@@ -7,6 +7,7 @@ import socket
 import threading
 import uvicorn
 from pydantic import BaseModel
+from copy import copy
 
 
 app = FastAPI()
@@ -222,7 +223,11 @@ async def read_index():
 @app.get("/sinks")
 async def get_sinks():
     """Get all sinks"""
-    return sinks
+    _sinks = []
+    for sink in sinks:
+        _sinks.append(copy(sink))
+        _sinks[len(_sinks) - 1].outsock = ""
+    return _sinks
 
 @app.post("/sinks")
 async def add_sink_group(sink: PostSinkGroup):
