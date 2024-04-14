@@ -1,0 +1,57 @@
+sinks: 
+  - sink:
+      name: "Livingroom"
+      ip: 192.168.3.178
+      port: 4010
+
+  - sink:
+      name: "Bedroom"
+      ip: 192.168.3.111
+      port: 4010
+
+  - sink:
+      name: "Bathroom"
+      ip: 192.168.3.102
+      port: 4010
+    
+  - sink:
+      name: "Office"
+      ip: 192.168.3.199
+      port: 4010
+
+sources:    
+  - source:
+      name: "Office PC"
+      ip: 192.168.3.199
+
+  - source:
+      name: "Server"
+      ip: 192.168.3.119
+    
+  - source:
+      name: "Livingroom PC"
+      ip: 192.168.3.172
+    
+  - source:
+      name: "Tablet"
+      ip: 192.168.3.0 # TODO: Update with real IP
+
+groups:
+  sinks:
+    - sink:
+        name: "All"
+        sinks: ["Livingroom", "Bedroom", "Bathroom", "Office"]
+    - sink:
+        name: "All Bedroom"
+        sinks: ["Bedroom", "Bathroom"]
+  sources:
+    - source:
+        name: "All"
+        sources: ["Server", "Office PC", "Livingroom PC", "Tablet"]
+    - source:
+        name: "Music"
+        sources: ["Server"]
+
+default_routing:
+  sink: "All"
+  source: "Music"
