@@ -1,13 +1,16 @@
 #!/usr/bin/python3
 from typing import List
 from fastapi import FastAPI
-from starlette.responses import FileResponse 
+from starlette.responses import FileResponse
 import yaml
 import socket
 import threading
 import uvicorn
 from pydantic import BaseModel
 from copy import copy
+import time
+
+from mixer import MasterReceiver, Receiver
 
 
 app = FastAPI()
@@ -96,6 +99,7 @@ sources = []  # Holds a list of sources and source groups
 routes = []  # Holds a list of routes
 threads = []  # Holds a pointer to the UdpListener thread
 sourcestosinks = {}  # Holds a cached map of sources -> sinks
+sinkstosources = {}  # Holds a cached map of sinks -> sources
 
 def unique(list):
     _list = []
@@ -151,8 +155,31 @@ def get_all_real_sinks_from_sink(sink: Sink):
         return sinks
     else:
         return unique([sink])
-    
+
 # Source Finders
+def get_sources_by_sink(sink: Sink):
+    """Returns all sources for a given sink"""
+    _sources = []
+    _routes = get_routes_by_sink(sink)
+    for route in _routes:
+        _sources.extend(get_all_real_sources_by_route(route))
+    return unique(_sources)
+
+def get_all_real_sources_by_route(route: Route):
+    """Returns all real (non-group) sources for a given route"""
+    return get_all_real_sources_from_source(get_source_by_name(route.source))
+
+def get_sinks_by_source(source: Source):
+    """Returns all sinks for a given source"""
+    _sinks = []
+    _routes = get_routes_by_source(source)
+    for route in _routes:
+        _sinks.extend(get_all_real_sinks_by_route(route))
+    return unique(_sinks)
+
+def get_all_real_sinks_by_route(route: Route):
+    """Returns all real (non-group) sinks for a given route"""
+    return get_all_real_sinks_from_sink(get_sink_by_name(route.sink))
 def get_source_by_name(name: str):
     """Get source by name"""
     for source in sources:
@@ -180,7 +207,7 @@ def get_all_real_sources_from_source(source: Source):
         return _sources
    else:
         return unique([source])
-    
+
 def get_all_real_sources():
     """Get all real sources in the project"""
     _sources = []
@@ -199,6 +226,16 @@ def get_routes_by_source(source: Source):
                 _routes.append(route)
     return unique(_routes)
 
+def get_routes_by_sink(sink: Sink):
+    """Get all routes that use this sink"""
+    _routes = []
+    for route in routes:
+        _sinks = get_all_real_sinks_from_sink(get_sink_by_name(route.sink))
+        for _sink in _sinks:
+            if _sink == sink:
+                _routes.append(route)
+    return unique(_routes)
+
 def build_sources_to_sinks():
     """Build source to sink cache"""
     global sourcestosinks
@@ -206,12 +243,38 @@ def build_sources_to_sinks():
     for source in sources:
         sourcestosinks[source.ip] = get_sinks_by_source(source)
 
+def build_sinks_to_sources():
+    """Build sink to source cache"""
+    global sinkstosources
+    sinkstosources = {}
+    for sink in sinks:
+        sinkstosources[sink.ip] = get_sources_by_sink(sink)
+
+master = False
+masterset = False
+
 def load_listeners():
     """Load the listener thread"""
+    global master,masterset
     build_sources_to_sinks()
-    newListener = UdpListener()
-    threads.append(newListener)
-    newListener.start()
+    build_sinks_to_sources()
+    if masterset:
+        print("Closing master!")
+        master.sock.close()
+        master.close()
+        time.sleep(5)
+    masterset = True
+    master = MasterReceiver()
+    for sink in sinkstosources.keys():
+        sourceips = []
+        for source in sinkstosources[sink]:
+            sourceips.append(source.ip)
+        if len(sourceips) > 0 and sink:
+            print(f"Sink:{sink}, Sources: {sinkstosources[sink]}")
+            receiver = Receiver(master, sink, sourceips)
+#    newListener = UdpListener()
+#    threads.append(newListener)
+#    newListener.start()
 
 # Index Endpoint
 @app.get("/")
@@ -238,7 +301,7 @@ async def add_sink_group(sink: PostSinkGroup):
     if sink.name.strip() == False:
         return False
     sinks.append(Sink(sink.name,"", 0, True, sink.sinks))
-    build_sources_to_sinks()
+    load_listeners()
     return True
 
 @app.delete("/sinks/{sink_id}")
@@ -249,7 +312,7 @@ async def delete_sink_group(sink_id: int):
             if sinks[sink_id].name == route.sink:
                 return False  # Can't remove a sink in use by a route
         sinks.pop(sink_id)
-        build_sources_to_sinks()
+        load_listeners()
         return True
     return False
 
@@ -268,7 +331,7 @@ async def add_source_group(source: PostSourceGroup):
     if source.name.strip() == False:
         return False
     sources.append(Source(source.name, "", 0, True, source.sources))
-    build_sources_to_sinks()
+    load_listeners()
     return True
 
 @app.delete("/sources/{source_id}")
@@ -279,7 +342,7 @@ async def delete_source_group(source_id: int):
             if sources[source_id].name == route.source:
                 return False  # Can't remove a source in use by a route
         sources.pop(source_id)
-        build_sources_to_sinks()
+        load_listeners()
         return True
     return False
 
@@ -293,14 +356,14 @@ async def get_routes():
 async def add_route(route: PostRoute):
     """Add a new route"""
     routes.append(Route(route.name, route.sink, route.source))
-    build_sources_to_sinks()
+    load_listeners()
     return True
 
 @app.delete("/routes/{route_id}")
 async def delete_route(route_id: int):
     """Delete a route by ID"""
     routes.pop(route_id)
-    build_sources_to_sinks()
+    load_listeners()
     return True
 
 if __name__ == '__main__':
