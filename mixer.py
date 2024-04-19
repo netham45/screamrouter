@@ -36,11 +36,11 @@ class Sink(threading.Thread):
         self.ffmpeg_command=['ffmpeg', '-hide_banner']  # Build ffmpeg command
 
         for ip in self.sourceips:  # Add an ffmpeg input for each source #'-use_wallclock_as_timestamps', 'true',
-            self.ffmpeg_command.extend(['-use_wallclock_as_timestamps', 'true', '-f', 's24le', '-ac', '2', '-ar', '48000', '-i', f"{self.temppath + ip}"])
+            self.ffmpeg_command.extend(['-rtbufsize', '5000', '-use_wallclock_as_timestamps', 'true', '-f', 's24le', '-ac', '2', '-ar', '48000', '-i', f"{self.temppath + ip}"])
 
         if self.multiplesources:  # If there are multiple sources build a filter_complex string
             filterstring = ""
-            mixinputs=""
+            mixinputs = ""
 
             for i in range(0,len(sourceips)):  # For each source IP add an input to aresample async, and append it to an input variable for amix
                 filterstring = filterstring + f"[{i}]aresample=async=10000:osr=48000[a{i}],"  # aresample

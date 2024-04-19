@@ -18,7 +18,7 @@
 
         function populateSourcesCallback(data){
             for (entry in data)
-                document.getElementById("sources").appendChild(createOption(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":""), entry));
+                document.getElementById("sources").appendChild(createOption(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry));
         }
 
         function populateSinks(){
@@ -27,7 +27,7 @@
 
         function populateSinksCallback(data){
             for (entry in data)
-                document.getElementById("sinks").appendChild(createOption(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":""), entry));
+                document.getElementById("sinks").appendChild(createOption(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry));
         }
 
         function removeSinkButton(){
@@ -68,7 +68,7 @@
 
         function populateRoutesCallback(data){
             for (entry in data)
-                document.getElementById("routes").appendChild(createOption(data[entry].name, data[entry].name + " [Sink: " + data[entry].sink + " Source: " + data[entry].source + "]", entry));
+                document.getElementById("routes").appendChild(createOption(data[entry].name, data[entry].name + " [Sink: " + data[entry].sink + " Source: " + data[entry].source + "]" + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry));
         }
 
         function removeRouteButton(){

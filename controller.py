@@ -226,6 +226,8 @@ class Controller:
     # Sink Finders, used to build sourcetosink cache
     def __get_sinks_by_source(self, source: Source):
         """Returns all sinks for a given source"""
+        if not source.enabled:
+            return []
         _sinks = []
         _routes = self.__get_routes_by_source(source)
         for route in _routes:
@@ -264,6 +266,8 @@ class Controller:
     # Source Finders
     def __get_sources_by_sink(self, sink: Sink):
         """Returns all sources for a given sink"""
+        if not sink.enabled:
+            return []
         _sources = []
         _routes = self.__get_routes_by_sink(sink)
         for route in _routes:
@@ -274,6 +278,8 @@ class Controller:
 
     def __get_all_real_sources_by_route(self, route: Route):
         """Returns all real (non-group) sources for a given route"""
+        if not route.enabled:
+            return []
         return self.__get_all_real_sources_from_source(self.__get_source_by_name(route.source))
 
     def __get_sinks_by_source(self, source: Source):
@@ -288,6 +294,8 @@ class Controller:
 
     def __get_all_real_sinks_by_route(self, route: Route):
         """Returns all real (non-group) sinks for a given route"""
+        if not route.enabled:
+            return []
         return self.__get_all_real_sinks_from_sink(self.__get_sink_by_name(route.sink))
 
     def __get_source_by_name(self, name: str):
