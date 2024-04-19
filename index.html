@@ -1,4 +1,4 @@
-<HTML>
+  <HTML>
     <HEAD>
       <TITLE>ScreamRouter</TITLE>
       <SCRIPT TYPE="text/javascript">
@@ -8,16 +8,17 @@
           callAPI("sources","GET","",populateSourcesCallback);
         }
 
-        function createOption(name, id){
+        function createOption(name, label, id){
           option = document.createElement("option");
-          option.innerHTML = name;
+          option.name = name;
+          option.innerHTML = label;
           option.value = id;
           return option;
         }
-        
+
         function populateSourcesCallback(data){
             for (entry in data)
-                document.getElementById("sources").appendChild(createOption(data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":""), entry));
+                document.getElementById("sources").appendChild(createOption(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":""), entry));
         }
 
         function populateSinks(){
@@ -26,7 +27,14 @@
 
         function populateSinksCallback(data){
             for (entry in data)
-                document.getElementById("sinks").appendChild(createOption(data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":""), entry));
+                document.getElementById("sinks").appendChild(createOption(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":""), entry));
+        }
+
+        function removeSinkButton(){
+            options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
+            options.reverse().forEach(function (option){
+                removeSink(option.value);
+            });
         }
 
         function removeSink(sink_id){
@@ -35,7 +43,14 @@
 
         function removeSinkCallback(data)
         {
-            location.reload();
+            load();
+        }
+
+        function removeSourceButton(){
+            options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
+            options.reverse().forEach(function (option){
+                removeSource(option.value);
+            });
         }
 
         function removeSource(source_id){
@@ -44,7 +59,7 @@
 
         function removeSourceCallback(data)
         {
-            location.reload();
+            load();
         }
 
         function populateRoutes(){
@@ -53,66 +68,192 @@
 
         function populateRoutesCallback(data){
             for (entry in data)
-                document.getElementById("routes").appendChild(createOption(data[entry].name, entry));
+                document.getElementById("routes").appendChild(createOption(data[entry].name, data[entry].name + " [Sink: " + data[entry].sink + " Source: " + data[entry].source + "]", entry));
+        }
+
+        function removeRouteButton(){
+            options = [... document.querySelectorAll("SELECT#routes OPTION:checked")]
+            options.reverse().forEach(function (option){
+                removeRoute(option.value);
+            });
         }
 
         function removeRoute(route_id){
-            callAPI("sources/" + route_id, "DELETE", "", removeRouteCallback);
+            callAPI("routes/" + route_id, "DELETE", "", removeRouteCallback);
         }
 
         function removeRouteCallback(data)
         {
-            location.reload();
+            load();
+        }
+
+        function addSinkButton(){
+            options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
+            labels = []
+            options.reverse().forEach(function (option){
+              labels.push(option.name);
+            });
+            data = {"name": document.getElementById("SinkName").value, "sinks": labels};
+            callAPI("sinks", "POST", JSON.stringify(data), removeRouteCallback);
+        }
+
+        function addSourceButton(){
+            options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
+            labels = []
+            options.reverse().forEach(function (option){
+              labels.push(option.name);
+            });
+            data = {"name": document.getElementById("SourceName").value, "sources": labels};
+            callAPI("sources", "POST", JSON.stringify(data), removeRouteCallback);
+        }
+
+        function addRouteButton(){
+            sourceOptions = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
+            sinkOptions = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
+            if ( sourceOptions.length > 1 || sinkOptions.length > 1) {
+                alert("Select only one source or sink per route");
+                return false;
+            }
+            data = {"name": document.getElementById("RouteName").value, "source": sourceOptions[0].name, "sink": sinkOptions[0].name};
+            callAPI("routes", "POST", JSON.stringify(data), removeRouteCallback);
+        }
+
+        function disableSourceButton(){
+            options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
+            options.reverse().forEach(function (option){
+                disableSource(option.value);
+            });
+        }
+
+        function enableSourceButton(){
+            options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
+            options.reverse().forEach(function (option){
+                enableSource(option.value);
+            });
+        }
+
+        function disableSinkButton(){
+            options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
+            options.reverse().forEach(function (option){
+                disableSink(option.value);
+            });
+        }
+
+        function enableSinkButton(){
+            options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
+            options.reverse().forEach(function (option){
+                enableSink(option.value);
+            });
+        }
+        
+        function disableRouteButton(){
+            options = [... document.querySelectorAll("SELECT#routes OPTION:checked")]
+            options.reverse().forEach(function (option){
+                disableRoute(option.value);
+            });
+        }
+
+        function enableRouteButton(){
+            options = [... document.querySelectorAll("SELECT#routes OPTION:checked")]
+            options.reverse().forEach(function (option){
+                enableRoute(option.value);
+            });
+        }
+
+        
+        function disableSink(sink_id)
+        {
+            callAPI("sinks/" + sink_id + "/disable", "GET", "", removeRouteCallback);
+        }
+
+        function enableSink(sink_id)
+        {
+            callAPI("sinks/" + sink_id + "/enable", "GET", "", removeRouteCallback);
+        }
+
+        function disableSource(source_id)
+        {
+          callAPI("sources/" + source_id + "/disable", "GET", "", removeRouteCallback);
+        }
+
+        function enableSource(source_id)
+        {
+            callAPI("sources/" + source_id + "/enable", "GET", "", removeRouteCallback);
+        }
+
+        function disableRoute(route_id)
+        {
+            callAPI("routes/" + route_id + "/disable", "GET", "", removeRouteCallback);
+        }
+
+        function enableRoute(route_id)
+        {
+            callAPI("routes/" + route_id + "/enable", "GET", "", removeRouteCallback);
         }
 
         function load()
         {
+            [... document.getElementsByTagName("option")].forEach(function(option){option.parentNode.removeChild(option)})
             populateSources();
             populateSinks();
             populateRoutes();
         }
 
         function callAPI(endpoint, method, data, callback){
-            // First create an XMLHttprequest object 
-            const xhr = new XMLHttpRequest(); 
+            // First create an XMLHttprequest object
+            const xhr = new XMLHttpRequest();
             xhr.open(method, BASEURL + endpoint, true);
-            if (method != "GET")
+            xhr.getResponseHeader("Content-type", "application/json");
+            if (method == "POST")
+                xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
                 xhr.send(data)
-            xhr.getResponseHeader("Content-type", "application/json"); 
-        
-            xhr.onload = function() { 
+
+            xhr.onload = function() {
                 const obj = JSON.parse(this.responseText);
                 callback(obj)
             }
-            xhr.send(); 
         }
-        
+
         window.addEventListener("load", (event) => {
             load();
         });
       </SCRIPT>
+      <STYLE>
+        SELECT {
+            height: 300px;
+        }
+      </STYLE>
     </HEAD>
     <BODY>
       <DIV ID="sourcesdiv">
         <SELECT ID="sources" MULTIPLE>
         </SELECT>
         <BR />
-        <INPUT TYPE="BUTTON" VALUE="+ Source Group" />
-        <INPUT TYPE="BUTTON" VALUE="- Source Group" />
+        <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name" ID="SourceName" />
+        <INPUT TYPE="BUTTON" VALUE="+ Source Group" onclick="addSourceButton();" />
+        <INPUT TYPE="BUTTON" VALUE="- Source Group" onclick="removeSourceButton();" />
+        <INPUT TYPE="BUTTON" VALUE="Disable Source" onclick="disableSourceButton();" />
+        <INPUT TYPE="BUTTON" VALUE="Enable Source" onclick="enableSourceButton();" />
       </DIV>
       <DIV ID="sinksdiv">
         <SELECT ID="sinks" MULTIPLE>
         </SELECT>
         <BR />
-        <INPUT TYPE="BUTTON" VALUE="+ Sink Group" />
-        <INPUT TYPE="BUTTON" VALUE="- Sink Group" />
+        <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name" ID="SinkName" />
+        <INPUT TYPE="BUTTON" VALUE="+ Sink Group" ONCLICK="addSinkButton();" />
+        <INPUT TYPE="BUTTON" VALUE="- Sink Group" ONCLICK="removeSinkButton();" />
+        <INPUT TYPE="BUTTON" VALUE="Disable Sink" onclick="disableSinkButton();" />
+        <INPUT TYPE="BUTTON" VALUE="Enable Sink" onclick="enableSinkButton();" />
       </DIV>
       <DIV ID="routesdiv">
         <SELECT ID="routes" MULTIPLE>
         </SELECT>
         <BR />
-        <INPUT TYPE="BUTTON" VALUE="+ Route" />
-        <INPUT TYPE="BUTTON" VALUE="- Route" />
+        <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name" ID="RouteName" />
+        <INPUT TYPE="BUTTON" VALUE="+ Route" ONCLICK="addRouteButton();" />
+        <INPUT TYPE="BUTTON" VALUE="- Route" ONCLICK="removeRouteButton();" />
+        <INPUT TYPE="BUTTON" VALUE="Disable Route" onclick="disableRouteButton();" />
+        <INPUT TYPE="BUTTON" VALUE="Enable Route" onclick="enableRouteButton();" />
       </DIV>
     </BODY>
-  </HTML>
+</HTML>
