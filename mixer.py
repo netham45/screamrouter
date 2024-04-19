@@ -10,7 +10,7 @@ from copy import copy
 import traceback
 
 class Sink(threading.Thread):
-    def __init__(self, master, destip: str, sourceips: List[str]):
+    def __init__(self, receiver, destip: str, sourceips: List[str]):
         """This gets data from multiple sources from a master, mixes them, and sends them back out to destip"""
         super().__init__()
         self.destip = destip
@@ -39,8 +39,8 @@ class Sink(threading.Thread):
             self.ffmpeg_command.extend(['-use_wallclock_as_timestamps', 'true', '-f', 's24le', '-ac', '2', '-ar', '48000', '-i', f"{self.temppath + ip}"])
 
         if self.multiplesources:  # If there are multiple sources build a filter_complex string
-            filterstring = "" #[0]aresample=async=10000:osr=48000[a0]"
-            mixinputs="" #[a0]"
+            filterstring = ""
+            mixinputs=""
 
             for i in range(0,len(sourceips)):  # For each source IP add an input to aresample async, and append it to an input variable for amix
                 filterstring = filterstring + f"[{i}]aresample=async=10000:osr=48000[a{i}],"  # aresample
@@ -52,7 +52,7 @@ class Sink(threading.Thread):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         print(self.ffmpeg_command)
         self.lastmessage = {}
-        master.registerSink(self)  # Let the master know to update us
+        receiver.registerSink(self)  # Let the receiver know to update us
         self.makefifos()  # Make FIFO files
         self.start()  # Start our listener thread
 

@@ -37,7 +37,8 @@ class API:
         self.app.delete("/routes/{route_id}")(self.delete_route)
         self.app.get("/routes/{route_id}/disable")(self.disable_route)
         self.app.get("/routes/{route_id}/enable")(self.enable_route)
-            # Index Endpoint
+
+    # Index Endpoint
     async def read_index(self):
         """Index page"""
         return FileResponse('index.html')
