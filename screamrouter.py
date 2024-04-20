@@ -1,9 +1,11 @@
 #!/usr/bin/python3
 import api
 import controller
-import uvicorn
+import time
 
 if __name__ == '__main__':
-    controller = controller.controller()
-    api = api(controller)
-    uvicorn.run(api.app, port=8080, host='0.0.0.0')
+    controller = controller.Controller()
+    api = api.API(controller)
+
+while True:
+    time.sleep(555555)

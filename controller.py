@@ -78,7 +78,6 @@ class Controller:
         self.__receiverset = False  # Flag if the master is set
         self.__load_yaml()
         self.__start_receiver()
-        print("Sinks {self.__sinks} Sources {self.__sources}")
 
     # Public functions
 
@@ -220,7 +219,6 @@ class Controller:
             for source in self.__sinkstosources[sink_ip]:
                 sourceips.append(source.ip)
             if len(sourceips) > 0 and sink_ip:
-                print(f"Sink:{sink_ip}, Sources: {self.__sinkstosources[sink_ip]}")
                 sink = mixer.Sink(self.__receiver, sink_ip, sourceips)
 
     # Sink Finders, used to build sourcetosink cache
@@ -296,7 +294,10 @@ class Controller:
         """Returns all real (non-group) sinks for a given route"""
         if not route.enabled:
             return []
-        return self.__get_all_real_sinks_from_sink(self.__get_sink_by_name(route.sink))
+        sink = self.__get_sink_by_name(route.sink)
+        if not sink.enabled:
+            return []
+        return self.__get_all_real_sinks_from_sink(sink)
 
     def __get_source_by_name(self, name: str):
         """Get source by name"""
@@ -358,7 +359,10 @@ class Controller:
         for route in self.__routes:
             if not route.enabled:
                 continue
-            _sinks = self.__get_all_real_sinks_from_sink(self.__get_sink_by_name(route.sink))
+            _parentsink = self.__get_sink_by_name(route.sink)
+            if not _parentsink.enabled:
+                continue
+            _sinks = self.__get_all_real_sinks_from_sink(_parentsink)
             for _sink in _sinks:
                 if not _sink.enabled:
                     continue

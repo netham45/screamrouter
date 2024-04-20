@@ -2,6 +2,8 @@ from typing import List
 from fastapi import FastAPI
 from starlette.responses import FileResponse
 from pydantic import BaseModel
+import threading
+import uvicorn
 
 class PostSinkGroup(BaseModel):
     name: str
@@ -16,9 +18,9 @@ class PostRoute(BaseModel):
     source: str
     sink: str
 
-class API:
-
+class API(threading.Thread):
     def __init__(self, controller):
+        super().__init__()
         self.app = FastAPI()
         self.controller = controller
         self.app.get("/")(self.read_index)
@@ -37,71 +39,76 @@ class API:
         self.app.delete("/routes/{route_id}")(self.delete_route)
         self.app.get("/routes/{route_id}/disable")(self.disable_route)
         self.app.get("/routes/{route_id}/enable")(self.enable_route)
+        self.start()
+
+
+    def run(self):
+        uvicorn.run(self.app, port=8080, host='0.0.0.0')
 
     # Index Endpoint
-    async def read_index(self):
+    def read_index(self):
         """Index page"""
         return FileResponse('index.html')
 
     # Sink Endpoints
-    async def get_sinks(self):
+    def get_sinks(self):
         """Get all sinks"""
         return self.controller.get_sinks()
 
-    async def add_sink_group(self, sink: PostSinkGroup):
+    def add_sink_group(self, sink: PostSinkGroup):
         """Add a new sink group"""
         return self.controller.add_sink_group(sink)
 
-    async def delete_sink_group(self, sink_id: int):
+    def delete_sink_group(self, sink_id: int):
         """Delete a sink group by ID"""
         return self.controller.delete_sink_group(sink_id)
 
-    async def disable_sink(self, sink_id: int):
+    def disable_sink(self, sink_id: int):
         """Disable a sink"""
         return self.controller.disable_sink(sink_id)
 
-    async def enable_sink(self, sink_id: int):
+    def enable_sink(self, sink_id: int):
         """Enable a sink"""
         return self.controller.enable_sink(sink_id)
 
     # Source Endpoints
-    async def get_sources(self):
+    def get_sources(self):
         """Get all sources"""
         return self.controller.get_sources()
 
-    async def add_source_group(self, source: PostSourceGroup):
+    def add_source_group(self, source: PostSourceGroup):
         """Add a new source group"""
         return self.controller.add_source_group(PostSourceGroup)
 
-    async def delete_source_group(self, source_id: int):
+    def delete_source_group(self, source_id: int):
         """Delete a source group by ID"""
         return self.controller.delete_source_group(source_id)
 
-    async def disable_source(self, source_id: int):
+    def disable_source(self, source_id: int):
         """Disable a source"""
         return self.controller.disable_source(source_id)
 
-    async def enable_source(self, source_id: int):
+    def enable_source(self, source_id: int):
         """Enable a source"""
         return self.controller.enable_source(source_id)
 
     # Route Endpoints
-    async def get_routes(self):
+    def get_routes(self):
         """Get all routes"""
         return self.controller.get_routes()
 
-    async def add_route(self, route: PostRoute):
+    def add_route(self, route: PostRoute):
         """Add a new route"""
         return self.controller.add_route(route)
 
-    async def delete_route(self, route_id: int):
+    def delete_route(self, route_id: int):
         """Delete a route by ID"""
         return self.controller.delete_route(route_id)
 
-    async def disable_route(self, route_id: int):
+    def disable_route(self, route_id: int):
         """Disable a route"""
         return self.controller.disable_route(route_id)
 
-    async def enable_route(self, route_id: int):
+    def enable_route(self, route_id: int):
         """Enable a route"""
         return self.controller.enable_route(route_id)
