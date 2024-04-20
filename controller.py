@@ -18,14 +18,14 @@ is_group: A boolean indicating whether this sink is a group or not.
 group_members: A list of Sink objects that are members of this sink if it is a group, otherwise an empty list.
 """
 class Sink:
-    def __init__(self, name: str, ip: str, port: int, is_group: bool, group_members=None):
+    def __init__(self, name: str, ip: str, port: int, is_group: bool, enabled: bool, group_members=None):
         self.name = name
         self.ip = ip
         self.port = port
         self.is_group = is_group
         self.group_members = group_members or []
         self.outsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if not self.is_group else None
-        self.enabled = True
+        self.enabled = enabled
 
 """
 Class Source
@@ -37,12 +37,12 @@ group
 """
 
 class Source:
-    def __init__(self, name: str, ip: str, is_group: bool, group_members=None):
+    def __init__(self, name: str, ip: str, is_group: bool, enabled: bool, group_members=None):
         self.name = name
         self.ip = ip
         self.is_group = is_group
         self.group_members = group_members or []
-        self.enabled = True
+        self.enabled = enabled
 
 """
 Class Route
@@ -53,11 +53,11 @@ source: A Source object that represents the source that this route is connected 
 """
 
 class Route:
-    def __init__(self, name: str, sink: Sink, source: Source):
+    def __init__(self, name: str, sink: Sink, source: Source, enabled: bool):
         self.name = name
         self.sink = sink
         self.source = source
-        self.enabled = True
+        self.enabled = enabled
 
 # Helper functions
 def unique(list):
@@ -190,27 +190,58 @@ class Controller:
 
     def __load_yaml(self):
         """Loads the initial config"""
-        with open("screamrouter.yaml", "r") as f:
+        with open("config.yaml", "r") as f:
             config = yaml.safe_load(f)
         for sinkEntry in config["sinks"]:
-            self.__sinks.append(Sink(sinkEntry["sink"]["name"], sinkEntry["sink"]["ip"], sinkEntry["sink"]["port"], False, []))
+            self.__sinks.append(Sink(sinkEntry["name"], sinkEntry["ip"], sinkEntry["port"], False, sinkEntry["enabled"], []))
         for sourceEntry in config["sources"]:
-            self.__sources.append(Source(sourceEntry["source"]["name"], sourceEntry["source"]["ip"], False, []))
+            self.__sources.append(Source(sourceEntry["name"], sourceEntry["ip"], False, sourceEntry["enabled"], []))
         for sinkGroup in config["groups"]["sinks"]:
-            self.__sinks.append(Sink(sinkGroup["sink"]["name"], "", 0, True, sinkGroup["sink"]["sinks"]))
+            self.__sinks.append(Sink(sinkGroup["name"], "", 0, True, sinkGroup["enabled"], sinkGroup["sinks"]))
         for sourceGroup in config["groups"]["sources"]:
-            self.__sources.append(Source(sourceGroup["source"]["name"], 0, True, sourceGroup["source"]["sources"]))
+            self.__sources.append(Source(sourceGroup["name"], 0, True, sourceGroup["enabled"], sourceGroup["sources"]))
         for routeEntry in config["routes"]:
-            self.__routes.append(Route(routeEntry["route"]["name"], routeEntry["route"]["sink"], routeEntry["route"]["source"]))
+            self.__routes.append(Route(routeEntry["name"], routeEntry["sink"], routeEntry["source"], routeEntry["enabled"]))
+
+    def __save_yaml(self):
+        """Saves the config to config.yaml"""
+        sinks = []
+        for sink in self.__sinks:
+            if not sink.is_group:
+                _newsink = {"name": sink.name, "ip": sink.ip, "port": sink.port, "enabled": sink.enabled}
+                sinks.append(_newsink)
+        sources = []
+        for source in self.__sources:
+            if not source.is_group:
+                _newsource = {"name": source.name, "ip": source.ip, "enabled": source.enabled}
+                sources.append(_newsource)
+        routes = []
+        for route in self.__routes:
+            _newroute = {"name": route.name, "source": route.source, "sink": route.sink, "enabled": route.enabled}
+            routes.append(_newroute)
+        sink_groups = []
+        for sink in self.__sinks:
+            if sink.is_group:
+                _newsink = {"name": sink.name, "sinks": sink.group_members}
+                sink_groups.append(_newsink)
+        source_groups = []
+        for source in self.__sources:
+            if source.is_group:
+                _newsource = {"name": source.name, "sources": source.group_members}
+                source_groups.append(_newsource)
+        groups = {"sinks": sink_groups, "sources": source_groups}
+        save_data = {"sinks": sinks, "sources": sources, "routes": routes, "groups": groups}
+        with open('config.yaml', 'w') as yaml_file:
+            yaml.dump(save_data, yaml_file)
 
     def __start_receiver(self):
         """Start or restart the receiver"""
+        self.__save_yaml()
         self.__build_sources_to_sinks()
         self.__build_sinks_to_sources()
         if self.__receiverset:
             print("Closing receiver!")
-            self.__receiver.sock.close()
-            self.__receiver.close()
+            self.__receiver.stop()
             time.sleep(.5)
         self.__receiverset = True
         self.__receiver = mixer.Receiver()
@@ -220,6 +251,7 @@ class Controller:
                 sourceips.append(source.ip)
             if len(sourceips) > 0 and sink_ip:
                 sink = mixer.Sink(self.__receiver, sink_ip, sourceips)
+                self.__receiver.register_sink(sink)
 
     # Sink Finders, used to build sourcetosink cache
     def __get_sinks_by_source(self, source: Source):

@@ -1,0 +1,65 @@
+groups:
+  sinks:
+  - enabled: true
+    name: All
+    sinks:
+    - Livingroom
+    - Bedroom
+    - Bathroom
+    - Office
+  - enabled: true
+    name: Bedroom
+    sinks:
+    - Bedroom
+    - Bathroom
+  sources:
+  - enabled: true
+    name: All
+    sources:
+    - Server
+    - Office PC
+    - Livingroom PC
+    - Tablet
+  - enabled: true
+    name: Music
+    sources:
+    - Server
+routes:
+- enabled: true
+  name: Music to All
+  sink: All
+  source: Music
+- enabled: true
+  name: Office PC to Office
+  sink: Office
+  source: Office PC
+sinks:
+- enabled: true
+  ip: 192.168.3.178
+  name: Livingroom
+  port: 4010
+- enabled: true
+  ip: 192.168.3.111
+  name: Bedroom
+  port: 4010
+- enabled: true
+  ip: 192.168.3.102
+  name: Bathroom
+  port: 4010
+- enabled: true
+  ip: 192.168.3.199
+  name: Office
+  port: 4010
+sources:
+- enabled: true
+  ip: 192.168.3.119
+  name: Server
+- enabled: true
+  ip: 192.168.3.199
+  name: Office PC
+- enabled: false
+  ip: 192.168.3.172
+  name: Livingroom PC
+- enabled: true
+  ip: 192.168.3.0
+  name: Tablet
