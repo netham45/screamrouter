@@ -41,17 +41,6 @@ class Source():
         self._fifo_file_name: str = fifo_file_name
         self.__fifo_file_handle: io.IOBase
 
-        try:
-            try:
-                os.remove(self._fifo_file_name)
-            except:
-                pass
-            os.mkfifo(self._fifo_file_name)
-            fd = os.open(self._fifo_file_name, os.O_RDWR | os.O_NONBLOCK)
-            self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
-        except:
-            print(traceback.format_exc())
-
     def check_attributes(self, stream_attributes: ScreamStreamInfo) -> bool:
         """Returns True if the stream attributes are the same, False if they're different."""
         return stream_attributes == self._stream_attributes
@@ -78,14 +67,29 @@ class Source():
 
     def open(self) -> None:
         """Opens the source"""
+        try:
+            try:
+                os.remove(self._fifo_file_name)
+            except:
+                pass
+            os.mkfifo(self._fifo_file_name)
+            fd = os.open(self._fifo_file_name, os.O_RDWR | os.O_NONBLOCK)
+            self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
+        except:
+            print(traceback.format_exc())
         self.__open = True
 
     def close(self) -> None:
         """Closes the source"""
+        try:
+            self.__fifo_file_handle.close()
+            os.remove(self._fifo_file_name)
+        except:
+            pass
         self.__open = False
 
     def stop(self) -> None:
-        """Stops the source, closes fifo handles"""
+        """Fully stops and closes the source, closes fifo handles"""
         self.__open = False
         try:
             self.__fifo_file_handle.close()
@@ -114,7 +118,6 @@ class Sink(threading.Thread):
 
         for source_ip in source_ips:  # Initialize dicts based off of source ips
             self.__sources.append(Source(source_ip, self.__temp_path + source_ip))
-
 
         self.start()  # Start our listener thread
 
@@ -211,19 +214,14 @@ class Sink(threading.Thread):
         """Looks for old pipes that are open and closes them"""
         if len(self.__get_open_sources()) < 2:  # Don't close the last pipe
             return
-        now: int = time.time() * 1000.0
-        do_reset: bool = False
+
         for source in self.__sources:
             if not source.is_active() and source.is_open():
                 source.close()
-                do_reset = True
-
-        if do_reset:
-            self.__reset_ffmpeg()
 
     def __verify_pipe_open_and_attributes(self, source: Source, header: bytearray) -> bool:
         """Verifies the target pipe is open and has the right header. True = Everything valid, False = ffmpeg restarted"""
-        if  self.__verify_pipe_attributes(source, header):
+        if self.__verify_pipe_attributes(source, header):
             return self.__verify_pipe_is_open(source)
         return False
 
@@ -271,7 +269,7 @@ class Sink(threading.Thread):
         pass
 
     def stop(self) -> None:
-        """Stops the thread"""
+        """Stops the Sink, closes all handles"""
         self.__running = False
 
     def run(self) -> None:
@@ -310,9 +308,9 @@ class Receiver(threading.Thread):
         self.sinks.append(sink)
 
     def stop(self) -> None:
-        """Close the socket, stop the thread"""
-        self.sock.close()
+        """Stops the Receiver and all sinks"""
         self.running = False
+        self.sock.close()
 
     def get_sink_status(self, sink_ip) -> None:
         """For the provided sink, return nothing"""
