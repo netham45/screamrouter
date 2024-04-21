@@ -12,6 +12,7 @@ from typing import List, Type
 from copy import copy
 import traceback
 import numpy
+import io
 
 class ScreamStreamInfo():
     def __init__(self, scream_header):
@@ -22,127 +23,180 @@ class ScreamStreamInfo():
         sample_rate_multiplier = numpy.packbits(sample_rate_bits,bitorder='little')[0]  # Convert it back into a number without the top bit, this is the multiplier to multiply the base by
         if sample_rate_multiplier < 1:
             sample_rate_multiplier = 1
-        self.sample_rate = sample_rate_base * sample_rate_multiplier
-        self.bit_depth = scream_header[1]  # One byte for bit depth
-        self.channels = scream_header[2]  # One byte for channel count
-        self.map = scream_header[3:]  # Two bytes for WAVEFORMATEXTENSIBLE
+        self.sample_rate: int = sample_rate_base * sample_rate_multiplier
+        self.bit_depth: int = scream_header[1]  # One byte for bit depth
+        self.channels: int = scream_header[2]  # One byte for channel count
+        self.map: bytearray = scream_header[3:]  # Two bytes for WAVEFORMATEXTENSIBLE
 
     def __eq__(self, other):
         return (self.sample_rate == other.sample_rate) and (self.bit_depth == other.bit_depth) and (self.channels == other.channels)
+
+
+class Source():
+    def __init__(self, ip: str, fifo_file_name: str):
+        self._ip: str = ip
+        self.__open: bool = False
+        self.__last_data_time: int = 0
+        self._stream_attributes: ScreamStreamInfo = ScreamStreamInfo([0,0,0,0,0])
+        self._fifo_file_name: str = fifo_file_name
+        self.__fifo_file_handle: io.IOBase
+
+        try:
+            try:
+                os.remove(self._fifo_file_name)
+            except:
+                pass
+            os.mkfifo(self._fifo_file_name)
+            fd = os.open(self._fifo_file_name, os.O_RDWR | os.O_NONBLOCK)
+            self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
+        except:
+            print(traceback.format_exc())
+
+    def check_attributes(self, stream_attributes: ScreamStreamInfo) -> bool:
+        """Returns True if the stream attributes are the same, False if they're different."""
+        return stream_attributes == self._stream_attributes
+
+    def set_attributes(self, stream_attributes: ScreamStreamInfo) -> None:
+        """Sets stream attributes"""
+        self._stream_attributes = stream_attributes
+
+    def is_active(self) -> bool:
+        """Returns if the source has been active in the last 200ms"""
+        now = time.time() * 1000
+        if now - self.__last_data_time > 200:
+            return False
+        return True
+
+    def update_activity(self) -> None:
+        """Sets the source last active time"""
+        now = time.time() * 1000
+        self.__last_data_time = now
+
+    def is_open(self) -> bool:
+        """Returns if the source is open"""
+        return self.__open
+
+    def open(self) -> None:
+        """Opens the source"""
+        self.__open = True
+
+    def close(self) -> None:
+        """Closes the source"""
+        self.__open = False
+
+    def stop(self) -> None:
+        """Stops the source, closes fifo handles"""
+        self.__open = False
+        try:
+            self.__fifo_file_handle.close()
+        except:
+            print(traceback.format_exc())
+
+    def write(self, data: bytearray) -> None:
+        """Writes data to this source's FIFO"""
+        self.__fifo_file_handle.write(data)
+
 
 class Sink(threading.Thread):
     def __init__(self, receiver, dest_ip: str, source_ips: List[str]):
         """This gets data from multiple sources from a master, mixes them, and sends them back out to destip"""
         super().__init__()
-        self._dest_ip = dest_ip
-        self._source_ips = source_ips
-        self.__temp_path = tempfile.gettempdir() + f"/scream-{self._dest_ip}-"  # Per-sink temp path
-
-        self._keys = []  # Holds keys the rest of the dicts use
-
-        self.__fifoin = self.__temp_path + "in"  # Input file from ffmpeg
-        self._fifo_file_names = {}  # Holds fifo file names for output to ffmpeg
-        self.__fifo_file_handles = {}  # Holds fifo file objects
-
-        self._source_open = {}  # Holds rather a source is open or not
-        self._last_data_time = {}  # Holds the last data received time for a source
-        self._stream_attributes = {}  # Holds scream stream attributes, stream is restarted when this changes
-
-        self.__running = True  # Running
-
-        self.__ffmpeg = False  # Holds popen for ffmpeg once it's started
-        self.__sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # Socket to send to sink
-
-        for ip in self._source_ips:  # Initialize dicts based off of source ips
-            key = ip
-            self._keys.append(key)
-            self._fifo_file_names[key] =  self.__temp_path + ip
-            self._stream_attributes[key] = ScreamStreamInfo([0] * 5)
-            self._last_data_time[key] = 0
-            self._source_open[key] = False
+        self._dest_ip: str = dest_ip
+        self.__sources: List[Source] = []
+        self.__temp_path: str = tempfile.gettempdir() + f"/scream-{self._dest_ip}-"  # Per-sink temp path
+        self.__fifo_in: str = self.__temp_path + "in"  # Input file from ffmpeg
+        self.__running: bool = True
+        self.__ffmpeg: os.popen = None
+        self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         self.__make_in_fifo()  # Make python -> ffmpeg fifo fifo
-        self.__make_out_fifos()  # Make ffmpeg fifo->python->sink fifo
+
+        for source_ip in source_ips:  # Initialize dicts based off of source ips
+            self.__sources.append(Source(source_ip, self.__temp_path + source_ip))
+
+
         self.start()  # Start our listener thread
 
-    def __get_active_sources(self):
+    def get_fifo_in(self) -> str:
+        """Test function to return fifoin value"""
+        return self.__fifo_in
+
+    def get_sources(self) -> List[Source]:
+        """Test function to return sources"""
+        return self.__sources
+
+    def __get_open_sources(self) -> List[Source]:
         """Build a list of active IPs, exclude ones that aren't open"""
-        active_sources = []
-        for ip in self._source_ips:
-            key = ip
-            if self._source_open[key]:
-                active_sources.append(ip)
+        active_sources: List[Source] = []
+        for source in self.__sources:
+            if source.is_open():
+                active_sources.append(source)
         return active_sources
 
-    def __get_ffmpeg_inputs(self, active_sources):
+    def __get_ffmpeg_inputs(self, active_sources: List[Source]) -> List[str]:
         """Add an input for each source"""
-        ffmpeg_command = []
-        for ip in active_sources:
-            key = ip
-            bit_depth = self._stream_attributes[key].bit_depth
-            sample_rate = self._stream_attributes[key].sample_rate
-            channels = self._stream_attributes[key].channels
-            ffmpeg_command.extend(['-thread_queue_size', '64', 
-                                   '-f', f's{bit_depth}le', 
-                                   '-ac', f'{channels}', 
-                                   '-ar', f'{sample_rate}', 
-                                   '-i', f'{self.__temp_path + ip}'])
+        ffmpeg_command: List[str] = []
+        for source in active_sources:
+            bit_depth = source._stream_attributes.bit_depth
+            sample_rate = source._stream_attributes.sample_rate
+            channels = source._stream_attributes.channels
+            ip = source._ip
+            file_name = source._fifo_file_name
+            ffmpeg_command.extend(['-thread_queue_size', '64',
+                                   '-f', f's{bit_depth}le',
+                                   '-ac', f'{channels}',
+                                   '-ar', f'{sample_rate}',
+                                   '-i', f'{file_name}'])
         return ffmpeg_command
 
-    def __get_ffmpeg_filters(self, active_sources):
+    def __get_ffmpeg_filters(self, active_sources: List[Source]) -> List[str]:
         """Build complex filter"""
-        ffmpeg_command = []
+        ffmpeg_command_parts: List[str] = []
         full_filter_string = ""
         amix_inputs = ""
         per_input_filter = "asetpts='(RTCTIME - RTCSTART) / (TB * 1000000)',aresample=async=5000:flags=+res:resampler=soxr"
 
-        for i in range(0,len(active_sources)):  # For each source IP add an input to aresample async, and append it to an input variable for amix
+        for i in range(0, len(active_sources)):  # For each source IP add an input to aresample async, and append it to an input variable for amix
             full_filter_string = full_filter_string + f"[{i}]{per_input_filter}[a{i}],"
             amix_inputs = amix_inputs + f"[a{i}]"  # amix input
         if len(active_sources) > 1:
-            ffmpeg_command.extend(['-filter_complex', full_filter_string + amix_inputs + "amix=normalize=0"])
+            ffmpeg_command_parts.extend(['-filter_complex', full_filter_string + amix_inputs + "amix=normalize=0"])
         else:
-            ffmpeg_command.extend(['-filter_complex', full_filter_string + amix_inputs + "aresample[0]"])
-        return ffmpeg_command
+            ffmpeg_command_parts.extend(['-filter_complex', full_filter_string + amix_inputs + "aresample[0]"])
+        return ffmpeg_command_parts
 
-    def __get_ffmpeg_command(self):
+    def __get_ffmpeg_output(self) -> List[str]:
+        """Returns the ffmpeg output"""
+        # TODO: Add output bitdepth/channels/sample rate to yaml
+        ffmpeg_command_parts: List[str] = []
+        ffmpeg_command_parts.extend(['-y', '-f', 's32le', '-ac', '2', '-ar', '48000', f"file:{self.__fifo_in}"])  # ffmpeg output
+        return ffmpeg_command_parts
+
+    def __get_ffmpeg_command(self) -> List[str]:
         """Builds the ffmpeg command"""
-        active_sources = self.__get_active_sources()
+        active_sources: List[Source] = self.__get_open_sources()
+        ffmpeg_command_parts: List[str] = ['ffmpeg', '-hide_banner']  # Build ffmpeg command
+        ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(active_sources))
+        ffmpeg_command_parts.extend(self.__get_ffmpeg_filters(active_sources))
+        ffmpeg_command_parts.extend(self.__get_ffmpeg_output())  # ffmpeg output
+        return ffmpeg_command_parts
 
-        ffmpeg_command=['ffmpeg', '-hide_banner']  # Build ffmpeg command
-        ffmpeg_command.extend(self.__get_ffmpeg_inputs(active_sources))
-        ffmpeg_command.extend(self.__get_ffmpeg_filters(active_sources))
-        ffmpeg_command.extend(['-y', '-f', 's32le', '-ac', '2', '-ar', '48000', f"file:{self.__fifoin}"])  # ffmpeg output
-        return ffmpeg_command
-
-    def __make_in_fifo(self):
+    def __make_in_fifo(self) -> bool:
         """Makes fifo in for ffmpeg to send back to python"""
         try:
             try:
-                os.remove(self.__fifoin)
+                os.remove(self.__fifo_in)
             except:
                 pass
-            os.mkfifo(self.__fifoin)
+            os.mkfifo(self.__fifo_in)
+            return True
         except:
             print(traceback.format_exc())
+            return False
 
-    def __make_out_fifos(self):
-        """Makes all fifo out files for this instance of ffmpeg"""
-        for key in self._keys:
-            try:
-                try:
-                    os.remove(self._fifo_file_names[key])
-                except:
-                    pass
-                os.mkfifo(self._fifo_file_names[key])
-                fd = os.open(self._fifo_file_names[key],os.O_RDWR | os.O_NONBLOCK)
-                self.__fifo_file_handles[key] = os.fdopen(fd, 'wb', 0)
-            except:
-                print(traceback.format_exc())
-
-    def __reset_ffmpeg(self):
+    def __reset_ffmpeg(self) -> None:
         """Opens the ffmpeg instance"""
-        print("Opening" + self.__temp_path)
+        print("(Re)Opening sink " + self._dest_ip)
         if self.__ffmpeg:
             try:
                 self.__ffmpeg.kill()
@@ -152,77 +206,80 @@ class Sink(threading.Thread):
                 print(f"Failed to close ffmpeg for {self.__temp_path}!")
         self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(), shell=False, stdout=subprocess.PIPE, stdin=subprocess.PIPE)
 
-    def __check_for_inactive_pipes(self):
+    def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
-        now = time.time() * 1000.0
-        for key, value in self._last_data_time.items():
-            # If the source is open and there's at least one other source open and it's been inactive for 200ms then close it
-            if self._source_open[key] and len(self.__get_active_sources()) > 1 and now - value > 200:
-                self._source_open[key] = False
-                print(f"No frames from {key} in 200ms, restarting ffmpeg")
-                self.__reset_ffmpeg()
+        if len(self.__get_open_sources()) < 2:  # Don't close the last pipe
+            return
+        now: int = time.time() * 1000.0
+        do_reset: bool = False
+        for source in self.__sources:
+            if not source.is_active() and source.is_open():
+                source.close()
+                do_reset = True
 
-    def __verify_pipe_open_and_attributes(self, key, header):
+        if do_reset:
+            self.__reset_ffmpeg()
+
+    def __verify_pipe_open_and_attributes(self, source: Source, header: bytearray) -> bool:
         """Verifies the target pipe is open and has the right header. True = Everything valid, False = ffmpeg restarted"""
-        if  self.__verify_pipe_attributes(key, header):
-            return self.__verify_pipe_is_open(key)
+        if  self.__verify_pipe_attributes(source, header):
+            return self.__verify_pipe_is_open(source)
         return False
 
-    def __verify_pipe_attributes(self, key, header):
+    def __verify_pipe_attributes(self, source: Source, header: bytearray) -> bool:
         """Verifies the target pipe header matches what we have open, updates it if not. False = closed and reopened, True = open already"""
         parsed_scream_header = ScreamStreamInfo(header)
-        if parsed_scream_header != self._stream_attributes[key]:  # Have input stream properties changed?
-            print(f"{key} had a stream property change. Was: {self._stream_attributes[key].bit_depth}-bit at {self._stream_attributes[key].sample_rate}kHz, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz.")
-            self._stream_attributes[key] = parsed_scream_header
-            self._source_open[key] = True
+        if not source.check_attributes(parsed_scream_header):
+            source.set_attributes(parsed_scream_header)
+            print(f"Source {source._ip} had a stream property change. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz.")
+            source.open()
             self.__reset_ffmpeg()
             return False
         return True
 
-    def __verify_pipe_is_open(self, key):
+    def __verify_pipe_is_open(self, source: Source) -> bool:
         """Verifies the target pipe is open, opens it if not. False = closed and reopened, True = open already"""
-        if not self._source_open[key]:  # Is it writing to a closed fifo?
-            print(f"Trying to write to a closed pipe {key}, restarting ffmpeg to reopen")
-            self._source_open[key] = True  # Mark the fifo as open and close to reopen with the new fifo
+        if not source.is_open():  # Is it writing to a closed fifo?
+            print(f"Trying to write to a closed source {source._ip}, restarting ffmpeg to reopen")
+            source.open()
             self.__reset_ffmpeg()
             return False
         return True
 
-    def __verify_packet(self, data):
+    def __verify_packet(self, data) -> bool:
         """Verifies a packet is the right length"""
         if len(data) != 1157:
             print(f"Got bad packet length {len(data)}")
             return False
         return True
 
-    def send(self, source_ip, data):
+    def send(self, source_ip, data) -> None:
         """Sends data from the master to ffmpeg after verifying it's on our list"""
         if not self.__verify_packet(data):
             return
-   
-        if source_ip in self._source_ips:  # Check if the source is one we care about
-            key = source_ip
-            self.__verify_pipe_open_and_attributes(key, data[:5])
-            self.__check_for_inactive_pipes()
-            now = time.time() * 1000.0
-            self.__fifo_file_handles[key].write(data[5:])  # Write the data to the output fifo
-            self._last_data_time[key] = now
 
-    def get_status(self):
-        """Returns a dict holding source ip -> source open, dict holding source ip -> stream attributes, list of active source ips"""
-        return copy(self._source_open), copy(self._stream_attributes), copy(self._active_sources)
+        for source in self.__sources:
+            if source._ip == source_ip:
+                self.__verify_pipe_open_and_attributes(source, data[:5])
+                source.write(data[5:])  # Write the data to the output fifo
+                source.update_activity()
+        self.__check_for_inactive_sources()
 
-    def stop(self):
+    def get_status(self) -> None:
+        """Returns nothing yet"""
+        pass
+
+    def stop(self) -> None:
         """Stops the thread"""
         self.__running = False
 
-    def run(self):
+    def run(self) -> None:
         """This thread implements listening to self.fifoin and sending it out to dest_ip"""
-        self.fd = open(self.__fifoin, "rb")
+        fd = open(self.__fifo_in, "rb")
         while self.__running:
             try:
                 header = bytes([0x01, 0x20, 0x02, 0x03, 0x00])  # 48khz, 32-bit, stereo
-                data = self.fd.read(1152)  # Read 1152 bytes from ffmpeg
+                data = fd.read(1152)  # Read 1152 bytes from ffmpeg
                 if len(data) == 1152:
                     sendbuf = header + data  # Add the header to the data
                     self.__sock.sendto(sendbuf, (self._dest_ip, 4010))  # Send it to the sink
@@ -238,36 +295,42 @@ class Sink(threading.Thread):
 
 
 class Receiver(threading.Thread):
+
     def __init__(self):
         """Takes no parameters"""
         super().__init__()
-        self.running = True
-        self.sinks = []  # Holds the sinks to send data to
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sinks: List[Sink] = []
+        self.running: bool = True
         self.start()
 
-    def register_sink(self, sink: Sink):
+    def register_sink(self, sink: Sink) -> None:
         """Add a sink"""
         self.sinks.append(sink)
 
-    def stop(self):
+    def stop(self) -> None:
         """Close the socket, stop the thread"""
         self.sock.close()
         self.running = False
 
-    def get_sink_status(self, sink_ip):
-        """For the provided sink, returns a dict holding source ip -> source open, dict holding source ip -> stream attributes, list of active source ips"""
+    def get_sink_status(self, sink_ip) -> None:
+        """For the provided sink, return nothing"""
         for sink in self.sinks:
             if sink._dest_ip == sink_ip:
-                return sink.get_status()
+                return None
+        return None
 
-    def run(self):
+    def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks"""
         self.sock.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,4096)
         self.sock.bind(("", 16401))
 
         recvbuf = bytearray(1157)
         while self.running:
+            for sink in self.sinks:
+                for source in sink.get_sources():
+                    pass
+                    #print(source._ip)
             ready = select.select([self.sock], [], [], .2)  # If the socket is dead for more than .2 seconds kill ffmpeg
             if ready[0]:
                 try:
@@ -283,3 +346,4 @@ class Receiver(threading.Thread):
             print("Closing sinks")
             sink.close()
             sink.stop()
+            sink.join()

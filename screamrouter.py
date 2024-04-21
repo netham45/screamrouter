@@ -8,4 +8,4 @@ if __name__ == '__main__':
     api = api.API(controller)
 
 while True:
-    time.sleep(555555)
+    time.sleep(10000)
