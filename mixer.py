@@ -5,7 +5,7 @@ import time
 import subprocess
 import tempfile
 import select
-from typing import List
+from typing import List, Annotated
 import traceback
 import numpy
 import io
@@ -14,19 +14,24 @@ class ScreamStreamInfo():
     """Parses Scream headers to get sample rate, bit depth, and channels"""
     def __init__(self, scream_header):
         """Parses the first five bytes of a Scream header to get the stream attributes"""
-        sample_rate_bits = numpy.unpackbits(numpy.array([scream_header[0]], dtype=numpy.uint8), bitorder='little')  # Unpack the first byte into 8 bits
-        sample_rate_base = 44100 if sample_rate_bits[7] == 1 else 48000  # If the uppermost bit is set then the base is 44100, if it's not set the base is 48000
+        sample_rate_bits: numpy.array = numpy.unpackbits(numpy.array([scream_header[0]], dtype=numpy.uint8), bitorder='little')  # Unpack the first byte into 8 bits
+        sample_rate_base: int = 44100 if sample_rate_bits[7] == 1 else 48000  # If the uppermost bit is set then the base is 44100, if it's not set the base is 48000
         sample_rate_bits = numpy.delete(sample_rate_bits, 7)  # Remove the uppermost bit
-        sample_rate_multiplier = numpy.packbits(sample_rate_bits,bitorder='little')[0]  # Convert it back into a number without the top bit, this is the multiplier to multiply the base by
+        sample_rate_multiplier: int = numpy.packbits(sample_rate_bits,bitorder='little')[0]  # Convert it back into a number without the top bit, this is the multiplier to multiply the base by
         if sample_rate_multiplier < 1:
             sample_rate_multiplier = 1
         self.sample_rate: int = sample_rate_base * sample_rate_multiplier
+        """Sample rate in Hz"""
         self.bit_depth: int = scream_header[1]  # One byte for bit depth
+        """Bit depth"""
         self.channels: int = scream_header[2]  # One byte for channel count
+        """Channel count"""
         self.map: bytearray = scream_header[3:]  # Two bytes for WAVEFORMATEXTENSIBLE
+        """WAVEFORMATEXTENSIBLE"""
 
-    def __eq__(self, other):
+    def __eq__(self, _other):
         """Returns if two ScreamStreamInfos equal, minus the WAVEFORMATEXTENSIBLE part"""
+        other: ScreamStreamInfo = _other
         return (self.sample_rate == other.sample_rate) and (self.bit_depth == other.bit_depth) and (self.channels == other.channels)
 
 
@@ -34,19 +39,26 @@ class Source():
     """Stores the status for a single Source to a single Sink"""
     def __init__(self, ip: str, fifo_file_name: str):
         """Initializes a new Source object"""
+        
         self._ip: str = ip
+        """The source's IP"""
         self.__open: bool = False
+        """Rather the Source is open for writing or not"""
         self.__last_data_time: int = 0
-        self._stream_attributes: ScreamStreamInfo = ScreamStreamInfo([0,0,0,0,0])
+        """The time in milliseconds we last received data"""
+        self._stream_attributes: ScreamStreamInfo = ScreamStreamInfo([0, 0, 0, 0, 0])
+        """The source stream attributes (bit depth, sample rate, channels)"""
         self._fifo_file_name: str = fifo_file_name
+        """The named pipe that ffmpeg is using as an input for this source"""
         self.__fifo_file_handle: io.IOBase
+        """The open handle to the ffmpeg named pipe"""
 
     def check_attributes(self, stream_attributes: ScreamStreamInfo) -> bool:
-        """Returns True if the stream attributes are the same, False if they're different."""
+        """Returns True if the source's stream attributes are the same, False if they're different."""
         return stream_attributes == self._stream_attributes
 
     def set_attributes(self, stream_attributes: ScreamStreamInfo) -> None:
-        """Sets stream attributes"""
+        """Sets stream attributes for a source"""
         self._stream_attributes = stream_attributes
 
     def is_active(self) -> bool:
@@ -106,16 +118,23 @@ class Source():
 
 class Sink(threading.Thread):
     """Handles ffmpeg, keeps a list of it's own sources, sends passed data to the appropriate pipe"""
-    def __init__(self, receiver, dest_ip: str, source_ips: List[str]):
+    def __init__(self, receiver, sink_ip: str, source_ips: List[str]):
         """This gets data from multiple sources from a master, mixes them, and sends them back out to destip"""
         super().__init__()
-        self._dest_ip: str = dest_ip
+        self._sink_ip: str = sink_ip
+        """Sink IP"""
         self.__sources: List[Source] = []
-        self.__temp_path: str = tempfile.gettempdir() + f"/scream-{self._dest_ip}-"  # Per-sink temp path
-        self.__fifo_in: str = self.__temp_path + "in"  # Input file from ffmpeg
+        """Sources this Sink is playing"""
+        self.__temp_path: str = tempfile.gettempdir() + f"/scream-{self._sink_ip}-"
+        """Per-sink temp path"""
+        self.__fifo_in: str = self.__temp_path + "in"
+        """Input file from ffmpeg"""
         self.__running: bool = True
+        """Rather the Sink is running, when set to false the thread ends and the sink is done"""
         self.__ffmpeg: os.popen = None
+        """ffmpeg process"""
         self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        """Output socket for sink"""
 
         self.__make_in_fifo()  # Make python -> ffmpeg fifo fifo
 
@@ -203,7 +222,7 @@ class Sink(threading.Thread):
 
     def __reset_ffmpeg(self) -> None:
         """Opens the ffmpeg instance"""
-        print("(Re)starting ffmpeg for sink " + self._dest_ip)
+        print("(Re)starting ffmpeg for sink " + self._sink_ip)
         if self.__ffmpeg:
             try:
                 self.__ffmpeg.kill()
@@ -220,7 +239,7 @@ class Sink(threading.Thread):
 
         for source in self.__sources:
             if not source.is_active() and source.is_open():
-                print(f"[{self._dest_ip}] Source {source._ip} closing (Timeout)")
+                print(f"[{self._sink_ip}] Source {source._ip} closing (Timeout)")
                 source.close()
 
     def __update_pipe_attributes_open_pipe(self, source: Source, header: bytearray) -> None:
@@ -229,10 +248,10 @@ class Sink(threading.Thread):
         if not source.check_attributes(parsed_scream_header):
             print(f"Source {source._ip} had a stream property change. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz.")
             source.set_attributes(parsed_scream_header)
-            print(f"[{self._dest_ip}] Source {source._ip} closing (Attribute Change)")
+            print(f"[{self._sink_ip}] Source {source._ip} closing (Attribute Change)")
             source.close()
         if not source.is_open():
-            print(f"[{self._dest_ip}] Source {source._ip} opening")
+            print(f"[{self._sink_ip}] Source {source._ip} opening")
             source.open()
             self.__reset_ffmpeg()
 
@@ -275,7 +294,7 @@ class Sink(threading.Thread):
                 data = fd.read(1152)  # Read 1152 bytes from ffmpeg
                 if len(data) == 1152:
                     sendbuf = header + data  # Add the header to the data
-                    self.__sock.sendto(sendbuf, (self._dest_ip, 4010))  # Send it to the sink
+                    self.__sock.sendto(sendbuf, (self._sink_ip, 4010))  # Send it to the sink
             except Exception as e:
                 print(traceback.format_exc())
         print("Stopping " + self.__temp_path)
@@ -293,8 +312,11 @@ class Receiver(threading.Thread):
         """Takes no parameters"""
         super().__init__()
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        """Main socket all sources send to"""
         self.sinks: List[Sink] = []
+        """List of all sinks to forward data to"""
         self.running: bool = True
+        """Rather the Recevier is running, when set to false the receiver ends"""
         self.start()
 
     def register_sink(self, sink: Sink) -> None:
@@ -309,7 +331,7 @@ class Receiver(threading.Thread):
     def get_sink_status(self, sink_ip) -> None:
         """For the provided sink, return nothing"""
         for sink in self.sinks:
-            if sink._dest_ip == sink_ip:
+            if sink._sink_ip == sink_ip:
                 return None
         return None
 

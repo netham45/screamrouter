@@ -21,11 +21,17 @@ group_members: A list of Sink objects that are members of this sink if it is a g
 
 class Sink(BaseModel):
     name: str
+    """Sink Name"""
     ip: str
+    """Sink IP"""
     port: int
+    """Sink port number"""
     is_group: bool
+    """Sink Is Group"""
     enabled: bool
+    """Sink is Enabled"""
     group_members: List[str]
+    """Sink Group Members"""
     def __init__(self, name: str, ip: str, port: int, is_group: bool, enabled: bool, group_members: List[str] = []):
         super().__init__(name = name, ip = ip, port = port, is_group = is_group, enabled = enabled, group_members = group_members)
 
@@ -40,10 +46,15 @@ group
 
 class Source(BaseModel):
     name: str
+    """Source Name"""
     ip: str
+    """Source IP"""
     is_group: bool
+    """Source Is Group"""
     enabled: bool
+    """Source Enabled"""
     group_members: List[str]
+    """"Source Group MEmbers"""
     def __init__(self, name: str, ip: str, is_group: bool, enabled: bool, group_members: List[str] = []):
         super().__init__(name = name, ip = ip, is_group = is_group, enabled = enabled, group_members = group_members)
 
@@ -57,9 +68,13 @@ source: A Source name that represents the source that this route is connected to
 
 class Route(BaseModel):
     name: str
+    """Route Name"""
     sink: str
+    """Route Sink"""
     source: str
+    """Route Source"""
     enabled: bool
+    """Route Enabled"""
     def __init__(self, name: str, sink: Sink, source: Source, enabled: bool):
         super().__init__(name = name, sink = sink, source = source, enabled = enabled)
 
@@ -77,12 +92,19 @@ class Controller:
     def __init__(self):
         """Initialize an empty controller"""
         self.__sinks: List[Sink] = []
+        """List of Sinks the controller knows of"""
         self.__sources:  List[Source] = []
+        """List of Sources the controller knows of"""
         self.__routes: List[Route] = []
+        """List of Routes the controller knows of"""
         self.__sources_to_sinks = {}
+        """Dict mapping all source IPs to all the sinks playing them"""
         self.__sinks_to_sources = {}
+        """Dict mapping all sink IPs to the sources playing to them"""
         self.__receiver: mixer.Receiver = None
+        """Main receiver, handles receiving data from sources"""
         self.__receiverset: bool = False
+        """Rather the recevier has been set"""
         self.__load_yaml()
         self.__start_receiver()
 

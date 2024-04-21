@@ -8,32 +8,46 @@ from controller import Sink, Source, Route, Controller
 
 class PostSink(BaseModel):
     name: str
+    """Sink Name"""
     ip: str
+    """Sink IP"""
     port: int
+    """Sink Port"""
 
 class PostSinkGroup(BaseModel):
     name: str
+    """Sink Group Name"""
     sinks: List[str]
+    """List of names of grouped sinks"""
 
 class PostSource(BaseModel):
     name: str
+    """Source Name"""
     ip: str
+    """Source IP"""
 
 class PostSourceGroup(BaseModel):
     name: str
+    """Source Group Name"""
     sources: List[str]
+    """List of names of grouped Sources"""
 
 class PostRoute(BaseModel):
     name: str
+    """Route Name"""
     source: str
+    """Route Source"""
     sink: str
+    """Route Sink"""
 
 class API(threading.Thread):
 
     def __init__(self, controller):
         super().__init__()
         self.controller: Controller = controller
+        """Holds the active controller"""
         self.app: FastAPI = FastAPI()
+        """FastAPI"""
         self.app.get("/")(self.read_index)
         self.app.get("/sinks")(self.get_sinks)
         self.app.post("/groups/sinks")(self.add_sink_group)
