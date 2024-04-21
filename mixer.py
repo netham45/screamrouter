@@ -1,20 +1,17 @@
 import socket
-import struct
 import threading
-import wave
 import os
-import sys
 import time
 import subprocess
 import tempfile
 import select
-from typing import List, Type
-from copy import copy
+from typing import List
 import traceback
 import numpy
 import io
 
 class ScreamStreamInfo():
+    """Parses Scream headers to get sample rate, bit depth, and channels"""
     def __init__(self, scream_header):
         """Parses the first five bytes of a Scream header to get the stream attributes"""
         sample_rate_bits = numpy.unpackbits(numpy.array([scream_header[0]], dtype=numpy.uint8), bitorder='little')  # Unpack the first byte into 8 bits
@@ -29,11 +26,14 @@ class ScreamStreamInfo():
         self.map: bytearray = scream_header[3:]  # Two bytes for WAVEFORMATEXTENSIBLE
 
     def __eq__(self, other):
+        """Returns if two ScreamStreamInfos equal, minus the WAVEFORMATEXTENSIBLE part"""
         return (self.sample_rate == other.sample_rate) and (self.bit_depth == other.bit_depth) and (self.channels == other.channels)
 
 
 class Source():
+    """Stores the status for a single Source to a single Sink"""
     def __init__(self, ip: str, fifo_file_name: str):
+        """Initializes a new Source object"
         self._ip: str = ip
         self.__open: bool = False
         self.__last_data_time: int = 0
@@ -62,14 +62,14 @@ class Source():
 
     def is_active(self) -> bool:
         """Returns if the source has been active in the last 200ms"""
-        now = time.time() * 1000
+        now: int = time.time() * 1000
         if now - self.__last_data_time > 200:
             return False
         return True
 
     def update_activity(self) -> None:
         """Sets the source last active time"""
-        now = time.time() * 1000
+        now: int = time.time() * 1000
         self.__last_data_time = now
 
     def is_open(self) -> bool:
@@ -98,6 +98,7 @@ class Source():
 
 
 class Sink(threading.Thread):
+    """Handles ffmpeg, keeps a list of it's own sources, sends passed data to the appropriate pipe"""
     def __init__(self, receiver, dest_ip: str, source_ips: List[str]):
         """This gets data from multiple sources from a master, mixes them, and sends them back out to destip"""
         super().__init__()
@@ -230,8 +231,8 @@ class Sink(threading.Thread):
         """Verifies the target pipe header matches what we have open, updates it if not. False = closed and reopened, True = open already"""
         parsed_scream_header = ScreamStreamInfo(header)
         if not source.check_attributes(parsed_scream_header):
-            source.set_attributes(parsed_scream_header)
             print(f"Source {source._ip} had a stream property change. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz.")
+            source.set_attributes(parsed_scream_header)
             source.open()
             self.__reset_ffmpeg()
             return False
@@ -295,7 +296,7 @@ class Sink(threading.Thread):
 
 
 class Receiver(threading.Thread):
-
+    """Handles the main socket that listens for incoming Scream streams and sends them to the appropriate sinks"""
     def __init__(self):
         """Takes no parameters"""
         super().__init__()

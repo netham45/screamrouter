@@ -64,7 +64,7 @@ class Route(BaseModel):
 
 # Helper functions
 #def unique[T](list: List[T]) -> List[T]:  # One day
-def unique(list: []) -> []:
+def unique(list: List) -> List:
     _list = []
     for element in list:
         if not element in _list:
@@ -72,7 +72,9 @@ def unique(list: []) -> []:
     return _list
 
 class Controller:
+    """The controller handles tracking configuration and loading the main receiver/sinks based off of it"""
     def __init__(self):
+        """Initialize an empty controller"""
         self.__sinks: List[Sink] = []
         self.__sources:  List[Source] = []
         self.__routes: List[Route] = []
@@ -86,12 +88,14 @@ class Controller:
     # Public functions
 
     def get_sinks(self) -> List[Sink]:
+        """Returns a copy of the list holding all sinks"""
         _sinks = []
         for sink in self.__sinks:
             _sinks.append(copy(sink))
         return _sinks
 
     def add_sink(self, sink: Sink) -> bool:
+        """Adds a sink"""
         for _sink in self.__sinks:
             if sink.name == _sink.name:
                 return False
@@ -102,6 +106,7 @@ class Controller:
         return True
 
     def delete_sink(self, sink_id: int) -> bool:
+        """Deletes a sink by index"""
         if self.__sinks[sink_id].is_group:
             for route in self.__routes:
                 if self.__sinks[sink_id].name == route.sink:
@@ -112,6 +117,7 @@ class Controller:
         return False
 
     def enable_sink(self, sink_id: int) -> bool:
+        """Enables a sink by index"""
         if 0 <= sink_id < len(self.__sinks):
             self.__sinks[sink_id].enabled = True
             self.__start_receiver()
@@ -119,16 +125,19 @@ class Controller:
         return False
 
     def disable_sink(self, sink_id: int) -> bool:
+        """Disables a sink by index"""
         if 0 <= sink_id < len(self.__sinks):
             self.__sinks[sink_id].enabled = False
             self.__start_receiver()
             return True
         return False
 
-    def get_sources(self) -> List[Sink]:
+    def get_sources(self) -> List[Source]:
+        """Returns a copy of the sources list"""
         return copy(self.__sources)
 
     def add_source(self, source: Source) -> bool:
+        """Adds a source"""
         for _source in self.__sources:
             if source.name == _source.name:
                 return False
@@ -139,6 +148,7 @@ class Controller:
         return True
 
     def delete_source(self, source_id: int) -> bool:
+        """Deletes a source by index"""
         if self.__sources[source_id].is_group:
             for route in self.__routes:
                 if self.__sources[source_id].name == route.source:
@@ -149,6 +159,7 @@ class Controller:
         return False
 
     def enable_source(self, source_id: int) -> bool:
+        """Enables a source by index"""
         if 0 <= source_id < len(self.__sources):
             self.__sources[source_id].enabled = True
             self.__start_receiver()
@@ -156,6 +167,7 @@ class Controller:
         return False
 
     def disable_source(self, source_id: int) -> bool:
+        """Disables a source by index"""
         if 0 <= source_id < len(self.__sources):
             self.__sources[source_id].enabled = False
             self.__start_receiver()
@@ -163,19 +175,23 @@ class Controller:
         return False
 
     def get_routes(self) -> List[Route]:
+        """Returns a copy of the routes list"""
         return copy(self.__routes)
 
     def add_route(self, route: Route) -> bool:
+        """Adds a route"""
         self.__routes.append(route)
         self.__start_receiver()
         return True
 
     def delete_route(self, route_id: int) -> bool:
+        """Deletes a route by index"""
         self.__routes.pop(route_id)
         self.__start_receiver()
         return True
 
     def enable_route(self, route_id: int) -> bool:
+        """Enables a route by index"""
         if 0 <= route_id < len(self.__routes):
             self.__routes[route_id].enabled = True
             self.__start_receiver()
@@ -183,6 +199,7 @@ class Controller:
         return False
 
     def disable_route(self, route_id: int) -> bool:
+        """Disables a route by index"""
         if 0 <= route_id < len(self.__routes):
             self.__routes[route_id].enabled = False
             self.__start_receiver()
