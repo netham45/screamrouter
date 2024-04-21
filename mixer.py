@@ -33,7 +33,7 @@ class ScreamStreamInfo():
 class Source():
     """Stores the status for a single Source to a single Sink"""
     def __init__(self, ip: str, fifo_file_name: str):
-        """Initializes a new Source object"
+        """Initializes a new Source object"""
         self._ip: str = ip
         self.__open: bool = False
         self.__last_data_time: int = 0
