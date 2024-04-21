@@ -9,17 +9,11 @@ from pydantic import BaseModel, Field
 LOCALPORT=16401
 
 
-"""
-Class Sink
 
-name: A string name for the sink.
-ip: A string IP address for the sink.
-port: An integer port number for the sink.
-is_group: A boolean indicating whether this sink is a group or not.
-group_members: A list of Sink objects that are members of this sink if it is a group, otherwise an empty list.
-"""
-
-class Sink(BaseModel):
+class Sink(BaseModel): 
+    """
+    Holds either a sink IP and Port or a group of sink names
+    """
     name: str
     """Sink Name"""
     ip: str
@@ -35,16 +29,10 @@ class Sink(BaseModel):
     def __init__(self, name: str, ip: str, port: int, is_group: bool, enabled: bool, group_members: List[str] = []):
         super().__init__(name = name, ip = ip, port = port, is_group = is_group, enabled = enabled, group_members = group_members)
 
-"""
-Class Source
-
-name: A string name for the sink.
-ip: A string IP address for the sink.
-is_group: A boolean indicating whether this sink is a group or not.
-group
-"""
-
 class Source(BaseModel):
+    """
+    Holds either a source IP or a group of source names
+    """
     name: str
     """Source Name"""
     ip: str
@@ -58,15 +46,12 @@ class Source(BaseModel):
     def __init__(self, name: str, ip: str, is_group: bool, enabled: bool, group_members: List[str] = []):
         super().__init__(name = name, ip = ip, is_group = is_group, enabled = enabled, group_members = group_members)
 
-"""
-Class Route
 
-name: A string name for the route.
-sink: A Sink name that represents the sink that this route is connected to.
-source: A Source name that represents the source that this route is connected to.
-"""
 
 class Route(BaseModel):
+    """
+    Holds a route mapping from source to sink
+    """
     name: str
     """Route Name"""
     sink: str
@@ -75,12 +60,13 @@ class Route(BaseModel):
     """Route Source"""
     enabled: bool
     """Route Enabled"""
-    def __init__(self, name: str, sink: Sink, source: Source, enabled: bool):
+    def __init__(self, name: str, sink: str, source: str, enabled: bool):
         super().__init__(name = name, sink = sink, source = source, enabled = enabled)
 
 # Helper functions
 #def unique[T](list: List[T]) -> List[T]:  # One day
 def unique(list: List) -> List:
+    """Returns a list with duplicates filtered out"""
     _list = []
     for element in list:
         if not element in _list:
@@ -101,7 +87,7 @@ class Controller:
         """Dict mapping all source IPs to all the sinks playing them"""
         self.__sinks_to_sources = {}
         """Dict mapping all sink IPs to the sources playing to them"""
-        self.__receiver: mixer.Receiver = None
+        self.__receiver: mixer.Receiver
         """Main receiver, handles receiving data from sources"""
         self.__receiverset: bool = False
         """Rather the recevier has been set"""
@@ -124,7 +110,7 @@ class Controller:
                 return False
         if sink.name.strip() == False:
             return False
-        self.__sinks.append(Sink(sink))
+        self.__sinks.append(sink)
         self.__start_receiver()
         return True
 
@@ -283,9 +269,10 @@ class Controller:
         self.__build_real_sources_to_real_sinks()
         self.__build_real_sinks_to_real_sources()
         if self.__receiverset:
-            print("Closing receiver!")
+            print("[Controller] Closing receiver!")
             self.__receiver.stop()
             self.__receiver.join()
+            print("[Controller] Receiver closed!")
         self.__receiverset = True
         self.__receiver = mixer.Receiver()
         for sink_ip in self.__sinks_to_sources.keys():
@@ -296,32 +283,18 @@ class Controller:
                 sink = mixer.Sink(self.__receiver, sink_ip, sourceips)
                 self.__receiver.register_sink(sink)
 
-    # Sink Finders, used to build sourcetosink cache
-    def __get_real_sinks_by_source(self, source: Source) -> List[Sink]:
-        """Returns real (non-group) sinks for a given source"""
-        if source.enabled:
-            _sinks: List[Sink] = []
-            _routes = self.__get_routes_by_source(source)
-            for route in _routes:
-                if route.enabled:
-                    _sinks.extend(self.__get_real_sinks_by_route(route))
-        return unique(_sinks)
-
-    def __get_real_sinks_by_route(self, route: Route) -> List[Sink]:
-        """Returns real (non-group) sinks for a given route"""
-        return self.__get_real_sinks_from_sink(self.__get_sink_by_name(route.sink))
-
-    def __get_sink_by_name(self, name: str) -> List[Sink]:
+    # Sink Finders
+    def __get_sink_by_name(self, name: str) -> Sink:
         """Returns a sink by name"""
         for sink in self.__sinks:
             if sink.name == name:
                 return sink
-        return 0
+        raise Exception(f"Sink not found by name {name}")
 
     def __get_real_sinks_from_sink(self, sink: Sink) -> List[Sink]:
         """Recursively work through sink groups to get all real sinks"""
         if sink.is_group:
-            sinks: List[sink] = []
+            sinks: List[Sink] = []
             for entry in sink.group_members:
                 sinkEntry = self.__get_sink_by_name(entry)
                 if not sinkEntry.enabled:
@@ -351,37 +324,13 @@ class Controller:
         return []
 
     # Source Finders
-    def __get_real_sources_by_sink(self, sink: Sink) -> List[Source]:
-        """Returns real (non-group) sources for a given sink"""
-        if sink.enabled:
-            _sources: List[Source] = []
-            _routes = self.__get_routes_by_sink(sink)
-            for route in _routes:
-                if route.enabled:
-                    _sources.extend(self.__get_real_sources_by_route(route))
-        return unique(_sources)
-
-    def __get_real_sources_by_route(self, route: Route) -> List[Source]:
-        """Returns real (non-group) sources for a given route"""
-        source = self.__get_source_by_name(route.source)
-        if source.enabled and route.enabled:
-            return self.__get_real_sources_from_source(source)
-        return []
-
     def __get_source_by_name(self, name: str) -> Source:
         """Get source by name"""
         for source in self.__sources:
             if source.name == name:
                 return source
-        return 0
-
-    def __get_source_by_ip(self, ip: str) -> Source:
-        """Get source by IP"""
-        for source in self.__sources:
-            if source.ip == ip:
-                return source
-        return 0
-
+        raise Exception(f"No source found by name {name}")
+    
     def __get_real_sources_from_source(self, source: Source) -> List[Source]:
         """Recursively work through source groups to get all real sources"""
         if not source.enabled:
@@ -398,17 +347,26 @@ class Controller:
                 return _sources
         else:
                 return unique([source])
-
-    def __get_all_real_sources(self) -> List[Source]:
-        """Get all real sources in the project"""
+    
+    def __get_real_sources_by_sink(self, sink: Sink) -> List[Source]:
+        """Returns real (non-group) sources for a given sink"""
         _sources: List[Source] = []
-        for routeEntry in self.__routes:
-            if routeEntry.enabled:
-                _sources.extend(self.__get_real_sources_from_source(self.__get_source_by_name(routeEntry.source)))
-        return _sources
+        if sink.enabled:
+            _routes = self.__get_routes_by_sink(sink)
+            for route in _routes:
+                if route.enabled:
+                    _sources.extend(self.__get_real_sources_by_route(route))
+        return unique(_sources)
+
+    def __get_real_sources_by_route(self, route: Route) -> List[Source]:
+        """Returns real (non-group) sources for a given route"""
+        source = self.__get_source_by_name(route.source)
+        if source.enabled and route.enabled:
+            return self.__get_real_sources_from_source(source)
+        return []
 
     # Route Finders
-    def __get_routes_by_source(self, source: Source):
+    def __get_routes_by_source(self, source: Source) -> List[Route]:
         """Get all routes that use this source"""
         _routes: List[Route] = []
         for route in self.__routes:
@@ -419,7 +377,7 @@ class Controller:
                         _routes.append(route)
         return unique(_routes)
 
-    def __get_routes_by_sink(self, sink: Sink):
+    def __get_routes_by_sink(self, sink: Sink) -> List[Route]:
         """Get all routes that use this sink"""
         _routes: List[Route] = []
         for route in self.__routes:
@@ -431,15 +389,16 @@ class Controller:
                         _routes.append(route)
         return unique(_routes)
 
+    # IP -> IP maps
     def __build_real_sources_to_real_sinks(self):
-        """Build source to sink cache"""
+        """Build source to sink cache {"source_ip": ["sink1_ip", "sink2_ip", ...]}"""
         self.__sources_to_sinks = {}
         for source in self.__sources:
             if source.enabled:
                 self.__sources_to_sinks[source.ip] = self.__get_real_sinks_by_source(source)
 
     def __build_real_sinks_to_real_sources(self):
-        """Build sink to source cache"""
+        """Build sink to source cache {"sink_ip": ["source1_ip", "source_2_ip", ...]}"""
         self.__sinks_to_sources = {}
         for sink in self.__sinks:
             if sink.enabled:

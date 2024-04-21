@@ -14,7 +14,7 @@ class ScreamStreamInfo():
     """Parses Scream headers to get sample rate, bit depth, and channels"""
     def __init__(self, scream_header):
         """Parses the first five bytes of a Scream header to get the stream attributes"""
-        sample_rate_bits: numpy.array = numpy.unpackbits(numpy.array([scream_header[0]], dtype=numpy.uint8), bitorder='little')  # Unpack the first byte into 8 bits
+        sample_rate_bits: numpy.ndarray = numpy.unpackbits(numpy.array([scream_header[0]], dtype=numpy.uint8), bitorder='little')  # Unpack the first byte into 8 bits
         sample_rate_base: int = 44100 if sample_rate_bits[7] == 1 else 48000  # If the uppermost bit is set then the base is 44100, if it's not set the base is 48000
         sample_rate_bits = numpy.delete(sample_rate_bits, 7)  # Remove the uppermost bit
         sample_rate_multiplier: int = numpy.packbits(sample_rate_bits,bitorder='little')[0]  # Convert it back into a number without the top bit, this is the multiplier to multiply the base by
@@ -37,7 +37,7 @@ class ScreamStreamInfo():
 
 class Source():
     """Stores the status for a single Source to a single Sink"""
-    def __init__(self, ip: str, fifo_file_name: str):
+    def __init__(self, ip: str, fifo_file_name: str, sink_ip: str):
         """Initializes a new Source object"""
         
         self._ip: str = ip
@@ -52,6 +52,8 @@ class Source():
         """The named pipe that ffmpeg is using as an input for this source"""
         self.__fifo_file_handle: io.IOBase
         """The open handle to the ffmpeg named pipe"""
+        self.__sink_ip: str = sink_ip
+        """The sink that opened this source"""
 
     def check_attributes(self, stream_attributes: ScreamStreamInfo) -> bool:
         """Returns True if the source's stream attributes are the same, False if they're different."""
@@ -63,14 +65,14 @@ class Source():
 
     def is_active(self) -> bool:
         """Returns if the source has been active in the last 200ms"""
-        now: int = time.time() * 1000
+        now: int = round(time.time() * 1000)
         if now - self.__last_data_time > 200:
             return False
         return True
 
     def update_activity(self) -> None:
         """Sets the source last active time"""
-        now: int = time.time() * 1000
+        now: int = round(time.time() * 1000)
         self.__last_data_time = now
 
     def is_open(self) -> bool:
@@ -92,6 +94,7 @@ class Source():
                 print(traceback.format_exc())
             self.__open = True
             self.update_activity()
+            print(f"[Sink {self.__sink_ip} Source {self._ip}] Opened")
 
     def close(self) -> None:
         """Closes the source"""
@@ -101,6 +104,7 @@ class Source():
         except:
             pass
         self.__open = False
+        print(f"[Sink {self.__sink_ip} Source {self._ip}] Closed")
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""
@@ -131,15 +135,19 @@ class Sink(threading.Thread):
         """Input file from ffmpeg"""
         self.__running: bool = True
         """Rather the Sink is running, when set to false the thread ends and the sink is done"""
-        self.__ffmpeg: os.popen = None
+        self.__ffmpeg: subprocess.Popen
         """ffmpeg process"""
+        self.__ffmpeg_started: bool = False
+        """Holds rather ffmpeg is running"""
         self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Output socket for sink"""
+        self.__fd: io.IOBase
+        """Holds the ffmpeg output pipe handle"""
 
         self.__make_in_fifo()  # Make python -> ffmpeg fifo fifo
 
         for source_ip in source_ips:  # Initialize dicts based off of source ips
-            self.__sources.append(Source(source_ip, self.__temp_path + source_ip))
+            self.__sources.append(Source(source_ip, self.__temp_path + source_ip, self._sink_ip))
 
         self.start()  # Start our listener thread
 
@@ -222,15 +230,16 @@ class Sink(threading.Thread):
 
     def __reset_ffmpeg(self) -> None:
         """Opens the ffmpeg instance"""
-        print("(Re)starting ffmpeg for sink " + self._sink_ip)
-        if self.__ffmpeg:
+        print(f"[Sink {self._sink_ip}] (Re)starting ffmpeg")
+        if self.__ffmpeg_started:
             try:
                 self.__ffmpeg.kill()
                 self.__ffmpeg.wait()
             except:
                 print(traceback.format_exc())
-                print(f"Failed to close ffmpeg for {self.__temp_path}!")
-        self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(), shell=False, stdout=subprocess.PIPE, stdin=subprocess.PIPE)
+                print(f"[Sink {self._sink_ip}] Failed to close ffmpeg")
+        self.__ffmpeg_started = True
+        self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(), shell=False, stdout=subprocess.PIPE, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
@@ -239,26 +248,25 @@ class Sink(threading.Thread):
 
         for source in self.__sources:
             if not source.is_active() and source.is_open():
-                print(f"[{self._sink_ip}] Source {source._ip} closing (Timeout)")
+                print(f"[Sink {self._sink_ip}] Source {source._ip} Closing (Timeout)")
                 source.close()
 
     def __update_pipe_attributes_open_pipe(self, source: Source, header: bytearray) -> None:
         """Verifies the target pipe header matches what we have, updates it if not. Also opens the pipe."""
         parsed_scream_header = ScreamStreamInfo(header)
         if not source.check_attributes(parsed_scream_header):
-            print(f"Source {source._ip} had a stream property change. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz.")
+            print(f"[Sink {self._sink_ip} Source {source._ip}] Stream property change detected. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz.")
             source.set_attributes(parsed_scream_header)
-            print(f"[{self._sink_ip}] Source {source._ip} closing (Attribute Change)")
+            print(f"[Sink {self._sink_ip} Source {source._ip}] Closing (Attribute Change)")
             source.close()
         if not source.is_open():
-            print(f"[{self._sink_ip}] Source {source._ip} opening")
             source.open()
             self.__reset_ffmpeg()
 
     def __check_packet(self, source: Source, data: bytearray) -> bool:
         """Verifies a packet is the right length"""
         if len(data) != 1157:
-            print(f"Got bad packet length {len(data)} from source {source._ip}")
+            print(f"[Sink {self._sink_ip} Source {source._ip}] Got bad packet length {len(data)} != 1157 from source")
             return False
         return True
     
@@ -266,16 +274,19 @@ class Sink(threading.Thread):
         for source in self.__sources:
             if source._ip == ip:
                 return source
-        return None
+        raise Exception(f"[Sink {self._sink_ip}] Can't find source for IP {ip}")
 
     def process_packet_from_receiver(self, source_ip, data) -> None:
         """Sends data from the main receiver to ffmpeg after verifying it's on our list"""
-        source = self.__get_source_by_ip(source_ip)
-        if source:
-            if self.__check_packet(source, data):
-                self.__update_pipe_attributes_open_pipe(source, data[:5])
-                source.write(data[5:])  # Write the data to the output fifo
-        self.__check_for_inactive_sources()
+        try:
+            source = self.__get_source_by_ip(source_ip)
+            if source:
+                if self.__check_packet(source, data):
+                    self.__update_pipe_attributes_open_pipe(source, data[:5])
+                    source.write(data[5:])  # Write the data to the output fifo
+            self.__check_for_inactive_sources()
+        except:
+            pass
 
     def get_status(self) -> None:
         """Returns nothing yet"""
@@ -284,24 +295,33 @@ class Sink(threading.Thread):
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
         self.__running = False
+        self.__sock.close()
+        self.__fd.close()
+        try:
+            os.remove(self.__fifo_in)
+        except:
+            pass
 
     def run(self) -> None:
         """This thread implements listening to self.fifoin and sending it out to dest_ip"""
-        fd = open(self.__fifo_in, "rb")
+        self.__fd = open(self.__fifo_in, "rb")
         while self.__running:
             try:
                 header = bytes([0x01, 0x20, 0x02, 0x03, 0x00])  # 48khz, 32-bit, stereo
-                data = fd.read(1152)  # Read 1152 bytes from ffmpeg
-                if len(data) == 1152:
-                    sendbuf = header + data  # Add the header to the data
-                    self.__sock.sendto(sendbuf, (self._sink_ip, 4010))  # Send it to the sink
+                ready = select.select([self.__fd], [], [], .2)  # If the socket is dead for more than .2 seconds kill ffmpeg
+                if [ready[0]]:
+                    data = self.__fd.read(1152)  # Read 1152 bytes from ffmpeg
+                    if len(data) == 1152:
+                        sendbuf = header + data  # Add the header to the data
+                        self.__sock.sendto(sendbuf, (self._sink_ip, 4010))  # Send it to the sink
             except Exception as e:
                 print(traceback.format_exc())
-        print("Stopping " + self.__temp_path)
-        self.__close_ffmpeg()
-        for fifo_handle in self.__fifo_file_handles:
+        print(f"[Sink {self._sink_ip}] Stopping")
+        self.__ffmpeg.kill()
+        self.__ffmpeg.wait()
+        for source in self.__sources:
             try:
-                fifo_handle.close()
+                source.close()
             except:
                 print(traceback.format_exc())
 
@@ -352,9 +372,9 @@ class Receiver(threading.Thread):
                     print(e)
                     print(traceback.format_exc())
                     break
-        print(f"Main thread ending! self.running: {self.running}")
+        print(f"[Receiver] Main thread ending! self.running: {self.running}")
         for sink in self.sinks:
-            print("Closing sinks")
-            sink.close()
+            print(f"[Receiver] Closing sink {sink._sink_ip}")
             sink.stop()
             sink.join()
+            print(f"[Receiver] Closed sink {sink._sink_ip}")

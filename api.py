@@ -87,7 +87,7 @@ class API(threading.Thread):
 
     def add_sink_group(self, sink_group: PostSinkGroup) -> bool:
         """Add a new sink group"""
-        return self.controller.add_sink(Sink(sink_group.name, "", "", True, True, sink_group.sinks))
+        return self.controller.add_sink(Sink(sink_group.name, "", 0, True, True, sink_group.sinks))
 
     def delete_sink(self, sink_id: int) -> bool:
         """Delete a sink group by ID"""
@@ -111,7 +111,7 @@ class API(threading.Thread):
 
     def add_source_group(self, source_group: PostSourceGroup) -> bool:
         """Add a new source group"""
-        return self.controller.add_source(Source(source_group.name, "", "", True, True, source_group.sources))
+        return self.controller.add_source(Source(source_group.name, "", True, True, source_group.sources))
 
     def delete_source(self, source_id: int) -> bool:
         """Delete a source group by ID"""
@@ -132,7 +132,7 @@ class API(threading.Thread):
 
     def add_route(self, route: PostRoute) -> bool:
         """Add a new route"""
-        return self.controller.add_route(Route(route.name, route.sink, route.source,"True"))
+        return self.controller.add_route(Route(route.name, route.sink, route.source, True))
 
     def delete_route(self, route_id: int)  -> bool:
         """Delete a route by ID"""
