@@ -67,23 +67,25 @@ class Source():
 
     def open(self) -> None:
         """Opens the source"""
-        try:
+        if not self.__open:
             try:
-                os.remove(self._fifo_file_name)
+                try:
+                    os.remove(self._fifo_file_name)
+                except:
+                    pass
+                os.mkfifo(self._fifo_file_name)
+                fd = os.open(self._fifo_file_name, os.O_RDWR | os.O_NONBLOCK)
+                self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
             except:
-                pass
-            os.mkfifo(self._fifo_file_name)
-            fd = os.open(self._fifo_file_name, os.O_RDWR | os.O_NONBLOCK)
-            self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
-        except:
-            print(traceback.format_exc())
-        self.__open = True
+                print(traceback.format_exc())
+            self.__open = True
+            self.update_activity()
 
     def close(self) -> None:
         """Closes the source"""
         try:
-            self.__fifo_file_handle.close()
-            os.remove(self._fifo_file_name)
+            self.__fifo_file_handle.close()  # Close and remove the fifo handle so ffmpeg will stop trying to listen for it
+            os.remove(self._fifo_file_name)  # This avoids needing an ffmpeg restart when an incoming stream is closed for a multi-stream ffmpeg mixer
         except:
             pass
         self.__open = False
@@ -99,6 +101,7 @@ class Source():
     def write(self, data: bytearray) -> None:
         """Writes data to this source's FIFO"""
         self.__fifo_file_handle.write(data)
+        self.update_activity()
 
 
 class Sink(threading.Thread):
@@ -200,7 +203,7 @@ class Sink(threading.Thread):
 
     def __reset_ffmpeg(self) -> None:
         """Opens the ffmpeg instance"""
-        print("(Re)Opening sink " + self._dest_ip)
+        print("(Re)starting ffmpeg for sink " + self._dest_ip)
         if self.__ffmpeg:
             try:
                 self.__ffmpeg.kill()
@@ -217,51 +220,42 @@ class Sink(threading.Thread):
 
         for source in self.__sources:
             if not source.is_active() and source.is_open():
+                print(f"[{self._dest_ip}] Source {source._ip} closing (Timeout)")
                 source.close()
 
-    def __verify_pipe_open_and_attributes(self, source: Source, header: bytearray) -> bool:
-        """Verifies the target pipe is open and has the right header. True = Everything valid, False = ffmpeg restarted"""
-        if self.__verify_pipe_attributes(source, header):
-            return self.__verify_pipe_is_open(source)
-        return False
-
-    def __verify_pipe_attributes(self, source: Source, header: bytearray) -> bool:
-        """Verifies the target pipe header matches what we have open, updates it if not. False = closed and reopened, True = open already"""
+    def __update_pipe_attributes_open_pipe(self, source: Source, header: bytearray) -> None:
+        """Verifies the target pipe header matches what we have, updates it if not. Also opens the pipe."""
         parsed_scream_header = ScreamStreamInfo(header)
         if not source.check_attributes(parsed_scream_header):
             print(f"Source {source._ip} had a stream property change. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz.")
             source.set_attributes(parsed_scream_header)
+            print(f"[{self._dest_ip}] Source {source._ip} closing (Attribute Change)")
+            source.close()
+        if not source.is_open():
+            print(f"[{self._dest_ip}] Source {source._ip} opening")
             source.open()
             self.__reset_ffmpeg()
-            return False
-        return True
 
-    def __verify_pipe_is_open(self, source: Source) -> bool:
-        """Verifies the target pipe is open, opens it if not. False = closed and reopened, True = open already"""
-        if not source.is_open():  # Is it writing to a closed fifo?
-            print(f"Trying to write to a closed source {source._ip}, restarting ffmpeg to reopen")
-            source.open()
-            self.__reset_ffmpeg()
-            return False
-        return True
-
-    def __verify_packet(self, data) -> bool:
+    def __check_packet(self, source: Source, data: bytearray) -> bool:
         """Verifies a packet is the right length"""
         if len(data) != 1157:
-            print(f"Got bad packet length {len(data)}")
+            print(f"Got bad packet length {len(data)} from source {source._ip}")
             return False
         return True
-
-    def send(self, source_ip, data) -> None:
-        """Sends data from the master to ffmpeg after verifying it's on our list"""
-        if not self.__verify_packet(data):
-            return
-
+    
+    def __get_source_by_ip(self, ip: str) -> Source:
         for source in self.__sources:
-            if source._ip == source_ip:
-                self.__verify_pipe_open_and_attributes(source, data[:5])
+            if source._ip == ip:
+                return source
+        return None
+
+    def process_packet_from_receiver(self, source_ip, data) -> None:
+        """Sends data from the main receiver to ffmpeg after verifying it's on our list"""
+        source = self.__get_source_by_ip(source_ip)
+        if source:
+            if self.__check_packet(source, data):
+                self.__update_pipe_attributes_open_pipe(source, data[:5])
                 source.write(data[5:])  # Write the data to the output fifo
-                source.update_activity()
         self.__check_for_inactive_sources()
 
     def get_status(self) -> None:
@@ -326,16 +320,12 @@ class Receiver(threading.Thread):
 
         recvbuf = bytearray(1157)
         while self.running:
-            for sink in self.sinks:
-                for source in sink.get_sources():
-                    pass
-                    #print(source._ip)
             ready = select.select([self.sock], [], [], .2)  # If the socket is dead for more than .2 seconds kill ffmpeg
             if ready[0]:
                 try:
                     recvbuf, addr = self.sock.recvfrom(1157)  # 5 bytes header + 1152 bytes pcm
                     for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
-                        sink.send(addr[0], recvbuf)
+                        sink.process_packet_from_receiver(addr[0], recvbuf)
                 except Exception as e:
                     print(e)
                     print(traceback.format_exc())

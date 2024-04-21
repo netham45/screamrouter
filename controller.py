@@ -18,6 +18,7 @@ port: An integer port number for the sink.
 is_group: A boolean indicating whether this sink is a group or not.
 group_members: A list of Sink objects that are members of this sink if it is a group, otherwise an empty list.
 """
+
 class Sink(BaseModel):
     name: str
     ip: str
@@ -50,8 +51,8 @@ class Source(BaseModel):
 Class Route
 
 name: A string name for the route.
-sink: A Sink object that represents the sink that this route is connected to.
-source: A Source object that represents the source that this route is connected to.
+sink: A Sink name that represents the sink that this route is connected to.
+source: A Source name that represents the source that this route is connected to.
 """
 
 class Route(BaseModel):
@@ -352,7 +353,7 @@ class Controller:
                 return source
         return 0
 
-    def __getSourceByIP(self, ip: str) -> Source:
+    def __get_source_by_ip(self, ip: str) -> Source:
         """Get source by IP"""
         for source in self.__sources:
             if source.ip == ip:
