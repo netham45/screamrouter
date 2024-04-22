@@ -1,67 +1,15 @@
 import yaml
-import socket
-import time
-import mixer
 from copy import copy
-from typing import List, Type, Annotated
-from pydantic import BaseModel, Field
 
-LOCALPORT=16401
+from typing import List
+from pydantic import BaseModel
 
+import mixer.receiver
+import mixer.sink
 
-
-class Sink(BaseModel): 
-    """
-    Holds either a sink IP and Port or a group of sink names
-    """
-    name: str
-    """Sink Name"""
-    ip: str
-    """Sink IP"""
-    port: int
-    """Sink port number"""
-    is_group: bool
-    """Sink Is Group"""
-    enabled: bool
-    """Sink is Enabled"""
-    group_members: List[str]
-    """Sink Group Members"""
-    def __init__(self, name: str, ip: str, port: int, is_group: bool, enabled: bool, group_members: List[str] = []):
-        super().__init__(name = name, ip = ip, port = port, is_group = is_group, enabled = enabled, group_members = group_members)
-
-class Source(BaseModel):
-    """
-    Holds either a source IP or a group of source names
-    """
-    name: str
-    """Source Name"""
-    ip: str
-    """Source IP"""
-    is_group: bool
-    """Source Is Group"""
-    enabled: bool
-    """Source Enabled"""
-    group_members: List[str]
-    """"Source Group MEmbers"""
-    def __init__(self, name: str, ip: str, is_group: bool, enabled: bool, group_members: List[str] = []):
-        super().__init__(name = name, ip = ip, is_group = is_group, enabled = enabled, group_members = group_members)
-
-
-
-class Route(BaseModel):
-    """
-    Holds a route mapping from source to sink
-    """
-    name: str
-    """Route Name"""
-    sink: str
-    """Route Sink"""
-    source: str
-    """Route Source"""
-    enabled: bool
-    """Route Enabled"""
-    def __init__(self, name: str, sink: str, source: str, enabled: bool):
-        super().__init__(name = name, sink = sink, source = source, enabled = enabled)
+from controller_types import SinkDescription
+from controller_types import SourceDescription
+from controller_types import RouteDescription
 
 # Helper functions
 #def unique[T](list: List[T]) -> List[T]:  # One day
@@ -77,17 +25,17 @@ class Controller:
     """The controller handles tracking configuration and loading the main receiver/sinks based off of it"""
     def __init__(self):
         """Initialize an empty controller"""
-        self.__sinks: List[Sink] = []
+        self.__sink_objects: List[mixer.sink.Sink] = []
+        """List of Sink objects the receiver is using"""
+        self.__sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
-        self.__sources:  List[Source] = []
+        self.__source_descriptions:  List[SourceDescription] = []
         """List of Sources the controller knows of"""
-        self.__routes: List[Route] = []
+        self.__route_descriptions: List[RouteDescription] = []
         """List of Routes the controller knows of"""
-        self.__sources_to_sinks = {}
-        """Dict mapping all source IPs to all the sinks playing them"""
         self.__sinks_to_sources = {}
-        """Dict mapping all sink IPs to the sources playing to them"""
-        self.__receiver: mixer.Receiver
+        """Dict mapping all sink IPs to the source descriptions playing to them"""
+        self.__receiver: mixer.receiver.Receiver
         """Main receiver, handles receiving data from sources"""
         self.__receiverset: bool = False
         """Rather the recevier has been set"""
@@ -96,167 +44,199 @@ class Controller:
 
     # Public functions
 
-    def get_sinks(self) -> List[Sink]:
+    def get_sinks(self) -> List[SinkDescription]:
         """Returns a copy of the list holding all sinks"""
         _sinks = []
-        for sink in self.__sinks:
+        for sink in self.__sink_descriptions:
             _sinks.append(copy(sink))
         return _sinks
 
-    def add_sink(self, sink: Sink) -> bool:
+    def add_sink(self, sink: SinkDescription) -> bool:
         """Adds a sink"""
-        for _sink in self.__sinks:
+        for _sink in self.__sink_descriptions:
             if sink.name == _sink.name:
                 return False
         if sink.name.strip() == False:
             return False
-        self.__sinks.append(sink)
+        self.__sink_descriptions.append(sink)
         self.__start_receiver()
         return True
 
     def delete_sink(self, sink_id: int) -> bool:
         """Deletes a sink by index"""
-        if self.__sinks[sink_id].is_group:
-            for route in self.__routes:
-                if self.__sinks[sink_id].name == route.sink:
+        if self.__sink_descriptions[sink_id].is_group:
+            for route in self.__route_descriptions:
+                if self.__sink_descriptions[sink_id].name == route.sink:
                     return False  # Can't remove a sink in use by a route
-            self.__sinks.pop(sink_id)
+            self.__sink_descriptions.pop(sink_id)
             self.__start_receiver()
             return True
         return False
 
     def enable_sink(self, sink_id: int) -> bool:
         """Enables a sink by index"""
-        if 0 <= sink_id < len(self.__sinks):
-            self.__sinks[sink_id].enabled = True
+        if 0 <= sink_id < len(self.__sink_descriptions):
+            self.__sink_descriptions[sink_id].enabled = True
             self.__start_receiver()
             return True
         return False
 
     def disable_sink(self, sink_id: int) -> bool:
         """Disables a sink by index"""
-        if 0 <= sink_id < len(self.__sinks):
-            self.__sinks[sink_id].enabled = False
+        if 0 <= sink_id < len(self.__sink_descriptions):
+            self.__sink_descriptions[sink_id].enabled = False
             self.__start_receiver()
             return True
         return False
 
-    def get_sources(self) -> List[Source]:
+    def get_sources(self) -> List[SourceDescription]:
         """Returns a copy of the sources list"""
-        return copy(self.__sources)
+        return copy(self.__source_descriptions)
 
-    def add_source(self, source: Source) -> bool:
+    def add_source(self, source: SourceDescription) -> bool:
         """Adds a source"""
-        for _source in self.__sources:
+        for _source in self.__source_descriptions:
             if source.name == _source.name:
                 return False
         if source.name.strip() == False:
             return False
-        self.__sources.append(source)
+        self.__source_descriptions.append(source)
         self.__start_receiver()
         return True
 
     def delete_source(self, source_id: int) -> bool:
         """Deletes a source by index"""
-        if self.__sources[source_id].is_group:
-            for route in self.__routes:
-                if self.__sources[source_id].name == route.source:
+        if self.__source_descriptions[source_id].is_group:
+            for route in self.__route_descriptions:
+                if self.__source_descriptions[source_id].name == route.source:
                     return False  # Can't remove a source in use by a route
-            self.__sources.pop(source_id)
+            self.__source_descriptions.pop(source_id)
             self.__start_receiver()
             return True
         return False
 
     def enable_source(self, source_id: int) -> bool:
         """Enables a source by index"""
-        if 0 <= source_id < len(self.__sources):
-            self.__sources[source_id].enabled = True
+        if 0 <= source_id < len(self.__source_descriptions):
+            self.__source_descriptions[source_id].enabled = True
             self.__start_receiver()
             return True
         return False
 
     def disable_source(self, source_id: int) -> bool:
         """Disables a source by index"""
-        if 0 <= source_id < len(self.__sources):
-            self.__sources[source_id].enabled = False
+        if 0 <= source_id < len(self.__source_descriptions):
+            self.__source_descriptions[source_id].enabled = False
             self.__start_receiver()
             return True
         return False
 
-    def get_routes(self) -> List[Route]:
+    def get_routes(self) -> List[RouteDescription]:
         """Returns a copy of the routes list"""
-        return copy(self.__routes)
+        return copy(self.__route_descriptions)
 
-    def add_route(self, route: Route) -> bool:
+    def add_route(self, route: RouteDescription) -> bool:
         """Adds a route"""
-        self.__routes.append(route)
+        self.__route_descriptions.append(route)
         self.__start_receiver()
         return True
 
     def delete_route(self, route_id: int) -> bool:
         """Deletes a route by index"""
-        self.__routes.pop(route_id)
+        self.__route_descriptions.pop(route_id)
         self.__start_receiver()
         return True
 
     def enable_route(self, route_id: int) -> bool:
         """Enables a route by index"""
-        if 0 <= route_id < len(self.__routes):
-            self.__routes[route_id].enabled = True
+        if 0 <= route_id < len(self.__route_descriptions):
+            self.__route_descriptions[route_id].enabled = True
             self.__start_receiver()
             return True
         return False
 
     def disable_route(self, route_id: int) -> bool:
         """Disables a route by index"""
-        if 0 <= route_id < len(self.__routes):
-            self.__routes[route_id].enabled = False
+        if 0 <= route_id < len(self.__route_descriptions):
+            self.__route_descriptions[route_id].enabled = False
             self.__start_receiver()
             return True
         return False
+    
+    def update_source_volume(self, source_idx: int, volume: float) -> None:
+        """Sets the volume for source source_idx to volume"""
+        for idx, source in enumerate(self.__source_descriptions):
+            if idx == source_idx:
+                source.volume = volume
+        self.__apply_volume_change()
+
+    def update_sink_volume(self, sink_idx: int, volume: float) -> None:
+        """Sets the volume for sink sink_idx to volume"""
+        for idx, sink in enumerate(self.__sink_descriptions):
+            if idx == sink_idx:
+                sink.volume = volume
+        self.__apply_volume_change()
+
+    def update_route_volume(self, route_idx: int, volume: float) -> None:
+        """Sets the volume for route route_idx to volume"""
+        for idx, route in enumerate(self.__route_descriptions):
+            if idx == route_idx:
+                route.volume = volume
+        self.__apply_volume_change()
 
     # Private Functions
+
+    def __apply_volume_change(self) -> None:
+        self.__build_real_sinks_to_real_sources()
+        print(self.__sinks_to_sources)
+        for sink_ip, sources in self.__sinks_to_sources.items():
+            for _sink in self.__sink_objects:
+                if _sink._sink_ip == sink_ip:
+                    for source in sources:
+                        _sink.update_source_volume(source)
+        print(self.__sinks_to_sources)
+        self.__save_yaml()
 
     def __load_yaml(self) -> None:
         """Loads the initial config"""
         with open("config.yaml", "r") as f:
             config = yaml.safe_load(f)
         for sinkEntry in config["sinks"]:
-            self.__sinks.append(Sink(sinkEntry["name"], sinkEntry["ip"], sinkEntry["port"], False, sinkEntry["enabled"], []))
+            self.__sink_descriptions.append(SinkDescription(sinkEntry["name"], sinkEntry["ip"], sinkEntry["port"], False, sinkEntry["enabled"], [], sinkEntry["volume"]))
         for sourceEntry in config["sources"]:
-            self.__sources.append(Source(sourceEntry["name"], sourceEntry["ip"], False, sourceEntry["enabled"], []))
+            self.__source_descriptions.append(SourceDescription(sourceEntry["name"], sourceEntry["ip"], False, sourceEntry["enabled"], [], sourceEntry["volume"]))
         for sinkGroup in config["groups"]["sinks"]:
-            self.__sinks.append(Sink(sinkGroup["name"], "", 0, True, sinkGroup["enabled"], sinkGroup["sinks"]))
+            self.__sink_descriptions.append(SinkDescription(sinkGroup["name"], "", 0, True, sinkGroup["enabled"], sinkGroup["sinks"], sinkGroup["volume"]))
         for sourceGroup in config["groups"]["sources"]:
-            self.__sources.append(Source(sourceGroup["name"], "", True, sourceGroup["enabled"], sourceGroup["sources"]))
+            self.__source_descriptions.append(SourceDescription(sourceGroup["name"], "", True, sourceGroup["enabled"], sourceGroup["sources"], sourceGroup["volume"]))
         for routeEntry in config["routes"]:
-            self.__routes.append(Route(routeEntry["name"], routeEntry["sink"], routeEntry["source"], routeEntry["enabled"]))
+            self.__route_descriptions.append(RouteDescription(routeEntry["name"], routeEntry["sink"], routeEntry["source"], routeEntry["enabled"], routeEntry["volume"]))
 
     def __save_yaml(self) -> None:
         """Saves the config to config.yaml"""
         sinks = []
-        for sink in self.__sinks:
+        for sink in self.__sink_descriptions:
             if not sink.is_group:
-                _newsink = {"name": sink.name, "ip": sink.ip, "port": sink.port, "enabled": sink.enabled}
+                _newsink = {"name": sink.name, "ip": sink.ip, "port": sink.port, "enabled": sink.enabled, "volume": sink.volume}
                 sinks.append(_newsink)
         sources = []
-        for source in self.__sources:
+        for source in self.__source_descriptions:
             if not source.is_group:
-                _newsource = {"name": source.name, "ip": source.ip, "enabled": source.enabled}
+                _newsource = {"name": source.name, "ip": source.ip, "enabled": source.enabled, "volume": source.volume}
                 sources.append(_newsource)
         routes = []
-        for route in self.__routes:
-            _newroute = {"name": route.name, "source": route.source, "sink": route.sink, "enabled": route.enabled}
+        for route in self.__route_descriptions:
+            _newroute = {"name": route.name, "source": route.source, "sink": route.sink, "enabled": route.enabled, "volume": route.volume}
             routes.append(_newroute)
         sink_groups = []
-        for sink in self.__sinks:
+        for sink in self.__sink_descriptions:
             if sink.is_group:
-                _newsink = {"name": sink.name, "sinks": sink.group_members, "enabled": sink.enabled}
+                _newsink = {"name": sink.name, "sinks": sink.group_members, "enabled": sink.enabled, "volume": sink.volume}
                 sink_groups.append(_newsink)
         source_groups = []
-        for source in self.__sources:
+        for source in self.__source_descriptions:
             if source.is_group:
-                _newsource = {"name": source.name, "sources": source.group_members, "enabled": source.enabled}
+                _newsource = {"name": source.name, "sources": source.group_members, "enabled": source.enabled, "volume": source.volume}
                 source_groups.append(_newsource)
         groups = {"sinks": sink_groups, "sources": source_groups}
         save_data = {"sinks": sinks, "sources": sources, "routes": routes, "groups": groups}
@@ -266,7 +246,6 @@ class Controller:
     def __start_receiver(self) -> None:
         """Start or restart the receiver"""
         self.__save_yaml()
-        self.__build_real_sources_to_real_sinks()
         self.__build_real_sinks_to_real_sources()
         if self.__receiverset:
             print("[Controller] Closing receiver!")
@@ -274,83 +253,82 @@ class Controller:
             self.__receiver.join()
             print("[Controller] Receiver closed!")
         self.__receiverset = True
-        self.__receiver = mixer.Receiver()
+        self.__receiver = mixer.receiver.Receiver()
+        self.__sink_objects = []
         for sink_ip in self.__sinks_to_sources.keys():
-            sourceips: List[str] = []
-            for source in self.__sinks_to_sources[sink_ip]:
-                sourceips.append(source.ip)
-            if len(sourceips) > 0 and sink_ip:
-                sink = mixer.Sink(self.__receiver, sink_ip, sourceips)
-                self.__receiver.register_sink(sink)
+            sink = mixer.sink.Sink(sink_ip, self.__sinks_to_sources[sink_ip])
+            self.__receiver.register_sink(sink)
+            self.__sink_objects.append(sink)
 
     # Sink Finders
-    def __get_sink_by_name(self, name: str) -> Sink:
+    def __get_sink_by_name(self, name: str) -> SinkDescription:
         """Returns a sink by name"""
-        for sink in self.__sinks:
+        for sink in self.__sink_descriptions:
             if sink.name == name:
                 return sink
         raise Exception(f"Sink not found by name {name}")
 
-    def __get_real_sinks_from_sink(self, sink: Sink) -> List[Sink]:
-        """Recursively work through sink groups to get all real sinks"""
+    def __get_real_sinks_from_sink(self, sink: SinkDescription, volume_multiplier: float = -1) -> List[SinkDescription]:
+        """Recursively work through sink groups to get all real sinks
+           Volume levels for the returned sinks will be adjusted based off parent sink group levels
+        """
+        print(f"Getting real sinks from {sink.name} volume {sink.volume}")
+        if volume_multiplier == -1:
+            volume_multiplier = sink.volume
         if sink.is_group:
-            sinks: List[Sink] = []
+            sinks: List[SinkDescription] = []
             for entry in sink.group_members:
                 sinkEntry = self.__get_sink_by_name(entry)
                 if not sinkEntry.enabled:
                     return []
                 if sinkEntry.is_group:
-                    sinks.extend(self.__get_real_sinks_from_sink(sinkEntry))
+                    print(f"Got sink group {sinkEntry.name}")
+                    sinks.extend(self.__get_real_sinks_from_sink(sinkEntry, volume_multiplier * sink.volume))
                 else:
-                    sinks.append(sinkEntry)
+                    sink_entry_copy: SinkDescription = copy(sinkEntry)
+                    sink_entry_copy.volume = sink_entry_copy.volume * volume_multiplier
+                    print(f"Got sink Single {sink_entry_copy.name} volume {sink_entry_copy.volume}")
+                    sinks.append(sink_entry_copy)
             return sinks
         else:
-            return unique([sink])
-
-    def __get_real_sinks_by_source(self, source: Source) -> List[Sink]:
-        """Returns real (non-group) sinks for a given source"""
-        _sinks: List[Sink] = []
-        _routes = self.__get_routes_by_source(source)
-        for route in _routes:
-            if route.enabled and source.enabled:
-                _sinks.extend(self.__get_real_sinks_by_route(route))
-        return unique(_sinks)
-
-    def __get_real_sinks_by_route(self, route: Route) -> List[Sink]:
-        """Returns real (non-group) sinks for a given route"""
-        sink = self.__get_sink_by_name(route.sink)
-        if sink.enabled and route.enabled:
-            return self.__get_real_sinks_from_sink(sink)
-        return []
+            return [sink]
 
     # Source Finders
-    def __get_source_by_name(self, name: str) -> Source:
+    def __get_source_by_name(self, name: str) -> SourceDescription:
         """Get source by name"""
-        for source in self.__sources:
+        for source in self.__source_descriptions:
             if source.name == name:
                 return source
         raise Exception(f"No source found by name {name}")
-    
-    def __get_real_sources_from_source(self, source: Source) -> List[Source]:
-        """Recursively work through source groups to get all real sources"""
+
+    def __get_real_sources_from_source(self, source: SourceDescription, volume_multiplier: float = -1) -> List[SourceDescription]:
+        """Recursively work through source groups to get all real sources
+           Volume levels for the returned sources will be adjusted based off parent source group levels
+        """
         if not source.enabled:
             return []
+        if volume_multiplier == -1:
+            volume_multiplier = source.volume
         if source.is_group:
-                _sources: List[Source] = []
+                _sources: List[SourceDescription] = []
                 for entry in source.group_members:
-                    sourceEntry = self.__get_source_by_name(entry)
-                    if sourceEntry.enabled:
-                        if sourceEntry.is_group:
-                            _sources.extend(self.__get_real_sources_from_source(sourceEntry))
+                    source_entry = self.__get_source_by_name(entry)
+                    if source_entry.enabled:
+                        if source_entry.is_group:
+                            _sources.extend(self.__get_real_sources_from_source(source_entry, volume_multiplier * source_entry.volume))
                         else:
-                            _sources.append(sourceEntry)
+                            source_entry_copy = copy(source_entry)
+                            source_entry_copy.volume = source_entry_copy.volume * volume_multiplier
+                            _sources.append(source_entry_copy)
                 return _sources
         else:
-                return unique([source])
-    
-    def __get_real_sources_by_sink(self, sink: Sink) -> List[Source]:
+            source_entry_copy: SourceDescription = copy(source)
+            source_entry_copy.volume = source_entry_copy.volume * volume_multiplier
+            return [source_entry_copy]
+
+    def __get_real_sources_by_sink(self, sink: SinkDescription) -> List[SourceDescription]:
         """Returns real (non-group) sources for a given sink"""
-        _sources: List[Source] = []
+        _sources: List[SourceDescription] = []
         if sink.enabled:
             _routes = self.__get_routes_by_sink(sink)
             for route in _routes:
@@ -358,48 +336,37 @@ class Controller:
                     _sources.extend(self.__get_real_sources_by_route(route))
         return unique(_sources)
 
-    def __get_real_sources_by_route(self, route: Route) -> List[Source]:
-        """Returns real (non-group) sources for a given route"""
+    def __get_real_sources_by_route(self, route: RouteDescription) -> List[SourceDescription]:
+        """Returns real (non-group) sources for a given route
+           Volume levels for the returned sources will be adjusted based off the route levels
+        """
         source = self.__get_source_by_name(route.source)
         if source.enabled and route.enabled:
-            return self.__get_real_sources_from_source(source)
+            return self.__get_real_sources_from_source(source, route.volume)
         return []
 
     # Route Finders
-    def __get_routes_by_source(self, source: Source) -> List[Route]:
-        """Get all routes that use this source"""
-        _routes: List[Route] = []
-        for route in self.__routes:
-            if route.enabled:
-                _sources = self.__get_real_sources_from_source(self.__get_source_by_name(route.source))
-                for _source in _sources:
-                    if _source.enabled and _source == source:
-                        _routes.append(route)
-        return unique(_routes)
-
-    def __get_routes_by_sink(self, sink: Sink) -> List[Route]:
-        """Get all routes that use this sink"""
-        _routes: List[Route] = []
-        for route in self.__routes:
+    def __get_routes_by_sink(self, sink: SinkDescription) -> List[RouteDescription]:
+        """Get all routes that use this sink
+           Volume levels for the returned routes will be adjusted based off the sink levels
+        """
+        _routes: List[RouteDescription] = []
+        for route in self.__route_descriptions:
             _parentsink = self.__get_sink_by_name(route.sink)
             if _parentsink.enabled and route.enabled:
-                _sinks = self.__get_real_sinks_from_sink(_parentsink)
+                _sinks = self.__get_real_sinks_from_sink(_parentsink, _parentsink.volume)
                 for _sink in _sinks:
-                    if _sink.enabled and _sink == sink:
-                        _routes.append(route)
+                    if _sink.enabled and _sink.ip == sink.ip:
+                        route_copy = copy(route)
+                        route_copy.volume = route_copy.volume * _sink.volume
+                        _routes.append(route_copy)
         return unique(_routes)
 
-    # IP -> IP maps
-    def __build_real_sources_to_real_sinks(self):
-        """Build source to sink cache {"source_ip": ["sink1_ip", "sink2_ip", ...]}"""
-        self.__sources_to_sinks = {}
-        for source in self.__sources:
-            if source.enabled:
-                self.__sources_to_sinks[source.ip] = self.__get_real_sinks_by_source(source)
-
+    # Sink IP -> Source maps
     def __build_real_sinks_to_real_sources(self):
-        """Build sink to source cache {"sink_ip": ["source1_ip", "source_2_ip", ...]}"""
+        """Build sink to source cache {"sink_ip": ["source1", "source_2", ...]}"""
         self.__sinks_to_sources = {}
-        for sink in self.__sinks:
+        for sink in self.__sink_descriptions:
+            print(f"Checking sink {sink.name}")
             if sink.enabled:
                 self.__sinks_to_sources[sink.ip] = self.__get_real_sources_by_sink(sink)

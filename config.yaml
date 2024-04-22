@@ -7,11 +7,13 @@ groups:
     - Bedroom
     - Bathroom
     - Office
+    volume: 1.0
   - enabled: true
     name: Bedroom
     sinks:
     - Bedroom
     - Bathroom
+    volume: 0.5
   sources:
   - enabled: true
     name: All
@@ -20,46 +22,73 @@ groups:
     - Office PC
     - Livingroom PC
     - Tablet
+    volume: 1.0
   - enabled: true
     name: Music
     sources:
     - Server
+    volume: 1.0
+  - enabled: true
+    name: OfficeTest
+    sources:
+    - Office PC
+    volume: 1.0
 routes:
-- enabled: true
+- enabled: false
   name: Music to All
   sink: All
   source: Music
-- enabled: true
+  volume: 1.0
+- enabled: false
   name: Office PC to Office
   sink: Office
   source: Office PC
+  volume: 1.0
+- enabled: false
+  name: Test
+  sink: Office
+  source: OfficeTest
+  volume: 1.0
+- enabled: true
+  name: Test
+  sink: All
+  source: Office PC
+  volume: 1.0
 sinks:
 - enabled: true
   ip: 192.168.3.178
   name: Livingroom
   port: 4010
+  volume: 1.0
 - enabled: true
   ip: 192.168.3.111
   name: Bedroom
   port: 4010
+  volume: 0.5
 - enabled: true
   ip: 192.168.3.102
   name: Bathroom
   port: 4010
+  volume: 1.0
 - enabled: true
   ip: 192.168.3.199
   name: Office
   port: 4010
+  volume: 1.0
 sources:
 - enabled: true
   ip: 192.168.3.119
   name: Server
+  volume: 1.0
 - enabled: true
   ip: 192.168.3.199
   name: Office PC
-- enabled: false
+  volume: 1.0
+- enabled: true
   ip: 192.168.3.172
   name: Livingroom PC
+  volume: 1.0
 - enabled: true
   ip: 192.168.3.0
   name: Tablet
+  volume: 0.1

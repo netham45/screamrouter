@@ -219,8 +219,16 @@
         });
       </SCRIPT>
       <STYLE>
+        TD.select {
+            width: 50%;
+        }
         SELECT {
             height: 300px;
+            width: 100%;
+        }
+        TD.buttons {
+            text-align: left;
+            width: 10%;
         }
       </STYLE>
     </HEAD>
@@ -228,17 +236,15 @@
       <DIV ID="sourcesdiv">
         <TABLE>
           <TR>
-            <TD>
+            <TD CLASS="select">
               <SELECT ID="sources" MULTIPLE>
               </SELECT>
             </TD>
-          </TR>
-          <TR>
-            <TD>
+            <TD CLASS="buttons">
               <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name" ID="SourceName" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="+ Source Group" onclick="addSourceGroupButton();" /><BR />
+              <INPUT TYPE="BUTTON" VALUE="+ Source Group" onclick="addSourceGroupButton();" />
               <INPUT TYPE="BUTTON" VALUE="- Source Group" onclick="removeSourceGroupButton();" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="Disable Source" onclick="disableSourceButton();" /><BR />
+              <INPUT TYPE="BUTTON" VALUE="Disable Source" onclick="disableSourceButton();" />
               <INPUT TYPE="BUTTON" VALUE="Enable Source" onclick="enableSourceButton();" /><BR />
             </TD>
           </TR>
@@ -247,17 +253,15 @@
       <DIV ID="sinksdiv">
         <TABLE>
           <TR>
-            <TD>
+            <TD CLASS="select">
               <SELECT ID="sinks" MULTIPLE>
               </SELECT>
             </TD>
-          </TR>
-          <TR>
-            <TD>
+            <TD CLASS="buttons">
               <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name" ID="SinkName" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="+ Sink Group" ONCLICK="addSinkGroupButton();" /><BR />
+              <INPUT TYPE="BUTTON" VALUE="+ Sink Group" ONCLICK="addSinkGroupButton();" />
               <INPUT TYPE="BUTTON" VALUE="- Sink Group" ONCLICK="removeSinkGroupButton();" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="Disable Sink" onclick="disableSinkButton();" /><BR />
+              <INPUT TYPE="BUTTON" VALUE="Disable Sink" onclick="disableSinkButton();" />
               <INPUT TYPE="BUTTON" VALUE="Enable Sink" onclick="enableSinkButton();" /><BR />
             </TD>
           </TR>
@@ -266,17 +270,15 @@
       <DIV ID="routesdiv">
         <TABLE>
           <TR>
-            <TD>
+            <TD CLASS="select">
               <SELECT ID="routes" MULTIPLE>
               </SELECT>
             </TD>
-          </TR>
-          <TR>
-            <TD>
+            <TD CLASS="buttons">
               <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name" ID="RouteName" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="+ Route" ONCLICK="addRouteButton();" /><BR />
+              <INPUT TYPE="BUTTON" VALUE="+ Route" ONCLICK="addRouteButton();" />
               <INPUT TYPE="BUTTON" VALUE="- Route" ONCLICK="removeRouteButton();" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="Disable Route" onclick="disableRouteButton();" /><BR />
+              <INPUT TYPE="BUTTON" VALUE="Disable Route" onclick="disableRouteButton();" />
               <INPUT TYPE="BUTTON" VALUE="Enable Route" onclick="enableRouteButton();" /><BR />
             </TD>
           </TR>

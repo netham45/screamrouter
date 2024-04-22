@@ -4,7 +4,7 @@ from starlette.responses import FileResponse
 from pydantic import BaseModel
 import threading
 import uvicorn
-from controller import Sink, Source, Route, Controller
+from controller import SinkDescription, SourceDescription, RouteDescription, Controller
 
 class PostSink(BaseModel):
     name: str
@@ -49,18 +49,23 @@ class API(threading.Thread):
         self.app: FastAPI = FastAPI()
         """FastAPI"""
         self.app.get("/")(self.read_index)
+        self.app.get("/sinks/{sink_id}/volume/{volume}")(self.set_sink_volume)
         self.app.get("/sinks")(self.get_sinks)
         self.app.post("/groups/sinks")(self.add_sink_group)
         self.app.post("/sinks")(self.add_sink)
         self.app.delete("/sinks/{sink_id}")(self.delete_sink)
         self.app.get("/sinks/{sink_id}/disable")(self.disable_sink)
         self.app.get("/sinks/{sink_id}/enable")(self.enable_sink)
+        
+        self.app.get("/sources/{source_id}/volume/{volume}")(self.set_source_volume)
         self.app.get("/sources")(self.get_sources)
         self.app.post("/groups/sources")(self.add_source_group)
         self.app.post("/sources")(self.add_source)
         self.app.delete("/sources/{source_id}")(self.delete_source)
         self.app.get("/sources/{source_id}/disable")(self.disable_source)
         self.app.get("/sources/{source_id}/enable")(self.enable_source)
+
+        self.app.get("/routes/{route_id}/volume/{volume}")(self.set_route_volume)
         self.app.get("/routes")(self.get_routes)
         self.app.post("/routes")(self.add_route)
         self.app.delete("/routes/{route_id}")(self.delete_route)
@@ -78,16 +83,19 @@ class API(threading.Thread):
         return FileResponse('index.html')
 
     # Sink Endpoints
-    def get_sinks(self) -> List[Sink]:
+    def set_sink_volume(self, sink_id: int, volume: float) -> None:
+        return self.controller.update_sink_volume(sink_id, volume)
+    
+    def get_sinks(self) -> List[SinkDescription]:
         """Get all sinks"""
         return self.controller.get_sinks()
 
     def add_sink(self, sink: PostSink) -> bool:
-        return self.controller.add_sink(Sink(sink.name, sink.ip, sink.port, False, True, []))
+        return self.controller.add_sink(SinkDescription(sink.name, sink.ip, sink.port, False, True, [], 1))
 
     def add_sink_group(self, sink_group: PostSinkGroup) -> bool:
         """Add a new sink group"""
-        return self.controller.add_sink(Sink(sink_group.name, "", 0, True, True, sink_group.sinks))
+        return self.controller.add_sink(SinkDescription(sink_group.name, "", 0, True, True, sink_group.sinks, 1))
 
     def delete_sink(self, sink_id: int) -> bool:
         """Delete a sink group by ID"""
@@ -102,16 +110,19 @@ class API(threading.Thread):
         return self.controller.enable_sink(sink_id)
 
     # Source Endpoints
-    def get_sources(self) -> List[Source]:
+    def set_source_volume(self, source_id: int, volume: float) -> None:
+        return self.controller.update_source_volume(source_id, volume)
+    
+    def get_sources(self) -> List[SourceDescription]:
         """Get all sources"""
         return self.controller.get_sources()
 
     def add_source(self, source: PostSource) -> bool:
-        return self.controller.add_source(Source(source.name, source.ip, False, True, []))
+        return self.controller.add_source(SourceDescription(source.name, source.ip, False, True, [], 1))
 
     def add_source_group(self, source_group: PostSourceGroup) -> bool:
         """Add a new source group"""
-        return self.controller.add_source(Source(source_group.name, "", True, True, source_group.sources))
+        return self.controller.add_source(SourceDescription(source_group.name, "", True, True, source_group.sources, 1))
 
     def delete_source(self, source_id: int) -> bool:
         """Delete a source group by ID"""
@@ -126,13 +137,16 @@ class API(threading.Thread):
         return self.controller.enable_source(source_id)
 
     # Route Endpoints
-    def get_routes(self) -> List[Route]:
+    def set_route_volume(self, route_id: int, volume: float) -> None:
+        return self.controller.update_route_volume(route_id, volume)
+    
+    def get_routes(self) -> List[RouteDescription]:
         """Get all routes"""
         return self.controller.get_routes()
 
     def add_route(self, route: PostRoute) -> bool:
         """Add a new route"""
-        return self.controller.add_route(Route(route.name, route.sink, route.source, True))
+        return self.controller.add_route(RouteDescription(route.name, route.sink, route.source, True, 1))
 
     def delete_route(self, route_id: int)  -> bool:
         """Delete a route by ID"""
