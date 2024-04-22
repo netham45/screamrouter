@@ -62,7 +62,8 @@ class Receiver(threading.Thread):
                     break
         print(f"[Receiver] Main thread ending! self.running: {self.running}")
         for sink in self.sinks:
-            print(f"[Receiver] Closing sink {sink._sink_ip}")
+            print(f"[Receiver] Stopping sink {sink._sink_ip}")
             sink.stop()
+        for sink in self.sinks:
+            print(f"[Receiver] Waiting for sink {sink._sink_ip} to ")
             sink.join()
-            print(f"[Receiver] Closed sink {sink._sink_ip}")

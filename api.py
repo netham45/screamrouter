@@ -49,6 +49,8 @@ class API(threading.Thread):
         self.app: FastAPI = FastAPI()
         """FastAPI"""
         self.app.get("/")(self.read_index)
+        self.app.get("/site.js")(self.read_javascript)
+        self.app.get("/site.css")(self.read_css)
         self.app.get("/sinks/{sink_id}/volume/{volume}")(self.set_sink_volume)
         self.app.get("/sinks")(self.get_sinks)
         self.app.post("/groups/sinks")(self.add_sink_group)
@@ -73,7 +75,6 @@ class API(threading.Thread):
         self.app.get("/routes/{route_id}/enable")(self.enable_route)
         self.start()
 
-
     def run(self) -> None:
         uvicorn.run(self.app, port=8080, host='0.0.0.0')
 
@@ -82,10 +83,20 @@ class API(threading.Thread):
         """Index page"""
         return FileResponse('index.html')
 
+    # Javascript endpoint
+    def read_javascript(self) -> FileResponse:
+        """Javascript page"""
+        return FileResponse('site.js')
+
+    # Javascript endpoint
+    def read_css(self) -> FileResponse:
+        """CSS page"""
+        return FileResponse('site.css')
+
     # Sink Endpoints
     def set_sink_volume(self, sink_id: int, volume: float) -> None:
         return self.controller.update_sink_volume(sink_id, volume)
-    
+
     def get_sinks(self) -> List[SinkDescription]:
         """Get all sinks"""
         return self.controller.get_sinks()

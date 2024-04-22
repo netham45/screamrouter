@@ -3,6 +3,7 @@ import tempfile
 
 import threading
 import socket
+import select
 
 import io
 import traceback
@@ -39,6 +40,8 @@ class Sink(threading.Thread):
         """Output socket for sink"""
         self.__fd: io.IOBase
         """Holds the ffmpeg output pipe handle"""
+
+        print(f"New Sink IP '{self._sink_ip}'")
 
         self.__make_in_fifo()  # Make python -> ffmpeg fifo fifo
 
@@ -131,11 +134,17 @@ class Sink(threading.Thread):
         """Stops the Sink, closes all handles"""
         self.__running = False
         self.__sock.close()
-        self.__fd.close()
+        self.__ffmpeg.stop()
+        try:
+            self.__fd._checkClosed
+            self.__fd.close()
+        except:
+            pass
         try:
             os.remove(self.__fifo_in)
         except:
             pass
+
 
     def run(self) -> None:
         """This thread implements listening to self.fifoin and sending it out to dest_ip
@@ -147,13 +156,15 @@ class Sink(threading.Thread):
         while self.__running:
             try:
                 header = bytes([0x01, 0x20, 0x02, 0x03, 0x00])  # 48khz, 32-bit, stereo
-                data = self.__fd.read(1152)  # Read 1152 bytes from ffmpeg
-                if len(data) == 1152:
-                    sendbuf = header + data  # Add the header to the data
-                    self.__sock.sendto(sendbuf, (self._sink_ip, 4010))  # Send it to the sink
+                ready = select.select([self.__fd], [], [], .2)  # If the socket is dead for more than .2 seconds kill ffmpeg
+                if ready[0]:
+                    data = self.__fd.read(1152)  # Read 1152 bytes from ffmpeg
+                    if len(data) == 1152:
+                        sendbuf = header + data  # Add the header to the data
+                        self.__sock.sendto(sendbuf, (self._sink_ip, 4010))  # Send it to the sink
             except Exception as e:
                 print(traceback.format_exc())
-        print(f"[Sink {self._sink_ip}] Stopping")
+        print(f"[Sink {self._sink_ip}] Stopped")
         self.__ffmpeg.stop()
         for source in self.__sources:
             try:

@@ -2,7 +2,6 @@ import yaml
 from copy import copy
 
 from typing import List
-from pydantic import BaseModel
 
 import mixer.receiver
 import mixer.sink
@@ -17,7 +16,7 @@ def unique(list: List) -> List:
     """Returns a list with duplicates filtered out"""
     _list = []
     for element in list:
-        if not element in _list:
+        if not element in _list: 
             _list.append(element)
     return _list
 
@@ -64,13 +63,12 @@ class Controller:
 
     def delete_sink(self, sink_id: int) -> bool:
         """Deletes a sink by index"""
-        if self.__sink_descriptions[sink_id].is_group:
-            for route in self.__route_descriptions:
-                if self.__sink_descriptions[sink_id].name == route.sink:
-                    return False  # Can't remove a sink in use by a route
-            self.__sink_descriptions.pop(sink_id)
-            self.__start_receiver()
-            return True
+        for route in self.__route_descriptions:
+            if self.__sink_descriptions[sink_id].name == route.sink:
+                return False  # Can't remove a sink in use by a route
+        self.__sink_descriptions.pop(sink_id)
+        self.__start_receiver()
+        return True
         return False
 
     def enable_sink(self, sink_id: int) -> bool:
@@ -106,14 +104,12 @@ class Controller:
 
     def delete_source(self, source_id: int) -> bool:
         """Deletes a source by index"""
-        if self.__source_descriptions[source_id].is_group:
-            for route in self.__route_descriptions:
-                if self.__source_descriptions[source_id].name == route.source:
-                    return False  # Can't remove a source in use by a route
-            self.__source_descriptions.pop(source_id)
-            self.__start_receiver()
-            return True
-        return False
+        for route in self.__route_descriptions:
+            if self.__source_descriptions[source_id].name == route.source:
+                return False  # Can't remove a source in use by a route
+        self.__source_descriptions.pop(source_id)
+        self.__start_receiver()
+        return True
 
     def enable_source(self, source_id: int) -> bool:
         """Enables a source by index"""
@@ -137,6 +133,22 @@ class Controller:
 
     def add_route(self, route: RouteDescription) -> bool:
         """Adds a route"""
+        sinkFound: bool = False
+        sourceFound: bool = False
+
+        for sink in self.__sink_descriptions:
+            if sink.name == route.sink:
+                sinkFound = True
+                break
+
+        for source in self.__source_descriptions:
+            if source.name == route.source:
+                sourceFound = True
+                break
+        
+        if not sinkFound or not sourceFound:
+            return False
+
         self.__route_descriptions.append(route)
         self.__start_receiver()
         return True
@@ -188,13 +200,11 @@ class Controller:
 
     def __apply_volume_change(self) -> None:
         self.__build_real_sinks_to_real_sources()
-        print(self.__sinks_to_sources)
         for sink_ip, sources in self.__sinks_to_sources.items():
             for _sink in self.__sink_objects:
                 if _sink._sink_ip == sink_ip:
                     for source in sources:
                         _sink.update_source_volume(source)
-        print(self.__sinks_to_sources)
         self.__save_yaml()
 
     def __load_yaml(self) -> None:
@@ -256,9 +266,10 @@ class Controller:
         self.__receiver = mixer.receiver.Receiver()
         self.__sink_objects = []
         for sink_ip in self.__sinks_to_sources.keys():
-            sink = mixer.sink.Sink(sink_ip, self.__sinks_to_sources[sink_ip])
-            self.__receiver.register_sink(sink)
-            self.__sink_objects.append(sink)
+            if sink_ip != "":
+                sink = mixer.sink.Sink(sink_ip, self.__sinks_to_sources[sink_ip])
+                self.__receiver.register_sink(sink)
+                self.__sink_objects.append(sink)
 
     # Sink Finders
     def __get_sink_by_name(self, name: str) -> SinkDescription:
@@ -268,13 +279,10 @@ class Controller:
                 return sink
         raise Exception(f"Sink not found by name {name}")
 
-    def __get_real_sinks_from_sink(self, sink: SinkDescription, volume_multiplier: float = -1) -> List[SinkDescription]:
+    def __get_real_sinks_from_sink(self, sink: SinkDescription, volume_multiplier: float) -> List[SinkDescription]:
         """Recursively work through sink groups to get all real sinks
            Volume levels for the returned sinks will be adjusted based off parent sink group levels
         """
-        print(f"Getting real sinks from {sink.name} volume {sink.volume}")
-        if volume_multiplier == -1:
-            volume_multiplier = sink.volume
         if sink.is_group:
             sinks: List[SinkDescription] = []
             for entry in sink.group_members:
@@ -282,12 +290,10 @@ class Controller:
                 if not sinkEntry.enabled:
                     return []
                 if sinkEntry.is_group:
-                    print(f"Got sink group {sinkEntry.name}")
                     sinks.extend(self.__get_real_sinks_from_sink(sinkEntry, volume_multiplier * sink.volume))
                 else:
                     sink_entry_copy: SinkDescription = copy(sinkEntry)
                     sink_entry_copy.volume = sink_entry_copy.volume * volume_multiplier
-                    print(f"Got sink Single {sink_entry_copy.name} volume {sink_entry_copy.volume}")
                     sinks.append(sink_entry_copy)
             return sinks
         else:
@@ -301,14 +307,12 @@ class Controller:
                 return source
         raise Exception(f"No source found by name {name}")
 
-    def __get_real_sources_from_source(self, source: SourceDescription, volume_multiplier: float = -1) -> List[SourceDescription]:
+    def __get_real_sources_from_source(self, source: SourceDescription, volume_multiplier: float) -> List[SourceDescription]:
         """Recursively work through source groups to get all real sources
            Volume levels for the returned sources will be adjusted based off parent source group levels
         """
         if not source.enabled:
             return []
-        if volume_multiplier == -1:
-            volume_multiplier = source.volume
         if source.is_group:
                 _sources: List[SourceDescription] = []
                 for entry in source.group_members:
@@ -333,7 +337,8 @@ class Controller:
             _routes = self.__get_routes_by_sink(sink)
             for route in _routes:
                 if route.enabled:
-                    _sources.extend(self.__get_real_sources_by_route(route))
+                    sources = self.__get_real_sources_by_route(route)
+                    _sources.extend(sources)
         return unique(_sources)
 
     def __get_real_sources_by_route(self, route: RouteDescription) -> List[SourceDescription]:
@@ -342,7 +347,10 @@ class Controller:
         """
         source = self.__get_source_by_name(route.source)
         if source.enabled and route.enabled:
-            return self.__get_real_sources_from_source(source, route.volume)
+            print(f"Processing route {route.name}, source {route.source}")
+            sources: List[SourceDescription] = self.__get_real_sources_from_source(source, route.volume * source.volume)
+            print(sources)
+            return sources
         return []
 
     # Route Finders
@@ -367,6 +375,5 @@ class Controller:
         """Build sink to source cache {"sink_ip": ["source1", "source_2", ...]}"""
         self.__sinks_to_sources = {}
         for sink in self.__sink_descriptions:
-            print(f"Checking sink {sink.name}")
             if sink.enabled:
                 self.__sinks_to_sources[sink.ip] = self.__get_real_sources_by_sink(sink)

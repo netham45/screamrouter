@@ -1,0 +1,12 @@
+TD.select, TR {
+    width: 50%;
+    height: 200px;
+}
+SELECT { 
+    width: 100%;
+    height: 100%;
+}
+TD.buttons {
+    text-align: left;
+    width: 10%;
+}

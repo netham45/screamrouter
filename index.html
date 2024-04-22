@@ -1,251 +1,25 @@
   <HTML>
     <HEAD>
       <TITLE>ScreamRouter</TITLE>
-      <SCRIPT TYPE="text/javascript">
-        const BASEURL = "http://192.168.3.114:8080/"
-
-        function populateSources(){
-          callAPI("sources","GET","",populateSourcesCallback);
-        }
-
-        function createOption(name, label, id){
-          option = document.createElement("option");
-          option.name = name;
-          option.innerHTML = label;
-          option.value = id;
-          return option;
-        }
-
-        function populateSourcesCallback(data){
-            for (entry in data)
-                document.getElementById("sources").appendChild(createOption(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry));
-        }
-
-        function populateSinks(){
-            callAPI("sinks","GET","",populateSinksCallback);
-        }
-
-        function populateSinksCallback(data){
-            for (entry in data)
-                document.getElementById("sinks").appendChild(createOption(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry));
-        }
-
-        function removeSinkGroupButton(){
-            options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
-            options.reverse().forEach(function (option){
-                removeSinkGroup(option.value);
-            });
-        }
-
-        function removeSinkGroup(sink_id){
-            callAPI("sinks/groups/" + sink_id, "DELETE", "", removeSinkCallback);
-        }
-
-        function removeSinkCallback(data)
-        {
-            load();
-        }
-
-        function removeSourceGroupButton(){
-            options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
-            options.reverse().forEach(function (option){
-                removeSourceGroup(option.value);
-            });
-        }
-
-        function removeSourceGroup(source_id){
-            callAPI("sources/groups/" + source_id, "DELETE", "", removeSourceCallback);
-        }
-
-        function removeSourceCallback(data)
-        {
-            load();
-        }
-
-        function populateRoutes(){
-            callAPI("routes","GET","",populateRoutesCallback);
-        }
-
-        function populateRoutesCallback(data){
-            for (entry in data)
-                document.getElementById("routes").appendChild(createOption(data[entry].name, data[entry].name + " [Sink: " + data[entry].sink + " Source: " + data[entry].source + "]" + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry));
-        }
-
-        function removeRouteButton(){
-            options = [... document.querySelectorAll("SELECT#routes OPTION:checked")]
-            options.reverse().forEach(function (option){
-                removeRoute(option.value);
-            });
-        }
-
-        function removeRoute(route_id){
-            callAPI("routes/" + route_id, "DELETE", "", removeRouteCallback);
-        }
-
-        function removeRouteCallback(data)
-        {
-            load();
-        }
-
-        function addSinkGroupButton(){
-            options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
-            labels = []
-            options.reverse().forEach(function (option){
-              labels.push(option.name);
-            });
-            data = {"name": document.getElementById("SinkName").value, "sinks": labels};
-            callAPI("sinks/groups", "POST", JSON.stringify(data), removeRouteCallback);
-        }
-
-        function addSourceGroupButton(){
-            options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
-            labels = []
-            options.reverse().forEach(function (option){
-              labels.push(option.name);
-            });
-            data = {"name": document.getElementById("SourceName").value, "sources": labels};
-            callAPI("sources/groups", "POST", JSON.stringify(data), removeRouteCallback);
-        }
-
-        function addRouteButton(){
-            sourceOptions = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
-            sinkOptions = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
-            if ( sourceOptions.length > 1 || sinkOptions.length > 1) {
-                alert("Select only one source or sink per route");
-                return false;
-            }
-            data = {"name": document.getElementById("RouteName").value, "source": sourceOptions[0].name, "sink": sinkOptions[0].name};
-            callAPI("routes", "POST", JSON.stringify(data), removeRouteCallback);
-        }
-
-        function disableSourceButton(){
-            options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
-            options.reverse().forEach(function (option){
-                disableSource(option.value);
-            });
-        }
-
-        function enableSourceButton(){
-            options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
-            options.reverse().forEach(function (option){
-                enableSource(option.value);
-            });
-        }
-
-        function disableSinkButton(){
-            options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
-            options.reverse().forEach(function (option){
-                disableSink(option.value);
-            });
-        }
-
-        function enableSinkButton(){
-            options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
-            options.reverse().forEach(function (option){
-                enableSink(option.value);
-            });
-        }
-        
-        function disableRouteButton(){
-            options = [... document.querySelectorAll("SELECT#routes OPTION:checked")]
-            options.reverse().forEach(function (option){
-                disableRoute(option.value);
-            });
-        }
-
-        function enableRouteButton(){
-            options = [... document.querySelectorAll("SELECT#routes OPTION:checked")]
-            options.reverse().forEach(function (option){
-                enableRoute(option.value);
-            });
-        }
-
-        
-        function disableSink(sink_id)
-        {
-            callAPI("sinks/" + sink_id + "/disable", "GET", "", removeRouteCallback);
-        }
-
-        function enableSink(sink_id)
-        {
-            callAPI("sinks/" + sink_id + "/enable", "GET", "", removeRouteCallback);
-        }
-
-        function disableSource(source_id)
-        {
-          callAPI("sources/" + source_id + "/disable", "GET", "", removeRouteCallback);
-        }
-
-        function enableSource(source_id)
-        {
-            callAPI("sources/" + source_id + "/enable", "GET", "", removeRouteCallback);
-        }
-
-        function disableRoute(route_id)
-        {
-            callAPI("routes/" + route_id + "/disable", "GET", "", removeRouteCallback);
-        }
-
-        function enableRoute(route_id)
-        {
-            callAPI("routes/" + route_id + "/enable", "GET", "", removeRouteCallback);
-        }
-
-        function load()
-        {
-            [... document.getElementsByTagName("option")].forEach(function(option){option.parentNode.removeChild(option)})
-            populateSources();
-            populateSinks();
-            populateRoutes();
-        }
-
-        function callAPI(endpoint, method, data, callback){
-            // First create an XMLHttprequest object
-            const xhr = new XMLHttpRequest();
-            xhr.open(method, BASEURL + endpoint, true);
-            xhr.getResponseHeader("Content-type", "application/json");
-            if (method == "POST")
-                xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
-                xhr.send(data)
-
-            xhr.onload = function() {
-                const obj = JSON.parse(this.responseText);
-                callback(obj)
-            }
-        }
-
-        window.addEventListener("load", (event) => {
-            load();
-        });
-      </SCRIPT>
-      <STYLE>
-        TD.select {
-            width: 50%;
-        }
-        SELECT {
-            height: 300px;
-            width: 100%;
-        }
-        TD.buttons {
-            text-align: left;
-            width: 10%;
-        }
-      </STYLE>
+      <SCRIPT TYPE="text/javascript" SRC="site.js"></SCRIPT>
+      <LINK REL="stylesheet" TYPE="text/css" HREF="site.css">
     </HEAD>
     <BODY>
       <DIV ID="sourcesdiv">
         <TABLE>
           <TR>
             <TD CLASS="select">
-              <SELECT ID="sources" MULTIPLE>
-              </SELECT>
+              <H3>Sources</H3>
+              <SELECT ID="sources" MULTIPLE ONCHANGE="sources_onchange()">
             </TD>
             <TD CLASS="buttons">
-              <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name" ID="SourceName" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="+ Source Group" onclick="addSourceGroupButton();" />
-              <INPUT TYPE="BUTTON" VALUE="- Source Group" onclick="removeSourceGroupButton();" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="Disable Source" onclick="disableSourceButton();" />
-              <INPUT TYPE="BUTTON" VALUE="Enable Source" onclick="enableSourceButton();" /><BR />
+              <INPUT TYPE="range" ID="source_volume" ONCHANGE="source_volume_onchange()" DISABLED>
+              <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name for added source" ID="source_name"><BR>
+              <INPUT TYPE="BUTTON" VALUE="Add Source" ONCLICK="add_source_button()">
+              <INPUT TYPE="BUTTON" VALUE="Remove Source" ONCLICK="remove_source_button();"><BR>
+              <INPUT TYPE="BUTTON" VALUE="Disable Source" ONCLICK="disable_source_button();">
+              <INPUT TYPE="BUTTON" VALUE="Enable Source" ONCLICK="enable_source_button();"><BR>
+              <INPUT TYPE="BUTTON" VALUE="Add Source Group" ONCLICK="add_source_group_button();">
             </TD>
           </TR>
         </TABLE>
@@ -254,15 +28,17 @@
         <TABLE>
           <TR>
             <TD CLASS="select">
-              <SELECT ID="sinks" MULTIPLE>
-              </SELECT>
+              <H3>Sinks</H3>
+              <SELECT ID="sinks" MULTIPLE ONCHANGE="sinks_onchange()">
             </TD>
             <TD CLASS="buttons">
-              <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name" ID="SinkName" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="+ Sink Group" ONCLICK="addSinkGroupButton();" />
-              <INPUT TYPE="BUTTON" VALUE="- Sink Group" ONCLICK="removeSinkGroupButton();" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="Disable Sink" onclick="disableSinkButton();" />
-              <INPUT TYPE="BUTTON" VALUE="Enable Sink" onclick="enableSinkButton();" /><BR />
+              <INPUT TYPE="range" ID="sink_volume" ONCHANGE="sink_volume_onchange()" DISABLED>
+              <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name for added sink" ID="sink_name"><BR>
+              <INPUT TYPE="BUTTON" VALUE="Add Sink" ONCLICK="add_sink_button()">
+              <INPUT TYPE="BUTTON" VALUE="Remove Sink" ONCLICK="remove_sink_button();"><BR>
+              <INPUT TYPE="BUTTON" VALUE="Disable Sink" ONCLICK="disable_sink_button();">
+              <INPUT TYPE="BUTTON" VALUE="Enable Sink" ONCLICK="enable_sink_button();"><BR>
+              <INPUT TYPE="BUTTON" VALUE="Add Sink Group" ONCLICK="add_sink_group_button();">
             </TD>
           </TR>
         </TABLE>
@@ -271,15 +47,16 @@
         <TABLE>
           <TR>
             <TD CLASS="select">
-              <SELECT ID="routes" MULTIPLE>
-              </SELECT>
+              <H3>Routes</H3>
+              <SELECT ID="routes" MULTIPLE ONCHANGE="routes_onchange()">
             </TD>
             <TD CLASS="buttons">
-              <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name" ID="RouteName" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="+ Route" ONCLICK="addRouteButton();" />
-              <INPUT TYPE="BUTTON" VALUE="- Route" ONCLICK="removeRouteButton();" /><BR />
-              <INPUT TYPE="BUTTON" VALUE="Disable Route" onclick="disableRouteButton();" />
-              <INPUT TYPE="BUTTON" VALUE="Enable Route" onclick="enableRouteButton();" /><BR />
+              <INPUT TYPE="range" ID="route_volume" ONCHANGE="route_volume_onchange()" DISABLED>
+              <INPUT TYPE="TEXT" VALUE="" PLACEHOLDER="Name for added route" ID="route_name"><BR>
+              <INPUT TYPE="BUTTON" VALUE="Add Route" ONCLICK="add_route_button();">
+              <INPUT TYPE="BUTTON" VALUE="Remove Route" ONCLICK="remove_route_button();"><BR>
+              <INPUT TYPE="BUTTON" VALUE="Disable Route" ONCLICK="disable_route_button();">
+              <INPUT TYPE="BUTTON" VALUE="Enable Route" ONCLICK="enable_route_button();"><BR>
             </TD>
           </TR>
         </TABLE>
