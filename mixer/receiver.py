@@ -38,6 +38,13 @@ class Receiver(threading.Thread):
             if sink._sink_ip == sink_ip:
                 return None
         return None
+    
+    def __check_source_packet(self, source_ip: str, data: bytes) -> bool:
+        """Verifies a packet is the right length"""
+        if len(data) != 1157:
+            print(f"[Source {source_ip}] Got bad packet length {len(data)} != 1157 from source")
+            return False
+        return True
 
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks
@@ -54,8 +61,9 @@ class Receiver(threading.Thread):
             if ready[0]:
                 try:
                     recvbuf, addr = self.sock.recvfrom(1157)  # 5 bytes header + 1152 bytes pcm
-                    for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
-                        sink.process_packet_from_receiver(addr[0], recvbuf)
+                    if self.__check_source_packet(addr[0], recvbuf):
+                        for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
+                            sink.process_packet_from_receiver(addr[0], recvbuf)
                 except Exception as e:
                     print(e)
                     print(traceback.format_exc())

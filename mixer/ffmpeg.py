@@ -35,7 +35,6 @@ class ffmpeg(threading.Thread):
             bit_depth = source._stream_attributes.bit_depth
             sample_rate = source._stream_attributes.sample_rate
             channels = source._stream_attributes.channels
-            ip = source._ip
             file_name = source._fifo_file_name
             ffmpeg_command.extend(['-thread_queue_size', '64',
                                    '-f', f's{bit_depth}le',

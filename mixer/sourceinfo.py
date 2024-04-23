@@ -8,8 +8,7 @@ from mixer.streaminfo import StreamInfo
 
 
 class SourceInfo():
-    """Stores the status for a single Source to a single Sink
-    """
+    """Stores the status for a single Source to a single Sink"""
     def __init__(self, ip: str, fifo_file_name: str, sink_ip: str, volume: float):
         """Initializes a new Source object"""
         
@@ -38,10 +37,10 @@ class SourceInfo():
         """Sets stream attributes for a source"""
         self._stream_attributes = stream_attributes
 
-    def is_active(self) -> bool:
-        """Returns if the source has been active in the last 200ms"""
+    def is_active(self, active_time_ms: int = 200) -> bool:
+        """Returns if the source has been active in the last active_time_ms ms"""
         now: float = time.time() * 1000
-        if now - self.__last_data_time > 200:
+        if now - self.__last_data_time > active_time_ms:
             return False
         return True
 
@@ -75,7 +74,6 @@ class SourceInfo():
         """Closes the source"""
         try:
             self.__fifo_file_handle.close()  # Close and remove the fifo handle so ffmpeg will stop trying to listen for it
-            #os.remove(self._fifo_file_name)  # This avoids needing an ffmpeg restart when an incoming stream is closed for a multi-stream ffmpeg mixer
         except:
             pass
         self.__open = False
@@ -89,7 +87,7 @@ class SourceInfo():
         except:
             print(traceback.format_exc())
 
-    def write(self, data: bytearray) -> None:
+    def write(self, data: bytes) -> None:
         """Writes data to this source's FIFO
            Scream Source -> Receiver -> Sink Handler -> Sources -> Pipe -> FFMPEG -> Pipe -> Python -> Scream Sink
                                                            ^

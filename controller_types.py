@@ -1,5 +1,28 @@
+import ipaddress
 from typing import List
 from pydantic import BaseModel
+
+def verify_ip(ip: str) -> None:
+    """Verifies an ip address can be parsed correctly"""
+    try:
+        ipaddress.ip_address(ip)  # Verify IP address is formatted right
+    except ValueError:
+        raise Exception(f"Invalid IP address {ip}")
+    
+def verify_port(port: int) -> None:
+    """Verifies a port is between 1 and 65535"""
+    if port < 1 or port > 65535:
+        raise Exception(f"Invalid port {port}")
+
+def verify_name(name: str) -> None:
+    """Verifies a name is non-blank"""
+    if len(name) == 0:
+        raise Exception(f"Invalid name (Blank)")
+
+def verify_volume(volume: float) -> None:
+    """Verifies a volume is between 0 and 1"""
+    if volume < 0 or volume > 1:
+        raise Exception(f"Invalid Volume {volume} is not between 0 and 1")
 
 class SinkDescription(BaseModel): 
     """
@@ -20,6 +43,11 @@ class SinkDescription(BaseModel):
     volume: float = 1
     """Holds the volume for the sink"""
     def __init__(self, name: str, ip: str, port: int, is_group: bool, enabled: bool, group_members: List[str],  volume: float):
+        if not is_group:
+            verify_ip(ip)
+            verify_port(port)
+        verify_name(name)
+        verify_volume(volume)
         super().__init__(name = name, ip = ip, port = port, is_group = is_group, enabled = enabled, group_members = group_members, volume = volume)
 
 class SourceDescription(BaseModel):
@@ -39,6 +67,11 @@ class SourceDescription(BaseModel):
     volume: float = 1
     """Holds the volume for the source"""
     def __init__(self, name: str, ip: str, is_group: bool, enabled: bool, group_members: List[str], volume: float):
+        print(f"Adding source: {name} {ip} {is_group} {enabled} {group_members} {volume}")
+        if not is_group:
+            verify_ip(ip)
+        verify_name(name)
+        verify_volume(volume)
         super().__init__(name = name, ip = ip, is_group = is_group, enabled = enabled, group_members = group_members, volume = volume)
 
 class RouteDescription(BaseModel):
@@ -56,4 +89,6 @@ class RouteDescription(BaseModel):
     volume: float = 1
     """Route volume"""
     def __init__(self, name: str, sink: str, source: str, enabled: bool, volume: float):
+        verify_name(name)
+        verify_volume(volume)
         super().__init__(name = name, sink = sink, source = source, enabled = enabled, volume = volume)

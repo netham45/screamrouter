@@ -1,10 +1,12 @@
 from typing import List
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from starlette.responses import FileResponse
 from pydantic import BaseModel
 import threading
 import uvicorn
 from controller import SinkDescription, SourceDescription, RouteDescription, Controller
+import traceback
 
 class PostSink(BaseModel):
     name: str
@@ -76,7 +78,15 @@ class API(threading.Thread):
         self.start()
 
     def run(self) -> None:
+        self.app.add_exception_handler(Exception, self.__api_exception_handler)
         uvicorn.run(self.app, port=8080, host='0.0.0.0')
+
+    def __api_exception_handler(self, request: Request, exception: Exception) -> JSONResponse:
+        """Generic error handler so controller can throw generic exceptions and get useful messages returned to clients"""
+        return JSONResponse(
+            status_code = 500,
+            content = {"error": str(exception)}
+        )
 
     # Index Endpoint
     def read_index(self) -> FileResponse:
@@ -94,7 +104,8 @@ class API(threading.Thread):
         return FileResponse('site.css')
 
     # Sink Endpoints
-    def set_sink_volume(self, sink_id: int, volume: float) -> None:
+    def set_sink_volume(self, sink_id: int, volume: float) -> bool:
+        """Sets the volume for a sink"""
         return self.controller.update_sink_volume(sink_id, volume)
 
     def get_sinks(self) -> List[SinkDescription]:
@@ -121,7 +132,8 @@ class API(threading.Thread):
         return self.controller.enable_sink(sink_id)
 
     # Source Endpoints
-    def set_source_volume(self, source_id: int, volume: float) -> None:
+    def set_source_volume(self, source_id: int, volume: float) -> bool:
+        """Sets the volume for a source"""
         return self.controller.update_source_volume(source_id, volume)
     
     def get_sources(self) -> List[SourceDescription]:
@@ -148,7 +160,8 @@ class API(threading.Thread):
         return self.controller.enable_source(source_id)
 
     # Route Endpoints
-    def set_route_volume(self, route_id: int, volume: float) -> None:
+    def set_route_volume(self, route_id: int, volume: float) -> bool:
+        """Sets the volume for a route"""
         return self.controller.update_route_volume(route_id, volume)
     
     def get_routes(self) -> List[RouteDescription]:

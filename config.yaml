@@ -9,7 +9,7 @@ groups:
     - Office
     volume: 1.0
   - enabled: true
-    name: Bedroom
+    name: Bedroom Group
     sinks:
     - Bedroom
     - Bathroom
@@ -19,6 +19,11 @@ groups:
     name: Music
     sources:
     - Server
+    volume: 1.0
+  - enabled: true
+    name: test
+    sources:
+    - Office PC
     volume: 1.0
 routes:
 - enabled: true
@@ -30,6 +35,11 @@ routes:
   name: Office
   sink: Office
   source: Office PC
+  volume: 1.0
+- enabled: true
+  name: test
+  sink: Bedroom Group
+  source: test
   volume: 1.0
 sinks:
 - enabled: true
@@ -60,10 +70,6 @@ sources:
 - enabled: true
   ip: 192.168.3.172
   name: Livingroom PC
-  volume: 1.0
-- enabled: true
-  ip: 192.168.3.0
-  name: Tablet
   volume: 1.0
 - enabled: true
   ip: 192.168.3.199
