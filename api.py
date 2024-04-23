@@ -6,7 +6,6 @@ from pydantic import BaseModel
 import threading
 import uvicorn
 from controller import SinkDescription, SourceDescription, RouteDescription, Controller
-import traceback
 
 class PostSink(BaseModel):
     name: str
@@ -48,33 +47,65 @@ class API(threading.Thread):
         super().__init__()
         self.controller: Controller = controller
         """Holds the active controller"""
-        self.app: FastAPI = FastAPI()
+        tags_metadata = [
+            {
+                "name": "Sinks",
+                "description": "API endpoints for managing Sinks"
+            },
+            {
+                "name": "Sources",
+                "description": "API endpoints for managing Sources"
+            },
+            {
+                "name": "Routes",
+                "description": "API endpoints for managing Routes"
+            },
+            {
+                "name": "Site",
+                "description": "File handlers for the site interface"
+            }
+        ]
+        self.app: FastAPI = FastAPI( title="ScreamRouter",
+            description = "Routes PCM audio around for Scream sinks and sources",
+#            summary = "Routes PCM audio around for Scream sinks and sources",
+            version="0.0.1",
+            contact={
+                "name": "ScreamRouter",
+                "url": "http://github.com/netham45/screamrouter",
+            },
+            license_info={
+                "name": "No license chosen yet, all rights reserved",
+            },
+            openapi_tags=tags_metadata
+        )
         """FastAPI"""
-        self.app.get("/")(self.read_index)
-        self.app.get("/site.js")(self.read_javascript)
-        self.app.get("/site.css")(self.read_css)
-        self.app.get("/sinks/{sink_id}/volume/{volume}")(self.set_sink_volume)
-        self.app.get("/sinks")(self.get_sinks)
-        self.app.post("/groups/sinks")(self.add_sink_group)
-        self.app.post("/sinks")(self.add_sink)
-        self.app.delete("/sinks/{sink_id}")(self.delete_sink)
-        self.app.get("/sinks/{sink_id}/disable")(self.disable_sink)
-        self.app.get("/sinks/{sink_id}/enable")(self.enable_sink)
+        self.app.get("/", tags=["Site"])(self.read_index)
+        self.app.get("/site.js", tags=["Site"])(self.read_javascript)
+        self.app.get("/site.css", tags=["Site"])(self.read_css)
         
-        self.app.get("/sources/{source_id}/volume/{volume}")(self.set_source_volume)
-        self.app.get("/sources")(self.get_sources)
-        self.app.post("/groups/sources")(self.add_source_group)
-        self.app.post("/sources")(self.add_source)
-        self.app.delete("/sources/{source_id}")(self.delete_source)
-        self.app.get("/sources/{source_id}/disable")(self.disable_source)
-        self.app.get("/sources/{source_id}/enable")(self.enable_source)
+        self.app.get("/sinks", tags=["Sinks"])(self.get_sinks)
+        self.app.post("/groups/sinks", tags=["Sinks"])(self.add_sink_group)
+        self.app.post("/sinks", tags=["Sinks"])(self.add_sink)
+        self.app.delete("/sinks/{sink_id}", tags=["Sinks"])(self.delete_sink)
+        self.app.get("/sinks/{sink_id}/disable", tags=["Sinks"])(self.disable_sink)
+        self.app.get("/sinks/{sink_id}/enable", tags=["Sinks"])(self.enable_sink)
+        self.app.get("/sinks/{sink_id}/volume/{volume}", tags=["Sinks"])(self.set_sink_volume)
+        
+        self.app.get("/sources", tags=["Sources"])(self.get_sources)
+        self.app.post("/groups/sources", tags=["Sources"])(self.add_source_group)
+        self.app.post("/sources", tags=["Sources"])(self.add_source)
+        self.app.delete("/sources/{source_id}", tags=["Sources"])(self.delete_source)
+        self.app.get("/sources/{source_id}/disable", tags=["Sources"])(self.disable_source)
+        self.app.get("/sources/{source_id}/enable", tags=["Sources"])(self.enable_source)
+        self.app.get("/sources/{source_id}/volume/{volume}", tags=["Sources"])(self.set_source_volume)
 
-        self.app.get("/routes/{route_id}/volume/{volume}")(self.set_route_volume)
-        self.app.get("/routes")(self.get_routes)
-        self.app.post("/routes")(self.add_route)
-        self.app.delete("/routes/{route_id}")(self.delete_route)
-        self.app.get("/routes/{route_id}/disable")(self.disable_route)
-        self.app.get("/routes/{route_id}/enable")(self.enable_route)
+        self.app.get("/routes", tags=["Routes"])(self.get_routes)
+        self.app.get("/routes", tags=["Routes"])(self.get_routes)
+        self.app.post("/routes", tags=["Routes"])(self.add_route)
+        self.app.delete("/routes/{route_id}", tags=["Routes"])(self.delete_route)
+        self.app.get("/routes/{route_id}/disable", tags=["Routes"])(self.disable_route)
+        self.app.get("/routes/{route_id}/enable", tags=["Routes"])(self.enable_route)
+        self.app.get("/routes/{route_id}/volume/{volume}", tags=["Routes"])(self.set_route_volume)
         self.start()
 
     def run(self) -> None:
@@ -88,17 +119,15 @@ class API(threading.Thread):
             content = {"error": str(exception)}
         )
 
-    # Index Endpoint
+    # Site resource endpoints
     def read_index(self) -> FileResponse:
         """Index page"""
         return FileResponse('index.html')
 
-    # Javascript endpoint
     def read_javascript(self) -> FileResponse:
         """Javascript page"""
         return FileResponse('site.js')
 
-    # Javascript endpoint
     def read_css(self) -> FileResponse:
         """CSS page"""
         return FileResponse('site.css')
@@ -113,6 +142,7 @@ class API(threading.Thread):
         return self.controller.get_sinks()
 
     def add_sink(self, sink: PostSink) -> bool:
+        """Add a new sink"""
         return self.controller.add_sink(SinkDescription(sink.name, sink.ip, sink.port, False, True, [], 1))
 
     def add_sink_group(self, sink_group: PostSinkGroup) -> bool:
@@ -141,6 +171,7 @@ class API(threading.Thread):
         return self.controller.get_sources()
 
     def add_source(self, source: PostSource) -> bool:
+        """Add a new source"""
         return self.controller.add_source(SourceDescription(source.name, source.ip, False, True, [], 1))
 
     def add_source_group(self, source_group: PostSourceGroup) -> bool:
