@@ -31,13 +31,6 @@ class Receiver(threading.Thread):
         """Stops the Receiver and all sinks"""
         self.running = False
         self.sock.close()
-
-    def get_sink_status(self, sink_ip) -> None:
-        """For the provided sink, return nothing"""
-        for sink in self.sinks:
-            if sink._sink_ip == sink_ip:
-                return None
-        return None
     
     def __check_source_packet(self, source_ip: str, data: bytes) -> bool:
         """Verifies a packet is the right length"""

@@ -1,11 +1,16 @@
 from typing import List
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.templating import Jinja2Templates
 from starlette.responses import FileResponse
 from pydantic import BaseModel
 import threading
 import uvicorn
 from controller import SinkDescription, SourceDescription, RouteDescription, Controller
+
+from api_webstream import API_webstream
+
+templates = Jinja2Templates(directory="./")
 
 class PostSink(BaseModel):
     name: str
@@ -43,9 +48,10 @@ class PostRoute(BaseModel):
 
 class API(threading.Thread):
 
-    def __init__(self, controller):
+    def __init__(self):
         super().__init__()
-        self.controller: Controller = controller
+        self.__websocket: API_webstream = API_webstream()
+        self.controller: Controller = Controller(self.__websocket)
         """Holds the active controller"""
         tags_metadata = [
             {
@@ -86,26 +92,28 @@ class API(threading.Thread):
         self.app.get("/sinks", tags=["Sinks"])(self.get_sinks)
         self.app.post("/groups/sinks", tags=["Sinks"])(self.add_sink_group)
         self.app.post("/sinks", tags=["Sinks"])(self.add_sink)
-        self.app.delete("/sinks/{sink_id}", tags=["Sinks"])(self.delete_sink)
-        self.app.get("/sinks/{sink_id}/disable", tags=["Sinks"])(self.disable_sink)
-        self.app.get("/sinks/{sink_id}/enable", tags=["Sinks"])(self.enable_sink)
-        self.app.get("/sinks/{sink_id}/volume/{volume}", tags=["Sinks"])(self.set_sink_volume)
+        self.app.delete("/sinks/{sink_name}", tags=["Sinks"])(self.delete_sink)
+        self.app.get("/sinks/{sink_name}/disable", tags=["Sinks"])(self.disable_sink)
+        self.app.get("/sinks/{sink_name}/enable", tags=["Sinks"])(self.enable_sink)
+        self.app.get("/sinks/{sink_name}/volume/{volume}", tags=["Sinks"])(self.set_sink_volume)
         
         self.app.get("/sources", tags=["Sources"])(self.get_sources)
         self.app.post("/groups/sources", tags=["Sources"])(self.add_source_group)
         self.app.post("/sources", tags=["Sources"])(self.add_source)
-        self.app.delete("/sources/{source_id}", tags=["Sources"])(self.delete_source)
-        self.app.get("/sources/{source_id}/disable", tags=["Sources"])(self.disable_source)
-        self.app.get("/sources/{source_id}/enable", tags=["Sources"])(self.enable_source)
-        self.app.get("/sources/{source_id}/volume/{volume}", tags=["Sources"])(self.set_source_volume)
+        self.app.delete("/sources/{source_name}", tags=["Sources"])(self.delete_source)
+        self.app.get("/sources/{source_name}/disable", tags=["Sources"])(self.disable_source)
+        self.app.get("/sources/{source_name}/enable", tags=["Sources"])(self.enable_source)
+        self.app.get("/sources/{source_name}/volume/{volume}", tags=["Sources"])(self.set_source_volume)
 
         self.app.get("/routes", tags=["Routes"])(self.get_routes)
         self.app.get("/routes", tags=["Routes"])(self.get_routes)
         self.app.post("/routes", tags=["Routes"])(self.add_route)
-        self.app.delete("/routes/{route_id}", tags=["Routes"])(self.delete_route)
-        self.app.get("/routes/{route_id}/disable", tags=["Routes"])(self.disable_route)
-        self.app.get("/routes/{route_id}/enable", tags=["Routes"])(self.enable_route)
-        self.app.get("/routes/{route_id}/volume/{volume}", tags=["Routes"])(self.set_route_volume)
+        self.app.delete("/routes/{route_name}", tags=["Routes"])(self.delete_route)
+        self.app.get("/routes/{route_name}/disable", tags=["Routes"])(self.disable_route)
+        self.app.get("/routes/{route_name}/enable", tags=["Routes"])(self.enable_route)
+        self.app.get("/routes/{route_name}/volume/{volume}", tags=["Routes"])(self.set_route_volume)
+        self.app.websocket("/ws/{sink_ip}/")(self.__websocket.websocket_api_handler)
+        self.app.get("/stream/{sink_ip}/")(self.__websocket.http_api_handler)
         self.start()
 
     def run(self) -> None:
@@ -120,22 +128,34 @@ class API(threading.Thread):
         )
 
     # Site resource endpoints
-    def read_index(self) -> FileResponse:
+    def read_index(self, request: Request):
         """Index page"""
-        return FileResponse('index.html')
+        return templates.TemplateResponse(
+            request=request, name="index.html"
+            )
 
-    def read_javascript(self) -> FileResponse:
+    def read_javascript(self, request: Request):
         """Javascript page"""
-        return FileResponse('site.js')
+        return templates.TemplateResponse(
+            request=request, name="site.js"
+            )
 
-    def read_css(self) -> FileResponse:
+    def read_css(self, request: Request):
         """CSS page"""
-        return FileResponse('site.css')
+        return templates.TemplateResponse(
+            request=request, name="site.css"
+            )
+    
+    def read_audioprocessor(self, request: Request):
+        """audioprocessor js"""
+        return templates.TemplateResponse(
+            request=request, name="audioProcessor.js"
+            )
 
     # Sink Endpoints
-    def set_sink_volume(self, sink_id: int, volume: float) -> bool:
+    def set_sink_volume(self, sink_name: str, volume: float) -> bool:
         """Sets the volume for a sink"""
-        return self.controller.update_sink_volume(sink_id, volume)
+        return self.controller.update_sink_volume(sink_name, volume)
 
     def get_sinks(self) -> List[SinkDescription]:
         """Get all sinks"""
@@ -149,22 +169,22 @@ class API(threading.Thread):
         """Add a new sink group"""
         return self.controller.add_sink(SinkDescription(sink_group.name, "", 0, True, True, sink_group.sinks, 1))
 
-    def delete_sink(self, sink_id: int) -> bool:
+    def delete_sink(self, sink_name: str) -> bool:
         """Delete a sink group by ID"""
-        return self.controller.delete_sink(sink_id)
+        return self.controller.delete_sink(sink_name)
 
-    def disable_sink(self, sink_id: int) -> bool:
+    def disable_sink(self, sink_name: str) -> bool:
         """Disable a sink"""
-        return self.controller.disable_sink(sink_id)
+        return self.controller.disable_sink(sink_name)
 
-    def enable_sink(self, sink_id: int) -> bool:
+    def enable_sink(self, sink_name: str) -> bool:
         """Enable a sink"""
-        return self.controller.enable_sink(sink_id)
+        return self.controller.enable_sink(sink_name)
 
     # Source Endpoints
-    def set_source_volume(self, source_id: int, volume: float) -> bool:
+    def set_source_volume(self, source_name: str, volume: float) -> bool:
         """Sets the volume for a source"""
-        return self.controller.update_source_volume(source_id, volume)
+        return self.controller.update_source_volume(source_name, volume)
     
     def get_sources(self) -> List[SourceDescription]:
         """Get all sources"""
@@ -178,22 +198,22 @@ class API(threading.Thread):
         """Add a new source group"""
         return self.controller.add_source(SourceDescription(source_group.name, "", True, True, source_group.sources, 1))
 
-    def delete_source(self, source_id: int) -> bool:
-        """Delete a source group by ID"""
-        return self.controller.delete_source(source_id)
+    def delete_source(self, source_name: str) -> bool:
+        """Delete a source group by name"""
+        return self.controller.delete_source(source_name)
 
-    def disable_source(self, source_id: int) -> bool:
+    def disable_source(self, source_name: str) -> bool:
         """Disable a source"""
-        return self.controller.disable_source(source_id)
+        return self.controller.disable_source(source_name)
 
-    def enable_source(self, source_id: int) -> bool:
+    def enable_source(self, source_name: str) -> bool:
         """Enable a source"""
-        return self.controller.enable_source(source_id)
+        return self.controller.enable_source(source_name)
 
     # Route Endpoints
-    def set_route_volume(self, route_id: int, volume: float) -> bool:
+    def set_route_volume(self, route_name: str, volume: float) -> bool:
         """Sets the volume for a route"""
-        return self.controller.update_route_volume(route_id, volume)
+        return self.controller.update_route_volume(route_name, volume)
     
     def get_routes(self) -> List[RouteDescription]:
         """Get all routes"""
@@ -203,14 +223,14 @@ class API(threading.Thread):
         """Add a new route"""
         return self.controller.add_route(RouteDescription(route.name, route.sink, route.source, True, 1))
 
-    def delete_route(self, route_id: int)  -> bool:
+    def delete_route(self, route_name: str)  -> bool:
         """Delete a route by ID"""
-        return self.controller.delete_route(route_id)
+        return self.controller.delete_route(route_name)
 
-    def disable_route(self, route_id: int)  -> bool:
+    def disable_route(self, route_name: str)  -> bool:
         """Disable a route"""
-        return self.controller.disable_route(route_id)
+        return self.controller.disable_route(route_name)
 
-    def enable_route(self, route_id: int)  -> bool:
+    def enable_route(self, route_name: str)  -> bool:
         """Enable a route"""
-        return self.controller.enable_route(route_id)
+        return self.controller.enable_route(route_name)

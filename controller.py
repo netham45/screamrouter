@@ -1,15 +1,14 @@
-import ipaddress
 import yaml
 from copy import copy
 
-from typing import List
+from typing import List, Optional
 
 import mixer.receiver
 import mixer.sink
 
-from controller_types import SinkDescription
-from controller_types import SourceDescription
-from controller_types import RouteDescription
+from controller_types import SinkDescription, SourceDescription, RouteDescription, InUseException
+
+from api_webstream import API_webstream
 
 # Helper functions
 #def unique[T](list: List[T]) -> List[T]:  # One day
@@ -21,9 +20,10 @@ def unique(list: List) -> List:
             _list.append(element)
     return _list
 
+
 class Controller:
     """The controller handles tracking configuration and loading the main receiver/sinks based off of it"""
-    def __init__(self):
+    def __init__(self, websocket: Optional[API_webstream]):
         """Initialize an empty controller"""
         self.__sink_objects: List[mixer.sink.Sink] = []
         """List of Sink objects the receiver is using"""
@@ -41,6 +41,7 @@ class Controller:
         """Rather the recevier has been set"""
         self.__loaded: bool = False
         """Holds rather the config is loaded"""
+        self.__api_websocket: Optional[API_webstream] = websocket
         self.__load_yaml()
         self.__start_receiver()
 
@@ -60,25 +61,25 @@ class Controller:
         self.__start_receiver()
         return True
 
-    def delete_sink(self, sink_id: int) -> bool:
+    def delete_sink(self, sink_name: str) -> bool:
         """Deletes a sink by index"""
-        self.__verify_sink_index(sink_id)
-        self.__verify_sink_unused(self.__sink_descriptions[sink_id])
-        self.__sink_descriptions.pop(sink_id)
+        sink: SinkDescription = self.__get_sink_by_name(sink_name)
+        self.__verify_sink_unused(sink)
+        self.__sink_descriptions.remove(sink)
         self.__start_receiver()
         return True
 
-    def enable_sink(self, sink_id: int) -> bool:
+    def enable_sink(self, sink_name: str) -> bool:
         """Enables a sink by index"""
-        self.__verify_sink_index(sink_id)
-        self.__sink_descriptions[sink_id].enabled = True
+        sink: SinkDescription = self.__get_sink_by_name(sink_name)
+        sink.enabled = True
         self.__start_receiver()
         return True
 
-    def disable_sink(self, sink_id: int) -> bool:
+    def disable_sink(self, sink_name: str) -> bool:
         """Disables a sink by index"""
-        self.__verify_sink_index(sink_id)
-        self.__sink_descriptions[sink_id].enabled = False
+        sink: SinkDescription = self.__get_sink_by_name(sink_name)
+        sink.enabled = False
         self.__start_receiver()
         return True
 
@@ -93,25 +94,25 @@ class Controller:
         self.__start_receiver()
         return True
 
-    def delete_source(self, source_id: int) -> bool:
+    def delete_source(self, source_name: str) -> bool:
         """Deletes a source by index"""
-        self.__verify_source_index(source_id)
-        self.__verify_source_unused(self.__source_descriptions[source_id])
-        self.__source_descriptions.pop(source_id)
+        source: SourceDescription = self.__get_source_by_name(source_name)
+        self.__verify_source_unused(source)
+        self.__source_descriptions.remove(source)
         self.__start_receiver()
         return True
 
-    def enable_source(self, source_id: int) -> bool:
+    def enable_source(self, source_name: str) -> bool:
         """Enables a source by index"""
-        self.__verify_source_index(source_id)
-        self.__source_descriptions[source_id].enabled = True
+        source: SourceDescription = self.__get_source_by_name(source_name)
+        source.enabled = True
         self.__start_receiver()
         return True
 
-    def disable_source(self, source_id: int) -> bool:
+    def disable_source(self, source_name: str) -> bool:
         """Disables a source by index"""
-        self.__verify_source_index(source_id)
-        self.__source_descriptions[source_id].enabled = False
+        source: SourceDescription = self.__get_source_by_name(source_name)
+        source.enabled = False
         self.__start_receiver()
         return True
 
@@ -126,63 +127,45 @@ class Controller:
         self.__start_receiver()
         return True
 
-    def delete_route(self, route_id: int) -> bool:
+    def delete_route(self, route_name: str) -> bool:
         """Deletes a route by index"""
-        self.__verify_route_index(route_id)
-        self.__route_descriptions.pop(route_id)
+        route: RouteDescription = self.__get_route_by_name(route_name)
+        self.__route_descriptions.remove(route)
         self.__start_receiver()
         return True
 
-    def enable_route(self, route_id: int) -> bool:
+    def enable_route(self, route_name: str) -> bool:
         """Enables a route by index"""
-        self.__verify_route_index(route_id)
-        self.__route_descriptions[route_id].enabled = True
+        route: RouteDescription = self.__get_route_by_name(route_name)
+        route.enabled = True
         self.__start_receiver()
         return True
 
-    def disable_route(self, route_id: int) -> bool:
+    def disable_route(self, route_name: str) -> bool:
         """Disables a route by index"""
-        self.__verify_route_index(route_id)
-        self.__route_descriptions[route_id].enabled = False
+        route: RouteDescription = self.__get_route_by_name(route_name)
+        route.enabled = False
         self.__start_receiver()
         return True
     
-    def update_source_volume(self, source_id: int, volume: float) -> bool:
+    def update_source_volume(self, source_name: str, volume: float) -> bool:
         """Sets the volume for source source_id to volume"""
-        self.__verify_source_index(source_id)
-        found_source: bool = False
-        for idx, source in enumerate(self.__source_descriptions):
-            if idx == source_id:
-                source.volume = volume
-                found_source = True
-        if not found_source:
-            raise Exception("Source not found")
+        source: SourceDescription = self.__get_source_by_name(source_name)
+        source.set_volume(volume)
         self.__apply_volume_change()
         return True
 
-    def update_sink_volume(self, sink_id: int, volume: float) -> bool:
+    def update_sink_volume(self, sink_name: str, volume: float) -> bool:
         """Sets the volume for sink sink_id to volume"""
-        self.__verify_sink_index(sink_id)
-        found_sink: bool = False
-        for idx, sink in enumerate(self.__sink_descriptions):
-            if idx == sink_id:
-                sink.volume = volume
-                found_sink = True
-        if not found_sink:
-            raise Exception("Sink not found")
+        sink: SinkDescription = self.__get_sink_by_name(sink_name)
+        sink.set_volume(volume)
         self.__apply_volume_change()
         return True
 
-    def update_route_volume(self, route_id: int, volume: float) -> bool:
+    def update_route_volume(self, route_name: str, volume: float) -> bool:
         """Sets the volume for route route_id to volume"""
-        self.__verify_route_index(route_id)
-        found_route: bool = False
-        for idx, route in enumerate(self.__route_descriptions):
-            if idx == route_id:
-                route.volume = volume
-                found_route = True
-        if not found_route:
-            raise Exception("Route not found")
+        route: RouteDescription = self.__get_route_by_name(route_name)
+        route.set_volume(volume)
         self.__apply_volume_change()
         return True
 
@@ -192,7 +175,7 @@ class Controller:
         """Verifies all sink group members exist, throws exception if not"""
         for _sink in self.__sink_descriptions:
             if sink.name == _sink.name:
-                raise Exception(f"Sink name '{sink.name}' already in use")
+                raise ValueError(f"Sink name '{sink.name}' already in use")
         for member in sink.group_members:
             self.__get_sink_by_name(member)
         if sink.is_group:
@@ -203,7 +186,7 @@ class Controller:
         """Verifies all source group members exist, throws exception if not"""
         for _source in self.__source_descriptions:
             if source.name == _source.name:
-                raise Exception(f"Source name '{source.name}' already in use")
+                raise ValueError(f"Source name '{source.name}' already in use")
         if source.is_group:
             for member in source.group_members:
                 self.__get_source_by_name(member)
@@ -221,7 +204,7 @@ class Controller:
             group_names: List[str] = []
             for group in groups:
                 group_names.append(group.name)
-            raise Exception(f"Source {source.name} is in use by Groups {group_names}")
+            raise InUseException(f"Source {source.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
         try:
              routes = self.__get_routes_by_source(source)
@@ -232,7 +215,7 @@ class Controller:
         for route in routes:
             print(f"Comparing {route.source} to {source.name}")
             if route.source == source.name:
-                raise Exception(f"Source {source.name} is in use by Route {route.name}")
+                raise InUseException(f"Source {source.name} is in use by Route {route.name}")
 
     def __verify_sink_unused(self, sink: SinkDescription) -> None:
         """Verifies a sink is unused, throws exception if not"""
@@ -242,7 +225,7 @@ class Controller:
             group_names: List[str] = []
             for group in groups:
                 group_names.append(group.name)
-            raise Exception(f"Sink {sink.name} is in use by Groups {group_names}")
+            raise InUseException(f"Sink {sink.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
         try:
              routes = self.__get_routes_by_sink(sink)
@@ -253,23 +236,23 @@ class Controller:
         for route in routes:
             print(f"Comparing {route.sink} to {sink.name}")
             if route.sink == sink.name:
-                raise Exception(f"Sink {sink.name} is in use by Route {route.name}")
+                raise InUseException(f"Sink {sink.name} is in use by Route {route.name}")
                                           
     def __verify_sink_index(self, sink_index: int) -> None:
         """Verifies sink index is >= 0 and < len(self.__sink_descriptions), throws exception if not"""
         if sink_index < 0 or sink_index >= len(self.__sink_descriptions):
-            raise Exception(f"Invalid sink index {sink_index}, max index is {len(self.__sink_descriptions)}")
+            raise IndexError(f"Invalid sink index {sink_index}, max index is {len(self.__sink_descriptions)}")
         print(f"Index {sink_index} verified")
         
     def __verify_source_index(self, source_index: int) -> None:
         """Verifies source index is >= 0 and < len(self.__source_descriptions), throws exception if not"""
         if source_index < 0 or source_index >= len(self.__source_descriptions):
-            raise Exception(f"Invalid source index {source_index}, max index is {len(self.__source_descriptions)}")
+            raise IndexError(f"Invalid source index {source_index}, max index is {len(self.__source_descriptions)}")
 
     def __verify_route_index(self, route_index: int) -> None:
         """Verifies route index is >= 0 and < len(self.__route_descriptions), throws exception if not"""
         if route_index < 0 or route_index >= len(self.__route_descriptions):
-            raise Exception(f"Invalid route index {route_index}, max index is {len(self.__route_descriptions)}")
+            raise IndexError(f"Invalid route index {route_index}, max index is {len(self.__route_descriptions)}")
 
     def __apply_volume_change(self) -> None:
         """Applies the current controller volume to the running ffmpeg instances"""
@@ -343,7 +326,7 @@ class Controller:
         self.__sink_objects = []
         for sink_ip in self.__sinks_to_sources.keys():
             if sink_ip != "":
-                sink = mixer.sink.Sink(sink_ip, self.__sinks_to_sources[sink_ip])
+                sink = mixer.sink.Sink(sink_ip, self.__sinks_to_sources[sink_ip], self.__api_websocket)
                 self.__receiver.register_sink(sink)
                 self.__sink_objects.append(sink)
 
@@ -354,7 +337,7 @@ class Controller:
             print(f"Comparing {sink.name} to {name}")
             if sink.name == name:
                 return sink
-        raise Exception(f"Sink not found by name {name}")
+        raise NameError(f"Sink not found by name {name}")
 
     def __get_real_sinks_from_sink(self, sink: SinkDescription, volume_multiplier: float) -> List[SinkDescription]:
         """Recursively work through sink groups to get all real sinks
@@ -405,7 +388,7 @@ class Controller:
         for source in self.__source_descriptions:
             if source.name == name:
                 return source
-        raise Exception(f"No source found by name {name}")
+        raise NameError(f"No source found by name {name}")
 
     def __get_real_sources_from_source(self, source: SourceDescription, volume_multiplier: float) -> List[SourceDescription]:
         """Recursively work through source groups to get all real sources
@@ -477,6 +460,13 @@ class Controller:
         return source_groups
 
     # Route Finders
+    def __get_route_by_name(self, name: str) -> RouteDescription:
+        """Get route by name"""
+        for route in self.__route_descriptions:
+            if route.name == name:
+                return route
+        raise NameError(f"No route found by name {name}")
+    
     def __get_routes_by_enabled_sink(self, sink: SinkDescription) -> List[RouteDescription]:
         """Get all routes that use this sink
            Volume levels for the returned routes will be adjusted based off the sink levels

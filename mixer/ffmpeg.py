@@ -1,4 +1,3 @@
-import io
 import subprocess
 import time                     
 
@@ -60,6 +59,7 @@ class ffmpeg(threading.Thread):
         # TODO: Add output bitdepth/channels/sample rate to yaml
         ffmpeg_command_parts: List[str] = []
         ffmpeg_command_parts.extend(['-y', '-f', 's32le', '-ac', '2', '-ar', '48000', f"file:{self.__fifo_in}"])  # ffmpeg output
+        ffmpeg_command_parts.extend(['-y', '-f', 'mp3', '-ac', '2', '-reservoir', '0', f"file:{self.__fifo_in}-mp3"])  # ffmpeg ogg output
         return ffmpeg_command_parts
 
     def __get_ffmpeg_command(self, sources: List[SourceInfo]) -> List[str]:
@@ -104,7 +104,7 @@ class ffmpeg(threading.Thread):
             self.send_ffmpeg_command(command)
     
     def stop(self) -> None:
-        print(f"[Sink {self.__sink_ip}] Stopping ffmperg")
+        print(f"[Sink {self.__sink_ip}] Stopping ffmpeg")
         self.__running = False
         self.__ffmpeg.kill()
 

@@ -7,22 +7,27 @@ def verify_ip(ip: str) -> None:
     try:
         ipaddress.ip_address(ip)  # Verify IP address is formatted right
     except ValueError:
-        raise Exception(f"Invalid IP address {ip}")
+        raise ValueError(f"Invalid IP address {ip}")
     
 def verify_port(port: int) -> None:
     """Verifies a port is between 1 and 65535"""
     if port < 1 or port > 65535:
-        raise Exception(f"Invalid port {port}")
+        raise ValueError(f"Invalid port {port}")
 
 def verify_name(name: str) -> None:
     """Verifies a name is non-blank"""
     if len(name) == 0:
-        raise Exception(f"Invalid name (Blank)")
+        raise ValueError(f"Invalid name (Blank)")
 
 def verify_volume(volume: float) -> None:
     """Verifies a volume is between 0 and 1"""
     if volume < 0 or volume > 1:
-        raise Exception(f"Invalid Volume {volume} is not between 0 and 1")
+        raise ValueError(f"Invalid Volume {volume} is not between 0 and 1")
+    
+class InUseException(Exception):
+    """Called when removal is attempted of something that is in use"""
+    def __init__(self, message: str):
+        super().__init__(self, message)
 
 class SinkDescription(BaseModel): 
     """
@@ -50,6 +55,11 @@ class SinkDescription(BaseModel):
         verify_volume(volume)
         super().__init__(name = name, ip = ip, port = port, is_group = is_group, enabled = enabled, group_members = group_members, volume = volume)
 
+    def set_volume(self, volume: float):
+        """Verifies volume then sets i"""
+        verify_volume(volume)
+        self.volume = volume
+
 class SourceDescription(BaseModel):
     """
     Holds either a source IP or a group of source names
@@ -74,6 +84,11 @@ class SourceDescription(BaseModel):
         verify_volume(volume)
         super().__init__(name = name, ip = ip, is_group = is_group, enabled = enabled, group_members = group_members, volume = volume)
 
+    def set_volume(self, volume: float):
+        """Verifies volume then sets i"""
+        verify_volume(volume)
+        self.volume = volume
+
 class RouteDescription(BaseModel):
     """
     Holds a route mapping from source to sink
@@ -92,3 +107,8 @@ class RouteDescription(BaseModel):
         verify_name(name)
         verify_volume(volume)
         super().__init__(name = name, sink = sink, source = source, enabled = enabled, volume = volume)
+
+    def set_volume(self, volume: float):
+        """Verifies volume then sets i"""
+        verify_volume(volume)
+        self.volume = volume

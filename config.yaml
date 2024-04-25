@@ -20,11 +20,6 @@ groups:
     sources:
     - Server
     volume: 1.0
-  - enabled: true
-    name: test
-    sources:
-    - Office PC
-    volume: 1.0
 routes:
 - enabled: true
   name: Music to All
@@ -37,9 +32,9 @@ routes:
   source: Office PC
   volume: 1.0
 - enabled: true
-  name: test
-  sink: Bedroom Group
-  source: test
+  name: Office 2
+  sink: Office
+  source: Office PC Management VLAN
   volume: 1.0
 sinks:
 - enabled: true
@@ -74,4 +69,8 @@ sources:
 - enabled: true
   ip: 192.168.3.199
   name: Office PC
+  volume: 1.0
+- enabled: true
+  ip: 192.168.0.103
+  name: Office PC Management VLAN
   volume: 1.0

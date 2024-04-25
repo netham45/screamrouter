@@ -1,12 +1,113 @@
-TD.select, TR {
-    width: 50%;
-    height: 200px;
+TABLE.main > TBODY {
+    backdrop-filter: blur(30px);
 }
-SELECT { 
+
+body {
+  background-color: #000100;
+}
+
+TD.select {
+    min-height: 50px;
+}
+
+TD.column {
+    vertical-align: top;
+}
+
+TABLE.button {
+    width: 95%;
+}
+
+INPUT {
     width: 100%;
+}
+
+TD.name {
+    width: 125px;
+}
+
+TR.buttonsandnames {
+    height: 1;
+}
+
+TABLE#sourcestable, TABLE#sinkstable, TABLE#routestable {
     height: 100%;
 }
-TD.buttons {
-    text-align: left;
-    width: 10%;
+
+TABLE.columnholder {
+  width: 100%;
+  height: 80%;
+}
+
+DIV.column  {
+    height: 100%;
+}
+
+TD.title {
+    font-family: "Courier";
+    padding-left: 25px;
+    font-weight: 1000;
+    font-size: 48pt;
+
+    text-shadow: 0 0 20px #fff, 0 0 30px #AA7777, 0 0 40px #AA7777, 0 0 50px #AA7777, 0 0 60px #AA7777, 0 0 70px #AA7777, 0 0 80px #AA7777;
+    text-align: center;
+    padding-top: 10px;
+    width: 100%;
+}
+
+DIV.name {
+    font-family: "Courier";
+    padding-left: 25px;
+    font-weight: 1000;
+    font-size: 14pt;
+    text-shadow: 0 0 20px #fff, 0 0 30px #AA7777, 0 0 40px #AA7777, 0 0 50px #AA7777, 0 0 60px #AA7777, 0 0 70px #AA7777, 0 0 80px #AA7777;
+    z-index: 0;
+}
+
+SELECT { 
+    background:none;
+    height: 101%;
+    width: 101%;
+    background-image: linear-gradient(rgba(221,221,255,.75), rgba(153,153,187,.75));
+    overflow: auto;
+    border: none;
+    outline: none;
+}
+
+TABLE#headertable td {
+    height: 100%;
+    vertical-align: top;
+}
+
+/* bubbles */
+
+TABLE.main {
+    overflow: hidden;
+    border-collapse: collapse;
+    background-color: #004400;
+    border-radius: 25px;
+    background-size: 60vmin 60vmin;
+    width: 100%;
+}
+
+TABLE#headertable {
+    height: 10%;
+    vertical-align: center;
+    background-image:  {% for i in range(0, 45) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 200) | random}}, {{ range(0, 10) | random}}, {{ range(0, 100) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 45) %}{{ range(-100, 200) | random}}% {{ range(-100, 200) | random}}%, {% endfor %}{{ range(-100, 200) | random}}% {{ range(-100, 200) | random}}%;
+}
+
+TABLE#sourcestable {
+    background-image:  {% for i in range(0, 45) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 100) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 45) %}{{ range(-100, 200) | random}}% {{ range(-100, 200) | random}}%, {% endfor %}{{ range(-100, 200) | random}}% {{ range(-100, 200) | random}}%;
+}
+
+TABLE#sinkstable {
+    background-image:  {% for i in range(0, 45) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 100) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 45) %}{{ range(-100, 200) | random}}% {{ range(-100, 200) | random}}%, {% endfor %}{{ range(-100, 200) | random}}% {{ range(-100, 200) | random}}%;
+}
+
+TABLE#routestable {
+    background-image:  {% for i in range(0, 45) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 100) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 45) %}{{ range(-100, 200) | random}}% {{ range(-100, 200) | random}}%, {% endfor %}{{ range(-100, 200) | random}}% {{ range(-100, 200) | random}}%;
 }

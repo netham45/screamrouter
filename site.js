@@ -20,12 +20,14 @@ function call_api(endpoint, method, data, callback) {
     }
 }
 
-function create_option(name, label, id) {
-  option = document.createElement("option");
-  option.name = name;
-  option.innerHTML = label;
-  option.value = id;
-  return option;
+function create_option(name, label, id, ip, is_group = false) {
+    option = document.createElement("option");
+    option.name = name;
+    option.innerHTML = label;
+    option.value = id;
+    option.ip = ip;
+    option.is_group = is_group;
+    return option;
 }
 
 // API Calls
@@ -37,7 +39,7 @@ function populate_sinks() {
 function populate_sinks_callback(data) {
     sinks = data
     for (entry in data)
-        document.getElementById("sinks").appendChild(create_option(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry));
+        document.getElementById("sinks").appendChild(create_option(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry, data[entry].ip, data[entry].is_group));
 }
 
 function populate_sources() {
@@ -47,7 +49,7 @@ function populate_sources() {
 function populate_sources_callback(data) {
     sources = data
     for (entry in data)
-        document.getElementById("sources").appendChild(create_option(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry));
+        document.getElementById("sources").appendChild(create_option(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry,null,data[entry].is_group));
 }
 
 function populate_routes() {
@@ -57,43 +59,43 @@ function populate_routes() {
 function populate_routes_callback(data){
     routes = data
     for (entry in data)
-        document.getElementById("routes").appendChild(create_option(data[entry].name, data[entry].name + " [Sink: " + data[entry].sink + " Source: " + data[entry].source + "]" + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry));
+        document.getElementById("routes").appendChild(create_option(data[entry].name, data[entry].name + " [Sink: " + data[entry].sink + " Source: " + data[entry].source + "]" + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry, null, false));
 }
 
-function remove_sink(sink_id) {
-    call_api("sinks/" + sink_id, "DELETE", "", reload_callback);
+function remove_sink(sink_name) {
+    call_api("sinks/" + sink_name, "DELETE", "", reload_callback);
 }
 
-function remove_source(source_id) {
-    call_api("sources/" + source_id, "DELETE", "", reload_callback);
+function remove_source(source_name) {
+    call_api("sources/" + source_name, "DELETE", "", reload_callback);
 }
 
-function remove_route(route_id) {
-    call_api("routes/" + route_id, "DELETE", "", reload_callback);
+function remove_route(route_name) {
+    call_api("routes/" + route_name, "DELETE", "", reload_callback);
 }
 
-function disable_sink(sink_id) {
-    call_api("sinks/" + sink_id + "/disable", "GET", "", reload_callback);
+function disable_sink(sink_name) {
+    call_api("sinks/" + sink_name + "/disable", "GET", "", reload_callback);
 }
 
-function enable_sink(sink_id) {
-    call_api("sinks/" + sink_id + "/enable", "GET", "", reload_callback);
+function enable_sink(sink_name) {
+    call_api("sinks/" + sink_name + "/enable", "GET", "", reload_callback);
 }
 
-function disable_source(source_id) {
-  call_api("sources/" + source_id + "/disable", "GET", "", reload_callback);
+function disable_source(source_name) {
+  call_api("sources/" + source_name + "/disable", "GET", "", reload_callback);
 }
 
-function enable_source(source_id) {
-    call_api("sources/" + source_id + "/enable", "GET", "", reload_callback);
+function enable_source(source_name) {
+    call_api("sources/" + source_name + "/enable", "GET", "", reload_callback);
 }
 
-function disable_route(route_id) {
-    call_api("routes/" + route_id + "/disable", "GET", "", reload_callback);
+function disable_route(route_name) {
+    call_api("routes/" + route_name + "/disable", "GET", "", reload_callback);
 }
 
-function enable_route(route_id) {
-    call_api("routes/" + route_id + "/enable", "GET", "", reload_callback);
+function enable_route(route_name) {
+    call_api("routes/" + route_name + "/enable", "GET", "", reload_callback);
 }
 
 
@@ -123,21 +125,21 @@ function add_source_button() {
 function remove_source_button() {
     options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
     options.reverse().forEach(function (option){
-        remove_source(option.value);
+        remove_source(option.name);
     });
 }
 
 function disable_source_button() {
     options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
     options.reverse().forEach(function (option){
-        disable_source(option.value);
+        disable_source(option.name);
     });
 }
 
 function enable_source_button() {
     options = [... document.querySelectorAll("SELECT#sources OPTION:checked")]
     options.reverse().forEach(function (option){
-        enable_source(option.value);
+        enable_source(option.name);
     });
 }
 
@@ -147,7 +149,10 @@ function add_source_group_button() {
     options.reverse().forEach(function (option){
       labels.push(option.name);
     });
-    data = {"name": document.getElementById("source_name").value, "sources": labels};
+    name = window.prompt("Provide a source group name")
+    if (name == null)
+        return
+    data = {"name": name, "sources": labels};
     call_api("groups/sources/", "POST", JSON.stringify(data), reload_callback);
 }
 
@@ -168,21 +173,21 @@ function add_sink_button() {
 function remove_sink_button() {
     options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
     options.reverse().forEach(function (option){
-        remove_sink(option.value);
+        remove_sink(option.name);
     });
 }
 
 function disable_sink_button() {
     options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
     options.reverse().forEach(function (option){
-        disable_sink(option.value);
+        disable_sink(option.name);
     });
 }
 
 function enable_sink_button() {
     options = [... document.querySelectorAll("SELECT#sinks OPTION:checked")]
     options.reverse().forEach(function (option){
-        enable_sink(option.value);
+        enable_sink(option.name);
     });
 }
 
@@ -192,7 +197,10 @@ function add_sink_group_button(){
     options.reverse().forEach(function (option){
       labels.push(option.name);
     });
-    data = {"name": document.getElementById("sink_name").value, "sinks": labels};
+    name = window.prompt("Provide a sink group name")
+    if (name == null)
+        return
+    data = {"name": name, "sinks": labels};
     call_api("groups/sinks/", "POST", JSON.stringify(data), reload_callback);
 }
 
@@ -203,28 +211,31 @@ function add_route_button() {
         alert("Select one source and sink per route");
         return false;
     }
-    data = {"name": document.getElementById("route_name").value, "source": sourceOptions[0].name, "sink": sinkOptions[0].name};
+    name = window.prompt("Provide a sink group name")
+    if (name == null)
+        return
+    data = {"name": name, "source": sourceOptions[0].name, "sink": sinkOptions[0].name};
     call_api("routes", "POST", JSON.stringify(data), reload_callback);
 }
 
 function remove_route_button() {
     options = [... document.querySelectorAll("SELECT#routes OPTION:checked")]
     options.reverse().forEach(function (option){
-        remove_route(option.value);
+        remove_route(option.name);
     });
 }
 
 function disable_route_button() {
     options = [... document.querySelectorAll("SELECT#routes OPTION:checked")]
     options.reverse().forEach(function (option){
-        disable_route(option.value);
+        disable_route(option.name);
     });
 }
 
 function enable_route_button() {
     options = [... document.querySelectorAll("SELECT#routes OPTION:checked")]
     options.reverse().forEach(function (option){
-        enable_route(option.value);
+        enable_route(option.name);
     });
 }
 
@@ -298,7 +309,7 @@ function source_volume_onchange() {
     {
         for (source in sources) {
            if (checkedoptions[0].name == sources[source].name) {
-              call_api("sources/" + source + "/volume/" + (volumeslider.value / 100), "GET", "", null_callback);
+              call_api("sources/" + sources[source].name + "/volume/" + (volumeslider.value / 100), "GET", "", null_callback);
               sources[source].volume = (volumeslider.value / 100)
            }
         }
@@ -315,7 +326,7 @@ function sink_volume_onchange() {
     if ( checkedoptions.length == 1 ) {
         for (sink in sinks) {
             if (checkedoptions[0].name == sinks[sink].name) {
-            call_api("sinks/" + sink + "/volume/" + (volumeslider.value / 100), "GET", "", null_callback);
+            call_api("sinks/" + sinks[sink].name + "/volume/" + (volumeslider.value / 100), "GET", "", null_callback);
             sinks[sink].volume = (volumeslider.value / 100);
             }
         }
@@ -333,7 +344,7 @@ function route_volume_onchange() {
     {
         for (route in routes) {
             if (checkedoptions[0].name == routes[route].name) {
-            call_api("routes/" + route + "/volume/" + (volumeslider.value / 100), "GET", "", null_callback);
+            call_api("routes/" + routes[route].name + "/volume/" + (volumeslider.value / 100), "GET", "", null_callback);
             routes[route].volume = (volumeslider.value / 100)
             }
         }
@@ -358,3 +369,44 @@ function load()
 window.addEventListener("load", (event) => {
     load();
 });
+
+audio = {};
+audio_playing = false;
+
+function button_listen() {
+    checkedoptions = [... document.querySelectorAll("SELECT#sinks OPTION:checked")];
+    if (audio_playing)
+    {
+        stop_audio();
+    }
+    else if (checkedoptions.length == 1)
+    {
+        if (!checkedoptions[0].is_group)
+        {
+            start_audio(checkedoptions[0].ip);
+        }
+        else
+            alert("Can't listen to group, must listen to sink endpoint");
+    }
+    else
+    {
+        alert("Select one sink to listen from");
+    }
+}
+
+function start_audio(sink_ip) {
+    audiotag = document.getElementById("audio")
+    audiotag.pause();
+    audiotag.src = ""
+    audiotag.src = 'http://192.168.3.114:8080/stream/' + sink_ip + '/';
+    audiotag.play();
+    audiotag.style.display = "inline";
+}
+
+function stop_audio() {
+    audiotag = document.getElementById("audio")
+    audiotag.pause();
+    audiotag.style.display = "hidden";
+    audio_playing = false
+    button = document.getElementById("button_listen").value = "Listen to sink";
+}

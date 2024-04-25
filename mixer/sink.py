@@ -7,7 +7,7 @@ import socket
 import io
 import traceback
 
-from typing import List
+from typing import List, Optional
 
 from mixer.ffmpeg import ffmpeg
 from mixer.sourceinfo import SourceInfo
@@ -15,9 +15,69 @@ from mixer.streaminfo import StreamInfo
 
 from controller_types import SourceDescription as ControllerSource
 
+from api_webstream import API_webstream
+
+import mixer.mp3 as mp3
+
+
+class sink_mp3_thread(threading.Thread):
+    def __init__(self, fifo_in_mp3: str, sink_ip: str, webstream: Optional[API_webstream]):
+        super().__init__()
+        self.__fifo_in_mp3: str = fifo_in_mp3
+        self.__sink_ip: str = sink_ip
+        self.__webstream: Optional[API_webstream] = webstream
+        self.__running: bool = True
+        self.__make_in_fifo()  # Make python -> ffmpeg fifo fifo
+        print("Starting MP3 thread")
+        self.start()
+
+    def __make_in_fifo(self) -> bool:
+        """Makes fifo in for ffmpeg to send back to python"""
+        try:
+            try:
+                os.remove(self.__fifo_in_mp3)
+            except:
+                pass
+            os.mkfifo(self.__fifo_in_mp3)
+            return True
+        except:
+            print(traceback.format_exc())
+            return False
+        
+    def stop(self) -> None:
+        """Stop"""
+        self.__running = False
+        self.__fd_mp3.close()
+
+
+    def run(self) -> None:
+        self.__fd_mp3 = open(self.__fifo_in_mp3, "rb")
+        header_length:int = 4
+        junk = self.__fd_mp3.read(45)
+        output = bytearray()
+        targetcount: int = 1
+        count: int = 0
+        while self.__running:
+            try:
+                header = self.__fd_mp3.read(header_length)
+                output.extend(header)
+                header_data: mp3.MP3header = mp3.MP3header(header)
+                framelength = int(header_data.framelength)
+                data = self.__fd_mp3.read(framelength)
+                output.extend(data)
+                count = count + 1
+                if self.__webstream and count == targetcount:
+                    count = 0
+                    self.__webstream.sink_callback(self.__sink_ip, output)
+                    output = bytearray()
+            except Exception as e:
+                print(traceback.format_exc())
+
+
+
 class Sink(threading.Thread):
     """Handles ffmpeg, keeps a list of it's own sources, sends passed data to the appropriate pipe"""
-    def __init__(self, sink_ip: str, sources: List[ControllerSource]):
+    def __init__(self, sink_ip: str, sources: List[ControllerSource], websocket: Optional[API_webstream]):
         """Initialize a sink"""
         
         super().__init__()
@@ -39,8 +99,13 @@ class Sink(threading.Thread):
         """Output socket for sink"""
         self.__fd: io.IOBase
         """Holds the ffmpeg output pipe handle"""
+        self.__fd_mp3: io.IOBase
+        """Holds the ffmpeg MP3 output pipe handle"""
         self.__output_header = bytes([0x01, 0x20, 0x02, 0x03, 0x00])  # 48khz, 32-bit, stereo
         """Holds the header added onto packets sent to Scream receivers"""
+        self.__webstream: Optional[API_webstream] = websocket
+        """Holds the websock object to copy audio to"""
+        self.__mp3_thread: sink_mp3_thread = sink_mp3_thread(f"{self.__fifo_in}-mp3", self._sink_ip, self.__webstream)
 
         self.__make_in_fifo()  # Make python -> ffmpeg fifo fifo
 
@@ -125,6 +190,7 @@ class Sink(threading.Thread):
         self.__running = False
         self.__sock.close()
         self.__ffmpeg.stop()
+        self.__mp3_thread.stop()
         try:
             self.__fd._checkClosed
             self.__fd.close()
@@ -138,9 +204,10 @@ class Sink(threading.Thread):
     def __check_ffmpeg_packet(self, data: bytes) -> bool:
         """Verifies a packet is the right length"""
         if len(data) != 1152:
-            print(f"[Sink {self._sink_ip}] Got bad packet length {len(data)} != 1152 from source")
+            #print(f"[Sink {self._sink_ip}] Got bad packet length {len(data)} != 1152 from source")
             return False
         return True
+
     
     def run(self) -> None:
         """This thread implements listening to self.fifoin and sending it out to dest_ip
@@ -149,6 +216,7 @@ class Sink(threading.Thread):
                                                                                           You are here                   
         """
         self.__fd = open(self.__fifo_in, "rb")
+        
         while self.__running:
             try:
                 data = self.__fd.read(1152)  # Read 1152 bytes from ffmpeg
