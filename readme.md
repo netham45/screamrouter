@@ -6,11 +6,11 @@
 
 ## Prerequisites
 
-### * Scream - https://github.com/duncanthrax/scream
-### * Configure Scream to use UDP unicast, point it at ScreamRouter on port 16401. This is documented in the Scream repo.
-### * Install requirements.txt
+* Scream - https://github.com/duncanthrax/scream
+* Configure Scream to use UDP unicast, point it at ScreamRouter on port 16401. This is documented in the Scream repo.
+* Install requirements.txt
 
-# Notes on installing Scream:
+# Note on installing Scream
 
 Scream has an expired certificate of a type Windows actually cares about the date on. In order to install it your clock will need to be set earlier than July 6th 2023. Once the clock is set the normal Scream installation instructions, including disabling SecureBoot, will allow it to install on Windows 11.
 
@@ -145,29 +145,30 @@ Each ScreamRouter Route is a link of one Source to one Sink, and each Sink is an
 ## Technical Info
 
 ### API
-ScreamRouter uses FastAPI. The API documentation is enabled and can be viewed by accessing http://<Your ScreamRouter Server>/docs . This is the REST API the interface uses that allows adding and removing Sources, Routes, Sinks, along with Source and Sink Groups.
+ScreamRouter uses FastAPI. The API documentation is enabled and can be viewed by accessing `http://<Your ScreamRouter Server>/docs` . This is the REST API the interface uses that allows adding and removing Sources, Routes, Sinks, along with Source and Sink Groups.
 
 ### MP3 Stream
-It also exposes an MP3 stream of each sink. This is available at both http://<Your ScreamRouter Server>/stream/<IP of sink>/ and ws://<Your ScreamRouter Server>/ws/<IP of sink>/ (Note the trailing slashes)
+It also exposes an MP3 stream of each sink. This is available at both `http://<Your ScreamRouter Server>/stream/<IP of sink>/` and `ws://<Your ScreamRouter Server>/ws/<IP of sink>/` (Note the trailing slashes)
 
 The MP3 stream provided from FFMPEG is tracked frame by frame so that ScreamRouter can always start a connection on a new MP3 frame. FFMPEG is configured to generate MP3 with no inter-frame dependencies so files from it can be played back as normal MP3s or streamed to a player starting from any frame.
 
 The latency for streaming the MP3s to VLC is low, browsers will enforce a few seconds of caching. Mobile browsers sometimes more. Some clients refuse to play MP3s received one frame at a time, an option will be added to the configuration to adjust the number of frames buffered for MP3 data.
 
 ### Threads
-This is a heavily multi-threaded application and can take advantage of multiple cores.
+This is a multi-threaded application and can take advantage of multiple cores.
 
 The threads are:
 
-Receiver thread - This receives all data over UDP from sources and puts it in a queue for each sink.
-Sink Queue thread - This thread watches the sink queue and fires a callback that sends any incoming data to the FFMPEG pipes.
-Sink MP3 input thread - This thread watches the MP3 pipe output of FFMPEG and reads the data in. It sends the data to the WebStream queue that FastAPI watches when a stream request is made.
-Sink PCM input thread - This thread watches the PCM pipe output of FFMPEG and reads the data in. It sends the data to each enabled Scream Sink.
-Sink FFMPEG thread - This thread handles starting and stopping FFMPEG as well as ensuring the process is running when it should be. The class also handles building the command line for FFMPEG.
-API thread - FastAPI runs in it's own thread and will send requests in their own threads. When the Stream endpoint is called it will delay in an async function to wait for the WebStream queue to have data.
+* Receiver thread - This receives all data over UDP from sources and puts it in a queue for each sink.
+* Sink Queue thread - This thread watches the sink queue and fires a callback that sends any incoming data to the FFMPEG pipes.
+* Sink MP3 input thread - This thread watches the MP3 pipe output of FFMPEG and reads the data in. It sends the data to the WebStream queue that FastAPI watches when a stream request is made.
+* Sink PCM input thread - This thread watches the PCM pipe output of FFMPEG and reads the data in. It sends the data to each enabled Scream Sink.
+* Sink FFMPEG thread - This thread handles starting and stopping FFMPEG as well as ensuring the process is running when it should be. The class also handles building the command line for FFMPEG.
+* API thread - FastAPI runs in it's own thread and will send requests in their own threads. When the Stream endpoint is called it will delay in an async function to wait for the WebStream queue to have data.
 
 ### General Info
 Each Sink is associated with a Sink Controller. This controller reads into and out of the FIFO pipes for ffmpeg and tracks which sources are assigned and active.
+
 On the reciving thread receiving a packet it is forwarded to a queue for each Sink Controller. Each Sink controller will wait for the queue and check if the data matches a source it tracks. If so they send the data to the appropriate input in FFMPEG over a pipe.
 
 The Sink Controller also manages two threads to read input from FFMPEG, both PCM and MP3. The PCM thread is sent to Scream Receiver Sources, the MP3 stream is forwarded to a queue handler to make it available to FastAPI.
