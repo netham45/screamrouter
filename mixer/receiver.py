@@ -58,13 +58,10 @@ class Receiver(threading.Thread):
                         for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
                             sink.process_packet_from_receiver(addr[0], recvbuf)
                 except Exception as e:
-                    print(e)
-                    print(traceback.format_exc())
-                    break
-        print(f"[Receiver] Main thread ending! self.running: {self.running}")
+                    continue
+        print(f"[Receiver] Main thread ending sinks")
         for sink in self.sinks:
             print(f"[Receiver] Stopping sink {sink._sink_ip}")
             sink.stop()
-        for sink in self.sinks:
-            print(f"[Receiver] Waiting for sink {sink._sink_ip} to ")
-            sink.join()
+
+        print(f"[Receiver] Main thread ending!")

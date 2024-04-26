@@ -168,6 +168,11 @@ class Controller:
         route.set_volume(volume)
         self.__apply_volume_change()
         return True
+    
+    def stop(self) -> bool:
+        self.__receiver.stop()
+        self.__receiver.join()
+        return True
 
     # Private Functions
 
@@ -198,7 +203,6 @@ class Controller:
 
     def __verify_source_unused(self, source: SourceDescription) -> None:
         """Verifies a source is unused, throws exception if not"""
-        print("Verifying source unused")
         groups: List[SourceDescription] = self.__get_source_groups_from_member(source)
         if len(groups) > 0:
             group_names: List[str] = []
@@ -211,15 +215,12 @@ class Controller:
         except:  # Failed to find source, it must be unused.
             print(f"Failed to get routes for source {source.name}")
             return
-        print(f"Got routes for source {source.name} {routes}")
         for route in routes:
-            print(f"Comparing {route.source} to {source.name}")
             if route.source == source.name:
                 raise InUseException(f"Source {source.name} is in use by Route {route.name}")
 
     def __verify_sink_unused(self, sink: SinkDescription) -> None:
         """Verifies a sink is unused, throws exception if not"""
-        print("Verifying sink unused")
         groups: List[SinkDescription] = self.__get_sink_groups_from_member(sink)
         if len(groups) > 0:
             group_names: List[str] = []
@@ -232,9 +233,7 @@ class Controller:
         except:  # Failed to find sink, it must be unused.
             print(f"Failed to get routes for sink {sink.name}")
             return
-        print(f"Got routes for sink {sink.name} {routes}")
         for route in routes:
-            print(f"Comparing {route.sink} to {sink.name}")
             if route.sink == sink.name:
                 raise InUseException(f"Sink {sink.name} is in use by Route {route.name}")
                                           
@@ -242,7 +241,6 @@ class Controller:
         """Verifies sink index is >= 0 and < len(self.__sink_descriptions), throws exception if not"""
         if sink_index < 0 or sink_index >= len(self.__sink_descriptions):
             raise IndexError(f"Invalid sink index {sink_index}, max index is {len(self.__sink_descriptions)}")
-        print(f"Index {sink_index} verified")
         
     def __verify_source_index(self, source_index: int) -> None:
         """Verifies source index is >= 0 and < len(self.__source_descriptions), throws exception if not"""
@@ -334,7 +332,6 @@ class Controller:
     def __get_sink_by_name(self, name: str) -> SinkDescription:
         """Returns a sink by name"""
         for sink in self.__sink_descriptions:
-            print(f"Comparing {sink.name} to {name}")
             if sink.name == name:
                 return sink
         raise NameError(f"Sink not found by name {name}")
@@ -430,9 +427,7 @@ class Controller:
         """
         source = self.__get_source_by_name(route.source)
         if source.enabled and route.enabled:
-            print(f"Processing route {route.name}, source {route.source}")
             sources: List[SourceDescription] = self.__get_real_sources_from_source(source, route.volume * source.volume)
-            print(sources)
             return sources
         return []
 
@@ -508,7 +503,6 @@ class Controller:
         sinks.append(sink)
         for route in self.__route_descriptions:
                 for _sink in sinks:
-                    print(f"a Comparing {_sink.name} {sink.name}")
                     if _sink.name == route.sink:
                         _routes.append(copy(route))
         return unique(_routes)

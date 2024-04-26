@@ -77,7 +77,6 @@ class SourceDescription(BaseModel):
     volume: float = 1
     """Holds the volume for the source"""
     def __init__(self, name: str, ip: str, is_group: bool, enabled: bool, group_members: List[str], volume: float):
-        print(f"Adding source: {name} {ip} {is_group} {enabled} {group_members} {volume}")
         if not is_group:
             verify_ip(ip)
         verify_name(name)

@@ -1,5 +1,10 @@
 import numpy
 
+class InvalidHeaderException(Exception):
+    """Called when a header fails to parse"""
+    def __init__(self, message: str):
+        super().__init__(self, message)
+
 class MP3header():
     def __init__(self, header: bytes):
         self.mpeg_version = 0
@@ -223,19 +228,18 @@ class MP3header():
         return -1
 
     def __mp3_process_header(self, headerData: bytes):
+        if len(headerData) < 4:
+            raise InvalidHeaderException("Invalid MP3 Header (Too short)")
         data1: numpy.ndarray = numpy.unpackbits(numpy.array([headerData[0]], dtype=numpy.uint8), bitorder='little') 
         data2: numpy.ndarray = numpy.unpackbits(numpy.array([headerData[1]], dtype=numpy.uint8), bitorder='little') 
         data3: numpy.ndarray = numpy.unpackbits(numpy.array([headerData[2]], dtype=numpy.uint8), bitorder='little') 
         data4: numpy.ndarray = numpy.unpackbits(numpy.array([headerData[3]], dtype=numpy.uint8), bitorder='little')
         for i in range(0, 7):
             if data1[i] != 1:
-                print("Invalid MP3 Header (data1)")
-                return
-            
+                raise InvalidHeaderException("Invalid MP3 Header (data1)")
         for i in range(5, 7):
             if data2[i] != 1:
-                print("Invalid MP3 Header (data2)")
-                return
+                raise InvalidHeaderException("Invalid MP3 Header (data2)")
         self.mpeg_version = numpy.packbits(data2[3:5], bitorder='little')[0]
         self.layer_description = numpy.packbits(data2[1:2], bitorder='little')[0]
         self.protected = data2[0] == 1
