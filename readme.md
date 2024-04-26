@@ -2,7 +2,7 @@
 
 ### ScreamRouter is a Python-based audio router for Scream sources and sinks.
 
-![Screenshot of ScreamRouter](/assets/images/ScreamRouter.png)
+![Screenshot of ScreamRouter](/images/ScreamRouter.png)
 
 ## Prerequisites
 
