@@ -62,7 +62,7 @@ class HTTPListener(Listener):
             data = await self._queue.get()
             yield bytes(data)
 
-class API_webstream():
+class API_Webstream():
     """Holds the main websocket controller for the API that distributes messages to listeners"""
     def __init__(self, app: FastAPI):
         self._listeners: List[Listener] = []

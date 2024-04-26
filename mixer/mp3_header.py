@@ -5,7 +5,8 @@ class InvalidHeaderException(Exception):
     def __init__(self, message: str):
         super().__init__(self, message)
 
-class MP3header():
+class MP3Header():
+    """Parses an MP3 header"""
     def __init__(self, header: bytes):
         self.mpeg_version = 0
         self.layer_description = 0

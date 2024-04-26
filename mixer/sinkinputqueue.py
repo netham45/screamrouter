@@ -11,7 +11,7 @@ class SinkInputQueueEntry():
 
 class SinkInputQueue(threading.Thread):
     def __init__(self, callback):
-        super().__init__()
+        super().__init__(name=f"Sink Input Queue")
         self._queue: queue.Queue = queue.Queue()
         self._running = True
         self._callback = callback
@@ -26,7 +26,7 @@ class SinkInputQueue(threading.Thread):
     def run(self):
         while self._running:
             try:
-                entry = self._queue.get(True,.1)
+                entry = self._queue.get(True, .1)
                 self._callback(entry)
             except:
                 pass

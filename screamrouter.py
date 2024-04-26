@@ -1,10 +1,11 @@
 #!/usr/bin/python3
 import os
+import threading
 from typing import List
-import api
+import api_controller
 from fastapi import FastAPI
 
-from api_webstream import API_webstream
+from api_webstream import API_Webstream
 from controller import Controller
 
 import signal
@@ -41,7 +42,7 @@ app: FastAPI = FastAPI( title="ScreamRouter",
         },
         openapi_tags=tags_metadata
     )
-websocket: API_webstream = API_webstream(app)
+websocket: API_Webstream = API_Webstream(app)
 controller: Controller = Controller(websocket)
 
 def signal_handler(sig, frame):
@@ -50,5 +51,6 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 
-api = api.API(app, controller)
-api.join()
+api_controller = api_controller.API_Controller(app, controller)
+threading.current_thread().name = "ScreamRouter"
+api_controller.join()

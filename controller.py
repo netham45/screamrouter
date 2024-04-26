@@ -8,7 +8,7 @@ import mixer.sink
 
 from controller_types import SinkDescription, SourceDescription, RouteDescription, InUseException
 
-from api_webstream import API_webstream
+from api_webstream import API_Webstream
 
 # Helper functions
 #def unique[T](list: List[T]) -> List[T]:  # One day
@@ -23,7 +23,7 @@ def unique(list: List) -> List:
 
 class Controller:
     """The controller handles tracking configuration and loading the main receiver/sinks based off of it"""
-    def __init__(self, websocket: Optional[API_webstream]):
+    def __init__(self, websocket: Optional[API_Webstream]):
         """Initialize an empty controller"""
         self.__sink_objects: List[mixer.sink.Sink] = []
         """List of Sink objects the receiver is using"""
@@ -41,7 +41,7 @@ class Controller:
         """Rather the recevier has been set"""
         self.__loaded: bool = False
         """Holds rather the config is loaded"""
-        self.__api_websocket: Optional[API_webstream] = websocket
+        self.__api_websocket: Optional[API_Webstream] = websocket
         self.__load_yaml()
         self.__start_receiver()
 

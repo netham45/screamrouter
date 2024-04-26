@@ -19,18 +19,18 @@ from mixer.streaminfo import StreamInfo
 
 from controller_types import SourceDescription as ControllerSource
 
-from api_webstream import API_webstream
+from api_webstream import API_Webstream
 
-import mixer.mp3 as mp3
+import mixer.mp3_header as mp3_header
 
 
 class sink_mp3_thread(threading.Thread):
     """Handles listening for MP3 output from ffmpeg"""
-    def __init__(self, fifo_in: str, sink_ip: str, webstream: Optional[API_webstream]):
-        super().__init__(name=f"[{sink_ip}] MP3 Thread")
+    def __init__(self, fifo_in: str, sink_ip: str, webstream: Optional[API_Webstream]):
+        super().__init__(name=f"[Sink {sink_ip}] MP3 Thread")
         self.__fifo_in: str = fifo_in
         self.__sink_ip: str = sink_ip
-        self.__webstream: Optional[API_webstream] = webstream
+        self.__webstream: Optional[API_Webstream] = webstream
         self.__running: bool = True
         self.__fd: io.BufferedReader
         self.__make_in_fifo()  # Make python -> ffmpeg fifo fifo
@@ -90,7 +90,7 @@ class sink_mp3_thread(threading.Thread):
                     continue
             output.extend(header)
             try:
-                header_data: mp3.MP3header = mp3.MP3header(header)
+                header_data: mp3_header.MP3Header = mp3_header.MP3Header(header)
             except Exception as e:
                 if self.__running:
                     print(f"Got bad header {e}")
@@ -113,7 +113,7 @@ class sink_mp3_thread(threading.Thread):
 class sink_pcm_thread(threading.Thread):
     """Handles listening for PCM output from ffmpeg"""
     def __init__(self, fifo_in: str, sink_ip: str):
-        super().__init__()
+        super().__init__(name=f"[Sink {sink_ip}] PCM Thread")
         self.__fifo_in: str = fifo_in
         self._sink_ip: str = sink_ip
         self.__running: bool = True
@@ -193,7 +193,7 @@ class sink_pcm_thread(threading.Thread):
 
 class Sink():
     """Handles ffmpeg, keeps a list of it's own sources, sends passed data to the appropriate pipe"""
-    def __init__(self, sink_ip: str, sources: List[ControllerSource], websocket: Optional[API_webstream]):
+    def __init__(self, sink_ip: str, sources: List[ControllerSource], websocket: Optional[API_Webstream]):
         """Initialize a sink"""
         
         super().__init__()
@@ -210,7 +210,7 @@ class Sink():
         """Input file from ffmpeg"""
         self.__ffmpeg: ffmpeg = ffmpeg(self._sink_ip, self.__fifo_in_pcm, self.__fifo_in_mp3, self.__get_open_sources())
         """ffmpeg handler"""
-        self.__webstream: Optional[API_webstream] = websocket
+        self.__webstream: Optional[API_Webstream] = websocket
         """Holds the websock object to copy audio to, passed through to MP3 listener thread"""
         self.__pcm_thread: sink_pcm_thread = sink_pcm_thread(self.__fifo_in_pcm, self._sink_ip)
         """Holds the thread to listen to PCM output from ffmpeg"""
@@ -247,9 +247,9 @@ class Sink():
     def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
         for source in self.__sources:
-            active_time: int = 500  # Time in MS  300ms
+            active_time: int = 200  # Time in MS  300ms
             if len(self.__get_open_sources()) == 1:  # Don't close the last pipe until more time has passed
-                active_time = 2000000  # 1s
+                active_time = 5 * 1000  # 5s
             if not source.is_active(active_time) and source.is_open():
                 print(f"[Sink {self._sink_ip} Source {source._ip}] Closing (Timeout = {active_time}ms)")
                 source.close()

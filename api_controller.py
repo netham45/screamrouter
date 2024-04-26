@@ -8,7 +8,7 @@ import threading
 import uvicorn
 from controller import SinkDescription, SourceDescription, RouteDescription, Controller
 
-from api_webstream import API_webstream
+from api_webstream import API_Webstream
 
 templates = Jinja2Templates(directory="./")
 
@@ -46,43 +46,46 @@ class PostRoute(BaseModel):
     sink: str
     """Route Sink"""
 
-class API(threading.Thread):
+class API_Controller(threading.Thread):
 
     def __init__(self, app: FastAPI, controller: Controller):
-        super().__init__()
+        super().__init__(name=f"API Thread")
         """Holds the active controller"""
         self._controller = controller
+        self._app = app
         """FastAPI"""
-        app.get("/", tags=["Site"])(self.read_index)
-        app.get("/site.js", tags=["Site"])(self.read_javascript)
-        app.get("/site.css", tags=["Site"])(self.read_css)
+        self._app.get("/", tags=["Site"])(self.read_index)
+        self._app.get("/site.js", tags=["Site"])(self.read_javascript)
+        self._app.get("/site.css", tags=["Site"])(self.read_css)
         
-        app.get("/sinks", tags=["Sinks"])(self.get_sinks)
-        app.post("/groups/sinks", tags=["Sinks"])(self.add_sink_group)
-        app.post("/sinks", tags=["Sinks"])(self.add_sink)
-        app.delete("/sinks/{sink_name}", tags=["Sinks"])(self.delete_sink)
-        app.get("/sinks/{sink_name}/disable", tags=["Sinks"])(self.disable_sink)
-        app.get("/sinks/{sink_name}/enable", tags=["Sinks"])(self.enable_sink)
-        app.get("/sinks/{sink_name}/volume/{volume}", tags=["Sinks"])(self.set_sink_volume)
+        self._app.get("/sinks", tags=["Sinks"])(self.get_sinks)
+        self._app.post("/groups/sinks", tags=["Sinks"])(self.add_sink_group)
+        self._app.post("/sinks", tags=["Sinks"])(self.add_sink)
+        self._app.delete("/sinks/{sink_name}", tags=["Sinks"])(self.delete_sink)
+        self._app.get("/sinks/{sink_name}/disable", tags=["Sinks"])(self.disable_sink)
+        self._app.get("/sinks/{sink_name}/enable", tags=["Sinks"])(self.enable_sink)
+        self._app.get("/sinks/{sink_name}/volume/{volume}", tags=["Sinks"])(self.set_sink_volume)
         
-        app.get("/sources", tags=["Sources"])(self.get_sources)
-        app.post("/groups/sources", tags=["Sources"])(self.add_source_group)
-        app.post("/sources", tags=["Sources"])(self.add_source)
-        app.delete("/sources/{source_name}", tags=["Sources"])(self.delete_source)
-        app.get("/sources/{source_name}/disable", tags=["Sources"])(self.disable_source)
-        app.get("/sources/{source_name}/enable", tags=["Sources"])(self.enable_source)
-        app.get("/sources/{source_name}/volume/{volume}", tags=["Sources"])(self.set_source_volume)
+        self._app.get("/sources", tags=["Sources"])(self.get_sources)
+        self._app.post("/groups/sources", tags=["Sources"])(self.add_source_group)
+        self._app.post("/sources", tags=["Sources"])(self.add_source)
+        self._app.delete("/sources/{source_name}", tags=["Sources"])(self.delete_source)
+        self._app.get("/sources/{source_name}/disable", tags=["Sources"])(self.disable_source)
+        self._app.get("/sources/{source_name}/enable", tags=["Sources"])(self.enable_source)
+        self._app.get("/sources/{source_name}/volume/{volume}", tags=["Sources"])(self.set_source_volume)
 
-        app.get("/routes", tags=["Routes"])(self.get_routes)
-        app.get("/routes", tags=["Routes"])(self.get_routes)
-        app.post("/routes", tags=["Routes"])(self.add_route)
-        app.delete("/routes/{route_name}", tags=["Routes"])(self.delete_route)
-        app.get("/routes/{route_name}/disable", tags=["Routes"])(self.disable_route)
-        app.get("/routes/{route_name}/enable", tags=["Routes"])(self.enable_route)
-        app.get("/routes/{route_name}/volume/{volume}", tags=["Routes"])(self.set_route_volume)
-        app.add_exception_handler(Exception, self.__api_exception_handler)
-        uvicorn.run(app, port=8080, host='0.0.0.0')
+        self._app.get("/routes", tags=["Routes"])(self.get_routes)
+        self._app.get("/routes", tags=["Routes"])(self.get_routes)
+        self._app.post("/routes", tags=["Routes"])(self.add_route)
+        self._app.delete("/routes/{route_name}", tags=["Routes"])(self.delete_route)
+        self._app.get("/routes/{route_name}/disable", tags=["Routes"])(self.disable_route)
+        self._app.get("/routes/{route_name}/enable", tags=["Routes"])(self.enable_route)
+        self._app.get("/routes/{route_name}/volume/{volume}", tags=["Routes"])(self.set_route_volume)
+        self._app.add_exception_handler(Exception, self.__api_exception_handler)
         self.start()    
+
+    def run(self):
+        uvicorn.run(self._app, port=8080, host='0.0.0.0')
 
     def __api_exception_handler(self, request: Request, exception: Exception) -> JSONResponse:
         """Generic error handler so controller can throw generic exceptions and get useful messages returned to clients"""

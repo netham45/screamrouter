@@ -14,7 +14,7 @@ class Receiver(threading.Thread):
     """Handles the main socket that listens for incoming Scream streams and sends them to the appropriate sinks"""
     def __init__(self):
         """Takes no parameters"""
-        super().__init__()
+        super().__init__(name=f"Main Receiver Thread")
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Main socket all sources send to"""
         self.sinks: List[Sink] = []
@@ -50,7 +50,7 @@ class Receiver(threading.Thread):
 
         recvbuf = bytearray(1157)
         while self.running:
-            ready = select.select([self.sock], [], [], .2)  # If the socket is dead for more than .2 seconds kill ffmpeg
+            ready = select.select([self.sock], [], [], .2)
             if ready[0]:
                 try:
                     recvbuf, addr = self.sock.recvfrom(1157)  # 5 bytes header + 1152 bytes pcm

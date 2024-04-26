@@ -12,7 +12,7 @@ from mixer.sourceinfo import SourceInfo
 
 class ffmpeg(threading.Thread):
     def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str, sources: List[SourceInfo]):
-        super().__init__()
+        super().__init__(name=f"[Sink {sink_ip}] ffmpeg Thread")
         self.__fifo_in_pcm: str = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
         self.__fifo_in_mp3: str = fifo_in_mp3
@@ -80,16 +80,17 @@ class ffmpeg(threading.Thread):
 
     def start_ffmpeg(self):
         """Start ffmpeg if it's not running"""
+        print(f"[Sink {self.__sink_ip}] ffmpeg started")
         if (self.__running and not self.__ffmpeg_started):
             self.__ffmpeg_started = True
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE) #, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def reset_ffmpeg(self, sources: List[SourceInfo]) -> None:
         """Opens the ffmpeg instance"""
+        print(f"[{self.__sink_ip}] Resetting ffmpeg")
         self.__sources = sources
         if self.__ffmpeg_started:
             try:
-                self.send_ffmpeg_command('', 'q')
                 self.__ffmpeg.terminate()
                 self.__ffmpeg.kill()
                 self.__ffmpeg_started = False
@@ -133,8 +134,8 @@ class ffmpeg(threading.Thread):
             if len(self.__sources) == 0:
                 time.sleep(2)
                 continue
-            self.start_ffmpeg()
             if self.__ffmpeg_started:
                 self.__ffmpeg.wait()
-                #print(f"[Sink {self.__sink_ip}] ffmpeg ended Running {self.__running}")
+                print(f"[Sink {self.__sink_ip}] ffmpeg ended")
+                self.start_ffmpeg()
         print(f"[Sink {self.__sink_ip}] ffmpeg exit")
