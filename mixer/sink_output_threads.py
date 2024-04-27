@@ -11,7 +11,7 @@ from typing import List, Optional, Tuple
 
 from api.api_webstream import API_Webstream
 
-import mixer.mp3_header as mp3_header
+import mixer.mp3_header_parser as mp3_header_parser
     
 
 class sink_output_thread(threading.Thread):
@@ -71,7 +71,7 @@ class sink_mp3_thread(sink_output_thread):
         self.__webstream: Optional[API_Webstream] = webstream
         """Holds the Webstream queue object to dump to"""
     
-    def __read_header(self) -> Tuple[mp3_header.MP3Header, bytes]:
+    def __read_header(self) -> Tuple[mp3_header_parser.MP3Header, bytes]:
         """Returns a tuple of the parsed header and raw header data. Skips ID3 headers if found."""
         header_length: int = 4  # MP3 header length is 4 bytes
         ID3_length: int = 45  #  TODO: Assuming this is 45 bytes is bad. Seems to be reliable for ffmpeg but won't be for other MP3 sources.
@@ -79,7 +79,7 @@ class sink_mp3_thread(sink_output_thread):
         if header[0:3] == "ID3".encode():
             self._read_bytes(ID3_length - header_length)  # Discard ID3 data
             header = self._read_bytes(header_length)
-        header_parsed: mp3_header.MP3Header = mp3_header.MP3Header(header)
+        header_parsed: mp3_header_parser.MP3Header = mp3_header_parser.MP3Header(header)
         return (header_parsed, header)
 
     def run(self) -> None:
@@ -94,7 +94,7 @@ class sink_mp3_thread(sink_output_thread):
         available_frame_count: int = 0
         """Holds the number of available frames"""
         while self._running:
-            mp3_header_parsed: mp3_header.MP3Header
+            mp3_header_parsed: mp3_header_parser.MP3Header
             """Holds the parsed header object"""
             mp3_header_raw: bytes
             """Holds the raw header bytes"""

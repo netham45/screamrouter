@@ -4,7 +4,7 @@ from fastapi.templating import Jinja2Templates
 
 class API_Website():
     def __init__(self, app: FastAPI):
-        self._app = app
+        self._app   = app
         """FastAPI"""
         self._app.get("/", tags=["Site"])(self.read_index)
         self._app.get("/site.js", tags=["Site"])(self.read_javascript)

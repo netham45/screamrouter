@@ -4,7 +4,7 @@ import time
 import io
 import traceback
 
-from mixer.streaminfo import StreamInfo
+from mixer.stream_info import StreamInfo
 
 
 class SourceInfo():

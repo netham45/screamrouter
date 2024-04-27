@@ -8,7 +8,7 @@ import traceback
 
 from typing import List
 
-from mixer.sourceinfo import SourceInfo
+from mixer.source_info import SourceInfo
 
 class ffmpeg_handler(threading.Thread):
     def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str, sources: List[SourceInfo]):

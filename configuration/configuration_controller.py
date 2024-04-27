@@ -6,7 +6,7 @@ from typing import List, Optional
 import mixer.receiver
 import mixer.sink_controller
 
-from configuration_controller_types import SinkDescription, SourceDescription, RouteDescription, InUseException
+from configuration.configuration_controller_types import SinkDescription, SourceDescription, RouteDescription, InUseException
 
 from api.api_webstream import API_Webstream
 
@@ -19,7 +19,6 @@ def unique(list: List) -> List:
         if not element in _list: 
             _list.append(element)
     return _list
-
 
 class ConfigurationController:
     """The controller handles tracking configuration and loading the main receiver/sinks based off of it"""
