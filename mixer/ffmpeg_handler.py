@@ -10,7 +10,7 @@ from typing import List
 
 from mixer.sourceinfo import SourceInfo
 
-class ffmpeg(threading.Thread):
+class ffmpeg_handler(threading.Thread):
     def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str, sources: List[SourceInfo]):
         super().__init__(name=f"[Sink {sink_ip}] ffmpeg Thread")
         self.__fifo_in_pcm: str = fifo_in_pcm
@@ -27,8 +27,8 @@ class ffmpeg(threading.Thread):
         """Holds rather we're monitoring ffmpeg to restart it"""
         self.__sources = sources
         """Holds a list of active sources"""
-
         self.start()
+        self.start_ffmpeg()
 
     def __get_ffmpeg_inputs(self, sources: List[SourceInfo]) -> List[str]:
         """Add an input for each source"""
@@ -81,9 +81,9 @@ class ffmpeg(threading.Thread):
     def start_ffmpeg(self):
         """Start ffmpeg if it's not running"""
         print(f"[Sink {self.__sink_ip}] ffmpeg started")
-        if (self.__running and not self.__ffmpeg_started):
+        if (self.__running):
             self.__ffmpeg_started = True
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE) #, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def reset_ffmpeg(self, sources: List[SourceInfo]) -> None:
         """Opens the ffmpeg instance"""
@@ -93,13 +93,9 @@ class ffmpeg(threading.Thread):
             try:
                 self.__ffmpeg.terminate()
                 self.__ffmpeg.kill()
-                self.__ffmpeg_started = False
             except:
                 print(traceback.format_exc())
                 print(f"[Sink {self.__sink_ip}] Failed to close ffmpeg")
-        if len(sources) == 0:  # No sources to start
-            return
-        self.start_ffmpeg()
 
     def send_ffmpeg_command(self, command: str, command_char: str = "c") -> None:
         print(f"[Sink {self.__sink_ip}] Running ffmpeg command {command}") 
@@ -119,14 +115,17 @@ class ffmpeg(threading.Thread):
     
     def stop(self) -> None:
         self.__running = False
+        self.__ffmpeg_started = False
         try:
             self.send_ffmpeg_command('','q')
+        except:
+            pass
+        try:
             self.__ffmpeg.terminate()
             self.__ffmpeg.kill()
         except:
             pass
         self.__ffmpeg_started = False
-
 
     def run(self) -> None:
         """This thread implements listening to self.fifoin and sending it out to dest_ip"""
@@ -138,4 +137,4 @@ class ffmpeg(threading.Thread):
                 self.__ffmpeg.wait()
                 print(f"[Sink {self.__sink_ip}] ffmpeg ended")
                 self.start_ffmpeg()
-        print(f"[Sink {self.__sink_ip}] ffmpeg exit")
+        print(f"[Sink {self.__sink_ip}] ffmpeg exit")   

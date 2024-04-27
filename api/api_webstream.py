@@ -67,7 +67,7 @@ class API_Webstream():
     def __init__(self, app: FastAPI):
         self._listeners: List[Listener] = []
         app.websocket("/ws/{sink_ip}/")(self.websocket_api_handler)
-        app.get("/stream/{sink_ip}/")(self.http_api_handler)
+        app.get("/stream/{sink_ip}/", tags=["Stream"])(self.http_api_handler)
 
     def sink_callback(self, sink_ip: str, data: bytes) -> None:
         """Callback for sinks to have data sent out to websockets"""
@@ -84,7 +84,7 @@ class API_Webstream():
             await asyncio.sleep(100)
 
     async def http_api_handler(self, sink_ip: str):
-        """FastAPI handler"""
+        """Streams MP3 frames from ScreamRouter"""
         listener: HTTPListener = HTTPListener(sink_ip)
         await listener.open()
         self._listeners.append(listener)

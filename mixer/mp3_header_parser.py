@@ -257,4 +257,4 @@ class MP3Header():
         self.bitrate = self.__mp3_parse_bitrate(self.bitrate_raw, 1 if self.mpeg_version == 3 else 2, (3 - self.layer_description) + 1)
         self.slotsize = 4 if (3 - self.layer_description == 1) else 1
         self.framecount = self.__mp3_parse_frames(1 if self.mpeg_version == 3 else 2, (3 - self.layer_description) + 1)
-        self.framelength = (self.bitrate * 1000/8 * self.framecount / self.samplerate + (self.padding * self.slotsize)) - 4
+        self.framelength = int((self.bitrate * 1000/8 * self.framecount / self.samplerate + (self.padding * self.slotsize)) - 4)

@@ -1,15 +1,17 @@
 #!/usr/bin/python3
 import os
 import threading
-from typing import List
-import api_controller
+import signal
+
 from fastapi import FastAPI
 
-from api_webstream import API_Webstream
-from controller import Controller
+from configuration.configuration_controller import ConfigurationController
 
-import signal
-import sys
+from api.api_configuration import API_Configuration
+from api.api_webstream import API_Webstream
+from api.api_website import API_Website
+
+threading.current_thread().name = "ScreamRouter Main Thread"
        
 tags_metadata = [
         {
@@ -27,6 +29,10 @@ tags_metadata = [
         {
             "name": "Site",
             "description": "File handlers for the site interface"
+        },
+        {
+            "name": "Stream",
+            "description": "HTTP media streams"
         }
     ]
 app: FastAPI = FastAPI( title="ScreamRouter",
@@ -42,8 +48,9 @@ app: FastAPI = FastAPI( title="ScreamRouter",
         },
         openapi_tags=tags_metadata
     )
-websocket: API_Webstream = API_Webstream(app)
-controller: Controller = Controller(websocket)
+webstream: API_Webstream = API_Webstream(app)
+website: API_Website = API_Website(app)
+controller: ConfigurationController = ConfigurationController(webstream)
 
 def signal_handler(sig, frame):
     controller.stop()
@@ -51,6 +58,5 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 
-api_controller = api_controller.API_Controller(app, controller)
-threading.current_thread().name = "ScreamRouter"
+api_controller = API_Configuration(app, controller)
 api_controller.join()

@@ -4,11 +4,11 @@ from copy import copy
 from typing import List, Optional
 
 import mixer.receiver
-import mixer.sink
+import mixer.sink_controller
 
-from controller_types import SinkDescription, SourceDescription, RouteDescription, InUseException
+from configuration_controller_types import SinkDescription, SourceDescription, RouteDescription, InUseException
 
-from api_webstream import API_Webstream
+from api.api_webstream import API_Webstream
 
 # Helper functions
 #def unique[T](list: List[T]) -> List[T]:  # One day
@@ -21,11 +21,11 @@ def unique(list: List) -> List:
     return _list
 
 
-class Controller:
+class ConfigurationController:
     """The controller handles tracking configuration and loading the main receiver/sinks based off of it"""
     def __init__(self, websocket: Optional[API_Webstream]):
         """Initialize an empty controller"""
-        self.__sink_objects: List[mixer.sink.Sink] = []
+        self.__sink_objects: List[mixer.sink_controller.SinkController] = []
         """List of Sink objects the receiver is using"""
         self.__sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
@@ -324,7 +324,7 @@ class Controller:
         self.__sink_objects = []
         for sink_ip in self.__sinks_to_sources.keys():
             if sink_ip != "":
-                sink = mixer.sink.Sink(sink_ip, self.__sinks_to_sources[sink_ip], self.__api_websocket)
+                sink = mixer.sink_controller.SinkController(sink_ip, self.__sinks_to_sources[sink_ip], self.__api_websocket)
                 self.__receiver.register_sink(sink)
                 self.__sink_objects.append(sink)
 

@@ -36,12 +36,32 @@ routes:
   sink: Office
   source: Office PC Management VLAN
   volume: 1.0
+- enabled: true
+  name: Office to all
+  sink: All
+  source: Office PC
+  volume: 1.0
+- enabled: true
+  name: Livingroom
+  sink: Livingroom
+  source: Livingroom PC
+  volume: 1.0
+- enabled: false
+  name: Livingroom to All
+  sink: All
+  source: Livingroom PC
+  volume: 1.0
+- enabled: true
+  name: Office to Phone
+  sink: Phone
+  source: Office PC
+  volume: 1.0
 sinks:
 - enabled: true
   ip: 192.168.3.178
   name: Livingroom
   port: 4010
-  volume: 1.0
+  volume: 0.47
 - enabled: true
   ip: 192.168.3.111
   name: Bedroom
@@ -56,6 +76,11 @@ sinks:
   ip: 192.168.3.153
   name: Office
   port: 4010
+  volume: 1.0
+- enabled: true
+  ip: 192.168.3.106
+  name: Phone
+  port: 4011
   volume: 1.0
 sources:
 - enabled: true

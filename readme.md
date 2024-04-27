@@ -12,7 +12,7 @@
 
 # Note on installing Scream
 
-Scream has an expired certificate of a type Windows actually cares about the date on. In order to install it your clock will need to be set earlier than July 6th 2023. Once the clock is set the normal Scream installation instructions, including disabling SecureBoot, will allow it to install on Windows 11.
+Scream has an expired certificate of a type Windows actually cares about the date on. In order to install it your clock will need to be set earlier than July 6th 2023. Once the clock is set the normal Scream installation instructions, including disabling SecureBoot, will allow it to install on Windows 11. After the driver is installed the clock can be restored to the correct time and the driver will continue to function.
 
 # Usage
 
