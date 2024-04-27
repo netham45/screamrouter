@@ -1,18 +1,15 @@
 import os
 import select
-
 import threading
 import socket
-
 import io
 import traceback
 
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 from api.api_webstream import API_Webstream
 
 import mixer.mp3_header_parser as mp3_header_parser
-    
 
 class sink_output_thread(threading.Thread):
     def __init__(self, fifo_in: str, sink_ip: str, name: str):
@@ -29,7 +26,7 @@ class sink_output_thread(threading.Thread):
         self.start()
 
     def _make_ffmpeg_to_screamrouter_pipe(self) -> bool:
-        """Makes fifo in for ffmpeg to send back to python"""
+        """Makes fifo out for python sending to ffmpeg"""
         try:
             try:
                 os.remove(self._fifo_in)
@@ -55,12 +52,14 @@ class sink_output_thread(threading.Thread):
 
     def _read_bytes(self, count: int) -> bytes:
         """Reads count bytes, doesn't return unless self.__running goes false or bytes count is reached."""
-        data = bytes()
-        while self._running and len(data) < count:
+        dataout = bytearray()
+        while self._running and len(dataout) < count:
             ready = select.select([self._fd], [], [], .1)
             if ready[0]:
-                data: bytes = self._fd.read(count - len(data))
-        return data
+                data: bytes = self._fd.read(count - len(dataout))
+                if (data):
+                    dataout.extend(data)
+        return dataout
 
 
 class sink_mp3_thread(sink_output_thread):
@@ -100,7 +99,10 @@ class sink_mp3_thread(sink_output_thread):
             """Holds the raw header bytes"""
             mp3_frame: bytes
             """Holds the currently processing MP3 frame"""
-            mp3_header_parsed, mp3_header_raw = self.__read_header()
+            try:
+                mp3_header_parsed, mp3_header_raw = self.__read_header()
+            except:
+                continue
             available_data.extend(mp3_header_raw)
             mp3_frame = self._read_bytes(mp3_header_parsed.framelength)
             available_data.extend(mp3_frame)
@@ -134,8 +136,7 @@ class sink_pcm_thread(sink_output_thread):
         while self._running:
             data = bytearray()
             try:
-                datain = self._read_bytes(1152)  # 1152 for Scream compatibility
-                data.extend(datain)
+                data.extend(self._read_bytes(1152))  # 1152 for Scream compatibility
                 sendbuf = self.__output_header + data  # Add the header to the data
                 self.__sock.sendto(sendbuf, (self._sink_ip, 4010))  # Send it to the sink
             except Exception as e:

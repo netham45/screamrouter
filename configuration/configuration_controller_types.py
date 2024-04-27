@@ -45,8 +45,8 @@ class SinkDescription(BaseModel):
     """Sink is Enabled"""
     group_members: List[str]
     """Sink Group Members"""
-    volume: float = 1
-    """Holds the volume for the sink"""
+    volume: float
+    """Holds the volume for the sink (0.0-1.0)"""
     def __init__(self, name: str, ip: str, port: int, is_group: bool, enabled: bool, group_members: List[str],  volume: float):
         if not is_group:
             verify_ip(ip)
@@ -74,8 +74,8 @@ class SourceDescription(BaseModel):
     """Source Enabled"""
     group_members: List[str]
     """"Source Group Members"""
-    volume: float = 1
-    """Holds the volume for the source"""
+    volume: float
+    """Holds the volume for the source  (0.0-1.0)"""
     def __init__(self, name: str, ip: str, is_group: bool, enabled: bool, group_members: List[str], volume: float):
         if not is_group:
             verify_ip(ip)
@@ -100,8 +100,8 @@ class RouteDescription(BaseModel):
     """Route Source"""
     enabled: bool
     """Route Enabled"""
-    volume: float = 1
-    """Route volume"""
+    volume: float
+    """Route volume (0.0-1.0)"""
     def __init__(self, name: str, sink: str, source: str, enabled: bool, volume: float):
         verify_name(name)
         verify_volume(volume)

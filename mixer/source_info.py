@@ -1,6 +1,5 @@
 import os
 import time
-
 import io
 import traceback
 
@@ -52,28 +51,32 @@ class SourceInfo():
     def is_open(self) -> bool:
         """Returns if the source is open"""
         return self.__open
+    
+    def __make_screamrouter_to_ffmpeg_pipe(self):
+        try:
+            try:
+                os.remove(self._fifo_file_name)
+            except:
+                pass
+            os.mkfifo(self._fifo_file_name)
+            fd = os.open(self._fifo_file_name, os.O_RDWR | os.O_NONBLOCK)
+            self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
+        except:
+            print(traceback.format_exc())
 
     def open(self) -> None:
-        """Opens the source"""
+        """Makes the pipe to pass this source to FFMPEG, opens the source"""
         if not self.__open:
-            try:
-                try:
-                    os.remove(self._fifo_file_name)
-                except:
-                    pass
-                os.mkfifo(self._fifo_file_name)
-                fd = os.open(self._fifo_file_name, os.O_RDWR | os.O_NONBLOCK)
-                self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
-            except:
-                print(traceback.format_exc())
-            self.__open = True
+            self.__make_screamrouter_to_ffmpeg_pipe()
             self.update_activity()
+            self.__open = True
             print(f"[Sink {self.__sink_ip} Source {self._ip}] Opened")
 
     def close(self) -> None:
         """Closes the source"""
         try:
             self.__fifo_file_handle.close()  # Close and remove the fifo handle so ffmpeg will stop trying to listen for it
+            os.remove(self._fifo_file_name)
         except:
             pass
         self.__open = False

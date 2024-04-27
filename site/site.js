@@ -397,16 +397,18 @@ function button_listen() {
 function start_audio(sink_ip) {
     audiotag = document.getElementById("audio")
     audiotag.pause();
-    audiotag.src = ""
+    audiotag.src = "";
     audiotag.src = 'http://192.168.3.114:8080/stream/' + sink_ip + '/';
     audiotag.play();
     audiotag.style.display = "inline";
+    audio_playing = true;
+    button = document.getElementById("button_listen").value = "Stop playback";
 }
 
 function stop_audio() {
     audiotag = document.getElementById("audio")
     audiotag.pause();
-    audiotag.style.display = "hidden";
-    audio_playing = false
+    audiotag.style.display = "none";
+    audio_playing = false;
     button = document.getElementById("button_listen").value = "Listen to sink";
 }

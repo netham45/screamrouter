@@ -52,7 +52,6 @@ class ffmpeg_handler(threading.Thread):
         amix_inputs = ""
 
         for idx, value in enumerate(sources):  # For each source IP add an input to aresample async, and append it to an input variable for amix
-            #full_filter_string = full_filter_string + f"[{idx}]volume@volume_{idx}={value.volume},asetpts='(RTCTIME-RTCSTART)/(TB*1000000)',aresample=async=5000000:flags=+res:resampler=soxr[a{idx}],"
             full_filter_string = full_filter_string + f"[{idx}]volume@volume_{idx}={value.volume},asetpts=N/SR/TB,aresample=async=5000000:flags=+res:resampler=soxr[a{idx}],"
             amix_inputs = amix_inputs + f"[a{idx}]"  # amix input
         ffmpeg_command_parts.extend(['-filter_complex', full_filter_string + amix_inputs + f'amix=normalize=0:inputs={len(sources)}'])
@@ -83,7 +82,7 @@ class ffmpeg_handler(threading.Thread):
         print(f"[Sink {self.__sink_ip}] ffmpeg started")
         if (self.__running):
             self.__ffmpeg_started = True
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE) #, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def reset_ffmpeg(self, sources: List[SourceInfo]) -> None:
         """Opens the ffmpeg instance"""
@@ -98,13 +97,15 @@ class ffmpeg_handler(threading.Thread):
                 print(f"[Sink {self.__sink_ip}] Failed to close ffmpeg")
 
     def send_ffmpeg_command(self, command: str, command_char: str = "c") -> None:
+        """Send ffmpeg a command. Commands consist of control character to enter a mode (default 'c') and a string to run."""
         print(f"[Sink {self.__sink_ip}] Running ffmpeg command {command}") 
         self.__ffmpeg.stdin.write(command_char.encode())  # type: ignore
         self.__ffmpeg.stdin.flush()  # type: ignore
         self.__ffmpeg.stdin.write((command + "\n").encode())  # type: ignore
         self.__ffmpeg.stdin.flush()  # type: ignore
 
-    def set_source_volume(self, source: SourceInfo, volumelevel: float):
+    def set_input_volume(self, source: SourceInfo, volumelevel: float):
+        """Run an ffmpeg command to set the input volume"""
         index: int = -1
         for idx, _source in enumerate(self.__sources):
             if source._ip == _source._ip:
@@ -114,6 +115,7 @@ class ffmpeg_handler(threading.Thread):
             self.send_ffmpeg_command(command)
     
     def stop(self) -> None:
+        """Stop ffmpeg"""
         self.__running = False
         self.__ffmpeg_started = False
         try:

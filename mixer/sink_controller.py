@@ -39,7 +39,7 @@ class SinkController():
         """Holds the thread to listen to PCM output from ffmpeg"""
         self.__mp3_thread: sink_mp3_thread = sink_mp3_thread(self.__fifo_in_mp3, self._sink_ip, self.__webstream)
         """Holds the thread to listen to MP3 output from ffmpeg"""
-        self.__queue_thread: SinkInputQueue = SinkInputQueue(self.process_packet_from_queue)
+        self.__queue_thread: SinkInputQueue = SinkInputQueue(self.process_packet_from_queue, self._sink_ip)
         """Holds the thread to listen to the input queue and send it to ffmpeg"""
 
         for source in self.__controller_sources:
@@ -50,7 +50,7 @@ class SinkController():
         for source in self.__sources:
             if source._ip == controllersource.ip:
                 source.volume = controllersource.volume
-                self.__ffmpeg.set_source_volume(source, controllersource.volume)
+                self.__ffmpeg.set_input_volume(source, controllersource.volume)
 
     def __get_open_sources(self) -> List[SourceInfo]:
         """Build a list of active IPs, exclude ones that aren't open"""
@@ -70,13 +70,12 @@ class SinkController():
     def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
         for source in self.__sources:
-            active_time: int = 200  # Time in MS  300ms
+            active_time: int = 200  # Time in milliseconds
             if len(self.__get_open_sources()) == 1:  # Don't close the last pipe until more time has passed
-                active_time = 300 * 1000  # 5s
+                active_time = 300 * 1000  # Much more time in milliseconds
             if not source.is_active(active_time) and source.is_open():
                 print(f"[Sink {self._sink_ip} Source {source._ip}] Closing (Timeout = {active_time}ms)")
                 source.close()
-                #self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
 
     def __update_source_attributes_and_open_source(self, source: SourceInfo, header: bytes) -> None:
         """Verifies the target pipe header matches what we have, updates it if not. Also opens the pipe."""
