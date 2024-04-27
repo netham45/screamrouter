@@ -29,6 +29,7 @@ class Receiver(threading.Thread):
 
     def stop(self) -> None:
         """Stops the Receiver and all sinks"""
+        print("Recevier stopping")
         self.running = False
         self.sock.close()
     
@@ -64,4 +65,4 @@ class Receiver(threading.Thread):
             print(f"[Receiver] Stopping sink {sink._sink_ip}")
             sink.stop()
 
-        print(f"[Receiver] Main thread ending!")
+        print(f"[Receiver] Main thread stopped")

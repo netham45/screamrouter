@@ -1,0 +1,10 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "austin",
+            "file": "screamrouter.py",
+            "label": "Run with Austin"
+        }
+    ]
+}

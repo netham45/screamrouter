@@ -2,6 +2,7 @@ import os
 import time
 import io
 import traceback
+from typing import List
 
 from mixer.stream_info import StreamInfo
 
@@ -27,6 +28,7 @@ class SourceInfo():
         """The sink that opened this source"""
         self.volume: float = volume
         """Holds the sink's volume. 0 = silent, 1 = 100% volume"""
+        self.__buffer: List[bytes] = []
 
     def check_attributes(self, stream_attributes: StreamInfo) -> bool:
         """Returns True if the source's stream attributes are the same, False if they're different."""
@@ -76,7 +78,6 @@ class SourceInfo():
         """Closes the source"""
         try:
             self.__fifo_file_handle.close()  # Close and remove the fifo handle so ffmpeg will stop trying to listen for it
-            os.remove(self._fifo_file_name)
         except:
             pass
         self.__open = False

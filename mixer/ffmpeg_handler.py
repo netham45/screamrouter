@@ -29,7 +29,7 @@ class ffmpeg_handler(threading.Thread):
         """Holds a list of active sources"""
         self.start()
         self.start_ffmpeg()
-
+    
     def __get_ffmpeg_inputs(self, sources: List[SourceInfo]) -> List[str]:
         """Add an input for each source"""
         ffmpeg_command: List[str] = []
@@ -82,7 +82,8 @@ class ffmpeg_handler(threading.Thread):
         print(f"[Sink {self.__sink_ip}] ffmpeg started")
         if (self.__running):
             self.__ffmpeg_started = True
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(self.__get_ffmpeg_command(self.__sources))
+            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE) #, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def reset_ffmpeg(self, sources: List[SourceInfo]) -> None:
         """Opens the ffmpeg instance"""
@@ -92,6 +93,7 @@ class ffmpeg_handler(threading.Thread):
             try:
                 self.__ffmpeg.terminate()
                 self.__ffmpeg.kill()
+                self.__ffmpeg.wait()
             except:
                 print(traceback.format_exc())
                 print(f"[Sink {self.__sink_ip}] Failed to close ffmpeg")
@@ -133,7 +135,7 @@ class ffmpeg_handler(threading.Thread):
         """This thread implements listening to self.fifoin and sending it out to dest_ip"""
         while self.__running:
             if len(self.__sources) == 0:
-                time.sleep(2)
+                time.sleep(.1)
                 continue
             if self.__ffmpeg_started:
                 self.__ffmpeg.wait()

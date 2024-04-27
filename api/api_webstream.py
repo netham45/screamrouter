@@ -1,17 +1,25 @@
 import asyncio
+import ipaddress
 from typing import List, Optional
 
 from fastapi import FastAPI, WebSocket
 
 from fastapi.responses import StreamingResponse
 
+def verify_ip(ip: str) -> None:
+    """Verifies an ip address can be parsed correctly"""
+    try:
+        ipaddress.ip_address(ip)  # Verify IP address is formatted right
+    except ValueError:
+        raise ValueError(f"Invalid IP address {ip}")
+
 class Listener():
     def __init__(self, sink_ip: str):
-        # TODO: Validate parameters
         self._sink_ip: str = sink_ip
         """Sink IP the listener is listening to"""
         self._active: bool =  True
         """Rather the listener is active or not"""
+        verify_ip(sink_ip)
 
     async def open(self) -> None:
         """Opens the Listener"""
@@ -89,7 +97,7 @@ class API_Webstream():
         await listener.open()
         self._listeners.append(listener)
         while True:  # Keep the connection open until something external closes it.
-            await asyncio.sleep(100)
+            await asyncio.sleep(10000)
 
     async def http_mp3_stream(self, sink_ip: str):
         """Streams MP3 frames from ScreamRouter"""

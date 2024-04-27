@@ -4,7 +4,6 @@ import threading
 
 class SinkInputQueueEntry():
     """A data entry in the sink queue, holds the data and the source IP adderss."""
-    # TODO: Would using a tuple instead of a class for this perform better?
     source_ip: str
     """Source IP address for data sent to an input queue"""
     data: bytes

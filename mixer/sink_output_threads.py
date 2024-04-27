@@ -12,6 +12,7 @@ from api.api_webstream import API_Webstream
 import mixer.mp3_header_parser as mp3_header_parser
 
 class sink_output_thread(threading.Thread):
+    """Handles listening for output from ffmpeg, extended by stream-specific classes"""
     def __init__(self, fifo_in: str, sink_ip: str, name: str):
         super().__init__(name = name)
         self._fifo_in: str = fifo_in
@@ -23,6 +24,8 @@ class sink_output_thread(threading.Thread):
         self._fd: io.BufferedReader
         """File handle"""
         self._make_ffmpeg_to_screamrouter_pipe()  # Make python -> ffmpeg fifo fifo
+        fd = os.open(self._fifo_in, os.O_RDONLY | os.O_NONBLOCK)
+        self._fd = open(fd, 'rb')
         self.start()
 
     def _make_ffmpeg_to_screamrouter_pipe(self) -> bool:
@@ -51,8 +54,9 @@ class sink_output_thread(threading.Thread):
             pass
 
     def _read_bytes(self, count: int) -> bytes:
-        """Reads count bytes, doesn't return unless self.__running goes false or bytes count is reached."""
-        dataout = bytearray()
+        """Reads count bytes, blocks until self.__running goes false or 'count' bytes are received."""
+        dataout:bytearray = bytearray()
+        """Data to return"""
         while self._running and len(dataout) < count:
             ready = select.select([self._fd], [], [], .1)
             if ready[0]:
@@ -70,20 +74,37 @@ class sink_mp3_thread(sink_output_thread):
         self.__webstream: Optional[API_Webstream] = webstream
         """Holds the Webstream queue object to dump to"""
     
-    def __read_header(self) -> Tuple[mp3_header_parser.MP3Header, bytes]:
+    def __read_header(self) -> Tuple[mp3_header_parser.MP3Header, bytes]: # type: ignore  # Can't return None, ignore warning
         """Returns a tuple of the parsed header and raw header data. Skips ID3 headers if found."""
-        header_length: int = 4  # MP3 header length is 4 bytes
-        ID3_length: int = 45  #  TODO: Assuming this is 45 bytes is bad. Seems to be reliable for ffmpeg but won't be for other MP3 sources.
-        header = self._read_bytes(header_length)
-        if header[0:3] == "ID3".encode():
-            self._read_bytes(ID3_length - header_length)  # Discard ID3 data
-            header = self._read_bytes(header_length)
-        header_parsed: mp3_header_parser.MP3Header = mp3_header_parser.MP3Header(header)
-        return (header_parsed, header)
+        header_length: int = 4
+        """Length of an MP3 header"""
+        header: bytearray = bytearray(self._read_bytes(header_length))
+        """Header bytes"""
+        header_parsed: mp3_header_parser.MP3Header
+        """Parsed header object"""
+        max_bytes_to_search: int = 250
+        """Number of bytes to search for an MP3 header after finding an ID3 header"""
+        bytes_searched: int = 0
+        """Number of bytes searched so far"""
+
+        if header[0:3] == "ID3".encode():  # Found ID3 header, search for start of MP3 header
+            while bytes_searched < max_bytes_to_search:
+                bytes_searched = bytes_searched + 1
+                bytesin: bytearray = bytearray(self._read_bytes(1))
+                if bytesin[0] == 255:
+                    header = bytesin + self._read_bytes(header_length - 1)
+                    try:
+                        header_parsed: mp3_header_parser.MP3Header = mp3_header_parser.MP3Header(header)
+                        return (header_parsed, header)
+                    except:
+                        pass
+            if bytes_searched == max_bytes_to_search:
+                raise Exception(f"[Sink {self._sink_ip}] Couldn't find MP3 header after ID3 header")
+        else:
+            header_parsed: mp3_header_parser.MP3Header = mp3_header_parser.MP3Header(header)
+            return (header_parsed, header)
 
     def run(self) -> None:
-        fd = os.open(self._fifo_in, os.O_RDONLY | os.O_NONBLOCK)
-        self._fd = open(fd, 'rb')
         target_frames_per_packet: int = 1
         """Send data to the web handler when it gets this many frames buffered up"""
         target_bytes_per_packet: int = 1500
@@ -101,28 +122,31 @@ class sink_mp3_thread(sink_output_thread):
             """Holds the currently processing MP3 frame"""
             try:
                 mp3_header_parsed, mp3_header_raw = self.__read_header()
-            except:
+            except Exception as e:
+                print(f"[Sink {self._sink_ip}] Failed processing MP3 header, MP3 streaming will fail.")
+                print(traceback.format_exc())
                 continue
             available_data.extend(mp3_header_raw)
             mp3_frame = self._read_bytes(mp3_header_parsed.framelength)
             available_data.extend(mp3_frame)
             available_frame_count = available_frame_count + 1
             if self.__webstream and (available_frame_count == target_frames_per_packet or len(available_data) >= target_bytes_per_packet):
-                # If we have reached either target frames per packet or target bytes per packet then send the buffered data
+                # If it has reached either target frames per packet or target bytes per packet then send the buffered data
                 self.__webstream.sink_callback(self._sink_ip, available_data)
                 available_frame_count = 0
                 available_data = bytearray()
         print(f"[Sink {self._sink_ip}] MP3 thread exit")
 
+
 class sink_pcm_thread(sink_output_thread):
     """Handles listening for PCM output from ffmpeg"""
     def __init__(self, fifo_in: str, sink_ip: str):
-        super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink {sink_ip}] PCM Thread")
-
-        self.__output_header = bytes([0x01, 0x20, 0x02, 0x03, 0x00])  # 48khz, 32-bit, stereo"""
-        """Holds the header added onto packets sent to Scream receivers"""  # TODO: Dynamically generate this header based on config
         self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Output socket for sink"""
+        self.__output_header = bytes([0x01, 0x20, 0x02, 0x03, 0x00])  # 48khz, 32-bit, stereo"""
+        """Holds the header added onto packets sent to Scream receivers"""  # TODO: Dynamically generate this header based on config
+
+        super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink {sink_ip}] PCM Thread")
 
     def run(self) -> None:
         """This thread implements listening to self.fifoin and sending it out to dest_ip
@@ -130,15 +154,9 @@ class sink_pcm_thread(sink_output_thread):
                                                                                                ^
                                                                                           You are here                   
         """
-        fd = os.open(self._fifo_in, os.O_RDONLY | os.O_NONBLOCK)
-        self._fd = open(fd, 'rb')
-        
         while self._running:
-            data = bytearray()
             try:
-                data.extend(self._read_bytes(1152))  # 1152 for Scream compatibility
-                sendbuf = self.__output_header + data  # Add the header to the data
-                self.__sock.sendto(sendbuf, (self._sink_ip, 4010))  # Send it to the sink
+                self.__sock.sendto(self.__output_header + self._read_bytes(1152), (self._sink_ip, 4010))  # Send received data from ffmpeg to the sink
             except Exception as e:
                 print(traceback.format_exc())
         print(f"[Sink {self._sink_ip}] PCM thread exit")
