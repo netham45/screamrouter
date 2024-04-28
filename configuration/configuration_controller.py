@@ -278,6 +278,8 @@ class ConfigurationController:
                 self.add_source(SourceDescription(sourceGroup["name"], "", True, sourceGroup["enabled"], sourceGroup["sources"], sourceGroup["volume"]))
             for routeEntry in config["routes"]:
                 self.add_route(RouteDescription(routeEntry["name"], routeEntry["sink"], routeEntry["source"], routeEntry["enabled"], routeEntry["volume"]))
+        except FileNotFoundError as e:
+            print("Configuration not found, starting with a blank config")
         except:
             print("Failed to load config.yaml. Aborting load")
             print(traceback.format_exc())
