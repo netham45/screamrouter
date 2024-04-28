@@ -4,7 +4,7 @@ import uvicorn
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from api.api_configuration_types import PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup
+from api.api_configuration_types import PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup, PostURL
 from configuration.configuration_controller import SinkDescription, SourceDescription, RouteDescription, ConfigurationController
 
 class API_Configuration(threading.Thread):
@@ -25,6 +25,7 @@ class API_Configuration(threading.Thread):
         self._app.get("/sinks/{sink_name}/disable", tags=["Sink Configuration"])(self.disable_sink)
         self._app.get("/sinks/{sink_name}/enable", tags=["Sink Configuration"])(self.enable_sink)
         self._app.get("/sinks/{sink_name}/volume/{volume}", tags=["Sink Configuration"])(self.set_sink_volume)
+        self._app.post("/sinks/{sink_name}/play/{volume}", tags=["Sink Playback"])(self.sink_play)
         
         self._app.get("/sources", tags=["Source Configuration"])(self.get_sources)
         self._app.post("/groups/sources", tags=["Source Configuration"])(self.add_source_group)
@@ -60,6 +61,11 @@ class API_Configuration(threading.Thread):
     def set_sink_volume(self, sink_name: str, volume: float) -> bool:
         """Sets the volume for a sink"""
         return self._configuration_controller.update_sink_volume(sink_name, volume)
+    
+
+    def sink_play(self, url: PostURL, sink_name: str, volume: float):
+        """Plays a URL"""
+        return self._configuration_controller.play_url(sink_name, url.url, volume)
 
     def get_sinks(self) -> List[SinkDescription]:
         """Get all sinks"""

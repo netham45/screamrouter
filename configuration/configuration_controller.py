@@ -194,6 +194,14 @@ class ConfigurationController:
         self.__apply_volume_change()
         return True
     
+    def play_url(self, sink_name: str, url: str, volume: float) -> bool:
+        """Plays a URL on the sink"""
+        for sink in self.__sink_objects:
+            if sink.name == sink_name:
+                sink.play_url(url, volume)
+                return True
+        return False
+    
     def stop(self) -> bool:
         self.__receiver.stop()
         self.__receiver.join()

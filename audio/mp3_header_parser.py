@@ -44,7 +44,7 @@ class MP3Header():
         """Length of this frame"""
         self.__mp3_process_header(header)
 
-    def __mp3_parse_bitrate(self, index: int, mpeg_version: int, layer_description: int):
+    def __mp3_parse_bitrate(self, index: int, mpeg_version: int, layer_description: int) -> int:
         """Looks up the bitrate from a table"""
         bitrate_table = {
                         0:  # Index 0 (Free)
@@ -274,18 +274,18 @@ class MP3Header():
                         }
         return bitrate_table[index][mpeg_version][layer_description - 1]
 
-    def __mp3_parse_frames(self, mpeg_version: int, layer_description: int):
+    def __mp3_parse_frames(self, mpeg_version: int, layer_description: int) -> int:
         """Looks up the frame count from a table"""
         framecounts = {1: [384, 1152, 1152], 2: [384, 1152, 576]}
         return framecounts[mpeg_version][layer_description - 1]
 
-    def __mp3_process_samplerate(self, mpeg_version: int, samplerate: int):
+    def __mp3_process_samplerate(self, mpeg_version: int, samplerate: int) -> int:
         """Looks up the samplerate from a table"""
         version = 4 - mpeg_version
         samplerates = {1: [44100, 48000, 32000], 2: [22050, 24000, 16000], 3: [11025, 12000, 8000]}
         return samplerates[version][samplerate]
 
-    def __mp3_process_header(self, headerData: bytes):
+    def __mp3_process_header(self, headerData: bytes) -> None:
         """Processes an MP3 header"""
         # See http://www.mp3-tech.org/programmer/frame_header.html
         if len(headerData) < 4:

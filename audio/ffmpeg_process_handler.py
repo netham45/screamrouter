@@ -42,6 +42,21 @@ class ffmpeg_handler(threading.Thread):
             channels = source._stream_attributes.channels
             channel_layout = source._stream_attributes.channel_layout
             file_name = source._fifo_file_name
+
+            if self.queued_url:
+                ffmpeg_command.extend([
+                                   "-max_delay", "0",
+                                   "-audio_preload", "0",
+                                   "-max_probe_packets", "0",
+                                   "-rtbufsize", "0",
+                                   "-analyzeduration", "0",
+                                   "-probesize", "32",
+                                   "-fflags", "+discardcorrupt+faststart",
+                                   "-flags", "+low_delay",
+                                   "-fflags", "nobuffer",
+                                   "-thread_queue_size", "32",
+                                   "-channel_layout", "2",
+                                   "-i", f"{self.queued_url}"])
             # This is optimized to reduce latency and initial ffmpeg processing time
             ffmpeg_command.extend([
                                    "-max_delay", "0",
@@ -59,6 +74,7 @@ class ffmpeg_handler(threading.Thread):
                                    "-ac", f"{channels}",
                                    "-ar", f"{sample_rate}",
                                    "-i", f"{file_name}"])
+        
         return ffmpeg_command
 
     def __get_ffmpeg_filters(self, sources: List[SourceInfo]) -> List[str]:
@@ -86,6 +102,8 @@ class ffmpeg_handler(threading.Thread):
         ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_filters(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_output())  # ffmpeg output
+        self.queued_url = ""
+        print(ffmpeg_command_parts)
         return ffmpeg_command_parts
     
     def ffmpeg_preopen_hook(self): 
@@ -97,7 +115,7 @@ class ffmpeg_handler(threading.Thread):
         if (self.__running):
             print(f"[Sink {self.__sink_ip}] ffmpeg started")
             self.__ffmpeg_started = True
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE)#, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def reset_ffmpeg(self, sources: List[SourceInfo]) -> None:
         """Opens the ffmpeg instance"""

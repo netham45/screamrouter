@@ -41,3 +41,7 @@ class PostRoute(BaseModel):
     """Route Source"""
     sink: str
     """Route Sink"""
+
+class PostURL(BaseModel):
+    url: str
+    """URL"""

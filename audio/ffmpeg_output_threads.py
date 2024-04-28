@@ -24,7 +24,7 @@ class ffmpeg_output_thread(threading.Thread):
         """Rather this thread is running"""
         self._fd: io.BufferedReader
         """File handle"""
-        self._make_ffmpeg_to_screamrouter_pipe()  # Make python -> ffmpeg fifo fifo
+        self._make_ffmpeg_to_screamrouter_pipe()  # Make python -> ffmpeg fifo
         fd = os.open(self._fifo_in, os.O_RDONLY | os.O_NONBLOCK)
         self._fd = open(fd, 'rb')
         self.start()

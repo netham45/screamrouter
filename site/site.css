@@ -4,6 +4,7 @@ TABLE.main > TBODY {
 
 body {
   background-color: #000100;
+  font-family: "Arial";
 }
 
 TD.select {
@@ -121,7 +122,7 @@ DIV.dialog {
     top: 10%;
     left: 50%;
     margin-left: -150px;
-    background: linear-gradient(-45deg, rgba(0,10,0,.55), rgba(0,200,0,.9));
+    background: linear-gradient(-45deg, rgba(0,10,0,.35), rgba(0,200,0,.7));
     border-radius: 30px;
     display: none;
     padding-left: 15px;

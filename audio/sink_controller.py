@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from audio.ffmpeg_process_handler import ffmpeg_handler
 from audio.ffmpeg_input_queue import ffmpegInputQueue, ffmpegInputQueueEntry
+from audio.ffmpeg_url_play_thread import ffmpegPlayURL
 from audio.source_info import SourceInfo
 from audio.stream_info import StreamInfo, create_stream_info
 
@@ -18,6 +19,8 @@ class SinkController():
     def __init__(self, sink_info: SinkDescription, sources: List[ControllerSource], websocket: Optional[API_Webstream]):
         """Initialize a sink"""
         super().__init__()
+        self.__sink_info = sink_info
+        """Sink Info"""
         self.__channels = sink_info.channels
         """Number of channels the sink is configured for"""
         self.__bit_depth = sink_info.bit_depth
@@ -32,6 +35,8 @@ class SinkController():
         """Sink IP"""
         self._sink_port: int = sink_info.port
         """Sink Port"""
+        self.name: str = sink_info.name
+        """Sink Name"""
         self.__controller_sources: List[ControllerSource] = sources
         """Sources this Sink has"""
         self.__sources: List[SourceInfo] = []
@@ -52,9 +57,11 @@ class SinkController():
         """Holds the thread to listen to MP3 output from ffmpeg"""
         self.__queue_thread: ffmpegInputQueue = ffmpegInputQueue(self.process_packet_from_queue, self._sink_ip)
         """Holds the thread to listen to the input queue and send it to ffmpeg"""
+        self.__playing_sourceinfo: SourceInfo = SourceInfo("ffmpeg", "ffmpeg", self._sink_ip, 1)
 
         for source in self.__controller_sources:
             self.__sources.append(SourceInfo(source.ip, self.__temp_path + source.ip, self._sink_ip, source.volume))
+        self.__sources.append(self.__playing_sourceinfo)
     
     def update_source_volume(self, controllersource: ControllerSource) -> None:
         """Updates the source volume to the specified volume, does nothing if the source is not playing to this sink."""
@@ -140,3 +147,10 @@ class SinkController():
         self.__ffmpeg.join()
         print(f"[Sink {self._sink_ip}] ffmpeg thread stopped")
         print(f"[Sink {self._sink_ip}] Stopped")
+
+    def play_url(self, url: str, volume: float) -> None:
+        """Plays a URL"""
+        playback: ffmpegPlayURL = ffmpegPlayURL(url, volume, self.__sink_info, self.__temp_path + "ffmpeg", self.add_packet_to_queue)
+        #self.__ffmpeg.queued_url = url
+        #self.__ffmpeg.queued_url_volume = volume
+        #self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
