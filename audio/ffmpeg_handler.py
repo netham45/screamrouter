@@ -8,8 +8,8 @@ import traceback
 
 from typing import List
 
-from sink_controller.source_info import SourceInfo
-from sink_controller.stream_info import StreamInfo
+from audio.source_info import SourceInfo
+from audio.stream_info import StreamInfo
 
 class ffmpeg_handler(threading.Thread):
     def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str, sources: List[SourceInfo], sink_info: StreamInfo):

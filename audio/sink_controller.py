@@ -2,16 +2,16 @@ import tempfile
 
 from typing import List, Optional
 
-from sink_controller.ffmpeg_handler import ffmpeg_handler
-from sink_controller.sink_input_queue import SinkInputQueue, SinkInputQueueEntry
-from sink_controller.source_info import SourceInfo
-from sink_controller.stream_info import StreamInfo, create_stream_info
+from audio.ffmpeg_handler import ffmpeg_handler
+from audio.sink_input_queue import SinkInputQueue, SinkInputQueueEntry
+from audio.source_info import SourceInfo
+from audio.stream_info import StreamInfo, create_stream_info
 
 from configuration.configuration_controller_types import SinkDescription, SourceDescription as ControllerSource
 
 from api.api_webstream import API_Webstream
 
-from sink_controller.sink_output_threads import sink_mp3_thread, sink_pcm_thread
+from audio.sink_output_threads import sink_mp3_thread, sink_pcm_thread
 
 class SinkController():
     """Handles ffmpeg, keeps a list of it's own sources, sends passed data to the appropriate pipe"""

@@ -4,7 +4,7 @@ import select
 
 from typing import List
 
-from sink_controller.sink_controller import SinkController
+from audio.sink_controller import SinkController
 
 LOCALPORT=16401
 

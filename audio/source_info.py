@@ -4,7 +4,7 @@ import io
 import traceback
 from typing import List
 
-from sink_controller.stream_info import StreamInfo
+from audio.stream_info import StreamInfo
 
 
 class SourceInfo():
