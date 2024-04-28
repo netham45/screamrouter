@@ -12,7 +12,7 @@
 
 # Note on installing Scream
 
-Scream has an expired certificate of a type Windows actually cares about the date on. In order to install it your clock will need to be set earlier than July 6th 2023. Once the clock is set the normal Scream installation instructions, including disabling SecureBoot, will allow it to install on Windows 11. After the driver is installed the clock can be restored to the correct time and the driver will continue to function.
+Scream has an expired certificate of a type Windows verifies the date of. In order to install it your clock will need to be set earlier than July 6th 2023. Once the clock is set the normal Scream installation instructions, including disabling SecureBoot, will allow it to install on Windows 11. After the driver is installed the clock can be restored to the correct time and the driver will continue to function.
 
 # Usage
 
@@ -27,7 +27,7 @@ The interface will update the yaml so any notes, non-standard fields, or custom 
 Each Sink, Source, and Route has a name. This name is used as the reference for routes and groups to track members. Clicking Add Sink will prompt you for the information to make one. The names must be unique between Sinks and Sink Groups, Sources and Source Groups, and all Routes.
 
 ### Sinks
-Each Sink holds information for the destination IP, port, volume, and the sink name.
+Each Sink holds information for the destination IP, port, volume, sample rate, bit depth, channels, channel layout, and the sink name. The sample rate, bit depth, channels, and channel layout can be configured in the YAML.
 
 Example YAML block:
 
@@ -96,7 +96,6 @@ sources:
 ```
 
 
-
 ### Sink Groups
 Each Sink Group holds a name, a list of Sinks, and a volume. Groups can be nested.
 
@@ -143,7 +142,7 @@ Scream on Source PC -> ScreamRouter Source -> ScreamRouter Route -> ScreamRouter
 
 Each ScreamRouter Source is an IP address it looks for data from.
 
-Each ScreamRouter Sink is an IP address and port it sends data to. Currently it is sending 48KHz 32-bit stereo PCM but I am planning on allowing configuration.
+Each ScreamRouter Sink is an IP address and port it sends data to, along with a configuration for the output stream properties (bit depth, sample rate, channels, channel layout)
 
 The sinks can take in any input format Scream can produce, but using 24-bit is discouraged due to potential byte alignment issues. If you get random static blasted at you during playback this is why.
 
@@ -174,7 +173,7 @@ The threads are:
 * Sink FFMPEG thread - This thread handles starting and stopping FFMPEG as well as ensuring the process is running when it should be. The class also handles building the command line for FFMPEG.
 * API thread - FastAPI runs in it's own thread and will send requests in their own threads. When the Stream endpoint is called it will delay in an async function to wait for the WebStream queue to have data.
 
-### General Info
+### More Technical Info
 Each Sink is associated with a Sink Controller. This controller reads into and out of the FIFO pipes for ffmpeg and tracks which sources are assigned and active.
 
 On the reciving thread receiving a packet it is forwarded to a queue for each Sink Controller. Each Sink controller will wait for the queue and check if the data matches a source it tracks. If so they send the data to the appropriate input in FFMPEG over a pipe.
@@ -182,5 +181,4 @@ On the reciving thread receiving a packet it is forwarded to a queue for each Si
 The Sink Controller also manages two threads to read input from FFMPEG, both PCM and MP3. The PCM thread is sent to Scream Receiver Sources, the MP3 stream is forwarded to a queue handler to make it available to FastAPI.
 
 
-
-The lifecycle of each thread and ffmpeg process is controlled from start to end by ScreamRouter so that a configuration change can fully unload and reload.
+The lifecycle of each thread and ffmpeg process is controlled from start to end by ScreamRouter so that a configuration change can fully unload and reload ScreamRouter.
