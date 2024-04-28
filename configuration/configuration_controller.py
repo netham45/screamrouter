@@ -263,18 +263,24 @@ class ConfigurationController:
 
     def __load_yaml(self) -> None:
         """Loads the initial config"""
-        with open("config.yaml", "r") as f:
-            config = yaml.safe_load(f)
-        for sinkEntry in config["sinks"]:
-            self.add_sink(SinkDescription(sinkEntry["name"], sinkEntry["ip"], sinkEntry["port"], False, sinkEntry["enabled"], [], sinkEntry["volume"]))
-        for sourceEntry in config["sources"]:
-            self.add_source(SourceDescription(sourceEntry["name"], sourceEntry["ip"], False, sourceEntry["enabled"], [], sourceEntry["volume"]))
-        for sinkGroup in config["groups"]["sinks"]:
-            self.add_sink(SinkDescription(sinkGroup["name"], "", 0, True, sinkGroup["enabled"], sinkGroup["sinks"], sinkGroup["volume"]))
-        for sourceGroup in config["groups"]["sources"]:
-            self.add_source(SourceDescription(sourceGroup["name"], "", True, sourceGroup["enabled"], sourceGroup["sources"], sourceGroup["volume"]))
-        for routeEntry in config["routes"]:
-            self.add_route(RouteDescription(routeEntry["name"], routeEntry["sink"], routeEntry["source"], routeEntry["enabled"], routeEntry["volume"]))
+        try:
+            with open("config.yaml", "r") as f:
+                config = yaml.safe_load(f)
+            for sinkEntry in config["sinks"]:
+                self.add_sink(SinkDescription(sinkEntry["name"], sinkEntry["ip"], sinkEntry["port"], False, sinkEntry["enabled"], [], sinkEntry["volume"]))
+            for sourceEntry in config["sources"]:
+                self.add_source(SourceDescription(sourceEntry["name"], sourceEntry["ip"], False, sourceEntry["enabled"], [], sourceEntry["volume"]))
+            for sinkGroup in config["groups"]["sinks"]:
+                self.add_sink(SinkDescription(sinkGroup["name"], "", 0, True, sinkGroup["enabled"], sinkGroup["sinks"], sinkGroup["volume"]))
+            for sourceGroup in config["groups"]["sources"]:
+                self.add_source(SourceDescription(sourceGroup["name"], "", True, sourceGroup["enabled"], sourceGroup["sources"], sourceGroup["volume"]))
+            for routeEntry in config["routes"]:
+                self.add_route(RouteDescription(routeEntry["name"], routeEntry["sink"], routeEntry["source"], routeEntry["enabled"], routeEntry["volume"]))
+        except:
+            print("Failed to load config.yaml. Loading with a blank configuration.")
+            self.__sink_descriptions = []
+            self.__route_descriptions = []
+            self.__source_descriptions = []
 
         self.__loaded = True
 

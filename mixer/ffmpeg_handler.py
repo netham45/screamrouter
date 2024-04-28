@@ -38,7 +38,16 @@ class ffmpeg_handler(threading.Thread):
             sample_rate = source._stream_attributes.sample_rate
             channels = source._stream_attributes.channels
             file_name = source._fifo_file_name
-            ffmpeg_command.extend(['-thread_queue_size', '64',
+            ffmpeg_command.extend(['-max_delay', '0',
+                                   '-audio_preload', '1',
+                                   '-max_probe_packets', '32',
+                                   '-rtbufsize', '1',
+                                   '-analyzeduration', '10000',
+                                   '-probesize', '32',
+                                   '-fflags', 'discardcorrupt',
+                                   '-flags', 'low_delay',
+                                   '-fflags', 'nobuffer',
+                                   '-thread_queue_size', '64',
                                    '-f', f's{bit_depth}le',
                                    '-ac', f'{channels}',
                                    '-ar', f'{sample_rate}',
@@ -52,17 +61,17 @@ class ffmpeg_handler(threading.Thread):
         amix_inputs = ""
 
         for idx, value in enumerate(sources):  # For each source IP add an input to aresample async, and append it to an input variable for amix
-            full_filter_string = full_filter_string + f"[{idx}]volume@volume_{idx}={value.volume},asetpts=N/SR/TB,aresample=async=5000000:flags=+res:resampler=soxr[a{idx}],"
+            full_filter_string = full_filter_string + f"[{idx}]volume@volume_{idx}={value.volume},aresample=isr=48000:osr=48000:async=50000[a{idx}]," # ,adeclick masks dropouts
             amix_inputs = amix_inputs + f"[a{idx}]"  # amix input
-        ffmpeg_command_parts.extend(['-filter_complex', full_filter_string + amix_inputs + f'amix=normalize=0:inputs={len(sources)}'])
+        ffmpeg_command_parts.extend(['-filter_complex', full_filter_string + amix_inputs + f'amix=normalize=0:inputs={len(self.__sources)}'])
         return ffmpeg_command_parts
 
     def __get_ffmpeg_output(self) -> List[str]:
         """Returns the ffmpeg output"""
         # TODO: Add output bitdepth/channels/sample rate to yaml
         ffmpeg_command_parts: List[str] = []
-        ffmpeg_command_parts.extend(['-y', '-f', 's32le', '-ac', '2', '-ar', '48000', f"file:{self.__fifo_in_pcm}"])  # ffmpeg output
-        ffmpeg_command_parts.extend(['-y', '-f', 'mp3', '-ac', '2', '-reservoir', '0', f"file:{self.__fifo_in_mp3}"])  # ffmpeg ogg output
+        ffmpeg_command_parts.extend(['-avioflags', 'direct', '-y', '-f', 's32le', '-ac', '2', '-ar', '48000', f"{self.__fifo_in_pcm}"])  # ffmpeg output
+        ffmpeg_command_parts.extend(['-avioflags', 'direct', '-y', '-f', 'mp3', '-b', '320k', '-ac', '2', '-reservoir', '0', f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
         return ffmpeg_command_parts
 
     def __get_ffmpeg_command(self, sources: List[SourceInfo]) -> List[str]:
@@ -83,7 +92,7 @@ class ffmpeg_handler(threading.Thread):
         if (self.__running):
             self.__ffmpeg_started = True
             print(self.__get_ffmpeg_command(self.__sources))
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE) #, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE)#, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def reset_ffmpeg(self, sources: List[SourceInfo]) -> None:
         """Opens the ffmpeg instance"""

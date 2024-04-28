@@ -70,12 +70,11 @@ class SinkController():
     def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
         for source in self.__sources:
-            active_time: int = 200  # Time in milliseconds
-            if len(self.__get_open_sources()) == 1:  # Don't close the last pipe until more time has passed
-                active_time = 300 * 1000  # Much more time in milliseconds
+            active_time: int = 50  # Time in milliseconds, could be lower
             if not source.is_active(active_time) and source.is_open():
                 print(f"[Sink {self._sink_ip} Source {source._ip}] Closing (Timeout = {active_time}ms)")
                 source.close()
+                self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
 
     def __update_source_attributes_and_open_source(self, source: SourceInfo, header: bytes) -> None:
         """Verifies the target pipe header matches what we have, updates it if not. Also opens the pipe."""
