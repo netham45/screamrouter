@@ -8,39 +8,39 @@ class InvalidHeaderException(Exception):
 class MP3Header():
     """Parses an MP3 header"""
     def __init__(self, header: bytes):
-        self.mpeg_version = 0
+        self.mpeg_version: int = 0
         """MPEG Version"""
-        self.layer_description = 0
+        self.layer_description: int = 0
         """MPEG Layer"""
-        self.protected = 0
+        self.protected: bool = False
         """Is MP3 protected"""
-        self.bitrate_index = 0
+        self.bitrate_index: int = 0
         """Bitrate index from header"""
-        self.bitrate = 0
+        self.bitrate: int = 0
         """True bitrate"""
-        self.samplerate_index = 0
+        self.samplerate_index: int = 0
         """Samplerate index from header"""
-        self.samplerate = 0
+        self.samplerate: int = 0
         """True samplerate"""
-        self.padding = 0
+        self.padding: bool = False
         """Rather there's a padding byte to discard or not"""
-        self.private = 0
+        self.private: int = 0
         """Private byte"""
-        self.channelmode = 0
+        self.channelmode: int = 0
         """Channel mode (Mono/LR Stereo/MS Stereo)"""
-        self.modeextension = 0
+        self.modeextension: int = 0
         """Only used for MS Stereo"""
-        self.copyright = 0
+        self.copyright: int = 0
         """Rather the MP3 is copyright prtoected"""
-        self.original = 0
+        self.original: bool = False
         """Rather the MP3 is an original"""
-        self.emphasis = 0
+        self.emphasis: int = 0
         """Channel emphasis"""
-        self.slotsize = 0
+        self.slotsize: int = 0
         """Slot Size"""
-        self.samplecount = 0
+        self.samplecount: int = 0
         """Number of samples in this frame"""
-        self.framelength = 0
+        self.framelength: int = 0
         """Length of this frame"""
         self.__mp3_process_header(header)
 
@@ -278,7 +278,7 @@ class MP3Header():
         """Looks up the frame count from a table"""
         framecounts = {1: [384, 1152, 1152], 2: [384, 1152, 576]}
         return framecounts[mpeg_version][layer_description - 1]
-    
+
     def __mp3_process_samplerate(self, mpeg_version: int, samplerate: int):
         """Looks up the samplerate from a table"""
         version = 4 - mpeg_version
