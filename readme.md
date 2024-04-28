@@ -40,11 +40,19 @@ sinks:
   name: Livingroom
   port: 4010
   volume: 1.0
+  bitdepth: 32
+  channel_layout: stereo
+  channels: 2
+  samplerate: 48000
 - enabled: true
   ip: 192.168.3.111
   name: Bedroom
   port: 4010
   volume: 1.0
+  bitdepth: 32
+  channel_layout: stereo
+  channels: 2
+  samplerate: 48000
 ```
 
 ### Routes

@@ -18,7 +18,7 @@ class SourceInfo():
         """Rather the Source is open for writing or not"""
         self.__last_data_time: float = 0
         """The time in milliseconds we last received data"""
-        self._stream_attributes: StreamInfo = StreamInfo([0, 0, 0, 0, 0])
+        self._stream_attributes: StreamInfo = StreamInfo(bytearray([0, 0, 0, 0, 0]))
         """The source stream attributes (bit depth, sample rate, channels)"""
         self._fifo_file_name: str = fifo_file_name
         """The named pipe that ffmpeg is using as an input for this source"""

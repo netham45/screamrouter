@@ -9,9 +9,10 @@ import traceback
 from typing import List
 
 from mixer.source_info import SourceInfo
+from mixer.stream_info import StreamInfo
 
 class ffmpeg_handler(threading.Thread):
-    def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str, sources: List[SourceInfo]):
+    def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str, sources: List[SourceInfo], sink_info: StreamInfo):
         super().__init__(name=f"[Sink {sink_ip}] ffmpeg Thread")
         self.__fifo_in_pcm: str = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
@@ -27,6 +28,8 @@ class ffmpeg_handler(threading.Thread):
         """Holds rather we're monitoring ffmpeg to restart it"""
         self.__sources = sources
         """Holds a list of active sources"""
+        self.__sink_info: StreamInfo = sink_info
+        """Holds the sink configuration"""
         self.start()
         self.start_ffmpeg()
     
@@ -40,21 +43,21 @@ class ffmpeg_handler(threading.Thread):
             channel_layout = source._stream_attributes.channel_layout
             file_name = source._fifo_file_name
             ffmpeg_command.extend([
-                                   '-max_delay', '0',
-                                   '-audio_preload', '1',
-                                   '-max_probe_packets', '0',
-                                   '-rtbufsize', '0',
-                                   '-analyzeduration', '0',
-                                   '-probesize', '32',
-                                   '-fflags', 'discardcorrupt',
-                                   '-flags', 'low_delay',
-                                   '-fflags', 'nobuffer',
-                                   '-thread_queue_size', '128',
-                                   '-channel_layout', f'{channel_layout}',
-                                   '-f', f's{bit_depth}le',
-                                   '-ac', f'{channels}',
-                                   '-ar', f'{sample_rate}',
-                                   '-i', f'{file_name}'])
+                                   "-max_delay", "0",
+                                   "-audio_preload", "1",
+                                   "-max_probe_packets", "0",
+                                   "-rtbufsize", "0",
+                                   "-analyzeduration", "0",
+                                   "-probesize", "32",
+                                   "-fflags", "discardcorrupt",
+                                   "-flags", "low_delay",
+                                   "-fflags", "nobuffer",
+                                   "-thread_queue_size", "128",
+                                   "-channel_layout", f"{channel_layout}",
+                                   "-f", f"s{bit_depth}le",
+                                   "-ac", f"{channels}",
+                                   "-ar", f"{sample_rate}",
+                                   "-i", f"{file_name}"])
         return ffmpeg_command
 
     def __get_ffmpeg_filters(self, sources: List[SourceInfo]) -> List[str]:
@@ -66,20 +69,19 @@ class ffmpeg_handler(threading.Thread):
         for idx, value in enumerate(sources):  # For each source IP add an input to aresample async, and append it to an input variable for amix
             full_filter_string = full_filter_string + f"[{idx}]volume@volume_{idx}={value.volume},aresample=isr={value._stream_attributes.sample_rate}:osr={value._stream_attributes.sample_rate}:async=500000[a{idx}]," # ,adeclick masks dropouts
             amix_inputs = amix_inputs + f"[a{idx}]"  # amix input
-        ffmpeg_command_parts.extend(['-filter_complex', full_filter_string + amix_inputs + f'amix=normalize=0:inputs={len(self.__sources)}'])
+        ffmpeg_command_parts.extend(["-filter_complex", full_filter_string + amix_inputs + f"amix=normalize=0:inputs={len(self.__sources)}"])
         return ffmpeg_command_parts
 
     def __get_ffmpeg_output(self) -> List[str]:
         """Returns the ffmpeg output"""
-        # TODO: Add output bitdepth/channels/sample rate to yaml
         ffmpeg_command_parts: List[str] = []
-        ffmpeg_command_parts.extend(['-avioflags', 'direct', '-y', '-f', 's32le', '-ac', '2', '-ar', '48000', f"{self.__fifo_in_pcm}"])  # ffmpeg output
-        ffmpeg_command_parts.extend(['-avioflags', 'direct', '-y', '-f', 'mp3', '-b:a', '320k', '-ac', '2', '-ar', '48000', '-reservoir', '0', f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
+        ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", f"s{self.__sink_info.bit_depth}le", "-ac", f"{self.__sink_info.channels}", "-ar", f"{self.__sink_info.sample_rate}", f"{self.__fifo_in_pcm}"])  # ffmpeg output
+        ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", "mp3", "-b:a", "320k", "-ac", "2", "-ar", f"{self.__sink_info.sample_rate}", "-reservoir", "0", f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
         return ffmpeg_command_parts
 
     def __get_ffmpeg_command(self, sources: List[SourceInfo]) -> List[str]:
         """Builds the ffmpeg command"""
-        ffmpeg_command_parts: List[str] = ['ffmpeg', '-hide_banner']  # Build ffmpeg command
+        ffmpeg_command_parts: List[str] = ["ffmpeg", "-hide_banner"]  # Build ffmpeg command
         ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_filters(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_output())  # ffmpeg output
@@ -133,7 +135,7 @@ class ffmpeg_handler(threading.Thread):
         self.__running = False
         self.__ffmpeg_started = False
         try:
-            self.send_ffmpeg_command('','q')
+            self.send_ffmpeg_command("","q")
         except:
             pass
         try:

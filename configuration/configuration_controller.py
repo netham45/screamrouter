@@ -267,7 +267,7 @@ class ConfigurationController:
             with open("config.yaml", "r") as f:
                 config = yaml.safe_load(f)
             for sinkEntry in config["sinks"]:
-                self.add_sink(SinkDescription(sinkEntry["name"], sinkEntry["ip"], sinkEntry["port"], False, sinkEntry["enabled"], [], sinkEntry["volume"]))
+                self.add_sink(SinkDescription(sinkEntry["name"], sinkEntry["ip"], sinkEntry["port"], False, sinkEntry["enabled"], [], sinkEntry["volume"], sinkEntry["bitdepth"], sinkEntry["samplerate"], sinkEntry["channels"], sinkEntry["channel_layout"]))
             for sourceEntry in config["sources"]:
                 self.add_source(SourceDescription(sourceEntry["name"], sourceEntry["ip"], False, sourceEntry["enabled"], [], sourceEntry["volume"]))
             for sinkGroup in config["groups"]["sinks"]:
@@ -293,7 +293,7 @@ class ConfigurationController:
         routes: List[dict] = []
         for sink in self.__sink_descriptions:
             if not sink.is_group:
-                _newsink = {"name": sink.name, "ip": sink.ip, "port": sink.port, "enabled": sink.enabled, "volume": sink.volume}
+                _newsink = {"name": sink.name, "ip": sink.ip, "port": sink.port, "enabled": sink.enabled, "volume": sink.volume, "bitdepth": sink.bit_depth, "samplerate": sink.sample_rate, "channels": sink.channels, "channel_layout": sink.channel_layout}
                 sinks.append(_newsink)
             else:
                 _newsink = {"name": sink.name, "sinks": sink.group_members, "enabled": sink.enabled, "volume": sink.volume}
@@ -329,9 +329,14 @@ class ConfigurationController:
         self.__sink_objects = []
         for sink_ip in self.__sinks_to_sources.keys():
             if sink_ip != "":
-                sink = mixer.sink_controller.SinkController(sink_ip, self.__sinks_to_sources[sink_ip], self.__api_websocket)
-                self.__receiver.register_sink(sink)
-                self.__sink_objects.append(sink)
+                sink_info: SinkDescription
+                for sink_description in self.__sink_descriptions:
+                    if sink_description.ip == sink_ip:
+                        sink_info = sink_description
+                        sink = mixer.sink_controller.SinkController(sink_info, self.__sinks_to_sources[sink_ip], self.__api_websocket)
+                        self.__receiver.register_sink(sink)
+                        self.__sink_objects.append(sink)
+                        break
 
     # Sink Finders
     def __get_sink_by_name(self, name: str) -> SinkDescription:

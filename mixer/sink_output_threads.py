@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 from api.api_webstream import API_Webstream
 
 import mixer.mp3_header_parser as mp3_header_parser
+from mixer.stream_info import StreamInfo
 
 class sink_output_thread(threading.Thread):
     """Handles listening for output from ffmpeg, extended by stream-specific classes"""
@@ -140,11 +141,12 @@ class sink_mp3_thread(sink_output_thread):
 
 class sink_pcm_thread(sink_output_thread):
     """Handles listening for PCM output from ffmpeg"""
-    def __init__(self, fifo_in: str, sink_ip: str):
+    def __init__(self, fifo_in: str, sink_ip: str, output_info: StreamInfo):
+
         self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Output socket for sink"""
-        self.__output_header = bytes([0x01, 0x20, 0x02, 0x03, 0x00])  # 48khz, 32-bit, stereo"""
-        """Holds the header added onto packets sent to Scream receivers"""  # TODO: Dynamically generate this header based on config
+        self.__output_header = output_info.header
+        """Holds the header added onto packets sent to Scream receivers"""
 
         super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink {sink_ip}] PCM Thread")
 

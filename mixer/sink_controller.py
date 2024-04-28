@@ -5,9 +5,9 @@ from typing import List, Optional
 from mixer.ffmpeg_handler import ffmpeg_handler
 from mixer.sink_input_queue import SinkInputQueue, SinkInputQueueEntry
 from mixer.source_info import SourceInfo
-from mixer.stream_info import StreamInfo
+from mixer.stream_info import StreamInfo, create_stream_info
 
-from configuration.configuration_controller_types import SourceDescription as ControllerSource
+from configuration.configuration_controller_types import SinkDescription, SourceDescription as ControllerSource
 
 from api.api_webstream import API_Webstream
 
@@ -15,11 +15,20 @@ from mixer.sink_output_threads import sink_mp3_thread, sink_pcm_thread
 
 class SinkController():
     """Handles ffmpeg, keeps a list of it's own sources, sends passed data to the appropriate pipe"""
-    def __init__(self, sink_ip: str, sources: List[ControllerSource], websocket: Optional[API_Webstream]):
+    def __init__(self, sink_info: SinkDescription, sources: List[ControllerSource], websocket: Optional[API_Webstream]):
         """Initialize a sink"""
-        
         super().__init__()
-        self._sink_ip: str = sink_ip
+        self.__channels = sink_info.channels
+        """Number of channels the sink is configured for"""
+        self.__bit_depth = sink_info.bit_depth
+        """Bit depth the sink is configured for"""
+        self.__sample_rate = sink_info.sample_rate
+        """Sample rate the sink is configured for"""
+        self.__channel_layout = sink_info.channel_layout
+        """Channel layout the sink is configured for"""
+        self.__stream_info: StreamInfo = create_stream_info(self.__bit_depth, self.__sample_rate, self.__channels, self.__channel_layout)
+        """Output stream info"""
+        self._sink_ip: str = sink_info.ip
         """Sink IP"""
         self.__controller_sources: List[ControllerSource] = sources
         """Sources this Sink has"""
@@ -31,11 +40,11 @@ class SinkController():
         """Input file from ffmpeg PCM output"""
         self.__fifo_in_mp3: str = self.__temp_path + "in-mp3"
         """Input file from ffmpeg MP3 output"""
-        self.__ffmpeg: ffmpeg_handler = ffmpeg_handler(self._sink_ip, self.__fifo_in_pcm, self.__fifo_in_mp3, self.__get_open_sources())
+        self.__ffmpeg: ffmpeg_handler = ffmpeg_handler(self._sink_ip, self.__fifo_in_pcm, self.__fifo_in_mp3, self.__get_open_sources(), self.__stream_info)
         """ffmpeg handler"""
         self.__webstream: Optional[API_Webstream] = websocket
         """Holds the websock object to copy audio to, passed through to MP3 listener thread"""
-        self.__pcm_thread: sink_pcm_thread = sink_pcm_thread(self.__fifo_in_pcm, self._sink_ip)
+        self.__pcm_thread: sink_pcm_thread = sink_pcm_thread(self.__fifo_in_pcm, self._sink_ip, self.__stream_info)
         """Holds the thread to listen to PCM output from ffmpeg"""
         self.__mp3_thread: sink_mp3_thread = sink_mp3_thread(self.__fifo_in_mp3, self._sink_ip, self.__webstream)
         """Holds the thread to listen to MP3 output from ffmpeg"""
