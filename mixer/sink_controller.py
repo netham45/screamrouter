@@ -81,11 +81,10 @@ class SinkController():
         try:
             parsed_scream_header = StreamInfo(header)
         except:
-            # Got an invalid header. This can just be ignored for now.
             return
 
         if not source.check_attributes(parsed_scream_header):
-            print(f"[Sink {self._sink_ip} Source {source._ip}] Closing (Stream attribute change detected. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz.)")
+            print(f"[Sink {self._sink_ip} Source {source._ip}] Closing (Stream attribute change detected. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz {source._stream_attributes.channel_layout} layout, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz {parsed_scream_header.channel_layout} layout.)")
             source.set_attributes(parsed_scream_header)
             source.close()
         if not source.is_open():
@@ -112,15 +111,22 @@ class SinkController():
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
         print(f"[Sink {self._sink_ip}] Stopping PCM")
-        self.__pcm_thread.stop()
-        self.__pcm_thread.join()
+        self.__pcm_thread.stop()        
         print(f"[Sink {self._sink_ip}] Stopping MP3")
         self.__mp3_thread.stop()
-        self.__mp3_thread.join()
         print(f"[Sink {self._sink_ip}] Stopping Queue")
         self.__queue_thread.stop()
-        self.__queue_thread.join()
         print(f"[Sink {self._sink_ip}] Stopping ffmpeg")
         self.__ffmpeg.stop()
+        
+
+    def wait_for_threads_to_stop(self) -> None:
+        self.__pcm_thread.join()
+        print(f"[Sink {self._sink_ip}] PCM thread stopped")
+        self.__mp3_thread.join()
+        print(f"[Sink {self._sink_ip}] MP3 thread stopped")
+        self.__queue_thread.join()
+        print(f"[Sink {self._sink_ip}] Queue thread stopped")
         self.__ffmpeg.join()
+        print(f"[Sink {self._sink_ip}] ffmpeg stopped")
         print(f"[Sink {self._sink_ip}] Stopped")

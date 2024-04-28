@@ -16,10 +16,35 @@ class StreamInfo():
         """Bit depth"""
         self.channels: int = scream_header[2]  # One byte for channel count
         """Channel count"""
-        self.map: bytearray = scream_header[3:]  # Two bytes for WAVEFORMATEXTENSIBLE
-        """WAVEFORMATEXTENSIBLE"""
+        self.channel_mask: bytearray = scream_header[3:]  # Two bytes for channel_mask
+        """Channel Mask"""
+
+        self.channel_layout: str = "stereo"
+        """Holds the channel layout"""
+        self.__parse_channel_mask()
+
+    def __parse_channel_mask(self):
+        """Converts the channel mask to a string to be fed to ffmpeg"""
+        self.channel_layout: str = "stereo"
+        #print(f"Got mask {self.channel_mask[0]} {self.channel_mask[1]}")
+        if   self.channel_mask[1] == 0x00 and self.channel_mask[0] == 0x04:  # KSAUDIO_SPEAKER_MONO
+            self.channel_layout = "mono"
+        elif self.channel_mask[1] == 0x00 and self.channel_mask[0] == 0x03:  # KSAUDIO_SPEAKER_STEREO
+            self.channel_layout = "stereo"
+        elif self.channel_mask[1] == 0x00 and self.channel_mask[0] == 0x33:  # KSAUDIO_SPEAKER_QUAD
+            self.channel_layout = "quad"
+        elif self.channel_mask[1] == 0x01 and self.channel_mask[0] == 0x34:  # KSAUDIO_SPEAKER_SURROUND
+            self.channel_layout = "4.0"
+        elif self.channel_mask[1] == 0x00 and self.channel_mask[0] == 0x3F:  # KSAUDIO_SPEAKER_5POINT1
+            self.channel_layout = "5.1"
+        elif self.channel_mask[1] == 0x00 and self.channel_mask[0] == 0xFF:  # KSAUDIO_SPEAKER_7POINT1
+            self.channel_layout = "7.1"
+        elif self.channel_mask[1] == 0x06 and self.channel_mask[0] == 0x0F:  # KSAUDIO_SPEAKER_5POINT1_SURROUND
+            self.channel_layout = "5.1"
+        elif self.channel_mask[1] == 0x06 and self.channel_mask[0] == 0x3F:  # KSAUDIO_SPEAKER_7POINT1_SURROUND
+            self.channel_layout = "7.1"
 
     def __eq__(self, _other):
-        """Returns if two ScreamStreamInfos equal, minus the WAVEFORMATEXTENSIBLE part"""
+        """Returns if two ScreamStreamInfos equal"""
         other: StreamInfo = _other
-        return (self.sample_rate == other.sample_rate) and (self.bit_depth == other.bit_depth) and (self.channels == other.channels)
+        return (self.sample_rate == other.sample_rate) and (self.bit_depth == other.bit_depth) and (self.channels == other.channels) and (self.channel_mask == other.channel_mask)

@@ -37,17 +37,20 @@ class ffmpeg_handler(threading.Thread):
             bit_depth = source._stream_attributes.bit_depth
             sample_rate = source._stream_attributes.sample_rate
             channels = source._stream_attributes.channels
+            channel_layout = source._stream_attributes.channel_layout
             file_name = source._fifo_file_name
-            ffmpeg_command.extend(['-max_delay', '0',
+            ffmpeg_command.extend([
+                                   '-max_delay', '0',
                                    '-audio_preload', '1',
-                                   '-max_probe_packets', '32',
-                                   '-rtbufsize', '1',
-                                   '-analyzeduration', '10000',
+                                   '-max_probe_packets', '0',
+                                   '-rtbufsize', '0',
+                                   '-analyzeduration', '0',
                                    '-probesize', '32',
                                    '-fflags', 'discardcorrupt',
                                    '-flags', 'low_delay',
                                    '-fflags', 'nobuffer',
-                                   '-thread_queue_size', '64',
+                                   '-thread_queue_size', '128',
+                                   '-channel_layout', f'{channel_layout}',
                                    '-f', f's{bit_depth}le',
                                    '-ac', f'{channels}',
                                    '-ar', f'{sample_rate}',
@@ -61,7 +64,7 @@ class ffmpeg_handler(threading.Thread):
         amix_inputs = ""
 
         for idx, value in enumerate(sources):  # For each source IP add an input to aresample async, and append it to an input variable for amix
-            full_filter_string = full_filter_string + f"[{idx}]volume@volume_{idx}={value.volume},aresample=isr=48000:osr=48000:async=50000[a{idx}]," # ,adeclick masks dropouts
+            full_filter_string = full_filter_string + f"[{idx}]volume@volume_{idx}={value.volume},aresample=isr={value._stream_attributes.sample_rate}:osr={value._stream_attributes.sample_rate}:async=500000[a{idx}]," # ,adeclick masks dropouts
             amix_inputs = amix_inputs + f"[a{idx}]"  # amix input
         ffmpeg_command_parts.extend(['-filter_complex', full_filter_string + amix_inputs + f'amix=normalize=0:inputs={len(self.__sources)}'])
         return ffmpeg_command_parts
@@ -71,7 +74,7 @@ class ffmpeg_handler(threading.Thread):
         # TODO: Add output bitdepth/channels/sample rate to yaml
         ffmpeg_command_parts: List[str] = []
         ffmpeg_command_parts.extend(['-avioflags', 'direct', '-y', '-f', 's32le', '-ac', '2', '-ar', '48000', f"{self.__fifo_in_pcm}"])  # ffmpeg output
-        ffmpeg_command_parts.extend(['-avioflags', 'direct', '-y', '-f', 'mp3', '-b', '320k', '-ac', '2', '-reservoir', '0', f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
+        ffmpeg_command_parts.extend(['-avioflags', 'direct', '-y', '-f', 'mp3', '-b:a', '320k', '-ac', '2', '-ar', '48000', '-reservoir', '0', f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
         return ffmpeg_command_parts
 
     def __get_ffmpeg_command(self, sources: List[SourceInfo]) -> List[str]:
@@ -88,8 +91,8 @@ class ffmpeg_handler(threading.Thread):
 
     def start_ffmpeg(self):
         """Start ffmpeg if it's not running"""
-        print(f"[Sink {self.__sink_ip}] ffmpeg started")
         if (self.__running):
+            print(f"[Sink {self.__sink_ip}] ffmpeg started")
             self.__ffmpeg_started = True
             print(self.__get_ffmpeg_command(self.__sources))
             self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE)#, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -109,7 +112,7 @@ class ffmpeg_handler(threading.Thread):
 
     def send_ffmpeg_command(self, command: str, command_char: str = "c") -> None:
         """Send ffmpeg a command. Commands consist of control character to enter a mode (default 'c') and a string to run."""
-        print(f"[Sink {self.__sink_ip}] Running ffmpeg command {command}") 
+        print(f"[Sink {self.__sink_ip}] Running ffmpeg command {command_char} {command}") 
         self.__ffmpeg.stdin.write(command_char.encode())  # type: ignore
         self.__ffmpeg.stdin.flush()  # type: ignore
         self.__ffmpeg.stdin.write((command + "\n").encode())  # type: ignore
@@ -144,10 +147,10 @@ class ffmpeg_handler(threading.Thread):
         """This thread implements listening to self.fifoin and sending it out to dest_ip"""
         while self.__running:
             if len(self.__sources) == 0:
-                time.sleep(.1)
+                time.sleep(.01)
                 continue
             if self.__ffmpeg_started:
                 self.__ffmpeg.wait()
                 print(f"[Sink {self.__sink_ip}] ffmpeg ended")
                 self.start_ffmpeg()
-        print(f"[Sink {self.__sink_ip}] ffmpeg exit")   
+        print(f"[Sink {self.__sink_ip}] ffmpeg exit")

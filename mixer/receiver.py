@@ -2,8 +2,6 @@ import threading
 import socket
 import select
 
-import traceback
-
 from typing import List
 
 from mixer.sink_controller import SinkController
@@ -64,5 +62,8 @@ class Receiver(threading.Thread):
         for sink in self.sinks:
             print(f"[Receiver] Stopping sink {sink._sink_ip}")
             sink.stop()
+        for sink in self.sinks:
+            print(f"[Receiver] Waiting for sink {sink._sink_ip} to stop")
+            sink.wait_for_threads_to_stop()
 
         print(f"[Receiver] Main thread stopped")
