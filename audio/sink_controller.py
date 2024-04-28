@@ -2,8 +2,8 @@ import tempfile
 
 from typing import List, Optional
 
-from audio.ffmpeg_handler import ffmpeg_handler
-from audio.sink_input_queue import SinkInputQueue, SinkInputQueueEntry
+from audio.ffmpeg_process_handler import ffmpeg_handler
+from audio.ffmpeg_input_queue import ffmpegInputQueue, ffmpegInputQueueEntry
 from audio.source_info import SourceInfo
 from audio.stream_info import StreamInfo, create_stream_info
 
@@ -11,7 +11,7 @@ from configuration.configuration_controller_types import SinkDescription, Source
 
 from api.api_webstream import API_Webstream
 
-from audio.sink_output_threads import sink_mp3_thread, sink_pcm_thread
+from audio.ffmpeg_output_threads import ffmpeg_mp3_thread, ffmpeg_pcm_thread
 
 class SinkController():
     """Handles ffmpeg, keeps a list of it's own sources, sends passed data to the appropriate pipe"""
@@ -44,11 +44,11 @@ class SinkController():
         """ffmpeg handler"""
         self.__webstream: Optional[API_Webstream] = websocket
         """Holds the websock object to copy audio to, passed through to MP3 listener thread"""
-        self.__pcm_thread: sink_pcm_thread = sink_pcm_thread(self.__fifo_in_pcm, self._sink_ip, self.__stream_info)
+        self.__pcm_thread: ffmpeg_pcm_thread = ffmpeg_pcm_thread(self.__fifo_in_pcm, self._sink_ip, self.__stream_info)
         """Holds the thread to listen to PCM output from ffmpeg"""
-        self.__mp3_thread: sink_mp3_thread = sink_mp3_thread(self.__fifo_in_mp3, self._sink_ip, self.__webstream)
+        self.__mp3_thread: ffmpeg_mp3_thread = ffmpeg_mp3_thread(self.__fifo_in_mp3, self._sink_ip, self.__webstream)
         """Holds the thread to listen to MP3 output from ffmpeg"""
-        self.__queue_thread: SinkInputQueue = SinkInputQueue(self.process_packet_from_queue, self._sink_ip)
+        self.__queue_thread: ffmpegInputQueue = ffmpegInputQueue(self.process_packet_from_queue, self._sink_ip)
         """Holds the thread to listen to the input queue and send it to ffmpeg"""
 
         for source in self.__controller_sources:
@@ -100,7 +100,7 @@ class SinkController():
             source.open()
             self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
 
-    def process_packet_from_queue(self, entry: SinkInputQueueEntry) -> None:
+    def process_packet_from_queue(self, entry: ffmpegInputQueueEntry) -> None:
         source: SourceInfo
         result: bool
         source, result = self.__get_source_by_ip(entry.source_ip)
@@ -115,7 +115,7 @@ class SinkController():
                                              ^
                                         You are here                   
         """
-        self.__queue_thread.queue(SinkInputQueueEntry(source_ip, data))
+        self.__queue_thread.queue(ffmpegInputQueueEntry(source_ip, data))
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""

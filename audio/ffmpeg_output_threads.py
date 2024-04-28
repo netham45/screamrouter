@@ -12,8 +12,8 @@ from api.api_webstream import API_Webstream
 import audio.mp3_header_parser as mp3_header_parser
 from audio.stream_info import StreamInfo
 
-class sink_output_thread(threading.Thread):
-    """Handles listening for output from ffmpeg, extended by stream-specific classes"""
+class ffmpeg_output_thread(threading.Thread):
+    """Handles listening for output from ffmpeg, extended by codec-specific classes"""
     def __init__(self, fifo_in: str, sink_ip: str, name: str):
         super().__init__(name = name)
         self._fifo_in: str = fifo_in
@@ -67,7 +67,7 @@ class sink_output_thread(threading.Thread):
         return dataout
 
 
-class sink_mp3_thread(sink_output_thread):
+class ffmpeg_mp3_thread(ffmpeg_output_thread):
     """Handles listening for MP3 output from ffmpeg"""
     def __init__(self, fifo_in: str, sink_ip: str, webstream: Optional[API_Webstream]):
         super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink {sink_ip}] MP3 Thread")
@@ -139,7 +139,7 @@ class sink_mp3_thread(sink_output_thread):
         print(f"[Sink {self._sink_ip}] MP3 thread exit")
 
 
-class sink_pcm_thread(sink_output_thread):
+class ffmpeg_pcm_thread(ffmpeg_output_thread):
     """Handles listening for PCM output from ffmpeg"""
     def __init__(self, fifo_in: str, sink_ip: str, output_info: StreamInfo):
 

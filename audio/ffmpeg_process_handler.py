@@ -42,11 +42,12 @@ class ffmpeg_handler(threading.Thread):
             channels = source._stream_attributes.channels
             channel_layout = source._stream_attributes.channel_layout
             file_name = source._fifo_file_name
+            # This is optimized to reduce latency and initial ffmpeg processing time
             ffmpeg_command.extend([
                                    "-max_delay", "0",
                                    "-audio_preload", "1",
                                    "-max_probe_packets", "0",
-                                   "-rtbufsize", "0",
+                                   "-rtbufsize", "1",
                                    "-analyzeduration", "0",
                                    "-probesize", "32",
                                    "-fflags", "discardcorrupt",

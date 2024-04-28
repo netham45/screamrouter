@@ -2,8 +2,8 @@ import queue
 import threading
 
 
-class SinkInputQueueEntry():
-    """A data entry in the sink queue, holds the data and the source IP adderss."""
+class ffmpegInputQueueEntry():
+    """A data entry in the ffmpeg input queue, holds the data and the source IP adderss."""
     source_ip: str
     """Source IP address for data sent to an input queue"""
     data: bytes
@@ -12,8 +12,8 @@ class SinkInputQueueEntry():
         self.source_ip = source_ip
         self.data = data
 
-class SinkInputQueue(threading.Thread):
-    """A Sink Input Queue is written to by the receiver and read from by a sink controller. There is one queue per controller."""
+class ffmpegInputQueue(threading.Thread):
+    """An FFMPEG Input Queue is written to by the receiver and read from by ffmpeg. There is one queue per controller."""
     def __init__(self, callback, sink_ip: str):
         super().__init__(name=f"[Sink {sink_ip}] Sink Input Queue")
         self._queue: queue.Queue = queue.Queue()
@@ -30,14 +30,14 @@ class SinkInputQueue(threading.Thread):
         """Stops the queue thread"""
         self._running = False
 
-    def queue(self, entry: SinkInputQueueEntry):
+    def queue(self, entry: ffmpegInputQueueEntry):
         """Adds an item to the queue"""
         self._queue.put_nowait(entry)
 
     def run(self):
         while self._running:
             try:
-                entry = self._queue.get(True, .1)  # Blocks until data available
+                entry = self._queue.get(True, .01)  # Blocks until data available
                 self._callback(entry)
             except:
                 pass
