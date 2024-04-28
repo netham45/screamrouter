@@ -12,10 +12,11 @@ class ffmpegInputQueueEntry():
         self.source_ip = source_ip
         self.data = data
 
+
 class ffmpegInputQueue(threading.Thread):
-    """An FFMPEG Input Queue is written to by the receiver and read from by ffmpeg. There is one queue per controller."""
+    """An FFMPEG Input Queue is written to by the receiver and read from by ffmpeg. There is one queue per sink controller."""
     def __init__(self, callback, sink_ip: str):
-        super().__init__(name=f"[Sink {sink_ip}] Sink Input Queue")
+        super().__init__(name=f"[Sink {sink_ip}] ffmpeg Input Queue")
         self._queue: queue.Queue = queue.Queue()
         """Holds the queue to read/write from"""
         self._running = True

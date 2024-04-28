@@ -119,15 +119,14 @@ class SinkController():
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
-        print(f"[Sink {self._sink_ip}] Stopping PCM")
+        print(f"[Sink {self._sink_ip}] Stopping PCM thread")
         self.__pcm_thread.stop()        
-        print(f"[Sink {self._sink_ip}] Stopping MP3")
+        print(f"[Sink {self._sink_ip}] Stopping MP3 thread")
         self.__mp3_thread.stop()
-        print(f"[Sink {self._sink_ip}] Stopping Queue")
+        print(f"[Sink {self._sink_ip}] Stopping Queue thread")
         self.__queue_thread.stop()
-        print(f"[Sink {self._sink_ip}] Stopping ffmpeg")
+        print(f"[Sink {self._sink_ip}] Stopping ffmpeg thread")
         self.__ffmpeg.stop()
-        
 
     def wait_for_threads_to_stop(self) -> None:
         self.__pcm_thread.join()
@@ -137,5 +136,5 @@ class SinkController():
         self.__queue_thread.join()
         print(f"[Sink {self._sink_ip}] Queue thread stopped")
         self.__ffmpeg.join()
-        print(f"[Sink {self._sink_ip}] ffmpeg stopped")
+        print(f"[Sink {self._sink_ip}] ffmpeg thread stopped")
         print(f"[Sink {self._sink_ip}] Stopped")
