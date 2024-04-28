@@ -87,6 +87,7 @@ class SourceInfo():
         self.__open = False
         try:
             self.__fifo_file_handle.close()
+            os.remove(self._fifo_file_name)
         except:
             print(traceback.format_exc())
 

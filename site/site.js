@@ -7,7 +7,7 @@ function call_api(endpoint, method, data, callback) {
     const xhr = new XMLHttpRequest();
     xhr.open(method, BASEURL + endpoint, true);
     xhr.getResponseHeader("Content-type", "application/json");
-    if (method == "POST")
+    if (method == "POST" || method == "PUT")
         xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
         xhr.send(data)
 
@@ -20,7 +20,7 @@ function call_api(endpoint, method, data, callback) {
     }
 }
 
-function create_option(name, label, id, ip, is_group = false) {
+function create_option(name, label, id, ip = "", is_group = false) {
     option = document.createElement("option");
     option.name = name;
     option.innerHTML = label;
@@ -49,7 +49,7 @@ function populate_sources() {
 function populate_sources_callback(data) {
     sources = data
     for (entry in data)
-        document.getElementById("sources").appendChild(create_option(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry,null,data[entry].is_group));
+        document.getElementById("sources").appendChild(create_option(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry,data[entry].ip,data[entry].is_group));
 }
 
 function populate_routes() {
@@ -357,7 +357,7 @@ function route_volume_onchange() {
 
 function load()
 {
-    [... document.getElementsByTagName("option")].forEach(function(option){option.parentNode.removeChild(option)})
+    [... document.querySelectorAll("table.main option")].forEach(function(option){option.parentNode.removeChild(option)})
     populate_sources();
     populate_sinks();
     populate_routes();
@@ -412,3 +412,307 @@ function stop_audio() {
     audio_playing = false;
     button = document.getElementById("button_listen").value = "Listen to sink";
 }
+
+function show_shadow() {
+    shadow = document.getElementById("shadow");
+    shadow.style.display = "block";
+}
+
+function dismiss_shadow() {
+    shadow = document.getElementById("shadow");
+    shadow.style.display = "none";
+}
+
+function shadow_div() {
+    //dismiss_dialog();
+}
+
+function dismiss_dialog() {
+    dialogs = [... document.getElementsByClassName("dialog")];
+    dialogs.forEach(function(dialog){dialog.style.display = "none";})
+    dismiss_shadow();
+}
+
+function open_dialog(name) {
+    var dialog = document.getElementById(name)
+    dialog.style.display = "block";
+    show_shadow();
+}
+
+function set_field_value(dialogname, fieldname, fieldvalue) {
+    console.log(dialogname)
+    console.log(fieldname)
+    console.log(fieldvalue)
+    console.log("Querying for " + "div#" + dialogname + " input#" + fieldname)
+    var field = document.querySelectorAll("div#" + dialogname + " input#" + fieldname)[0]
+    console.log(field)
+    field.value = fieldvalue
+}
+
+function get_field_value(dialogname, fieldname) {
+    var field = document.querySelectorAll("div#" + dialogname + " input#" + fieldname)[0]
+    return field.value
+}
+
+function set_select_selected(select, value) {
+    for (index in select.children)
+        console.log("Comparing" +select.children[index].value + " == " + value);
+        if (select.children[index].value == value)
+            select.selectedIndex = index;
+}
+
+function get_select_selected(select) {
+    return select.children[select.selectedIndex].value
+}
+
+function get_selected_sink() {
+    var checkedoptions = [... document.querySelectorAll("SELECT#sinks OPTION:checked")];
+    if (checkedoptions.length == 1) {
+        return checkedoptions[0];
+    }
+    return null;
+}
+
+function get_selected_source() {
+    var checkedoptions = [... document.querySelectorAll("SELECT#sources OPTION:checked")];
+    if (checkedoptions.length == 1) {
+        return checkedoptions[0];
+    }
+    return null;
+}
+
+function get_selected_route() {
+    var checkedoptions = [... document.querySelectorAll("SELECT#routes OPTION:checked")];
+    if (checkedoptions.length == 1) {
+        return checkedoptions[0];
+    }
+    return null;
+}
+
+function get_source_info(name) {
+    for (source in sources)
+        if (sources[source].name == name)
+            return sources[source];
+}
+
+function get_sink_info(name) {
+    for (sink in sinks)
+        if (sinks[sink].name == name)
+            return sinks[sink];
+}
+
+function get_route_info(name) {
+    for (route in routes)
+        if (routes[route].name == name)
+            return routes[route];
+}
+
+function add_source_button() {
+    var dialog = "add_source"
+    open_dialog(dialog);
+    set_field_value(dialog, "sourcename", "")
+    set_field_value(dialog, "sourceip", "")
+}
+
+function update_source_button() {
+    var source = get_selected_source();
+    if (source === null) {
+        alert("Select a source to edit");
+        return
+    }
+    var sourceinfo = get_source_info(source.name);
+    if (sourceinfo.is_group)
+    {
+        alert("Can't edit groups yet");
+        return
+    }
+
+    var dialog = "update_source"
+    open_dialog(dialog);
+    set_field_value(dialog, "sourcename", source.name)
+    set_field_value(dialog, "sourceip", source.ip)
+}
+
+function add_sink_button() {
+    open_dialog("add_sink");
+}
+
+function update_sink_button() {
+    var sink = get_selected_sink();
+    if (sink === null) {
+        alert("Select a sink to edit");
+        return
+    }
+    var sinkinfo = get_sink_info(sink.name);
+    if (sinkinfo.is_group)
+    {
+        alert("Can't edit groups yet");
+        return
+    }
+    console.log(sinkinfo);
+    dialog = "update_sink"
+    open_dialog(dialog);
+    set_field_value(dialog, "sinkname", sinkinfo.name);
+    set_field_value(dialog, "sinkip", sinkinfo.ip);
+    set_field_value(dialog, "sinkport", sinkinfo.port);
+    set_field_value(dialog, "sinkchannels", sinkinfo.channels);
+    var bitdepthselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkbitdepth")][0];
+    var samplerateselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinksamplerate")][0];
+    var channellayoutselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkchannellayout")][0];
+    set_select_selected(bitdepthselect, sinkinfo.bit_depth);
+    set_select_selected(samplerateselect, sinkinfo.sample_rate);
+    set_select_selected(channellayoutselect, sinkinfo.channel_layout);
+
+}
+
+function add_route_button() {
+    var dialog = "add_route";
+    open_dialog(dialog);
+    var sinkselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesink")][0];
+    var sourceselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesource")][0];
+    populate_route_sinks(sinkselect);
+    populate_route_sources(sourceselect);
+}
+
+function update_route_button() {
+    var route = get_selected_route();
+    if (route === null) {
+        alert("Select a route to edit");
+        return
+    }
+    
+    var routeinfo = get_route_info(route.name);
+    if (routeinfo.is_group)
+    {
+        alert("Can't edit groups yet");
+        return
+    }
+
+    var dialog = "update_route";
+    open_dialog(dialog);
+    var sinkselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesink")][0];
+    var sourceselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesource")][0];
+    set_field_value(dialog, "routename", route.name)
+    populate_route_sinks(sinkselect);
+    populate_route_sources(sourceselect);
+    for (index in sinkselect.children) {
+        if (sinkselect.children[index].name == routeinfo.sink) {
+            sinkselect.selectedIndex = index;
+        }
+    }
+    for (index in sourceselect.children) {
+        if (sourceselect.children[index].name == routeinfo.source) {
+            sourceselect.selectedIndex = index;
+        }
+    }
+}
+
+function populate_route_sinks(selecttag) {
+    while (selecttag.hasChildNodes()) {
+        selecttag.removeChild(selecttag.lastChild);
+    }
+    for (index in sinks) {
+        sink = sinks[index];
+        selecttag.appendChild(create_option(sink.name, sink.name, sink.name))
+    }
+}
+
+function populate_route_sources(selecttag) {
+    while (selecttag.hasChildNodes()) {
+        selecttag.removeChild(selecttag.lastChild);
+    }
+    for (index in sources) {
+        source = sources[index];
+        selecttag.appendChild(create_option(source.name, source.name, source.name))
+    }
+}
+
+function do_add_source() {
+    dialog = "add_source";
+    var data = {
+        "name": get_field_value(dialog, "sourcename"),
+        "ip": get_field_value(dialog, "sourceip")
+    };
+    call_api("sources", "POST", JSON.stringify(data), reload_callback);
+    dismiss_dialog();
+}
+
+function do_update_source() {
+    dialog = "update_source";
+    var data = {
+        "name": get_field_value(dialog, "sourcename"),
+        "ip": get_field_value(dialog, "sourceip")
+    };
+    call_api("sources", "PUT", JSON.stringify(data), reload_callback);
+    dismiss_dialog();
+}
+
+function do_add_sink() {
+    dialog = "add_sink"
+    var bitdepthselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkbitdepth")][0];
+    var samplerateselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinksamplerate")][0];
+    var channellayoutselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkchannellayout")][0];
+    var data = {
+        "name": get_field_value(dialog, "sinkname"),
+        "ip": get_field_value(dialog, "sinkip"),
+        "bit_depth": get_select_selected(bitdepthselect),
+        "sample_rate": get_select_selected(samplerateselect),
+        "channels": get_field_value(dialog, "sinkchannels"),
+        "channel_layout": get_select_selected(channellayoutselect)
+        
+    };
+    call_api("sinks", "POST", JSON.stringify(data), reload_callback);
+    dismiss_dialog();
+}
+
+function do_update_sink() {
+    dialog = "update_sink"
+    var bitdepthselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkbitdepth")][0];
+    var samplerateselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinksamplerate")][0];
+    var channellayoutselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkchannellayout")][0];
+    var data = {
+        "name": get_field_value(dialog, "sinkname"),
+        "ip": get_field_value(dialog, "sinkip"),
+        "port": get_field_value(dialog, "sinkport"),
+        "bit_depth": get_select_selected(bitdepthselect),
+        "sample_rate": get_select_selected(samplerateselect),
+        "channels": get_field_value(dialog, "sinkchannels"),
+        "channel_layout": get_select_selected(channellayoutselect)
+        
+    };
+    call_api("sinks", "PUT", JSON.stringify(data), reload_callback);
+    dismiss_dialog();
+}
+
+function do_add_route() {
+    dialog = "add_route";
+    var sinkselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesink")][0];
+    var sourceselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesource")][0];
+    var data = {
+        "name": get_field_value(dialog, "routename"),
+        "sink": get_select_selected(sinkselect),
+        "source": get_select_selected(sourceselect)
+    };
+    call_api("routes", "POST", JSON.stringify(data), reload_callback);
+    dismiss_dialog();
+}
+
+function do_update_route() {
+    dialog = "update_route";
+    var sinkselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesink")][0];
+    var sourceselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesource")][0];
+    var data = {
+        "name": get_field_value(dialog, "routename"),
+        "sink": get_select_selected(sinkselect),
+        "source": get_select_selected(sourceselect)
+    };
+    console.log(data);
+    call_api("routes", "PUT", JSON.stringify(data), reload_callback);
+    dismiss_dialog();
+}
+
+document.addEventListener("keydown",function(e){
+    if(e.key === "Escape") {
+        dismiss_dialog();
+    }
+  });

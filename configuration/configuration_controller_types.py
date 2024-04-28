@@ -49,7 +49,7 @@ def verify_channel_layout(channel_layout: str) -> None:
             return
     raise ValueError(f"Invalid Channel Layout {channel_layout} Valid channel layouts: {StreamInfo.CHANNEL_LAYOUT_TABLE.values()}")
     
-class InUseException(Exception):
+class InUseError(Exception):
     """Called when removal is attempted of something that is in use"""
     def __init__(self, message: str):
         super().__init__(self, message)

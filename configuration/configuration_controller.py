@@ -8,7 +8,7 @@ from typing import List, Optional
 import audio.receiver
 import audio.sink_controller
 
-from configuration.configuration_controller_types import SinkDescription, SourceDescription, RouteDescription, InUseException
+from configuration.configuration_controller_types import SinkDescription, SourceDescription, RouteDescription, InUseError
 
 from api.api_webstream import API_Webstream
 
@@ -61,6 +61,14 @@ class ConfigurationController:
         self.__sink_descriptions.append(sink)
         self.__start_receiver()
         return True
+    
+    def update_sink(self, sink: SinkDescription) -> bool:
+        """Updates a sink"""
+        self.__get_sink_by_name(sink.name)
+        existing_sink_index: int = self.__sink_descriptions.index(self.__get_sink_by_name(sink.name))
+        self.__sink_descriptions[existing_sink_index] = sink
+        self.__start_receiver()
+        return True
 
     def delete_sink(self, sink_name: str) -> bool:
         """Deletes a sink by index"""
@@ -94,6 +102,14 @@ class ConfigurationController:
         self.__source_descriptions.append(source)
         self.__start_receiver()
         return True
+    
+    def update_source(self, source: SourceDescription) -> bool:
+        """Updates a source"""
+        self.__get_source_by_name(source.name)
+        existing_source_index: int = self.__source_descriptions.index(self.__get_source_by_name(source.name))
+        self.__source_descriptions[existing_source_index] = source
+        self.__start_receiver()
+        return True
 
     def delete_source(self, source_name: str) -> bool:
         """Deletes a source by index"""
@@ -125,6 +141,14 @@ class ConfigurationController:
         """Adds a route"""
         self.__verify_route(route)
         self.__route_descriptions.append(route)
+        self.__start_receiver()
+        return True
+    
+    def update_route(self, route: RouteDescription) -> bool:
+        """Updates a route"""
+        self.__get_route_by_name(route.name)
+        existing_route_index: int = self.__route_descriptions.index(self.__get_route_by_name(route.name))
+        self.__route_descriptions[existing_route_index] = route
         self.__start_receiver()
         return True
 
@@ -209,7 +233,7 @@ class ConfigurationController:
             group_names: List[str] = []
             for group in groups:
                 group_names.append(group.name)
-            raise InUseException(f"Source {source.name} is in use by Groups {group_names}")
+            raise InUseError(f"Source {source.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
         try:
              routes = self.__get_routes_by_source(source)
@@ -218,7 +242,7 @@ class ConfigurationController:
             return
         for route in routes:
             if route.source == source.name:
-                raise InUseException(f"Source {source.name} is in use by Route {route.name}")
+                raise InUseError(f"Source {source.name} is in use by Route {route.name}")
 
     def __verify_sink_unused(self, sink: SinkDescription) -> None:
         """Verifies a sink is unused, throws exception if not"""
@@ -227,7 +251,7 @@ class ConfigurationController:
             group_names: List[str] = []
             for group in groups:
                 group_names.append(group.name)
-            raise InUseException(f"Sink {sink.name} is in use by Groups {group_names}")
+            raise InUseError(f"Sink {sink.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
         try:
              routes = self.__get_routes_by_sink(sink)
@@ -236,7 +260,7 @@ class ConfigurationController:
             return
         for route in routes:
             if route.sink == sink.name:
-                raise InUseException(f"Sink {sink.name} is in use by Route {route.name}")
+                raise InUseError(f"Sink {sink.name} is in use by Route {route.name}")
                                           
     def __verify_sink_index(self, sink_index: int) -> None:
         """Verifies sink index is >= 0 and < len(self.__sink_descriptions), throws exception if not"""

@@ -89,7 +89,8 @@ class API_Webstream():
         """Callback for sinks to have data sent out to websockets"""
         for idx, listener in enumerate(self._listeners):
             if not listener.send(sink_ip, data):  # Returns false on receive error
-                self._listeners.remove(self._listeners[idx])
+                #self._listeners.remove(self._listeners[idx])
+                pass
 
     async def websocket_mp3_stream(self, websocket: WebSocket, sink_ip: str):
         """FastAPI handler"""

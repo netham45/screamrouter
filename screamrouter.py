@@ -31,15 +31,15 @@ app: FastAPI = FastAPI( title="ScreamRouter",
         },
         openapi_tags=[
         {
-            "name": "Sinks",
+            "name": "Sink Configuration",
             "description": "API endpoints for managing Sinks"
         },
         {
-            "name": "Sources",
+            "name": "Source Configuration",
             "description": "API endpoints for managing Sources"
         },
         {
-            "name": "Routes",
+            "name": "Route Configuration",
             "description": "API endpoints for managing Routes"
         },
         {

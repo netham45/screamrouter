@@ -111,3 +111,41 @@ TABLE#routestable {
     background-image:  {% for i in range(0, 45) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 100) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
     background-position: {% for i in range(0, 45) %}{{ range(-100, 200) | random}}% {{ range(-100, 200) | random}}%, {% endfor %}{{ range(-100, 200) | random}}% {{ range(-100, 200) | random}}%;
 }
+
+DIV.dialog {
+    padding-top: 20px;
+    padding-bottom: 20px;
+    position: fixed;
+    width: 300px;
+    height: auto;
+    top: 10%;
+    left: 50%;
+    margin-left: -150px;
+    background: linear-gradient(-45deg, rgba(0,10,0,.55), rgba(0,200,0,.9));
+    border-radius: 30px;
+    display: none;
+    padding-left: 15px;
+    padding-right: 15px;
+    backdrop-filter: blur(5px);
+}
+
+DIV.dialog SELECT {
+    width: 99%;
+}
+
+DIV.dialog H3 {
+    display: block;
+    padding: 0;
+    margin: 0;
+    text-align: center;
+}
+
+DIV#shadow {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    backdrop-filter: blur(2px);
+    display: none;
+}

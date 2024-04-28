@@ -7,6 +7,14 @@ class PostSink(BaseModel):
     """Sink IP"""
     port: int
     """Sink Port"""
+    bit_depth: int
+    """Bit Depth"""
+    sample_rate: int
+    """Sample Rate"""
+    channels: int
+    """Channel Count"""
+    channel_layout: str
+    """Channel Layout"""
 
 class PostSinkGroup(BaseModel):
     name: str
