@@ -141,11 +141,12 @@ class ffmpeg_mp3_thread(ffmpeg_output_thread):
 
 class ffmpeg_pcm_thread(ffmpeg_output_thread):
     """Handles listening for PCM output from ffmpeg"""
-    def __init__(self, fifo_in: str, sink_ip: str, output_info: StreamInfo):
+    def __init__(self, fifo_in: str, sink_ip: str, sink_port: int, output_info: StreamInfo):
 
         self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Output socket for sink"""
-        self.__output_header = output_info.header
+        self._sink_port: int = sink_port
+        self.__output_header: bytes = output_info.header
         """Holds the header added onto packets sent to Scream receivers"""
 
         super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink {sink_ip}] PCM Thread")
@@ -158,7 +159,7 @@ class ffmpeg_pcm_thread(ffmpeg_output_thread):
         """
         while self._running:
             try:
-                self.__sock.sendto(self.__output_header + self._read_bytes(1152), (self._sink_ip, 4010))  # Send received data from ffmpeg to the sink
+                self.__sock.sendto(self.__output_header + self._read_bytes(1152), (self._sink_ip, self._sink_port))  # Send received data from ffmpeg to the sink
             except Exception as e:
                 print(traceback.format_exc())
         print(f"[Sink {self._sink_ip}] PCM thread exit")

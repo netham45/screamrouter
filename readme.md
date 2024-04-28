@@ -22,12 +22,12 @@ ScreamRouter will start up with a blank profile by default. There will be no sou
 
 The interface will update the yaml so any notes, non-standard fields, or custom layouts in the yaml will be lost. The interface will prompt you for the required information when you go to add an entry.
 
-
-## YAML Configuration
 Each Sink, Source, and Route has a name. This name is used as the reference for routes and groups to track members. Clicking Add Sink will prompt you for the information to make one. The names must be unique between Sinks and Sink Groups, Sources and Source Groups, and all Routes.
 
 ### Sinks
-Each Sink holds information for the destination IP, port, volume, sample rate, bit depth, channels, channel layout, and the sink name. The sample rate, bit depth, channels, and channel layout can be configured in the YAML.
+Each Sink holds information for the destination IP, port, volume, sample rate, bit depth, channels, channel layout, and the sink name.
+
+![Screenshot of Add Sink Dialog](/images/AddSink.png)
 
 Example YAML block:
 
@@ -58,6 +58,8 @@ sinks:
 ### Routes
 Each Route holds one Sink name and one Source name, and volume.
 
+![Screenshot of Add Route Dialog](/images/AddRoute.png)
+
 Example YAML block:
 
 This defines two routes, Music to All and Office to Office PC.
@@ -78,6 +80,8 @@ routes:
 
 ### Sources
 Each Source holds information for the source IP, volume, and the Source name.
+
+![Screenshot of Add Source Dialog](/images/AddSource.png)
 
 Example YAML block:
 

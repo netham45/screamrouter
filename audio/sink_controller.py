@@ -30,6 +30,8 @@ class SinkController():
         """Output stream info"""
         self._sink_ip: str = sink_info.ip
         """Sink IP"""
+        self._sink_port: int = sink_info.port
+        """Sink Port"""
         self.__controller_sources: List[ControllerSource] = sources
         """Sources this Sink has"""
         self.__sources: List[SourceInfo] = []
@@ -44,7 +46,7 @@ class SinkController():
         """ffmpeg handler"""
         self.__webstream: Optional[API_Webstream] = websocket
         """Holds the websock object to copy audio to, passed through to MP3 listener thread"""
-        self.__pcm_thread: ffmpeg_pcm_thread = ffmpeg_pcm_thread(self.__fifo_in_pcm, self._sink_ip, self.__stream_info)
+        self.__pcm_thread: ffmpeg_pcm_thread = ffmpeg_pcm_thread(self.__fifo_in_pcm, self._sink_ip, self._sink_port, self.__stream_info)
         """Holds the thread to listen to PCM output from ffmpeg"""
         self.__mp3_thread: ffmpeg_mp3_thread = ffmpeg_mp3_thread(self.__fifo_in_mp3, self._sink_ip, self.__webstream)
         """Holds the thread to listen to MP3 output from ffmpeg"""
