@@ -41,11 +41,11 @@ class SinkController():
         """Sources this Sink has"""
         self.__sources: List[SourceInfo] = []
         """Sources this Sink is playing"""
-        self.__temp_path: str = tempfile.gettempdir() + f"/scream-{self._sink_ip}-"
-        """Per-sink temp path"""
-        self.__fifo_in_pcm: str = self.__temp_path + "in-pcm"
+        self.__pipe_path: str = f"./pipes/scream-{self._sink_ip}-"
+        """Per-sink pipe path"""
+        self.__fifo_in_pcm: str = self.__pipe_path + "in-pcm"
         """Input file from ffmpeg PCM output"""
-        self.__fifo_in_mp3: str = self.__temp_path + "in-mp3"
+        self.__fifo_in_mp3: str = self.__pipe_path + "in-mp3"
         """Input file from ffmpeg MP3 output"""
         self.__ffmpeg: ffmpeg_handler = ffmpeg_handler(self._sink_ip, self.__fifo_in_pcm, self.__fifo_in_mp3, self.__get_open_sources(), self.__stream_info)
         """ffmpeg handler"""
@@ -61,7 +61,7 @@ class SinkController():
         """Counter that holds how many URLs are playing so FFMPEG source ids can be guaranteed unique"""
 
         for source in self.__controller_sources:
-            self.__sources.append(SourceInfo(source.ip, self.__temp_path + source.ip, self._sink_ip, source.volume))
+            self.__sources.append(SourceInfo(source.ip, self.__pipe_path + source.ip, self._sink_ip, source.volume))
 
     def update_source_volume(self, controllersource: ControllerSource) -> None:
         """Updates the source volume to the specified volume, does nothing if the source is not playing to this sink."""
@@ -152,15 +152,14 @@ class SinkController():
 
     def url_playback_done_callback(self, source: SourceInfo):
         """Callback for ffmpeg to clean up when playback is done"""
-        #if source in self.__sources:
         self.__sources.remove(source)
         self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
                 
     def play_url(self, url: str, volume: float) -> None:
         """Plays a URL"""
-        ffmpeg_source_info: SourceInfo = SourceInfo(f"ffmpeg{self.__url_play_counter}", f"ffmpeg{self.__url_play_counter}", self._sink_ip, 1)
+        ffmpeg_source_info: SourceInfo = SourceInfo(self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self._sink_ip, 1)
         """ffmpeg source info so the sink controller will accept data from a new temporary source"""
         self.__sources.append(ffmpeg_source_info)
-        playback: ffmpegPlayURL = ffmpegPlayURL(url, volume, self.__sink_info, self.__temp_path + f"ffmpeg{self.__url_play_counter}", f"ffmpeg{self.__url_play_counter}", ffmpeg_source_info, self.add_packet_to_queue, self.url_playback_done_callback)
+        playback: ffmpegPlayURL = ffmpegPlayURL(url, volume, self.__sink_info, self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self.__pipe_path + f"ffmpeg{self.__url_play_counter}", ffmpeg_source_info, self.add_packet_to_queue, self.url_playback_done_callback)
         """Spawn a new ffmpegPlayURL thread to play a URL back."""
         self.__url_play_counter = self.__url_play_counter + 1
