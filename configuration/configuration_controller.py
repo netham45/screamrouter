@@ -1,3 +1,5 @@
+import sys
+import traceback
 import yaml
 from copy import copy
 
@@ -266,7 +268,7 @@ class ConfigurationController:
         try:
             with open("config.yaml", "r") as f:
                 config = yaml.safe_load(f)
-            for sinkEntry in config["sinks"]:
+            for sinkEntry in config["sinks"]:   
                 self.add_sink(SinkDescription(sinkEntry["name"], sinkEntry["ip"], sinkEntry["port"], False, sinkEntry["enabled"], [], sinkEntry["volume"], sinkEntry["bitdepth"], sinkEntry["samplerate"], sinkEntry["channels"], sinkEntry["channel_layout"]))
             for sourceEntry in config["sources"]:
                 self.add_source(SourceDescription(sourceEntry["name"], sourceEntry["ip"], False, sourceEntry["enabled"], [], sourceEntry["volume"]))
@@ -277,10 +279,10 @@ class ConfigurationController:
             for routeEntry in config["routes"]:
                 self.add_route(RouteDescription(routeEntry["name"], routeEntry["sink"], routeEntry["source"], routeEntry["enabled"], routeEntry["volume"]))
         except:
-            print("Failed to load config.yaml. Loading with a blank configuration.")
-            self.__sink_descriptions = []
-            self.__route_descriptions = []
-            self.__source_descriptions = []
+            print("Failed to load config.yaml. Aborting load")
+            print(traceback.format_exc())
+            sys.exit(-1)
+
 
         self.__loaded = True
 

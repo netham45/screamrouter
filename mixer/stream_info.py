@@ -7,10 +7,11 @@ class StreamInfo():
                                   (0x03, 0x00): "stereo",
                                   (0x33, 0x00): "quad",
                                   (0x34, 0x01): "surround",
-                                  (0x3F, 0x00): "5.1",
-                                  (0xFF, 0x00): "7.1",
-                                  (0x0F, 0x06): "5.1",
-                                  (0x3F, 0x06): "7.1"}
+                                  (0x0F, 0x06): "5.1",  # Surround
+                                  (0x3F, 0x06): "7.1",  # Surround
+                                  (0x3F, 0x00): "5.1",  # Deprecated
+                                  (0xFF, 0x00): "7.1"   # Deprecated
+                                  }
     
     def __init__(self, scream_header: Union[bytearray, bytes]):
         scream_header_array: bytearray = bytearray(scream_header)

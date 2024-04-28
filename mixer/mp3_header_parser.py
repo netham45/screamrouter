@@ -313,7 +313,7 @@ class MP3Header():
         self.original = byte_4[2] == 1
         self.emphasis = numpy.packbits(byte_4[0:2], bitorder='little')[0]
         self.samplerate = self.__mp3_process_samplerate(self.mpeg_version, self.samplerate_index)
-        self.bitrate = self.__mp3_parse_bitrate(self.bitrate_index, 1 if self.mpeg_version == 3 else 2, (3 - self.layer_description) + 1)  # TODO: Clean up mpeg_version, samplerate, layer_description
+        self.bitrate = self.__mp3_parse_bitrate(self.bitrate_index, 1 if self.mpeg_version == 3 else 2, (3 - self.layer_description) + 1)
         self.slotsize = 4 if (3 - self.layer_description == 1) else 1   
         self.samplecount = self.__mp3_parse_frames(1 if self.mpeg_version == 3 else 2, (3 - self.layer_description) + 1)
-        self.framelength = int((self.bitrate * 1000/8 * self.samplecount / self.samplerate + (self.padding * self.slotsize)) - 4)
+        self.framelength = int((self.bitrate * 1000 / 8 * self.samplecount / self.samplerate + (self.padding * self.slotsize)) - 4)

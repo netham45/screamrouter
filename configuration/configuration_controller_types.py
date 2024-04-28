@@ -47,7 +47,7 @@ def verify_channel_layout(channel_layout: str) -> None:
     for layout in StreamInfo.CHANNEL_LAYOUT_TABLE.values():
         if layout == channel_layout:
             return
-    raise ValueError("Invalid Channel Layout")
+    raise ValueError(f"Invalid Channel Layout {channel_layout} Valid channel layouts: {StreamInfo.CHANNEL_LAYOUT_TABLE.values()}")
     
 class InUseException(Exception):
     """Called when removal is attempted of something that is in use"""
@@ -81,6 +81,8 @@ class SinkDescription(BaseModel):
     channel_layout: str
     """Sink Channel Layout"""
     def __init__(self, name: str, ip: str, port: int, is_group: bool, enabled: bool, group_members: List[str], volume: float, bit_depth: int = 32, sample_rate: int = 48000, channels: int = 2, channel_layout: str = "stereo"):
+        if not isinstance(channel_layout, str):
+            channel_layout = str(channel_layout)
         if not is_group:
             verify_ip(ip)
             verify_port(port)
