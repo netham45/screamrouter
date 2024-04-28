@@ -57,12 +57,12 @@ class SinkController():
         """Holds the thread to listen to MP3 output from ffmpeg"""
         self.__queue_thread: ffmpegInputQueue = ffmpegInputQueue(self.process_packet_from_queue, self._sink_ip)
         """Holds the thread to listen to the input queue and send it to ffmpeg"""
-        self.__playing_sourceinfo: SourceInfo = SourceInfo("ffmpeg", "ffmpeg", self._sink_ip, 1)
+        self.__url_play_counter = 0
+        """Counter that holds how many URLs are playing so FFMPEG source ids can be guaranteed unique"""
 
         for source in self.__controller_sources:
             self.__sources.append(SourceInfo(source.ip, self.__temp_path + source.ip, self._sink_ip, source.volume))
-        self.__sources.append(self.__playing_sourceinfo)
-    
+
     def update_source_volume(self, controllersource: ControllerSource) -> None:
         """Updates the source volume to the specified volume, does nothing if the source is not playing to this sink."""
         for source in self.__sources:
@@ -92,6 +92,7 @@ class SinkController():
             if not source.is_active(active_time) and source.is_open():
                 print(f"[Sink {self._sink_ip} Source {source._ip}] Closing (Timeout = {active_time}ms)")
                 source.close()
+                print(self.__get_open_sources())
                 self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
 
     def __update_source_attributes_and_open_source(self, source: SourceInfo, header: bytes) -> None:
@@ -138,6 +139,7 @@ class SinkController():
         self.__ffmpeg.stop()
 
     def wait_for_threads_to_stop(self) -> None:
+        """Waits for threads to stop"""
         self.__pcm_thread.join()
         print(f"[Sink {self._sink_ip}] PCM thread stopped")
         self.__mp3_thread.join()
@@ -148,9 +150,17 @@ class SinkController():
         print(f"[Sink {self._sink_ip}] ffmpeg thread stopped")
         print(f"[Sink {self._sink_ip}] Stopped")
 
+    def url_playback_done_callback(self, source: SourceInfo):
+        """Callback for ffmpeg to clean up when playback is done"""
+        #if source in self.__sources:
+        self.__sources.remove(source)
+        self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
+                
     def play_url(self, url: str, volume: float) -> None:
         """Plays a URL"""
-        playback: ffmpegPlayURL = ffmpegPlayURL(url, volume, self.__sink_info, self.__temp_path + "ffmpeg", self.add_packet_to_queue)
-        #self.__ffmpeg.queued_url = url
-        #self.__ffmpeg.queued_url_volume = volume
-        #self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
+        ffmpeg_source_info: SourceInfo = SourceInfo(f"ffmpeg{self.__url_play_counter}", f"ffmpeg{self.__url_play_counter}", self._sink_ip, 1)
+        """ffmpeg source info so the sink controller will accept data from a new temporary source"""
+        self.__sources.append(ffmpeg_source_info)
+        playback: ffmpegPlayURL = ffmpegPlayURL(url, volume, self.__sink_info, self.__temp_path + f"ffmpeg{self.__url_play_counter}", f"ffmpeg{self.__url_play_counter}", ffmpeg_source_info, self.add_packet_to_queue, self.url_playback_done_callback)
+        """Spawn a new ffmpegPlayURL thread to play a URL back."""
+        self.__url_play_counter = self.__url_play_counter + 1

@@ -42,24 +42,8 @@ class ffmpeg_handler(threading.Thread):
             channels = source._stream_attributes.channels
             channel_layout = source._stream_attributes.channel_layout
             file_name = source._fifo_file_name
-
-            if self.queued_url:
-                ffmpeg_command.extend([
-                                   "-max_delay", "0",
-                                   "-audio_preload", "0",
-                                   "-max_probe_packets", "0",
-                                   "-rtbufsize", "0",
-                                   "-analyzeduration", "0",
-                                   "-probesize", "32",
-                                   "-fflags", "+discardcorrupt+faststart",
-                                   "-flags", "+low_delay",
-                                   "-fflags", "nobuffer",
-                                   "-thread_queue_size", "32",
-                                   "-channel_layout", "2",
-                                   "-i", f"{self.queued_url}"])
             # This is optimized to reduce latency and initial ffmpeg processing time
-            ffmpeg_command.extend([
-                                   "-max_delay", "0",
+            ffmpeg_command.extend(["-max_delay", "0",
                                    "-audio_preload", "1",
                                    "-max_probe_packets", "0",
                                    "-rtbufsize", "1",
@@ -84,7 +68,7 @@ class ffmpeg_handler(threading.Thread):
         amix_inputs = ""
 
         for idx, value in enumerate(sources):  # For each source IP add an input to aresample async, and append it to an input variable for amix
-            full_filter_string = full_filter_string + f"[{idx}]volume@volume_{idx}={value.volume},aresample=isr={value._stream_attributes.sample_rate}:osr={value._stream_attributes.sample_rate}:async=500000[a{idx}]," # ,adeclick masks dropouts
+            full_filter_string = full_filter_string + f"[{idx}]volume@volume_{idx}={value.volume},aresample=isr={value._stream_attributes.sample_rate}:osr={value._stream_attributes.sample_rate}:async=500000[a{idx}],"
             amix_inputs = amix_inputs + f"[a{idx}]"  # amix input
         ffmpeg_command_parts.extend(["-filter_complex", full_filter_string + amix_inputs + f"amix=normalize=0:inputs={len(self.__sources)}"])
         return ffmpeg_command_parts
@@ -102,8 +86,6 @@ class ffmpeg_handler(threading.Thread):
         ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_filters(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_output())  # ffmpeg output
-        self.queued_url = ""
-        print(ffmpeg_command_parts)
         return ffmpeg_command_parts
     
     def ffmpeg_preopen_hook(self): 
@@ -115,7 +97,7 @@ class ffmpeg_handler(threading.Thread):
         if (self.__running):
             print(f"[Sink {self.__sink_ip}] ffmpeg started")
             self.__ffmpeg_started = True
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE)#, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def reset_ffmpeg(self, sources: List[SourceInfo]) -> None:
         """Opens the ffmpeg instance"""
@@ -152,7 +134,7 @@ class ffmpeg_handler(threading.Thread):
         self.__running = False
         self.__ffmpeg_started = False
         try:
-            self.send_ffmpeg_command("","q")
+            self.send_ffmpeg_command("", "q")
         except:
             pass
         try:
