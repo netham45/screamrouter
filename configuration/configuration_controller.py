@@ -5,8 +5,8 @@ from copy import copy
 
 from typing import List, Optional
 
-import mixer.receiver
-import mixer.sink_controller
+import sink_controller.receiver
+import sink_controller.sink_controller
 
 from configuration.configuration_controller_types import SinkDescription, SourceDescription, RouteDescription, InUseException
 
@@ -26,7 +26,7 @@ class ConfigurationController:
     """The controller handles tracking configuration and loading the main receiver/sinks based off of it"""
     def __init__(self, websocket: Optional[API_Webstream]):
         """Initialize an empty controller"""
-        self.__sink_objects: List[mixer.sink_controller.SinkController] = []
+        self.__sink_objects: List[sink_controller.sink_controller.SinkController] = []
         """List of Sink objects the receiver is using"""
         self.__sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
@@ -36,7 +36,7 @@ class ConfigurationController:
         """List of Routes the controller knows of"""
         self.__sinks_to_sources = {}
         """Dict mapping all sink IPs to the source descriptions playing to them"""
-        self.__receiver: mixer.receiver.Receiver
+        self.__receiver: sink_controller.receiver.Receiver
         """Main receiver, handles receiving data from sources"""
         self.__receiverset: bool = False
         """Rather the recevier has been set"""
@@ -327,7 +327,7 @@ class ConfigurationController:
             self.__receiver.join()
             print("[Controller] Receiver closed!")
         self.__receiverset = True
-        self.__receiver = mixer.receiver.Receiver()
+        self.__receiver = sink_controller.receiver.Receiver()
         self.__sink_objects = []
         for sink_ip in self.__sinks_to_sources.keys():
             if sink_ip != "":
@@ -335,7 +335,7 @@ class ConfigurationController:
                 for sink_description in self.__sink_descriptions:
                     if sink_description.ip == sink_ip:
                         sink_info = sink_description
-                        sink = mixer.sink_controller.SinkController(sink_info, self.__sinks_to_sources[sink_ip], self.__api_websocket)
+                        sink = sink_controller.sink_controller.SinkController(sink_info, self.__sinks_to_sources[sink_ip], self.__api_websocket)
                         self.__receiver.register_sink(sink)
                         self.__sink_objects.append(sink)
                         break

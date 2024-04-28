@@ -9,8 +9,8 @@ from typing import Optional, Tuple
 
 from api.api_webstream import API_Webstream
 
-import mixer.mp3_header_parser as mp3_header_parser
-from mixer.stream_info import StreamInfo
+import sink_controller.mp3_header_parser as mp3_header_parser
+from sink_controller.stream_info import StreamInfo
 
 class sink_output_thread(threading.Thread):
     """Handles listening for output from ffmpeg, extended by stream-specific classes"""

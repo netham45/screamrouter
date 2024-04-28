@@ -4,7 +4,7 @@ import select
 
 from typing import List
 
-from mixer.sink_controller import SinkController
+from sink_controller.sink_controller import SinkController
 
 LOCALPORT=16401
 

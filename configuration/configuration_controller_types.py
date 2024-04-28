@@ -1,7 +1,7 @@
 import ipaddress
 from typing import List
 from pydantic import BaseModel
-from mixer.stream_info import StreamInfo
+from sink_controller.stream_info import StreamInfo
 
 def verify_ip(ip: str) -> None:
     """Verifies an ip address can be parsed correctly"""

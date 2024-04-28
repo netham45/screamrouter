@@ -8,8 +8,8 @@ import traceback
 
 from typing import List
 
-from mixer.source_info import SourceInfo
-from mixer.stream_info import StreamInfo
+from sink_controller.source_info import SourceInfo
+from sink_controller.stream_info import StreamInfo
 
 class ffmpeg_handler(threading.Thread):
     def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str, sources: List[SourceInfo], sink_info: StreamInfo):
@@ -75,7 +75,7 @@ class ffmpeg_handler(threading.Thread):
     def __get_ffmpeg_output(self) -> List[str]:
         """Returns the ffmpeg output"""
         ffmpeg_command_parts: List[str] = []
-        ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", f"s{self.__sink_info.bit_depth}le", "-ac", f"{self.__sink_info.channels}", "-ar", f"{self.__sink_info.sample_rate}", f"{self.__fifo_in_pcm}"])  # ffmpeg output
+        ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", f"s{self.__sink_info.bit_depth}le", "-ac", f"{self.__sink_info.channels}", "-ar", f"{self.__sink_info.sample_rate}", f"{self.__fifo_in_pcm}"])  # ffmpeg PCM output
         ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", "mp3", "-b:a", "320k", "-ac", "2", "-ar", f"{self.__sink_info.sample_rate}", "-reservoir", "0", f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
         return ffmpeg_command_parts
 
@@ -105,7 +105,6 @@ class ffmpeg_handler(threading.Thread):
         self.__sources = sources
         if self.__ffmpeg_started:
             try:
-                self.__ffmpeg.terminate()
                 self.__ffmpeg.kill()
                 self.__ffmpeg.wait()
             except:
@@ -139,7 +138,6 @@ class ffmpeg_handler(threading.Thread):
         except:
             pass
         try:
-            self.__ffmpeg.terminate()
             self.__ffmpeg.kill()
         except:
             pass

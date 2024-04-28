@@ -2,16 +2,16 @@ import tempfile
 
 from typing import List, Optional
 
-from mixer.ffmpeg_handler import ffmpeg_handler
-from mixer.sink_input_queue import SinkInputQueue, SinkInputQueueEntry
-from mixer.source_info import SourceInfo
-from mixer.stream_info import StreamInfo, create_stream_info
+from sink_controller.ffmpeg_handler import ffmpeg_handler
+from sink_controller.sink_input_queue import SinkInputQueue, SinkInputQueueEntry
+from sink_controller.source_info import SourceInfo
+from sink_controller.stream_info import StreamInfo, create_stream_info
 
 from configuration.configuration_controller_types import SinkDescription, SourceDescription as ControllerSource
 
 from api.api_webstream import API_Webstream
 
-from mixer.sink_output_threads import sink_mp3_thread, sink_pcm_thread
+from sink_controller.sink_output_threads import sink_mp3_thread, sink_pcm_thread
 
 class SinkController():
     """Handles ffmpeg, keeps a list of it's own sources, sends passed data to the appropriate pipe"""
@@ -79,7 +79,7 @@ class SinkController():
     def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
         for source in self.__sources:
-            active_time: int = 50  # Time in milliseconds, could be lower
+            active_time: int = 100  # Time in milliseconds
             if not source.is_active(active_time) and source.is_open():
                 print(f"[Sink {self._sink_ip} Source {source._ip}] Closing (Timeout = {active_time}ms)")
                 source.close()
