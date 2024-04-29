@@ -245,7 +245,7 @@ class MP3Header():
                                 ]
                             },
                         14:  # Index 14
-                            { 1:  # MPEG Version 1  
+                            { 1:  # MPEG Version 1
                                 [   # Layer Description
                                     448,  # Layer 1
                                     384,  # Layer 2

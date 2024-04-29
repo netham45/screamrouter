@@ -1,8 +1,10 @@
+"""Holds the API endpoints to serve files for html/javascript/css"""
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 
 
-class API_Website():
+class APIWebsite():
+    """Holds the API endpoints to serve files for html/javascript/css"""
     def __init__(self, app: FastAPI):
         self._app   = app
         """FastAPI"""
@@ -10,7 +12,7 @@ class API_Website():
         self._app.get("/site.js", tags=["Site"])(self.read_javascript)
         self._app.get("/site.css", tags=["Site"])(self.read_css)
         self._templates = Jinja2Templates(directory="./site/")
-        
+
     # Site resource endpoints
     def read_index(self, request: Request):
         """Index page"""

@@ -1,19 +1,18 @@
-
+"""Handles playing a URL and forwarding the output from it to the main receiver"""
 
 import io
 import os
 import select
 import subprocess
 import threading
-import traceback
 from typing import List
 
-from audio.source_info import SourceInfo
 from audio.stream_info import StreamInfo, create_stream_info
 from configuration.configuration_controller_types import SinkDescription
 
 
-class ffmpegPlayURL(threading.Thread):
+class FFMpegPlayURL(threading.Thread):
+    """Handles playing a URL and forwarding the output from it to the main receiver"""
     def __init__(self, url: str, volume: float, sink_info: SinkDescription, fifo_in_url: str, source_name: str, callback):
         super().__init__(name=f"[Sink {sink_info.ip}] ffmpeg Playback {url}")
         self._url: str = url
@@ -37,10 +36,10 @@ class ffmpegPlayURL(threading.Thread):
         self.__ffmpeg: subprocess.Popen
         self.start()
 
-    def ffmpeg_preopen_hook(self): 
+    def ffmpeg_preopen_hook(self):
         """Don't forward signals. It's lifecycle is managed."""
         os.setpgrp()
-        
+
     def __get_ffmpeg_command(self) -> List[str]:
         """Builds the ffmpeg playback command"""
         ffmpeg_command_parts: List[str] = ['ffmpeg', '-hide_banner']
@@ -51,26 +50,19 @@ class ffmpegPlayURL(threading.Thread):
 
     def _make_ffmpeg_to_screamrouter_pipe(self) -> bool:
         """Makes fifo out for python sending to ffmpeg"""
-        try:
-            try:
-                os.remove(self.__fifo_in_url)
-            except:
-                pass
-            os.mkfifo(self.__fifo_in_url)
-            return True
-        except:
-            print(traceback.format_exc())
-            return False
-        
+        if os.path.exists(self.__fifo_in_url):
+            os.remove(self.__fifo_in_url)
+        os.mkfifo(self.__fifo_in_url)
+        return True
+
     def _read_bytes(self, count: int) -> bytes:
         """Reads count bytes, blocks until self.__running goes false or 'count' bytes are received."""
-        dataout:bytearray = bytearray()
-        """Data to return"""
+        dataout:bytearray = bytearray()  # Data to return
         while  len(dataout) < count and self.__ffmpeg.poll() is None:
             ready = select.select([self._fd], [], [], .1)
             if ready[0]:
                 data: bytes = self._fd.read(count - len(dataout))
-                if (data):
+                if data:
                     dataout.extend(data)
         return dataout
 

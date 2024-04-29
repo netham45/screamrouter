@@ -1,5 +1,5 @@
+"""Handles FFmpeg input queues"""
 import collections
-import queue
 import threading
 import time
 
@@ -41,10 +41,7 @@ class FFmpegInputQueue(threading.Thread):
         """Constantly checks the queue, notifies the Sink Controller callback when there's something in the queue"""
         while self._running:
             while len(self._queue) > 0:
-                try:
-                    entry = self._queue.popleft()
-                    self._callback(entry)
-                except Exception:
-                    pass
+                entry = self._queue.popleft()
+                self._callback(entry)
             time.sleep(.0001)
         print(f"[Sink {self.__sink_ip}] Queue thread exit")

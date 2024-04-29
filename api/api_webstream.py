@@ -1,3 +1,4 @@
+"""Holds the web stream queue and API endpoints."""
 import asyncio
 import ipaddress
 from typing import List, Optional
@@ -10,10 +11,11 @@ def verify_ip(ip: str) -> None:
     """Verifies an ip address can be parsed correctly"""
     try:
         ipaddress.ip_address(ip)  # Verify IP address is formatted right
-    except ValueError:
-        raise ValueError(f"Invalid IP address {ip}")
+    except ValueError as exc:
+        raise ValueError(f"Invalid IP address {ip}") from exc
 
 class Listener():
+    """Holds info on a single listener to send streams to"""
     def __init__(self, sink_ip: str):
         self._sink_ip: str = sink_ip
         """Sink IP the listener is listening to"""
@@ -21,13 +23,12 @@ class Listener():
         """Rather the listener is active or not"""
         verify_ip(sink_ip)
 
-    async def open(self) -> None:
-        """Opens the Listener"""
-        pass
-
     def send(self, sink_ip: str, data: bytes) -> bool:
-        """Sends data to a listener for processing"""
-        return False
+        """Implemented by classes that extend Listener"""
+        return len(sink_ip) + len(data) == 9001  # Junk return so pylint quits complaining about unused args
+
+    async def open(self) -> None:
+        """Implemented by classes that extend Listener"""
 
 class WebsocketListener(Listener):
     """Holds a single instance of an active websocket sink listener"""
@@ -44,13 +45,10 @@ class WebsocketListener(Listener):
         """Send data to the websocket, returns false if the socket is dead"""
         if self._active:
             if sink_ip == self._sink_ip:
-                try:
-                    if self.__client:
-                        asyncio.run(self.__client.send_bytes(data))
-                except:
-                    self._active = False
+                if self.__client:
+                    asyncio.run(self.__client.send_bytes(data))
         return self._active
-    
+
 class HTTPListener(Listener):
     """Holds a single instance of an active websocket sink listener"""
     def __init__(self, sink_ip: str):
@@ -59,7 +57,6 @@ class HTTPListener(Listener):
 
     async def open(self) -> None:
         """Doesn't do anything for http"""
-        pass
 
     def send(self, sink_ip: str, data: bytes) -> bool:
         """Send data to the websocket, returns false if the socket is dead"""
@@ -72,13 +69,13 @@ class HTTPListener(Listener):
                     print(f"[{self._sink_ip}] HTTP queue full, assuming client disconnected")
         return self._active
 
-    async def getQueue(self):
+    async def get_queue(self):
         """Returns when a queue option is available"""
         while self._active:
             data = await self._queue.get()
             yield bytes(data)
 
-class API_Webstream():
+class APIWebStream():
     """Holds the main websocket controller for the API that distributes messages to listeners"""
     def __init__(self, app: FastAPI):
         self._listeners: List[Listener] = []
@@ -87,7 +84,7 @@ class API_Webstream():
 
     def sink_callback(self, sink_ip: str, data: bytes) -> None:
         """Callback for sinks to have data sent out to websockets"""
-        for idx, listener in enumerate(self._listeners):
+        for _, listener in enumerate(self._listeners):
             if not listener.send(sink_ip, data):  # Returns false on receive error
                 #self._listeners.remove(self._listeners[idx])
                 pass
@@ -105,4 +102,4 @@ class API_Webstream():
         listener: HTTPListener = HTTPListener(sink_ip)
         await listener.open()
         self._listeners.append(listener)
-        return StreamingResponse(listener.getQueue(), media_type="audio/mpeg")
+        return StreamingResponse(listener.get_queue(), media_type="audio/mpeg")

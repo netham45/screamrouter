@@ -1,22 +1,23 @@
+"""API endpoints to configure the controller"""
 from typing import List
 import threading
 import uvicorn
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from api.api_configuration_types import PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup, PostURL
 from configuration.configuration_controller import SinkDescription, SourceDescription, RouteDescription, ConfigurationController
 
-class API_Configuration(threading.Thread):
-
+class APIConfiguration(threading.Thread):
+    """API endpoints to configure the controller"""
     def __init__(self, app: FastAPI, configuration_controller: ConfigurationController):
-        super().__init__(name=f"API Thread")
         """Holds the active controller"""
+        super().__init__(name="API Thread")
         self._configuration_controller = configuration_controller
         """Configuration controller"""
         self._app = app
         """FastAPI"""
-        
+
         self._app.get("/sinks", tags=["Sink Configuration"])(self.get_sinks)
         self._app.post("/groups/sinks", tags=["Sink Configuration"])(self.add_sink_group)
         self._app.post("/sinks", tags=["Sink Configuration"])(self.add_sink)
@@ -26,7 +27,7 @@ class API_Configuration(threading.Thread):
         self._app.get("/sinks/{sink_name}/enable", tags=["Sink Configuration"])(self.enable_sink)
         self._app.get("/sinks/{sink_name}/volume/{volume}", tags=["Sink Configuration"])(self.set_sink_volume)
         self._app.post("/sinks/{sink_name}/play/{volume}", tags=["Sink Playback"])(self.sink_play)
-        
+
         self._app.get("/sources", tags=["Source Configuration"])(self.get_sources)
         self._app.post("/groups/sources", tags=["Source Configuration"])(self.add_source_group)
         self._app.post("/sources", tags=["Source Configuration"])(self.add_source)
@@ -45,12 +46,12 @@ class API_Configuration(threading.Thread):
         self._app.get("/routes/{route_name}/enable", tags=["Route Configuration"])(self.enable_route)
         self._app.get("/routes/{route_name}/volume/{volume}", tags=["Route Configuration"])(self.set_route_volume)
         self._app.add_exception_handler(Exception, self.__api_exception_handler)
-        self.start()    
+        self.start()
 
     def run(self):
         uvicorn.run(self._app, port=8080, host='0.0.0.0')
 
-    def __api_exception_handler(self, request: Request, exception: Exception) -> JSONResponse:
+    def __api_exception_handler(self, _, exception: Exception) -> JSONResponse:
         """Generic error handler so controller can throw generic exceptions and get useful messages returned to clients"""
         return JSONResponse(
             status_code = 500,
@@ -61,7 +62,6 @@ class API_Configuration(threading.Thread):
     def set_sink_volume(self, sink_name: str, volume: float) -> bool:
         """Sets the volume for a sink"""
         return self._configuration_controller.update_sink_volume(sink_name, volume)
-    
 
     def sink_play(self, url: PostURL, sink_name: str, volume: float):
         """Plays a URL"""
@@ -74,7 +74,7 @@ class API_Configuration(threading.Thread):
     def add_sink(self, sink: PostSink) -> bool:
         """Add a new sink"""
         return self._configuration_controller.add_sink(SinkDescription(sink.name, sink.ip, sink.port, False, True, [], 1, sink.bit_depth, sink.sample_rate, sink.channels, sink.channel_layout))
-    
+
     def update_sink(self, sink: PostSink) -> bool:
         """Updaet a sink"""
         return self._configuration_controller.update_sink(SinkDescription(sink.name, sink.ip, sink.port, False, True, [], 1, sink.bit_depth, sink.sample_rate, sink.channels, sink.channel_layout))
@@ -99,7 +99,7 @@ class API_Configuration(threading.Thread):
     def set_source_volume(self, source_name: str, volume: float) -> bool:
         """Sets the volume for a source"""
         return self._configuration_controller.update_source_volume(source_name, volume)
-    
+
     def get_sources(self) -> List[SourceDescription]:
         """Get all sources"""
         return self._configuration_controller.get_sources()
@@ -111,7 +111,7 @@ class API_Configuration(threading.Thread):
     def update_source(self, source: PostSource) -> bool:
         """Update an existing source"""
         return self._configuration_controller.update_source(SourceDescription(source.name, source.ip, False, True, [], 1))
-    
+
     def add_source_group(self, source_group: PostSourceGroup) -> bool:
         """Add a new source group"""
         return self._configuration_controller.add_source(SourceDescription(source_group.name, "", True, True, source_group.sources, 1))
@@ -132,7 +132,7 @@ class API_Configuration(threading.Thread):
     def set_route_volume(self, route_name: str, volume: float) -> bool:
         """Sets the volume for a route"""
         return self._configuration_controller.update_route_volume(route_name, volume)
-    
+
     def get_routes(self) -> List[RouteDescription]:
         """Get all routes"""
         return self._configuration_controller.get_routes()
@@ -140,7 +140,7 @@ class API_Configuration(threading.Thread):
     def add_route(self, route: PostRoute) -> bool:
         """Add a new route"""
         return self._configuration_controller.add_route(RouteDescription(route.name, route.sink, route.source, True, 1))
-    
+
     def update_route(self, route: PostRoute) -> bool:
         """Update a route"""
         return self._configuration_controller.update_route(RouteDescription(route.name, route.sink, route.source, True, 1))

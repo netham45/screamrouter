@@ -1,6 +1,9 @@
+"""Holds post types to be passed from FastAPI"""
 from typing import List
 from pydantic import BaseModel
+
 class PostSink(BaseModel):
+    """Post data to configure or add a Sink"""
     name: str
     """Sink Name"""
     ip: str
@@ -17,24 +20,28 @@ class PostSink(BaseModel):
     """Channel Layout"""
 
 class PostSinkGroup(BaseModel):
+    """Post data to configure or add a Sink Group"""
     name: str
     """Sink Group Name"""
     sinks: List[str]
     """List of names of grouped sinks"""
 
 class PostSource(BaseModel):
+    """Post data to configure or add a Source"""
     name: str
     """Source Name"""
     ip: str
     """Source IP"""
 
 class PostSourceGroup(BaseModel):
+    """Post data to configure or add a Source Group"""
     name: str
     """Source Group Name"""
     sources: List[str]
     """List of names of grouped Sources"""
 
 class PostRoute(BaseModel):
+    """Post data to configure or add a Route"""
     name: str
     """Route Name"""
     source: str
@@ -43,5 +50,6 @@ class PostRoute(BaseModel):
     """Route Sink"""
 
 class PostURL(BaseModel):
+    """Post data containing a URL"""
     url: str
     """URL"""

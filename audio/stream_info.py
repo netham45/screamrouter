@@ -1,3 +1,4 @@
+"""Holds stream info and parses Scream headers."""
 from typing import Union
 import numpy
 
@@ -12,7 +13,7 @@ class StreamInfo():
                                   (0x3F, 0x00): "5.1",  # Deprecated
                                   (0xFF, 0x00): "7.1"   # Deprecated
                                   }
-    
+
     def __init__(self, scream_header: Union[bytearray, bytes]):
         scream_header_array: bytearray = bytearray(scream_header)
         """Parses the first five bytes of a Scream header to get the stream attributes"""
@@ -34,7 +35,6 @@ class StreamInfo():
         """Holds the channel layout"""
         self.header: bytearray = scream_header_array
         """Holds the raw header bytes"""
-       
 
     def __parse_channel_mask(self):
         """Converts the channel mask to a string to be fed to ffmpeg"""
@@ -47,14 +47,14 @@ class StreamInfo():
         """Returns if two ScreamStreamInfos equal"""
         other: StreamInfo = _other
         return (self.sample_rate == other.sample_rate) and (self.bit_depth == other.bit_depth) and (self.channels == other.channels) and (self.channel_mask == other.channel_mask)
-    
+
 def create_stream_info(bit_depth: int, sample_rate: int, channels: int, channel_layout: str) -> StreamInfo:
     """Returns a header with the specified properties"""
     header: bytearray = bytearray([0, 0, 0, 0, 0])
-    _441kHz: bool = sample_rate % 44100 == 0
-    samplerate_multiplier: int = int(sample_rate / (44100 if _441kHz else 48000))
+    is_441khz: bool = sample_rate % 44100 == 0
+    samplerate_multiplier: int = int(sample_rate / (44100 if is_441khz else 48000))
     sample_rate_bits: numpy.ndarray = numpy.unpackbits(numpy.array([samplerate_multiplier], dtype=numpy.uint8), bitorder='little')  # Unpack the first byte into 8 bits
-    sample_rate_bits[7] = 1 if _441kHz else 0
+    sample_rate_bits[7] = 1 if is_441khz else 0
     sample_rate_packed: int = int(numpy.packbits(sample_rate_bits, bitorder='little')[0])
     header[0] = sample_rate_packed
     header[1] = bit_depth

@@ -1,3 +1,4 @@
+"""Main receiver, handles listening for sources to send UDP packets and puts them in sink queues"""
 import threading
 import socket
 import select
@@ -30,19 +31,19 @@ class Receiver(threading.Thread):
         print("Recevier stopping")
         self.running = False
         self.sock.close()
-    
+
     def __check_source_packet(self, source_ip: str, data: bytes) -> bool:
         """Verifies a packet is the right length"""
         if len(data) != 1157:
             print(f"[Source {source_ip}] Got bad packet length {len(data)} != 1157 from source")
             return False
         return True
-    
+
     def add_packet_to_queue(self, source: str, data: bytes):
         """Adds a packet to all sinks' queues"""
         if self.__check_source_packet(source, data):
-                for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
-                    sink.add_packet_to_queue(source, data)
+            for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
+                sink.add_packet_to_queue(source, data)
 
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks
@@ -63,8 +64,8 @@ class Receiver(threading.Thread):
                     if self.__check_source_packet(addr[0], recvbuf):
                         for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
                             sink.add_packet_to_queue(addr[0], recvbuf)
-                except Exception:
-                    continue
+                except OSError:
+                    break
         print("[Receiver] Main thread ending sinks")
         for sink in self.sinks:
             print(f"[Receiver] Stopping sink {sink.sink_ip}")

@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+"""ScreamRouter"""
 import os
 import threading
 import signal
@@ -7,11 +8,13 @@ from fastapi import FastAPI
 
 from configuration.configuration_controller import ConfigurationController
 
-from api.api_configuration import API_Configuration
-from api.api_webstream import API_Webstream
-from api.api_website import API_Website
+from api.api_configuration import APIConfiguration
+from api.api_webstream import APIWebStream
+from api.api_website import APIWebsite
 
 def signal_handler(sig, frame):
+    """Fired when Ctrl+C pressed"""
+    print(f"{sig} {frame}")
     controller.stop()
     os.kill(os.getpid(), signal.SIGTERM)  # Wouldn't it be cool if uvicorn provided a real way to exit?
 
@@ -51,8 +54,8 @@ app: FastAPI = FastAPI( title="ScreamRouter",
             "description": "HTTP media streams"
         }
     ])
-webstream: API_Webstream = API_Webstream(app)
-website: API_Website = API_Website(app)
+webstream: APIWebStream = APIWebStream(app)
+website: APIWebsite = APIWebsite(app)
 controller: ConfigurationController = ConfigurationController(webstream)
-api_controller = API_Configuration(app, controller)
+api_controller = APIConfiguration(app, controller)
 api_controller.join()
