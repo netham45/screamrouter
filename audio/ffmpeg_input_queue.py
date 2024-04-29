@@ -16,7 +16,8 @@ class FFMpegInputQueueEntry():
 
 
 class FFMpegInputQueue(threading.Thread):
-    """An FFMPEG Input Queue is written to by the receiver, verified to belong to the sink by the sink controller, and read from by ffmpeg. There is one queue per sink controller."""
+    """An FFMPEG Input Queue is written to by the receiver, passed to each Sink Controller,
+        which passes to ffmpeg. There is one queue per sink controller."""
     def __init__(self, callback, sink_ip: str):
         super().__init__(name=f"[Sink {sink_ip}] ffmpeg Input Queue")
         self._queue: collections.deque = collections.deque()
@@ -38,7 +39,8 @@ class FFMpegInputQueue(threading.Thread):
         self._queue.append(entry)
 
     def run(self):
-        """Constantly checks the queue, notifies the Sink Controller callback when there's something in the queue"""
+        """Constantly checks the queue
+            notifies the Sink Controller callback when there's something in the queue"""
         while self._running:
             while len(self._queue) > 0:
                 entry = self._queue.popleft()

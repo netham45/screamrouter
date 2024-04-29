@@ -1,7 +1,10 @@
 """Types used by the configuration controller"""
 from typing import List
 from pydantic import BaseModel
-from configuration.type_verification import verify_volume, verify_bit_depth, verify_channel_layout, verify_channels, verify_ip, verify_name, verify_port, verify_sample_rate
+from configuration.type_verification import verify_volume, verify_bit_depth, verify_channel_layout
+from configuration.type_verification import verify_channels, verify_ip, verify_name
+from configuration.type_verification import verify_port, verify_sample_rate
+
 
 
 class InUseError(Exception):
@@ -35,7 +38,12 @@ class SinkDescription(BaseModel):
     """Sink Channels Rate"""
     channel_layout: str
     """Sink Channel Layout"""
-    def __init__(self, name: str, ip: str, port: int, is_group: bool, enabled: bool, group_members: List[str], volume: float, bit_depth: int = 32, sample_rate: int = 48000, channels: int = 2, channel_layout: str = "stereo"):
+    def __init__(self, name: str, ip: str,
+                 port: int, is_group: bool,
+                 enabled: bool, group_members: List[str],
+                 volume: float, bit_depth: int = 32,
+                 sample_rate: int = 48000, channels: int = 2,
+                 channel_layout: str = "stereo"):
         if not isinstance(channel_layout, str):
             channel_layout = str(channel_layout)
         if not is_group:
@@ -80,12 +88,17 @@ class SourceDescription(BaseModel):
     """"Source Group Members"""
     volume: float
     """Holds the volume for the source  (0.0-1.0)"""
-    def __init__(self, name: str, ip: str, is_group: bool, enabled: bool, group_members: List[str], volume: float):
+    def __init__(self, name: str, ip: str,
+                 is_group: bool, enabled: bool,
+                 group_members: List[str],
+                 volume: float):
         if not is_group:
             verify_ip(ip)
         verify_name(name)
         verify_volume(volume)
-        super().__init__(name = name, ip = ip, is_group = is_group, enabled = enabled, group_members = group_members, volume = volume)
+        super().__init__(name = name, ip = ip,
+                         is_group = is_group, enabled = enabled,
+                         group_members = group_members, volume = volume)
 
     def set_volume(self, volume: float):
         """Verifies volume then sets i"""
@@ -106,10 +119,14 @@ class RouteDescription(BaseModel):
     """Route Enabled"""
     volume: float
     """Route volume (0.0-1.0)"""
-    def __init__(self, name: str, sink: str, source: str, enabled: bool, volume: float):
+    def __init__(self, name: str, sink: str,
+                 source: str, enabled: bool,
+                 volume: float):
         verify_name(name)
         verify_volume(volume)
-        super().__init__(name = name, sink = sink, source = source, enabled = enabled, volume = volume)
+        super().__init__(name = name, sink = sink,
+                         source = source, enabled = enabled,
+                         volume = volume)
 
     def set_volume(self, volume: float):
         """Verifies volume then sets i"""

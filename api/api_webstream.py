@@ -18,7 +18,8 @@ class Listener():
 
     def send(self, sink_ip: str, data: bytes) -> bool:
         """Implemented by classes that extend Listener"""
-        return len(sink_ip) + len(data) == 9001  # Junk return so pylint quits complaining about unused args
+        # Junk return so pylint quits complaining about unused args
+        return len(sink_ip) + len(data) == 9001
 
     async def open(self) -> None:
         """Implemented by classes that extend Listener"""

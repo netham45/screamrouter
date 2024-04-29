@@ -11,7 +11,8 @@ from audio.stream_info import StreamInfo
 
 class FFMpegHandler(threading.Thread):
     """Handles an FFMpeg process for a sink"""
-    def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str, sources: List[SourceToFFMpegWriter], sink_info: StreamInfo):
+    def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str,
+                  sources: List[SourceToFFMpegWriter], sink_info: StreamInfo):
         super().__init__(name=f"[Sink {sink_ip}] ffmpeg Thread")
         self.__fifo_in_pcm: str = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
@@ -65,17 +66,37 @@ class FFMpegHandler(threading.Thread):
         full_filter_string = ""
         amix_inputs = ""
 
-        for idx, value in enumerate(sources):  # For each source IP add an input to aresample async, and append it to an input variable for amix
-            full_filter_string = full_filter_string + f"[{idx}]volume@volume_{idx}={value.volume},aresample=isr={value.stream_attributes.sample_rate}:osr={value.stream_attributes.sample_rate}:async=500000[a{idx}],"
+        # For each source IP add a aresample and append it to an input variable for amix
+        for idx, value in enumerate(sources):
+            full_filter_string = "".join([full_filter_string,
+                                          f"[{idx}]volume@volume_{idx}={value.volume},",
+                                          f"aresample=isr={value.stream_attributes.sample_rate}:",
+                                          f"osr={value.stream_attributes.sample_rate}:",
+                                          f"async=500000[a{idx}],"])
             amix_inputs = amix_inputs + f"[a{idx}]"  # amix input
-        ffmpeg_command_parts.extend(["-filter_complex", full_filter_string + amix_inputs + f"amix=normalize=0:inputs={len(self.__sources)}"])
+        inputs: int = len(self.__sources)
+        combined_filter_string: str = full_filter_string + amix_inputs
+        combined_filter_string = combined_filter_string + f"amix=normalize=0:inputs={inputs}"
+        ffmpeg_command_parts.extend(["-filter_complex", combined_filter_string])
         return ffmpeg_command_parts
 
     def __get_ffmpeg_output(self) -> List[str]:
         """Returns the ffmpeg output"""
         ffmpeg_command_parts: List[str] = []
-        ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", f"s{self.__sink_info.bit_depth}le", "-ac", f"{self.__sink_info.channels}", "-ar", f"{self.__sink_info.sample_rate}", f"{self.__fifo_in_pcm}"])  # ffmpeg PCM output
-        ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", "mp3", "-b:a", "320k", "-ac", "2", "-ar", f"{self.__sink_info.sample_rate}", "-reservoir", "0", f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
+        ffmpeg_command_parts.extend(["-avioflags", "direct",
+                                     "-y",
+                                     "-f", f"s{self.__sink_info.bit_depth}le", 
+                                     "-ac", f"{self.__sink_info.channels}",
+                                     "-ar", f"{self.__sink_info.sample_rate}",
+                                       f"{self.__fifo_in_pcm}"])  # ffmpeg PCM output
+        ffmpeg_command_parts.extend(["-avioflags", "direct",
+                                     "-y",
+                                     "-f", "mp3",
+                                     "-b:a", "320k",
+                                     "-ac", "2",
+                                      "-ar", f"{self.__sink_info.sample_rate}",
+                                      "-reservoir", "0",
+                                      f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
         return ffmpeg_command_parts
 
     def __get_ffmpeg_command(self, sources: List[SourceToFFMpegWriter]) -> List[str]:
@@ -91,7 +112,12 @@ class FFMpegHandler(threading.Thread):
         if self.__running:
             print(f"[Sink {self.__sink_ip}] ffmpeg started")
             self.__ffmpeg_started = True
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), shell=False, start_new_session=True, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources),
+                                             shell=False,
+                                             start_new_session=True,
+                                             stdin=subprocess.PIPE,
+                                             stdout=subprocess.DEVNULL,
+                                             stderr=subprocess.DEVNULL)
 
     def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
         """Opens the ffmpeg instance"""
@@ -101,7 +127,8 @@ class FFMpegHandler(threading.Thread):
             self.__ffmpeg.kill()
 
     def send_ffmpeg_command(self, command: str, command_char: str = "c") -> None:
-        """Send ffmpeg a command. Commands consist of control character to enter a mode (default 'c') and a string to run."""
+        """Send ffmpeg a command.
+           Commands consist of control character to enter a mode (default c) and a string to run."""
         print(f"[Sink {self.__sink_ip}] Running ffmpeg command {command_char} {command}")
         try:
             if not self.__ffmpeg.stdin is None:

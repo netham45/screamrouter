@@ -16,7 +16,8 @@ def signal_handler(sig, frame):
     """Fired when Ctrl+C pressed"""
     print(f"Ctrl+C pressed {sig} {frame}")
     controller.stop()
-    os.kill(os.getpid(), signal.SIGTERM)  # Wouldn't it be cool if uvicorn provided a real way to exit?
+    # Wouldn't it be cool if uvicorn provided a real way to exit?
+    os.kill(os.getpid(), signal.SIGTERM)
 
 signal.signal(signal.SIGINT, signal_handler)
 

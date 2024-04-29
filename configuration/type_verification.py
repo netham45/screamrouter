@@ -3,7 +3,7 @@ import ipaddress
 import traceback
 from typing import Tuple
 
-CHANNEL_LAYOUT_TABLE: dict[Tuple[int,int], str] = {(0x00, 0x00): "stereo", # Used by sources that haven't received any stream yet
+CHANNEL_LAYOUT_TABLE: dict[Tuple[int,int], str] = {(0x00, 0x00): "stereo", # No layout
                                                    (0x04, 0x00): "mono",
                                                    (0x03, 0x00): "stereo",
                                                    (0x33, 0x00): "quad",
@@ -58,4 +58,5 @@ def verify_channel_layout(channel_layout: str) -> None:
     for layout in CHANNEL_LAYOUT_TABLE.values():
         if layout == channel_layout:
             return
-    raise ValueError(f"Invalid Channel Layout {channel_layout} Valid channel layouts: {CHANNEL_LAYOUT_TABLE.values()}")
+    raise ValueError("".join([f"Invalid Channel Layout {channel_layout}",
+                              f"Valid channel layouts: {CHANNEL_LAYOUT_TABLE.values()}"]))

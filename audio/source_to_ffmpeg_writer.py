@@ -38,7 +38,7 @@ class SourceToFFMpegWriter(threading.Thread):
         self.start()
 
     def check_attributes(self, stream_attributes: StreamInfo) -> bool:
-        """Returns True if the source's stream attributes are the same, False if they're different."""
+        """Returns True if the source's stream attributes are the same."""
         return stream_attributes == self.stream_attributes
 
     def set_attributes(self, stream_attributes: StreamInfo) -> None:
@@ -79,7 +79,7 @@ class SourceToFFMpegWriter(threading.Thread):
     def close(self) -> None:
         """Closes the source"""
         if self.is_open():
-            self.__fifo_file_handle.close()  # Close and remove the fifo handle so ffmpeg will stop trying to listen for it
+            self.__fifo_file_handle.close()
             self.__open = False
             print(f"[Sink {self.__sink_ip} Source {self.tag}] Closed")
 
@@ -93,11 +93,7 @@ class SourceToFFMpegWriter(threading.Thread):
         self.__running = False
 
     def write(self, data: bytes) -> None:
-        """Writes data to this source's FIFO
-           Scream Source -> Receiver -> Sink Handler -> Sources -> Pipe -> FFMPEG -> Pipe -> Python -> Scream Sink
-                                                           ^
-                                                      You are here                       
-        """
+        """Writes data to this source's FIFO"""
         self._queue.append(data)
         self.update_activity()
 
@@ -108,6 +104,6 @@ class SourceToFFMpegWriter(threading.Thread):
                 try:
                     self.__fifo_file_handle.write(data)
                 except ValueError:
-                    print(f"[Sink {self.__sink_ip} Source {self.tag}] Failed to write to output pipe")
+                    print(f"[Sink {self.__sink_ip} Source {self.tag}] Failed to write to ffmpeg")
             time.sleep(.0001)
         print(f"[Sink {self.__sink_ip}] Queue thread exit")

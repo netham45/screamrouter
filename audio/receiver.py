@@ -10,7 +10,7 @@ from audio.sink_controller import SinkController
 LOCALPORT=16401
 
 class Receiver(threading.Thread):
-    """Handles the main socket that listens for incoming Scream streams and sends them to the appropriate sinks"""
+    """Handles the main socket that listens for incoming Scream streams and sends them to sinks"""
     def __init__(self):
         """Takes no parameters"""
         super().__init__(name="Main Receiver Thread")
@@ -42,7 +42,7 @@ class Receiver(threading.Thread):
     def add_packet_to_queue(self, source: str, data: bytes):
         """Adds a packet to all sinks' queues"""
         if self.__check_source_packet(source, data):
-            for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
+            for sink in self.sinks:
                 sink.add_packet_to_queue(source, data)
 
     def notify_url_done_playing(self, tag: str):
@@ -51,12 +51,7 @@ class Receiver(threading.Thread):
             sink.url_playback_done_callback(tag)
 
     def run(self) -> None:
-        """This thread listens for traffic from all sources and sends it to sinks
-
-        Scream Source -> Receiver -> Sink Handler -> Sources -> Pipe -> FFMPEG -> Pipe -> Python -> Scream Sink
-                            ^
-                       You are here                   
-        """
+        """This thread listens for traffic from all sources and sends it to sinks"""
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 65535)
         self.sock.bind(("", LOCALPORT))
 
@@ -67,7 +62,7 @@ class Receiver(threading.Thread):
                 try:
                     recvbuf, addr = self.sock.recvfrom(1157)  # 5 bytes header + 1152 bytes pcm
                     if self.__check_source_packet(addr[0], recvbuf):
-                        for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
+                        for sink in self.sinks:
                             sink.add_packet_to_queue(addr[0], recvbuf)
                 except OSError:
                     print("[Receiver] Failed to read from incoming sock, exiting")
