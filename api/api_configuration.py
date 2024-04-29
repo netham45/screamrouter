@@ -76,7 +76,7 @@ class APIConfiguration(threading.Thread):
         self.start()
 
     def run(self):
-        uvicorn.run(self._app, port=8080, host='0.0.0.0')
+        uvicorn.run(self._app, port=self._configuration_controller.api_port, host='0.0.0.0')
 
     def __api_exception_handler(self, _, exception: Exception) -> JSONResponse:
         """Error handler so controller can throw exceptions that get returned to clients"""

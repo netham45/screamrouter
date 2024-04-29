@@ -91,3 +91,6 @@ sources:
   ip: 192.168.0.103
   name: Office PC Management VLAN
   volume: 1.0
+server:
+  receiver_port: 16401
+  api_port: 8080

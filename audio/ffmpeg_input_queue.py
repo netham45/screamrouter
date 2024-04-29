@@ -5,7 +5,7 @@ import time
 
 
 class FFMpegInputQueueEntry():
-    """A data entry in the ffmpeg input queue, holds the data and the source IP adderss."""
+    """A data entry in the ffmpeg input queue, holds the data and the source IP address."""
     source_ip: str
     """Source IP address for data sent to an input queue"""
     data: bytes

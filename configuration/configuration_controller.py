@@ -50,7 +50,12 @@ class ConfigurationController:
         """Holds rather the config is loaded"""
         self.__url_play_counter: int = 0
         """Holds URL play counter so ffmpeg pipes can have unique names"""
-        self.__api_websocket: Optional[APIWebStream] = websocket
+        self.__api_webstream: Optional[APIWebStream] = websocket
+        """Holds the WebStream API for streaming MP3s to browsers"""
+        self.api_port: int = 8080
+        """Port for Uvicorn API to listen on"""
+        self.receiver_port: int = 16401
+        """Port for receiver to listen on"""
         self.__load_yaml()
         self.__start_receiver()
 
@@ -325,6 +330,8 @@ class ConfigurationController:
                 self.add_route(RouteDescription(route_entry["name"], route_entry["sink"],
                                                 route_entry["source"], route_entry["enabled"],
                                                 route_entry["volume"]))
+            self.api_port = config["server"]["api_port"]
+            self.receiver_port = config["server"]["receiver_port"]
         except FileNotFoundError:
             print("[Controller] Configuration not found, starting with a blank config")
         except KeyError as exc:
@@ -344,6 +351,7 @@ class ConfigurationController:
         sources: List[dict] = []
         source_groups: List[dict] = []
         routes: List[dict] = []
+        serverinfo: dict = {"api_port": self.api_port, "receiver_port": self.receiver_port}
         for sink in self.__sink_descriptions:
             if not sink.is_group:
                 _newsink = {"name": sink.name, "ip": sink.ip,
@@ -372,7 +380,7 @@ class ConfigurationController:
             routes.append(_newroute)
         groups = {"sinks": sink_groups, "sources": source_groups}
         save_data = {"sinks": sinks, "sources": sources,
-                     "routes": routes, "groups": groups}
+                     "routes": routes, "groups": groups, "server": serverinfo}
         with open('config.yaml', 'w', encoding="UTF-8") as yaml_file:
             yaml.dump(save_data, yaml_file)
 
@@ -388,7 +396,7 @@ class ConfigurationController:
             self.__receiver.join()
             print("[Controller] Receiver closed!")
         self.__receiverset = True
-        self.__receiver = Receiver()
+        self.__receiver = Receiver(self.receiver_port)
         self.__sink_objects = []
         for sink_ip, _ in self.sinks_to_sources.items():
             if sink_ip != "":
@@ -398,7 +406,7 @@ class ConfigurationController:
                         sink_info = sink_description
                         sink = audio.sink_controller.SinkController(sink_info,
                                                                     self.sinks_to_sources[sink_ip],
-                                                                    self.__api_websocket)
+                                                                    self.__api_webstream)
                         self.__receiver.register_sink(sink)
                         self.__sink_objects.append(sink)
                         break

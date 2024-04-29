@@ -7,12 +7,10 @@ from typing import List
 
 from audio.sink_controller import SinkController
 
-LOCALPORT=16401
-
 class Receiver(threading.Thread):
     """Handles the main socket that listens for incoming Scream streams and sends them to sinks"""
-    def __init__(self):
-        """Takes no parameters"""
+    def __init__(self, port: int):
+        """Takes the UDP port number to listen on"""
         super().__init__(name="Main Receiver Thread")
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Main socket all sources send to"""
@@ -20,6 +18,8 @@ class Receiver(threading.Thread):
         """List of all sinks to forward data to"""
         self.running: bool = True
         """Rather the Recevier is running, when set to false the receiver ends"""
+        self.port: int = port
+        """UDP port to listen on"""
         self.start()
 
     def register_sink(self, sink: SinkController) -> None:
@@ -53,7 +53,7 @@ class Receiver(threading.Thread):
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks"""
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 65535)
-        self.sock.bind(("", LOCALPORT))
+        self.sock.bind(("", self.port))
 
         recvbuf = bytearray(1157)
         while self.running:

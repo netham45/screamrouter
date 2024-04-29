@@ -159,8 +159,19 @@ groups:
     volume: 1.0
 ```
 
-### Volume
-Each Source, Route, and Sink has a volume control. The default volume of 1 is unattenuated. The volumes for each sink, sink group, route, source group, and source it passes through are multiplied together to come up with a final volume.
+### Server Configuration
+
+The server configuration holds the port for the API to listen on and the port for the recevier to receive audio frames on
+
+Example YAML block:
+
+This defines the receiver port as 16401 (Default) and the API port as 8080 (Default)
+
+```
+server:
+  receiver_port: 16401
+  api_port: 8080
+```
 
 ## General Info
 
@@ -175,6 +186,9 @@ Each ScreamRouter Sink is an IP address and port it sends data to, along with a 
 The sinks can take in any input format Scream can produce, but using 24-bit is discouraged due to potential byte alignment issues. If you get random static blasted at you during playback this is why.
 
 Each ScreamRouter Route is a link of one Source to one Sink, and each Sink is an IP and Port for ScreamRouter to unicast data to. ScreamRouter receives traffic from all sources on one UDP port and filters based off of the source IP.
+
+### Volume
+Each Source, Route, and Sink has a volume control. The default volume of 1 is unattenuated. The volumes for each sink, sink group, route, source group, and source it passes through are multiplied together to come up with a final volume.
 
 
 ## Technical Info
