@@ -121,7 +121,7 @@ class FFMpegHandler(threading.Thread):
 
     def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
         """Opens the ffmpeg instance"""
-        print(f"[{self.__sink_ip}] Resetting ffmpeg")
+        print(f"[Sink {self.__sink_ip}] Resetting ffmpeg")
         self.__sources = sources
         if self.__ffmpeg_started:
             self.__ffmpeg.kill()

@@ -113,13 +113,13 @@ class SinkController():
         parsed_scream_header = StreamInfo(header)
         if not source.check_attributes(parsed_scream_header):
             print("".join([f"[Sink {self.sink_ip} Source {source.tag}]",
-                           "Closing (Stream attribute change detected. ",
-                           "Was: {source.stream_attributes.bit_depth}-bit ",
-                           "at {source.stream_attributes.sample_rate}kHz ",
-                           f"{source.stream_attributes.channel_layout} layout is now",
-                           "{parsed_scream_header.bit_depth}-bit at ",
-                           "{parsed_scream_header.sample_rate}kHz ",
-                           "{parsed_scream_header.channel_layout} layout.)"]))
+                           "Closing source, stream attribute change detected. ",
+                           f"Was: {source.stream_attributes.bit_depth}-bit ",
+                           f"at {source.stream_attributes.sample_rate}kHz ",
+                           f"{source.stream_attributes.channel_layout} layout is now ",
+                           f"{parsed_scream_header.bit_depth}-bit at ",
+                           f"{parsed_scream_header.sample_rate}kHz ",
+                           f"{parsed_scream_header.channel_layout} layout."]))
             source.set_attributes(parsed_scream_header)
             source.close()
         if not source.is_open():
