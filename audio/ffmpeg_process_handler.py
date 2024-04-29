@@ -1,5 +1,4 @@
 """Handles the ffmpeg process for each sink"""
-import os
 import subprocess
 import time
 
@@ -87,16 +86,12 @@ class FFMpegHandler(threading.Thread):
         ffmpeg_command_parts.extend(self.__get_ffmpeg_output())  # ffmpeg output
         return ffmpeg_command_parts
 
-    def ffmpeg_preopen_hook(self):
-        """Don't forward signals. It's lifecycle is managed."""
-        os.setpgrp()
-
     def start_ffmpeg(self):
         """Start ffmpeg if it's not running"""
         if self.__running:
             print(f"[Sink {self.__sink_ip}] ffmpeg started")
             self.__ffmpeg_started = True
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) # pylint: disable=subprocess-popen-preexec-fn
+            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), shell=False, start_new_session=True, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
         """Opens the ffmpeg instance"""

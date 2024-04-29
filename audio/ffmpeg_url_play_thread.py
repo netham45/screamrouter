@@ -38,10 +38,6 @@ class FFMpegPlayURL(threading.Thread):
         self.__ffmpeg: subprocess.Popen
         self.start()
 
-    def ffmpeg_preopen_hook(self):
-        """Don't forward signals. It's lifecycle is managed."""
-        os.setpgrp()
-
     def __get_ffmpeg_command(self) -> List[str]:
         """Builds the ffmpeg playback command"""
         ffmpeg_command_parts: List[str] = ['ffmpeg', '-hide_banner']
@@ -70,7 +66,7 @@ class FFMpegPlayURL(threading.Thread):
 
     def run(self):
         """Wait for data to be available from ffmpeg to put into the sink queue, when ffmpeg ends the thread can end"""
-        self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # pylint: disable=subprocess-popen-preexec-fn
+        self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(), shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         while self.__ffmpeg.poll() is None:
             data = self._read_bytes(1152)
             self.__receiver.add_packet_to_queue(self.__source_name, self.__header.header + data)
