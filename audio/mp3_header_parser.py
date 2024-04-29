@@ -1,3 +1,4 @@
+"""Holds the MP3Header class that parses MP3 headers"""
 import numpy
 
 class InvalidHeaderException(Exception):
@@ -285,15 +286,15 @@ class MP3Header():
         samplerates = {1: [44100, 48000, 32000], 2: [22050, 24000, 16000], 3: [11025, 12000, 8000]}
         return samplerates[version][samplerate]
 
-    def __mp3_process_header(self, headerData: bytes) -> None:
+    def __mp3_process_header(self, header_data: bytes) -> None:
         """Processes an MP3 header"""
         # See http://www.mp3-tech.org/programmer/frame_header.html
-        if len(headerData) < 4:
+        if len(header_data) < 4:
             raise InvalidHeaderException("Invalid MP3 Header (Too short)")
-        byte_1: numpy.ndarray = numpy.unpackbits(numpy.array([headerData[0]], dtype=numpy.uint8), bitorder='little') 
-        byte_2: numpy.ndarray = numpy.unpackbits(numpy.array([headerData[1]], dtype=numpy.uint8), bitorder='little') 
-        byte_3: numpy.ndarray = numpy.unpackbits(numpy.array([headerData[2]], dtype=numpy.uint8), bitorder='little') 
-        byte_4: numpy.ndarray = numpy.unpackbits(numpy.array([headerData[3]], dtype=numpy.uint8), bitorder='little')
+        byte_1: numpy.ndarray = numpy.unpackbits(numpy.array([header_data[0]], dtype=numpy.uint8), bitorder='little')
+        byte_2: numpy.ndarray = numpy.unpackbits(numpy.array([header_data[1]], dtype=numpy.uint8), bitorder='little')
+        byte_3: numpy.ndarray = numpy.unpackbits(numpy.array([header_data[2]], dtype=numpy.uint8), bitorder='little')
+        byte_4: numpy.ndarray = numpy.unpackbits(numpy.array([header_data[3]], dtype=numpy.uint8), bitorder='little')
         for i in range(0, 7):
             if byte_1[i] != 1:
                 raise InvalidHeaderException("Invalid MP3 Header (First byte has invalid marker)")
@@ -314,6 +315,6 @@ class MP3Header():
         self.emphasis = numpy.packbits(byte_4[0:2], bitorder='little')[0]
         self.samplerate = self.__mp3_process_samplerate(self.mpeg_version, self.samplerate_index)
         self.bitrate = self.__mp3_parse_bitrate(self.bitrate_index, 1 if self.mpeg_version == 3 else 2, (3 - self.layer_description) + 1)
-        self.slotsize = 4 if (3 - self.layer_description == 1) else 1   
+        self.slotsize = 4 if (3 - self.layer_description == 1) else 1
         self.samplecount = self.__mp3_parse_frames(1 if self.mpeg_version == 3 else 2, (3 - self.layer_description) + 1)
         self.framelength = int((self.bitrate * 1000 / 8 * self.samplecount / self.samplerate + (self.padding * self.slotsize)) - 4)

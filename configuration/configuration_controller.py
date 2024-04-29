@@ -290,7 +290,7 @@ class ConfigurationController:
         self.__build_real_sinks_to_real_sources()
         for sink_ip, sources in self.__sinks_to_sources.items():
             for _sink in self.__sink_objects:
-                if _sink._sink_ip == sink_ip:
+                if _sink.sink_ip == sink_ip:
                     for source in sources:
                         _sink.update_source_volume(source)
         self.__save_yaml()

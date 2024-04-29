@@ -1,9 +1,8 @@
-import tempfile
-
+"""Controls the sink, keeps track of associated sources, and holds the ffmpeg thread object"""
 from typing import List, Optional
 
 from audio.ffmpeg_process_handler import ffmpeg_handler
-from audio.ffmpeg_input_queue import ffmpegInputQueue, ffmpegInputQueueEntry
+from audio.ffmpeg_input_queue import FFmpegInputQueue, FFmpegInputQueueEntry
 from audio.ffmpeg_url_play_thread import ffmpegPlayURL
 from audio.source_info import SourceInfo
 from audio.stream_info import StreamInfo, create_stream_info
@@ -21,17 +20,17 @@ class SinkController():
         super().__init__()
         self.__sink_info = sink_info
         """Sink Info"""
-        self.__channels = sink_info.channels
+        self.__channels: int = sink_info.channels
         """Number of channels the sink is configured for"""
-        self.__bit_depth = sink_info.bit_depth
+        self.__bit_depth: int = sink_info.bit_depth
         """Bit depth the sink is configured for"""
-        self.__sample_rate = sink_info.sample_rate
+        self.__sample_rate: int = sink_info.sample_rate
         """Sample rate the sink is configured for"""
-        self.__channel_layout = sink_info.channel_layout
+        self.__channel_layout: str = sink_info.channel_layout
         """Channel layout the sink is configured for"""
         self.__stream_info: StreamInfo = create_stream_info(self.__bit_depth, self.__sample_rate, self.__channels, self.__channel_layout)
         """Output stream info"""
-        self._sink_ip: str = sink_info.ip
+        self.sink_ip: str = sink_info.ip
         """Sink IP"""
         self._sink_port: int = sink_info.port
         """Sink Port"""
@@ -41,32 +40,32 @@ class SinkController():
         """Sources this Sink has"""
         self.__sources: List[SourceInfo] = []
         """Sources this Sink is playing"""
-        self.__pipe_path: str = f"./pipes/scream-{self._sink_ip}-"
+        self.__pipe_path: str = f"./pipes/scream-{self.sink_ip}-"
         """Per-sink pipe path"""
         self.__fifo_in_pcm: str = self.__pipe_path + "in-pcm"
         """Input file from ffmpeg PCM output"""
         self.__fifo_in_mp3: str = self.__pipe_path + "in-mp3"
         """Input file from ffmpeg MP3 output"""
-        self.__ffmpeg: ffmpeg_handler = ffmpeg_handler(self._sink_ip, self.__fifo_in_pcm, self.__fifo_in_mp3, self.__get_open_sources(), self.__stream_info)
+        self.__ffmpeg: ffmpeg_handler = ffmpeg_handler(self.sink_ip, self.__fifo_in_pcm, self.__fifo_in_mp3, self.__get_open_sources(), self.__stream_info)
         """ffmpeg handler"""
         self.__webstream: Optional[API_Webstream] = websocket
         """Holds the websock object to copy audio to, passed through to MP3 listener thread"""
-        self.__pcm_thread: ffmpeg_pcm_thread = ffmpeg_pcm_thread(self.__fifo_in_pcm, self._sink_ip, self._sink_port, self.__stream_info)
+        self.__pcm_thread: ffmpeg_pcm_thread = ffmpeg_pcm_thread(self.__fifo_in_pcm, self.sink_ip, self._sink_port, self.__stream_info)
         """Holds the thread to listen to PCM output from ffmpeg"""
-        self.__mp3_thread: ffmpeg_mp3_thread = ffmpeg_mp3_thread(self.__fifo_in_mp3, self._sink_ip, self.__webstream)
+        self.__mp3_thread: ffmpeg_mp3_thread = ffmpeg_mp3_thread(self.__fifo_in_mp3, self.sink_ip, self.__webstream)
         """Holds the thread to listen to MP3 output from ffmpeg"""
-        self.__queue_thread: ffmpegInputQueue = ffmpegInputQueue(self.process_packet_from_queue, self._sink_ip)
+        self.__queue_thread: FFmpegInputQueue = FFmpegInputQueue(self.process_packet_from_queue, self.sink_ip)
         """Holds the thread to listen to the input queue and send it to ffmpeg"""
-        self.__url_play_counter = 0
+        self.__url_play_counter: int = 0
         """Counter that holds how many URLs are playing so FFMPEG source ids can be guaranteed unique"""
 
         for source in self.__controller_sources:
-            self.__sources.append(SourceInfo(source.ip, self.__pipe_path + source.ip, self._sink_ip, source.volume))
+            self.__sources.append(SourceInfo(source.ip, self.__pipe_path + source.ip, self.sink_ip, source.volume))
 
     def update_source_volume(self, controllersource: ControllerSource) -> None:
         """Updates the source volume to the specified volume, does nothing if the source is not playing to this sink."""
         for source in self.__sources:
-            if source._ip == controllersource.ip:
+            if source.ip == controllersource.ip:
                 source.volume = controllersource.volume
                 self.__ffmpeg.set_input_volume(source, controllersource.volume)
 
@@ -81,7 +80,7 @@ class SinkController():
     def __get_source_by_ip(self, ip: str) -> tuple[SourceInfo, bool]:
         """Gets a SourceInfo by IP address"""
         for source in self.__sources:
-            if source._ip == ip:
+            if source.ip == ip:
                 return (source, True)
         return (None, False)  # type: ignore
 
@@ -90,7 +89,7 @@ class SinkController():
         for source in self.__sources:
             active_time: int = 100  # Time in milliseconds
             if not source.is_active(active_time) and source.is_open():
-                print(f"[Sink {self._sink_ip} Source {source._ip}] Closing (Timeout = {active_time}ms)")
+                print(f"[Sink {self.sink_ip} Source {source.ip}] Closing (Timeout = {active_time}ms)")
                 source.close()
                 print(self.__get_open_sources())
                 self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
@@ -99,18 +98,19 @@ class SinkController():
         """Verifies the target pipe header matches what we have, updates it if not. Also opens the pipe."""
         try:
             parsed_scream_header = StreamInfo(header)
-        except:
+        except Exception:
             return
 
         if not source.check_attributes(parsed_scream_header):
-            print(f"[Sink {self._sink_ip} Source {source._ip}] Closing (Stream attribute change detected. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz {source._stream_attributes.channel_layout} layout, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz {parsed_scream_header.channel_layout} layout.)")
+            print(f"[Sink {self.sink_ip} Source {source.ip}] Closing (Stream attribute change detected. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz {source._stream_attributes.channel_layout} layout, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz {parsed_scream_header.channel_layout} layout.)")
             source.set_attributes(parsed_scream_header)
             source.close()
         if not source.is_open():
             source.open()
             self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
 
-    def process_packet_from_queue(self, entry: ffmpegInputQueueEntry) -> None:
+    def process_packet_from_queue(self, entry: FFmpegInputQueueEntry) -> None:
+        """Callback for the queue thread to pass packets for processing"""
         source: SourceInfo
         result: bool
         source, result = self.__get_source_by_ip(entry.source_ip)
@@ -125,30 +125,30 @@ class SinkController():
                                              ^
                                         You are here                   
         """
-        self.__queue_thread.queue(ffmpegInputQueueEntry(source_ip, data))
+        self.__queue_thread.queue(FFmpegInputQueueEntry(source_ip, data))
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
-        print(f"[Sink {self._sink_ip}] Stopping PCM thread")
+        print(f"[Sink {self.sink_ip}] Stopping PCM thread")
         self.__pcm_thread.stop()        
-        print(f"[Sink {self._sink_ip}] Stopping MP3 thread")
+        print(f"[Sink {self.sink_ip}] Stopping MP3 thread")
         self.__mp3_thread.stop()
-        print(f"[Sink {self._sink_ip}] Stopping Queue thread")
+        print(f"[Sink {self.sink_ip}] Stopping Queue thread")
         self.__queue_thread.stop()
-        print(f"[Sink {self._sink_ip}] Stopping ffmpeg thread")
+        print(f"[Sink {self.sink_ip}] Stopping ffmpeg thread")
         self.__ffmpeg.stop()
 
     def wait_for_threads_to_stop(self) -> None:
         """Waits for threads to stop"""
         self.__pcm_thread.join()
-        print(f"[Sink {self._sink_ip}] PCM thread stopped")
+        print(f"[Sink {self.sink_ip}] PCM thread stopped")
         self.__mp3_thread.join()
-        print(f"[Sink {self._sink_ip}] MP3 thread stopped")
+        print(f"[Sink {self.sink_ip}] MP3 thread stopped")
         self.__queue_thread.join()
-        print(f"[Sink {self._sink_ip}] Queue thread stopped")
+        print(f"[Sink {self.sink_ip}] Queue thread stopped")
         self.__ffmpeg.join()
-        print(f"[Sink {self._sink_ip}] ffmpeg thread stopped")
-        print(f"[Sink {self._sink_ip}] Stopped")
+        print(f"[Sink {self.sink_ip}] ffmpeg thread stopped")
+        print(f"[Sink {self.sink_ip}] Stopped")
 
     def url_playback_done_callback(self, source: SourceInfo):
         """Callback for ffmpeg to clean up when playback is done"""
@@ -157,9 +157,9 @@ class SinkController():
                 
     def play_url(self, url: str, volume: float) -> None:
         """Plays a URL"""
-        ffmpeg_source_info: SourceInfo = SourceInfo(self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self._sink_ip, 1)
-        """ffmpeg source info so the sink controller will accept data from a new temporary source"""
+        ffmpeg_source_info: SourceInfo = SourceInfo(self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self.sink_ip, 1)
+        # ffmpeg source info so the sink controller will accept data from a new temporary source
         self.__sources.append(ffmpeg_source_info)
         playback: ffmpegPlayURL = ffmpegPlayURL(url, volume, self.__sink_info, self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self.__pipe_path + f"ffmpeg{self.__url_play_counter}", ffmpeg_source_info, self.add_packet_to_queue, self.url_playback_done_callback)
-        """Spawn a new ffmpegPlayURL thread to play a URL back."""
+        # Spawn a new ffmpegPlayURL thread to play a URL back.
         self.__url_play_counter = self.__url_play_counter + 1

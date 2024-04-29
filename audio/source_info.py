@@ -4,7 +4,7 @@ import io
 import traceback
 from typing import List
 
-from audio.stream_info import StreamInfo
+from audio.stream_info import StreamInfo 
 
 
 class SourceInfo():
@@ -12,7 +12,7 @@ class SourceInfo():
     def __init__(self, ip: str, fifo_file_name: str, sink_ip: str, volume: float):
         """Initializes a new Source object"""
         
-        self._ip: str = ip
+        self.ip: str = ip
         """The source's IP"""
         self.__open: bool = False
         """Rather the Source is open for writing or not"""
@@ -71,7 +71,7 @@ class SourceInfo():
             self.__make_screamrouter_to_ffmpeg_pipe()
             self.update_activity()
             self.__open = True
-            print(f"[Sink {self.__sink_ip} Source {self._ip}] Opened")
+            print(f"[Sink {self.__sink_ip} Source {self.ip}] Opened")
 
     def close(self) -> None:
         """Closes the source"""
@@ -80,7 +80,7 @@ class SourceInfo():
         except:
             pass
         self.__open = False
-        print(f"[Sink {self.__sink_ip} Source {self._ip}] Closed")
+        print(f"[Sink {self.__sink_ip} Source {self.ip}] Closed")
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""

@@ -123,7 +123,7 @@ class ffmpeg_handler(threading.Thread):
         """Run an ffmpeg command to set the input volume"""
         index: int = -1
         for idx, _source in enumerate(self.__sources):
-            if source._ip == _source._ip:
+            if source.ip == _source.ip:
                 index = idx
         if index != -1:
             command: str = f"volume@volume_{index} -1 volume {volumelevel}"

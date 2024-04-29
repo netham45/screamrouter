@@ -12,7 +12,7 @@ class Receiver(threading.Thread):
     """Handles the main socket that listens for incoming Scream streams and sends them to the appropriate sinks"""
     def __init__(self):
         """Takes no parameters"""
-        super().__init__(name=f"Main Receiver Thread")
+        super().__init__(name="Main Receiver Thread")
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Main socket all sources send to"""
         self.sinks: List[SinkController] = []
@@ -56,14 +56,14 @@ class Receiver(threading.Thread):
                     if self.__check_source_packet(addr[0], recvbuf):
                         for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
                             sink.add_packet_to_queue(addr[0], recvbuf)
-                except Exception as e:
+                except Exception:
                     continue
-        print(f"[Receiver] Main thread ending sinks")
+        print("[Receiver] Main thread ending sinks")
         for sink in self.sinks:
-            print(f"[Receiver] Stopping sink {sink._sink_ip}")
+            print(f"[Receiver] Stopping sink {sink.sink_ip}")
             sink.stop()
         for sink in self.sinks:
-            print(f"[Receiver] Waiting for sink {sink._sink_ip} to stop")
+            print(f"[Receiver] Waiting for sink {sink.sink_ip} to stop")
             sink.wait_for_threads_to_stop()
 
-        print(f"[Receiver] Main thread stopped")
+        print("[Receiver] Main thread stopped")

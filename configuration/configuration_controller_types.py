@@ -18,7 +18,7 @@ def verify_port(port: int) -> None:
 def verify_name(name: str) -> None:
     """Verifies a name is non-blank"""
     if len(name) == 0:
-        raise ValueError(f"Invalid name (Blank)")
+        raise ValueError("Invalid name (Blank)")
 
 def verify_volume(volume: float) -> None:
     """Verifies a volume is between 0 and 1"""
@@ -54,7 +54,7 @@ class InUseError(Exception):
     def __init__(self, message: str):
         super().__init__(self, message)
 
-class SinkDescription(BaseModel): 
+class SinkDescription(BaseModel):
     """
     Holds either a sink IP and Port or a group of sink names
     """
