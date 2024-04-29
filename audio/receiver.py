@@ -65,7 +65,7 @@ class Receiver(threading.Thread):
                         for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
                             sink.add_packet_to_queue(addr[0], recvbuf)
                 except OSError:
-                    break
+                    continue
         print("[Receiver] Main thread ending sinks")
         for sink in self.sinks:
             print(f"[Receiver] Stopping sink {sink.sink_ip}")

@@ -10,7 +10,7 @@ import yaml
 from audio.ffmpeg_url_play_thread import FFMpegPlayURL
 import audio.receiver
 import audio.sink_controller
-from audio.source_info import SourceInfo
+from audio.source_handler import SourceToFFMpegWriter
 
 from configuration.configuration_controller_types import SinkDescription, SourceDescription, RouteDescription, InUseError
 
@@ -209,7 +209,7 @@ class ConfigurationController:
             for sink_controller in self.__sink_objects:
                 if sink_description.name == sink_controller.name:
                     found = True
-                    ffmpeg_source_info: SourceInfo = SourceInfo(f"ffmpeg{self.__url_play_counter}", f"./pipes/scream-{sink_description.ip}-ffmpeg{self.__url_play_counter}", sink_description.ip, sink_description.volume * volume)
+                    ffmpeg_source_info: SourceToFFMpegWriter = SourceToFFMpegWriter(f"ffmpeg{self.__url_play_counter}", f"./pipes/scream-{sink_description.ip}-ffmpeg{self.__url_play_counter}", sink_description.ip, sink_description.volume * volume)
                     sink_controller.sources.append(ffmpeg_source_info)
         if found:
             FFMpegPlayURL(url, 1, all_child_sinks[0], f"./pipes/ffmpeg{self.__url_play_counter}", f"ffmpeg{self.__url_play_counter}", self.__receiver.add_packet_to_queue)

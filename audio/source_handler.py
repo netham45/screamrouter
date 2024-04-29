@@ -9,7 +9,7 @@ import collections
 from audio.stream_info import StreamInfo
 
 
-class SourceInfo(threading.Thread):
+class SourceToFFMpegWriter(threading.Thread):
     """Stores the status for a single Source to a single Sink"""
     def __init__(self, tag: str, fifo_file_name: str, sink_ip: str, volume: float):
         """Initializes a new Source object"""
@@ -65,22 +65,23 @@ class SourceInfo(threading.Thread):
         if os.path.exists(self.fifo_file_name):
             os.remove(self.fifo_file_name)
         os.mkfifo(self.fifo_file_name)
-        fd = os.open(self.fifo_file_name, os.O_RDWR)
-        self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
 
     def open(self) -> None:
         """Makes the pipe to pass this source to FFMPEG, opens the source"""
         if not self.__open:
             #self.__make_screamrouter_to_ffmpeg_pipe()
             self.update_activity()
+            fd = os.open(self.fifo_file_name, os.O_RDWR)
+            self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
             self.__open = True
             print(f"[Sink {self.__sink_ip} Source {self.tag}] Opened")
 
     def close(self) -> None:
         """Closes the source"""
-        self.__fifo_file_handle.close()  # Close and remove the fifo handle so ffmpeg will stop trying to listen for it
-        self.__open = False
-        print(f"[Sink {self.__sink_ip} Source {self.tag}] Closed")
+        if self.is_open():
+            self.__fifo_file_handle.close()  # Close and remove the fifo handle so ffmpeg will stop trying to listen for it
+            self.__open = False
+            print(f"[Sink {self.__sink_ip} Source {self.tag}] Closed")
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""
@@ -101,7 +102,7 @@ class SourceInfo(threading.Thread):
 
     def run(self) -> None:
         while self.__running:
-            while len(self._queue) > 0:
+            while len(self._queue) > 0 and self.is_open():
                 data: bytes = self._queue.popleft()
                 try:
                     self.__fifo_file_handle.write(data)

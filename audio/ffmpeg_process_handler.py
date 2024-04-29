@@ -7,12 +7,12 @@ import threading
 
 from typing import List
 
-from audio.source_info import SourceInfo
+from audio.source_handler import SourceToFFMpegWriter
 from audio.stream_info import StreamInfo
 
 class FFMpegHandler(threading.Thread):
     """Handles an FFMpeg process for a sink"""
-    def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str, sources: List[SourceInfo], sink_info: StreamInfo):
+    def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str, sources: List[SourceToFFMpegWriter], sink_info: StreamInfo):
         super().__init__(name=f"[Sink {sink_ip}] ffmpeg Thread")
         self.__fifo_in_pcm: str = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
@@ -33,7 +33,7 @@ class FFMpegHandler(threading.Thread):
         self.start()
         self.start_ffmpeg()
 
-    def __get_ffmpeg_inputs(self, sources: List[SourceInfo]) -> List[str]:
+    def __get_ffmpeg_inputs(self, sources: List[SourceToFFMpegWriter]) -> List[str]:
         """Add an input for each source"""
         ffmpeg_command: List[str] = []
         for source in sources:
@@ -60,7 +60,7 @@ class FFMpegHandler(threading.Thread):
                                    "-i", f"{file_name}"])
         return ffmpeg_command
 
-    def __get_ffmpeg_filters(self, sources: List[SourceInfo]) -> List[str]:
+    def __get_ffmpeg_filters(self, sources: List[SourceToFFMpegWriter]) -> List[str]:
         """Build complex filter"""
         ffmpeg_command_parts: List[str] = []
         full_filter_string = ""
@@ -79,12 +79,13 @@ class FFMpegHandler(threading.Thread):
         ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", "mp3", "-b:a", "320k", "-ac", "2", "-ar", f"{self.__sink_info.sample_rate}", "-reservoir", "0", f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
         return ffmpeg_command_parts
 
-    def __get_ffmpeg_command(self, sources: List[SourceInfo]) -> List[str]:
+    def __get_ffmpeg_command(self, sources: List[SourceToFFMpegWriter]) -> List[str]:
         """Builds the ffmpeg command"""
         ffmpeg_command_parts: List[str] = ["ffmpeg", "-hide_banner"]  # Build ffmpeg command
         ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_filters(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_output())  # ffmpeg output
+        print(ffmpeg_command_parts)
         return ffmpeg_command_parts
 
     def ffmpeg_preopen_hook(self):
@@ -98,13 +99,12 @@ class FFMpegHandler(threading.Thread):
             self.__ffmpeg_started = True
             self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def reset_ffmpeg(self, sources: List[SourceInfo]) -> None:
+    def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
         """Opens the ffmpeg instance"""
         print(f"[{self.__sink_ip}] Resetting ffmpeg")
         self.__sources = sources
         if self.__ffmpeg_started:
             self.__ffmpeg.kill()
-            self.__ffmpeg.wait()
 
     def send_ffmpeg_command(self, command: str, command_char: str = "c") -> None:
         """Send ffmpeg a command. Commands consist of control character to enter a mode (default 'c') and a string to run."""
@@ -117,7 +117,7 @@ class FFMpegHandler(threading.Thread):
         except BrokenPipeError:
             pass
 
-    def set_input_volume(self, source: SourceInfo, volumelevel: float):
+    def set_input_volume(self, source: SourceToFFMpegWriter, volumelevel: float):
         """Run an ffmpeg command to set the input volume"""
         index: int = -1
         for idx, _source in enumerate(self.__sources):

@@ -4,7 +4,7 @@ import threading
 import time
 
 
-class FFmpegInputQueueEntry():
+class FFMpegInputQueueEntry():
     """A data entry in the ffmpeg input queue, holds the data and the source IP adderss."""
     source_ip: str
     """Source IP address for data sent to an input queue"""
@@ -15,7 +15,7 @@ class FFmpegInputQueueEntry():
         self.data = data
 
 
-class FFmpegInputQueue(threading.Thread):
+class FFMpegInputQueue(threading.Thread):
     """An FFMPEG Input Queue is written to by the receiver, verified to belong to the sink by the sink controller, and read from by ffmpeg. There is one queue per sink controller."""
     def __init__(self, callback, sink_ip: str):
         super().__init__(name=f"[Sink {sink_ip}] ffmpeg Input Queue")
@@ -33,7 +33,7 @@ class FFmpegInputQueue(threading.Thread):
         """Stops the queue thread"""
         self._running = False
 
-    def queue(self, entry: FFmpegInputQueueEntry):
+    def queue(self, entry: FFMpegInputQueueEntry):
         """Adds an item to the queue"""
         self._queue.append(entry)
 
