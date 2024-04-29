@@ -201,14 +201,13 @@ class ConfigurationController:
     def play_url(self, sink_name: str, url: str, volume: float) -> bool:
         """Plays a URL on the sink or all children sinks"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
-        all_child_sinks: List[SinkDescription] = self.__get_real_sinks_from_sink(sink, sink.volume * volume)
-        print(all_child_sinks)
+        all_child_sinks: List[SinkDescription] = self.__get_real_sinks_from_sink(sink, sink.volume)
         found: bool = False
         for sink_description in all_child_sinks:
             for sink_controller in self.__sink_objects:
                 if sink_description.name == sink_controller.name:
                     found = True
-                    ffmpeg_source_info: SourceInfo = SourceInfo(f"ffmpeg{self.__url_play_counter}", f"./pipes/scream-{sink_description.ip}-ffmpeg{self.__url_play_counter}", sink_description.ip, sink_description.volume)
+                    ffmpeg_source_info: SourceInfo = SourceInfo(f"ffmpeg{self.__url_play_counter}", f"./pipes/scream-{sink_description.ip}-ffmpeg{self.__url_play_counter}", sink_description.ip, sink_description.volume * volume)
                     sink_controller.sources.append(ffmpeg_source_info)
         if found:
             playback: ffmpegPlayURL = ffmpegPlayURL(url, 1, all_child_sinks[0], f"./pipes/ffmpeg{self.__url_play_counter}", f"ffmpeg{self.__url_play_counter}", self.__receiver.add_packet_to_queue)

@@ -45,7 +45,7 @@ class ffmpegPlayURL(threading.Thread):
         """Builds the ffmpeg playback command"""
         ffmpeg_command_parts: List[str] = ['ffmpeg', '-hide_banner']
         ffmpeg_command_parts.extend(["-i", f"{self._url}"])
-        ffmpeg_command_parts.extend(["-filter_complex", f"arealtime,volume={self._volume}"])
+        ffmpeg_command_parts.extend(["-filter_complex", f"arealtime,volume={self._volume},apad=pad_dur=3"])
         ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", f"s{self.__sink_info.bit_depth}le", "-ac", "2", "-ar", f"{self.__sink_info.sample_rate}", f"{self.__fifo_in_url}"])  # ffmpeg PCM output
         return ffmpeg_command_parts
 

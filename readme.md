@@ -1,9 +1,23 @@
 # **ScreamRouter**
 
-### ScreamRouter is a Python-based audio router for Scream sources and sinks.
+### What is it
+ScreamRouter is a Python-based audio router for Scream sources and sinks. It allows you to enter an IP address for all of your Scream audio sources and IP address, port, bit depth, sample rate, and channel configuration for all of your sinks. It has a web interface for managing the configuration and listening to sinks.
+
+### Features
+* Configure Sources based off of IP address
+* Configure Routes between Sources and Sinks
+* Configure Sinks with Bit Depth, Sample Rate, Channel Layout, Sink IP, and Port
+* Group together Sources and Sinks to control and play to multiple at a time
+* Control the volume for each Source, Route, Sink, and Group the stream passes through
+* Exposes an MP3 stream of all sinks so they can be listened to in a browser
+* Can play a URL out of a sink or sink group
+* Has a Home Assistant Custom Component for managing Sinks and playing media back through Sinks (See: https://github.com/netham45/screamrouter_ha_component )
+* Automatically saves to YAML on setting change
+* Uses ffmpeg to mix sources together into final sink stream to be played to the Scream sink
 
 ![Screenshot of ScreamRouter](/images/ScreamRouter.png)
 
+![Screenshot of HA media player for ScreamRouter Sink](/images/HAMediaPlayer.png)
 ## Prerequisites
 
 * Scream - https://github.com/duncanthrax/scream
