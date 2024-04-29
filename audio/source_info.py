@@ -103,6 +103,9 @@ class SourceInfo(threading.Thread):
         while self.__running:
             while len(self._queue) > 0:
                 data: bytes = self._queue.popleft()
-                self.__fifo_file_handle.write(data)
+                try:
+                    self.__fifo_file_handle.write(data)
+                except ValueError:
+                    pass
             time.sleep(.0001)
         print(f"[Sink {self.__sink_ip}] Queue thread exit")
