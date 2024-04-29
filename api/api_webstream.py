@@ -67,7 +67,7 @@ class HTTPListener(Listener):
             if sink_ip == self._sink_ip:
                 try:
                     self._queue.put_nowait(data)
-                except asyncio.queues.QueueFull as exception:
+                except asyncio.queues.QueueFull:
                     self._active = False
                     print(f"[{self._sink_ip}] HTTP queue full, assuming client disconnected")
         return self._active

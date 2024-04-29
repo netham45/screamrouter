@@ -89,21 +89,18 @@ class SinkController():
             if not source.is_active(active_time) and source.is_open():
                 print(f"[Sink {self.sink_ip} Source {source.tag}] Closing (Timeout = {active_time}ms)")
                 source.close()
-                print(self.__get_open_sources())
                 self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
 
     def __update_source_attributes_and_open_source(self, source: SourceInfo, header: bytes) -> None:
         """Verifies the target pipe header matches what we have, updates it if not. Also opens the pipe."""
-        try:
-            parsed_scream_header = StreamInfo(header)
-        except Exception:
-            return
-
-        if not source.check_attributes(parsed_scream_header):
-            print(f"[Sink {self.sink_ip} Source {source.tag}] Closing (Stream attribute change detected. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz {source._stream_attributes.channel_layout} layout, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz {parsed_scream_header.channel_layout} layout.)")
-            source.set_attributes(parsed_scream_header)
-            source.close()
         if not source.is_open():
+            try:
+                parsed_scream_header = StreamInfo(header)
+            except Exception:
+                return
+            if not source.check_attributes(parsed_scream_header):
+                print(f"[Sink {self.sink_ip} Source {source.tag}] Closing (Stream attribute change detected. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz {source._stream_attributes.channel_layout} layout, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz {parsed_scream_header.channel_layout} layout.)")
+            source.set_attributes(parsed_scream_header)
             source.open()
             self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
 
@@ -135,6 +132,9 @@ class SinkController():
         self.__queue_thread.stop()
         print(f"[Sink {self.sink_ip}] Stopping ffmpeg thread")
         self.__ffmpeg.stop()
+        print(f"[Sink {self.sink_ip}] Stopping sources")
+        for source in self.sources:
+            source.stop()
 
     def wait_for_threads_to_stop(self) -> None:
         """Waits for threads to stop"""
@@ -146,6 +146,9 @@ class SinkController():
         print(f"[Sink {self.sink_ip}] Queue thread stopped")
         self.__ffmpeg.join()
         print(f"[Sink {self.sink_ip}] ffmpeg thread stopped")
+        for source in self.sources:
+            source.join()
+        print(f"[Sink {self.sink_ip}] sources stopped")
         print(f"[Sink {self.sink_ip}] Stopped")
 
     def url_playback_done_callback(self, source: SourceInfo):

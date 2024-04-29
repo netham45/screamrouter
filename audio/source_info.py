@@ -1,17 +1,21 @@
 import os
+import queue
+import threading
 import time
 import io
 import traceback
 from typing import List
 
+import collections
+
 from audio.stream_info import StreamInfo 
 
 
-class SourceInfo():
+class SourceInfo(threading.Thread):
     """Stores the status for a single Source to a single Sink"""
     def __init__(self, tag: str, fifo_file_name: str, sink_ip: str, volume: float):
         """Initializes a new Source object"""
-        
+        super().__init__(name=f"[Sink {sink_ip} Source {tag}] Pipe Writer")
         self.tag: str = tag
         """The source's tag, generally it's IP."""
         self.__open: bool = False
@@ -28,6 +32,12 @@ class SourceInfo():
         """The sink that opened this source"""
         self.volume: float = volume
         """Holds the sink's volume. 0 = silent, 1 = 100% volume"""
+        self.__running = True
+        """Rather the thread is running"""
+        self._queue: collections.deque = collections.deque([bytes([] * 1152)])
+        """Holds the queue to read/write from"""
+        self.__make_screamrouter_to_ffmpeg_pipe()
+        self.start()
 
     def check_attributes(self, stream_attributes: StreamInfo) -> bool:
         """Returns True if the source's stream attributes are the same, False if they're different."""
@@ -60,7 +70,7 @@ class SourceInfo():
             except:
                 pass
             os.mkfifo(self._fifo_file_name)
-            fd = os.open(self._fifo_file_name, os.O_RDWR | os.O_NONBLOCK)
+            fd = os.open(self._fifo_file_name, os.O_RDWR)
             self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
         except:
             print(traceback.format_exc())
@@ -68,7 +78,7 @@ class SourceInfo():
     def open(self) -> None:
         """Makes the pipe to pass this source to FFMPEG, opens the source"""
         if not self.__open:
-            self.__make_screamrouter_to_ffmpeg_pipe()
+            #self.__make_screamrouter_to_ffmpeg_pipe()
             self.update_activity()
             self.__open = True
             print(f"[Sink {self.__sink_ip} Source {self.tag}] Opened")
@@ -90,6 +100,7 @@ class SourceInfo():
             os.remove(self._fifo_file_name)
         except:
             print(traceback.format_exc())
+        self.__running = False
 
     def write(self, data: bytes) -> None:
         """Writes data to this source's FIFO
@@ -97,5 +108,16 @@ class SourceInfo():
                                                            ^
                                                       You are here                       
         """
-        self.__fifo_file_handle.write(data)
+        self._queue.append(data)
         self.update_activity()
+        
+    def run(self) -> None:
+        while self.__running:
+            while len(self._queue) > 0:
+                try:
+                    data: bytes = self._queue.popleft()
+                    self.__fifo_file_handle.write(data)
+                except Exception:
+                    pass
+            time.sleep(.0001)
+        print(f"[Sink {self.__sink_ip}] Queue thread exit")

@@ -33,8 +33,8 @@ class ffmpegPlayURL(threading.Thread):
         self._make_ffmpeg_to_screamrouter_pipe()  # Make python -> ffmpeg fifo
         fd = os.open(self.__fifo_in_url, os.O_RDONLY | os.O_NONBLOCK)
         self._fd = open(fd, 'rb')
-        self.__ffmpeg: subprocess.Popen = subprocess.Popen(self.__get_ffmpeg_command(), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.__header: StreamInfo = create_stream_info(self.__sink_info.bit_depth, self.__sink_info.sample_rate, 2, "stereo")
+        self.__ffmpeg: subprocess.Popen
         self.start()
 
     def ffmpeg_preopen_hook(self): 
@@ -66,7 +66,7 @@ class ffmpegPlayURL(threading.Thread):
         """Reads count bytes, blocks until self.__running goes false or 'count' bytes are received."""
         dataout:bytearray = bytearray()
         """Data to return"""
-        while  len(dataout) < count and self.__ffmpeg.poll() == None:
+        while  len(dataout) < count and self.__ffmpeg.poll() is None:
             ready = select.select([self._fd], [], [], .1)
             if ready[0]:
                 data: bytes = self._fd.read(count - len(dataout))
@@ -76,7 +76,8 @@ class ffmpegPlayURL(threading.Thread):
 
     def run(self):
         """Wait for data to be available from ffmpeg to put into the sink queue, when ffmpeg ends the thread can end"""
-        while self.__ffmpeg.poll() == None:
+        self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        while self.__ffmpeg.poll() is None:
             data = self._read_bytes(1152)
             callback = self.callback
             callback(self.__source_name, self.__header.header + data)

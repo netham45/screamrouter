@@ -1,5 +1,7 @@
+import collections
 import queue
 import threading
+import time
 
 
 class FFmpegInputQueueEntry():
@@ -17,7 +19,7 @@ class FFmpegInputQueue(threading.Thread):
     """An FFMPEG Input Queue is written to by the receiver, verified to belong to the sink by the sink controller, and read from by ffmpeg. There is one queue per sink controller."""
     def __init__(self, callback, sink_ip: str):
         super().__init__(name=f"[Sink {sink_ip}] ffmpeg Input Queue")
-        self._queue: queue.Queue = queue.Queue()
+        self._queue: collections.deque = collections.deque()
         """Holds the queue to read/write from"""
         self._running = True
         """Rather the thread is running"""
@@ -33,14 +35,16 @@ class FFmpegInputQueue(threading.Thread):
 
     def queue(self, entry: FFmpegInputQueueEntry):
         """Adds an item to the queue"""
-        self._queue.put_nowait(entry)
+        self._queue.append(entry)
 
     def run(self):
         """Constantly checks the queue, notifies the Sink Controller callback when there's something in the queue"""
         while self._running:
-            try:
-                entry = self._queue.get(True, .01)  # Blocks until data available
-                self._callback(entry)
-            except Exception:
-                pass
+            while len(self._queue) > 0:
+                try:
+                    entry = self._queue.popleft()
+                    self._callback(entry)
+                except Exception:
+                    pass
+            time.sleep(.0001)
         print(f"[Sink {self.__sink_ip}] Queue thread exit")

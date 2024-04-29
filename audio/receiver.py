@@ -46,16 +46,17 @@ class Receiver(threading.Thread):
 
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks
+
         Scream Source -> Receiver -> Sink Handler -> Sources -> Pipe -> FFMPEG -> Pipe -> Python -> Scream Sink
                             ^
                        You are here                   
         """
-        self.sock.setsockopt(socket.SOL_SOCKET,socket.SO_RCVBUF,4096)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 1024)
         self.sock.bind(("", LOCALPORT))
 
         recvbuf = bytearray(1157)
         while self.running:
-            ready = select.select([self.sock], [], [], .2)
+            ready = select.select([self.sock], [], [], .1)
             if ready[0]:
                 try:
                     recvbuf, addr = self.sock.recvfrom(1157)  # 5 bytes header + 1152 bytes pcm

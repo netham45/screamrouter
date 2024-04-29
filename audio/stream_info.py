@@ -30,11 +30,11 @@ class StreamInfo():
         """Channel count"""
         self.channel_mask: bytearray = scream_header_array[3:]  # Two bytes for channel_mask
         """Channel Mask"""
-        self.channel_layout: str = "stereo"
+        self.channel_layout: str = self.__parse_channel_mask()
         """Holds the channel layout"""
         self.header: bytearray = scream_header_array
         """Holds the raw header bytes"""
-        self.__parse_channel_mask()
+       
 
     def __parse_channel_mask(self):
         """Converts the channel mask to a string to be fed to ffmpeg"""
@@ -61,5 +61,5 @@ def create_stream_info(bit_depth: int, sample_rate: int, channels: int, channel_
     header[2] = channels
     for key, value in StreamInfo.CHANNEL_LAYOUT_TABLE:
         if value == channel_layout:
-            header[3], header[4]  = key
+            header[3], header[4] = key
     return StreamInfo(header)
