@@ -7,7 +7,7 @@ import threading
 
 from typing import List
 
-from audio.source_handler import SourceToFFMpegWriter
+from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
 from audio.stream_info import StreamInfo
 
 class FFMpegHandler(threading.Thread):
@@ -44,9 +44,9 @@ class FFMpegHandler(threading.Thread):
             file_name = source.fifo_file_name
             # This is optimized to reduce latency and initial ffmpeg processing time
             ffmpeg_command.extend(["-max_delay", "0",
-                                   "-audio_preload", "1",
+                                   "-audio_preload", "0",
                                    "-max_probe_packets", "0",
-                                   "-rtbufsize", "1",
+                                   "-rtbufsize", "0",
                                    "-analyzeduration", "0",
                                    "-probesize", "32",
                                    "-fflags", "discardcorrupt",
@@ -85,7 +85,6 @@ class FFMpegHandler(threading.Thread):
         ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_filters(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_output())  # ffmpeg output
-        print(ffmpeg_command_parts)
         return ffmpeg_command_parts
 
     def ffmpeg_preopen_hook(self):
@@ -97,7 +96,7 @@ class FFMpegHandler(threading.Thread):
         if self.__running:
             print(f"[Sink {self.__sink_ip}] ffmpeg started")
             self.__ffmpeg_started = True
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) # pylint: disable=subprocess-popen-preexec-fn
 
     def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
         """Opens the ffmpeg instance"""
@@ -110,12 +109,13 @@ class FFMpegHandler(threading.Thread):
         """Send ffmpeg a command. Commands consist of control character to enter a mode (default 'c') and a string to run."""
         print(f"[Sink {self.__sink_ip}] Running ffmpeg command {command_char} {command}")
         try:
-            self.__ffmpeg.stdin.write(command_char.encode())  # type: ignore
-            self.__ffmpeg.stdin.flush()  # type: ignore
-            self.__ffmpeg.stdin.write((command + "\n").encode())  # type: ignore
-            self.__ffmpeg.stdin.flush()  # type: ignore
+            if not self.__ffmpeg.stdin is None:
+                self.__ffmpeg.stdin.write(command_char.encode())
+                self.__ffmpeg.stdin.flush()
+                self.__ffmpeg.stdin.write((command + "\n").encode())
+                self.__ffmpeg.stdin.flush()
         except BrokenPipeError:
-            pass
+            print(f"[Sink {self.__sink_ip}] Trying to send a comand to a closed instance of ffmpeg")
 
     def set_input_volume(self, source: SourceToFFMpegWriter, volumelevel: float):
         """Run an ffmpeg command to set the input volume"""

@@ -85,8 +85,9 @@ class SourceToFFMpegWriter(threading.Thread):
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""
-        self.__open = False
-        self.__fifo_file_handle.close()
+        if self.is_open():
+            self.__open = False
+            self.__fifo_file_handle.close()
         if os.path.exists(self.fifo_file_name):
             os.remove(self.fifo_file_name)
         self.__running = False
@@ -107,6 +108,6 @@ class SourceToFFMpegWriter(threading.Thread):
                 try:
                     self.__fifo_file_handle.write(data)
                 except ValueError:
-                    pass
+                    print(f"[Sink {self.__sink_ip} Source {self.tag}] Failed to write to output pipe")
             time.sleep(.0001)
         print(f"[Sink {self.__sink_ip}] Queue thread exit")

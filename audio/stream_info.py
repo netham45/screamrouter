@@ -1,18 +1,11 @@
 """Holds stream info and parses Scream headers."""
+import traceback
 from typing import Union
 import numpy
+from configuration.type_verification import verify_bit_depth, verify_channel_layout, verify_channels, verify_sample_rate, CHANNEL_LAYOUT_TABLE
 
 class StreamInfo():
     """Parses Scream headers to get sample rate, bit depth, and channels"""
-    CHANNEL_LAYOUT_TABLE: dict = {(0x04, 0x00): "mono",
-                                  (0x03, 0x00): "stereo",
-                                  (0x33, 0x00): "quad",
-                                  (0x34, 0x01): "surround",
-                                  (0x0F, 0x06): "5.1",  # Surround
-                                  (0x3F, 0x06): "7.1",  # Surround
-                                  (0x3F, 0x00): "5.1",  # Deprecated
-                                  (0xFF, 0x00): "7.1"   # Deprecated
-                                  }
 
     def __init__(self, scream_header: Union[bytearray, bytes]):
         scream_header_array: bytearray = bytearray(scream_header)
@@ -39,8 +32,10 @@ class StreamInfo():
     def __parse_channel_mask(self):
         """Converts the channel mask to a string to be fed to ffmpeg"""
         try:
-            return self.CHANNEL_LAYOUT_TABLE[(self.channel_mask[0], self.channel_mask[1])]
+            return CHANNEL_LAYOUT_TABLE[(self.channel_mask[0], self.channel_mask[1])]
         except KeyError:
+            print(f"Unknown speaker configuration: {self.channel_mask[0]} {self.channel_mask[1]} ({self.channels} channels), defaulting to stereo")
+            traceback.format_exc()
             return "stereo"
 
     def __eq__(self, _other):
@@ -50,16 +45,20 @@ class StreamInfo():
 
 def create_stream_info(bit_depth: int, sample_rate: int, channels: int, channel_layout: str) -> StreamInfo:
     """Returns a header with the specified properties"""
+    verify_bit_depth(bit_depth)
+    verify_sample_rate(sample_rate)
+    verify_channels(channels)
+    verify_channel_layout(channel_layout)
     header: bytearray = bytearray([0, 0, 0, 0, 0])
     is_441khz: bool = sample_rate % 44100 == 0
     samplerate_multiplier: int = int(sample_rate / (44100 if is_441khz else 48000))
-    sample_rate_bits: numpy.ndarray = numpy.unpackbits(numpy.array([samplerate_multiplier], dtype=numpy.uint8), bitorder='little')  # Unpack the first byte into 8 bits
+    sample_rate_bits: numpy.ndarray = numpy.unpackbits(numpy.array([samplerate_multiplier], dtype=numpy.uint8), bitorder='little')
     sample_rate_bits[7] = 1 if is_441khz else 0
     sample_rate_packed: int = int(numpy.packbits(sample_rate_bits, bitorder='little')[0])
     header[0] = sample_rate_packed
     header[1] = bit_depth
     header[2] = channels
-    for key, value in StreamInfo.CHANNEL_LAYOUT_TABLE:
+    for key, value in CHANNEL_LAYOUT_TABLE.items():
         if value == channel_layout:
             header[3], header[4] = key
     return StreamInfo(header)

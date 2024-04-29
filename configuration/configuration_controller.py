@@ -1,6 +1,5 @@
 """This is the main controller that holds the configuration and spawns the receiver and sink handlers"""
 import sys
-import traceback
 from copy import copy
 
 from typing import List, Optional
@@ -8,13 +7,14 @@ from typing import List, Optional
 import yaml
 
 from audio.ffmpeg_url_play_thread import FFMpegPlayURL
-import audio.receiver
+from audio.receiver import Receiver
 import audio.sink_controller
-from audio.source_handler import SourceToFFMpegWriter
+from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
 
-from configuration.configuration_controller_types import SinkDescription, SourceDescription, RouteDescription, InUseError
+from configuration.configuration_types import SinkDescription, SourceDescription, RouteDescription, InUseError
 
 from api.api_webstream import APIWebStream
+
 
 # Helper functions
 #def unique[T](list: List[T]) -> List[T]:  # One day
@@ -25,6 +25,7 @@ def unique(list_in: List) -> List:
         if not element in return_list:
             return_list.append(element)
     return return_list
+
 
 class ConfigurationController:
     """The controller handles tracking configuration and loading the main receiver/sinks based off of it"""
@@ -40,7 +41,7 @@ class ConfigurationController:
         """List of Routes the controller knows of"""
         self.__sinks_to_sources = {}
         """Dict mapping all sink IPs to the source descriptions playing to them"""
-        self.__receiver: audio.receiver.Receiver
+        self.__receiver: Receiver
         """Main receiver, handles receiving data from sources"""
         self.__receiverset: bool = False
         """Rather the recevier has been set"""
@@ -212,7 +213,7 @@ class ConfigurationController:
                     ffmpeg_source_info: SourceToFFMpegWriter = SourceToFFMpegWriter(f"ffmpeg{self.__url_play_counter}", f"./pipes/scream-{sink_description.ip}-ffmpeg{self.__url_play_counter}", sink_description.ip, sink_description.volume * volume)
                     sink_controller.sources.append(ffmpeg_source_info)
         if found:
-            FFMpegPlayURL(url, 1, all_child_sinks[0], f"./pipes/ffmpeg{self.__url_play_counter}", f"ffmpeg{self.__url_play_counter}", self.__receiver.add_packet_to_queue)
+            FFMpegPlayURL(url, 1, all_child_sinks[0], f"./pipes/ffmpeg{self.__url_play_counter}", f"ffmpeg{self.__url_play_counter}", self.__receiver)
             self.__url_play_counter = self.__url_play_counter + 1
         return found
 
@@ -258,11 +259,7 @@ class ConfigurationController:
                 group_names.append(group.name)
             raise InUseError(f"Source {source.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
-        try:
-            routes = self.__get_routes_by_source(source)
-        except NameError:  # Failed to find source, it must be unused.
-            print(f"Failed to get routes for source {source.name}")
-            return
+        routes = self.__get_routes_by_source(source)
         for route in routes:
             if route.source == source.name:
                 raise InUseError(f"Source {source.name} is in use by Route {route.name}")
@@ -276,11 +273,7 @@ class ConfigurationController:
                 group_names.append(group.name)
             raise InUseError(f"Sink {sink.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
-        try:
-            routes = self.__get_routes_by_sink(sink)
-        except NameError:  # Failed to find sink, it must be unused.
-            print(f"Failed to get routes for sink {sink.name}")
-            return
+        routes = self.__get_routes_by_sink(sink)
         for route in routes:
             if route.sink == sink.name:
                 raise InUseError(f"Sink {sink.name} is in use by Route {route.name}")
@@ -312,14 +305,12 @@ class ConfigurationController:
             for route_entry in config["routes"]:
                 self.add_route(RouteDescription(route_entry["name"], route_entry["sink"], route_entry["source"], route_entry["enabled"], route_entry["volume"]))
         except FileNotFoundError:
-            print("Configuration not found, starting with a blank config")
-        except KeyError:
-            print("Failed to load config.yaml. Aborting load")
-            print(traceback.format_exc())
+            print("[Controller] Configuration not found, starting with a blank config")
+        except KeyError as exc:
+            print(f"[Controller] Failed to load config.yaml. Aborting load. Exception: {exc}")
             sys.exit(-1)
-        except IndexError:
-            print("Failed to load config.yaml. Aborting load")
-            print(traceback.format_exc())
+        except IndexError as exc:
+            print(f"[Controller] Failed to load config.yaml. Aborting load. Exception: {exc}")
             sys.exit(-1)
 
 
@@ -367,7 +358,7 @@ class ConfigurationController:
             self.__receiver.join()
             print("[Controller] Receiver closed!")
         self.__receiverset = True
-        self.__receiver = audio.receiver.Receiver()
+        self.__receiver = Receiver()
         self.__sink_objects = []
         for sink_ip, _ in self.__sinks_to_sources.items():
             if sink_ip != "":

@@ -4,13 +4,12 @@ import select
 import threading
 import socket
 import io
-import traceback
 
 from typing import Optional, Tuple
 
 from api.api_webstream import APIWebStream
 
-import audio.mp3_header_parser as mp3_header_parser
+from audio.mp3_header_parser import MP3Header, InvalidHeaderException
 from audio.stream_info import StreamInfo
 
 class FFMpegOutputThread(threading.Thread):
@@ -55,7 +54,7 @@ class FFMpegOutputThread(threading.Thread):
                     if data:
                         dataout.extend(data)
                 except ValueError:
-                    pass
+                    print(f"[Sink {self._sink_ip}] Can't read ffmpeg output")
         return dataout
 
 
@@ -67,12 +66,12 @@ class FFMpegMP3Thread(FFMpegOutputThread):
         self.__webstream: Optional[APIWebStream] = webstream
         """Holds the Webstream queue object to dump to"""
 
-    def __read_header(self) -> Tuple[mp3_header_parser.MP3Header, bytes]: # type: ignore  # Can't return None, ignore warning
+    def __read_header(self) -> Tuple[MP3Header, bytes]:
         """Returns a tuple of the parsed header and raw header data. Skips ID3 headers if found."""
         header_length: int = 4  # Length of an MP3 header
         header: bytearray = bytearray(self._read_bytes(header_length))  # Header bytes
-        header_parsed: mp3_header_parser.MP3Header  # Parsed header object
-        max_bytes_to_search: int = 250  # Number of bytes to search for an MP3 header after finding an ID3 header
+        header_parsed: MP3Header  # Parsed header object
+        max_bytes_to_search: int = 250  # Byte count to search for an MP3 header tag after finding an ID3 header
         bytes_searched: int = 0  # Number of bytes searched so far
 
         if header[0:3] == "ID3".encode():  # Found ID3 header, search for start of MP3 header
@@ -82,15 +81,16 @@ class FFMpegMP3Thread(FFMpegOutputThread):
                 if bytesin[0] == 255:
                     header = bytesin + self._read_bytes(header_length - 1)
                     try:
-                        header_parsed: mp3_header_parser.MP3Header = mp3_header_parser.MP3Header(header)
+                        header_parsed: MP3Header = MP3Header(header)
                         return (header_parsed, header)
-                    except mp3_header_parser.InvalidHeaderException:
-                        pass
+                    except InvalidHeaderException as exc:
+                        print(f"[Sink {self._sink_ip}] Bad MP3 Header: {exc}")
             if bytes_searched == max_bytes_to_search:
-                raise mp3_header_parser.InvalidHeaderException(f"[Sink {self._sink_ip}] Couldn't find MP3 header after ID3 header")
+                raise InvalidHeaderException(f"[Sink {self._sink_ip}] Couldn't find MP3 header after ID3 header")
         else:
-            header_parsed: mp3_header_parser.MP3Header = mp3_header_parser.MP3Header(header)
+            header_parsed: MP3Header = MP3Header(header)
             return (header_parsed, header)
+        raise InvalidHeaderException("Invalid header")
 
     def run(self) -> None:
         target_frames_per_packet: int = 1  #  Send data to the web handler when it gets this many frames buffered up
@@ -98,14 +98,13 @@ class FFMpegMP3Thread(FFMpegOutputThread):
         available_data = bytearray()  # Holds the available frames
         available_frame_count: int = 0  # Holds the number of available frames
         while self._running:
-            mp3_header_parsed: mp3_header_parser.MP3Header  # Holds the parsed header object
+            mp3_header_parsed: MP3Header  # Holds the parsed header object
             mp3_header_raw: bytes  # Holds the raw header bytes
             mp3_frame: bytes  # Holds the currently processing MP3 frame
             try:
                 mp3_header_parsed, mp3_header_raw = self.__read_header()
-            except mp3_header_parser.InvalidHeaderException:
-                print(f"[Sink {self._sink_ip}] Failed processing MP3 header, MP3 streaming will fail.")
-                print(traceback.format_exc())
+            except InvalidHeaderException as exc:
+                print(f"[Sink {self._sink_ip}] Failed processing MP3 header, MP3 streaming will fail: {exc}")
                 continue
             available_data.extend(mp3_header_raw)
             mp3_frame = self._read_bytes(mp3_header_parsed.framelength)

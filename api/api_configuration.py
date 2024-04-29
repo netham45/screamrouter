@@ -1,11 +1,12 @@
 """API endpoints to configure the controller"""
+import traceback
 from typing import List
 import threading
 import uvicorn
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from api.api_configuration_types import PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup, PostURL
+from api.api_types import PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup, PostURL
 from configuration.configuration_controller import SinkDescription, SourceDescription, RouteDescription, ConfigurationController
 
 class APIConfiguration(threading.Thread):
@@ -52,10 +53,10 @@ class APIConfiguration(threading.Thread):
         uvicorn.run(self._app, port=8080, host='0.0.0.0')
 
     def __api_exception_handler(self, _, exception: Exception) -> JSONResponse:
-        """Generic error handler so controller can throw generic exceptions and get useful messages returned to clients"""
+        """Generic error handler so controller can throw exceptions and get useful messages returned to clients"""
         return JSONResponse(
             status_code = 500,
-            content = {"error": str(exception)}
+            content = {"error": str(exception), "traceback": traceback.format_exc()}
         )
 
     # Sink Endpoints

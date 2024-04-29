@@ -28,7 +28,7 @@ class Receiver(threading.Thread):
 
     def stop(self) -> None:
         """Stops the Receiver and all sinks"""
-        print("Recevier stopping")
+        print("[Recevier] Stopping")
         self.running = False
         self.sock.close()
 
@@ -45,6 +45,11 @@ class Receiver(threading.Thread):
             for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
                 sink.add_packet_to_queue(source, data)
 
+    def notify_url_done_playing(self, tag: str):
+        """Notifies all registered sinks that a URL is done playing"""
+        for sink in self.sinks:
+            sink.url_playback_done_callback(tag)
+
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks
 
@@ -52,7 +57,7 @@ class Receiver(threading.Thread):
                             ^
                        You are here                   
         """
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 1024)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 65535)
         self.sock.bind(("", LOCALPORT))
 
         recvbuf = bytearray(1157)
@@ -65,7 +70,8 @@ class Receiver(threading.Thread):
                         for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
                             sink.add_packet_to_queue(addr[0], recvbuf)
                 except OSError:
-                    continue
+                    print("[Receiver] Failed to read from incoming sock, exiting")
+                    return
         print("[Receiver] Main thread ending sinks")
         for sink in self.sinks:
             print(f"[Receiver] Stopping sink {sink.sink_ip}")

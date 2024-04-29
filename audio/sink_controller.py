@@ -3,11 +3,11 @@ from typing import List, Optional
 
 from audio.ffmpeg_process_handler import FFMpegHandler
 from audio.ffmpeg_input_queue import FFMpegInputQueue, FFMpegInputQueueEntry
-from audio.source_handler import SourceToFFMpegWriter
+from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
 from audio.stream_info import StreamInfo, create_stream_info
 from audio.ffmpeg_output_threads import FFMpegMP3Thread, FFMpegPCMThread
 
-from configuration.configuration_controller_types import SinkDescription, SourceDescription
+from configuration.configuration_types import SinkDescription, SourceDescription
 
 from api.api_webstream import APIWebStream
 
@@ -73,12 +73,12 @@ class SinkController():
                 active_sources.append(source)
         return active_sources
 
-    def __get_source_by_ip(self, ip: str) -> tuple[SourceToFFMpegWriter, bool]:
+    def __get_source_by_ip(self, ip: str) -> Optional[SourceToFFMpegWriter]:
         """Gets a SourceInfo by IP address"""
         for source in self.sources:
             if source.tag == ip:
-                return (source, True)
-        return (None, False)  # type: ignore
+                return source
+        return None
 
     def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
@@ -93,21 +93,19 @@ class SinkController():
         """Verifies the target pipe header matches what we have, updates it if not. Also opens the pipe."""
         parsed_scream_header = StreamInfo(header)
         if not source.check_attributes(parsed_scream_header):
-            print([f"[Sink {self.sink_ip} Source {source.tag}] Closing (Stream attribute change detected. Was: {source.stream_attributes.bit_depth}-bit at {source.stream_attributes.sample_rate}kHz ",
-                    "{source.stream_attributes.channel_layout} layout is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz {parsed_scream_header.channel_layout} layout.)"])
+            print("".join([f"[Sink {self.sink_ip} Source {source.tag}] Closing (Stream attribute change detected. Was: {source.stream_attributes.bit_depth}-bit at {source.stream_attributes.sample_rate}kHz ",
+                    f"{source.stream_attributes.channel_layout} layout is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz {parsed_scream_header.channel_layout} layout.)"]))
             source.set_attributes(parsed_scream_header)
             source.close()
         if not source.is_open():
             source.open()
-            print(self.__get_open_sources())
             self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
 
     def process_packet_from_queue(self, entry: FFMpegInputQueueEntry) -> None:
         """Callback for the queue thread to pass packets for processing"""
-        source: SourceToFFMpegWriter
-        result: bool
-        source, result = self.__get_source_by_ip(entry.source_ip)
-        if result:
+        source: Optional[SourceToFFMpegWriter]
+        source = self.__get_source_by_ip(entry.source_ip)
+        if not source is None:
             self.__check_for_inactive_sources()
             self.__update_source_attributes_and_open_source(source, entry.data[:5])
             source.write(entry.data[5:])  # Write the data to the output fifo
@@ -149,7 +147,10 @@ class SinkController():
         print(f"[Sink {self.sink_ip}] sources stopped")
         print(f"[Sink {self.sink_ip}] Stopped")
 
-    def url_playback_done_callback(self, source: SourceToFFMpegWriter):
-        """Callback for ffmpeg to clean up when playback is done"""
-        self.sources.remove(source)
-        self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
+    def url_playback_done_callback(self, tag: str):
+        """Callback for ffmpeg to clean up when playback is done, tag is the Source tag"""
+        for source in self.sources:
+            if source.tag == tag:
+                source.close()
+                source.stop()
+                self.sources.remove(source)

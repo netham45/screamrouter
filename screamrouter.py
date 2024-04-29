@@ -14,7 +14,7 @@ from api.api_website import APIWebsite
 
 def signal_handler(sig, frame):
     """Fired when Ctrl+C pressed"""
-    print(f"{sig} {frame}")
+    print(f"Ctrl+C pressed {sig} {frame}")
     controller.stop()
     os.kill(os.getpid(), signal.SIGTERM)  # Wouldn't it be cool if uvicorn provided a real way to exit?
 

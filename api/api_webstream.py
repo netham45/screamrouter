@@ -1,18 +1,11 @@
 """Holds the web stream queue and API endpoints."""
 import asyncio
-import ipaddress
 from typing import List, Optional
 
 from fastapi import FastAPI, WebSocket
 
 from fastapi.responses import StreamingResponse
-
-def verify_ip(ip: str) -> None:
-    """Verifies an ip address can be parsed correctly"""
-    try:
-        ipaddress.ip_address(ip)  # Verify IP address is formatted right
-    except ValueError as exc:
-        raise ValueError(f"Invalid IP address {ip}") from exc
+from configuration.type_verification import verify_ip
 
 class Listener():
     """Holds info on a single listener to send streams to"""

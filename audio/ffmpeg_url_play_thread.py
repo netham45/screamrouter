@@ -7,13 +7,15 @@ import subprocess
 import threading
 from typing import List
 
+from audio.receiver import Receiver
 from audio.stream_info import StreamInfo, create_stream_info
-from configuration.configuration_controller_types import SinkDescription
+from configuration.configuration_types import SinkDescription
 
 
 class FFMpegPlayURL(threading.Thread):
     """Handles playing a URL and forwarding the output from it to the main receiver"""
-    def __init__(self, url: str, volume: float, sink_info: SinkDescription, fifo_in_url: str, source_name: str, callback):
+    def __init__(self, url: str, volume: float, sink_info: SinkDescription, fifo_in: str, source_name: str, receiver: Receiver):
+        """Plays a URL using ffmpeg and outputs it to a pipe name stored in fifo_in."""
         super().__init__(name=f"[Sink {sink_info.ip}] ffmpeg Playback {url}")
         self._url: str = url
         """URL for Playback"""
@@ -21,14 +23,14 @@ class FFMpegPlayURL(threading.Thread):
         """Volume for playback (0.0-1.0)"""
         self.__sink_info: SinkDescription = sink_info
         """Sink info, needed for bitrate to transcode to"""
-        self.__fifo_in_url: str = fifo_in_url
+        self.__fifo_in_url: str = fifo_in
         """ffmpeg fifo file"""
         self._fd: io.BufferedReader
         """File handle"""
         self.__source_name = source_name
         """Source name that the sink queue will check against"""
-        self.callback = callback
-        """Callback to add to input queue on sink controller"""
+        self.__receiver: Receiver = receiver
+        """Receiver to call back when data is available or playback is done"""
         self._make_ffmpeg_to_screamrouter_pipe()  # Make python -> ffmpeg fifo
         fd = os.open(self.__fifo_in_url, os.O_RDONLY | os.O_NONBLOCK)
         self._fd = open(fd, 'rb')
@@ -68,9 +70,9 @@ class FFMpegPlayURL(threading.Thread):
 
     def run(self):
         """Wait for data to be available from ffmpeg to put into the sink queue, when ffmpeg ends the thread can end"""
-        self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(), preexec_fn = self.ffmpeg_preopen_hook, shell=False, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # pylint: disable=subprocess-popen-preexec-fn
         while self.__ffmpeg.poll() is None:
             data = self._read_bytes(1152)
-            callback = self.callback
-            callback(self.__source_name, self.__header.header + data)
+            self.__receiver.add_packet_to_queue(self.__source_name, self.__header.header + data)
         self.__ffmpeg.wait()
+        self.__receiver.notify_url_done_playing(self._url)

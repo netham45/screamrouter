@@ -1,5 +1,5 @@
 {
     "python.REPL.enableREPLSmartSend": false,
-    "pylint.args": ["--max-line-length=250", "--disable=W1509", "--disable=E0633"],
+    "pylint.args": ["--max-line-length=250"],
     "css.validate": false 
 }
