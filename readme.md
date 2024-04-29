@@ -23,6 +23,7 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Scream - https://github.com/duncanthrax/scream
 * Configure Scream to use UDP unicast, point it at ScreamRouter on port 16401. This is documented in the Scream repo.
 * Install requirements.txt
+* Command line ffmpeg
 
 # Note on installing Scream
 
