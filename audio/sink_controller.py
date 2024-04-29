@@ -112,7 +112,7 @@ class SinkController():
         """Opens and verifies the target pipe header matches what we have, updates it if not."""
         parsed_scream_header = StreamInfo(header)
         if not source.check_attributes(parsed_scream_header):
-            print("".join([f"[Sink {self.sink_ip} Source {source.tag}]",
+            print("".join([f"[Sink {self.sink_ip} Source {source.tag}] ",
                            "Closing source, stream attribute change detected. ",
                            f"Was: {source.stream_attributes.bit_depth}-bit ",
                            f"at {source.stream_attributes.sample_rate}kHz ",
