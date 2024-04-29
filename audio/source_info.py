@@ -9,11 +9,11 @@ from audio.stream_info import StreamInfo
 
 class SourceInfo():
     """Stores the status for a single Source to a single Sink"""
-    def __init__(self, ip: str, fifo_file_name: str, sink_ip: str, volume: float):
+    def __init__(self, tag: str, fifo_file_name: str, sink_ip: str, volume: float):
         """Initializes a new Source object"""
         
-        self.ip: str = ip
-        """The source's IP"""
+        self.tag: str = tag
+        """The source's tag, generally it's IP."""
         self.__open: bool = False
         """Rather the Source is open for writing or not"""
         self.__last_data_time: float = 0
@@ -71,7 +71,7 @@ class SourceInfo():
             self.__make_screamrouter_to_ffmpeg_pipe()
             self.update_activity()
             self.__open = True
-            print(f"[Sink {self.__sink_ip} Source {self.ip}] Opened")
+            print(f"[Sink {self.__sink_ip} Source {self.tag}] Opened")
 
     def close(self) -> None:
         """Closes the source"""
@@ -80,7 +80,7 @@ class SourceInfo():
         except:
             pass
         self.__open = False
-        print(f"[Sink {self.__sink_ip} Source {self.ip}] Closed")
+        print(f"[Sink {self.__sink_ip} Source {self.tag}] Closed")
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""

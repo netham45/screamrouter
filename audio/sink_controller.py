@@ -63,7 +63,7 @@ class SinkController():
     def update_source_volume(self, controllersource: ControllerSource) -> None:
         """Updates the source volume to the specified volume, does nothing if the source is not playing to this sink."""
         for source in self.sources:
-            if source.ip == controllersource.ip:
+            if source.tag == controllersource.ip:
                 source.volume = controllersource.volume
                 self.__ffmpeg.set_input_volume(source, controllersource.volume)
 
@@ -78,7 +78,7 @@ class SinkController():
     def __get_source_by_ip(self, ip: str) -> tuple[SourceInfo, bool]:
         """Gets a SourceInfo by IP address"""
         for source in self.sources:
-            if source.ip == ip:
+            if source.tag == ip:
                 return (source, True)
         return (None, False)  # type: ignore
 
@@ -87,7 +87,7 @@ class SinkController():
         for source in self.sources:
             active_time: int = 100  # Time in milliseconds
             if not source.is_active(active_time) and source.is_open():
-                print(f"[Sink {self.sink_ip} Source {source.ip}] Closing (Timeout = {active_time}ms)")
+                print(f"[Sink {self.sink_ip} Source {source.tag}] Closing (Timeout = {active_time}ms)")
                 source.close()
                 print(self.__get_open_sources())
                 self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
@@ -100,7 +100,7 @@ class SinkController():
             return
 
         if not source.check_attributes(parsed_scream_header):
-            print(f"[Sink {self.sink_ip} Source {source.ip}] Closing (Stream attribute change detected. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz {source._stream_attributes.channel_layout} layout, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz {parsed_scream_header.channel_layout} layout.)")
+            print(f"[Sink {self.sink_ip} Source {source.tag}] Closing (Stream attribute change detected. Was: {source._stream_attributes.bit_depth}-bit at {source._stream_attributes.sample_rate}kHz {source._stream_attributes.channel_layout} layout, is now {parsed_scream_header.bit_depth}-bit at {parsed_scream_header.sample_rate}kHz {parsed_scream_header.channel_layout} layout.)")
             source.set_attributes(parsed_scream_header)
             source.close()
         if not source.is_open():

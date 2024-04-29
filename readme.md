@@ -4,9 +4,7 @@
 ScreamRouter is a Python-based audio router for Scream sources and sinks. It allows you to enter an IP address for all of your Scream audio sources and IP address, port, bit depth, sample rate, and channel configuration for all of your sinks. It has a web interface for managing the configuration and listening to sinks.
 
 ### Features
-* Configure Sources based off of IP address
-* Configure Routes between Sources and Sinks
-* Configure Sinks with Bit Depth, Sample Rate, Channel Layout, Sink IP, and Port
+* Configure Sources based off of IP address, Configure Routes between Sources and Sinks, Configure Sinks with Bit Depth, Sample Rate, Channel Layout, Sink IP, and Port
 * Group together Sources and Sinks to control and play to multiple at a time
 * Control the volume for each Source, Route, Sink, and Group the stream passes through
 * Exposes an MP3 stream of all sinks so they can be listened to in a browser
@@ -15,14 +13,23 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Automatically saves to YAML on setting change
 * Uses ffmpeg to mix sources together into final sink stream to be played to the Scream sink
 
+### Use Cases
+* Mixing one or many Scream Sources to one or many Scream Receivers for a whole-house audio setup
+* Changing the volume of groups of sinks at once while having each sink also individually leveled
+* Use a web browser as a sink via the 'Listen to Sink' feature
+* Use any streaming MP3 player as a sink via the exposed API
+* Programatically enable/disable sinks, or adjust the volume through the FastAPI API, or through Home Assistant
+* Play back sound effects and Text to Speech to arbitrary Sinks from Home Assistant automations
+
+
 ![Screenshot of ScreamRouter](/images/ScreamRouter.png)
 
 ![Screenshot of HA media player for ScreamRouter Sink](/images/HAMediaPlayer.png)
 ## Prerequisites
 
 * Scream - https://github.com/duncanthrax/scream
-* Configure Scream to use UDP unicast, point it at ScreamRouter on port 16401. This is documented in the Scream repo.
-* Install requirements.txt
+* Configure Scream to use UDP unicast, point it at ScreamRouter on port 16401. The configuration for setting Unicast is in the Scream repo readme.md.
+* Install requirements.txt through either pip or your package manager of choice
 * Command line ffmpeg
 
 # Note on installing Scream
@@ -34,6 +41,8 @@ Scream has an expired certificate of a type Windows verifies the date of. In ord
 ## Configuration
 
 ScreamRouter will start up with a blank profile by default. There will be no sources, sinks, or routers configured. You can add them by editing the yaml or by using the interface.
+
+ScreamRouter's web interface listens on port 8080.
 
 The interface will update the yaml so any notes, non-standard fields, or custom layouts in the yaml will be lost. The interface will prompt you for the required information when you go to add an entry.
 
@@ -171,10 +180,10 @@ Each ScreamRouter Route is a link of one Source to one Sink, and each Sink is an
 ## Technical Info
 
 ### API
-ScreamRouter uses FastAPI. The API documentation is enabled and can be viewed by accessing `http://<Your ScreamRouter Server>/docs` . This is the REST API the interface uses that allows adding and removing Sources, Routes, Sinks, along with Source and Sink Groups.
+ScreamRouter uses FastAPI. The API documentation is enabled and can be viewed by accessing `http://<Your ScreamRouter Server>:8080/docs` . This is the REST API the interface uses that allows adding and removing Sources, Routes, Sinks, along with Source and Sink Groups.
 
 ### MP3 Stream
-It also exposes an MP3 stream of each sink. This is available at both `http://<Your ScreamRouter Server>/stream/<IP of sink>/` and `ws://<Your ScreamRouter Server>/ws/<IP of sink>/` (Note the trailing slashes)
+It also exposes an MP3 stream of each sink. This is available at both `http://<Your ScreamRouter Server>:8080/stream/<IP of sink>/` and `ws://<Your ScreamRouter Server>:8080/ws/<IP of sink>/` (Note the trailing slashes)
 
 The MP3 stream provided from FFMPEG is tracked frame by frame so that ScreamRouter can always start a connection on a new MP3 frame. FFMPEG is configured to generate MP3 with no inter-frame dependencies so files from it can be played back as normal MP3s or streamed to a player starting from any frame.
 
