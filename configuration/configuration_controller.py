@@ -5,9 +5,11 @@ from copy import copy
 
 from typing import List, Optional
 
+from audio.ffmpeg_url_play_thread import ffmpegPlayURL
 import audio.receiver
 import audio.sink_controller
 
+from audio.source_info import SourceInfo
 from configuration.configuration_controller_types import SinkDescription, SourceDescription, RouteDescription, InUseError
 
 from api.api_webstream import API_Webstream
@@ -42,6 +44,8 @@ class ConfigurationController:
         """Rather the recevier has been set"""
         self.__loaded: bool = False
         """Holds rather the config is loaded"""
+        self.__url_play_counter: int = 0
+        """Holds URL play counter so ffmpeg pipes can have unique names"""
         self.__api_websocket: Optional[API_Webstream] = websocket
         self.__load_yaml()
         self.__start_receiver()
@@ -195,12 +199,21 @@ class ConfigurationController:
         return True
     
     def play_url(self, sink_name: str, url: str, volume: float) -> bool:
-        """Plays a URL on the sink"""
-        for sink in self.__sink_objects:
-            if sink.name == sink_name:
-                sink.play_url(url, volume)
-                return True
-        return False
+        """Plays a URL on the sink or all children sinks"""
+        sink: SinkDescription = self.__get_sink_by_name(sink_name)
+        all_child_sinks: List[SinkDescription] = self.__get_real_sinks_from_sink(sink, sink.volume * volume)
+        print(all_child_sinks)
+        found: bool = False
+        for sink_description in all_child_sinks:
+            for sink_controller in self.__sink_objects:
+                if sink_description.name == sink_controller.name:
+                    found = True
+                    ffmpeg_source_info: SourceInfo = SourceInfo(f"ffmpeg{self.__url_play_counter}", f"./pipes/scream-{sink_description.ip}-ffmpeg{self.__url_play_counter}", sink_description.ip, sink_description.volume)
+                    sink_controller.sources.append(ffmpeg_source_info)
+        if found:
+            playback: ffmpegPlayURL = ffmpegPlayURL(url, 1, all_child_sinks[0], f"./pipes/ffmpeg{self.__url_play_counter}", f"ffmpeg{self.__url_play_counter}", self.__receiver.add_packet_to_queue)
+            self.__url_play_counter = self.__url_play_counter + 1
+        return found
     
     def stop(self) -> bool:
         self.__receiver.stop()

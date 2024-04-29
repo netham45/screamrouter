@@ -37,6 +37,12 @@ class Receiver(threading.Thread):
             print(f"[Source {source_ip}] Got bad packet length {len(data)} != 1157 from source")
             return False
         return True
+    
+    def add_packet_to_queue(self, source: str, data: bytes):
+        """Adds a packet to all sinks' queues"""
+        if self.__check_source_packet(source, data):
+                for sink in self.sinks:  # Send the data to each recevier, they'll decide if they need to deal with it
+                    sink.add_packet_to_queue(source, data)
 
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks

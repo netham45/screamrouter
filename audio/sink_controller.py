@@ -18,7 +18,7 @@ class SinkController():
     def __init__(self, sink_info: SinkDescription, sources: List[ControllerSource], websocket: Optional[API_Webstream]):
         """Initialize a sink"""
         super().__init__()
-        self.__sink_info = sink_info
+        self.sink_info = sink_info
         """Sink Info"""
         self.__channels: int = sink_info.channels
         """Number of channels the sink is configured for"""
@@ -38,7 +38,7 @@ class SinkController():
         """Sink Name"""
         self.__controller_sources: List[ControllerSource] = sources
         """Sources this Sink has"""
-        self.__sources: List[SourceInfo] = []
+        self.sources: List[SourceInfo] = []
         """Sources this Sink is playing"""
         self.__pipe_path: str = f"./pipes/scream-{self.sink_ip}-"
         """Per-sink pipe path"""
@@ -56,15 +56,13 @@ class SinkController():
         """Holds the thread to listen to MP3 output from ffmpeg"""
         self.__queue_thread: FFmpegInputQueue = FFmpegInputQueue(self.process_packet_from_queue, self.sink_ip)
         """Holds the thread to listen to the input queue and send it to ffmpeg"""
-        self.__url_play_counter: int = 0
-        """Counter that holds how many URLs are playing so FFMPEG source ids can be guaranteed unique"""
 
         for source in self.__controller_sources:
-            self.__sources.append(SourceInfo(source.ip, self.__pipe_path + source.ip, self.sink_ip, source.volume))
+            self.sources.append(SourceInfo(source.ip, self.__pipe_path + source.ip, self.sink_ip, source.volume))
 
     def update_source_volume(self, controllersource: ControllerSource) -> None:
         """Updates the source volume to the specified volume, does nothing if the source is not playing to this sink."""
-        for source in self.__sources:
+        for source in self.sources:
             if source.ip == controllersource.ip:
                 source.volume = controllersource.volume
                 self.__ffmpeg.set_input_volume(source, controllersource.volume)
@@ -72,21 +70,21 @@ class SinkController():
     def __get_open_sources(self) -> List[SourceInfo]:
         """Build a list of active IPs, exclude ones that aren't open"""
         active_sources: List[SourceInfo] = []
-        for source in self.__sources:
+        for source in self.sources:
             if source.is_open():
                 active_sources.append(source)
         return active_sources
     
     def __get_source_by_ip(self, ip: str) -> tuple[SourceInfo, bool]:
         """Gets a SourceInfo by IP address"""
-        for source in self.__sources:
+        for source in self.sources:
             if source.ip == ip:
                 return (source, True)
         return (None, False)  # type: ignore
 
     def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
-        for source in self.__sources:
+        for source in self.sources:
             active_time: int = 100  # Time in milliseconds
             if not source.is_active(active_time) and source.is_open():
                 print(f"[Sink {self.sink_ip} Source {source.ip}] Closing (Timeout = {active_time}ms)")
@@ -152,14 +150,5 @@ class SinkController():
 
     def url_playback_done_callback(self, source: SourceInfo):
         """Callback for ffmpeg to clean up when playback is done"""
-        self.__sources.remove(source)
+        self.sources.remove(source)
         self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
-                
-    def play_url(self, url: str, volume: float) -> None:
-        """Plays a URL"""
-        ffmpeg_source_info: SourceInfo = SourceInfo(self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self.sink_ip, 1)
-        # ffmpeg source info so the sink controller will accept data from a new temporary source
-        self.__sources.append(ffmpeg_source_info)
-        playback: ffmpegPlayURL = ffmpegPlayURL(url, volume, self.__sink_info, self.__pipe_path + f"ffmpeg{self.__url_play_counter}", self.__pipe_path + f"ffmpeg{self.__url_play_counter}", ffmpeg_source_info, self.add_packet_to_queue, self.url_playback_done_callback)
-        # Spawn a new ffmpegPlayURL thread to play a URL back.
-        self.__url_play_counter = self.__url_play_counter + 1

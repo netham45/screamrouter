@@ -14,7 +14,7 @@ from configuration.configuration_controller_types import SinkDescription
 
 
 class ffmpegPlayURL(threading.Thread):
-    def __init__(self, url: str, volume: float, sink_info: SinkDescription, fifo_in_url: str, source_name: str, source: SourceInfo, callback, end_callback):
+    def __init__(self, url: str, volume: float, sink_info: SinkDescription, fifo_in_url: str, source_name: str, callback):
         super().__init__(name=f"[Sink {sink_info.ip}] ffmpeg Playback {url}")
         self._url: str = url
         """URL for Playback"""
@@ -30,10 +30,6 @@ class ffmpegPlayURL(threading.Thread):
         """Source name that the sink queue will check against"""
         self.callback = callback
         """Callback to add to input queue on sink controller"""
-        self.end_callback = end_callback
-        """Callback to remove the source from the source list on the sink controller when done"""
-        self.__source = source
-        """Source to be removed from sink controller source list when done"""
         self._make_ffmpeg_to_screamrouter_pipe()  # Make python -> ffmpeg fifo
         fd = os.open(self.__fifo_in_url, os.O_RDONLY | os.O_NONBLOCK)
         self._fd = open(fd, 'rb')
@@ -50,7 +46,7 @@ class ffmpegPlayURL(threading.Thread):
         ffmpeg_command_parts: List[str] = ['ffmpeg', '-hide_banner']
         ffmpeg_command_parts.extend(["-i", f"{self._url}"])
         ffmpeg_command_parts.extend(["-filter_complex", f"arealtime,volume={self._volume}"])
-        ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", f"s{self.__sink_info.bit_depth}le", "-ac", f"{self.__sink_info.channels}", "-ar", f"{self.__sink_info.sample_rate}", f"{self.__fifo_in_url}"])  # ffmpeg PCM output
+        ffmpeg_command_parts.extend(["-avioflags", "direct", "-y", "-f", f"s{self.__sink_info.bit_depth}le", "-ac", "2", "-ar", f"{self.__sink_info.sample_rate}", f"{self.__fifo_in_url}"])  # ffmpeg PCM output
         return ffmpeg_command_parts
 
     def _make_ffmpeg_to_screamrouter_pipe(self) -> bool:
@@ -85,4 +81,3 @@ class ffmpegPlayURL(threading.Thread):
             callback = self.callback
             callback(self.__source_name, self.__header.header + data)
         self.__ffmpeg.wait()
-        self.end_callback(self.__source)
