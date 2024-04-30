@@ -79,10 +79,10 @@ class Receiver(threading.Thread):
                     break
         logger.info("[Receiver] Main thread ending sinks")
         for sink in self.sinks:
-            logger.info("[Receiver] Stopping sink %s", sink.sink_ip)
+            logger.info("[Receiver] Stopping sink %s", sink.sink_info.ip)
             sink.stop()
         for sink in self.sinks:
-            logger.debug("[Receiver] Waiting for sink %s to stop", sink.sink_ip)
+            logger.debug("[Receiver] Waiting for sink %s to stop", sink.sink_info.ip)
             sink.wait_for_threads_to_stop()
         self.sock.close()
 

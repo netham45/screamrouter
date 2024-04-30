@@ -1,5 +1,6 @@
 """Threads to handle the PCM and MP3 output from ffmpeg"""
 import os
+import pathlib
 import select
 import threading
 import socket
@@ -18,9 +19,9 @@ logger = get_logger(__name__)
 
 class FFMpegOutputThread(threading.Thread):
     """Handles listening for output from ffmpeg, extended by codec-specific classes"""
-    def __init__(self, fifo_in: str, sink_ip: IPAddressType, threadname: str):
+    def __init__(self, fifo_in: pathlib.Path, sink_ip: IPAddressType, threadname: str):
         super().__init__(name = threadname)
-        self._fifo_in: str = fifo_in
+        self._fifo_in: pathlib.Path = fifo_in
         """Holds the ffmpeg output pipe name this sink will use as a source"""
         self._sink_ip: IPAddressType = sink_ip
         """Holds the sink IP for the web api to filter based on"""
@@ -64,7 +65,7 @@ class FFMpegOutputThread(threading.Thread):
 
 class FFMpegMP3Thread(FFMpegOutputThread):
     """Handles listening for MP3 output from ffmpeg"""
-    def __init__(self, fifo_in: str, sink_ip: IPAddressType,
+    def __init__(self, fifo_in: pathlib.Path, sink_ip: IPAddressType,
                  webstream: Optional[APIWebStream]):
         super().__init__(fifo_in=fifo_in, sink_ip=sink_ip,
                          threadname=f"[Sink:{sink_ip}] MP3 Thread")
@@ -135,7 +136,7 @@ class FFMpegMP3Thread(FFMpegOutputThread):
 
 class FFMpegPCMThread(FFMpegOutputThread):
     """Handles listening for PCM output from ffmpeg"""
-    def __init__(self, fifo_in: str, sink_ip: IPAddressType,
+    def __init__(self, fifo_in: pathlib.Path, sink_ip: IPAddressType,
                  sink_port: PortType, output_info: StreamInfo):
 
         self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

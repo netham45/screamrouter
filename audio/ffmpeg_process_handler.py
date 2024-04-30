@@ -1,4 +1,5 @@
 """Handles the ffmpeg process for each sink"""
+import pathlib
 import subprocess
 import time
 
@@ -15,13 +16,13 @@ logger = get_logger(__name__)
 
 class FFMpegHandler(threading.Thread):
     """Handles an FFMpeg process for a sink"""
-    def __init__(self, tag, fifo_in_pcm: str, fifo_in_mp3: str,
+    def __init__(self, tag, fifo_in_pcm: pathlib.Path, fifo_in_mp3: pathlib.Path,
                   sources: List[SourceToFFMpegWriter],
                   sink_info: StreamInfo, equalizer: Equalizer, delay: DelayType):
         super().__init__(name=f"[Sink:{tag}] ffmpeg Thread")
-        self.__fifo_in_pcm: str = fifo_in_pcm
+        self.__fifo_in_pcm: pathlib.Path = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
-        self.__fifo_in_mp3: str = fifo_in_mp3
+        self.__fifo_in_mp3: pathlib.Path = fifo_in_mp3
         """Holds the filename for ffmpeg to output MP3 to"""
         self.__tag = tag
         """Holds a tag to put on logs"""

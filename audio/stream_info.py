@@ -75,10 +75,10 @@ class StreamInfo(BaseModel):
         result = result and (self.channel_mask == other.channel_mask)
         return result
 
-def create_stream_info(bit_depth: int,
-                       sample_rate: int,
-                       channels: int,
-                       channel_layout: str) -> StreamInfo:
+def create_stream_info(bit_depth: BitDepthType,
+                       sample_rate: SampleRateType,
+                       channels: ChannelsType,
+                       channel_layout: ChannelLayoutType) -> StreamInfo:
     """Returns a header with the specified properties"""
     header: bytearray = bytearray([0, 32, 2, 0, 0])
     is_441khz: bool = sample_rate % 44100 == 0

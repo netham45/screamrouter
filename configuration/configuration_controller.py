@@ -16,7 +16,7 @@ from screamrouter_types import SinkNameType, SourceNameType, VolumeType
 from api.api_webstream import APIWebStream
 from audio.ffmpeg_url_play_thread import FFMpegPlayURL
 from audio.receiver import Receiver
-import audio.sink_controller
+from audio.sink_controller import SinkController
 from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
 
 from logger import get_logger, LOGS_DIR, CONSOLE_LOG_LEVEL
@@ -38,7 +38,7 @@ class ConfigurationController:
     """Tracks configuration and loading the main receiver/sinks based off of it"""
     def __init__(self, websocket: Optional[APIWebStream]):
         """Initialize an empty controller"""
-        self.__sink_objects: List[audio.sink_controller.SinkController] = []
+        self.__sink_objects: List[SinkController] = []
         """List of Sink objects the receiver is using"""
         self.__sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
@@ -62,7 +62,7 @@ class ConfigurationController:
         """Port for Uvicorn API to listen on, can be changed by load_yaml"""
         self.receiver_port: PortType = 16401
         """Port for receiver to listen on, can be changed by load_yaml"""
-        self.pipes_dir: str = "./pipes/"
+        self.pipes_dir: pathlib.Path = pathlib.Path("./pipes/")
         """Folder for pipes to be stored in, can be changed by load_yaml"""
         self.__starting = False
         """Holds rather start_receiver is running so multiple instances don't go off at once"""
@@ -81,7 +81,7 @@ class ConfigurationController:
 
     def get_sinks(self) -> List[SinkDescription]:
         """Returns a copy of the list holding all sinks"""
-        _sinks = []
+        _sinks: List[SinkDescription] = []
         for sink in self.__sink_descriptions:
             _sinks.append(copy(sink))
         return _sinks
@@ -221,10 +221,7 @@ class ConfigurationController:
     def update_sink_volume(self, sink_name: SinkNameType, volume: VolumeType) -> bool:
         """Sets the volume for sink sink_id to volume"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
-        print(sink.name)
-        print(volume)
         sink.set_volume(volume)
-        print(sink.volume)
         self.__apply_volume_change()
         return True
 
@@ -249,7 +246,7 @@ class ConfigurationController:
         found: bool = False
         for sink_description in all_child_sinks:
             for sink_controller in self.__sink_objects:
-                if sink_description.name == sink_controller.name:
+                if sink_description.name == sink_controller.sink_info.name:
                     found = True
                     tag: str = f"ffmpeg{self.__url_play_counter}"
                     pipe_name: str = f"{self.pipes_dir}scream-{sink_description.ip}-{tag}"
@@ -329,14 +326,12 @@ class ConfigurationController:
                 raise InUseError(f"Sink:{sink.name} is in use by Route {route.name}")
 
     def __apply_volume_change(self) -> None:
-        """Applies the current controller volume to the running ffmpeg instances"""
+        """Calculates the volume for each Source on each Sink and tells the Sink Controllers"""
         self.__build_real_sinks_to_real_sources()
         for sink_ip, sources in self.sinks_to_sources.items():
             for _sink in self.__sink_objects:
-                if _sink.sink_ip == sink_ip:
+                if _sink.sink_info.ip == sink_ip:
                     for source in sources:
-                        print(source)
-                        print(f"Updating sink {_sink.name} that {source.name} has new volume")
                         _sink.update_source_volume(source)
         self.__save_yaml()
 
@@ -344,7 +339,7 @@ class ConfigurationController:
         """Applies the current controller delay to the running ffmpeg instances"""
         for sink in self.__sink_objects:
             for _sink in self.__sink_descriptions:
-                if sink.name == _sink.name:
+                if sink.sink_info.name == _sink.name:
                     sink.update_delay(_sink.delay)
         self.__save_yaml()
 
@@ -385,7 +380,6 @@ class ConfigurationController:
                 self.add_source(SourceDescription(source_entry["name"], source_entry["ip"],
                                                   False, source_entry["enabled"],
                                                   [], source_entry["volume"]))
-            print(config["groups"]["sinks"])
             for sink_group in config["groups"]["sinks"]:
                 self.add_sink(SinkDescription(sink_group["name"], None,
                                               1, True,
@@ -508,8 +502,6 @@ class ConfigurationController:
         self.__starting = True
         self.__save_yaml()
         self.__build_real_sinks_to_real_sources()
-        for key, value in enumerate(self.sinks_to_sources):
-            print(f"{key}:{value}")
         if self.__receiverset:
             logger.debug("[Controller] Closing receiver!")
             self.__receiver.stop()
@@ -524,12 +516,9 @@ class ConfigurationController:
                 for sink_description in self.__sink_descriptions:
                     if sink_description.ip == sink_ip:
                         sink_info = sink_description
-                        print(sink_info)
-                        print(self.sinks_to_sources[sink_ip])
-                        print(sink_ip)
-                        sink = audio.sink_controller.SinkController(sink_info,
-                                                                    self.sinks_to_sources[sink_ip],
-                                                                    self.__api_webstream)
+                        sink = SinkController(sink_info,
+                                              self.sinks_to_sources[sink_ip],
+                                              self.__api_webstream)
                         self.__receiver.register_sink(sink)
                         self.__sink_objects.append(sink)
                         break

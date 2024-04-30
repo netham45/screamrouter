@@ -15,7 +15,8 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 class SourceToFFMpegWriter(threading.Thread):
-    """Stores the status for a single Source to a single Sink"""
+    """Stores the status for a single Source to a single Sink
+       Handles writing from a queue to an ffmpeg pipe"""
     def __init__(self, tag: str, fifo_file_name: pathlib.Path,
                  sink_ip: Optional[IPAddressType], volume: VolumeType):
         """Initializes a new Source object"""
