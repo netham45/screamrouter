@@ -113,7 +113,7 @@ class FFMpegHandler(threading.Thread):
     def start_ffmpeg(self):
         """Start ffmpeg if it's not running"""
         if self.__running:
-            logger.info("[Sink:%s] ffmpeg started", self.__tag)
+            logger.debug("[Sink:%s] ffmpeg started", self.__tag)
             self.__ffmpeg_started = True
             self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources),
                                              shell=False,
@@ -124,7 +124,7 @@ class FFMpegHandler(threading.Thread):
 
     def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
         """Opens the ffmpeg instance"""
-        logger.info("[Sink:%s] Resetting ffmpeg", self.__tag)
+        logger.debug("[Sink:%s] Resetting ffmpeg", self.__tag)
         self.__sources = sources
         if self.__ffmpeg_started:
             self.__ffmpeg.kill()
@@ -132,7 +132,7 @@ class FFMpegHandler(threading.Thread):
     def send_ffmpeg_command(self, command: str, command_char: str = "c") -> None:
         """Send ffmpeg a command.
            Commands consist of control character to enter a mode (default c) and a string to run."""
-        logger.info("[Sink:%s] Running ffmpeg command %s %s", self.__tag, command_char, command)
+        logger.debug("[Sink:%s] Running ffmpeg command %s %s", self.__tag, command_char, command)
         try:
             if not self.__ffmpeg.stdin is None:
                 self.__ffmpeg.stdin.write(command_char.encode())
@@ -162,13 +162,13 @@ class FFMpegHandler(threading.Thread):
         self.__ffmpeg_started = False
 
     def run(self) -> None:
-        """This thread implements listening to self.fifoin and sending it out to dest_ip"""
+        """This thread monitors ffmpeg and restarts it if it ends or needs restarted"""
         while self.__running:
             if len(self.__sources) == 0:
                 time.sleep(.01)
                 continue
             if self.__ffmpeg_started:
                 self.__ffmpeg.wait()
-                logger.info("[Sink:%s] ffmpeg ended", self.__tag)
+                logger.debug("[Sink:%s] ffmpeg ended", self.__tag)
                 self.start_ffmpeg()
-        logger.info("[Sink:%s] ffmpeg exit", self.__tag)
+        logger.debug("[Sink:%s] ffmpeg exit", self.__tag)

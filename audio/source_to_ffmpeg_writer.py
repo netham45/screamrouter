@@ -71,7 +71,6 @@ class SourceToFFMpegWriter(threading.Thread):
     def open(self) -> None:
         """Makes the pipe to pass this source to FFMPEG, opens the source"""
         if not self.__open:
-            #self.__make_screamrouter_to_ffmpeg_pipe()
             self.update_activity()
             fd = os.open(self.fifo_file_name, os.O_RDWR)
             self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
@@ -109,4 +108,4 @@ class SourceToFFMpegWriter(threading.Thread):
                     logger.warning("[Sink:%s][Source:%s] Failed to write to ffmpeg",
                                     self.__sink_ip, self.tag)
             time.sleep(.0001)
-        logger.info("[Sink:%s] Queue thread exit", self.__sink_ip)
+        logger.debug("[Sink:%s] Queue thread exit", self.__sink_ip)

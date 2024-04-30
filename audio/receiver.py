@@ -38,7 +38,7 @@ class Receiver(threading.Thread):
     def __check_source_packet(self, source_ip: str, data: bytes) -> bool:
         """Verifies a packet is the right length"""
         if len(data) != 1157:
-            logger.info("[Source:%s] Got bad packet length %i != 1157 from source",
+            logger.warning("[Source:%s] Got bad packet length %i != 1157 from source",
                         source_ip,
                         len(data))
             return False
@@ -77,7 +77,7 @@ class Receiver(threading.Thread):
             logger.info("[Receiver] Stopping sink %s", sink.sink_ip)
             sink.stop()
         for sink in self.sinks:
-            logger.info("[Receiver] Waiting for sink %s to stop", sink.sink_ip)
+            logger.debug("[Receiver] Waiting for sink %s to stop", sink.sink_ip)
             sink.wait_for_threads_to_stop()
 
         logger.info("[Receiver] Main thread stopped")

@@ -111,7 +111,8 @@ class FFMpegMP3Thread(FFMpegOutputThread):
             try:
                 mp3_header_parsed, mp3_header_raw = self.__read_header()
             except InvalidHeaderException as exc:
-                logger.error("[Sink:%s] Failed processing MP3 header: %s",  self._sink_ip, exc)
+                logger.debug("[Sink:%s] Failed processing MP3 header: %s",  self._sink_ip, exc)
+                logger.debug("[Sink:%s] This is probably because ffmpeg quit", self._sink_ip)
                 continue
             available_data.extend(mp3_header_raw)
             mp3_frame = self._read_bytes(mp3_header_parsed.framelength)
@@ -123,7 +124,7 @@ class FFMpegMP3Thread(FFMpegOutputThread):
                 self.__webstream.sink_callback(self._sink_ip, available_data)
                 available_frame_count = 0
                 available_data = bytearray()
-        logger.info("[Sink:%s] MP3 thread exit", self._sink_ip)
+        logger.debug("[Sink:%s] MP3 thread exit", self._sink_ip)
 
 
 class FFMpegPCMThread(FFMpegOutputThread):
@@ -144,4 +145,4 @@ class FFMpegPCMThread(FFMpegOutputThread):
             # Send data from ffmpeg to the Scream receiver
             self.__sock.sendto(self.__output_header + self._read_bytes(1152),
                                (self._sink_ip, self._sink_port))
-        logger.info("[Sink:%s] PCM thread exit", self._sink_ip)
+        logger.debug("[Sink:%s] PCM thread exit", self._sink_ip)

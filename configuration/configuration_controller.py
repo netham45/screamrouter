@@ -17,7 +17,7 @@ from configuration.configuration_types import RouteDescription, InUseError
 
 from api.api_webstream import APIWebStream
 
-from logger import get_logger, LOGS_DIR
+from logger import get_logger, LOGS_DIR, CONSOLE_LOG_LEVEL
 
 logger = get_logger(__name__)
 
@@ -64,6 +64,14 @@ class ConfigurationController:
         """Folder for pipes to be stored in"""
         self.__load_yaml()
         self.__start_receiver()
+        print( "------------------------------------------------------------------------")
+        print( "ScreamRouter")
+        print(f"     Console Log level: {CONSOLE_LOG_LEVEL}")
+        print(f"     Log Dir: {os.path.realpath(LOGS_DIR)}")
+        print(f"     Pipe Dir: {os.path.realpath(self.pipes_dir)}")
+        print(f"     API listening on: http://0.0.0.0:{self.api_port}")
+        print(f"     Input Sink active at 0.0.0.0:{self.receiver_port}")
+        print( "------------------------------------------------------------------------")
 
     # Public functions
 
@@ -362,7 +370,8 @@ class ConfigurationController:
         source_groups: List[dict] = []
         routes: List[dict] = []
         serverinfo: dict = {"api_port": self.api_port, "receiver_port": self.receiver_port,
-                             "logs_dir": LOGS_DIR, "pipes_dir": self.pipes_dir}
+                             "logs_dir": LOGS_DIR, "pipes_dir": self.pipes_dir,
+                             "console_log_level": CONSOLE_LOG_LEVEL}
         for sink in self.__sink_descriptions:
             if not sink.is_group:
                 _newsink = {"name": sink.name, "ip": sink.ip,
@@ -402,7 +411,7 @@ class ConfigurationController:
         self.__save_yaml()
         self.__build_real_sinks_to_real_sources()
         if self.__receiverset:
-            logger.info("[Controller] Closing receiver!")
+            logger.debug("[Controller] Closing receiver!")
             self.__receiver.stop()
             self.__receiver.join()
             logger.info("[Controller] Receiver closed!")

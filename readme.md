@@ -165,8 +165,11 @@ The server configuration holds the port for the API to listen on and the port fo
 
 Example YAML block:
 
-This defines the receiver port as 16401 (Default) and the API port as 8080 (Default).
-It also defines the logs_dir as logs/ and the pipes_dir as pipes/
+api_port: Port for the ScreamRouter API to listen to (Default 8080)
+logs_dir: Directory to log to (Default logs/)
+receiver_port: UDP port for ScreamRouter to listen for sources to send to (Dfeault: 16401)
+pipes_dir: Directory to store temproary pipes in (Default pipes/)
+console_log_level: Log level (Default info, Valid log levels: critical=no logs, error, warn, info, debug)
 
 ```
 server:
@@ -174,6 +177,7 @@ server:
   logs_dir: logs/
   receiver_port: 16401
   pipes_dir: pipes/
+  console_log_level: info
 ```
 
 ## General Info

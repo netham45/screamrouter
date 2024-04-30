@@ -88,3 +88,5 @@ class FFMpegPlayURL(threading.Thread):
             self.__receiver.add_packet_to_queue(self.__source_name, self.__header.header + data)
         self.__ffmpeg.wait()
         self.__receiver.notify_url_done_playing(self._url)
+        if os.path.exists(self.__fifo_in_url):
+            os.remove(self.__fifo_in_url)

@@ -117,7 +117,7 @@ class SinkController():
         """Opens and verifies the target pipe header matches what we have, updates it if not."""
         parsed_scream_header = StreamInfo(header)
         if not source.check_attributes(parsed_scream_header):
-            logger.info("".join([f"[Sink:{self.sink_ip}][Source:{source.tag}] ",
+            logger.debug("".join([f"[Sink:{self.sink_ip}][Source:{source.tag}] ",
                                   "Closing source, stream attribute change detected. ",
                                  f"Was: {source.stream_attributes.bit_depth}-bit ",
                                  f"at {source.stream_attributes.sample_rate}kHz ",
@@ -146,31 +146,31 @@ class SinkController():
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
-        logger.info("[Sink:%s] Stopping PCM thread", self.sink_ip)
+        logger.debug("[Sink:%s] Stopping PCM thread", self.sink_ip)
         self.__pcm_thread.stop()
-        logger.info("[Sink:%s] Stopping MP3 thread", self.sink_ip)
+        logger.debug("[Sink:%s] Stopping MP3 thread", self.sink_ip)
         self.__mp3_thread.stop()
-        logger.info("[Sink:%s] Stopping Queue thread", self.sink_ip)
+        logger.debug("[Sink:%s] Stopping Queue thread", self.sink_ip)
         self.__queue_thread.stop()
-        logger.info("[Sink:%s] Stopping ffmpeg thread", self.sink_ip)
+        logger.debug("[Sink:%s] Stopping ffmpeg thread", self.sink_ip)
         self.__ffmpeg.stop()
-        logger.info("[Sink:%s] Stopping sources", self.sink_ip)
+        logger.debug("[Sink:%s] Stopping sources", self.sink_ip)
         for source in self.sources:
             source.stop()
 
     def wait_for_threads_to_stop(self) -> None:
         """Waits for threads to stop"""
         self.__pcm_thread.join()
-        logger.info("[Sink:%s] PCM thread stopped", self.sink_ip)
+        logger.debug("[Sink:%s] PCM thread stopped", self.sink_ip)
         self.__mp3_thread.join()
-        logger.info("[Sink:%s] MP3 thread stopped", self.sink_ip)
+        logger.debug("[Sink:%s] MP3 thread stopped", self.sink_ip)
         self.__queue_thread.join()
-        logger.info("[Sink  %s] Queue thread stopped", self.sink_ip)
+        logger.debug("[Sink  %s] Queue thread stopped", self.sink_ip)
         self.__ffmpeg.join()
-        logger.info("[Sink:%s] ffmpeg thread stopped", self.sink_ip)
+        logger.debug("[Sink:%s] ffmpeg thread stopped", self.sink_ip)
         for source in self.sources:
             source.join()
-        logger.info("[Sink:%s] sources stopped", self.sink_ip)
+        logger.debug("[Sink:%s] sources stopped", self.sink_ip)
         logger.info("[Sink:%s] Stopped", self.sink_ip)
 
     def url_playback_done_callback(self, tag: str):

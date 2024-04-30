@@ -32,15 +32,15 @@ class FFMpegInputQueue(threading.Thread):
         """Holds the sink IP (Only used for log messages)"""
         self.start()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stops the queue thread"""
         self._running = False
 
-    def queue(self, entry: FFMpegInputQueueEntry):
+    def queue(self, entry: FFMpegInputQueueEntry) -> None:
         """Adds an item to the queue"""
         self._queue.append(entry)
 
-    def run(self):
+    def run(self) -> None:
         """Constantly checks the queue
             notifies the Sink Controller callback when there's something in the queue"""
         while self._running:
@@ -48,4 +48,4 @@ class FFMpegInputQueue(threading.Thread):
                 entry = self._queue.popleft()
                 self._callback(entry)
             time.sleep(.0001)
-        logger.info("[Sink:%s] Queue thread exit", self.__sink_ip)
+        logger.debug("[Sink:%s] Queue thread exit", self.__sink_ip)
