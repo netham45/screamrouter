@@ -89,6 +89,8 @@ class SourceToFFMpegWriter(threading.Thread):
         if self.is_open():
             self.__open = False
             self.__fifo_file_handle.close()
+            logger.info("[Sink:%s][Source:%s] Closed", self.__sink_ip, self.tag)
+            logger.debug("[Sink:%s][Source:%s] Stopping", self.__sink_ip, self.tag)
         if os.path.exists(self.fifo_file_name):
             os.remove(self.fifo_file_name)
         self.__running = False

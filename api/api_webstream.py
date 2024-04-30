@@ -63,7 +63,7 @@ class HTTPListener(Listener):
                     self._queue.put_nowait(data)
                 except asyncio.queues.QueueFull:
                     self._active = False
-                    logger.debug("[%s] HTTP queue full, assuming client disconnected", self._sink_ip)
+                    logger.debug("[%s] HTTP queue full, assuming client disconnect", self._sink_ip)
         return self._active
 
     async def get_queue(self):

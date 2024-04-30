@@ -108,6 +108,7 @@ class FFMpegHandler(threading.Thread):
         ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_filters(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_output())  # ffmpeg output
+        logger.debug("[Sink:%s] ffmpeg command %s", self.__tag, ffmpeg_command_parts)
         return ffmpeg_command_parts
 
     def start_ffmpeg(self):
