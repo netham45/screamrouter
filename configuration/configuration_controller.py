@@ -16,6 +16,9 @@ from configuration.configuration_types import RouteDescription, InUseError
 
 from api.api_webstream import APIWebStream
 
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 # Helper functions
 #def unique[T](list: List[T]) -> List[T]:  # One day
@@ -270,12 +273,12 @@ class ConfigurationController:
             group_names: List[str] = []
             for group in groups:
                 group_names.append(group.name)
-            raise InUseError(f"Source {source.name} is in use by Groups {group_names}")
+            raise InUseError(f"Source:{source.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
         routes = self.__get_routes_by_source(source)
         for route in routes:
             if route.source == source.name:
-                raise InUseError(f"Source {source.name} is in use by Route {route.name}")
+                raise InUseError(f"Source:{source.name} is in use by Route {route.name}")
 
     def __verify_sink_unused(self, sink: SinkDescription) -> None:
         """Verifies a sink is unused, throws exception if not"""
@@ -284,12 +287,12 @@ class ConfigurationController:
             group_names: List[str] = []
             for group in groups:
                 group_names.append(group.name)
-            raise InUseError(f"Sink {sink.name} is in use by Groups {group_names}")
+            raise InUseError(f"Sink:{sink.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
         routes = self.__get_routes_by_sink(sink)
         for route in routes:
             if route.sink == sink.name:
-                raise InUseError(f"Sink {sink.name} is in use by Route {route.name}")
+                raise InUseError(f"Sink:{sink.name} is in use by Route {route.name}")
 
     def __apply_volume_change(self) -> None:
         """Applies the current controller volume to the running ffmpeg instances"""
@@ -333,15 +336,15 @@ class ConfigurationController:
             self.api_port = config["server"]["api_port"]
             self.receiver_port = config["server"]["receiver_port"]
         except FileNotFoundError:
-            print("[Controller] Configuration not found, starting with a blank config")
+            logger.warning("[Controller] Configuration not found, starting with a blank config")
         except KeyError as exc:
-            print(f"[Controller] Failed to load config.yaml. Aborting load. Exception: {exc}")
+            logger.error("[Controller] Failed to load config.yaml. Aborting load.",
+                          exc_info = exc)
             sys.exit(-1)
         except IndexError as exc:
-            print(f"[Controller] Failed to load config.yaml. Aborting load. Exception: {exc}")
+            logger.error("[Controller] Failed to load config.yaml. Aborting load.",
+                         exc_info = exc)
             sys.exit(-1)
-
-
         self.__loaded = True
 
     def __save_yaml(self) -> None:
@@ -391,10 +394,10 @@ class ConfigurationController:
         self.__save_yaml()
         self.__build_real_sinks_to_real_sources()
         if self.__receiverset:
-            print("[Controller] Closing receiver!")
+            logger.info("[Controller] Closing receiver!")
             self.__receiver.stop()
             self.__receiver.join()
-            print("[Controller] Receiver closed!")
+            logger.info("[Controller] Receiver closed!")
         self.__receiverset = True
         self.__receiver = Receiver(self.receiver_port)
         self.__sink_objects = []
@@ -598,7 +601,7 @@ class ConfigurationController:
 
     # Sink IP -> Source maps
     def __build_real_sinks_to_real_sources(self):
-        """Build sink to source cache {"sink_ip": ["source1", "source_2", ...]}"""
+        """Build sink to source cache {"sink_ip": [source1, source_2, ...]}"""
         self.sinks_to_sources = {}
         for sink in self.__sink_descriptions:
             if sink.enabled:

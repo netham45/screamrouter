@@ -8,25 +8,28 @@ from typing import List
 
 from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
 from audio.stream_info import StreamInfo
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 class FFMpegHandler(threading.Thread):
     """Handles an FFMpeg process for a sink"""
-    def __init__(self, sink_ip, fifo_in_pcm: str, fifo_in_mp3: str,
+    def __init__(self, tag, fifo_in_pcm: str, fifo_in_mp3: str,
                   sources: List[SourceToFFMpegWriter], sink_info: StreamInfo):
-        super().__init__(name=f"[Sink {sink_ip}] ffmpeg Thread")
+        super().__init__(name=f"[Sink:{tag}] ffmpeg Thread")
         self.__fifo_in_pcm: str = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
         self.__fifo_in_mp3: str = fifo_in_mp3
         """Holds the filename for ffmpeg to output MP3 to"""
-        self.__sink_ip = sink_ip
-        """Holds the sink IP that's running ffmpeg"""
+        self.__tag = tag
+        """Holds a tag to put on logs"""
         self.__ffmpeg: subprocess.Popen
         """Holds the ffmpeg object"""
         self.__ffmpeg_started: bool = False
         """Holds rather ffmpeg is running"""
         self.__running: bool = True
         """Holds rather we're monitoring ffmpeg to restart it"""
-        self.__sources = sources
+        self.__sources: List[SourceToFFMpegWriter] = sources
         """Holds a list of active sources"""
         self.__sink_info: StreamInfo = sink_info
         """Holds the sink configuration"""
@@ -63,8 +66,8 @@ class FFMpegHandler(threading.Thread):
     def __get_ffmpeg_filters(self, sources: List[SourceToFFMpegWriter]) -> List[str]:
         """Build complex filter"""
         ffmpeg_command_parts: List[str] = []
-        full_filter_string = ""
-        amix_inputs = ""
+        full_filter_string: str = ""
+        amix_inputs: str = ""
 
         # For each source IP add a aresample and append it to an input variable for amix
         for idx, value in enumerate(sources):
@@ -110,7 +113,7 @@ class FFMpegHandler(threading.Thread):
     def start_ffmpeg(self):
         """Start ffmpeg if it's not running"""
         if self.__running:
-            print(f"[Sink {self.__sink_ip}] ffmpeg started")
+            logger.info("[Sink:%s] ffmpeg started", self.__tag)
             self.__ffmpeg_started = True
             self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources),
                                              shell=False,
@@ -121,7 +124,7 @@ class FFMpegHandler(threading.Thread):
 
     def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
         """Opens the ffmpeg instance"""
-        print(f"[Sink {self.__sink_ip}] Resetting ffmpeg")
+        logger.info("[Sink:%s] Resetting ffmpeg", self.__tag)
         self.__sources = sources
         if self.__ffmpeg_started:
             self.__ffmpeg.kill()
@@ -129,7 +132,7 @@ class FFMpegHandler(threading.Thread):
     def send_ffmpeg_command(self, command: str, command_char: str = "c") -> None:
         """Send ffmpeg a command.
            Commands consist of control character to enter a mode (default c) and a string to run."""
-        print(f"[Sink {self.__sink_ip}] Running ffmpeg command {command_char} {command}")
+        logger.info("[Sink:%s] Running ffmpeg command %s %s", self.__tag, command_char, command)
         try:
             if not self.__ffmpeg.stdin is None:
                 self.__ffmpeg.stdin.write(command_char.encode())
@@ -137,7 +140,8 @@ class FFMpegHandler(threading.Thread):
                 self.__ffmpeg.stdin.write((command + "\n").encode())
                 self.__ffmpeg.stdin.flush()
         except BrokenPipeError:
-            print(f"[Sink {self.__sink_ip}] Trying to send a comand to a closed instance of ffmpeg")
+            logger.warning("[Sink:%s] Trying to send a comand to a closed instance of ffmpeg",
+                            self.__tag)
 
     def set_input_volume(self, source: SourceToFFMpegWriter, volumelevel: float):
         """Run an ffmpeg command to set the input volume"""
@@ -165,6 +169,6 @@ class FFMpegHandler(threading.Thread):
                 continue
             if self.__ffmpeg_started:
                 self.__ffmpeg.wait()
-                print(f"[Sink {self.__sink_ip}] ffmpeg ended")
+                logger.info("[Sink:%s] ffmpeg ended", self.__tag)
                 self.start_ffmpeg()
-        print(f"[Sink {self.__sink_ip}] ffmpeg exit")
+        logger.info("[Sink:%s] ffmpeg exit", self.__tag)

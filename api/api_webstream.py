@@ -6,6 +6,9 @@ from fastapi import FastAPI, WebSocket
 
 from fastapi.responses import StreamingResponse
 from configuration.type_verification import verify_ip
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 class Listener():
     """Holds info on a single listener to send streams to"""
@@ -60,7 +63,7 @@ class HTTPListener(Listener):
                     self._queue.put_nowait(data)
                 except asyncio.queues.QueueFull:
                     self._active = False
-                    print(f"[{self._sink_ip}] HTTP queue full, assuming client disconnected")
+                    logger.info("[%s] HTTP queue full, assuming client disconnected", self._sink_ip)
         return self._active
 
     async def get_queue(self):

@@ -1,5 +1,4 @@
 """Handles playing a URL and forwarding the output from it to the main receiver"""
-
 import io
 import os
 import select
@@ -10,14 +9,16 @@ from typing import List
 from audio.receiver import Receiver
 from audio.stream_info import StreamInfo, create_stream_info
 from configuration.configuration_types import SinkDescription
+from logger import get_logger
 
+logger = get_logger(__name__)
 
 class FFMpegPlayURL(threading.Thread):
     """Handles playing a URL and forwarding the output from it to the main receiver"""
     def __init__(self, url: str, volume: float, sink_info: SinkDescription,
                  fifo_in: str, source_name: str, receiver: Receiver):
         """Plays a URL using ffmpeg and outputs it to a pipe name stored in fifo_in."""
-        super().__init__(name=f"[Sink {sink_info.ip}] ffmpeg Playback {url}")
+        super().__init__(name=f"[Sink:{sink_info.ip}] ffmpeg Playback {url}")
         self._url: str = url
         """URL for Playback"""
         self._volume: float = volume

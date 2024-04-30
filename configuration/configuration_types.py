@@ -5,7 +5,9 @@ from configuration.type_verification import verify_volume, verify_bit_depth, ver
 from configuration.type_verification import verify_channels, verify_ip, verify_name
 from configuration.type_verification import verify_port, verify_sample_rate
 
+from logger import get_logger
 
+logger = get_logger(__name__)
 
 class InUseError(Exception):
     """Called when removal is attempted of something that is in use"""

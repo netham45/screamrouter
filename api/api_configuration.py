@@ -1,4 +1,8 @@
 """API endpoints to configure the controller"""
+import logging
+import logging.config
+import sys
+import time
 import traceback
 from typing import List
 import threading
@@ -9,6 +13,9 @@ from fastapi.responses import JSONResponse
 from api.api_types import PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup, PostURL
 from configuration.configuration_controller import SinkDescription, SourceDescription
 from configuration.configuration_controller import RouteDescription, ConfigurationController
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 class APIConfiguration(threading.Thread):
     """API endpoints to configure the controller"""
@@ -76,7 +83,32 @@ class APIConfiguration(threading.Thread):
         self.start()
 
     def run(self):
-        uvicorn.run(self._app, port=self._configuration_controller.api_port, host='0.0.0.0')
+        current_time: str = time.strftime("%Y%m%d%H%M%S")
+        uvicorn.run(self._app,
+                    port=self._configuration_controller.api_port,
+                    host='0.0.0.0',
+                    log_config="uvicorn_log_config.yaml")
+        logger_error = logging.getLogger("uvicorn.error")
+        logger_access = logging.getLogger("uvicorn.access")
+
+        stdout_log_formatter = logging.Formatter(
+            '%(name)s: %(asctime)s | %(levelname)s | %(filename)s:%(lineno)s | %(message)s'
+        )
+        file_log_formatter = logging.Formatter(
+            '%(name)s: %(asctime)s | %(levelname)s | %(filename)s:%(lineno)s | %(process)d | %(message)s'
+        )
+        stdout_log_handler = logging.StreamHandler(stream=sys.stdout)
+        stdout_log_handler.setLevel(logging.INFO)
+        stdout_log_handler.setFormatter(stdout_log_formatter)
+        
+        file_handler = logging.FileHandler(f"logs/{uvicorn}.{current_time}.log")
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(file_log_formatter)
+        logger_error.removeHandler(logging.getLogger().handlers[0])
+        logger_error.addHandler(stdout_log_handler)
+        logger_error.addHandler(file_handler)
+        logger_access.removeHandler(logging.getLogger().handlers[0])
+        logger_access.addHandler(file_handler)
 
     def __api_exception_handler(self, _, exception: Exception) -> JSONResponse:
         """Error handler so controller can throw exceptions that get returned to clients"""

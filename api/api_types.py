@@ -1,6 +1,9 @@
 """Holds post types to be passed from FastAPI"""
 from typing import List
 from pydantic import BaseModel
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 class PostSink(BaseModel):
     """Post data to configure or add a Sink"""

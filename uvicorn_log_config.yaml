@@ -1,0 +1,46 @@
+version: 1
+disable_existing_loggers: False
+formatters:
+  default:
+    # "()": uvicorn.logging.DefaultFormatter
+    format: '[%(levelname)s:%(asctime)s][%(name)s] %(message)s'
+  access:
+    # "()": uvicorn.logging.AccessFormatter
+    format: '[%(levelname)s:%(asctime)s][%(name)s] %(message)s'
+handlers:
+  default:
+    formatter: default
+    class: logging.StreamHandler
+    stream: ext://sys.stderr
+  default2:
+    class: logging.FileHandler
+    level: INFO
+    formatter: default
+    filename: "./logs/uvicorn.log"
+    encoding: utf8
+    mode: a
+  access:
+    class: logging.FileHandler
+    level: INFO
+    formatter: access
+    filename: "./logs/uvicorn.log"
+    encoding: utf8
+    mode: a
+loggers:
+  uvicorn.error:
+    level: INFO
+    handlers:
+      - default
+      - default2
+    propagate: no
+  uvicorn.access:
+    level: INFO
+    handlers:
+      - access
+    propagate: no
+root:
+  level: INFO
+  handlers:
+    - default
+    - default2
+  propagate: no

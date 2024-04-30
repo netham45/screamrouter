@@ -5,6 +5,10 @@ import numpy
 from configuration.type_verification import verify_bit_depth, verify_channel_layout, verify_channels
 from configuration.type_verification import verify_sample_rate, CHANNEL_LAYOUT_TABLE
 
+from logger import get_logger
+
+logger = get_logger(__name__)
+
 class StreamInfo():
     """Parses Scream headers to get sample rate, bit depth, and channels"""
 
@@ -40,9 +44,9 @@ class StreamInfo():
         try:
             return CHANNEL_LAYOUT_TABLE[(self.channel_mask[0], self.channel_mask[1])]
         except KeyError:
-            print("".join(["Unknown speaker configuration:",
-                           f"{self.channel_mask[0]} {self.channel_mask[1]}",
-                           f"({self.channels} channels), defaulting to stereo"]))
+            logger.warning("".join([ "Unknown speaker configuration:",
+                                    f"{self.channel_mask[0]} {self.channel_mask[1]}",
+                                    f"({self.channels} channels), defaulting to stereo"]))
             traceback.format_exc()
             return "stereo"
 

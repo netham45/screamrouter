@@ -11,6 +11,9 @@ from api.api_webstream import APIWebStream
 
 from audio.mp3_header_parser import MP3Header, InvalidHeaderException
 from audio.stream_info import StreamInfo
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 class FFMpegOutputThread(threading.Thread):
     """Handles listening for output from ffmpeg, extended by codec-specific classes"""
@@ -54,14 +57,14 @@ class FFMpegOutputThread(threading.Thread):
                     if data:
                         dataout.extend(data)
                 except ValueError:
-                    print(f"[Sink {self._sink_ip}] Can't read ffmpeg output")
+                    logger.warning("[Sink:%s] Can't read ffmpeg output", self._sink_ip)
         return dataout
 
 
 class FFMpegMP3Thread(FFMpegOutputThread):
     """Handles listening for MP3 output from ffmpeg"""
     def __init__(self, fifo_in: str, sink_ip: str, webstream: Optional[APIWebStream]):
-        super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink {sink_ip}] MP3 Thread")
+        super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink:{sink_ip}] MP3 Thread")
 
         self.__webstream: Optional[APIWebStream] = webstream
         """Holds the Webstream queue object to dump to"""
@@ -85,10 +88,10 @@ class FFMpegMP3Thread(FFMpegOutputThread):
                         header_parsed: MP3Header = MP3Header(header)
                         return (header_parsed, header)
                     except InvalidHeaderException as exc:
-                        print(f"[Sink {self._sink_ip}] Bad MP3 Header: {exc}")
+                        logger.warning("[Sink:%s] Bad MP3 Header: %s", self._sink_ip, exc)
             if bytes_searched == max_bytes_to_search:
                 raise InvalidHeaderException(
-                    f"[Sink {self._sink_ip}] Couldn't find MP3 header after ID3 header")
+                    f"[Sink:{self._sink_ip}] Couldn't find MP3 header after ID3 header")
         else:
             header_parsed: MP3Header = MP3Header(header)
             return (header_parsed, header)
@@ -108,7 +111,7 @@ class FFMpegMP3Thread(FFMpegOutputThread):
             try:
                 mp3_header_parsed, mp3_header_raw = self.__read_header()
             except InvalidHeaderException as exc:
-                print(f"[Sink {self._sink_ip}] Failed processing MP3 header: {exc}")
+                logger.error("[Sink:%s] Failed processing MP3 header: %s",  self._sink_ip, exc)
                 continue
             available_data.extend(mp3_header_raw)
             mp3_frame = self._read_bytes(mp3_header_parsed.framelength)
@@ -120,7 +123,7 @@ class FFMpegMP3Thread(FFMpegOutputThread):
                 self.__webstream.sink_callback(self._sink_ip, available_data)
                 available_frame_count = 0
                 available_data = bytearray()
-        print(f"[Sink {self._sink_ip}] MP3 thread exit")
+        logger.info("[Sink:%s] MP3 thread exit", self._sink_ip)
 
 
 class FFMpegPCMThread(FFMpegOutputThread):
@@ -133,7 +136,7 @@ class FFMpegPCMThread(FFMpegOutputThread):
         self.__output_header: bytes = output_info.header
         """Holds the header added onto packets sent to Scream receivers"""
 
-        super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink {sink_ip}] PCM Thread")
+        super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink:{sink_ip}] PCM Thread")
 
     def run(self) -> None:
         """This thread implements listening to self.fifoin and sending it out to dest_ip"""
@@ -141,4 +144,4 @@ class FFMpegPCMThread(FFMpegOutputThread):
             # Send data from ffmpeg to the Scream receiver
             self.__sock.sendto(self.__output_header + self._read_bytes(1152),
                                (self._sink_ip, self._sink_port))
-        print(f"[Sink {self._sink_ip}] PCM thread exit")
+        logger.info("[Sink:%s] PCM thread exit", self._sink_ip)

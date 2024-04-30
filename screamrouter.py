@@ -11,10 +11,13 @@ from configuration.configuration_controller import ConfigurationController
 from api.api_configuration import APIConfiguration
 from api.api_webstream import APIWebStream
 from api.api_website import APIWebsite
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 def signal_handler(sig, frame):
     """Fired when Ctrl+C pressed"""
-    print(f"Ctrl+C pressed {sig} {frame}")
+    logger.error("Ctrl+C pressed %s %s", sig, frame)
     controller.stop()
     # Wouldn't it be cool if uvicorn provided a real way to exit?
     os.kill(os.getpid(), signal.SIGTERM)

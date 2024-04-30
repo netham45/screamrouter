@@ -7,13 +7,15 @@ import io
 import collections
 
 from audio.stream_info import StreamInfo
+from logger import get_logger
 
+logger = get_logger(__name__)
 
 class SourceToFFMpegWriter(threading.Thread):
     """Stores the status for a single Source to a single Sink"""
     def __init__(self, tag: str, fifo_file_name: str, sink_ip: str, volume: float):
         """Initializes a new Source object"""
-        super().__init__(name=f"[Sink {sink_ip} Source {tag}] Pipe Writer")
+        super().__init__(name=f"[Sink:{sink_ip}][Source:{tag}] Pipe Writer")
         self.tag: str = tag
         """The source's tag, generally it's IP."""
         self.__open: bool = False
@@ -74,14 +76,14 @@ class SourceToFFMpegWriter(threading.Thread):
             fd = os.open(self.fifo_file_name, os.O_RDWR)
             self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
             self.__open = True
-            print(f"[Sink {self.__sink_ip} Source {self.tag}] Opened")
+            logger.info("[Sink:%s][Source:%s] Opened", self.__sink_ip, self.tag)
 
     def close(self) -> None:
         """Closes the source"""
         if self.is_open():
             self.__fifo_file_handle.close()
             self.__open = False
-            print(f"[Sink {self.__sink_ip} Source {self.tag}] Closed")
+            logger.info("[Sink:%s][Source:%s] Closed", self.__sink_ip, self.tag)
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""
@@ -104,6 +106,7 @@ class SourceToFFMpegWriter(threading.Thread):
                 try:
                     self.__fifo_file_handle.write(data)
                 except ValueError:
-                    print(f"[Sink {self.__sink_ip} Source {self.tag}] Failed to write to ffmpeg")
+                    logger.warning("[Sink:%s][Source:%s] Failed to write to ffmpeg",
+                                    self.__sink_ip, self.tag)
             time.sleep(.0001)
-        print(f"[Sink {self.__sink_ip}] Queue thread exit")
+        logger.info("[Sink:%s] Queue thread exit", self.__sink_ip)

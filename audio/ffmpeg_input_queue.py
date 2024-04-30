@@ -2,7 +2,9 @@
 import collections
 import threading
 import time
+from logger import get_logger
 
+logger = get_logger(__name__)
 
 class FFMpegInputQueueEntry():
     """A data entry in the ffmpeg input queue, holds the data and the source IP address."""
@@ -19,7 +21,7 @@ class FFMpegInputQueue(threading.Thread):
     """An FFMPEG Input Queue is written to by the receiver, passed to each Sink Controller,
         which passes to ffmpeg. There is one queue per sink controller."""
     def __init__(self, callback, sink_ip: str):
-        super().__init__(name=f"[Sink {sink_ip}] ffmpeg Input Queue")
+        super().__init__(name=f"[Sink:{sink_ip}] ffmpeg Input Queue")
         self._queue: collections.deque = collections.deque()
         """Holds the queue to read/write from"""
         self._running = True
@@ -46,4 +48,4 @@ class FFMpegInputQueue(threading.Thread):
                 entry = self._queue.popleft()
                 self._callback(entry)
             time.sleep(.0001)
-        print(f"[Sink {self.__sink_ip}] Queue thread exit")
+        logger.info("[Sink:%s] Queue thread exit", self.__sink_ip)

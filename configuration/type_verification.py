@@ -3,6 +3,10 @@ import ipaddress
 import traceback
 from typing import Tuple
 
+from logger import get_logger
+
+logger = get_logger(__name__)
+
 CHANNEL_LAYOUT_TABLE: dict[Tuple[int,int], str] = {(0x00, 0x00): "stereo", # No layout
                                                    (0x04, 0x00): "mono",
                                                    (0x03, 0x00): "stereo",
@@ -43,8 +47,8 @@ def verify_sample_rate(sample_rate: int) -> None:
 def verify_bit_depth(bit_depth: int) -> None:
     """Verifies bit depth is 16, 24, or 32"""
     if bit_depth == 24:
-        print("WARNING: Using 24-bit depth is not recommended.")
-        print(traceback.format_exc())
+        logger.warning("WARNING: Using 24-bit depth is not recommended.")
+        logger.warning(traceback.format_exc())
     if bit_depth != 16 and bit_depth != 24 and bit_depth != 32:
         raise ValueError("Invalid Bit Depth")
 

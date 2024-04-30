@@ -10,6 +10,9 @@ from audio.ffmpeg_output_threads import FFMpegMP3Thread, FFMpegPCMThread
 from configuration.configuration_types import SinkDescription, SourceDescription
 
 from api.api_webstream import APIWebStream
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 class SinkController():
     """Handles ffmpeg, keeps a list of sources, sends passed data to the appropriate pipe"""
@@ -102,7 +105,9 @@ class SinkController():
         """Looks for old pipes that are open and closes them"""
         for source in self.sources:
             if not source.is_active(100) and source.is_open():
-                print(f"[Sink {self.sink_ip} Source {source.tag}] Closing (Timeout = 100ms)")
+                logger.info("[Sink:%s][Source:%s] Closing (Timeout = 100ms)",
+                            self.sink_ip,
+                            source.tag)
                 source.close()
                 self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
 
@@ -112,14 +117,14 @@ class SinkController():
         """Opens and verifies the target pipe header matches what we have, updates it if not."""
         parsed_scream_header = StreamInfo(header)
         if not source.check_attributes(parsed_scream_header):
-            print("".join([f"[Sink {self.sink_ip} Source {source.tag}] ",
-                           "Closing source, stream attribute change detected. ",
-                           f"Was: {source.stream_attributes.bit_depth}-bit ",
-                           f"at {source.stream_attributes.sample_rate}kHz ",
-                           f"{source.stream_attributes.channel_layout} layout is now ",
-                           f"{parsed_scream_header.bit_depth}-bit at ",
-                           f"{parsed_scream_header.sample_rate}kHz ",
-                           f"{parsed_scream_header.channel_layout} layout."]))
+            logger.info("".join([f"[Sink:{self.sink_ip}][Source:{source.tag}] ",
+                                  "Closing source, stream attribute change detected. ",
+                                 f"Was: {source.stream_attributes.bit_depth}-bit ",
+                                 f"at {source.stream_attributes.sample_rate}kHz ",
+                                 f"{source.stream_attributes.channel_layout} layout is now ",
+                                 f"{parsed_scream_header.bit_depth}-bit at ",
+                                 f"{parsed_scream_header.sample_rate}kHz ",
+                                 f"{parsed_scream_header.channel_layout} layout."]))
             source.set_attributes(parsed_scream_header)
             source.close()
         if not source.is_open():
@@ -141,32 +146,32 @@ class SinkController():
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
-        print(f"[Sink {self.sink_ip}] Stopping PCM thread")
+        logger.info("[Sink:%s] Stopping PCM thread", self.sink_ip)
         self.__pcm_thread.stop()
-        print(f"[Sink {self.sink_ip}] Stopping MP3 thread")
+        logger.info("[Sink:%s] Stopping MP3 thread", self.sink_ip)
         self.__mp3_thread.stop()
-        print(f"[Sink {self.sink_ip}] Stopping Queue thread")
+        logger.info("[Sink:%s] Stopping Queue thread", self.sink_ip)
         self.__queue_thread.stop()
-        print(f"[Sink {self.sink_ip}] Stopping ffmpeg thread")
+        logger.info("[Sink:%s] Stopping ffmpeg thread", self.sink_ip)
         self.__ffmpeg.stop()
-        print(f"[Sink {self.sink_ip}] Stopping sources")
+        logger.info("[Sink:%s] Stopping sources", self.sink_ip)
         for source in self.sources:
             source.stop()
 
     def wait_for_threads_to_stop(self) -> None:
         """Waits for threads to stop"""
         self.__pcm_thread.join()
-        print(f"[Sink {self.sink_ip}] PCM thread stopped")
+        logger.info("[Sink:%s] PCM thread stopped", self.sink_ip)
         self.__mp3_thread.join()
-        print(f"[Sink {self.sink_ip}] MP3 thread stopped")
+        logger.info("[Sink:%s] MP3 thread stopped", self.sink_ip)
         self.__queue_thread.join()
-        print(f"[Sink {self.sink_ip}] Queue thread stopped")
+        logger.info("[Sink  %s] Queue thread stopped", self.sink_ip)
         self.__ffmpeg.join()
-        print(f"[Sink {self.sink_ip}] ffmpeg thread stopped")
+        logger.info("[Sink:%s] ffmpeg thread stopped", self.sink_ip)
         for source in self.sources:
             source.join()
-        print(f"[Sink {self.sink_ip}] sources stopped")
-        print(f"[Sink {self.sink_ip}] Stopped")
+        logger.info("[Sink:%s] sources stopped", self.sink_ip)
+        logger.info("[Sink:%s] Stopped", self.sink_ip)
 
     def url_playback_done_callback(self, tag: str):
         """Callback for ffmpeg to clean up when playback is done, tag is the Source tag"""

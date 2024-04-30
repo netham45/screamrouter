@@ -6,6 +6,9 @@ import select
 from typing import List
 
 from audio.sink_controller import SinkController
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 class Receiver(threading.Thread):
     """Handles the main socket that listens for incoming Scream streams and sends them to sinks"""
@@ -28,14 +31,16 @@ class Receiver(threading.Thread):
 
     def stop(self) -> None:
         """Stops the Receiver and all sinks"""
-        print("[Recevier] Stopping")
+        logger.info("[Recevier] Stopping")
         self.running = False
         self.sock.close()
 
     def __check_source_packet(self, source_ip: str, data: bytes) -> bool:
         """Verifies a packet is the right length"""
         if len(data) != 1157:
-            print(f"[Source {source_ip}] Got bad packet length {len(data)} != 1157 from source")
+            logger.info("[Source:%s] Got bad packet length %i != 1157 from source",
+                        source_ip,
+                        len(data))
             return False
         return True
 
@@ -65,14 +70,14 @@ class Receiver(threading.Thread):
                         for sink in self.sinks:
                             sink.add_packet_to_queue(addr[0], recvbuf)
                 except OSError:
-                    print("[Receiver] Failed to read from incoming sock, exiting")
+                    logger.warning("[Receiver] Failed to read from incoming sock, exiting")
                     return
-        print("[Receiver] Main thread ending sinks")
+        logger.info("[Receiver] Main thread ending sinks")
         for sink in self.sinks:
-            print(f"[Receiver] Stopping sink {sink.sink_ip}")
+            logger.info("[Receiver] Stopping sink %s", sink.sink_ip)
             sink.stop()
         for sink in self.sinks:
-            print(f"[Receiver] Waiting for sink {sink.sink_ip} to stop")
+            logger.info("[Receiver] Waiting for sink %s to stop", sink.sink_ip)
             sink.wait_for_threads_to_stop()
 
-        print("[Receiver] Main thread stopped")
+        logger.info("[Receiver] Main thread stopped")
