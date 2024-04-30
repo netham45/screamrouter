@@ -1,5 +1,7 @@
 # **ScreamRouter**
 
+![Screenshot of ScreamRouter](/images/ScreamRouter.png)
+
 ### What is it
 ScreamRouter is a Python-based audio router for Scream sources and sinks. It allows you to enter an IP address for all of your Scream audio sources and IP address, port, bit depth, sample rate, and channel configuration for all of your sinks. It has a web interface for managing the configuration and listening to sinks.
 
@@ -15,6 +17,8 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Can use ffmpeg to delay sinks so sinks line up better
 * Can adjust equalization for any sink
 
+![Screenshot of ScreamRouter Equalizer](/images/Equalizer.png)
+
 ### Use Cases
 * Mixing one or many Scream Sources to one or many Scream Receivers for a whole-house audio setup
 * Changing the volume of groups of sinks at once while having each sink also individually leveled
@@ -24,9 +28,6 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Play back sound effects and Text to Speech to arbitrary Sinks from Home Assistant automations
 * Line up speakers with differing timings by delaying one
 * Adjusting EQ to a cheap speaker so it sounds better
-
-
-![Screenshot of ScreamRouter](/images/ScreamRouter.png)
 
 ![Screenshot of HA media player for ScreamRouter Sink](/images/HAMediaPlayer.png)
 ## Prerequisites
