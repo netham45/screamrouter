@@ -25,6 +25,7 @@ try:
 except FileNotFoundError:
     pass
 
+
 def get_logger(name: str) -> logging.Logger:
     """Creates a pre-configured logger"""
     if not os.path.exists(LOGS_DIR):
@@ -35,6 +36,7 @@ def get_logger(name: str) -> logging.Logger:
         '[%(levelname)s:%(asctime)s][%(filename)s:%(lineno)s:%(process)s]%(message)s'
     )
 
+    
     file_handler = logging.FileHandler(f"{LOGS_DIR}{name}.log", delay=True)
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(file_log_formatter)

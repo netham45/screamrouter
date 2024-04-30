@@ -1,5 +1,5 @@
 # This is an example configuration. You do not need to edit it manually, but can. ScreamRouter will overwrite any changes to this file while it is running. Any comments or formatting will be lost.
-# ScreamRouter will also generate a default config on first run.
+# ScreamRouter will also generate a default template on first run.
 groups:
   sinks:
   - enabled: true

@@ -6,6 +6,7 @@ import threading
 
 from typing import List
 
+from api.api_types import Equalizer
 from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
 from audio.stream_info import StreamInfo
 from logger import get_logger
@@ -15,7 +16,7 @@ logger = get_logger(__name__)
 class FFMpegHandler(threading.Thread):
     """Handles an FFMpeg process for a sink"""
     def __init__(self, tag, fifo_in_pcm: str, fifo_in_mp3: str,
-                  sources: List[SourceToFFMpegWriter], sink_info: StreamInfo, delay: int = 0):
+                  sources: List[SourceToFFMpegWriter], sink_info: StreamInfo, equalizer: Equalizer, delay: int = 0):
         super().__init__(name=f"[Sink:{tag}] ffmpeg Thread")
         self.__fifo_in_pcm: str = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
@@ -35,6 +36,8 @@ class FFMpegHandler(threading.Thread):
         """Holds the sink configuration"""
         self.__delay: int = delay
         """Stream delay in ms"""
+        self.equalizer: Equalizer = equalizer
+        """Equalizer"""
         self.start()
         self.start_ffmpeg()
 
@@ -73,6 +76,7 @@ class FFMpegHandler(threading.Thread):
 
         # For each source IP add a aresample and append it to an input variable for amix
         for idx, value in enumerate(sources):
+
             full_filter_string = "".join([full_filter_string,
                                           f"[{idx}]volume@volume_{idx}={value.volume},",
                                           f"aresample=isr={value.stream_attributes.sample_rate}:",
@@ -81,8 +85,17 @@ class FFMpegHandler(threading.Thread):
             amix_inputs = amix_inputs + f"[a{idx}]"  # amix input
         inputs: int = len(self.__sources)
         combined_filter_string: str = full_filter_string + amix_inputs
+        eq_str: str = "".join([f",superequalizer=1b={self.equalizer.b1}:2b={self.equalizer.b2}:",
+                               f"3b={self.equalizer.b3}:4b={self.equalizer.b4}:",
+                               f"5b={self.equalizer.b5}:6b={self.equalizer.b6}:",
+                               f"7b={self.equalizer.b1}:8b={self.equalizer.b8}:",
+                               f"9b={self.equalizer.b7}:10b={self.equalizer.b10}:",
+                               f"11b={self.equalizer.b1}:12b={self.equalizer.b12}:",
+                               f"13b={self.equalizer.b9}:14b={self.equalizer.b14}:",
+                               f"15b={self.equalizer.b11}:16b={self.equalizer.b16}:",
+                               f"17b={self.equalizer.b13}:18b={self.equalizer.b18}"])
         amix_string = f"amix=normalize=0:inputs={inputs},adelay=delays={self.__delay}:all=1"
-        combined_filter_string = combined_filter_string + amix_string
+        combined_filter_string = combined_filter_string + amix_string + eq_str
         ffmpeg_command_parts.extend(["-filter_complex", combined_filter_string])
         return ffmpeg_command_parts
 

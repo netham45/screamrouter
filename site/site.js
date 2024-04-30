@@ -563,7 +563,64 @@ function update_sink_button() {
     set_select_selected(bitdepthselect, sinkinfo.bit_depth);
     set_select_selected(samplerateselect, sinkinfo.sample_rate);
     set_select_selected(channellayoutselect, sinkinfo.channel_layout);
+}
 
+function update_sink_equalizer_button() {
+    var sink = get_selected_sink();
+    if (sink === null) {
+        alert("Select a sink to edit");
+        return
+    }
+    var sinkinfo = get_sink_info(sink.name);
+    if (sinkinfo.is_group)
+    {
+        alert("Can't edit groups yet");
+        return
+    }
+    console.log(sinkinfo);
+    dialog = "update_sink_equalizer"
+    open_dialog(dialog);
+    set_field_value(dialog, "sinkname", sinkinfo.name);
+    set_field_value(dialog, "eq_b1", 200 - sinkinfo.equalizer.b1 * 100);
+    set_field_value(dialog, "eq_b2", 200 - sinkinfo.equalizer.b2 * 100);
+    set_field_value(dialog, "eq_b3", 200 - sinkinfo.equalizer.b3 * 100);
+    set_field_value(dialog, "eq_b4", 200 - sinkinfo.equalizer.b4 * 100);
+    set_field_value(dialog, "eq_b5", 200 - sinkinfo.equalizer.b5 * 100);
+    set_field_value(dialog, "eq_b6", 200 - sinkinfo.equalizer.b6 * 100);
+    set_field_value(dialog, "eq_b7", 200 - sinkinfo.equalizer.b7 * 100);
+    set_field_value(dialog, "eq_b8", 200 - sinkinfo.equalizer.b8 * 100);
+    set_field_value(dialog, "eq_b9", 200 - sinkinfo.equalizer.b9 * 100);
+    set_field_value(dialog, "eq_b10", 200 - sinkinfo.equalizer.b10 * 100);
+    set_field_value(dialog, "eq_b11", 200 - sinkinfo.equalizer.b11 * 100);
+    set_field_value(dialog, "eq_b12", 200 - sinkinfo.equalizer.b12 * 100);
+    set_field_value(dialog, "eq_b13", 200 - sinkinfo.equalizer.b13 * 100);
+    set_field_value(dialog, "eq_b14", 200 - sinkinfo.equalizer.b14 * 100);
+    set_field_value(dialog, "eq_b15", 200 - sinkinfo.equalizer.b15 * 100);
+    set_field_value(dialog, "eq_b16", 200 - sinkinfo.equalizer.b16 * 100);
+    set_field_value(dialog, "eq_b17", 200 - sinkinfo.equalizer.b17 * 100);
+    set_field_value(dialog, "eq_b18", 200 - sinkinfo.equalizer.b18 * 100);
+}
+
+function default_eq_button() {
+    dialog = "update_sink_equalizer"
+    set_field_value(dialog, "eq_b1", 100);
+    set_field_value(dialog, "eq_b2", 100);
+    set_field_value(dialog, "eq_b3", 100);
+    set_field_value(dialog, "eq_b4", 100);
+    set_field_value(dialog, "eq_b5", 100);
+    set_field_value(dialog, "eq_b6", 100);
+    set_field_value(dialog, "eq_b7", 100);
+    set_field_value(dialog, "eq_b8", 100);
+    set_field_value(dialog, "eq_b9", 100);
+    set_field_value(dialog, "eq_b10", 100);
+    set_field_value(dialog, "eq_b11", 100);
+    set_field_value(dialog, "eq_b12", 100);
+    set_field_value(dialog, "eq_b13", 100);
+    set_field_value(dialog, "eq_b14", 100);
+    set_field_value(dialog, "eq_b15", 100);
+    set_field_value(dialog, "eq_b16", 100);
+    set_field_value(dialog, "eq_b17", 100);
+    set_field_value(dialog, "eq_b18", 100);
 }
 
 function add_route_button() {
@@ -661,6 +718,26 @@ function do_add_sink() {
         "channels": get_field_value(dialog, "sinkchannels"),
         "channel_layout": get_select_selected(channellayoutselect),
         "delay": get_field_value(dialog, "sinkdelay"),
+        "equalizer": {
+            "b1": 1,
+            "b2": 1,
+            "b3": 1,
+            "b4": 1,
+            "b5": 1,
+            "b6": 1,
+            "b7": 1,
+            "b8": 1,
+            "b9": 1,
+            "b10": 1,
+            "b11": 1,
+            "b12": 1,
+            "b13": 1,
+            "b14": 1,
+            "b15": 1,
+            "b16": 1,
+            "b17": 1,
+            "b18": 1
+        }
         
     };
     call_api("sinks", "POST", JSON.stringify(data), reload_callback);
@@ -672,6 +749,11 @@ function do_update_sink() {
     var bitdepthselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkbitdepth")][0];
     var samplerateselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinksamplerate")][0];
     var channellayoutselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkchannellayout")][0];
+    sinkinfo = {}
+    for (sink in sinks) {
+        if (sinks[sink].name == get_field_value(dialog, "sinkname"))
+            sinkinfo = sinks[sink]
+    }
     var data = {
         "name": get_field_value(dialog, "sinkname"),
         "ip": get_field_value(dialog, "sinkip"),
@@ -681,9 +763,37 @@ function do_update_sink() {
         "channels": get_field_value(dialog, "sinkchannels"),
         "channel_layout": get_select_selected(channellayoutselect),
         "delay": get_field_value(dialog, "sinkdelay"),
-        
+        "equalizer": sinkinfo.equalizer
     };
     call_api("sinks", "PUT", JSON.stringify(data), reload_callback);
+    dismiss_dialog();
+}
+
+
+function do_update_sink_equalizer() {
+    dialog = "update_sink_equalizer"
+    sinkname = get_field_value(dialog, "sinkname")
+    equalizer = {
+        "b1": (200 - get_field_value(dialog, "eq_b1"))/100,
+        "b2": (200 - get_field_value(dialog, "eq_b2"))/100,
+        "b3": (200 - get_field_value(dialog, "eq_b3"))/100,
+        "b4": (200 - get_field_value(dialog, "eq_b4"))/100,
+        "b5": (200 - get_field_value(dialog, "eq_b5"))/100,
+        "b6": (200 - get_field_value(dialog, "eq_b6"))/100,
+        "b7": (200 - get_field_value(dialog, "eq_b7"))/100,
+        "b8": (200 - get_field_value(dialog, "eq_b8"))/100,
+        "b9": (200 - get_field_value(dialog, "eq_b9"))/100,
+        "b10": (200 - get_field_value(dialog, "eq_b10"))/100,
+        "b11": (200 - get_field_value(dialog, "eq_b11"))/100,
+        "b12": (200 - get_field_value(dialog, "eq_b12"))/100,
+        "b13": (200 - get_field_value(dialog, "eq_b13"))/100,
+        "b14": (200 - get_field_value(dialog, "eq_b14"))/100,
+        "b15": (200 - get_field_value(dialog, "eq_b15"))/100,
+        "b16": (200 - get_field_value(dialog, "eq_b16"))/100,
+        "b17": (200 - get_field_value(dialog, "eq_b17"))/100,
+        "b18": (200 - get_field_value(dialog, "eq_b18"))/100
+    }
+    call_api("sinks/" + sinkname + "/equalizer/", "POST", JSON.stringify(equalizer), reload_callback);
     dismiss_dialog();
 }
 
@@ -719,3 +829,4 @@ document.addEventListener("keydown",function(e){
         dismiss_dialog();
     }
   });
+

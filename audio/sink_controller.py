@@ -22,6 +22,7 @@ class SinkController():
         super().__init__()
         self.sink_info = sink_info
         """Sink Info"""
+        print(sink_info.equalizer)
         self.__channels: int = sink_info.channels
         """Number of channels the sink is configured for"""
         self.__bit_depth: int = sink_info.bit_depth
@@ -56,6 +57,7 @@ class SinkController():
                                                      self.__fifo_in_mp3,
                                                      self.__get_open_sources(),
                                                      self.__stream_info,
+                                                     self.sink_info.equalizer,
                                                      self.sink_info.delay)
         """ffmpeg handler"""
         self.__webstream: Optional[APIWebStream] = websocket

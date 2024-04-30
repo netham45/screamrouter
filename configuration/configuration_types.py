@@ -1,6 +1,7 @@
 """Types used by the configuration controller"""
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
+from api.api_types import Equalizer
 from configuration.type_verification import verify_volume, verify_delay, verify_bit_depth
 from configuration.type_verification import verify_channels, verify_ip, verify_name
 from configuration.type_verification import verify_port, verify_sample_rate, verify_channel_layout
@@ -42,12 +43,20 @@ class SinkDescription(BaseModel):
     """Sink Channel Layout"""
     delay: int
     """Delay in ms"""
+    equalizer: Equalizer
+    """Audio Equalizer"""
     def __init__(self, name: str, ip: str,
                  port: int, is_group: bool,
                  enabled: bool, group_members: List[str],
-                 volume: float, bit_depth: int = 32,
+                 volume: float,
+                 bit_depth: int = 32,
                  sample_rate: int = 48000, channels: int = 2,
-                 channel_layout: str = "stereo", delay: int = 0):
+                 channel_layout: str = "stereo", delay: int = 0,
+                 equalizer: Optional[Equalizer] = None):
+        if equalizer is None:
+            equalizer = Equalizer(b1=1,b2=1,b3=1,b4=1,b5=1,b6=1,
+                                  b7=1,b8=1,b9=1,b10=1,b11=1,b12=1,
+                                  b13=1,b14=1,b15=1,b16=1,b17=1,b18=1)
         if not isinstance(channel_layout, str):
             channel_layout = str(channel_layout)
         if not is_group:
@@ -70,7 +79,9 @@ class SinkDescription(BaseModel):
                          sample_rate = sample_rate,
                          channels = channels,
                          channel_layout = channel_layout,
-                         delay = delay)
+                         delay = delay,
+                         equalizer = equalizer
+                         )
 
     def set_volume(self, volume: float):
         """Verifies volume then sets it"""
@@ -142,3 +153,4 @@ class RouteDescription(BaseModel):
         """Verifies volume then sets i"""
         verify_volume(volume)
         self.volume = volume
+

@@ -130,6 +130,11 @@ DIV.dialog {
     backdrop-filter: blur(5px);
 }
 
+DIV#update_sink_equalizer {
+    width: 750px;
+    margin-left: -375px;
+}
+
 DIV.dialog SELECT {
     width: 99%;
 }
@@ -149,4 +154,15 @@ DIV#shadow {
     left: 0;
     backdrop-filter: blur(2px);
     display: none;
+}
+
+input.eq_slider {
+    writing-mode: vertical-lr;
+    display: inline;
+    padding-right; 30px;
+    padding-left: 30px;
+}
+
+TABLE#equalizer {
+    text-align: center;
 }

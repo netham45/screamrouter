@@ -148,6 +148,9 @@
                       <TD>
                         <INPUT TYPE="BUTTON" VALUE="Disable Sink" ONCLICK="disable_sink_button();">
                       </TD>
+                      <TD>
+                        <INPUT TYPE="BUTTON" VALUE="Equalizer" ONCLICK="update_sink_equalizer_button();">
+                      </TD>
                     </TR>
                     <TR>
                       <TD>
@@ -251,6 +254,93 @@
         </SELECT><BR>
         <LABEL FOR="sinkdelay">Sink Delay in ms</LABEL> <INPUT TYPE="number" MIN=1 MAX=5000 ID="sinkdelay" NAME="delay" VALUE=0><BR><BR>
         <INPUT TYPE="BUTTON" VALUE="Update sink" ONCLICK="do_update_sink()"><BR>
+        <INPUT TYPE="BUTTON" VALUE="Close" ONCLICK="dismiss_dialog()"><BR>
+      </DIV>
+      <DIV ID="update_sink_equalizer" CLASS="update_dialog dialog">
+        <INPUT TYPE="BUTTON" VALUE="Default" ONCLICK="default_eq_button()">
+        <TABLE ID="equalizer">
+          <TR>
+            <TD>
+              <INPUT TYPE="hidden" ID="sinkname" />
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b1" NAME="b1" LIST="values" MAX="200" MIN="0" />
+              65
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b2" NAME="b2" LIST="values" MAX="200" MIN="0" />
+              92
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b3" NAME="b3" LIST="values" MAX="200" MIN="0" />
+              131
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b4" NAME="b4" LIST="values" MAX="200" MIN="0" />
+              185
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b5" NAME="b5" LIST="values" MAX="200" MIN="0" />
+              262
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b6" NAME="b6" LIST="values" MAX="200" MIN="0" />
+              370
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b7" NAME="b7" LIST="values" MAX="200" MIN="0" />
+              523
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b8" NAME="b8" LIST="values" MAX="200" MIN="0" />
+              740
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b9" NAME="b9" LIST="values" MAX="200" MIN="0" />
+              1047
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b10" NAME="b10" LIST="values" MAX="200" MIN="0" />
+              1480
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b11" NAME="b11" LIST="values" MAX="200" MIN="0" />
+              2093
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b12" NAME="b12" LIST="values" MAX="200" MIN="0" />
+              2960
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b13" NAME="b13" LIST="values" MAX="200" MIN="0" />
+              4186
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b14" NAME="b14" LIST="values" MAX="200" MIN="0" />
+              5920
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b15" NAME="b15" LIST="values" MAX="200" MIN="0" />
+              8372
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b16" NAME="b16" LIST="values" MAX="200" MIN="0" />
+              11840
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b17" NAME="b17" LIST="values" MAX="200" MIN="0" />
+              16744
+            </TD>
+            <TD>
+              <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b18" NAME="b18" LIST="values" MAX="200" MIN="0" />
+              20000
+            </TD>
+          </TR>
+          <TR>
+            <TD COLSPAN=18>
+              kHz 
+            </TD>
+          </TR>
+        </TABLE>
+        <INPUT TYPE="BUTTON" VALUE="Update sink" ONCLICK="do_update_sink_equalizer()"><BR>
         <INPUT TYPE="BUTTON" VALUE="Close" ONCLICK="dismiss_dialog()"><BR>
       </DIV>
       <DIV ID="add_route" CLASS="add_dialog dialog">

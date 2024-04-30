@@ -7,6 +7,7 @@ from typing import List, Optional
 
 import yaml
 
+from api.api_types import Equalizer
 from audio.ffmpeg_url_play_thread import FFMpegPlayURL
 from audio.receiver import Receiver
 import audio.sink_controller
@@ -206,6 +207,18 @@ class ConfigurationController:
         source.set_volume(volume)
         self.__apply_volume_change()
         return True
+    
+    def update_sink_equalizer(self, sink_name: str, equalizer: Equalizer) -> bool:
+        """Sets the volume for sink sink_id to volume"""
+        sink: SinkDescription = self.__get_sink_by_name(sink_name)
+        print("Before")
+        print(sink.equalizer)
+        print(equalizer)
+        sink.equalizer = equalizer
+        print(sink.equalizer)
+        print("After")
+        self.__start_receiver()
+        return True
 
     def update_sink_volume(self, sink_name: str, volume: float) -> bool:
         """Sets the volume for sink sink_id to volume"""
@@ -336,12 +349,33 @@ class ConfigurationController:
             with open("config.yaml", "r", encoding="UTF-8") as f:
                 config = yaml.safe_load(f)
             for sink_entry in config["sinks"]:
+                equalizer: Equalizer = Equalizer(b1 = sink_entry["equalizer"]["b1"],
+                                                 b2 = sink_entry["equalizer"]["b2"],
+                                                 b3 = sink_entry["equalizer"]["b3"],
+                                                 b4 = sink_entry["equalizer"]["b4"],
+                                                 b5 = sink_entry["equalizer"]["b5"],
+                                                 b6 = sink_entry["equalizer"]["b6"],
+                                                 b7 = sink_entry["equalizer"]["b7"],
+                                                 b8 = sink_entry["equalizer"]["b8"],
+                                                 b9 = sink_entry["equalizer"]["b9"],
+                                                 b10 = sink_entry["equalizer"]["b10"],
+                                                 b11 = sink_entry["equalizer"]["b11"],
+                                                 b12 = sink_entry["equalizer"]["b12"],
+                                                 b13 = sink_entry["equalizer"]["b13"],
+                                                 b14 = sink_entry["equalizer"]["b14"],
+                                                 b15 = sink_entry["equalizer"]["b15"],
+                                                 b16 = sink_entry["equalizer"]["b16"],
+                                                 b17 = sink_entry["equalizer"]["b17"],
+                                                 b18 = sink_entry["equalizer"]["b18"],
+                )
                 self.add_sink(SinkDescription(sink_entry["name"], sink_entry["ip"],
                                               sink_entry["port"], False,
                                               sink_entry["enabled"], [],
                                               sink_entry["volume"], sink_entry["bitdepth"],
                                               sink_entry["samplerate"], sink_entry["channels"],
-                                              sink_entry["channel_layout"], sink_entry["delay"]))
+                                              sink_entry["channel_layout"], sink_entry["delay"],
+                                              equalizer=equalizer
+                                              ))
             for source_entry in config["sources"]:
                 self.add_source(SourceDescription(source_entry["name"], source_entry["ip"],
                                                   False, source_entry["enabled"],
@@ -387,13 +421,53 @@ class ConfigurationController:
         serverinfo: dict = {"api_port": self.api_port, "receiver_port": self.receiver_port,
                              "logs_dir": LOGS_DIR, "pipes_dir": self.pipes_dir,
                              "console_log_level": CONSOLE_LOG_LEVEL}
+
         for sink in self.__sink_descriptions:
             if not sink.is_group:
+                if sink.equalizer is not None:
+                    equalizer: dict = { "b1": sink.equalizer.b1,
+                                        "b2": sink.equalizer.b2,
+                                        "b3": sink.equalizer.b3,
+                                        "b4": sink.equalizer.b4,
+                                        "b5": sink.equalizer.b5,
+                                        "b6": sink.equalizer.b6,
+                                        "b7": sink.equalizer.b7,
+                                        "b8": sink.equalizer.b8,
+                                        "b9": sink.equalizer.b9,
+                                        "b10": sink.equalizer.b10,
+                                        "b11": sink.equalizer.b11,
+                                        "b12": sink.equalizer.b12,
+                                        "b13": sink.equalizer.b13,
+                                        "b14": sink.equalizer.b14,
+                                        "b15": sink.equalizer.b15,
+                                        "b16": sink.equalizer.b16,
+                                        "b17": sink.equalizer.b17,
+                                        "b18": sink.equalizer.b18}
+                else:
+                    equalizer: dict = { "b1": 1,
+                                        "b2": 1,
+                                        "b3": 1,
+                                        "b4": 1,
+                                        "b5": 1,
+                                        "b6": 1,
+                                        "b7": 1,
+                                        "b8": 1,
+                                        "b9": 1,
+                                        "b10": 1,
+                                        "b11": 1,
+                                        "b12": 1,
+                                        "b13": 1,
+                                        "b14": 1,
+                                        "b15": 1,
+                                        "b16": 1,
+                                        "b17": 1,
+                                        "b18": 1}
                 _newsink = {"name": sink.name, "ip": sink.ip,
                             "port": sink.port, "enabled": sink.enabled,
                             "volume": sink.volume, "bitdepth": sink.bit_depth,
                             "samplerate": sink.sample_rate, "channels": sink.channels,
-                            "channel_layout": sink.channel_layout, "delay": sink.delay}
+                            "channel_layout": sink.channel_layout, "delay": sink.delay,
+                            "equalizer": equalizer}
                 sinks.append(_newsink)
             else:
                 _newsink = {"name": sink.name, "sinks": sink.group_members,
