@@ -73,6 +73,25 @@ sinks:
   channels: 2
   samplerate: 48000
   delay: 0
+  equalizer:
+    b1: 1.0
+    b10: 1.0
+    b11: 1.0
+    b12: 1.0
+    b13: 1.0
+    b14: 1.0
+    b15: 1.0
+    b16: 1.0
+    b17: 1.0
+    b18: 1.0
+    b2: 1.0
+    b3: 1.0
+    b4: 1.0
+    b5: 1.0
+    b6: 1.0
+    b7: 1.0
+    b8: 1.0
+    b9: 1.0
 - enabled: true
   ip: 192.168.3.111
   name: Bedroom
@@ -83,6 +102,25 @@ sinks:
   channels: 2
   samplerate: 48000
   delay: 0
+  equalizer:
+    b1: 1.0
+    b10: 1.0
+    b11: 1.0
+    b12: 1.0
+    b13: 1.0
+    b14: 1.0
+    b15: 1.0
+    b16: 1.0
+    b17: 1.0
+    b18: 1.0
+    b2: 1.0
+    b3: 1.0
+    b4: 1.0
+    b5: 1.0
+    b6: 1.0
+    b7: 1.0
+    b8: 1.0
+    b9: 1.0
 ```
 
 ### Routes
