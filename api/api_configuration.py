@@ -6,8 +6,9 @@ import uvicorn
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from api.api_types import PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup, PostURL
-from api.api_types import Equalizer
+from api.api_types import DelayType, PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup
+from api.api_types import Equalizer, PostURL, RouteNameType, SinkNameType, SourceNameType
+from api.api_types import VolumeType
 from configuration.configuration_controller import SinkDescription, SourceDescription
 from configuration.configuration_controller import RouteDescription, ConfigurationController
 from logger import get_logger
@@ -26,11 +27,11 @@ class APIConfiguration(threading.Thread):
 
         self._app.get("/sinks",
                       tags=["Sink Configuration"])(self.get_sinks)
-        self._app.post("/groups/sinks",
+        self._app.post("/groups/sinks/{sink_name}",
                        tags=["Sink Configuration"])(self.add_sink_group)
-        self._app.post("/sinks",
+        self._app.post("/sinks/{sink_name}",
                         tags=["Sink Configuration"])(self.add_sink)
-        self._app.put("/sinks",
+        self._app.put("/sinks/{sink_name}",
                        tags=["Sink Configuration"])(self.update_sink)
         self._app.delete("/sinks/{sink_name}",
                           tags=["Sink Configuration"])(self.delete_sink)
@@ -48,11 +49,11 @@ class APIConfiguration(threading.Thread):
 
         self._app.get("/sources",
                       tags=["Source Configuration"])(self.get_sources)
-        self._app.post("/groups/sources",
+        self._app.post("/groups/sources/{source_name}",
                        tags=["Source Configuration"])(self.add_source_group)
-        self._app.post("/sources",
+        self._app.post("/sources/{source_name}",
                        tags=["Source Configuration"])(self.add_source)
-        self._app.put("/sources",
+        self._app.put("/sources/{source_name}",
                       tags=["Source Configuration"])(self.update_source)
         self._app.delete("/sources/{source_name}",
                          tags=["Source Configuration"])(self.delete_source)
@@ -65,11 +66,9 @@ class APIConfiguration(threading.Thread):
 
         self._app.get("/routes",
                       tags=["Route Configuration"])(self.get_routes)
-        self._app.get("/routes",
-                      tags=["Route Configuration"])(self.get_routes)
-        self._app.post("/routes",
+        self._app.post("/routes/{route_name}",
                        tags=["Route Configuration"])(self.add_route)
-        self._app.put("/routes",
+        self._app.put("/routes/{route_name}",
                       tags=["Route Configuration"])(self.update_route)
         self._app.delete("/routes/{route_name}",
                          tags=["Route Configuration"])(self.delete_route)
@@ -95,29 +94,29 @@ class APIConfiguration(threading.Thread):
         )
 
     # Sink Endpoints
-    def set_sink_equalizer(self, sink_name: str, equalizer: Equalizer) -> bool:
+    def set_sink_equalizer(self, sink_name: SinkNameType, equalizer: Equalizer) -> bool:
         """Sets the equalizer for a sink"""
         return self._configuration_controller.update_sink_equalizer(sink_name, equalizer)
 
-    def set_sink_volume(self, sink_name: str, volume: float) -> bool:
+    def set_sink_volume(self, sink_name: SinkNameType, volume: VolumeType) -> bool:
         """Sets the volume for a sink"""
         return self._configuration_controller.update_sink_volume(sink_name, volume)
 
-    def set_sink_delay(self, sink_name: str, delay: int) -> bool:
+    def set_sink_delay(self, sink_name: SinkNameType, delay: DelayType) -> bool:
         """Sets the volume for a sink"""
         return self._configuration_controller.update_sink_delay(sink_name, delay)
 
-    def sink_play(self, url: PostURL, sink_name: str, volume: float):
+    def sink_play(self, url: PostURL, sink_name: SinkNameType, volume: VolumeType):
         """Plays a URL"""
-        return self._configuration_controller.play_url(sink_name, url.url, volume)
+        return self._configuration_controller.play_url(sink_name, str(url.url), volume)
 
     def get_sinks(self) -> List[SinkDescription]:
         """Get all sinks"""
         return self._configuration_controller.get_sinks()
 
-    def add_sink(self, sink: PostSink) -> bool:
+    def add_sink(self, sink: PostSink, sink_name: SinkNameType) -> bool:
         """Add a new sink"""
-        return self._configuration_controller.add_sink(SinkDescription(sink.name, sink.ip,
+        return self._configuration_controller.add_sink(SinkDescription(sink_name, str(sink.ip),
                                                                         sink.port, False,
                                                                         True, [], 1,
                                                                         sink.bit_depth,
@@ -127,9 +126,9 @@ class APIConfiguration(threading.Thread):
                                                                         sink.delay,
                                                                         sink.equalizer))
 
-    def update_sink(self, sink: PostSink) -> bool:
+    def update_sink(self, sink: PostSink, sink_name: SinkNameType) -> bool:
         """Updaet a sink"""
-        return self._configuration_controller.update_sink(SinkDescription(sink.name, sink.ip,
+        return self._configuration_controller.update_sink(SinkDescription(sink_name, str(sink.ip),
                                                                            sink.port, False,
                                                                            True, [], 1,
                                                                            sink.bit_depth,
@@ -139,26 +138,26 @@ class APIConfiguration(threading.Thread):
                                                                            sink.delay,
                                                                            sink.equalizer))
 
-    def add_sink_group(self, sink_group: PostSinkGroup) -> bool:
+    def add_sink_group(self, sink_group: PostSinkGroup, sink_group_name: SinkNameType) -> bool:
         """Add a new sink group"""  
-        return self._configuration_controller.add_sink(SinkDescription(sink_group.name, "", 0,
+        return self._configuration_controller.add_sink(SinkDescription(sink_group_name, "", 0,
                                                                         True, True,
                                                                         sink_group.sinks, 1))
 
-    def delete_sink(self, sink_name: str) -> bool:
-        """Delete a sink group by ID"""
+    def delete_sink(self, sink_name: SinkNameType) -> bool:
+        """Delete a sink by name"""
         return self._configuration_controller.delete_sink(sink_name)
 
-    def disable_sink(self, sink_name: str) -> bool:
+    def disable_sink(self, sink_name: SinkNameType) -> bool:
         """Disable a sink"""
         return self._configuration_controller.disable_sink(sink_name)
 
-    def enable_sink(self, sink_name: str) -> bool:
+    def enable_sink(self, sink_name: SinkNameType) -> bool:
         """Enable a sink"""
         return self._configuration_controller.enable_sink(sink_name)
 
     # Source Endpoints
-    def set_source_volume(self, source_name: str, volume: float) -> bool:
+    def set_source_volume(self, source_name: SourceNameType, volume: VolumeType) -> bool:
         """Sets the volume for a source"""
         return self._configuration_controller.update_source_volume(source_name, volume)
 
@@ -166,37 +165,39 @@ class APIConfiguration(threading.Thread):
         """Get all sources"""
         return self._configuration_controller.get_sources()
 
-    def add_source(self, source: PostSource) -> bool:
+    def add_source(self, source: PostSource, source_name: SourceNameType) -> bool:
         """Add a new source"""
-        return self._configuration_controller.add_source(SourceDescription(source.name,source.ip,
+        return self._configuration_controller.add_source(SourceDescription(source_name,
+                                                                           str(source.ip),
                                                                            False, True, [], 1))
 
-    def update_source(self, source: PostSource) -> bool:
+    def update_source(self, source: PostSource, source_name: SourceNameType) -> bool:
         """Update an existing source"""
-        return self._configuration_controller.update_source(SourceDescription(source.name,
-                                                                              source.ip,
+        return self._configuration_controller.update_source(SourceDescription(source_name,
+                                                                              str(source.ip),
                                                                               False, True, [], 1))
 
-    def add_source_group(self, source_group: PostSourceGroup) -> bool:
+    def add_source_group(self, source_group: PostSourceGroup,
+                         source_group_name: SourceNameType) -> bool:
         """Add a new source group"""
-        return self._configuration_controller.add_source(SourceDescription(source_group.name, "",
+        return self._configuration_controller.add_source(SourceDescription(source_group_name, "",
                                                                            True, True,
                                                                            source_group.sources, 1))
 
-    def delete_source(self, source_name: str) -> bool:
-        """Delete a source group by name"""
+    def delete_source(self, source_name: SourceNameType) -> bool:
+        """Delete a source by name"""
         return self._configuration_controller.delete_source(source_name)
 
-    def disable_source(self, source_name: str) -> bool:
+    def disable_source(self, source_name: SourceNameType) -> bool:
         """Disable a source"""
         return self._configuration_controller.disable_source(source_name)
 
-    def enable_source(self, source_name: str) -> bool:
+    def enable_source(self, source_name: SourceNameType) -> bool:
         """Enable a source"""
         return self._configuration_controller.enable_source(source_name)
 
     # Route Endpoints
-    def set_route_volume(self, route_name: str, volume: float) -> bool:
+    def set_route_volume(self, route_name: RouteNameType, volume: VolumeType) -> bool:
         """Sets the volume for a route"""
         return self._configuration_controller.update_route_volume(route_name, volume)
 
@@ -204,24 +205,24 @@ class APIConfiguration(threading.Thread):
         """Get all routes"""
         return self._configuration_controller.get_routes()
 
-    def add_route(self, route: PostRoute) -> bool:
+    def add_route(self, route: PostRoute, route_name: RouteNameType) -> bool:
         """Add a new route"""
-        return self._configuration_controller.add_route(RouteDescription(route.name, route.sink,
+        return self._configuration_controller.add_route(RouteDescription(route_name, route.sink,
                                                                           route.source, True, 1))
 
-    def update_route(self, route: PostRoute) -> bool:
+    def update_route(self, route: PostRoute, route_name: RouteNameType) -> bool:
         """Update a route"""
-        return self._configuration_controller.update_route(RouteDescription(route.name, route.sink,
+        return self._configuration_controller.update_route(RouteDescription(route_name, route.sink,
                                                                              route.source, True, 1))
 
-    def delete_route(self, route_name: str)  -> bool:
+    def delete_route(self, route_name: RouteNameType) -> bool:
         """Delete a route by ID"""
         return self._configuration_controller.delete_route(route_name)
 
-    def disable_route(self, route_name: str)  -> bool:
+    def disable_route(self, route_name: RouteNameType) -> bool:
         """Disable a route"""
         return self._configuration_controller.disable_route(route_name)
 
-    def enable_route(self, route_name: str)  -> bool:
+    def enable_route(self, route_name: RouteNameType) -> bool:
         """Enable a route"""
         return self._configuration_controller.enable_route(route_name)

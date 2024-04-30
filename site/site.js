@@ -4,6 +4,7 @@ var sources = {}
 var routes = {}
 
 function call_api(endpoint, method, data, callback) {
+    console.log(data)
     const xhr = new XMLHttpRequest();
     xhr.open(method, BASEURL + endpoint, true);
     xhr.getResponseHeader("Content-type", "application/json");
@@ -15,6 +16,8 @@ function call_api(endpoint, method, data, callback) {
         const obj = JSON.parse(this.responseText);
         if (obj["error"])
             alert(obj["error"])
+        else if (obj["detail"])
+            alert(JSON.stringify(obj["detail"]))
         else
             callback(obj)
     }
@@ -711,13 +714,12 @@ function do_add_sink() {
     var samplerateselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinksamplerate")][0];
     var channellayoutselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkchannellayout")][0];
     var data = {
-        "name": get_field_value(dialog, "sinkname"),
         "ip": get_field_value(dialog, "sinkip"),
-        "bit_depth": get_select_selected(bitdepthselect),
-        "sample_rate": get_select_selected(samplerateselect),
-        "channels": get_field_value(dialog, "sinkchannels"),
+        "bit_depth": parseInt(get_select_selected(bitdepthselect)),
+        "sample_rate": parseInt(get_select_selected(samplerateselect)),
+        "channels": parseInt(get_field_value(dialog, "sinkchannels")),
         "channel_layout": get_select_selected(channellayoutselect),
-        "delay": get_field_value(dialog, "sinkdelay"),
+        "delay": int(get_field_value(dialog, "sinkdelay")),
         "equalizer": {
             "b1": 1,
             "b2": 1,
@@ -740,7 +742,7 @@ function do_add_sink() {
         }
         
     };
-    call_api("sinks", "POST", JSON.stringify(data), reload_callback);
+    call_api("sinks/"+get_field_value(dialog, "sinkname"), "POST", data, reload_callback);
     dismiss_dialog();
 }
 
@@ -755,24 +757,23 @@ function do_update_sink() {
             sinkinfo = sinks[sink]
     }
     var data = {
-        "name": get_field_value(dialog, "sinkname"),
         "ip": get_field_value(dialog, "sinkip"),
-        "port": get_field_value(dialog, "sinkport"),
-        "bit_depth": get_select_selected(bitdepthselect),
-        "sample_rate": get_select_selected(samplerateselect),
-        "channels": get_field_value(dialog, "sinkchannels"),
+        "port": parseInt(get_field_value(dialog, "sinkport")),
+        "bit_depth": parseInt(get_select_selected(bitdepthselect)),
+        "sample_rate": parseInt(get_select_selected(samplerateselect)),
+        "channels": parseInt(get_field_value(dialog, "sinkchannels")),
         "channel_layout": get_select_selected(channellayoutselect),
         "delay": get_field_value(dialog, "sinkdelay"),
         "equalizer": sinkinfo.equalizer
     };
-    call_api("sinks", "PUT", JSON.stringify(data), reload_callback);
+    call_api("sinks/"+get_field_value(dialog, "sinkname"), "PUT", JSON.stringify(data), reload_callback);
     dismiss_dialog();
 }
 
 
 function do_update_sink_equalizer() {
     dialog = "update_sink_equalizer"
-    sinkname = get_field_value(dialog, "sinkname")
+    var sinkname = get_field_value(dialog, "sinkname")
     equalizer = {
         "b1": (200 - get_field_value(dialog, "eq_b1"))/100,
         "b2": (200 - get_field_value(dialog, "eq_b2"))/100,
@@ -801,11 +802,10 @@ function do_add_route() {
     var sinkselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesink")][0];
     var sourceselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesource")][0];
     var data = {
-        "name": get_field_value(dialog, "routename"),
         "sink": get_select_selected(sinkselect),
         "source": get_select_selected(sourceselect)
     };
-    call_api("routes", "POST", JSON.stringify(data), reload_callback);
+    call_api("routes/" + get_field_value(dialog, "routename"), "POST", JSON.stringify(data), reload_callback);
     dismiss_dialog();
 }
 
@@ -814,12 +814,11 @@ function do_update_route() {
     var sinkselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesink")][0];
     var sourceselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesource")][0];
     var data = {
-        "name": get_field_value(dialog, "routename"),
         "sink": get_select_selected(sinkselect),
         "source": get_select_selected(sourceselect)
     };
     console.log(data);
-    call_api("routes", "PUT", JSON.stringify(data), reload_callback);
+    call_api("routes/" + get_field_value(dialog, "routename"), "PUT", JSON.stringify(data), reload_callback);
     dismiss_dialog();
 }
 
