@@ -141,7 +141,6 @@ class FFMpegHandler(threading.Thread):
 
     def set_delay(self, new_delay: int) -> None:
         """Sets a delay for the sink"""
-        print(f"Setting delay to {new_delay}")
         self.__delay = new_delay
         if self.__ffmpeg_started:
             self.__ffmpeg.kill()

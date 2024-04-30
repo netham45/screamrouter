@@ -22,7 +22,6 @@ class SinkController():
         super().__init__()
         self.sink_info = sink_info
         """Sink Info"""
-        print(sink_info.equalizer)
         self.__channels: int = sink_info.channels
         """Number of channels the sink is configured for"""
         self.__bit_depth: int = sink_info.bit_depth

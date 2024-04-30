@@ -211,12 +211,7 @@ class ConfigurationController:
     def update_sink_equalizer(self, sink_name: str, equalizer: Equalizer) -> bool:
         """Sets the volume for sink sink_id to volume"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
-        print("Before")
-        print(sink.equalizer)
-        print(equalizer)
         sink.equalizer = equalizer
-        print(sink.equalizer)
-        print("After")
         self.__start_receiver()
         return True
 

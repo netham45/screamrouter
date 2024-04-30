@@ -96,7 +96,6 @@ class APIConfiguration(threading.Thread):
     # Sink Endpoints
     def set_sink_equalizer(self, sink_name: str, equalizer: Equalizer) -> bool:
         """Sets the equalizer for a sink"""
-        print(f"Got Eq {equalizer}")
         return self._configuration_controller.update_sink_equalizer(sink_name, equalizer)
     
     def set_sink_volume(self, sink_name: str, volume: float) -> bool:
