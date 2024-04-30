@@ -57,15 +57,15 @@ class ConfigurationController:
         self.__api_webstream: Optional[APIWebStream] = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
         self.api_port: int = 8080
-        """Port for Uvicorn API to listen on"""
+        """Port for Uvicorn API to listen on, can be changed by load_yaml"""
         self.receiver_port: int = 16401
-        """Port for receiver to listen on"""
+        """Port for receiver to listen on, can be changed by load_yaml"""
         self.pipes_dir: str = "./pipes/"
-        """Folder for pipes to be stored in"""
+        """Folder for pipes to be stored in, can be changed by load_yaml"""
         self.__load_yaml()
         self.__start_receiver()
         print( "------------------------------------------------------------------------")
-        print( "ScreamRouter")
+        print( "  ScreamRouter")
         print(f"     Console Log level: {CONSOLE_LOG_LEVEL}")
         print(f"     Log Dir: {os.path.realpath(LOGS_DIR)}")
         print(f"     Pipe Dir: {os.path.realpath(self.pipes_dir)}")

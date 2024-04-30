@@ -177,6 +177,7 @@ class SinkController():
         """Callback for ffmpeg to clean up when playback is done, tag is the Source tag"""
         for source in self.sources:
             if source.tag == tag:
+                logger.debug("ffmpeg url playback ended callback called, removing %s", tag)
                 source.close()
                 source.stop()
                 self.sources.remove(source)

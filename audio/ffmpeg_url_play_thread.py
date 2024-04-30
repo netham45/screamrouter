@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 class FFMpegPlayURL(threading.Thread):
     """Handles playing a URL and forwarding the output from it to the main receiver"""
     def __init__(self, url: str, volume: float, sink_info: SinkDescription,
-                 fifo_in: str, source_name: str, receiver: Receiver):
+                 fifo_in: str, source_tag: str, receiver: Receiver):
         """Plays a URL using ffmpeg and outputs it to a pipe name stored in fifo_in."""
         super().__init__(name=f"[Sink:{sink_info.ip}] ffmpeg Playback {url}")
         self._url: str = url
@@ -29,8 +29,8 @@ class FFMpegPlayURL(threading.Thread):
         """ffmpeg fifo file"""
         self._fd: io.BufferedReader
         """File handle"""
-        self.__source_name = source_name
-        """Source name that the sink queue will check against"""
+        self.__source_tag = source_tag
+        """Source tag that the sink queue will check against"""
         self.__receiver: Receiver = receiver
         """Receiver to call back when data is available or playback is done"""
         self._make_ffmpeg_to_screamrouter_pipe()  # Make python -> ffmpeg fifo
@@ -85,8 +85,8 @@ class FFMpegPlayURL(threading.Thread):
                                          stderr=subprocess.DEVNULL)
         while self.__ffmpeg.poll() is None:
             data = self._read_bytes(1152)
-            self.__receiver.add_packet_to_queue(self.__source_name, self.__header.header + data)
+            self.__receiver.add_packet_to_queue(self.__source_tag, self.__header.header + data)
+        self.__receiver.notify_url_done_playing(self.__source_tag)
         self.__ffmpeg.wait()
-        self.__receiver.notify_url_done_playing(self._url)
         if os.path.exists(self.__fifo_in_url):
             os.remove(self.__fifo_in_url)

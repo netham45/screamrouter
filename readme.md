@@ -161,7 +161,7 @@ groups:
 
 ### Server Configuration
 
-The server configuration holds the port for the API to listen on and the port for the recevier to receive audio frames on
+The server configuration holds the port for the API to listen on and the port for the recevier to receive audio frames on. These options can only be edited in the YAML.
 
 Example YAML block:
 
