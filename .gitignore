@@ -1,6 +1,5 @@
 config.yaml
 __pycache__/
 *.py[cod]
-pipes/ffmpeg*
-pipes/scream*
+pipes/
 logs/

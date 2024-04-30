@@ -58,6 +58,7 @@ app: FastAPI = FastAPI( title="ScreamRouter",
             "description": "HTTP media streams"
         }
     ])
+
 webstream: APIWebStream = APIWebStream(app)
 website: APIWebsite = APIWebsite(app)
 controller: ConfigurationController = ConfigurationController(webstream)

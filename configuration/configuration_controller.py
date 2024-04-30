@@ -1,4 +1,5 @@
 """This is the main controller that holds the configuration and spawns the receiver/sink handlers"""
+import os
 import sys
 from copy import copy
 
@@ -16,7 +17,7 @@ from configuration.configuration_types import RouteDescription, InUseError
 
 from api.api_webstream import APIWebStream
 
-from logger import get_logger
+from logger import get_logger, LOGS_DIR
 
 logger = get_logger(__name__)
 
@@ -59,6 +60,8 @@ class ConfigurationController:
         """Port for Uvicorn API to listen on"""
         self.receiver_port: int = 16401
         """Port for receiver to listen on"""
+        self.pipes_dir: str = "./pipes/"
+        """Folder for pipes to be stored in"""
         self.__load_yaml()
         self.__start_receiver()
 
@@ -220,7 +223,7 @@ class ConfigurationController:
                 if sink_description.name == sink_controller.name:
                     found = True
                     tag: str = f"ffmpeg{self.__url_play_counter}"
-                    pipe_name: str = f"/pipes/scream-{sink_description.ip}-{tag}"
+                    pipe_name: str = f"{self.pipes_dir}scream-{sink_description.ip}-{tag}"
                     ffmpeg_source_info: SourceToFFMpegWriter
                     ffmpeg_source_info= SourceToFFMpegWriter(tag, pipe_name,
                                                              sink_description.ip,
@@ -228,7 +231,7 @@ class ConfigurationController:
                     sink_controller.sources.append(ffmpeg_source_info)
         if found:
             tag: str = f"ffmpeg{self.__url_play_counter}"
-            pipe_name: str = f"./pipes/ffmpeg{self.__url_play_counter}"
+            pipe_name: str = f"{self.pipes_dir}ffmpeg{self.__url_play_counter}"
             FFMpegPlayURL(url, 1, all_child_sinks[0], pipe_name, tag, self.__receiver)
             self.__url_play_counter = self.__url_play_counter + 1
         return found
@@ -335,6 +338,7 @@ class ConfigurationController:
                                                 route_entry["volume"]))
             self.api_port = config["server"]["api_port"]
             self.receiver_port = config["server"]["receiver_port"]
+            self.pipes_dir = config["server"]["pipes_dir"]
         except FileNotFoundError:
             logger.warning("[Controller] Configuration not found, starting with a blank config")
         except KeyError as exc:
@@ -345,6 +349,9 @@ class ConfigurationController:
             logger.error("[Controller] Failed to load config.yaml. Aborting load.",
                          exc_info = exc)
             sys.exit(-1)
+
+        if not os.path.exists(self.pipes_dir):
+            os.mkdir(self.pipes_dir)
         self.__loaded = True
 
     def __save_yaml(self) -> None:
@@ -354,7 +361,8 @@ class ConfigurationController:
         sources: List[dict] = []
         source_groups: List[dict] = []
         routes: List[dict] = []
-        serverinfo: dict = {"api_port": self.api_port, "receiver_port": self.receiver_port}
+        serverinfo: dict = {"api_port": self.api_port, "receiver_port": self.receiver_port,
+                             "logs_dir": LOGS_DIR, "pipes_dir": self.pipes_dir}
         for sink in self.__sink_descriptions:
             if not sink.is_group:
                 _newsink = {"name": sink.name, "ip": sink.ip,

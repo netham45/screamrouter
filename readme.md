@@ -165,12 +165,15 @@ The server configuration holds the port for the API to listen on and the port fo
 
 Example YAML block:
 
-This defines the receiver port as 16401 (Default) and the API port as 8080 (Default)
+This defines the receiver port as 16401 (Default) and the API port as 8080 (Default).
+It also defines the logs_dir as logs/ and the pipes_dir as pipes/
 
 ```
 server:
-  receiver_port: 16401
   api_port: 8080
+  logs_dir: logs/
+  receiver_port: 16401
+  pipes_dir: pipes/
 ```
 
 ## General Info

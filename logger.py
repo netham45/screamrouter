@@ -3,6 +3,22 @@ import logging
 import os
 import sys
 
+import yaml
+
+LOGS_DIR = "logs/"
+
+try:
+    with open("config.yaml", "r", encoding="UTF-8") as f:
+        config = yaml.safe_load(f)
+        LOGS_DIR = config['server']['log_path']
+except FileNotFoundError:
+    pass
+except KeyError:
+    pass
+except IndexError:
+    pass
+
+
 def get_logger(name: str, log_level: int = logging.INFO) -> logging.Logger:
     """Creates a pre-configured logger"""
     logger = logging.getLogger(name)
@@ -17,13 +33,13 @@ def get_logger(name: str, log_level: int = logging.INFO) -> logging.Logger:
     stdout_log_handler = logging.StreamHandler(stream=sys.stdout)
     stdout_log_handler.setLevel(logging.INFO)
     stdout_log_handler.setFormatter(stdout_log_formatter)
-    if not os.path.exists("logs/"):
-        os.mkdir("logs")
-    file_handler = logging.FileHandler(f"logs/{name}.log", delay=True)
+    if not os.path.exists(LOGS_DIR):
+        os.mkdir(LOGS_DIR)
+    file_handler = logging.FileHandler(f"{LOGS_DIR}{name}.log", delay=True)
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(file_log_formatter)
 
-    all_files_file_handler = logging.FileHandler("logs/all.log", delay=True)
+    all_files_file_handler = logging.FileHandler(f"{LOGS_DIR}all.log", delay=True)
     all_files_file_handler.setLevel(logging.DEBUG)
     all_files_file_handler.setFormatter(file_log_formatter)
 
