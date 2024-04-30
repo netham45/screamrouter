@@ -93,6 +93,7 @@ sources:
   volume: 1.0
 server:
   api_port: 8080
-  log_path: logs/
+  logs_dir: logs/
   receiver_port: 16401
   pipes_dir: pipes/
+  console_log_level: info
