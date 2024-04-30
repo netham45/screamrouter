@@ -3,9 +3,12 @@ import os
 import threading
 import time
 import io
+import pathlib
 
 import collections
+from typing import Optional
 
+from screamrouter_types import IPAddressType, VolumeType
 from audio.stream_info import StreamInfo
 from logger import get_logger
 
@@ -13,8 +16,11 @@ logger = get_logger(__name__)
 
 class SourceToFFMpegWriter(threading.Thread):
     """Stores the status for a single Source to a single Sink"""
-    def __init__(self, tag: str, fifo_file_name: str, sink_ip: str, volume: float):
+    def __init__(self, tag: str, fifo_file_name: pathlib.Path,
+                 sink_ip: Optional[IPAddressType], volume: VolumeType):
         """Initializes a new Source object"""
+        if sink_ip is None:
+            raise ValueError("Can't start FFMPEG Writer without a Sink IP")
         super().__init__(name=f"[Sink:{sink_ip}][Source:{tag}] Pipe Writer")
         self.tag: str = tag
         """The source's tag, generally it's IP."""
@@ -22,15 +28,15 @@ class SourceToFFMpegWriter(threading.Thread):
         """Rather the Source is open for writing or not"""
         self.__last_data_time: float = 0
         """The time in milliseconds we last received data"""
-        self.stream_attributes: StreamInfo = StreamInfo(bytearray([0, 0, 0, 0, 0]))
+        self.stream_attributes: StreamInfo = StreamInfo(bytearray([0, 32, 2, 0, 0]))
         """The source stream attributes (bit depth, sample rate, channels)"""
-        self.fifo_file_name: str = fifo_file_name
+        self.fifo_file_name: pathlib.Path = fifo_file_name
         """The named pipe that ffmpeg is using as an input for this source"""
         self.__fifo_file_handle: io.IOBase
         """The open handle to the ffmpeg named pipe"""
-        self.__sink_ip: str = sink_ip
+        self.__sink_ip: IPAddressType = sink_ip
         """The sink that opened this source"""
-        self.volume: float = volume
+        self.volume: VolumeType = volume
         """Holds the sink's volume. 0 = silent, 1 = 100% volume"""
         self.__running = True
         """Rather the thread is running"""

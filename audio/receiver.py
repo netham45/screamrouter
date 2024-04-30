@@ -5,6 +5,7 @@ import select
 
 from typing import List
 
+from screamrouter_types import PortType
 from audio.sink_controller import SinkController
 from logger import get_logger
 
@@ -12,7 +13,7 @@ logger = get_logger(__name__)
 
 class Receiver(threading.Thread):
     """Handles the main socket that listens for incoming Scream streams and sends them to sinks"""
-    def __init__(self, port: int):
+    def __init__(self, port: PortType):
         """Takes the UDP port number to listen on"""
         super().__init__(name="Main Receiver Thread")
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -21,7 +22,7 @@ class Receiver(threading.Thread):
         """List of all sinks to forward data to"""
         self.running: bool = True
         """Rather the Recevier is running, when set to false the receiver ends"""
-        self.port: int = port
+        self.port: PortType = port
         """UDP port to listen on"""
         self.start()
 
@@ -36,20 +37,20 @@ class Receiver(threading.Thread):
         self.sock.close()
         self.join()
 
-    def __check_source_packet(self, source_ip: str, data: bytes) -> bool:
+    def __check_source_packet(self, tag: str, data: bytes) -> bool:
         """Verifies a packet is the right length"""
         if len(data) != 1157:
             logger.warning("[Source:%s] Got bad packet length %i != 1157 from source",
-                        source_ip,
+                        tag,
                         len(data))
             return False
         return True
 
-    def add_packet_to_queue(self, source: str, data: bytes):
+    def add_packet_to_queue(self, tag: str, data: bytes):
         """Adds a packet to all sinks' queues"""
-        if self.__check_source_packet(source, data):
+        if self.__check_source_packet(tag, data):
             for sink in self.sinks:
-                sink.add_packet_to_queue(source, data)
+                sink.add_packet_to_queue(tag, data)
 
     def notify_url_done_playing(self, tag: str):
         """Notifies all registered sinks that a URL is done playing"""

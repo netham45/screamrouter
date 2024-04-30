@@ -7,6 +7,7 @@ import io
 
 from typing import Optional, Tuple
 
+from screamrouter_types import IPAddressType, PortType
 from api.api_webstream import APIWebStream
 
 from audio.mp3_header_parser import MP3Header, InvalidHeaderException
@@ -17,11 +18,11 @@ logger = get_logger(__name__)
 
 class FFMpegOutputThread(threading.Thread):
     """Handles listening for output from ffmpeg, extended by codec-specific classes"""
-    def __init__(self, fifo_in: str, sink_ip: str, name: str):
-        super().__init__(name = name)
+    def __init__(self, fifo_in: str, sink_ip: IPAddressType, threadname: str):
+        super().__init__(name = threadname)
         self._fifo_in: str = fifo_in
         """Holds the ffmpeg output pipe name this sink will use as a source"""
-        self._sink_ip: str = sink_ip
+        self._sink_ip: IPAddressType = sink_ip
         """Holds the sink IP for the web api to filter based on"""
         self._running: bool = True
         """Rather this thread is running"""
@@ -63,8 +64,10 @@ class FFMpegOutputThread(threading.Thread):
 
 class FFMpegMP3Thread(FFMpegOutputThread):
     """Handles listening for MP3 output from ffmpeg"""
-    def __init__(self, fifo_in: str, sink_ip: str, webstream: Optional[APIWebStream]):
-        super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink:{sink_ip}] MP3 Thread")
+    def __init__(self, fifo_in: str, sink_ip: IPAddressType,
+                 webstream: Optional[APIWebStream]):
+        super().__init__(fifo_in=fifo_in, sink_ip=sink_ip,
+                         threadname=f"[Sink:{sink_ip}] MP3 Thread")
 
         self.__webstream: Optional[APIWebStream] = webstream
         """Holds the Webstream queue object to dump to"""
@@ -132,20 +135,22 @@ class FFMpegMP3Thread(FFMpegOutputThread):
 
 class FFMpegPCMThread(FFMpegOutputThread):
     """Handles listening for PCM output from ffmpeg"""
-    def __init__(self, fifo_in: str, sink_ip: str, sink_port: int, output_info: StreamInfo):
+    def __init__(self, fifo_in: str, sink_ip: IPAddressType,
+                 sink_port: PortType, output_info: StreamInfo):
 
         self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Output socket for sink"""
-        self._sink_port: int = sink_port
+        self._sink_port: PortType = sink_port
         self.__output_header: bytes = output_info.header
         """Holds the header added onto packets sent to Scream receivers"""
 
-        super().__init__(fifo_in=fifo_in, sink_ip=sink_ip, name=f"[Sink:{sink_ip}] PCM Thread")
+        super().__init__(fifo_in=fifo_in,sink_ip=sink_ip,
+                         threadname=f"[Sink:{sink_ip}] PCM Thread")
 
     def run(self) -> None:
         """This thread implements listening to self.fifoin and sending it out to dest_ip"""
         while self._running:
             # Send data from ffmpeg to the Scream receiver
             self.__sock.sendto(self.__output_header + self._read_bytes(1152),
-                               (self._sink_ip, self._sink_port))
+                               (str(self._sink_ip), int(self._sink_port)))
         logger.debug("[Sink:%s] PCM thread exit", self._sink_ip)

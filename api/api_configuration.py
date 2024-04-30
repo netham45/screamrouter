@@ -6,9 +6,9 @@ import uvicorn
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from api.api_types import DelayType, PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup
-from api.api_types import Equalizer, PostURL, RouteNameType, SinkNameType, SourceNameType
-from api.api_types import VolumeType
+from screamrouter_types import DelayType, PostRoute, PostSink, PostSinkGroup, PostSource
+from screamrouter_types import Equalizer, PostURL, RouteNameType, SinkNameType, SourceNameType
+from screamrouter_types import VolumeType, PostSourceGroup
 from configuration.configuration_controller import SinkDescription, SourceDescription
 from configuration.configuration_controller import RouteDescription, ConfigurationController
 from logger import get_logger
@@ -108,7 +108,7 @@ class APIConfiguration(threading.Thread):
 
     def sink_play(self, url: PostURL, sink_name: SinkNameType, volume: VolumeType):
         """Plays a URL"""
-        return self._configuration_controller.play_url(sink_name, str(url.url), volume)
+        return self._configuration_controller.play_url(sink_name, url.url, volume)
 
     def get_sinks(self) -> List[SinkDescription]:
         """Get all sinks"""
@@ -116,7 +116,7 @@ class APIConfiguration(threading.Thread):
 
     def add_sink(self, sink: PostSink, sink_name: SinkNameType) -> bool:
         """Add a new sink"""
-        return self._configuration_controller.add_sink(SinkDescription(sink_name, str(sink.ip),
+        return self._configuration_controller.add_sink(SinkDescription(sink_name, sink.ip,
                                                                         sink.port, False,
                                                                         True, [], 1,
                                                                         sink.bit_depth,
@@ -128,7 +128,7 @@ class APIConfiguration(threading.Thread):
 
     def update_sink(self, sink: PostSink, sink_name: SinkNameType) -> bool:
         """Updaet a sink"""
-        return self._configuration_controller.update_sink(SinkDescription(sink_name, str(sink.ip),
+        return self._configuration_controller.update_sink(SinkDescription(sink_name, sink.ip,
                                                                            sink.port, False,
                                                                            True, [], 1,
                                                                            sink.bit_depth,
@@ -140,7 +140,7 @@ class APIConfiguration(threading.Thread):
 
     def add_sink_group(self, sink_group: PostSinkGroup, sink_group_name: SinkNameType) -> bool:
         """Add a new sink group"""  
-        return self._configuration_controller.add_sink(SinkDescription(sink_group_name, "", 0,
+        return self._configuration_controller.add_sink(SinkDescription(sink_group_name, None, 0,
                                                                         True, True,
                                                                         sink_group.sinks, 1))
 
@@ -168,19 +168,19 @@ class APIConfiguration(threading.Thread):
     def add_source(self, source: PostSource, source_name: SourceNameType) -> bool:
         """Add a new source"""
         return self._configuration_controller.add_source(SourceDescription(source_name,
-                                                                           str(source.ip),
+                                                                           source.ip,
                                                                            False, True, [], 1))
 
     def update_source(self, source: PostSource, source_name: SourceNameType) -> bool:
         """Update an existing source"""
         return self._configuration_controller.update_source(SourceDescription(source_name,
-                                                                              str(source.ip),
+                                                                              source.ip,
                                                                               False, True, [], 1))
 
     def add_source_group(self, source_group: PostSourceGroup,
                          source_group_name: SourceNameType) -> bool:
         """Add a new source group"""
-        return self._configuration_controller.add_source(SourceDescription(source_group_name, "",
+        return self._configuration_controller.add_source(SourceDescription(source_group_name, None,
                                                                            True, True,
                                                                            source_group.sources, 1))
 

@@ -1,5 +1,6 @@
 """This is the main controller that holds the configuration and spawns the receiver/sink handlers"""
 import os
+import pathlib
 import sys
 from copy import copy
 
@@ -8,15 +9,15 @@ from typing import List, Optional
 
 import yaml
 
-from api.api_types import Equalizer
+from screamrouter_types import SinkDescription, SourceDescription
+from screamrouter_types import RouteDescription, InUseError
+from screamrouter_types import DelayType, Equalizer, PlaybackURLType, PortType, RouteNameType
+from screamrouter_types import SinkNameType, SourceNameType, VolumeType
 from api.api_webstream import APIWebStream
 from audio.ffmpeg_url_play_thread import FFMpegPlayURL
 from audio.receiver import Receiver
 import audio.sink_controller
 from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
-
-from configuration.configuration_types import SinkDescription, SourceDescription
-from configuration.configuration_types import RouteDescription, InUseError
 
 from logger import get_logger, LOGS_DIR, CONSOLE_LOG_LEVEL
 
@@ -57,9 +58,9 @@ class ConfigurationController:
         """Holds URL play counter so ffmpeg pipes can have unique names"""
         self.__api_webstream: Optional[APIWebStream] = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
-        self.api_port: int = 8080
+        self.api_port: PortType = 8080
         """Port for Uvicorn API to listen on, can be changed by load_yaml"""
-        self.receiver_port: int = 16401
+        self.receiver_port: PortType = 16401
         """Port for receiver to listen on, can be changed by load_yaml"""
         self.pipes_dir: str = "./pipes/"
         """Folder for pipes to be stored in, can be changed by load_yaml"""
@@ -100,7 +101,7 @@ class ConfigurationController:
         self.__start_receiver()
         return True
 
-    def delete_sink(self, sink_name: str) -> bool:
+    def delete_sink(self, sink_name: SinkNameType) -> bool:
         """Deletes a sink by index"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
         self.__verify_sink_unused(sink)
@@ -108,14 +109,14 @@ class ConfigurationController:
         self.__start_receiver()
         return True
 
-    def enable_sink(self, sink_name: str) -> bool:
+    def enable_sink(self, sink_name: SinkNameType) -> bool:
         """Enables a sink by index"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
         sink.enabled = True
         self.__start_receiver()
         return True
 
-    def disable_sink(self, sink_name: str) -> bool:
+    def disable_sink(self, sink_name: SinkNameType) -> bool:
         """Disables a sink by index"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
         sink.enabled = False
@@ -141,7 +142,7 @@ class ConfigurationController:
         self.__start_receiver()
         return True
 
-    def delete_source(self, source_name: str) -> bool:
+    def delete_source(self, source_name: SourceNameType) -> bool:
         """Deletes a source by index"""
         source: SourceDescription = self.__get_source_by_name(source_name)
         self.__verify_source_unused(source)
@@ -149,14 +150,14 @@ class ConfigurationController:
         self.__start_receiver()
         return True
 
-    def enable_source(self, source_name: str) -> bool:
+    def enable_source(self, source_name: SourceNameType) -> bool:
         """Enables a source by index"""
         source: SourceDescription = self.__get_source_by_name(source_name)
         source.enabled = True
         self.__start_receiver()
         return True
 
-    def disable_source(self, source_name: str) -> bool:
+    def disable_source(self, source_name: SourceNameType) -> bool:
         """Disables a source by index"""
         source: SourceDescription = self.__get_source_by_name(source_name)
         source.enabled = False
@@ -182,63 +183,66 @@ class ConfigurationController:
         self.__start_receiver()
         return True
 
-    def delete_route(self, route_name: str) -> bool:
+    def delete_route(self, route_name: RouteNameType) -> bool:
         """Deletes a route by index"""
         route: RouteDescription = self.__get_route_by_name(route_name)
         self.__route_descriptions.remove(route)
         self.__start_receiver()
         return True
 
-    def enable_route(self, route_name: str) -> bool:
+    def enable_route(self, route_name: RouteNameType) -> bool:
         """Enables a route by index"""
         route: RouteDescription = self.__get_route_by_name(route_name)
         route.enabled = True
         self.__start_receiver()
         return True
 
-    def disable_route(self, route_name: str) -> bool:
+    def disable_route(self, route_name: RouteNameType) -> bool:
         """Disables a route by index"""
         route: RouteDescription = self.__get_route_by_name(route_name)
         route.enabled = False
         self.__start_receiver()
         return True
 
-    def update_source_volume(self, source_name: str, volume: float) -> bool:
+    def update_source_volume(self, source_name: SourceNameType, volume: VolumeType) -> bool:
         """Sets the volume for source source_id to volume"""
         source: SourceDescription = self.__get_source_by_name(source_name)
         source.set_volume(volume)
         self.__apply_volume_change()
         return True
 
-    def update_sink_equalizer(self, sink_name: str, equalizer: Equalizer) -> bool:
+    def update_sink_equalizer(self, sink_name: SinkNameType, equalizer: Equalizer) -> bool:
         """Sets the volume for sink sink_id to volume"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
         sink.equalizer = equalizer
         self.__start_receiver()
         return True
 
-    def update_sink_volume(self, sink_name: str, volume: float) -> bool:
+    def update_sink_volume(self, sink_name: SinkNameType, volume: VolumeType) -> bool:
         """Sets the volume for sink sink_id to volume"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
+        print(sink.name)
+        print(volume)
         sink.set_volume(volume)
+        print(sink.volume)
         self.__apply_volume_change()
         return True
 
-    def update_sink_delay(self, sink_name: str, delay: int) -> bool:
+    def update_sink_delay(self, sink_name: SinkNameType, delay: DelayType) -> bool:
         """Sets the delay for sink sink_id to delay"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
         sink.set_delay(delay)
         self.__apply_delay_change()
         return True
 
-    def update_route_volume(self, route_name: str, volume: float) -> bool:
+    def update_route_volume(self, route_name: RouteNameType, volume: VolumeType) -> bool:
         """Sets the volume for route route_id to volume"""
         route: RouteDescription = self.__get_route_by_name(route_name)
         route.set_volume(volume)
         self.__apply_volume_change()
         return True
 
-    def play_url(self, sink_name: str, url: str, volume: float) -> bool:
+    def play_url(self, sink_name: SinkNameType, url: PlaybackURLType, volume: VolumeType) -> bool:
         """Plays a URL on the sink or all children sinks"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
         all_child_sinks: List[SinkDescription] = self.__get_real_sinks_from_sink(sink, sink.volume)
@@ -249,15 +253,17 @@ class ConfigurationController:
                     found = True
                     tag: str = f"ffmpeg{self.__url_play_counter}"
                     pipe_name: str = f"{self.pipes_dir}scream-{sink_description.ip}-{tag}"
+                    pipe_path: pathlib.Path = pathlib.Path(pipe_name)
                     ffmpeg_source_info: SourceToFFMpegWriter
-                    ffmpeg_source_info= SourceToFFMpegWriter(tag, pipe_name,
-                                                             sink_description.ip,
-                                                             sink_description.volume * volume)
+                    ffmpeg_source_info = SourceToFFMpegWriter(tag, pipe_path,
+                                                              sink_description.ip,
+                                                              sink_description.volume * volume)
                     sink_controller.sources.append(ffmpeg_source_info)
-        if found:
+        if found:  # If at least one sink is found start playback
             tag: str = f"ffmpeg{self.__url_play_counter}"
             pipe_name: str = f"{self.pipes_dir}ffmpeg{self.__url_play_counter}"
-            FFMpegPlayURL(url, 1, all_child_sinks[0], pipe_name, tag, self.__receiver)
+            pipe_path: pathlib.Path = pathlib.Path(pipe_name)
+            FFMpegPlayURL(url, 1, all_child_sinks[0], pipe_path, tag, self.__receiver)
             self.__url_play_counter = self.__url_play_counter + 1
         return found
 
@@ -329,6 +335,8 @@ class ConfigurationController:
             for _sink in self.__sink_objects:
                 if _sink.sink_ip == sink_ip:
                     for source in sources:
+                        print(source)
+                        print(f"Updating sink {_sink.name} that {source.name} has new volume")
                         _sink.update_source_volume(source)
         self.__save_yaml()
 
@@ -377,13 +385,14 @@ class ConfigurationController:
                 self.add_source(SourceDescription(source_entry["name"], source_entry["ip"],
                                                   False, source_entry["enabled"],
                                                   [], source_entry["volume"]))
+            print(config["groups"]["sinks"])
             for sink_group in config["groups"]["sinks"]:
-                self.add_sink(SinkDescription(sink_group["name"], "",
-                                              0, True,
+                self.add_sink(SinkDescription(sink_group["name"], None,
+                                              1, True,
                                               sink_group["enabled"], sink_group["sinks"],
                                               sink_group["volume"]))
             for source_group in config["groups"]["sources"]:
-                self.add_source(SourceDescription(source_group["name"], "",
+                self.add_source(SourceDescription(source_group["name"], None,
                                                   True, source_group["enabled"],
                                                   source_group["sources"], source_group["volume"]))
             for route_entry in config["routes"]:
@@ -459,7 +468,7 @@ class ConfigurationController:
                                         "b16": 1,
                                         "b17": 1,
                                         "b18": 1}
-                _newsink = {"name": sink.name, "ip": sink.ip,
+                _newsink = {"name": sink.name, "ip": str(sink.ip),
                             "port": sink.port, "enabled": sink.enabled,
                             "volume": sink.volume, "bitdepth": sink.bit_depth,
                             "samplerate": sink.sample_rate, "channels": sink.channels,
@@ -472,7 +481,7 @@ class ConfigurationController:
                 sink_groups.append(_newsink)
         for source in self.__source_descriptions:
             if not source.is_group:
-                _newsource = {"name": source.name, "ip": source.ip,
+                _newsource = {"name": source.name, "ip": str(source.ip),
                               "enabled": source.enabled, "volume": source.volume}
                 sources.append(_newsource)
             else:
@@ -499,6 +508,8 @@ class ConfigurationController:
         self.__starting = True
         self.__save_yaml()
         self.__build_real_sinks_to_real_sources()
+        for key, value in enumerate(self.sinks_to_sources):
+            print(f"{key}:{value}")
         if self.__receiverset:
             logger.debug("[Controller] Closing receiver!")
             self.__receiver.stop()
@@ -508,11 +519,14 @@ class ConfigurationController:
         self.__receiver = Receiver(self.receiver_port)
         self.__sink_objects = []
         for sink_ip, _ in self.sinks_to_sources.items():
-            if sink_ip != "":
+            if not sink_ip is None:
                 sink_info: SinkDescription
                 for sink_description in self.__sink_descriptions:
                     if sink_description.ip == sink_ip:
                         sink_info = sink_description
+                        print(sink_info)
+                        print(self.sinks_to_sources[sink_ip])
+                        print(sink_ip)
                         sink = audio.sink_controller.SinkController(sink_info,
                                                                     self.sinks_to_sources[sink_ip],
                                                                     self.__api_webstream)
@@ -520,8 +534,9 @@ class ConfigurationController:
                         self.__sink_objects.append(sink)
                         break
         self.__starting = False
+
     # Sink Finders
-    def __get_sink_by_name(self, name: str) -> SinkDescription:
+    def __get_sink_by_name(self, name: SinkNameType) -> SinkDescription:
         """Returns a sink by name"""
         for sink in self.__sink_descriptions:
             if sink.name == name:
@@ -529,14 +544,14 @@ class ConfigurationController:
         raise NameError(f"Sink not found by name {name}")
 
     def __get_real_sinks_from_sink(self, sink: SinkDescription,
-                                   volume_multiplier: float) -> List[SinkDescription]:
+                                   volume_multiplier: VolumeType) -> List[SinkDescription]:
         """Recursively work through sink groups to get all real sinks
            Volume levels for the returned sinks will be adjusted based off parent sink group levels
         """
         if sink.is_group:
             sinks: List[SinkDescription] = []
             for entry in sink.group_members:
-                sink_entry = self.__get_sink_by_name(entry)
+                sink_entry: SinkDescription = self.__get_sink_by_name(entry)
                 if not sink_entry.enabled:
                     return []
                 if sink_entry.is_group:
@@ -573,7 +588,7 @@ class ConfigurationController:
         return sink_groups
 
     # Source Finders
-    def __get_source_by_name(self, name: str) -> SourceDescription:
+    def __get_source_by_name(self, name: SourceNameType) -> SourceDescription:
         """Get source by name"""
         for source in self.__source_descriptions:
             if source.name == name:
@@ -581,7 +596,7 @@ class ConfigurationController:
         raise NameError(f"No source found by name {name}")
 
     def __get_real_sources_from_source(self, source: SourceDescription,
-                                       volume_multiplier: float) -> List[SourceDescription]:
+                                       volume_multiplier: VolumeType) -> List[SourceDescription]:
         """Recursively work through source groups to get all real sources
            Volume levels for the returned sources will be adjusted for parent source group levels
         """
@@ -593,7 +608,7 @@ class ConfigurationController:
                 source_entry = self.__get_source_by_name(entry)
                 if source_entry.enabled:
                     if source_entry.is_group:
-                        new_volume: float = volume_multiplier * source_entry.volume
+                        new_volume: VolumeType = volume_multiplier * source_entry.volume
                         group_sources: List[SourceDescription]
                         group_sources = self.__get_real_sources_from_source(source_entry,
                                                                             new_volume)
@@ -656,7 +671,7 @@ class ConfigurationController:
         return source_groups
 
     # Route Finders
-    def __get_route_by_name(self, name: str) -> RouteDescription:
+    def __get_route_by_name(self, name: RouteNameType) -> RouteDescription:
         """Get route by name"""
         for route in self.__route_descriptions:
             if route.name == name:

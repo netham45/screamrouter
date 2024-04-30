@@ -1,16 +1,38 @@
 """Holds stream info and parses Scream headers."""
 import traceback
-from typing import Union
+from typing import Tuple, Union
 import numpy
-from configuration.type_verification import verify_bit_depth, verify_channel_layout, verify_channels
-from configuration.type_verification import verify_sample_rate, CHANNEL_LAYOUT_TABLE
+from pydantic import BaseModel
+from screamrouter_types import BitDepthType, ChannelLayoutType, ChannelsType, SampleRateType
 
 from logger import get_logger
 
 logger = get_logger(__name__)
 
-class StreamInfo():
+CHANNEL_LAYOUT_TABLE: dict[Tuple[int,int], str] = {(0x00, 0x00): "stereo", # No layout
+                                                   (0x04, 0x00): "mono",
+                                                   (0x03, 0x00): "stereo",
+                                                   (0x33, 0x00): "quad",
+                                                   (0x34, 0x01): "surround",
+                                                   (0x0F, 0x06): "5.1",  # Surround
+                                                   (0x3F, 0x06): "7.1",  # Surround
+                                                   (0x3F, 0x00): "5.1",  # Deprecated
+                                                   (0xFF, 0x00): "7.1"}   # Deprecated
+
+class StreamInfo(BaseModel):
     """Parses Scream headers to get sample rate, bit depth, and channels"""
+    sample_rate: SampleRateType
+    """Sample rate in Hz"""
+    bit_depth: BitDepthType
+    """Bit depth"""
+    channels: ChannelsType
+    """Channel count"""
+    channel_mask: bytes
+    """Channel Mask"""
+    channel_layout: ChannelLayoutType
+    """Holds the channel layout"""
+    header: bytes
+    """Holds the raw header bytes"""
 
     def __init__(self, scream_header: Union[bytearray, bytes]):
         scream_header_array: bytearray = bytearray(scream_header)
@@ -26,23 +48,17 @@ class StreamInfo():
         sample_rate_multiplier: int = numpy.packbits(sample_rate_bits,bitorder='little')[0]
         if sample_rate_multiplier < 1:
             sample_rate_multiplier = 1
-        self.sample_rate: int = sample_rate_base * sample_rate_multiplier
-        """Sample rate in Hz"""
-        self.bit_depth: int = scream_header_array[1]  # One byte for bit depth
-        """Bit depth"""
-        self.channels: int = scream_header_array[2]  # One byte for channel count
-        """Channel count"""
-        self.channel_mask: bytearray = scream_header_array[3:]  # Two bytes for channel_mask
-        """Channel Mask"""
-        self.channel_layout: str = self.__parse_channel_mask()
-        """Holds the channel layout"""
-        self.header: bytearray = scream_header_array
-        """Holds the raw header bytes"""
+        super().__init__(sample_rate=int(sample_rate_base * sample_rate_multiplier),
+                         bit_depth=int(scream_header_array[1]),
+                         channels=int(scream_header_array[2]),
+                         channel_mask=scream_header_array[3:],
+                         channel_layout=self.__parse_channel_mask(scream_header_array[3:]),
+                         header=scream_header_array)
 
-    def __parse_channel_mask(self):
+    def __parse_channel_mask(self, channel_mask: bytes) -> str:
         """Converts the channel mask to a string to be fed to ffmpeg"""
         try:
-            return CHANNEL_LAYOUT_TABLE[(self.channel_mask[0], self.channel_mask[1])]
+            return CHANNEL_LAYOUT_TABLE[(channel_mask[0], channel_mask[1])]
         except KeyError:
             logger.warning("".join([ "Unknown speaker configuration:",
                                     f"{self.channel_mask[0]} {self.channel_mask[1]}",
@@ -64,11 +80,7 @@ def create_stream_info(bit_depth: int,
                        channels: int,
                        channel_layout: str) -> StreamInfo:
     """Returns a header with the specified properties"""
-    verify_bit_depth(bit_depth)
-    verify_sample_rate(sample_rate)
-    verify_channels(channels)
-    verify_channel_layout(channel_layout)
-    header: bytearray = bytearray([0, 0, 0, 0, 0])
+    header: bytearray = bytearray([0, 32, 2, 0, 0])
     is_441khz: bool = sample_rate % 44100 == 0
     samplerate_multiplier: int = int(sample_rate / (44100 if is_441khz else 48000))
     sample_rate_bits: numpy.ndarray = numpy.unpackbits(numpy.array([samplerate_multiplier],

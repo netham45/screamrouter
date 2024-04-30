@@ -2,33 +2,34 @@
 import collections
 import threading
 import time
+from screamrouter_types import IPAddressType
 from logger import get_logger
 
 logger = get_logger(__name__)
 
 class FFMpegInputQueueEntry():
     """A data entry in the ffmpeg input queue, holds the data and the source IP address."""
-    source_ip: str
+    tag: str
     """Source IP address for data sent to an input queue"""
     data: bytes
     """Data sent to an input queue"""
-    def __init__(self, source_ip: str, data: bytes):
-        self.source_ip = source_ip
+    def __init__(self, tag: str, data: bytes):
+        self.tag = tag
         self.data = data
 
 
 class FFMpegInputQueue(threading.Thread):
     """An FFMPEG Input Queue is written to by the receiver, passed to each Sink Controller,
         which passes to ffmpeg. There is one queue per sink controller."""
-    def __init__(self, callback, sink_ip: str):
+    def __init__(self, callback, sink_ip: IPAddressType):
         super().__init__(name=f"[Sink:{sink_ip}] ffmpeg Input Queue")
         self._queue: collections.deque = collections.deque()
         """Holds the queue to read/write from"""
-        self._running = True
+        self._running: bool = True
         """Rather the thread is running"""
         self._callback = callback
         """Callback in Sink controller for us to call when there's data available"""
-        self.__sink_ip = sink_ip
+        self.__sink_ip: IPAddressType = sink_ip
         """Holds the sink IP (Only used for log messages)"""
         self.start()
 

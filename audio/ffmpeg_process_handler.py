@@ -6,7 +6,7 @@ import threading
 
 from typing import List
 
-from api.api_types import Equalizer
+from screamrouter_types import DelayType, Equalizer
 from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
 from audio.stream_info import StreamInfo
 from logger import get_logger
@@ -17,7 +17,7 @@ class FFMpegHandler(threading.Thread):
     """Handles an FFMpeg process for a sink"""
     def __init__(self, tag, fifo_in_pcm: str, fifo_in_mp3: str,
                   sources: List[SourceToFFMpegWriter],
-                  sink_info: StreamInfo, equalizer: Equalizer, delay: int = 0):
+                  sink_info: StreamInfo, equalizer: Equalizer, delay: DelayType):
         super().__init__(name=f"[Sink:{tag}] ffmpeg Thread")
         self.__fifo_in_pcm: str = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
@@ -35,7 +35,7 @@ class FFMpegHandler(threading.Thread):
         """Holds a list of active sources"""
         self.__sink_info: StreamInfo = sink_info
         """Holds the sink configuration"""
-        self.__delay: int = delay
+        self.__delay: DelayType = delay
         """Stream delay in ms"""
         self.equalizer: Equalizer = equalizer
         """Equalizer"""

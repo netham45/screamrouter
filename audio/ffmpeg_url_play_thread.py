@@ -1,31 +1,33 @@
 """Handles playing a URL and forwarding the output from it to the main receiver"""
 import io
 import os
+import pathlib
 import select
 import subprocess
 import threading
 from typing import List
 
+from screamrouter_types import SinkDescription
+from screamrouter_types import PlaybackURLType, VolumeType
 from audio.receiver import Receiver
 from audio.stream_info import StreamInfo, create_stream_info
-from configuration.configuration_types import SinkDescription
 from logger import get_logger
 
 logger = get_logger(__name__)
 
 class FFMpegPlayURL(threading.Thread):
     """Handles playing a URL and forwarding the output from it to the main receiver"""
-    def __init__(self, url: str, volume: float, sink_info: SinkDescription,
-                 fifo_in: str, source_tag: str, receiver: Receiver):
+    def __init__(self, url: PlaybackURLType, volume: VolumeType, sink_info: SinkDescription,
+                 fifo_in: pathlib.Path, source_tag: str, receiver: Receiver):
         """Plays a URL using ffmpeg and outputs it to a pipe name stored in fifo_in."""
         super().__init__(name=f"[Sink:{sink_info.ip}] ffmpeg Playback {url}")
-        self._url: str = url
+        self._url: PlaybackURLType = url
         """URL for Playback"""
-        self._volume: float = volume
+        self._volume: VolumeType = volume
         """Volume for playback (0.0-1.0)"""
         self.__sink_info: SinkDescription = sink_info
         """Sink info, needed for bitrate to transcode to"""
-        self.__fifo_in_url: str = fifo_in
+        self.__fifo_in_url: pathlib.Path = fifo_in
         """ffmpeg fifo file"""
         self._fd: io.BufferedReader
         """File handle"""

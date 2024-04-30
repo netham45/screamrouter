@@ -5,31 +5,30 @@ from typing import List, Optional
 from fastapi import FastAPI, WebSocket
 
 from fastapi.responses import StreamingResponse
-from configuration.type_verification import verify_ip
+from screamrouter_types import IPAddressType
 from logger import get_logger
 
 logger = get_logger(__name__)
 
 class Listener():
     """Holds info on a single listener to send streams to"""
-    def __init__(self, sink_ip: str):
-        self._sink_ip: str = sink_ip
+    def __init__(self, sink_ip: IPAddressType):
+        self._sink_ip: IPAddressType = sink_ip
         """Sink IP the listener is listening to"""
         self._active: bool =  True
         """Rather the listener is active or not"""
-        verify_ip(sink_ip)
 
-    def send(self, sink_ip: str, data: bytes) -> bool:
+    def send(self, sink_ip: IPAddressType, data: bytes) -> bool:
         """Implemented by classes that extend Listener"""
         # Junk return so pylint quits complaining about unused args
-        return len(sink_ip) + len(data) == 9001
+        return str(sink_ip) + str(len(data)) == 9001
 
     async def open(self) -> None:
         """Implemented by classes that extend Listener"""
 
 class WebsocketListener(Listener):
     """Holds a single instance of an active websocket sink listener"""
-    def __init__(self, sink_ip: str, client: Optional[WebSocket]):
+    def __init__(self, sink_ip: IPAddressType, client: Optional[WebSocket]):
         super().__init__(sink_ip)
         self.__client: Optional[WebSocket] = client
 
@@ -38,7 +37,7 @@ class WebsocketListener(Listener):
         if self.__client:
             await self.__client.accept()
 
-    def send(self, sink_ip: str, data: bytes) -> bool:
+    def send(self, sink_ip: IPAddressType, data: bytes) -> bool:
         """Send data to the websocket, returns false if the socket is dead"""
         if self._active:
             if sink_ip == self._sink_ip:
@@ -48,14 +47,14 @@ class WebsocketListener(Listener):
 
 class HTTPListener(Listener):
     """Holds a single instance of an active websocket sink listener"""
-    def __init__(self, sink_ip: str):
+    def __init__(self, sink_ip: IPAddressType):
         super().__init__(sink_ip)
         self._queue = asyncio.Queue(200)
 
     async def open(self) -> None:
         """Doesn't do anything for http"""
 
-    def send(self, sink_ip: str, data: bytes) -> bool:
+    def send(self, sink_ip: IPAddressType, data: bytes) -> bool:
         """Send data to the websocket, returns false if the socket is dead"""
         if self._active:
             if sink_ip == self._sink_ip:
@@ -79,14 +78,14 @@ class APIWebStream():
         app.websocket("/ws/{sink_ip}/")(self.websocket_mp3_stream)
         app.get("/stream/{sink_ip}/", tags=["Stream"])(self.http_mp3_stream)
 
-    def sink_callback(self, sink_ip: str, data: bytes) -> None:
+    def sink_callback(self, sink_ip: IPAddressType, data: bytes) -> None:
         """Callback for sinks to have data sent out to websockets"""
         for _, listener in enumerate(self._listeners):
             if not listener.send(sink_ip, data):  # Returns false on receive error
                 #self._listeners.remove(self._listeners[idx])
                 pass
 
-    async def websocket_mp3_stream(self, websocket: WebSocket, sink_ip: str):
+    async def websocket_mp3_stream(self, websocket: WebSocket, sink_ip: IPAddressType):
         """FastAPI handler"""
         listener: WebsocketListener = WebsocketListener(sink_ip, websocket)
         await listener.open()
@@ -94,7 +93,7 @@ class APIWebStream():
         while True:  # Keep the connection open until something external closes it.
             await asyncio.sleep(10000)
 
-    async def http_mp3_stream(self, sink_ip: str):
+    async def http_mp3_stream(self, sink_ip: IPAddressType):
         """Streams MP3 frames from ScreamRouter"""
         listener: HTTPListener = HTTPListener(sink_ip)
         await listener.open()

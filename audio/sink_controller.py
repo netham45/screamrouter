@@ -1,15 +1,18 @@
 """Controls the sink, keeps track of associated sources, and holds the ffmpeg thread object"""
+import pathlib
+import traceback
 from typing import List, Optional
 
+from api.api_webstream import APIWebStream
+from screamrouter_types import IPAddressType, PortType, SinkNameType
+from screamrouter_types import SinkDescription, SourceDescription
 from audio.ffmpeg_process_handler import FFMpegHandler
 from audio.ffmpeg_input_queue import FFMpegInputQueue, FFMpegInputQueueEntry
 from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
 from audio.stream_info import StreamInfo, create_stream_info
 from audio.ffmpeg_output_threads import FFMpegMP3Thread, FFMpegPCMThread
 
-from configuration.configuration_types import SinkDescription, SourceDescription
 
-from api.api_webstream import APIWebStream
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -35,21 +38,27 @@ class SinkController():
                                                             self.__channels,
                                                             self.__channel_layout)
         """Output stream info"""
-        self.sink_ip: str = sink_info.ip
+        if sink_info.ip is None:
+            for line in traceback.format_stack():
+                print(line)
+            raise ValueError("Running Sink Controller IP can't be null")
+        self.sink_ip: IPAddressType = sink_info.ip
         """Sink IP"""
-        self._sink_port: int = sink_info.port
+        if sink_info.port is None:
+            raise ValueError("Running Sink Controller Port can't be null")
+        self._sink_port: PortType = sink_info.port
         """Sink Port"""
-        self.name: str = sink_info.name
+        self.name: SinkNameType = sink_info.name
         """Sink Name"""
         self.__controller_sources: List[SourceDescription] = sources
         """Sources this Sink has"""
         self.sources: List[SourceToFFMpegWriter] = []
         """Sources this Sink is playing"""
-        self.__pipe_path: str = f"./pipes/scream-{self.sink_ip}-"
+        self.__pipe_path_base: str = f"./pipes/scream-{self.sink_ip}-"
         """Per-sink pipe path"""
-        self.__fifo_in_pcm: str = self.__pipe_path + "in-pcm"
+        self.__fifo_in_pcm: str = self.__pipe_path_base + "in-pcm"
         """Input file from ffmpeg PCM output"""
-        self.__fifo_in_mp3: str = self.__pipe_path + "in-mp3"
+        self.__fifo_in_mp3: str = self.__pipe_path_base + "in-mp3"
         """Input file from ffmpeg MP3 output"""
         self.__ffmpeg: FFMpegHandler = FFMpegHandler(self.sink_ip,
                                                      self.__fifo_in_pcm,
@@ -75,8 +84,9 @@ class SinkController():
         """Holds the thread to listen to the input queue and send it to ffmpeg"""
 
         for source in self.__controller_sources:
-            self.sources.append(SourceToFFMpegWriter(source.ip,
-                                                     self.__pipe_path + source.ip,
+            pipename: pathlib.Path = pathlib.Path(self.__pipe_path_base + str(source.ip))
+            self.sources.append(SourceToFFMpegWriter(str(source.ip),  # Tag, not IP
+                                                     pipename,
                                                      self.sink_ip,
                                                      source.volume))
 
@@ -84,7 +94,7 @@ class SinkController():
         """Updates the source volume to the specified volume.
            Does nothing if the source is not playing to this sink."""
         for source in self.sources:
-            if source.tag == controllersource.ip:
+            if source.tag == str(controllersource.ip):
                 source.volume = controllersource.volume
                 self.__ffmpeg.set_input_volume(source, controllersource.volume)
 
@@ -100,10 +110,10 @@ class SinkController():
                 active_sources.append(source)
         return active_sources
 
-    def __get_source_by_ip(self, ip: str) -> Optional[SourceToFFMpegWriter]:
+    def __get_source_by_tag(self, tag: str) -> Optional[SourceToFFMpegWriter]:
         """Gets a SourceInfo by IP address"""
         for source in self.sources:
-            if source.tag == ip:
+            if source.tag == tag:
                 return source
         return None
 
@@ -140,15 +150,15 @@ class SinkController():
     def process_packet_from_queue(self, entry: FFMpegInputQueueEntry) -> None:
         """Callback for the queue thread to pass packets for processing"""
         source: Optional[SourceToFFMpegWriter]
-        source = self.__get_source_by_ip(entry.source_ip)
+        source = self.__get_source_by_tag(entry.tag)
         if not source is None:
             self.__check_for_inactive_sources()
             self.__update_source_attributes_and_open_source(source, entry.data[:5])
             source.write(entry.data[5:])  # Write the data to the output fifo
 
-    def add_packet_to_queue(self, source_ip: str, data: bytes) -> None:
+    def add_packet_to_queue(self, tag: str, data: bytes) -> None:
         """Sends data from the main receiver to ffmpeg after verifying it's on our list"""
-        self.__queue_thread.queue(FFMpegInputQueueEntry(source_ip, data))
+        self.__queue_thread.queue(FFMpegInputQueueEntry(tag, data))
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
