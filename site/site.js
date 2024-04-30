@@ -794,7 +794,6 @@ function do_update_sink_equalizer() {
         "b18": (200 - get_field_value(dialog, "eq_b18"))/100
     }
     call_api("sinks/" + sinkname + "/equalizer/", "POST", JSON.stringify(equalizer), reload_callback);
-    dismiss_dialog();
 }
 
 function do_add_route() {

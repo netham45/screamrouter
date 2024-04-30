@@ -3,6 +3,7 @@ import os
 import sys
 from copy import copy
 
+import time
 from typing import List, Optional
 
 import yaml
@@ -63,6 +64,8 @@ class ConfigurationController:
         """Port for receiver to listen on, can be changed by load_yaml"""
         self.pipes_dir: str = "./pipes/"
         """Folder for pipes to be stored in, can be changed by load_yaml"""
+        self.__starting = False
+        """Holds rather start_receiver is running so multiple instances don't go off at once"""
         self.__load_yaml()
         self.__start_receiver()
         print( "------------------------------------------------------------------------")
@@ -492,6 +495,9 @@ class ConfigurationController:
         """Start or restart the receiver"""
         if not self.__loaded:
             return
+        while self.__starting:
+            time.sleep(.1)
+        self.__starting = True
         self.__save_yaml()
         self.__build_real_sinks_to_real_sources()
         if self.__receiverset:
@@ -514,7 +520,7 @@ class ConfigurationController:
                         self.__receiver.register_sink(sink)
                         self.__sink_objects.append(sink)
                         break
-
+        self.__starting = False
     # Sink Finders
     def __get_sink_by_name(self, name: str) -> SinkDescription:
         """Returns a sink by name"""

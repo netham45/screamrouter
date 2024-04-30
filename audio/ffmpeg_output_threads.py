@@ -82,6 +82,9 @@ class FFMpegMP3Thread(FFMpegOutputThread):
             while bytes_searched < max_bytes_to_search:
                 bytes_searched = bytes_searched + 1
                 bytesin: bytearray = bytearray(self._read_bytes(1))
+                if len(bytesin) == 0:
+                    raise InvalidHeaderException(
+                        f"[Sink:{self._sink_ip}] Couldn't read from ffmpeg")
                 if bytesin[0] == 255:
                     header = bytesin + self._read_bytes(header_length - 1)
                     try:

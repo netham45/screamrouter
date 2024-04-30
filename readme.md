@@ -13,6 +13,7 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Automatically saves to YAML on setting change
 * Uses ffmpeg to mix sources together into final sink stream to be played to the Scream sink
 * Can use ffmpeg to delay sinks so sinks line up better
+* Can adjust equalization for any sink
 
 ### Use Cases
 * Mixing one or many Scream Sources to one or many Scream Receivers for a whole-house audio setup
@@ -22,6 +23,7 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Programatically enable/disable sinks, or adjust the volume through the FastAPI API, or through Home Assistant
 * Play back sound effects and Text to Speech to arbitrary Sinks from Home Assistant automations
 * Line up speakers with differing timings by delaying one
+* Adjusting EQ to a cheap speaker so it sounds better
 
 
 ![Screenshot of ScreamRouter](/images/ScreamRouter.png)

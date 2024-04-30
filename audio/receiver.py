@@ -34,6 +34,7 @@ class Receiver(threading.Thread):
         logger.info("[Recevier] Stopping")
         self.running = False
         self.sock.close()
+        self.join()
 
     def __check_source_packet(self, source_ip: str, data: bytes) -> bool:
         """Verifies a packet is the right length"""
@@ -57,8 +58,11 @@ class Receiver(threading.Thread):
 
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks"""
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 65535)
-        self.sock.bind(("", self.port))
+        if self.running:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 65535)
+            self.sock.bind(("", self.port))
+        else:
+            return
 
         recvbuf = bytearray(1157)
         while self.running:
@@ -71,7 +75,7 @@ class Receiver(threading.Thread):
                             sink.add_packet_to_queue(addr[0], recvbuf)
                 except OSError:
                     logger.warning("[Receiver] Failed to read from incoming sock, exiting")
-                    return
+                    break
         logger.info("[Receiver] Main thread ending sinks")
         for sink in self.sinks:
             logger.info("[Receiver] Stopping sink %s", sink.sink_ip)
@@ -79,5 +83,6 @@ class Receiver(threading.Thread):
         for sink in self.sinks:
             logger.debug("[Receiver] Waiting for sink %s to stop", sink.sink_ip)
             sink.wait_for_threads_to_stop()
+        self.sock.close()
 
         logger.info("[Receiver] Main thread stopped")
