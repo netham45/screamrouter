@@ -9,6 +9,7 @@ from typing import List, Optional
 import yaml
 
 from api.api_types import Equalizer
+from api.api_webstream import APIWebStream
 from audio.ffmpeg_url_play_thread import FFMpegPlayURL
 from audio.receiver import Receiver
 import audio.sink_controller
@@ -16,8 +17,6 @@ from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
 
 from configuration.configuration_types import SinkDescription, SourceDescription
 from configuration.configuration_types import RouteDescription, InUseError
-
-from api.api_webstream import APIWebStream
 
 from logger import get_logger, LOGS_DIR, CONSOLE_LOG_LEVEL
 
@@ -210,7 +209,7 @@ class ConfigurationController:
         source.set_volume(volume)
         self.__apply_volume_change()
         return True
-    
+
     def update_sink_equalizer(self, sink_name: str, equalizer: Equalizer) -> bool:
         """Sets the volume for sink sink_id to volume"""
         sink: SinkDescription = self.__get_sink_by_name(sink_name)

@@ -153,4 +153,3 @@ class RouteDescription(BaseModel):
         """Verifies volume then sets i"""
         verify_volume(volume)
         self.volume = volume
-

@@ -16,7 +16,8 @@ logger = get_logger(__name__)
 class FFMpegHandler(threading.Thread):
     """Handles an FFMpeg process for a sink"""
     def __init__(self, tag, fifo_in_pcm: str, fifo_in_mp3: str,
-                  sources: List[SourceToFFMpegWriter], sink_info: StreamInfo, equalizer: Equalizer, delay: int = 0):
+                  sources: List[SourceToFFMpegWriter],
+                  sink_info: StreamInfo, equalizer: Equalizer, delay: int = 0):
         super().__init__(name=f"[Sink:{tag}] ffmpeg Thread")
         self.__fifo_in_pcm: str = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""

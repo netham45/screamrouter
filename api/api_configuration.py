@@ -6,7 +6,8 @@ import uvicorn
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from api.api_types import PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup, PostURL, Equalizer
+from api.api_types import PostRoute, PostSink, PostSinkGroup, PostSource, PostSourceGroup, PostURL
+from api.api_types import Equalizer
 from configuration.configuration_controller import SinkDescription, SourceDescription
 from configuration.configuration_controller import RouteDescription, ConfigurationController
 from logger import get_logger
@@ -41,7 +42,7 @@ class APIConfiguration(threading.Thread):
                       tags=["Sink Configuration"])(self.set_sink_volume)
         self._app.post("/sinks/{sink_name}/equalizer/",
                        tags=["Sink Configuration"])(self.set_sink_equalizer)
-        
+
         self._app.post("/sinks/{sink_name}/play/{volume}",
                        tags=["Sink Playback"])(self.sink_play)
 
@@ -97,7 +98,7 @@ class APIConfiguration(threading.Thread):
     def set_sink_equalizer(self, sink_name: str, equalizer: Equalizer) -> bool:
         """Sets the equalizer for a sink"""
         return self._configuration_controller.update_sink_equalizer(sink_name, equalizer)
-    
+
     def set_sink_volume(self, sink_name: str, volume: float) -> bool:
         """Sets the volume for a sink"""
         return self._configuration_controller.update_sink_volume(sink_name, volume)
