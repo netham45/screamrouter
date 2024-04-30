@@ -1,9 +1,9 @@
 """Types used by the configuration controller"""
 from typing import List
 from pydantic import BaseModel
-from configuration.type_verification import verify_volume, verify_bit_depth, verify_channel_layout
+from configuration.type_verification import verify_volume, verify_delay, verify_bit_depth
 from configuration.type_verification import verify_channels, verify_ip, verify_name
-from configuration.type_verification import verify_port, verify_sample_rate
+from configuration.type_verification import verify_port, verify_sample_rate, verify_channel_layout
 
 from logger import get_logger
 
@@ -40,12 +40,14 @@ class SinkDescription(BaseModel):
     """Sink Channels Rate"""
     channel_layout: str
     """Sink Channel Layout"""
+    delay: int
+    """Delay in ms"""
     def __init__(self, name: str, ip: str,
                  port: int, is_group: bool,
                  enabled: bool, group_members: List[str],
                  volume: float, bit_depth: int = 32,
                  sample_rate: int = 48000, channels: int = 2,
-                 channel_layout: str = "stereo"):
+                 channel_layout: str = "stereo", delay: int = 0):
         if not isinstance(channel_layout, str):
             channel_layout = str(channel_layout)
         if not is_group:
@@ -67,12 +69,18 @@ class SinkDescription(BaseModel):
                          bit_depth = bit_depth,
                          sample_rate = sample_rate,
                          channels = channels,
-                         channel_layout = channel_layout)
+                         channel_layout = channel_layout,
+                         delay = delay)
 
     def set_volume(self, volume: float):
-        """Verifies volume then sets i"""
+        """Verifies volume then sets it"""
         verify_volume(volume)
         self.volume = volume
+
+    def set_delay(self, delay: int):
+        """Verifies delay then sets it"""
+        verify_delay(delay)
+        self.delay = delay
 
 class SourceDescription(BaseModel):
     """

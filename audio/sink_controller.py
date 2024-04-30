@@ -55,7 +55,8 @@ class SinkController():
                                                      self.__fifo_in_pcm,
                                                      self.__fifo_in_mp3,
                                                      self.__get_open_sources(),
-                                                     self.__stream_info)
+                                                     self.__stream_info,
+                                                     self.sink_info.delay)
         """ffmpeg handler"""
         self.__webstream: Optional[APIWebStream] = websocket
         """Holds the websock object to copy audio to, passed through to MP3 listener thread"""
@@ -85,6 +86,10 @@ class SinkController():
             if source.tag == controllersource.ip:
                 source.volume = controllersource.volume
                 self.__ffmpeg.set_input_volume(source, controllersource.volume)
+
+    def update_delay(self, delay: int) -> None:
+        """Updates the ffmpeg delay to the specified delay."""
+        self.__ffmpeg.set_delay(delay)
 
     def __get_open_sources(self) -> List[SourceToFFMpegWriter]:
         """Build a list of active IPs, exclude ones that aren't open"""

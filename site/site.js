@@ -556,6 +556,7 @@ function update_sink_button() {
     set_field_value(dialog, "sinkip", sinkinfo.ip);
     set_field_value(dialog, "sinkport", sinkinfo.port);
     set_field_value(dialog, "sinkchannels", sinkinfo.channels);
+    set_field_value(dialog, "sinkdelay", sinkinfo.delay);
     var bitdepthselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkbitdepth")][0];
     var samplerateselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinksamplerate")][0];
     var channellayoutselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkchannellayout")][0];
@@ -658,7 +659,8 @@ function do_add_sink() {
         "bit_depth": get_select_selected(bitdepthselect),
         "sample_rate": get_select_selected(samplerateselect),
         "channels": get_field_value(dialog, "sinkchannels"),
-        "channel_layout": get_select_selected(channellayoutselect)
+        "channel_layout": get_select_selected(channellayoutselect),
+        "delay": get_field_value(dialog, "sinkdelay"),
         
     };
     call_api("sinks", "POST", JSON.stringify(data), reload_callback);
@@ -677,7 +679,8 @@ function do_update_sink() {
         "bit_depth": get_select_selected(bitdepthselect),
         "sample_rate": get_select_selected(samplerateselect),
         "channels": get_field_value(dialog, "sinkchannels"),
-        "channel_layout": get_select_selected(channellayoutselect)
+        "channel_layout": get_select_selected(channellayoutselect),
+        "delay": get_field_value(dialog, "sinkdelay"),
         
     };
     call_api("sinks", "PUT", JSON.stringify(data), reload_callback);

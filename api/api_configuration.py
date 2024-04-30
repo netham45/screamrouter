@@ -1,8 +1,4 @@
 """API endpoints to configure the controller"""
-import logging
-import logging.config
-import sys
-import time
 import traceback
 from typing import List
 import threading
@@ -83,33 +79,10 @@ class APIConfiguration(threading.Thread):
         self.start()
 
     def run(self):
-        current_time: str = time.strftime("%Y%m%d%H%M%S")
         uvicorn.run(self._app,
                     port=self._configuration_controller.api_port,
                     host='0.0.0.0',
                     log_config="uvicorn_log_config.yaml")
-        logger_error = logging.getLogger("uvicorn.error")
-        logger_access = logging.getLogger("uvicorn.access")
-
-        stdout_log_formatter = logging.Formatter(
-            '%(name)s: %(asctime)s | %(levelname)s | %(filename)s:%(lineno)s | %(message)s'
-        )
-        file_log_formatter = logging.Formatter(
-            '%(name)s: %(asctime)s | %(levelname)s | %(filename)s:%(lineno)s | %(process)d | %(message)s'
-        )
-        stdout_log_handler = logging.StreamHandler(stream=sys.stdout)
-        stdout_log_handler.setLevel(logging.INFO)
-        stdout_log_handler.setFormatter(stdout_log_formatter)
-        
-        file_handler = logging.FileHandler(f"logs/{uvicorn}.{current_time}.log")
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(file_log_formatter)
-        logger_error.removeHandler(logging.getLogger().handlers[0])
-        logger_error.addHandler(stdout_log_handler)
-        logger_error.addHandler(file_handler)
-        logger_access.removeHandler(logging.getLogger().handlers[0])
-        logger_access.addHandler(file_handler)
-
     def __api_exception_handler(self, _, exception: Exception) -> JSONResponse:
         """Error handler so controller can throw exceptions that get returned to clients"""
         return JSONResponse(
@@ -121,6 +94,10 @@ class APIConfiguration(threading.Thread):
     def set_sink_volume(self, sink_name: str, volume: float) -> bool:
         """Sets the volume for a sink"""
         return self._configuration_controller.update_sink_volume(sink_name, volume)
+
+    def set_sink_delay(self, sink_name: str, delay: int) -> bool:
+        """Sets the volume for a sink"""
+        return self._configuration_controller.update_sink_delay(sink_name, delay)
 
     def sink_play(self, url: PostURL, sink_name: str, volume: float):
         """Plays a URL"""
@@ -138,7 +115,8 @@ class APIConfiguration(threading.Thread):
                                                                         sink.bit_depth,
                                                                         sink.sample_rate,
                                                                         sink.channels,
-                                                                        sink.channel_layout))
+                                                                        sink.channel_layout,
+                                                                        sink.delay))
 
     def update_sink(self, sink: PostSink) -> bool:
         """Updaet a sink"""
@@ -148,7 +126,8 @@ class APIConfiguration(threading.Thread):
                                                                            sink.bit_depth,
                                                                            sink.sample_rate,
                                                                            sink.channels,
-                                                                           sink.channel_layout))
+                                                                           sink.channel_layout,
+                                                                           sink.delay))
 
     def add_sink_group(self, sink_group: PostSinkGroup) -> bool:
         """Add a new sink group"""

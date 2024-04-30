@@ -12,6 +12,7 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Has a Home Assistant Custom Component for managing Sinks and playing media back through Sinks (See: https://github.com/netham45/screamrouter_ha_component )
 * Automatically saves to YAML on setting change
 * Uses ffmpeg to mix sources together into final sink stream to be played to the Scream sink
+* Can use ffmpeg to delay sinks so sinks line up better
 
 ### Use Cases
 * Mixing one or many Scream Sources to one or many Scream Receivers for a whole-house audio setup
@@ -20,6 +21,7 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Use any streaming MP3 player as a sink via the exposed API
 * Programatically enable/disable sinks, or adjust the volume through the FastAPI API, or through Home Assistant
 * Play back sound effects and Text to Speech to arbitrary Sinks from Home Assistant automations
+* Line up speakers with differing timings by delaying one
 
 
 ![Screenshot of ScreamRouter](/images/ScreamRouter.png)
@@ -49,7 +51,7 @@ The interface will update the yaml so any notes, non-standard fields, or custom 
 Each Sink, Source, and Route has a name. This name is used as the reference for routes and groups to track members. Clicking Add Sink will prompt you for the information to make one. The names must be unique between Sinks and Sink Groups, Sources and Source Groups, and all Routes.
 
 ### Sinks
-Each Sink holds information for the destination IP, port, volume, sample rate, bit depth, channels, channel layout, and the sink name.
+Each Sink holds information for the destination IP, port, volume, sample rate, bit depth, channels, channel layout, and the sink name, and how many ms it is delayed
 
 ![Screenshot of Add Sink Dialog](/images/AddSink.png)
 
@@ -68,6 +70,7 @@ sinks:
   channel_layout: stereo
   channels: 2
   samplerate: 48000
+  delay: 0
 - enabled: true
   ip: 192.168.3.111
   name: Bedroom
@@ -77,6 +80,7 @@ sinks:
   channel_layout: stereo
   channels: 2
   samplerate: 48000
+  delay: 0
 ```
 
 ### Routes
@@ -197,6 +201,8 @@ Each ScreamRouter Route is a link of one Source to one Sink, and each Sink is an
 ### Volume
 Each Source, Route, and Sink has a volume control. The default volume of 1 is unattenuated. The volumes for each sink, sink group, route, source group, and source it passes through are multiplied together to come up with a final volume.
 
+### Delay
+Delays will add gaps to streams when sources come in and drop out. To avoid this set delays to 0.
 
 ## Technical Info
 

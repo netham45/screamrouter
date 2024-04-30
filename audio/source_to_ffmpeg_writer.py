@@ -109,5 +109,5 @@ class SourceToFFMpegWriter(threading.Thread):
                 except ValueError:
                     logger.warning("[Sink:%s][Source:%s] Failed to write to ffmpeg",
                                     self.__sink_ip, self.tag)
-            time.sleep(.0001)
+            time.sleep(.005)
         logger.debug("[Sink:%s] Queue thread exit", self.__sink_ip)

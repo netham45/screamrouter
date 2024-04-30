@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 class FFMpegHandler(threading.Thread):
     """Handles an FFMpeg process for a sink"""
     def __init__(self, tag, fifo_in_pcm: str, fifo_in_mp3: str,
-                  sources: List[SourceToFFMpegWriter], sink_info: StreamInfo):
+                  sources: List[SourceToFFMpegWriter], sink_info: StreamInfo, delay: int = 0):
         super().__init__(name=f"[Sink:{tag}] ffmpeg Thread")
         self.__fifo_in_pcm: str = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
@@ -33,6 +33,8 @@ class FFMpegHandler(threading.Thread):
         """Holds a list of active sources"""
         self.__sink_info: StreamInfo = sink_info
         """Holds the sink configuration"""
+        self.__delay: int = delay
+        """Stream delay in ms"""
         self.start()
         self.start_ffmpeg()
 
@@ -79,7 +81,8 @@ class FFMpegHandler(threading.Thread):
             amix_inputs = amix_inputs + f"[a{idx}]"  # amix input
         inputs: int = len(self.__sources)
         combined_filter_string: str = full_filter_string + amix_inputs
-        combined_filter_string = combined_filter_string + f"amix=normalize=0:inputs={inputs}"
+        amix_string = f"amix=normalize=0:inputs={inputs},adelay=delays={self.__delay}:all=1"
+        combined_filter_string = combined_filter_string + amix_string
         ffmpeg_command_parts.extend(["-filter_complex", combined_filter_string])
         return ffmpeg_command_parts
 
@@ -122,6 +125,13 @@ class FFMpegHandler(threading.Thread):
                                              stdin=subprocess.PIPE,
                                              stdout=subprocess.DEVNULL,
                                              stderr=subprocess.DEVNULL)
+
+    def set_delay(self, new_delay: int) -> None:
+        """Sets a delay for the sink"""
+        print(f"Setting delay to {new_delay}")
+        self.__delay = new_delay
+        if self.__ffmpeg_started:
+            self.__ffmpeg.kill()
 
     def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
         """Opens the ffmpeg instance"""
@@ -166,7 +176,7 @@ class FFMpegHandler(threading.Thread):
         """This thread monitors ffmpeg and restarts it if it ends or needs restarted"""
         while self.__running:
             if len(self.__sources) == 0:
-                time.sleep(.01)
+                time.sleep(.005)
                 continue
             if self.__ffmpeg_started:
                 self.__ffmpeg.wait()

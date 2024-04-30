@@ -21,6 +21,8 @@ class PostSink(BaseModel):
     """Channel Count"""
     channel_layout: str
     """Channel Layout"""
+    delay: int
+    """Delay in ms"""
 
 class PostSinkGroup(BaseModel):
     """Post data to configure or add a Sink Group"""

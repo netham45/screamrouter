@@ -39,6 +39,11 @@ def verify_volume(volume: float) -> None:
     if volume < 0 or volume > 1:
         raise ValueError(f"Invalid Volume {volume} is not between 0 and 1")
 
+def verify_delay(delay: int) -> None:
+    """Verifies a delay is between 0 and 5000"""
+    if delay < 0 or delay > 5000:
+        raise ValueError(f"Invalid Delay {delay} is not between 0 and 5000")
+
 def verify_sample_rate(sample_rate: int) -> None:
     """Verifies a sample rate has a base of 44.1 or 48 kHz"""
     if sample_rate % 44100 != 0 and sample_rate % 48000 != 0:

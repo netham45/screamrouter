@@ -214,6 +214,13 @@ class ConfigurationController:
         self.__apply_volume_change()
         return True
 
+    def update_sink_delay(self, sink_name: str, delay: int) -> bool:
+        """Sets the delay for sink sink_id to delay"""
+        sink: SinkDescription = self.__get_sink_by_name(sink_name)
+        sink.set_delay(delay)
+        self.__apply_delay_change()
+        return True
+
     def update_route_volume(self, route_name: str, volume: float) -> bool:
         """Sets the volume for route route_id to volume"""
         route: RouteDescription = self.__get_route_by_name(route_name)
@@ -315,6 +322,14 @@ class ConfigurationController:
                         _sink.update_source_volume(source)
         self.__save_yaml()
 
+    def __apply_delay_change(self) -> None:
+        """Applies the current controller delay to the running ffmpeg instances"""
+        for sink in self.__sink_objects:
+            for _sink in self.__sink_descriptions:
+                if sink.name == _sink.name:
+                    sink.update_delay(_sink.delay)
+        self.__save_yaml()
+
     def __load_yaml(self) -> None:
         """Loads the initial config"""
         try:
@@ -326,7 +341,7 @@ class ConfigurationController:
                                               sink_entry["enabled"], [],
                                               sink_entry["volume"], sink_entry["bitdepth"],
                                               sink_entry["samplerate"], sink_entry["channels"],
-                                              sink_entry["channel_layout"]))
+                                              sink_entry["channel_layout"], sink_entry["delay"]))
             for source_entry in config["sources"]:
                 self.add_source(SourceDescription(source_entry["name"], source_entry["ip"],
                                                   False, source_entry["enabled"],
@@ -378,7 +393,7 @@ class ConfigurationController:
                             "port": sink.port, "enabled": sink.enabled,
                             "volume": sink.volume, "bitdepth": sink.bit_depth,
                             "samplerate": sink.sample_rate, "channels": sink.channels,
-                            "channel_layout": sink.channel_layout}
+                            "channel_layout": sink.channel_layout, "delay": sink.delay}
                 sinks.append(_newsink)
             else:
                 _newsink = {"name": sink.name, "sinks": sink.group_members,

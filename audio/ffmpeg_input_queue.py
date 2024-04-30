@@ -47,5 +47,5 @@ class FFMpegInputQueue(threading.Thread):
             while len(self._queue) > 0:
                 entry = self._queue.popleft()
                 self._callback(entry)
-            time.sleep(.0001)
+            time.sleep(.005)
         logger.debug("[Sink:%s] Queue thread exit", self.__sink_ip)
