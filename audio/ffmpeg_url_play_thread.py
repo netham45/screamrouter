@@ -15,11 +15,15 @@ from logger import get_logger
 
 logger = get_logger(__name__)
 
+url_playback_semaphore: threading.Semaphore = threading.Semaphore(6)
+"""Max number of URLs playing at once, for limiting resource usage"""
+
 class FFMpegPlayURL(threading.Thread):
     """Handles playing a URL and forwarding the output from it to the main receiver"""
     def __init__(self, url: PlaybackURLType, volume: VolumeType, sink_info: SinkDescription,
                  fifo_in: pathlib.Path, source_tag: str, receiver: Receiver):
         """Plays a URL using ffmpeg and outputs it to a pipe name stored in fifo_in."""
+        url_playback_semaphore.acquire()
         super().__init__(name=f"[Sink:{sink_info.ip}] ffmpeg Playback {url}")
         self._url: PlaybackURLType = url
         """URL for Playback"""
@@ -92,3 +96,4 @@ class FFMpegPlayURL(threading.Thread):
         self.__ffmpeg.wait()
         if os.path.exists(self.__fifo_in_url):
             os.remove(self.__fifo_in_url)
+        url_playback_semaphore.release()

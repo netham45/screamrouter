@@ -1,5 +1,6 @@
 """Controls the sink, keeps track of associated sources, and holds the ffmpeg thread object"""
 import pathlib
+import threading
 from typing import List, Optional
 
 from api.api_webstream import APIWebStream
@@ -65,6 +66,8 @@ class SinkController():
         self.__queue_thread: FFMpegInputQueue = FFMpegInputQueue(self.process_packet_from_queue,
                                                                  self.sink_info.ip)
         """Holds the thread to listen to the input queue and send it to ffmpeg"""
+        self.lock: threading.Lock = threading.Lock()
+        """Lock to ensure the controller is only accessed by one other thread at a time"""
 
         for source in self.__controller_sources:
             pipename: pathlib.Path = pathlib.Path(self.__pipe_path_base + str(source.ip))
@@ -83,7 +86,9 @@ class SinkController():
 
     def update_delay(self, delay: DelayType) -> None:
         """Updates the ffmpeg delay to the specified delay."""
+        self.lock.acquire()
         self.__ffmpeg.set_delay(delay)
+        self.lock.release()
 
     def __get_open_sources(self) -> List[SourceToFFMpegWriter]:
         """Build a list of active IPs, exclude ones that aren't open"""
@@ -103,8 +108,8 @@ class SinkController():
     def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
         for source in self.sources:
-            if not source.is_active(100) and source.is_open():
-                logger.info("[Sink:%s][Source:%s] Closing (Timeout = 100ms)",
+            if not source.is_active(300) and source.is_open():
+                logger.info("[Sink:%s][Source:%s] Closing (Timeout = 300ms)",
                             self.sink_info.ip,
                             source.tag)
                 source.close()
@@ -145,6 +150,7 @@ class SinkController():
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
+        self.lock.acquire()
         logger.debug("[Sink:%s] Stopping PCM thread", self.sink_info.ip)
         self.__pcm_thread.stop()
         logger.debug("[Sink:%s] Stopping MP3 thread", self.sink_info.ip)
@@ -156,9 +162,11 @@ class SinkController():
         logger.debug("[Sink:%s] Stopping sources", self.sink_info.ip)
         for source in self.sources:
             source.stop()
+        self.lock.release()
 
     def wait_for_threads_to_stop(self) -> None:
         """Waits for threads to stop"""
+        self.lock.acquire()
         self.__pcm_thread.join()
         logger.debug("[Sink:%s] PCM thread stopped", self.sink_info.ip)
         self.__mp3_thread.join()
@@ -171,12 +179,12 @@ class SinkController():
             source.join()
         logger.debug("[Sink:%s] sources stopped", self.sink_info.ip)
         logger.info("[Sink:%s] Stopped", self.sink_info.ip)
+        self.lock.release()
 
     def url_playback_done_callback(self, tag: str):
         """Callback for ffmpeg to clean up when playback is done, tag is the Source tag"""
         for source in self.sources:
             if source.tag == tag:
-                logger.debug("ffmpeg url playback ended callback called, removing %s", tag)
                 source.close()
                 source.stop()
                 self.sources.remove(source)

@@ -20,8 +20,12 @@ class SourceToFFMpegWriter(threading.Thread):
     def __init__(self, tag: str, fifo_file_name: pathlib.Path,
                  sink_ip: Optional[IPAddressType], volume: VolumeType):
         """Initializes a new Source object"""
+        print(f"Starting URL playback with ID {tag}")
         if sink_ip is None:
             raise ValueError("Can't start FFMPEG Writer without a Sink IP")
+        self.lock: threading.Lock = threading.Lock()
+        """Lock to ensure the controller is only accessed by one other thread at a time"""
+        self.lock.acquire()
         super().__init__(name=f"[Sink:{sink_ip}][Source:{tag}] Pipe Writer")
         self.tag: str = tag
         """The source's tag, generally it's IP."""
@@ -56,6 +60,8 @@ class SourceToFFMpegWriter(threading.Thread):
 
     def is_active(self, active_time_ms: int = 200) -> bool:
         """Returns if the source has been active in the last active_time_ms ms"""
+        if not self.__running:
+            return False
         now: float = time.time() * 1000
         if now - self.__last_data_time > active_time_ms:
             return False
@@ -63,11 +69,15 @@ class SourceToFFMpegWriter(threading.Thread):
 
     def update_activity(self) -> None:
         """Sets the source last active time"""
+        if not self.__running:
+            return
         now: float = time.time() * 1000
         self.__last_data_time = now
 
     def is_open(self) -> bool:
         """Returns if the source is open"""
+        if not self.__running:
+            return False
         return self.__open
 
     def __make_screamrouter_to_ffmpeg_pipe(self):
@@ -77,22 +87,33 @@ class SourceToFFMpegWriter(threading.Thread):
 
     def open(self) -> None:
         """Makes the pipe to pass this source to FFMPEG, opens the source"""
+        self.lock.acquire()
+        if not self.__running:
+            return
         if not self.__open:
             self.update_activity()
             fd = os.open(self.fifo_file_name, os.O_RDWR)
             self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
             self.__open = True
             logger.info("[Sink:%s][Source:%s] Opened", self.__sink_ip, self.tag)
+        self.lock.release()
 
     def close(self) -> None:
         """Closes the source"""
+        if not self.__running:
+            return
+        self.lock.acquire()
         if self.is_open():
             self.__fifo_file_handle.close()
             self.__open = False
             logger.info("[Sink:%s][Source:%s] Closed", self.__sink_ip, self.tag)
+        self.lock.release()
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""
+        if not self.__running:
+            return
+        self.lock.acquire()
         if self.is_open():
             self.__open = False
             self.__fifo_file_handle.close()
@@ -101,13 +122,17 @@ class SourceToFFMpegWriter(threading.Thread):
         if os.path.exists(self.fifo_file_name):
             os.remove(self.fifo_file_name)
         self.__running = False
+        self.lock.release()
 
     def write(self, data: bytes) -> None:
         """Writes data to this source's FIFO"""
+        if not self.__running:
+            return
         self._queue.append(data)
         self.update_activity()
 
     def run(self) -> None:
+        self.lock.release()
         while self.__running:
             while len(self._queue) > 0 and self.is_open():
                 data: bytes = self._queue.popleft()

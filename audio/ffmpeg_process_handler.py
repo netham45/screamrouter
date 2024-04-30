@@ -40,6 +40,9 @@ class FFMpegHandler(threading.Thread):
         """Stream delay in ms"""
         self.equalizer: Equalizer = equalizer
         """Equalizer"""
+        self.lock: threading.Lock = threading.Lock()
+        """Lock to ensure this thread is only accessed by one other thread at a time"""
+        self.lock.acquire()
         self.start()
         self.start_ffmpeg()
 
@@ -140,15 +143,19 @@ class FFMpegHandler(threading.Thread):
                                              stdin=subprocess.PIPE,
                                              stdout=subprocess.DEVNULL,
                                              stderr=subprocess.DEVNULL)
+            if self.lock.locked():
+                self.lock.release()
 
     def set_delay(self, new_delay: int) -> None:
         """Sets a delay for the sink"""
+        self.lock.acquire()
         self.__delay = new_delay
         if self.__ffmpeg_started:
             self.__ffmpeg.kill()
 
     def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
         """Opens the ffmpeg instance"""
+        self.lock.acquire()
         logger.debug("[Sink:%s] Resetting ffmpeg", self.__tag)
         self.__sources = sources
         if self.__ffmpeg_started:
@@ -158,6 +165,7 @@ class FFMpegHandler(threading.Thread):
         """Send ffmpeg a command.
            Commands consist of control character to enter a mode (default c) and a string to run."""
         logger.debug("[Sink:%s] Running ffmpeg command %s %s", self.__tag, command_char, command)
+        self.lock.acquire()
         try:
             if not self.__ffmpeg.stdin is None:
                 self.__ffmpeg.stdin.write(command_char.encode())
@@ -167,6 +175,7 @@ class FFMpegHandler(threading.Thread):
         except BrokenPipeError:
             logger.warning("[Sink:%s] Trying to send a comand to a closed instance of ffmpeg",
                             self.__tag)
+        self.lock.release()
 
     def set_input_volume(self, source: SourceToFFMpegWriter, volumelevel: float):
         """Run an ffmpeg command to set the input volume"""

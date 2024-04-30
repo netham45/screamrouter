@@ -4,6 +4,7 @@ import pathlib
 import sys
 from copy import copy
 
+import threading
 import time
 from typing import List, Optional
 
@@ -66,6 +67,8 @@ class ConfigurationController:
         """Folder for pipes to be stored in, can be changed by load_yaml"""
         self.__starting = False
         """Holds rather start_receiver is running so multiple instances don't go off at once"""
+        self.url_playback_lock: threading.Lock = threading.Lock()
+        """Lock to ensure URL playback is only started by one thread at a time"""
         self.__load_yaml()
         self.__start_receiver()
         print( "------------------------------------------------------------------------")
@@ -241,6 +244,7 @@ class ConfigurationController:
 
     def play_url(self, sink_name: SinkNameType, url: PlaybackURLType, volume: VolumeType) -> bool:
         """Plays a URL on the sink or all children sinks"""
+        self.url_playback_lock.acquire()
         sink: SinkDescription = self.__get_sink_by_name(sink_name)
         all_child_sinks: List[SinkDescription] = self.__get_real_sinks_from_sink(sink, sink.volume)
         found: bool = False
@@ -262,6 +266,7 @@ class ConfigurationController:
             pipe_path: pathlib.Path = pathlib.Path(pipe_name)
             FFMpegPlayURL(url, 1, all_child_sinks[0], pipe_path, tag, self.__receiver)
             self.__url_play_counter = self.__url_play_counter + 1
+        self.url_playback_lock.release()
         return found
 
     def stop(self) -> bool:
