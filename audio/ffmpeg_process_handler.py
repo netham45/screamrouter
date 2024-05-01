@@ -1,13 +1,11 @@
 """Handles the ffmpeg process for each sink"""
-import pathlib
 import subprocess
 import time
-
 import threading
-
 from typing import List
+from pathlib import Path
 
-from screamrouter_types import DelayType, Equalizer
+from screamrouter_types import Equalizer, VolumeType
 from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
 from audio.stream_info import StreamInfo
 from logger import get_logger
@@ -16,13 +14,13 @@ logger = get_logger(__name__)
 
 class FFMpegHandler(threading.Thread):
     """Handles an FFMpeg process for a sink"""
-    def __init__(self, tag, fifo_in_pcm: pathlib.Path, fifo_in_mp3: pathlib.Path,
+    def __init__(self, tag, fifo_in_pcm: Path, fifo_in_mp3: Path,
                   sources: List[SourceToFFMpegWriter],
-                  sink_info: StreamInfo, equalizer: Equalizer, delay: DelayType):
+                  sink_info: StreamInfo, equalizer: Equalizer):
         super().__init__(name=f"[Sink:{tag}] ffmpeg Thread")
-        self.__fifo_in_pcm: pathlib.Path = fifo_in_pcm
+        self.__fifo_in_pcm: Path = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
-        self.__fifo_in_mp3: pathlib.Path = fifo_in_mp3
+        self.__fifo_in_mp3: Path = fifo_in_mp3
         """Holds the filename for ffmpeg to output MP3 to"""
         self.__tag = tag
         """Holds a tag to put on logs"""
@@ -31,20 +29,20 @@ class FFMpegHandler(threading.Thread):
         self.__ffmpeg_started: bool = False
         """Holds rather ffmpeg is running"""
         self.__running: bool = True
-        """Holds rather we're monitoring ffmpeg to restart it"""
+        """Holds rather we're monitoring ffmpeg to restart it or waiting for the thread to end"""
         self.__sources: List[SourceToFFMpegWriter] = sources
         """Holds a list of active sources"""
         self.__sink_info: StreamInfo = sink_info
         """Holds the sink configuration"""
-        self.__delay: DelayType = delay
-        """Stream delay in ms"""
         self.equalizer: Equalizer = equalizer
         """Equalizer"""
-        self.lock: threading.Lock = threading.Lock()
-        """Lock to ensure this thread is only accessed by one other thread at a time"""
-        self.lock.acquire()
+        self.ffmpeg_not_running_lock: threading.Lock = threading.Lock()
+        """Lock to ensure this thread is only accessed by one other thread at a time
+           The thread is locked when ffmpeg is not running until ffmpeg starts again
+           This is to prevent multiple threads from trying to restart it at once"""
+        self.ffmpeg_not_running_lock.acquire()
+
         self.start()
-        #self.start_ffmpeg()
 
     def __get_ffmpeg_inputs(self, sources: List[SourceToFFMpegWriter]) -> List[str]:
         """Add an input for each source"""
@@ -56,7 +54,8 @@ class FFMpegHandler(threading.Thread):
             channel_layout = source.stream_attributes.channel_layout
             file_name = source.fifo_file_name
             # This is optimized to reduce latency and initial ffmpeg processing time
-            ffmpeg_command.extend(["-max_delay", "0",
+            ffmpeg_command.extend(["-blocksize", str(1152 * 4),
+                                   "-max_delay", "0",
                                    "-audio_preload", "0",
                                    "-max_probe_packets", "0",
                                    "-rtbufsize", "0",
@@ -80,34 +79,38 @@ class FFMpegHandler(threading.Thread):
         amix_inputs: str = ""
 
         # For each source IP add a aresample and append it to an input variable for amix
-        for idx, value in enumerate(sources):
-
+        for idx, source in enumerate(sources):
+            eq_str: str = "".join([
+                 "superequalizer=",
+                f"1b={source.source_info.equalizer.b1}:2b={source.source_info.equalizer.b2}:",
+                f"3b={source.source_info.equalizer.b3}:4b={source.source_info.equalizer.b4}:",
+                f"5b={source.source_info.equalizer.b5}:6b={source.source_info.equalizer.b6}:",
+                f"7b={source.source_info.equalizer.b1}:8b={source.source_info.equalizer.b8}:",
+                f"9b={source.source_info.equalizer.b7}:10b={source.source_info.equalizer.b10}:",
+                f"11b={source.source_info.equalizer.b1}:12b={source.source_info.equalizer.b12}:",
+                f"13b={source.source_info.equalizer.b9}:14b={source.source_info.equalizer.b14}:",
+                f"15b={source.source_info.equalizer.b11}:16b={source.source_info.equalizer.b16}:",
+                f"17b={source.source_info.equalizer.b13}:18b={source.source_info.equalizer.b18}"])
+            delay_str: str = f"adelay=delays={source.source_info.delay}:all=1"
             full_filter_string = "".join([full_filter_string,
-                                          f"[{idx}]volume@volume_{idx}={value.volume},",
-                                          f"aresample=isr={value.stream_attributes.sample_rate}:",
-                                          f"osr={value.stream_attributes.sample_rate}:",
-                                          f"async=500000[a{idx}],"])
+                                        f"[{idx}]volume@volume_{idx}={source.source_info.volume},",
+                                        f"aresample=isr={source.stream_attributes.sample_rate}:",
+                                        f"osr={self.__sink_info.sample_rate}:",
+                                        "async=500000,",
+                                        f"{delay_str},{eq_str}[a{idx}],"])
             amix_inputs = amix_inputs + f"[a{idx}]"  # amix input
         inputs: int = len(self.__sources)
         combined_filter_string: str = full_filter_string + amix_inputs
-        eq_str: str = "".join([f",superequalizer=1b={self.equalizer.b1}:2b={self.equalizer.b2}:",
-                               f"3b={self.equalizer.b3}:4b={self.equalizer.b4}:",
-                               f"5b={self.equalizer.b5}:6b={self.equalizer.b6}:",
-                               f"7b={self.equalizer.b1}:8b={self.equalizer.b8}:",
-                               f"9b={self.equalizer.b7}:10b={self.equalizer.b10}:",
-                               f"11b={self.equalizer.b1}:12b={self.equalizer.b12}:",
-                               f"13b={self.equalizer.b9}:14b={self.equalizer.b14}:",
-                               f"15b={self.equalizer.b11}:16b={self.equalizer.b16}:",
-                               f"17b={self.equalizer.b13}:18b={self.equalizer.b18}"])
-        amix_string = f"amix=normalize=0:inputs={inputs},adelay=delays={self.__delay}:all=1"
-        combined_filter_string = combined_filter_string + amix_string + eq_str
+        amix_string = f"amix=normalize=0:inputs={inputs}"
+        combined_filter_string = combined_filter_string + amix_string
         ffmpeg_command_parts.extend(["-filter_complex", combined_filter_string])
         return ffmpeg_command_parts
 
     def __get_ffmpeg_output(self) -> List[str]:
         """Returns the ffmpeg output"""
         ffmpeg_command_parts: List[str] = []
-        ffmpeg_command_parts.extend(["-avioflags", "direct",
+        ffmpeg_command_parts.extend([#"-blocksize", str(1152 * 32),
+                                     "-avioflags", "direct",
                                      "-y",
                                      "-f", f"s{self.__sink_info.bit_depth}le", 
                                      "-ac", f"{self.__sink_info.channels}",
@@ -144,23 +147,16 @@ class FFMpegHandler(threading.Thread):
                                                 stdin=subprocess.PIPE,
                                                 stdout=subprocess.DEVNULL,
                                                 stderr=subprocess.DEVNULL)
-                if self.lock.locked():
-                    self.lock.release()
-
-    def set_delay(self, new_delay: int) -> None:
-        """Sets a delay for the sink"""
-        self.__delay = new_delay
-        if self.__ffmpeg_started:
-            self.lock.acquire()
-            self.__ffmpeg_started = False
-            self.__ffmpeg.kill()
+                # This is where ffmpeg is running and the not running lock can be released
+                if self.ffmpeg_not_running_lock.locked():
+                    self.ffmpeg_not_running_lock.release()
 
     def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
         """Opens the ffmpeg instance"""        
         logger.debug("[Sink:%s] Resetting ffmpeg", self.__tag)
         self.__sources = sources
         if self.__ffmpeg_started:
-            self.lock.acquire()
+            self.ffmpeg_not_running_lock.acquire()  # Lock ffmpeg until it can restart
             self.__ffmpeg_started = False
             self.__ffmpeg.kill()
 
@@ -168,7 +164,8 @@ class FFMpegHandler(threading.Thread):
         """Send ffmpeg a command.
            Commands consist of control character to enter a mode (default c) and a string to run."""
         logger.debug("[Sink:%s] Running ffmpeg command %s %s", self.__tag, command_char, command)
-        self.lock.acquire()
+        # Lock ffmpeg before sending a command
+        self.ffmpeg_not_running_lock.acquire()
         try:
             if not self.__ffmpeg.stdin is None:
                 self.__ffmpeg.stdin.write(command_char.encode())
@@ -178,27 +175,26 @@ class FFMpegHandler(threading.Thread):
         except BrokenPipeError:
             logger.warning("[Sink:%s] Trying to send a comand to a closed instance of ffmpeg",
                             self.__tag)
-        self.lock.release()
+        # Release ffmpeg once a command is finished
+        self.ffmpeg_not_running_lock.release()
 
-    def set_input_volume(self, source: SourceToFFMpegWriter, volumelevel: float):
+    def set_input_volume(self, source: SourceToFFMpegWriter, volume: VolumeType):
         """Run an ffmpeg command to set the input volume"""
-        index: int = -1
         for idx, _source in enumerate(self.__sources):
             if source.tag == _source.tag:
-                index = idx
-        if index != -1:
-            command: str = f"volume@volume_{index} -1 volume {volumelevel}"
-            self.send_ffmpeg_command(command)
+                command: str = f"volume@volume_{idx} -1 volume {volume}"
+                self.send_ffmpeg_command(command)
+                return
 
     def stop(self) -> None:
         """Stop ffmpeg"""
         self.__running = False
         self.__ffmpeg_started = False
-        self.send_ffmpeg_command("", "q")
-        self.__ffmpeg.kill()
+        if self.__ffmpeg_started:
+            self.__ffmpeg.kill()
 
     def run(self) -> None:
-        """This thread monitors ffmpeg and restarts it if it ends or needs restarted"""
+        """This thread monitors ffmpeg and restarts it if it ends or otherwise needs restarted"""
 
         while self.__running:
             if len(self.__sources) == 0:

@@ -130,7 +130,7 @@ DIV.dialog {
     backdrop-filter: blur(5px);
 }
 
-DIV#update_sink_equalizer {
+DIV#update_equalizer {
     width: 750px;
     margin-left: -375px;
 }

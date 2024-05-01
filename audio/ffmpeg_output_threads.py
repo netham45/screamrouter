@@ -1,12 +1,11 @@
 """Threads to handle the PCM and MP3 output from ffmpeg"""
 import os
-import pathlib
 import select
 import threading
 import socket
 import io
 import fcntl
-
+from pathlib import Path
 from typing import Optional, Tuple
 
 from screamrouter_types import IPAddressType, PortType
@@ -20,9 +19,9 @@ logger = get_logger(__name__)
 
 class FFMpegOutputThread(threading.Thread):
     """Handles listening for output from ffmpeg, extended by codec-specific classes"""
-    def __init__(self, fifo_in: pathlib.Path, sink_ip: IPAddressType, threadname: str):
+    def __init__(self, fifo_in: Path, sink_ip: IPAddressType, threadname: str):
         super().__init__(name = threadname)
-        self._fifo_in: pathlib.Path = fifo_in
+        self._fifo_in: Path = fifo_in
         """Holds the ffmpeg output pipe name this sink will use as a source"""
         self._sink_ip: IPAddressType = sink_ip
         """Holds the sink IP for the web api to filter based on"""
@@ -50,8 +49,10 @@ class FFMpegOutputThread(threading.Thread):
         if os.path.exists(self._fifo_in):
             os.remove(self._fifo_in)
 
-    def _read_bytes(self, count: int) -> bytes:
-        """Reads count bytes, blocks until self.__running goes false or count bytes are received."""
+    def _read_bytes(self, count: int, firstread: bool = False) -> bytes:
+        """Reads count bytes, blocks until self.__running goes false or count bytes are received.
+        firstread indicates it should return the first read regardless of how many bytes it read
+        as long as it read something."""
         dataout:bytearray = bytearray() # Data to return
         while self._running and len(dataout) < count:
             ready = select.select([self._fd], [], [], .1)
@@ -59,6 +60,8 @@ class FFMpegOutputThread(threading.Thread):
                 try:
                     data: bytes = self._fd.read(count - len(dataout))
                     if data:
+                        if firstread:
+                            return data
                         dataout.extend(data)
                 except ValueError:
                     logger.warning("[Sink:%s] Can't read ffmpeg output", self._sink_ip)
@@ -67,7 +70,7 @@ class FFMpegOutputThread(threading.Thread):
 
 class FFMpegMP3Thread(FFMpegOutputThread):
     """Handles listening for MP3 output from ffmpeg"""
-    def __init__(self, fifo_in: pathlib.Path, sink_ip: IPAddressType,
+    def __init__(self, fifo_in: Path, sink_ip: IPAddressType,
                  webstream: Optional[APIWebStream]):
         super().__init__(fifo_in=fifo_in, sink_ip=sink_ip,
                          threadname=f"[Sink:{sink_ip}] MP3 Thread")
@@ -138,7 +141,7 @@ class FFMpegMP3Thread(FFMpegOutputThread):
 
 class FFMpegPCMThread(FFMpegOutputThread):
     """Handles listening for PCM output from ffmpeg"""
-    def __init__(self, fifo_in: pathlib.Path, sink_ip: IPAddressType,
+    def __init__(self, fifo_in: Path, sink_ip: IPAddressType,
                  sink_port: PortType, output_info: StreamInfo):
 
         self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -155,6 +158,6 @@ class FFMpegPCMThread(FFMpegOutputThread):
         self.__sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 65535)
         while self._running:
             # Send data from ffmpeg to the Scream receiver
-            self.__sock.sendto(self.__output_header + self._read_bytes(1152),
+            self.__sock.sendto(self.__output_header + self._read_bytes(1152, True),
                                (str(self._sink_ip), int(self._sink_port)))
         logger.debug("[Sink:%s] PCM thread exit", self._sink_ip)

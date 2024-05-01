@@ -50,6 +50,9 @@
                       <TD>
                         <INPUT TYPE="BUTTON" VALUE="Disable Source" ONCLICK="disable_source_button();">
                       </TD>
+                      <TD>
+                        <INPUT TYPE="BUTTON" VALUE="Equalizer" ONCLICK="update_source_equalizer_button();">
+                      </TD>
                     </TR>
                     <TR>
                       <TD>
@@ -98,6 +101,9 @@
                       </TD>
                       <TD>
                         <INPUT TYPE="BUTTON" VALUE="Disable Route" ONCLICK="disable_route_button();">
+                      </TD>
+                      <TD>
+                        <INPUT TYPE="BUTTON" VALUE="Equalizer" ONCLICK="update_route_equalizer_button();">
                       </TD>
                     </TR>
                     <TR>
@@ -177,14 +183,16 @@
       <DIV ID="add_source" CLASS="add_dialog dialog">
         <H3>Add Source</H3>
         <LABEL FOR="sourcename">Source Name</LABEL> <INPUT TYPE="text" ID="sourcename" NAME="name"><BR>
-        <LABEL FOR="sourceip">Source IP Address</LABEL> <INPUT TYPE="text" ID="sourceip" NAME="ip"><BR><BR>
+        <LABEL FOR="sourceip">Source IP Address</LABEL> <INPUT TYPE="text" ID="sourceip" NAME="ip"><BR>
+        <LABEL FOR="sourcedelay">Source Delay in ms</LABEL> <INPUT TYPE="number" MIN=1 MAX=5000 ID="sourcedelay" NAME="delay" VALUE=0><BR><BR>
         <INPUT TYPE="BUTTON" VALUE="Add Source" ONCLICK="do_add_source()"><BR>
         <INPUT TYPE="BUTTON" VALUE="Close" ONCLICK="dismiss_dialog()"><BR>
       </DIV>
       <DIV ID="update_source" CLASS="update_dialog dialog">
         <H3>Update Source</H3>
         <LABEL FOR="sourcename">Source Name</LABEL> <INPUT TYPE="text" ID="sourcename" NAME="name" DISABLED><BR>
-        <LABEL FOR="sourceip">Source IP Address</LABEL> <INPUT TYPE="text" ID="sourceip" NAME="ip"><BR><BR>
+        <LABEL FOR="sourceip">Source IP Address</LABEL> <INPUT TYPE="text" ID="sourceip" NAME="ip"><BR>
+        <LABEL FOR="sourcedelay">Source Delay in ms</LABEL> <INPUT TYPE="number" MIN=1 MAX=5000 ID="sourcedelay" NAME="delay" VALUE=0><BR><BR>
         <INPUT TYPE="BUTTON" VALUE="Update Source" ONCLICK="do_update_source()"><BR>
         <INPUT TYPE="BUTTON" VALUE="Close" ONCLICK="dismiss_dialog()"><BR>
       </DIV>
@@ -256,12 +264,13 @@
         <INPUT TYPE="BUTTON" VALUE="Update sink" ONCLICK="do_update_sink()"><BR>
         <INPUT TYPE="BUTTON" VALUE="Close" ONCLICK="dismiss_dialog()"><BR>
       </DIV>
-      <DIV ID="update_sink_equalizer" CLASS="update_dialog dialog">
+      <DIV ID="update_equalizer" CLASS="update_dialog dialog">
         <INPUT TYPE="BUTTON" VALUE="Default" ONCLICK="default_eq_button()">
         <TABLE ID="equalizer">
           <TR>
             <TD>
-              <INPUT TYPE="hidden" ID="sinkname" />
+              <INPUT TYPE="hidden" ID="name" />
+              <INPUT TYPE="hidden" ID="type" />
               <INPUT TYPE="range" CLASS="eq_slider" ID="eq_b1" NAME="b1" LIST="values" MAX="200" MIN="0" />
               65
             </TD>
@@ -340,14 +349,15 @@
             </TD>
           </TR>
         </TABLE>
-        <INPUT TYPE="BUTTON" VALUE="Update sink" ONCLICK="do_update_sink_equalizer()"><BR>
+        <INPUT TYPE="BUTTON" VALUE="Update sink" ONCLICK="do_update_equalizer()"><BR>
         <INPUT TYPE="BUTTON" VALUE="Close" ONCLICK="dismiss_dialog()"><BR>
       </DIV>
       <DIV ID="add_route" CLASS="add_dialog dialog">
         <H3>Add Route</H3>
         <LABEL FOR="routename">Route Name</LABEL> <INPUT TYPE="text" ID="routename" NAME="name"><BR>
         <LABEL FOR="routesource">Source</LABEL> <SELECT ID="routesource" NAME="source"></SELECT><BR>
-        <LABEL FOR="routesink">Sink</LABEL> <SELECT ID="routesink" NAME="sink"></SELECT><BR><BR>
+        <LABEL FOR="routesink">Sink</LABEL> <SELECT ID="routesink" NAME="sink"></SELECT><BR>
+        <LABEL FOR="routedelay">Route Delay in ms</LABEL> <INPUT TYPE="number" MIN=1 MAX=5000 ID="routedelay" NAME="delay" VALUE=0><BR><BR>
         <INPUT TYPE="BUTTON" VALUE="Add Route" ONCLICK="do_add_route()"><BR>
         <INPUT TYPE="BUTTON" VALUE="Close" ONCLICK="dismiss_dialog()"><BR>
       </DIV>
@@ -355,7 +365,8 @@
         <H3>Update Route</H3>
         <LABEL FOR="routename">Route Name</LABEL> <INPUT TYPE="text" ID="routename" NAME="name" DISABLED><BR>
         <LABEL FOR="routesource">Source</LABEL> <SELECT ID="routesource" NAME="source"></SELECT><BR>
-        <LABEL FOR="routesink">Sink</LABEL> <SELECT ID="routesink" NAME="sink"></SELECT><BR><BR>
+        <LABEL FOR="routesink">Sink</LABEL> <SELECT ID="routesink" NAME="sink"></SELECT><BR>  
+        <LABEL FOR="routedelay">Route Delay in ms</LABEL> <INPUT TYPE="number" MIN=1 MAX=5000 ID="routedelay" NAME="delay" VALUE=0><BR><BR>
         <INPUT TYPE="BUTTON" VALUE="Update Route" ONCLICK="do_update_route()"><BR>
         <INPUT TYPE="BUTTON" VALUE="Close" ONCLICK="dismiss_dialog()"><BR>  
       </DIV>

@@ -1,10 +1,9 @@
 """Controls the sink, keeps track of associated sources, and holds the ffmpeg thread object"""
-import pathlib
 import threading
 from typing import Dict, List, Optional
+from pathlib import Path
 
 from api.api_webstream import APIWebStream
-from screamrouter_types import DelayType
 from screamrouter_types import SinkDescription, SourceDescription
 from audio.ffmpeg_process_handler import FFMpegHandler
 from audio.ffmpeg_input_queue import FFMpegInputQueue, FFMpegInputQueueEntry
@@ -31,67 +30,60 @@ class SinkController():
                                                             sink_info.channel_layout)
         """Output stream info"""
         if self.sink_info.ip is None:
-            raise ValueError("Running Sink Controller IP can't be null")
+            raise ValueError("Running Sink Controller IP can't be None")
         if self.sink_info.port is None:
-            raise ValueError("Running Sink Controller Port can't be null")
+            raise ValueError("Running Sink Controller Port can't be None")
         self.__controller_sources: List[SourceDescription] = sources
         """Sources this Sink has"""
         self.sources: Dict[str, SourceToFFMpegWriter] = {}
         """Sources this Sink is playing"""
         self.__pipe_path_base: str = f"./pipes/scream-{self.sink_info.ip}-"
         """Per-sink pipe path"""
-        self.__fifo_in_pcm: pathlib.Path = pathlib.Path(self.__pipe_path_base + "in-pcm")
+        self.__fifo_in_pcm: Path = Path(self.__pipe_path_base + "in-pcm")
         """Input file from ffmpeg PCM output"""
-        self.__fifo_in_mp3: pathlib.Path = pathlib.Path(self.__pipe_path_base + "in-mp3")
+        self.__fifo_in_mp3: Path = Path(self.__pipe_path_base + "in-mp3")
         """Input file from ffmpeg MP3 output"""
         self.__ffmpeg: FFMpegHandler = FFMpegHandler(self.sink_info.ip,
-                                                     pathlib.Path(self.__fifo_in_pcm),
-                                                     pathlib.Path(self.__fifo_in_mp3),
+                                                     Path(self.__fifo_in_pcm),
+                                                     Path(self.__fifo_in_mp3),
                                                      self.__get_open_sources(),
                                                      self.__stream_info,
-                                                     self.sink_info.equalizer,
-                                                     self.sink_info.delay)
+                                                     self.sink_info.equalizer)
         """ffmpeg handler"""
         self.__webstream: Optional[APIWebStream] = websocket
         """Holds the websock object to copy audio to, passed through to MP3 listener thread"""
-        self.__pcm_thread: FFMpegPCMThread = FFMpegPCMThread(pathlib.Path(self.__fifo_in_pcm),
+        self.__pcm_thread: FFMpegPCMThread = FFMpegPCMThread(Path(self.__fifo_in_pcm),
                                                              self.sink_info.ip,
                                                              self.sink_info.port,
                                                              self.__stream_info)
         """Holds the thread to listen to PCM output from ffmpeg"""
-        self.__mp3_thread: FFMpegMP3Thread = FFMpegMP3Thread(pathlib.Path(self.__fifo_in_mp3),
+        self.__mp3_thread: FFMpegMP3Thread = FFMpegMP3Thread(Path(self.__fifo_in_mp3),
                                                              self.sink_info.ip,
                                                              self.__webstream)
         """Holds the thread to listen to MP3 output from ffmpeg"""
         self.__queue_thread: FFMpegInputQueue = FFMpegInputQueue(self.process_packet_from_queue,
                                                                  self.sink_info.ip)
         """Holds the thread to listen to the input queue and send it to ffmpeg"""
-        self.lock: threading.Lock = threading.Lock()
-        """Lock to ensure the controller is only accessed by one other thread at a time"""
+        self.sources_lock: threading.Lock = threading.Lock()
+        """This lock ensures the Sources list is only accessed by one thread at a time"""
         self.count: int = 0
 
-        self.lock.acquire()
+        self.sources_lock.acquire()
         for source in self.__controller_sources:
-            pipename: pathlib.Path = pathlib.Path(self.__pipe_path_base + str(source.ip))
+            pipename: Path = Path(self.__pipe_path_base + str(source.ip))
             self.sources[str(source.ip)] = SourceToFFMpegWriter(str(source.ip),  # Tag, not IP
                                                      pipename,
                                                      self.sink_info.ip,
-                                                     source.volume)
-        self.lock.release()
+                                                     source)
+        self.sources_lock.release()
 
     def update_source_volume(self, controllersource: SourceDescription) -> None:
         """Updates the source volume to the specified volume.
            Does nothing if the source is not playing to this sink."""
         for tag, source in self.sources.items():
             if tag == str(controllersource.ip):
-                source.volume = controllersource.volume
+                source.source_info.volume = controllersource.volume
                 self.__ffmpeg.set_input_volume(source, controllersource.volume)
-
-    def update_delay(self, delay: DelayType) -> None:
-        """Updates the ffmpeg delay to the specified delay."""
-        self.lock.acquire()
-        self.__ffmpeg.set_delay(delay)
-        self.lock.release()
 
     def __get_open_sources(self) -> List[SourceToFFMpegWriter]:
         """Build a list of active IPs, exclude ones that aren't open"""
@@ -110,15 +102,15 @@ class SinkController():
 
     def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
-        self.lock.acquire()
+        self.sources_lock.acquire()
         for _, source in self.sources.items():
-            if source.is_open() and not source.is_active(300):
-                logger.info("[Sink:%s][Source:%s] Closing (Timeout = 300ms)",
+            if source.is_open() and not source.is_active(100):
+                logger.info("[Sink:%s][Source:%s] Closing (Timeout = 100ms)",
                             self.sink_info.ip,
                             source.tag)
                 source.close()
                 self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
-        self.lock.release()
+        self.sources_lock.release()
 
     def __update_source_attributes_and_open_source(self,
                                                    source: SourceToFFMpegWriter,
@@ -156,7 +148,7 @@ class SinkController():
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
-        self.lock.acquire()
+        self.sources_lock.acquire()
         logger.debug("[Sink:%s] Stopping PCM thread", self.sink_info.ip)
         self.__pcm_thread.stop()
         logger.debug("[Sink:%s] Stopping MP3 thread", self.sink_info.ip)
@@ -168,11 +160,11 @@ class SinkController():
         logger.debug("[Sink:%s] Stopping sources", self.sink_info.ip)
         for _, source in self.sources.items():
             source.stop()
-        self.lock.release()
+        self.sources_lock.release()
 
     def wait_for_threads_to_stop(self) -> None:
         """Waits for threads to stop"""
-        self.lock.acquire()
+        self.sources_lock.acquire()
         self.__pcm_thread.join()
         logger.debug("[Sink:%s] PCM thread stopped", self.sink_info.ip)
         self.__mp3_thread.join()
@@ -185,15 +177,14 @@ class SinkController():
             source.join()
         logger.debug("[Sink:%s] sources stopped", self.sink_info.ip)
         logger.info("[Sink:%s] Stopped", self.sink_info.ip)
-        self.lock.release()
+        self.sources_lock.release()
 
     def url_playback_done_callback(self, tag: str):
         """Callback for ffmpeg to clean up when playback is done, tag is the Source tag"""
         if tag in self.sources:
-            self.lock.acquire()
+            self.sources_lock.acquire()
             self.sources[tag].close()
             self.sources[tag].stop()
             del self.sources[tag]
-            self.lock.release()
+            self.sources_lock.release()
             self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
-

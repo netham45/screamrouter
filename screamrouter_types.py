@@ -1,10 +1,10 @@
 """Holds all the custom types ScreamRouter uses with Pydantic"""
+from copy import copy
 from typing import Annotated, List, Literal, Optional
 from fastapi import Path
 from pydantic import AnyUrl, BaseModel, IPvAnyAddress
-from logger import get_logger
 
-logger = get_logger(__name__)
+PACKET_SIZE: int = 1152
 
 VolumeType = Annotated[
     float,
@@ -15,14 +15,14 @@ VolumeType = Annotated[
         ge=0
     )
 ]
-"Volume, 0.0-1.0"
+"""Volume, 0.0-1.0"""
 
 DelayType = Annotated[
     int,
     Path(
         description="Delay in ms. Int, must be between 0 and 5000.",
         json_schema_extra={"example": "180"},
-        le=1,
+        le=5000,
         ge=0
     )
 ]
@@ -359,48 +359,32 @@ class Equalizer(BaseModel):
     b18: EqualizerBandType18 = 1
     """Set 20000Hz band gain."""
 
-class PostSink(BaseModel):
-    """Post data to configure or add a Sink"""
-    ip: IPAddressType
-    """Sink IP"""
-    port: PortType = 4010
-    """Sink Port"""
-    bit_depth: BitDepthType = 32
-    """Bit Depth"""
-    sample_rate: SampleRateType = 48000
-    """Sample Rate"""
-    channels:ChannelsType = 2
-    """Channel Count"""
-    channel_layout: ChannelLayoutType = "stereo"
-    """Channel Layout"""
-    delay: DelayType = 0
-    """Delay in ms"""
-    equalizer: Equalizer
-    """Equalizer"""
+    def __mul__(self, other):
+        other_eq: Equalizer = copy(other)
+        other_eq.b1 = other_eq.b1 * self.b1
+        other_eq.b2 = other_eq.b2 * self.b2
+        other_eq.b3 = other_eq.b3 * self.b3
+        other_eq.b4 = other_eq.b4 * self.b4
+        other_eq.b5 = other_eq.b5 * self.b5
+        other_eq.b6 = other_eq.b6 * self.b6
+        other_eq.b7 = other_eq.b7 * self.b7
+        other_eq.b8 = other_eq.b8 * self.b8
+        other_eq.b9 = other_eq.b9 * self.b9
+        other_eq.b10 = other_eq.b10 * self.b10
+        other_eq.b11 = other_eq.b11 * self.b11
+        other_eq.b12 = other_eq.b12 * self.b12
+        other_eq.b13 = other_eq.b13 * self.b13
+        other_eq.b14 = other_eq.b14 * self.b14
+        other_eq.b15 = other_eq.b15 * self.b15
+        other_eq.b16 = other_eq.b16 * self.b16
+        other_eq.b17 = other_eq.b17 * self.b17
+        other_eq.b18 = other_eq.b18 * self.b18
+        return other_eq
 
-class PostSinkGroup(BaseModel):
-    """Post data to configure or add a Sink Group"""
-    sinks: List[SinkNameType]
-    """List of names of grouped sinks"""
+    __rmul__ = __mul__
 
-class PostSource(BaseModel):
-    """Post data to configure or add a Source"""
-    ip: IPAddressType
-    """Source IP"""
 
-class PostSourceGroup(BaseModel):
-    """Post data to configure or add a Source Group"""
-    sources: List[SourceNameType]
-    """List of names of grouped Sources"""
-
-class PostRoute(BaseModel):
-    """Post data to configure or add a Route"""
-    source: SourceNameType
-    """Route Source"""
-    sink: SinkNameType
-    """Route Sink"""
-
-class PostURL(BaseModel):
+class URL(BaseModel):
     """Post data containing a URL"""
     url: PlaybackURLType
     """URL to play back"""
@@ -416,64 +400,43 @@ class SinkDescription(BaseModel):
     """
     name: SinkNameType
     """Sink Name"""
-    ip: Optional[IPAddressType]
+    ip: Optional[IPAddressType] = None
     """Sink IP"""
-    port: Optional[PortType]
+    port: Optional[PortType] = 4010
     """Sink port number"""
-    is_group: bool
+    is_group: bool = False
     """Sink Is Group"""
-    enabled: bool
+    enabled: bool = True
     """Sink is Enabled"""
-    group_members: List[SinkNameType]
+    group_members: List[SinkNameType] = []
     """Sink Group Members"""
-    volume: VolumeType
+    volume: VolumeType = 1
     """Holds the volume for the sink (0.0-1.0)"""
-    bit_depth: BitDepthType
+    bit_depth: BitDepthType = 32
     """Sink Bit depth"""
-    sample_rate: SampleRateType
+    sample_rate: SampleRateType = 48000
     """Sink Sample Rate"""
-    channels: ChannelsType
-    """Sink Channels Rate"""
-    channel_layout: ChannelLayoutType
+    channels: ChannelsType = 2
+    """Sink Channel Count"""
+    channel_layout: ChannelLayoutType = "stereo"
     """Sink Channel Layout"""
-    delay: DelayType
+    delay: DelayType = 0
     """Delay in ms"""
-    equalizer: Equalizer
+    equalizer: Equalizer = Equalizer(b1=1, b2=1, b3=1, b4=1, b5=1, b6=1,
+                                     b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
+                                     b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
     """Audio Equalizer"""
-    def __init__(self, name: SinkNameType, ip: Optional[IPAddressType],
-                 port: Optional[PortType], is_group: bool,
-                 enabled: bool, group_members: List[SinkNameType],
-                 volume: VolumeType,
-                 bit_depth: BitDepthType = 32,
-                 sample_rate: SampleRateType = 48000, channels: ChannelsType = 2,
-                 channel_layout: ChannelLayoutType = "stereo", delay: DelayType = 0,
-                 equalizer: Optional[Equalizer] = None):
-        if equalizer is None:
-            equalizer = Equalizer(b1=1,b2=1,b3=1,b4=1,b5=1,b6=1,
-                                  b7=1,b8=1,b9=1,b10=1,b11=1,b12=1,
-                                  b13=1,b14=1,b15=1,b16=1,b17=1,b18=1)
-        super().__init__(name = name,
-                         ip = ip,
-                         port = port,
-                         is_group = is_group,
-                         enabled = enabled,
-                         group_members = group_members,
-                         volume = volume,
-                         bit_depth = bit_depth,
-                         sample_rate = sample_rate,
-                         channels = channels,
-                         channel_layout = channel_layout,
-                         delay = delay,
-                         equalizer = equalizer
-                         )
 
-    def set_volume(self, volume: VolumeType):
-        """Verifies volume then sets it"""
-        self.volume = volume
+    def __eq__(self, other):
+        """Compares the name"""
+        if isinstance(other, SinkDescription):
+            other_sink: SinkDescription = other
+            return self.name == other_sink.name
+        if isinstance(other, str):
+            other_sink_name: SinkNameType = other
+            return self.name == other_sink_name
+        raise TypeError(f"Can't compare {type(self)} against {type(other)}")
 
-    def set_delay(self, delay: DelayType):
-        """Verifies delay then sets it"""
-        self.delay = delay
 
 class SourceDescription(BaseModel):
     """
@@ -481,27 +444,32 @@ class SourceDescription(BaseModel):
     """
     name: SourceNameType
     """Source Name"""
-    ip: Optional[IPAddressType]
+    ip: Optional[IPAddressType] = None
     """Source IP"""
-    is_group: bool
+    is_group: bool = False
     """Source Is Group"""
-    enabled: bool
+    enabled: bool = True
     """Source Enabled"""
-    group_members: List[SourceNameType]
+    group_members: List[SourceNameType] = []
     """"Source Group Members"""
-    volume: VolumeType
+    volume: VolumeType = 1
     """Holds the volume for the source  (0.0-1.0)"""
-    def __init__(self, name: SourceNameType, ip: Optional[IPAddressType],
-                 is_group: bool, enabled: bool,
-                 group_members: List[SourceNameType],
-                 volume: VolumeType):
-        super().__init__(name = name, ip = ip,
-                         is_group = is_group, enabled = enabled,
-                         group_members = group_members, volume = volume)
+    delay: DelayType = 0
+    """Delay in ms"""
+    equalizer: Equalizer = Equalizer(b1=1, b2=1, b3=1, b4=1, b5=1, b6=1,
+                                     b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
+                                     b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
+    """Audio Equalizer"""
 
-    def set_volume(self, volume: VolumeType):
-        """Verifies volume then sets i"""
-        self.volume = volume
+    def __eq__(self, other):
+        """Compares the name"""
+        if isinstance(other, SourceDescription):
+            other_source: SourceDescription = other
+            return self.name == other_source.name
+        if isinstance(other, str):
+            other_source_name: SourceNameType = other
+            return self.name == other_source_name
+        raise TypeError(f"Can't compare {type(self)} against {type(other)}")
 
 class RouteDescription(BaseModel):
     """
@@ -513,17 +481,23 @@ class RouteDescription(BaseModel):
     """Route Sink"""
     source: SourceNameType
     """Route Source"""
-    enabled: bool
+    enabled: bool = True
     """Route Enabled"""
-    volume: VolumeType
+    volume: VolumeType = 1
     """Route volume (0.0-1.0)"""
-    def __init__(self, name: RouteNameType, sink: SinkNameType,
-                 source: SourceNameType, enabled: bool,
-                 volume: VolumeType):
-        super().__init__(name = name, sink = sink,
-                         source = source, enabled = enabled,
-                         volume = volume)
+    delay: DelayType = 0
+    """Delay in ms"""
+    equalizer: Equalizer = Equalizer(b1=1, b2=1, b3=1, b4=1, b5=1, b6=1,
+                                     b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
+                                     b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
+    """Audio Equalizer"""
 
-    def set_volume(self, volume: VolumeType):
-        """Verifies volume then sets it"""
-        self.volume = volume
+    def __eq__(self, other):
+        """Compares the name"""
+        if isinstance(other, RouteDescription):
+            other_route: RouteDescription = other
+            return self.name == other_route.name
+        if isinstance(other, str):
+            other_route_name: RouteNameType = other
+            return self.name == other_route_name
+        raise TypeError(f"Can't compare {type(self)} against {type(other)}")

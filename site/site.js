@@ -575,15 +575,10 @@ function update_sink_equalizer_button() {
         return
     }
     var sinkinfo = get_sink_info(sink.name);
-    if (sinkinfo.is_group)
-    {
-        alert("Can't edit groups yet");
-        return
-    }
-    console.log(sinkinfo);
-    dialog = "update_sink_equalizer"
+    dialog = "update_equalizer"
     open_dialog(dialog);
-    set_field_value(dialog, "sinkname", sinkinfo.name);
+    set_field_value(dialog, "name", sinkinfo.name);
+    set_field_value(dialog, "type", "sinks");
     set_field_value(dialog, "eq_b1", 200 - sinkinfo.equalizer.b1 * 100);
     set_field_value(dialog, "eq_b2", 200 - sinkinfo.equalizer.b2 * 100);
     set_field_value(dialog, "eq_b3", 200 - sinkinfo.equalizer.b3 * 100);
@@ -604,8 +599,71 @@ function update_sink_equalizer_button() {
     set_field_value(dialog, "eq_b18", 200 - sinkinfo.equalizer.b18 * 100);
 }
 
+function update_source_equalizer_button() {
+    var source = get_selected_source();
+    if (source === null) {
+        alert("Select a source to edit");
+        return
+    }
+    var sourceinfo = get_source_info(source.name);
+    dialog = "update_equalizer"
+    open_dialog(dialog);
+    set_field_value(dialog, "name", sourceinfo.name);
+    set_field_value(dialog, "type", "sources");
+    set_field_value(dialog, "eq_b1", 200 - sourceinfo.equalizer.b1 * 100);
+    set_field_value(dialog, "eq_b2", 200 - sourceinfo.equalizer.b2 * 100);
+    set_field_value(dialog, "eq_b3", 200 - sourceinfo.equalizer.b3 * 100);
+    set_field_value(dialog, "eq_b4", 200 - sourceinfo.equalizer.b4 * 100);
+    set_field_value(dialog, "eq_b5", 200 - sourceinfo.equalizer.b5 * 100);
+    set_field_value(dialog, "eq_b6", 200 - sourceinfo.equalizer.b6 * 100);
+    set_field_value(dialog, "eq_b7", 200 - sourceinfo.equalizer.b7 * 100);
+    set_field_value(dialog, "eq_b8", 200 - sourceinfo.equalizer.b8 * 100);
+    set_field_value(dialog, "eq_b9", 200 - sourceinfo.equalizer.b9 * 100);
+    set_field_value(dialog, "eq_b10", 200 - sourceinfo.equalizer.b10 * 100);
+    set_field_value(dialog, "eq_b11", 200 - sourceinfo.equalizer.b11 * 100);
+    set_field_value(dialog, "eq_b12", 200 - sourceinfo.equalizer.b12 * 100);
+    set_field_value(dialog, "eq_b13", 200 - sourceinfo.equalizer.b13 * 100);
+    set_field_value(dialog, "eq_b14", 200 - sourceinfo.equalizer.b14 * 100);
+    set_field_value(dialog, "eq_b15", 200 - sourceinfo.equalizer.b15 * 100);
+    set_field_value(dialog, "eq_b16", 200 - sourceinfo.equalizer.b16 * 100);
+    set_field_value(dialog, "eq_b17", 200 - sourceinfo.equalizer.b17 * 100);
+    set_field_value(dialog, "eq_b18", 200 - sourceinfo.equalizer.b18 * 100);
+}
+
+function update_route_equalizer_button() {
+    var route = get_selected_route();
+    if (route === null) {
+        alert("Select a route to edit");
+        return
+    }
+    var routeinfo = get_route_info(route.name);
+    dialog = "update_equalizer"
+    open_dialog(dialog);
+    set_field_value(dialog, "name", routeinfo.name);
+    set_field_value(dialog, "type", "routes");
+    set_field_value(dialog, "eq_b1", 200 - routeinfo.equalizer.b1 * 100);
+    set_field_value(dialog, "eq_b2", 200 - routeinfo.equalizer.b2 * 100);
+    set_field_value(dialog, "eq_b3", 200 - routeinfo.equalizer.b3 * 100);
+    set_field_value(dialog, "eq_b4", 200 - routeinfo.equalizer.b4 * 100);
+    set_field_value(dialog, "eq_b5", 200 - routeinfo.equalizer.b5 * 100);
+    set_field_value(dialog, "eq_b6", 200 - routeinfo.equalizer.b6 * 100);
+    set_field_value(dialog, "eq_b7", 200 - routeinfo.equalizer.b7 * 100);
+    set_field_value(dialog, "eq_b8", 200 - routeinfo.equalizer.b8 * 100);
+    set_field_value(dialog, "eq_b9", 200 - routeinfo.equalizer.b9 * 100);
+    set_field_value(dialog, "eq_b10", 200 - routeinfo.equalizer.b10 * 100);
+    set_field_value(dialog, "eq_b11", 200 - routeinfo.equalizer.b11 * 100);
+    set_field_value(dialog, "eq_b12", 200 - routeinfo.equalizer.b12 * 100);
+    set_field_value(dialog, "eq_b13", 200 - routeinfo.equalizer.b13 * 100);
+    set_field_value(dialog, "eq_b14", 200 - routeinfo.equalizer.b14 * 100);
+    set_field_value(dialog, "eq_b15", 200 - routeinfo.equalizer.b15 * 100);
+    set_field_value(dialog, "eq_b16", 200 - routeinfo.equalizer.b16 * 100);
+    set_field_value(dialog, "eq_b17", 200 - routeinfo.equalizer.b17 * 100);
+    set_field_value(dialog, "eq_b18", 200 - routeinfo.equalizer.b18 * 100);
+}
+
+
 function default_eq_button() {
-    dialog = "update_sink_equalizer"
+    dialog = "update_equalizer"
     set_field_value(dialog, "eq_b1", 100);
     set_field_value(dialog, "eq_b2", 100);
     set_field_value(dialog, "eq_b3", 100);
@@ -692,7 +750,8 @@ function do_add_source() {
     dialog = "add_source";
     var data = {
         "name": get_field_value(dialog, "sourcename"),
-        "ip": get_field_value(dialog, "sourceip")
+        "ip": get_field_value(dialog, "sourceip"),
+        "delay": get_field_value(dialog, "sourcedelay")
     };
     call_api("sources", "POST", JSON.stringify(data), reload_callback);
     dismiss_dialog();
@@ -702,7 +761,8 @@ function do_update_source() {
     dialog = "update_source";
     var data = {
         "name": get_field_value(dialog, "sourcename"),
-        "ip": get_field_value(dialog, "sourceip")
+        "ip": get_field_value(dialog, "sourceip"),
+        "delay": get_field_value(dialog, "sourcedelay")
     };
     call_api("sources", "PUT", JSON.stringify(data), reload_callback);
     dismiss_dialog();
@@ -714,35 +774,16 @@ function do_add_sink() {
     var samplerateselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinksamplerate")][0];
     var channellayoutselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#sinkchannellayout")][0];
     var data = {
+        "name": get_field_value(dialog, "sinkname"),
         "ip": get_field_value(dialog, "sinkip"),
         "bit_depth": parseInt(get_select_selected(bitdepthselect)),
         "sample_rate": parseInt(get_select_selected(samplerateselect)),
         "channels": parseInt(get_field_value(dialog, "sinkchannels")),
         "channel_layout": get_select_selected(channellayoutselect),
-        "delay": int(get_field_value(dialog, "sinkdelay")),
-        "equalizer": {
-            "b1": 1,
-            "b2": 1,
-            "b3": 1,
-            "b4": 1,
-            "b5": 1,
-            "b6": 1,
-            "b7": 1,
-            "b8": 1,
-            "b9": 1,
-            "b10": 1,
-            "b11": 1,
-            "b12": 1,
-            "b13": 1,
-            "b14": 1,
-            "b15": 1,
-            "b16": 1,
-            "b17": 1,
-            "b18": 1
-        }
+        "delay": int(get_field_value(dialog, "sinkdelay"))
         
     };
-    call_api("sinks/"+get_field_value(dialog, "sinkname"), "POST", data, reload_callback);
+    call_api("sinks", "POST", data, reload_callback);
     dismiss_dialog();
 }
 
@@ -757,22 +798,49 @@ function do_update_sink() {
             sinkinfo = sinks[sink]
     }
     var data = {
+        "name": get_field_value(dialog, "sinkname"),
         "ip": get_field_value(dialog, "sinkip"),
         "port": parseInt(get_field_value(dialog, "sinkport")),
         "bit_depth": parseInt(get_select_selected(bitdepthselect)),
         "sample_rate": parseInt(get_select_selected(samplerateselect)),
         "channels": parseInt(get_field_value(dialog, "sinkchannels")),
         "channel_layout": get_select_selected(channellayoutselect),
-        "delay": get_field_value(dialog, "sinkdelay"),
-        "equalizer": sinkinfo.equalizer
+        "delay": get_field_value(dialog, "sinkdelay")
     };
-    call_api("sinks/"+get_field_value(dialog, "sinkname"), "PUT", JSON.stringify(data), reload_callback);
+    call_api("sinks", "PUT", JSON.stringify(data), reload_callback);
     dismiss_dialog();
 }
 
 
+function do_update_equalizer() {
+    dialog = "update_equalizer"
+    var _type = get_field_value(dialog, "type")
+    var name = get_field_value(dialog, "name")
+    equalizer = {
+        "b1": (200 - get_field_value(dialog, "eq_b1"))/100,
+        "b2": (200 - get_field_value(dialog, "eq_b2"))/100,
+        "b3": (200 - get_field_value(dialog, "eq_b3"))/100,
+        "b4": (200 - get_field_value(dialog, "eq_b4"))/100,
+        "b5": (200 - get_field_value(dialog, "eq_b5"))/100,
+        "b6": (200 - get_field_value(dialog, "eq_b6"))/100,
+        "b7": (200 - get_field_value(dialog, "eq_b7"))/100,
+        "b8": (200 - get_field_value(dialog, "eq_b8"))/100,
+        "b9": (200 - get_field_value(dialog, "eq_b9"))/100,
+        "b10": (200 - get_field_value(dialog, "eq_b10"))/100,
+        "b11": (200 - get_field_value(dialog, "eq_b11"))/100,
+        "b12": (200 - get_field_value(dialog, "eq_b12"))/100,
+        "b13": (200 - get_field_value(dialog, "eq_b13"))/100,
+        "b14": (200 - get_field_value(dialog, "eq_b14"))/100,
+        "b15": (200 - get_field_value(dialog, "eq_b15"))/100,
+        "b16": (200 - get_field_value(dialog, "eq_b16"))/100,
+        "b17": (200 - get_field_value(dialog, "eq_b17"))/100,
+        "b18": (200 - get_field_value(dialog, "eq_b18"))/100
+    }
+    call_api(_type + "/" + name + "/equalizer/", "POST", JSON.stringify(equalizer), reload_callback);
+}
+
 function do_update_sink_equalizer() {
-    dialog = "update_sink_equalizer"
+    dialog = "update_rouite_equalizer"
     var sinkname = get_field_value(dialog, "sinkname")
     equalizer = {
         "b1": (200 - get_field_value(dialog, "eq_b1"))/100,
@@ -802,10 +870,12 @@ function do_add_route() {
     var sinkselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesink")][0];
     var sourceselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesource")][0];
     var data = {
+        "name": get_field_value(dialog, "routename"),
         "sink": get_select_selected(sinkselect),
-        "source": get_select_selected(sourceselect)
+        "source": get_select_selected(sourceselect),
+        "delay": get_field_value(dialog, "routedelay")
     };
-    call_api("routes/" + get_field_value(dialog, "routename"), "POST", JSON.stringify(data), reload_callback);
+    call_api("routes/", "POST", JSON.stringify(data), reload_callback);
     dismiss_dialog();
 }
 
@@ -814,11 +884,13 @@ function do_update_route() {
     var sinkselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesink")][0];
     var sourceselect = [... document.querySelectorAll("DIV#" + dialog + " SELECT#routesource")][0];
     var data = {
+        "name": get_field_value(dialog, "routename"),
         "sink": get_select_selected(sinkselect),
-        "source": get_select_selected(sourceselect)
+        "source": get_select_selected(sourceselect),
+        "delay": get_field_value(dialog, "routedelay")
     };
     console.log(data);
-    call_api("routes/" + get_field_value(dialog, "routename"), "PUT", JSON.stringify(data), reload_callback);
+    call_api("routes/", "PUT", JSON.stringify(data), reload_callback);
     dismiss_dialog();
 }
 

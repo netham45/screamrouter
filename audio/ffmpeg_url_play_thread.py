@@ -1,12 +1,12 @@
 """Handles playing a URL and forwarding the output from it to the main receiver"""
 import io
 import os
-import pathlib
 import select
 import subprocess
 import threading
 import fcntl
 from typing import List
+from pathlib import Path
 
 from screamrouter_types import SinkDescription
 from screamrouter_types import PlaybackURLType, VolumeType
@@ -22,7 +22,7 @@ url_playback_semaphore: threading.Semaphore = threading.Semaphore(8)
 class FFMpegPlayURL(threading.Thread):
     """Handles playing a URL and forwarding the output from it to the main receiver"""
     def __init__(self, url: PlaybackURLType, volume: VolumeType, sink_info: SinkDescription,
-                 fifo_in: pathlib.Path, source_tag: str, receiver: Receiver):
+                 fifo_in: Path, source_tag: str, receiver: Receiver):
         """Plays a URL using ffmpeg and outputs it to a pipe name stored in fifo_in."""
         if not url_playback_semaphore.acquire(timeout=1):
             raise TimeoutError("Timed out waiting for available URL play slot")
@@ -33,7 +33,7 @@ class FFMpegPlayURL(threading.Thread):
         """Volume for playback (0.0-1.0)"""
         self.__sink_info: SinkDescription = sink_info
         """Sink info, needed for bitrate to transcode to"""
-        self.__fifo_in_url: pathlib.Path = fifo_in
+        self.__fifo_in_url: Path = fifo_in
         """ffmpeg fifo file"""
         self._fd: io.BufferedReader
         """File handle"""

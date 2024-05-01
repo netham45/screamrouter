@@ -30,8 +30,8 @@ class FFMpegInputQueue(threading.Thread):
         """Callback in Sink controller for us to call when there's data available"""
         self.__sink_ip: IPAddressType = sink_ip
         """Holds the sink IP (Only used for log messages)"""
-        self._condition: threading.Condition = threading.Condition()
-        """Condition"""
+        self._queue_read_condition: threading.Condition = threading.Condition()
+        """Condition used so the queue can wait when it runs out of data until it is notified"""
         self.start()
 
     def stop(self) -> None:
@@ -41,17 +41,17 @@ class FFMpegInputQueue(threading.Thread):
     def queue(self, entry: FFMpegInputQueueEntry) -> None:
         """Adds an item to the queue"""
         self._queue.append(entry)
-        self._condition.acquire()
-        self._condition.notify_all()
-        self._condition.release()
+        self._queue_read_condition.acquire()
+        self._queue_read_condition.notify_all()
+        self._queue_read_condition.release()
 
     def run(self) -> None:
         """Constantly checks the queue
             notifies the Sink Controller callback when there's something in the queue"""
         while self._running:
-            while len(self._queue) > 0:
+            while len(self._queue) > 0 and self._running:
                 self._callback(self._queue.popleft())
-            self._condition.acquire()
-            self._condition.wait(timeout=.2)
-            self._condition.release()
+            self._queue_read_condition.acquire()
+            self._queue_read_condition.wait(timeout=.1)
+            self._queue_read_condition.release()
         logger.debug("[Sink:%s] Ffmepg Output Queue thread exit", self.__sink_ip)

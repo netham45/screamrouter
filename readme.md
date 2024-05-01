@@ -14,8 +14,8 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Has a Home Assistant Custom Component for managing Sinks and playing media back through Sinks (See: https://github.com/netham45/screamrouter_ha_component )
 * Automatically saves to YAML on setting change
 * Uses ffmpeg to mix sources together into final sink stream to be played to the Scream sink
-* Can use ffmpeg to delay sinks so sinks line up better
-* Can adjust equalization for any sink
+* Can use ffmpeg to delay any sink, route, source, or group so sinks line up better
+* Can adjust equalization for any sink, route, source, or group
 
 ![Screenshot of ScreamRouter Equalizer](/images/Equalizer.png)
 
@@ -58,115 +58,16 @@ Each Sink holds information for the destination IP, port, volume, sample rate, b
 
 ![Screenshot of Add Sink Dialog](/images/AddSink.png)
 
-Example YAML block:
-
-This defines two sinks, Livingroom and Bedroom.
-
-```
-sinks:
-- enabled: true
-  ip: 192.168.3.178
-  name: Livingroom
-  port: 4010
-  volume: 1.0
-  bitdepth: 32
-  channel_layout: stereo
-  channels: 2
-  samplerate: 48000
-  delay: 0
-  equalizer:
-    b1: 1.0
-    b10: 1.0
-    b11: 1.0
-    b12: 1.0
-    b13: 1.0
-    b14: 1.0
-    b15: 1.0
-    b16: 1.0
-    b17: 1.0
-    b18: 1.0
-    b2: 1.0
-    b3: 1.0
-    b4: 1.0
-    b5: 1.0
-    b6: 1.0
-    b7: 1.0
-    b8: 1.0
-    b9: 1.0
-- enabled: true
-  ip: 192.168.3.111
-  name: Bedroom
-  port: 4010
-  volume: 1.0
-  bitdepth: 32
-  channel_layout: stereo
-  channels: 2
-  samplerate: 48000
-  delay: 0
-  equalizer:
-    b1: 1.0
-    b10: 1.0
-    b11: 1.0
-    b12: 1.0
-    b13: 1.0
-    b14: 1.0
-    b15: 1.0
-    b16: 1.0
-    b17: 1.0
-    b18: 1.0
-    b2: 1.0
-    b3: 1.0
-    b4: 1.0
-    b5: 1.0
-    b6: 1.0
-    b7: 1.0
-    b8: 1.0
-    b9: 1.0
-```
-
 ### Routes
 Each Route holds one Sink name and one Source name, and volume.
 
 ![Screenshot of Add Route Dialog](/images/AddRoute.png)
 
-Example YAML block:
-
-This defines two routes, Music to All and Office to Office PC.
-
-```
-routes:
-- enabled: true
-  name: Music to All
-  sink: All
-  source: Music
-  volume: 1.0
-- enabled: true
-  name: Office
-  sink: Office
-  source: Office PC
-  volume: 1.0
-```
 
 ### Sources
 Each Source holds information for the source IP, volume, and the Source name.
 
 ![Screenshot of Add Source Dialog](/images/AddSource.png)
-
-Example YAML block:
-
-This defines two sources, Server and Livingroom PC
-
-```
-sources:
-- enabled: true
-  ip: 192.168.3.119
-  name: Server
-  volume: 1.0
-- enabled: true
-  ip: 192.168.3.172
-  name: Livingroom PC
-  volume: 1.0
-```
 
 
 ### Sink Groups
@@ -176,54 +77,13 @@ Each Sink Group holds a name, a list of Sinks, and a volume. Groups can be neste
 
 Each Source Group holds a name, a list of Sources, and a volume. Groups can be nested.
 
-Example YAML block:
-
-This defines two sink groups and one Source group. The sinks are 'All' containing 'Livingroom', 'Bedroom', and 'Office', and 'Bedroom Group' containing 'Bedroom' and 'Bathroom'. The source group is 'Music', containing just 'Server'.
-
-```
-groups:
-  sinks:
-  - enabled: true
-    name: All
-    sinks:
-    - Livingroom
-    - Bedroom
-    - Office
-    volume: 1.0
-  - enabled: true
-    name: Bedroom Group
-    sinks:
-    - Bedroom
-    - Bathroom
-    volume: 1.0
-  sources:
-  - enabled: true
-    name: Music
-    sources:
-    - Server
-    volume: 1.0
-```
-
 ### Server Configuration
 
-The server configuration holds the port for the API to listen on and the port for the recevier to receive audio frames on. These options can only be edited in the YAML.
+The server configuration holds the port for the API to listen on and the port for the recevier to receive audio frames on. These options currently can only be edited in the config.yaml file.
 
-Example YAML block:
+### YAML
 
-* api_port: Port for the ScreamRouter API to listen to (Default 8080)
-* logs_dir: Directory to log to (Default logs/)
-* receiver_port: UDP port for ScreamRouter to listen for sources to send to (Dfeault: 16401)
-* pipes_dir: Directory to store temproary pipes in (Default pipes/)
-* console_log_level: Log level (Default info, Valid log levels: critical=no logs, error, warn, info, debug)
-
-```
-server:
-  api_port: 8080
-  logs_dir: logs/
-  receiver_port: 16401
-  pipes_dir: pipes/
-  console_log_level: info
-```
+The YAML is generated from Pydantic. It can be manually edited but it is messy and not user-friendly. Take a backup before you make any changes.
 
 ## General Info
 
@@ -241,6 +101,9 @@ Each ScreamRouter Route is a link of one Source to one Sink, and each Sink is an
 
 ### Volume
 Each Source, Route, and Sink has a volume control. The default volume of 1 is unattenuated. The volumes for each sink, sink group, route, source group, and source it passes through are multiplied together to come up with a final volume.
+
+### Equalizer
+Much like the volume, Source, Route, and Sink has an equalizer. The default equalizer is 1, it has a minimum of 0 and a maximum of 2. The equalizations for each sink, sink group, route, source group, and source it passes through are multiplied together per band to come up with a final volume.
 
 ### Delay
 Delays will add gaps to streams when sources come in and drop out. To avoid this set delays to 0.

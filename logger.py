@@ -4,27 +4,21 @@ import os
 
 import yaml
 
+import screamrouter_types  # pylint: disable=unused-import
+
 LOGS_DIR = "logs/"
 CONSOLE_LOG_LEVEL = "INFO"
 
 try:
     with open("config.yaml", "r", encoding="UTF-8") as f:
-        config = yaml.safe_load(f)
-        try:
-            LOGS_DIR = config['server']['log_path']
-        except KeyError:
-            pass
-        except IndexError:
-            pass
-        try:
-            CONSOLE_LOG_LEVEL = config['server']['console_log_level'].upper()
-        except KeyError:
-            pass
-        except IndexError:
-            pass
+        savedata: dict = yaml.unsafe_load(f)
+        serverinfo = savedata["serverinfo"]
+        LOGS_DIR = serverinfo["logs_dir"]
+        CONSOLE_LOG_LEVEL = serverinfo["console_log_level"]
 except FileNotFoundError:
-    pass
-
+    print("[Logger] Configuration not found, starting with default log path")
+except KeyError as exc:
+    print("[Logger] Configuration key %s missing, using default log path.", exc)
 
 def get_logger(name: str) -> logging.Logger:
     """Creates a pre-configured logger"""
