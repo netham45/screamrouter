@@ -1,4 +1,5 @@
 """Holds the Source Info and a thread for handling it's queue"""
+import fcntl
 import os
 import threading
 import time
@@ -20,7 +21,6 @@ class SourceToFFMpegWriter(threading.Thread):
     def __init__(self, tag: str, fifo_file_name: pathlib.Path,
                  sink_ip: Optional[IPAddressType], volume: VolumeType):
         """Initializes a new Source object"""
-        print(f"Starting URL playback with ID {tag}")
         if sink_ip is None:
             raise ValueError("Can't start FFMPEG Writer without a Sink IP")
         self.lock: threading.Lock = threading.Lock()
@@ -47,6 +47,7 @@ class SourceToFFMpegWriter(threading.Thread):
         """Rather the thread is running"""
         self._queue: collections.deque = collections.deque([bytes([] * 1152)])
         """Holds the queue to read/write from"""
+        self._condition: threading.Condition = threading.Condition()
         self.__make_screamrouter_to_ffmpeg_pipe()
         self.start()
 
@@ -92,10 +93,14 @@ class SourceToFFMpegWriter(threading.Thread):
             return
         if not self.__open:
             self.update_activity()
-            fd = os.open(self.fifo_file_name, os.O_RDWR)
-            self.__fifo_file_handle = os.fdopen(fd, 'wb', 0)
+            fd = os.open(self.fifo_file_name, os.O_RDWR | os.O_NONBLOCK)
+            fcntl.fcntl(fd, 1031, 1024*1024*1024*64)
+            self.__fifo_file_handle = os.fdopen(fd, 'wb', -1)
             self.__open = True
             logger.info("[Sink:%s][Source:%s] Opened", self.__sink_ip, self.tag)
+        self._condition.acquire()
+        self._condition.notify_all()
+        self._condition.release()
         self.lock.release()
 
     def close(self) -> None:
@@ -104,7 +109,11 @@ class SourceToFFMpegWriter(threading.Thread):
             return
         self.lock.acquire()
         if self.is_open():
-            self.__fifo_file_handle.close()
+            if not self.__fifo_file_handle.closed:
+                try:
+                    self.__fifo_file_handle.close()
+                except BlockingIOError:
+                    pass
             self.__open = False
             logger.info("[Sink:%s][Source:%s] Closed", self.__sink_ip, self.tag)
         self.lock.release()
@@ -116,7 +125,10 @@ class SourceToFFMpegWriter(threading.Thread):
         self.lock.acquire()
         if self.is_open():
             self.__open = False
-            self.__fifo_file_handle.close()
+            try:
+                self.__fifo_file_handle.close()
+            except BlockingIOError:
+                pass
             logger.info("[Sink:%s][Source:%s] Closed", self.__sink_ip, self.tag)
             logger.debug("[Sink:%s][Source:%s] Stopping", self.__sink_ip, self.tag)
         if os.path.exists(self.fifo_file_name):
@@ -130,16 +142,26 @@ class SourceToFFMpegWriter(threading.Thread):
             return
         self._queue.append(data)
         self.update_activity()
+        self._condition.acquire()
+        self._condition.notify_all()
+        self._condition.release()
 
     def run(self) -> None:
         self.lock.release()
+        self._condition.acquire()
         while self.__running:
-            while len(self._queue) > 0 and self.is_open():
-                data: bytes = self._queue.popleft()
+            while self.is_open():
                 try:
+                    data: bytes = self._queue.popleft()
                     self.__fifo_file_handle.write(data)
                 except ValueError:
                     logger.warning("[Sink:%s][Source:%s] Failed to write to ffmpeg",
                                     self.__sink_ip, self.tag)
-            time.sleep(.005)
-        logger.debug("[Sink:%s] Queue thread exit", self.__sink_ip)
+                except IndexError:
+                    self._condition.wait(timeout=.1)
+                except BlockingIOError:
+                    pass
+            self._condition.wait(timeout=.1)
+        self._condition.release()
+
+        logger.debug("[Sink:%s] Source Queue thread exit", self.__sink_ip)

@@ -5,6 +5,7 @@ import select
 import threading
 import socket
 import io
+import fcntl
 
 from typing import Optional, Tuple
 
@@ -31,7 +32,8 @@ class FFMpegOutputThread(threading.Thread):
         """File handle"""
         self._make_ffmpeg_to_screamrouter_pipe()  # Make python -> ffmpeg fifo
         fd = os.open(self._fifo_in, os.O_RDONLY | os.O_NONBLOCK)
-        self._fd = open(fd, 'rb')
+        fcntl.fcntl(fd, 1031, 1024*1024*1024*64)
+        self._fd = open(fd, 'rb', -1)
         self.start()
 
     def _make_ffmpeg_to_screamrouter_pipe(self) -> bool:
@@ -150,6 +152,7 @@ class FFMpegPCMThread(FFMpegOutputThread):
 
     def run(self) -> None:
         """This thread implements listening to self.fifoin and sending it out to dest_ip"""
+        self.__sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 65535)
         while self._running:
             # Send data from ffmpeg to the Scream receiver
             self.__sock.sendto(self.__output_header + self._read_bytes(1152),

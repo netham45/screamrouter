@@ -59,8 +59,9 @@ app: FastAPI = FastAPI( title="ScreamRouter",
         }
     ])
 
+controller: ConfigurationController = ConfigurationController(None)
+api_controller = APIConfiguration(app, controller)
 webstream: APIWebStream = APIWebStream(app)
 website: APIWebsite = APIWebsite(app)
-controller: ConfigurationController = ConfigurationController(webstream)
-api_controller = APIConfiguration(app, controller)
+controller.set_webstream(webstream)
 api_controller.join()

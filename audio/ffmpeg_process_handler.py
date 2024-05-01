@@ -44,7 +44,7 @@ class FFMpegHandler(threading.Thread):
         """Lock to ensure this thread is only accessed by one other thread at a time"""
         self.lock.acquire()
         self.start()
-        self.start_ffmpeg()
+        #self.start_ffmpeg()
 
     def __get_ffmpeg_inputs(self, sources: List[SourceToFFMpegWriter]) -> List[str]:
         """Add an input for each source"""
@@ -135,30 +135,33 @@ class FFMpegHandler(threading.Thread):
     def start_ffmpeg(self):
         """Start ffmpeg if it's not running"""
         if self.__running:
-            logger.debug("[Sink:%s] ffmpeg started", self.__tag)
-            self.__ffmpeg_started = True
-            self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources),
-                                             shell=False,
-                                             start_new_session=True,
-                                             stdin=subprocess.PIPE,
-                                             stdout=subprocess.DEVNULL,
-                                             stderr=subprocess.DEVNULL)
-            if self.lock.locked():
-                self.lock.release()
+            if not self.__ffmpeg_started:
+                logger.debug("[Sink:%s] ffmpeg started", self.__tag)
+                self.__ffmpeg_started = True
+                self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources),
+                                                shell=False,
+                                                start_new_session=True,
+                                                stdin=subprocess.PIPE,
+                                                stdout=subprocess.DEVNULL,
+                                                stderr=subprocess.DEVNULL)
+                if self.lock.locked():
+                    self.lock.release()
 
     def set_delay(self, new_delay: int) -> None:
         """Sets a delay for the sink"""
-        self.lock.acquire()
         self.__delay = new_delay
         if self.__ffmpeg_started:
+            self.lock.acquire()
+            self.__ffmpeg_started = False
             self.__ffmpeg.kill()
 
     def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
-        """Opens the ffmpeg instance"""
-        self.lock.acquire()
+        """Opens the ffmpeg instance"""        
         logger.debug("[Sink:%s] Resetting ffmpeg", self.__tag)
         self.__sources = sources
         if self.__ffmpeg_started:
+            self.lock.acquire()
+            self.__ffmpeg_started = False
             self.__ffmpeg.kill()
 
     def send_ffmpeg_command(self, command: str, command_char: str = "c") -> None:
@@ -193,16 +196,18 @@ class FFMpegHandler(threading.Thread):
         self.__ffmpeg_started = False
         self.send_ffmpeg_command("", "q")
         self.__ffmpeg.kill()
-        self.__ffmpeg_started = False
 
     def run(self) -> None:
         """This thread monitors ffmpeg and restarts it if it ends or needs restarted"""
+
         while self.__running:
             if len(self.__sources) == 0:
                 time.sleep(.005)
                 continue
             if self.__ffmpeg_started:
                 self.__ffmpeg.wait()
+                self.__ffmpeg_started = False
                 logger.debug("[Sink:%s] ffmpeg ended", self.__tag)
+            if self.__running:
                 self.start_ffmpeg()
         logger.debug("[Sink:%s] ffmpeg exit", self.__tag)

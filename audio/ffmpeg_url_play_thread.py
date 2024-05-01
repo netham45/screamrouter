@@ -5,6 +5,7 @@ import pathlib
 import select
 import subprocess
 import threading
+import fcntl
 from typing import List
 
 from screamrouter_types import SinkDescription
@@ -15,7 +16,7 @@ from logger import get_logger
 
 logger = get_logger(__name__)
 
-url_playback_semaphore: threading.Semaphore = threading.Semaphore(6)
+url_playback_semaphore: threading.Semaphore = threading.Semaphore(8)
 """Max number of URLs playing at once, for limiting resource usage"""
 
 class FFMpegPlayURL(threading.Thread):
@@ -41,7 +42,8 @@ class FFMpegPlayURL(threading.Thread):
         """Receiver to call back when data is available or playback is done"""
         self._make_ffmpeg_to_screamrouter_pipe()  # Make python -> ffmpeg fifo
         fd = os.open(self.__fifo_in_url, os.O_RDONLY | os.O_NONBLOCK)
-        self._fd = open(fd, 'rb')
+        fcntl.fcntl(fd, 1031, 1024*1024*1024*64)
+        self._fd = open(fd, 'rb', -1)
         self.__header: StreamInfo = create_stream_info(self.__sink_info.bit_depth,
                                                        self.__sink_info.sample_rate,
                                                        2, "stereo")
@@ -73,7 +75,7 @@ class FFMpegPlayURL(threading.Thread):
         """Reads count bytes, blocks until self.__running goes false or count bytes are received."""
         dataout:bytearray = bytearray()  # Data to return
         while  len(dataout) < count and self.__ffmpeg.poll() is None:
-            ready = select.select([self._fd], [], [], .1)
+            ready = select.select([self._fd], [], [], .005)
             if ready[0]:
                 data: bytes = self._fd.read(count - len(dataout))
                 if data:

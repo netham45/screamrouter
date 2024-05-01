@@ -259,7 +259,9 @@ class ConfigurationController:
                     ffmpeg_source_info = SourceToFFMpegWriter(tag, pipe_path,
                                                               sink_description.ip,
                                                               sink_description.volume * volume)
-                    sink_controller.sources.append(ffmpeg_source_info)
+                    sink_controller.lock.acquire()
+                    sink_controller.sources[tag] = ffmpeg_source_info
+                    sink_controller.lock.release()
         if found:  # If at least one sink is found start playback
             tag: str = f"ffmpeg{self.__url_play_counter}"
             pipe_name: str = f"{self.pipes_dir}ffmpeg{self.__url_play_counter}"
@@ -274,6 +276,11 @@ class ConfigurationController:
         self.__receiver.stop()
         self.__receiver.join()
         return True
+
+    def set_webstream(self, webstream: APIWebStream) -> None:
+        """Sets the webstream"""
+        self.__api_webstream = webstream
+        #self.__start_receiver()
 
     # Private Functions
 
@@ -503,7 +510,7 @@ class ConfigurationController:
         if not self.__loaded:
             return
         while self.__starting:
-            time.sleep(.1)
+            time.sleep(.01)
         self.__starting = True
         self.__save_yaml()
         self.__build_real_sinks_to_real_sources()

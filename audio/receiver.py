@@ -67,7 +67,7 @@ class Receiver(threading.Thread):
 
         recvbuf = bytearray(1157)
         while self.running:
-            ready = select.select([self.sock], [], [], .1)
+            ready = select.select([self.sock], [], [], .005)
             if ready[0]:
                 try:
                     recvbuf, addr = self.sock.recvfrom(1157)  # 5 bytes header + 1152 bytes pcm

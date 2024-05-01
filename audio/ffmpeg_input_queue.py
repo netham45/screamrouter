@@ -1,7 +1,6 @@
 """Handles FFmpeg input queues"""
 import collections
 import threading
-import time
 from screamrouter_types import IPAddressType
 from logger import get_logger
 
@@ -31,6 +30,8 @@ class FFMpegInputQueue(threading.Thread):
         """Callback in Sink controller for us to call when there's data available"""
         self.__sink_ip: IPAddressType = sink_ip
         """Holds the sink IP (Only used for log messages)"""
+        self._condition: threading.Condition = threading.Condition()
+        """Condition"""
         self.start()
 
     def stop(self) -> None:
@@ -40,13 +41,17 @@ class FFMpegInputQueue(threading.Thread):
     def queue(self, entry: FFMpegInputQueueEntry) -> None:
         """Adds an item to the queue"""
         self._queue.append(entry)
+        self._condition.acquire()
+        self._condition.notify_all()
+        self._condition.release()
 
     def run(self) -> None:
         """Constantly checks the queue
             notifies the Sink Controller callback when there's something in the queue"""
         while self._running:
             while len(self._queue) > 0:
-                entry = self._queue.popleft()
-                self._callback(entry)
-            time.sleep(.005)
-        logger.debug("[Sink:%s] Queue thread exit", self.__sink_ip)
+                self._callback(self._queue.popleft())
+            self._condition.acquire()
+            self._condition.wait(timeout=.2)
+            self._condition.release()
+        logger.debug("[Sink:%s] Ffmepg Output Queue thread exit", self.__sink_ip)
