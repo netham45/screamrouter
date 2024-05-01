@@ -24,7 +24,8 @@ class FFMpegPlayURL(threading.Thread):
     def __init__(self, url: PlaybackURLType, volume: VolumeType, sink_info: SinkDescription,
                  fifo_in: pathlib.Path, source_tag: str, receiver: Receiver):
         """Plays a URL using ffmpeg and outputs it to a pipe name stored in fifo_in."""
-        url_playback_semaphore.acquire()
+        if not url_playback_semaphore.acquire(timeout=1):
+            raise TimeoutError("Timed out waiting for available URL play slot")
         super().__init__(name=f"[Sink:{sink_info.ip}] ffmpeg Playback {url}")
         self._url: PlaybackURLType = url
         """URL for Playback"""
