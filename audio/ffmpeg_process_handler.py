@@ -1,4 +1,4 @@
-"""Handles the ffmpeg process for each sink"""
+"""Handles the ffmpeg process for each audio controller"""
 import subprocess
 import time
 import threading
@@ -6,8 +6,8 @@ from typing import List
 from pathlib import Path
 
 from screamrouter_types import Equalizer, VolumeType
-from audio.source_to_ffmpeg_writer import SourceToFFMpegWriter
-from audio.stream_info import StreamInfo
+from audio.source_input_writer import SourceInputThread
+from audio.scream_header_parser import ScreamHeader
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -15,8 +15,8 @@ logger = get_logger(__name__)
 class FFMpegHandler(threading.Thread):
     """Handles an FFMpeg process for a sink"""
     def __init__(self, tag, fifo_in_pcm: Path, fifo_in_mp3: Path,
-                  sources: List[SourceToFFMpegWriter],
-                  sink_info: StreamInfo, equalizer: Equalizer):
+                  sources: List[SourceInputThread],
+                  sink_info: ScreamHeader, equalizer: Equalizer):
         super().__init__(name=f"[Sink:{tag}] ffmpeg Thread")
         self.__fifo_in_pcm: Path = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
@@ -30,9 +30,9 @@ class FFMpegHandler(threading.Thread):
         """Holds rather ffmpeg is running"""
         self.__running: bool = True
         """Holds rather we're monitoring ffmpeg to restart it or waiting for the thread to end"""
-        self.__sources: List[SourceToFFMpegWriter] = sources
+        self.__sources: List[SourceInputThread] = sources
         """Holds a list of active sources"""
-        self.__sink_info: StreamInfo = sink_info
+        self.__sink_info: ScreamHeader = sink_info
         """Holds the sink configuration"""
         self.equalizer: Equalizer = equalizer
         """Equalizer"""
@@ -44,7 +44,7 @@ class FFMpegHandler(threading.Thread):
 
         self.start()
 
-    def __get_ffmpeg_inputs(self, sources: List[SourceToFFMpegWriter]) -> List[str]:
+    def __get_ffmpeg_inputs(self, sources: List[SourceInputThread]) -> List[str]:
         """Add an input for each source"""
         ffmpeg_command: List[str] = []
         for source in sources:
@@ -54,7 +54,7 @@ class FFMpegHandler(threading.Thread):
             channel_layout = source.stream_attributes.channel_layout
             file_name = source.fifo_file_name
             # This is optimized to reduce latency and initial ffmpeg processing time
-            ffmpeg_command.extend(["-blocksize", str(1152 * 4),
+            ffmpeg_command.extend([#"-blocksize", str(1152 * 4),
                                    "-max_delay", "0",
                                    "-audio_preload", "0",
                                    "-max_probe_packets", "0",
@@ -72,15 +72,15 @@ class FFMpegHandler(threading.Thread):
                                    "-i", f"{file_name}"])
         return ffmpeg_command
 
-    def __get_ffmpeg_filters(self, sources: List[SourceToFFMpegWriter]) -> List[str]:
+    def __get_ffmpeg_filters(self, sources: List[SourceInputThread]) -> List[str]:
         """Build complex filter"""
         ffmpeg_command_parts: List[str] = []
-        full_filter_string: str = ""
-        amix_inputs: str = ""
+        input_filter_string: str = ""
+        output_filter_inputs: str = ""
 
         # For each source IP add a aresample and append it to an input variable for amix
-        for idx, source in enumerate(sources):
-            eq_str: str = "".join([
+        for index, source in enumerate(sources):
+            equalizer_filter: str = "".join([
                  "superequalizer=",
                 f"1b={source.source_info.equalizer.b1}:2b={source.source_info.equalizer.b2}:",
                 f"3b={source.source_info.equalizer.b3}:4b={source.source_info.equalizer.b4}:",
@@ -91,19 +91,24 @@ class FFMpegHandler(threading.Thread):
                 f"13b={source.source_info.equalizer.b9}:14b={source.source_info.equalizer.b14}:",
                 f"15b={source.source_info.equalizer.b11}:16b={source.source_info.equalizer.b16}:",
                 f"17b={source.source_info.equalizer.b13}:18b={source.source_info.equalizer.b18}"])
-            delay_str: str = f"adelay=delays={source.source_info.delay}:all=1"
-            full_filter_string = "".join([full_filter_string,
-                                        f"[{idx}]volume@volume_{idx}={source.source_info.volume},",
-                                        f"aresample=isr={source.stream_attributes.sample_rate}:",
-                                        f"osr={self.__sink_info.sample_rate}:",
-                                        "async=500000,",
-                                        f"{delay_str},{eq_str}[a{idx}],"])
-            amix_inputs = amix_inputs + f"[a{idx}]"  # amix input
+            delay_filter: str = f"adelay=delays={source.source_info.delay}:all=1"
+            volume_filter: str = f"volume@volume_{index}={source.source_info.volume}"
+            aresample_filter: str = "".join(["aresample=",
+                                          f"isr={source.stream_attributes.sample_rate}:",
+                                          f"osr={self.__sink_info.sample_rate}:",
+                                          "async=500000"])
+            input_filter_string = "".join([f"{input_filter_string}",
+                                          f"[{index}]",
+                                          f"{volume_filter},",
+                                          f"{delay_filter},",
+                                          f"{aresample_filter},",
+                                          f"{equalizer_filter}",
+                                          f"[a{index}],"])
+            output_filter_inputs = output_filter_inputs + f"[a{index}]"  # amix input
         inputs: int = len(self.__sources)
-        combined_filter_string: str = full_filter_string + amix_inputs
-        amix_string = f"amix=normalize=0:inputs={inputs}"
-        combined_filter_string = combined_filter_string + amix_string
-        ffmpeg_command_parts.extend(["-filter_complex", combined_filter_string])
+        output_filter_string = f"{output_filter_inputs}amix=normalize=0:inputs={inputs}"
+        complex_filter_string: str = input_filter_string + output_filter_string
+        ffmpeg_command_parts.extend(["-filter_complex", complex_filter_string])
         return ffmpeg_command_parts
 
     def __get_ffmpeg_output(self) -> List[str]:
@@ -126,7 +131,7 @@ class FFMpegHandler(threading.Thread):
                                       f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
         return ffmpeg_command_parts
 
-    def __get_ffmpeg_command(self, sources: List[SourceToFFMpegWriter]) -> List[str]:
+    def __get_ffmpeg_command(self, sources: List[SourceInputThread]) -> List[str]:
         """Builds the ffmpeg command"""
         ffmpeg_command_parts: List[str] = ["ffmpeg", "-hide_banner"]  # Build ffmpeg command
         ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(sources))
@@ -151,7 +156,7 @@ class FFMpegHandler(threading.Thread):
                 if self.ffmpeg_not_running_lock.locked():
                     self.ffmpeg_not_running_lock.release()
 
-    def reset_ffmpeg(self, sources: List[SourceToFFMpegWriter]) -> None:
+    def reset_ffmpeg(self, sources: List[SourceInputThread]) -> None:
         """Opens the ffmpeg instance"""        
         logger.debug("[Sink:%s] Resetting ffmpeg", self.__tag)
         self.__sources = sources
@@ -178,11 +183,11 @@ class FFMpegHandler(threading.Thread):
         # Release ffmpeg once a command is finished
         self.ffmpeg_not_running_lock.release()
 
-    def set_input_volume(self, source: SourceToFFMpegWriter, volume: VolumeType):
+    def set_input_volume(self, source: SourceInputThread, volume: VolumeType):
         """Run an ffmpeg command to set the input volume"""
-        for idx, _source in enumerate(self.__sources):
+        for index, _source in enumerate(self.__sources):
             if source.tag == _source.tag:
-                command: str = f"volume@volume_{idx} -1 volume {volume}"
+                command: str = f"volume@volume_{index} -1 volume {volume}"
                 self.send_ffmpeg_command(command)
                 return
 

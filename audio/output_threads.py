@@ -12,12 +12,12 @@ from screamrouter_types import IPAddressType, PortType
 from api.api_webstream import APIWebStream
 
 from audio.mp3_header_parser import MP3Header, InvalidHeaderException
-from audio.stream_info import StreamInfo
+from audio.scream_header_parser import ScreamHeader
 from logger import get_logger
 
 logger = get_logger(__name__)
 
-class FFMpegOutputThread(threading.Thread):
+class OutputThread(threading.Thread):
     """Handles listening for output from ffmpeg, extended by codec-specific classes"""
     def __init__(self, fifo_in: Path, sink_ip: IPAddressType, threadname: str):
         super().__init__(name = threadname)
@@ -68,8 +68,8 @@ class FFMpegOutputThread(threading.Thread):
         return dataout
 
 
-class FFMpegMP3Thread(FFMpegOutputThread):
-    """Handles listening for MP3 output from ffmpeg"""
+class MP3OutputThread(OutputThread):
+    """Handles listening for MP3 output from ffmpeg and sends it to the WebStream handler"""
     def __init__(self, fifo_in: Path, sink_ip: IPAddressType,
                  webstream: Optional[APIWebStream]):
         super().__init__(fifo_in=fifo_in, sink_ip=sink_ip,
@@ -139,10 +139,10 @@ class FFMpegMP3Thread(FFMpegOutputThread):
         logger.debug("[Sink:%s] MP3 thread exit", self._sink_ip)
 
 
-class FFMpegPCMThread(FFMpegOutputThread):
-    """Handles listening for PCM output from ffmpeg"""
+class PCMOutputThread(OutputThread):
+    """Handles listening for PCM output from ffmpeg and sends it to sinks"""
     def __init__(self, fifo_in: Path, sink_ip: IPAddressType,
-                 sink_port: PortType, output_info: StreamInfo):
+                 sink_port: PortType, output_info: ScreamHeader):
 
         self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Output socket for sink"""

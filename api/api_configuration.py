@@ -1,22 +1,19 @@
-"""API endpoints to configure the controller"""
+"""API endpoints to the configuration manager"""
 import traceback
-import threading
-import uvicorn
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from configuration.configuration_controller import ConfigurationController
+from configuration.configuration_manager import ConfigurationManager
 from logger import get_logger
 
 logger = get_logger(__name__)
 
-class APIConfiguration(threading.Thread):
-    """API endpoints to configure the controller"""
-    def __init__(self, app: FastAPI, configuration_controller: ConfigurationController):
-        """Holds the active controller"""
-        super().__init__(name="API Thread")
+class APIConfiguration():
+    """API endpoints to the configuration manager"""
+    def __init__(self, app: FastAPI, configuration_controller: ConfigurationManager):
+        """Holds the active configuration"""
         self._configuration_controller = configuration_controller
-        """Configuration controller"""
+        """Configuration manager"""
         self._app = app
         """FastAPI"""
 
@@ -71,13 +68,7 @@ class APIConfiguration(threading.Thread):
         self._app.post("/routes/{route_name}/equalizer/",
             tags=["Route Configuration"])(self._configuration_controller.update_route_equalizer)
         self._app.add_exception_handler(Exception, self.__api_exception_handler)
-        self.start()
 
-    def run(self):
-        uvicorn.run(self._app,
-                    port=self._configuration_controller.api_port,
-                    host='0.0.0.0',
-                    log_config="uvicorn_log_config.yaml")
     def __api_exception_handler(self, _, exception: Exception) -> JSONResponse:
         """Error handler so controller can throw exceptions that get returned to clients"""
         return JSONResponse(

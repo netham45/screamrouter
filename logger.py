@@ -7,7 +7,7 @@ import yaml
 import screamrouter_types  # pylint: disable=unused-import
 
 LOGS_DIR = "logs/"
-CONSOLE_LOG_LEVEL = "INFO"
+CONSOLE_LOG_LEVEL = "DEBUG"
 
 try:
     with open("config.yaml", "r", encoding="UTF-8") as f:

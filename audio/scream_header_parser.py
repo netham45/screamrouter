@@ -19,7 +19,7 @@ CHANNEL_LAYOUT_TABLE: dict[Tuple[int,int], str] = {(0x00, 0x00): "stereo", # No 
                                                    (0x3F, 0x00): "5.1",  # Deprecated
                                                    (0xFF, 0x00): "7.1"}   # Deprecated
 
-class StreamInfo(BaseModel):
+class ScreamHeader(BaseModel):
     """Parses Scream headers to get sample rate, bit depth, and channels"""
     sample_rate: SampleRateType
     """Sample rate in Hz"""
@@ -68,7 +68,7 @@ class StreamInfo(BaseModel):
 
     def __eq__(self, _other):
         """Returns if two ScreamStreamInfos equal"""
-        other: StreamInfo = _other
+        other: ScreamHeader = _other
         result: bool = self.sample_rate == other.sample_rate
         result = result and (self.bit_depth == other.bit_depth)
         result = result and (self.channels == other.channels)
@@ -78,7 +78,7 @@ class StreamInfo(BaseModel):
 def create_stream_info(bit_depth: BitDepthType,
                        sample_rate: SampleRateType,
                        channels: ChannelsType,
-                       channel_layout: ChannelLayoutType) -> StreamInfo:
+                       channel_layout: ChannelLayoutType) -> ScreamHeader:
     """Returns a header with the specified properties"""
     header: bytearray = bytearray([0, 32, 2, 0, 0])
     is_441khz: bool = sample_rate % 44100 == 0
@@ -94,4 +94,4 @@ def create_stream_info(bit_depth: BitDepthType,
     for key, value in CHANNEL_LAYOUT_TABLE.items():
         if value == channel_layout:
             header[3], header[4] = key
-    return StreamInfo(header)
+    return ScreamHeader(header)

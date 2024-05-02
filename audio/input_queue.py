@@ -1,4 +1,4 @@
-"""Handles FFmpeg input queues"""
+"""Handles a queue that writes Sources to pipes for ffmpeg to read from"""
 import collections
 import threading
 from screamrouter_types import IPAddressType
@@ -17,7 +17,7 @@ class FFMpegInputQueueEntry():
         self.data = data
 
 
-class FFMpegInputQueue(threading.Thread):
+class InputQueue(threading.Thread):
     """An FFMPEG Input Queue is written to by the receiver, passed to each Sink Controller,
         which passes to ffmpeg. There is one queue per sink controller."""
     def __init__(self, callback, sink_ip: IPAddressType):

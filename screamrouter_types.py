@@ -284,6 +284,12 @@ ChannelLayoutType = Annotated[
 ]
 """ScreamRouter Channel Layout, one of "mono", "stereo", "quad", "surround", "5.1", "7.1."""
 
+class _SourceNameType(str):
+    def __eq__(self, other):
+        if not isinstance(other, _SourceNameType):
+            return False
+        return super().__eq__(other)
+
 SourceNameType = Annotated[
     str,
     Path(
@@ -293,6 +299,12 @@ SourceNameType = Annotated[
 ]
 """ScreamRouter Source Name"""
 
+class _SinkNameType(str):
+    def __eq__(self, other):
+        if not isinstance(other, _SinkNameType):
+            return False
+        return super().__eq__(other)
+
 SinkNameType = Annotated[
     str,
     Path(
@@ -301,6 +313,12 @@ SinkNameType = Annotated[
     )
 ]
 """ScreamRouter Sink Name"""
+
+class _RouteNameType(str):
+    def __eq__(self, other):
+        if not isinstance(other, _RouteNameType):
+            return False
+        return super().__eq__(other)
 
 RouteNameType = Annotated[
     str,
@@ -359,6 +377,23 @@ class Equalizer(BaseModel):
     b18: EqualizerBandType18 = 1
     """Set 20000Hz band gain."""
 
+    def __eq__(self, other):
+        """Compares all properties if an Equalizer."""
+        if isinstance(other, Equalizer):
+            other_equalizer: Equalizer = other
+            for field_name in self.model_fields:
+                if not getattr(self, field_name) == getattr(other_equalizer, field_name):
+                    return False
+            return True
+        raise TypeError(f"Can't compare {type(self)} against {type(other)}")
+
+    def __hash__(self):
+        """Returns a hash"""
+        hashstr: str = ""
+        for field_name in self.model_fields:
+            hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+        return hash(hashstr)
+
     def __mul__(self, other):
         other_eq: Equalizer = copy(other)
         other_eq.b1 = other_eq.b1 * self.b1
@@ -399,77 +434,99 @@ class SinkDescription(BaseModel):
     Holds either a sink IP and Port or a group of sink names
     """
     name: SinkNameType
-    """Sink Name"""
+    """Sink Name, Endpoint and Group"""
     ip: Optional[IPAddressType] = None
-    """Sink IP"""
+    """Sink IP, Endpoint Only"""
     port: Optional[PortType] = 4010
-    """Sink port number"""
+    """Sink port number, Endpoint Only"""
     is_group: bool = False
     """Sink Is Group"""
     enabled: bool = True
-    """Sink is Enabled"""
+    """Sink is Enabled, Endpoint and Group"""
     group_members: List[SinkNameType] = []
-    """Sink Group Members"""
+    """Sink Group Members, Group Only"""
     volume: VolumeType = 1
-    """Holds the volume for the sink (0.0-1.0)"""
+    """Holds the volume for the sink (0.0-1.0), Endpoint and Group"""
     bit_depth: BitDepthType = 32
-    """Sink Bit depth"""
+    """Sink Bit depth, Endpoint Only"""
     sample_rate: SampleRateType = 48000
-    """Sink Sample Rate"""
+    """Sink Sample Rate, Endpoint Only"""
     channels: ChannelsType = 2
-    """Sink Channel Count"""
+    """Sink Channel Count, Endpoint Only"""
     channel_layout: ChannelLayoutType = "stereo"
-    """Sink Channel Layout"""
+    """Sink Channel Layout, Endpoint Only"""
     delay: DelayType = 0
-    """Delay in ms"""
+    """Delay in ms, Endpoint and Group"""
     equalizer: Equalizer = Equalizer(b1=1, b2=1, b3=1, b4=1, b5=1, b6=1,
                                      b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
                                      b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
     """Audio Equalizer"""
 
     def __eq__(self, other):
-        """Compares the name"""
-        if isinstance(other, SinkDescription):
-            other_sink: SinkDescription = other
-            return self.name == other_sink.name
+        """Compares the name if a string.
+           Compares all properties if a SinkDescription."""
         if isinstance(other, str):
             other_sink_name: SinkNameType = other
             return self.name == other_sink_name
+        if isinstance(other, SinkDescription):
+            other_sink: SinkDescription = other
+            for field_name in self.model_fields:
+                if not getattr(self, field_name) == getattr(other_sink, field_name):
+                    return False
+            return True
         raise TypeError(f"Can't compare {type(self)} against {type(other)}")
 
+    def __hash__(self):
+        """Returns a hash"""
+        hashstr: str = ""
+        for field_name in self.model_fields:
+            hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+        return hash(hashstr)
 
 class SourceDescription(BaseModel):
     """
     Holds either a source IP or a group of source names
     """
     name: SourceNameType
-    """Source Name"""
+    """Source Name, Endpoint and Group"""
     ip: Optional[IPAddressType] = None
-    """Source IP"""
+    """Source IP, Endpoint Only"""
     is_group: bool = False
     """Source Is Group"""
     enabled: bool = True
-    """Source Enabled"""
+    """Source Enabled, Endpoint and Group"""
     group_members: List[SourceNameType] = []
-    """"Source Group Members"""
+    """"Source Group Members, Group Only"""
     volume: VolumeType = 1
-    """Holds the volume for the source  (0.0-1.0)"""
+    """Holds the volume for the source  (0.0-1.0), Endpoint and Group"""
     delay: DelayType = 0
-    """Delay in ms"""
+    """Delay in ms, Endpoint and Group"""
     equalizer: Equalizer = Equalizer(b1=1, b2=1, b3=1, b4=1, b5=1, b6=1,
                                      b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
                                      b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
     """Audio Equalizer"""
 
     def __eq__(self, other):
-        """Compares the name"""
-        if isinstance(other, SourceDescription):
-            other_source: SourceDescription = other
-            return self.name == other_source.name
+        """Compares the name if a string.
+           Compares all properties if a SourceDescription."""
         if isinstance(other, str):
             other_source_name: SourceNameType = other
             return self.name == other_source_name
+        if isinstance(other, SourceDescription):
+            other_source: SourceDescription = other
+            for field_name in self.model_fields:
+                if not getattr(self, field_name) == getattr(other_source, field_name):
+                    return False
+            return True
         raise TypeError(f"Can't compare {type(self)} against {type(other)}")
+
+    def __hash__(self):
+        """Returns a hash"""
+        hashstr: str = ""
+        for field_name in self.model_fields:
+            hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+        return hash(hashstr)
+
 
 class RouteDescription(BaseModel):
     """
@@ -493,11 +550,22 @@ class RouteDescription(BaseModel):
     """Audio Equalizer"""
 
     def __eq__(self, other):
-        """Compares the name"""
-        if isinstance(other, RouteDescription):
-            other_route: RouteDescription = other
-            return self.name == other_route.name
+        """Compares the name if a string.
+           Compares all properties if a RouteDescription."""
         if isinstance(other, str):
             other_route_name: RouteNameType = other
             return self.name == other_route_name
+        if isinstance(other, RouteDescription):
+            other_route: RouteDescription = other
+            for field_name in self.model_fields:
+                if not getattr(self, field_name) == getattr(other_route, field_name):
+                    return False
+            return True
         raise TypeError(f"Can't compare {type(self)} against {type(other)}")
+
+    def __hash__(self):
+        """Returns a hash"""
+        hashstr: str = ""
+        for field_name in self.model_fields:
+            hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+        return hash(hashstr)

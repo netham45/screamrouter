@@ -1,4 +1,5 @@
-"""Handles playing a URL and forwarding the output from it to the main receiver"""
+"""Handles playing a URL and forwarding the output from it to the main receiver.
+   Sinks can subscribe to it by having a corresponding SourceDescription made."""
 import io
 import os
 import select
@@ -10,8 +11,8 @@ from pathlib import Path
 
 from screamrouter_types import SinkDescription
 from screamrouter_types import PlaybackURLType, VolumeType
-from audio.receiver import Receiver
-from audio.stream_info import StreamInfo, create_stream_info
+from audio.receiver_thread import ReceiverThread
+from audio.scream_header_parser import ScreamHeader, create_stream_info
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -19,10 +20,10 @@ logger = get_logger(__name__)
 url_playback_semaphore: threading.Semaphore = threading.Semaphore(8)
 """Max number of URLs playing at once, for limiting resource usage"""
 
-class FFMpegPlayURL(threading.Thread):
+class FFMpegURLPlayWriter(threading.Thread):
     """Handles playing a URL and forwarding the output from it to the main receiver"""
     def __init__(self, url: PlaybackURLType, volume: VolumeType, sink_info: SinkDescription,
-                 fifo_in: Path, source_tag: str, receiver: Receiver):
+                 fifo_in: Path, source_tag: str, receiver: ReceiverThread):
         """Plays a URL using ffmpeg and outputs it to a pipe name stored in fifo_in."""
         if not url_playback_semaphore.acquire(timeout=1):
             raise TimeoutError("Timed out waiting for available URL play slot")
@@ -39,13 +40,13 @@ class FFMpegPlayURL(threading.Thread):
         """File handle"""
         self.__source_tag = source_tag
         """Source tag that the sink queue will check against"""
-        self.__receiver: Receiver = receiver
+        self.__receiver: ReceiverThread = receiver
         """Receiver to call back when data is available or playback is done"""
         self._make_ffmpeg_to_screamrouter_pipe()  # Make python -> ffmpeg fifo
         fd = os.open(self.__fifo_in_url, os.O_RDONLY | os.O_NONBLOCK)
         fcntl.fcntl(fd, 1031, 1024*1024*1024*64)
         self._fd = open(fd, 'rb', -1)
-        self.__header: StreamInfo = create_stream_info(self.__sink_info.bit_depth,
+        self.__header: ScreamHeader = create_stream_info(self.__sink_info.bit_depth,
                                                        self.__sink_info.sample_rate,
                                                        2, "stereo")
         self.__ffmpeg: subprocess.Popen

@@ -9,12 +9,12 @@ from typing import Optional
 from pathlib import Path
 
 from screamrouter_types import IPAddressType, SourceDescription
-from audio.stream_info import StreamInfo
+from audio.scream_header_parser import ScreamHeader
 from logger import get_logger
 
 logger = get_logger(__name__)
 
-class SourceToFFMpegWriter(threading.Thread):
+class SourceInputThread(threading.Thread):
     """Stores the status for a single Source to a single Sink
        Handles writing from a queue to an ffmpeg pipe"""
     def __init__(self, tag: str, fifo_file_name: Path,
@@ -31,7 +31,7 @@ class SourceToFFMpegWriter(threading.Thread):
         """Rather the Source is open for writing or not"""
         self.__last_data_time: float = 0
         """The time in milliseconds we last received data"""
-        self.stream_attributes: StreamInfo = StreamInfo(bytearray([0, 32, 2, 0, 0]))
+        self.stream_attributes: ScreamHeader = ScreamHeader(bytearray([0, 32, 2, 0, 0]))
         """The source stream attributes (bit depth, sample rate, channels)"""
         self.fifo_file_name: Path = fifo_file_name
         """The named pipe that ffmpeg is using as an input for this source"""
@@ -50,11 +50,11 @@ class SourceToFFMpegWriter(threading.Thread):
         self.__make_screamrouter_to_ffmpeg_pipe()
         self.start()
 
-    def check_attributes(self, stream_attributes: StreamInfo) -> bool:
+    def check_attributes(self, stream_attributes: ScreamHeader) -> bool:
         """Returns True if the source's stream attributes are the same."""
         return stream_attributes == self.stream_attributes
 
-    def set_attributes(self, stream_attributes: StreamInfo) -> None:
+    def set_attributes(self, stream_attributes: ScreamHeader) -> None:
         """Sets stream attributes for a source"""
         self.stream_attributes = stream_attributes
 

@@ -1,4 +1,4 @@
-"""Holds the web stream queue and API endpoints."""
+"""Holds the web stream queue and API endpoints, manages serving MP3s."""
 import asyncio
 from typing import List, Optional
 

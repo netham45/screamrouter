@@ -3,17 +3,21 @@
 import os
 import threading
 import signal
+import uvicorn
 
 from fastapi import FastAPI
 
-from configuration.configuration_controller import ConfigurationController
+from configuration.configuration_manager import ConfigurationManager
 
 from api.api_configuration import APIConfiguration
 from api.api_webstream import APIWebStream
 from api.api_website import APIWebsite
 from logger import get_logger
 
+
 logger = get_logger(__name__)
+
+threading.current_thread().name = "ScreamRouter Main Thread"
 
 def signal_handler(sig, frame):
     """Fired when Ctrl+C pressed"""
@@ -23,8 +27,6 @@ def signal_handler(sig, frame):
     os.kill(os.getpid(), signal.SIGTERM)
 
 signal.signal(signal.SIGINT, signal_handler)
-
-threading.current_thread().name = "ScreamRouter Main Thread"
 
 app: FastAPI = FastAPI( title="ScreamRouter",
         description = "Routes PCM audio around for Scream sinks and sources",
@@ -59,9 +61,12 @@ app: FastAPI = FastAPI( title="ScreamRouter",
         }
     ])
 
-controller: ConfigurationController = ConfigurationController(None)
+controller: ConfigurationManager = ConfigurationManager(None)
 api_controller = APIConfiguration(app, controller)
 webstream: APIWebStream = APIWebStream(app)
 website: APIWebsite = APIWebsite(app)
 controller.set_webstream(webstream)
-api_controller.join()
+uvicorn.run(app,
+            port=controller.api_port,
+            host='0.0.0.0',
+            log_config="uvicorn_log_config.yaml")
