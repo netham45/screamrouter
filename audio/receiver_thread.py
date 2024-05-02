@@ -16,7 +16,7 @@ class ReceiverThread(threading.Thread):
     """Handles the main socket that listens for incoming Scream streams and sends them to sinks"""
     def __init__(self, port: PortType):
         """Takes the UDP port number to listen on"""
-        super().__init__(name="Main Receiver Thread")
+        super().__init__(name=f"Receiver Thread {port}")
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Main socket all sources send to"""
         self.audio_controllers: List[AudioController] = []
@@ -44,15 +44,14 @@ class ReceiverThread(threading.Thread):
 
     def stop(self) -> None:
         """Stops the Receiver and all sinks"""
-        logger.info("[Recevier] Stopping")
+        logger.info("[Receiver:%s] Stopping", self.port)
         self.running = False
-        self.sock.close()
         self.join()
 
     def __check_source_packet(self, tag: str, data: bytes) -> bool:
         """Verifies a packet is the right length"""
         if len(data) != 1157:
-            logger.warning("[Source:%s] Got bad packet length %i != 1157 from source",
+            logger.debug("[Source:%s] Got bad packet length %i != 1157 from source",
                         tag,
                         len(data))
             return False
@@ -71,8 +70,9 @@ class ReceiverThread(threading.Thread):
 
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks"""
+        logger.info("[Receiver:%s] Receiver started on port %s", self.port, self.port)
         if self.running:
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 65535)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 1024 * 1024)
             self.sock.bind(("", self.port))
         else:
             return
@@ -87,15 +87,17 @@ class ReceiverThread(threading.Thread):
                         for sink in self.audio_controllers:
                             sink.add_packet_to_queue(addr[0], recvbuf)
                 except OSError:
-                    logger.warning("[Receiver] Failed to read from incoming sock, exiting")
+                    logger.warning("[Receiver:%s] Failed to read from incoming sock, exiting",
+                                    self.port)
                     break
-        logger.info("[Receiver] Main thread ending sinks")
+        logger.info("[Receiver:%s] Main thread ending sinks", self.port)
         for sink in self.audio_controllers:
-            logger.info("[Receiver] Stopping sink %s", sink.sink_info.ip)
+            logger.info("[Receiver:%s] Stopping sink %s", self.port, sink.sink_info.ip)
             sink.stop()
         for sink in self.audio_controllers:
-            logger.debug("[Receiver] Waiting for sink %s to stop", sink.sink_info.ip)
+            logger.debug("[Receiver:%s] Waiting for sink %s to stop",
+                          self.port, sink.sink_info.ip)
             sink.wait_for_threads_to_stop()
         self.sock.close()
 
-        logger.info("[Receiver] Main thread stopped")
+        logger.info("[Receiver:%s] Main thread stopped", self.port)

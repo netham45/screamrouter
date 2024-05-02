@@ -276,13 +276,14 @@ ChannelsType = Annotated[
 """Channel Count, 1-8"""
 
 ChannelLayoutType = Annotated[
-    Literal["mono", "stereo", "quad", "surround", "5.1", "7.1"],
+    Literal["mono", "stereo", "quad", "surround", "3.1", "4.0", "5.1", "5.1(side)", "7.1"],
     Path(
         description="Channel Layout Type",
         json_schema_extra={"example": "stereo"},
     )
 ]
-"""ScreamRouter Channel Layout, one of "mono", "stereo", "quad", "surround", "5.1", "7.1."""
+"""ScreamRouter Channel Layout, one of:
+   "mono", "stereo", "quad", "surround", "3.1", "4.0", "5.1", "5.1(side)", "7.1."""
 
 class _SourceNameType(str):
     def __eq__(self, other):

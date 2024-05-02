@@ -68,6 +68,7 @@ class APIConfiguration():
         self._app.post("/routes/{route_name}/equalizer/",
             tags=["Route Configuration"])(self._configuration_controller.update_route_equalizer)
         self._app.add_exception_handler(Exception, self.__api_exception_handler)
+        logger.info("[API] API loaded")
 
     def __api_exception_handler(self, _, exception: Exception) -> JSONResponse:
         """Error handler so controller can throw exceptions that get returned to clients"""

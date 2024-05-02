@@ -14,6 +14,7 @@ class APIWebsite():
         self._app.get("/site.js", tags=["Site"])(self.read_javascript)
         self._app.get("/site.css", tags=["Site"])(self.read_css)
         self._templates = Jinja2Templates(directory="./site/")
+        logger.info("[Website] Web frontend endpoints added")
 
     # Site resource endpoints
     def read_index(self, request: Request):

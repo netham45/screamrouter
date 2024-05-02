@@ -8,7 +8,7 @@ from pathlib import Path
 from screamrouter_types import Equalizer, VolumeType
 from audio.source_input_writer import SourceInputThread
 from audio.scream_header_parser import ScreamHeader
-from logger import get_logger
+from logger import get_logger, CONSOLE_LOG_LEVEL
 
 logger = get_logger(__name__)
 
@@ -146,12 +146,18 @@ class FFMpegHandler(threading.Thread):
             if not self.__ffmpeg_started:
                 logger.debug("[Sink:%s] ffmpeg started", self.__tag)
                 self.__ffmpeg_started = True
-                self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources),
-                                                shell=False,
-                                                start_new_session=True,
-                                                stdin=subprocess.PIPE,
-                                                stdout=subprocess.DEVNULL,
-                                                stderr=subprocess.DEVNULL)
+                if CONSOLE_LOG_LEVEL == "DEBUG":
+                    self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources),
+                                                    shell=False,
+                                                    start_new_session=True,
+                                                    stdin=subprocess.PIPE)
+                else:
+                    self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources),
+                                                    shell=False,
+                                                    start_new_session=True,
+                                                    stdin=subprocess.PIPE,
+                                                    stdout=subprocess.DEVNULL,
+                                                    stderr=subprocess.DEVNULL)
                 # This is where ffmpeg is running and the not running lock can be released
                 if self.ffmpeg_not_running_lock.locked():
                     self.ffmpeg_not_running_lock.release()

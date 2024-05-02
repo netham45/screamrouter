@@ -12,7 +12,7 @@ from configuration.configuration_manager import ConfigurationManager
 from api.api_configuration import APIConfiguration
 from api.api_webstream import APIWebStream
 from api.api_website import APIWebsite
-from logger import get_logger
+from logger import LOG_TO_FILE, get_logger
 
 
 logger = get_logger(__name__)
@@ -69,4 +69,4 @@ controller.set_webstream(webstream)
 uvicorn.run(app,
             port=controller.api_port,
             host='0.0.0.0',
-            log_config="uvicorn_log_config.yaml")
+            log_config="uvicorn_log_config.yaml" if LOG_TO_FILE else None)

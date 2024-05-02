@@ -14,10 +14,11 @@ CHANNEL_LAYOUT_TABLE: dict[Tuple[int,int], str] = {(0x00, 0x00): "stereo", # No 
                                                    (0x03, 0x00): "stereo",
                                                    (0x33, 0x00): "quad",
                                                    (0x34, 0x01): "surround",
-                                                   (0x0F, 0x06): "5.1",  # Surround
-                                                   (0x3F, 0x06): "7.1",  # Surround
-                                                   (0x3F, 0x00): "5.1",  # Deprecated
-                                                   (0xFF, 0x00): "7.1"}   # Deprecated
+                                                   (0x0F, 0x00): "3.1",
+                                                   (0x07, 0x01): "4.0",
+                                                   (0x0F, 0x06): "5.1(side)",  # 5.1 Side
+                                                   (0x3F, 0x06): "7.1",
+                                                   (0x3F, 0x00): "5.1"} # 5.1 rear
 
 class ScreamHeader(BaseModel):
     """Parses Scream headers to get sample rate, bit depth, and channels"""
@@ -59,10 +60,9 @@ class ScreamHeader(BaseModel):
         """Converts the channel mask to a string to be fed to ffmpeg"""
         try:
             return CHANNEL_LAYOUT_TABLE[(channel_mask[0], channel_mask[1])]
-        except KeyError:
-            logger.warning("".join([ "Unknown speaker configuration:",
-                                    f"{self.channel_mask[0]} {self.channel_mask[1]}",
-                                    f"({self.channels} channels), defaulting to stereo"]))
+        except KeyError as exc:
+            logger.warning("Unknown speaker configuration bytes: %s, defaulting to stereo",
+                           exc)
             traceback.format_exc()
             return "stereo"
 

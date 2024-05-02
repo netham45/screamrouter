@@ -60,19 +60,20 @@ class ConfigurationManager:
         """Semaphore so only one thread can save to YAML at a time"""
         self.__load_config()
 
+        _logger.info("------------------------------------------------------------------------")
+        _logger.info("  ScreamRouter")
+        _logger.info("     Console Log level: %s", logger.CONSOLE_LOG_LEVEL)
+        _logger.info("     Log Dir: %s", os.path.realpath(logger.LOGS_DIR))
+        _logger.info("     Pipe Dir: %s", os.path.realpath(self.pipes_dir))
+        _logger.info("------------------------------------------------------------------------")
+
         # Needs config loaded
-        self.__receiver: ReceiverThread =  ReceiverThread(self.receiver_port)
-        """Main receiver, handles receiving data from sources"""
+        self.__receivers: List[ReceiverThread] = []
+        """Holds a list of receivers on different ports to receive data on"""
+        for i in range(0,10):
+            self.__receivers.append(ReceiverThread(self.receiver_port + i))
         self.__process_and_apply_configuration()
 
-        print( "------------------------------------------------------------------------")
-        print( "  ScreamRouter")
-        print(f"     Console Log level: {logger.CONSOLE_LOG_LEVEL}")
-        print(f"     Log Dir: {os.path.realpath(logger.LOGS_DIR)}")
-        print(f"     Pipe Dir: {os.path.realpath(self.pipes_dir)}")
-        print(f"     API listening on: http://0.0.0.0:{self.api_port}")
-        print(f"     Input Sink active at 0.0.0.0:{self.receiver_port}")
-        print( "------------------------------------------------------------------------")
 
     # Public functions
 
@@ -85,7 +86,7 @@ class ConfigurationManager:
 
     def add_sink(self, sink: SinkDescription) -> bool:
         """Adds a sink or sink group"""
-        self.__verify_sink(sink)
+        self.__verify_new_sink(sink)
         self.sink_descriptions.append(sink)
         self.__process_and_apply_configuration()
         return True
@@ -126,7 +127,7 @@ class ConfigurationManager:
 
     def add_source(self, source: SourceDescription) -> bool:
         """Add a source or source group"""
-        self.__verify_source(source)
+        self.__verify_new_source(source)
         self.source_descriptions.append(source)
         self.__process_and_apply_configuration()
         return True
@@ -168,7 +169,7 @@ class ConfigurationManager:
 
     def add_route(self, route: RouteDescription) -> bool:
         """Adds a route"""
-        self.__verify_route(route)
+        self.__verify_new_rout(route)
         self.route_descriptions.append(route)
         self.__process_and_apply_configuration()
         return True
@@ -281,15 +282,16 @@ class ConfigurationManager:
             tag: str = f"ffmpeg{self.__url_play_counter}"
             pipe_name: str = f"{self.pipes_dir}ffmpeg{self.__url_play_counter}"
             pipe_path: Path = Path(pipe_name)
-            FFMpegURLPlayWriter(url.url, 1, all_child_sinks[0], pipe_path, tag, self.__receiver)
+            FFMpegURLPlayWriter(url.url, 1, all_child_sinks[0], pipe_path, tag, self.__receivers[5])
             self.__url_play_counter = self.__url_play_counter + 1
         self.url_playback_lock.release()
         return found
 
     def stop(self) -> bool:
         """Stop the receiver, this stops all ffmepg processes and all sinks."""
-        self.__receiver.stop()
-        self.__receiver.join()
+        for receiver in self.__receivers:
+            receiver.stop()
+            receiver.join()
         return True
 
     def set_webstream(self, webstream: APIWebStream) -> None:
@@ -301,8 +303,9 @@ class ConfigurationManager:
 
     # Verification functions
 
-    def __verify_sink(self, sink: SinkDescription) -> None:
-        """Verifies all sink group members exist, throws exception if not"""
+    def __verify_new_sink(self, sink: SinkDescription) -> None:
+        """Verifies all sink group members exist and the sink doesn't
+           Throws exception on failure"""
         for _sink in self.sink_descriptions:
             if sink.name == _sink.name:
                 raise ValueError(f"Sink name '{sink.name}' already in use")
@@ -312,8 +315,9 @@ class ConfigurationManager:
             for member in sink.group_members:
                 self.configuration_solver.get_sink_from_name(member)
 
-    def __verify_source(self, source: SourceDescription) -> None:
-        """Verifies all source group members exist, throws exception if not"""
+    def __verify_new_source(self, source: SourceDescription) -> None:
+        """Verifies all source group members exist and the sink doesn't
+           Throws exception on failure"""
         for _source in self.source_descriptions:
             if source.name == _source.name:
                 raise ValueError(f"Source name '{source.name}' already in use")
@@ -321,13 +325,13 @@ class ConfigurationManager:
             for member in source.group_members:
                 self.configuration_solver.get_source_from_name(member)
 
-    def __verify_route(self, route: RouteDescription) -> None:
+    def __verify_new_rout(self, route: RouteDescription) -> None:
         """Verifies route sink and source exist, throws exception if not"""
         self.configuration_solver.get_sink_from_name(route.sink)
         self.configuration_solver.get_source_from_name(route.source)
 
     def __verify_source_unused(self, source: SourceDescription) -> None:
-        """Verifies a source is unused, throws exception if not"""
+        """Verifies a source is unused by any routes, throws exception if not"""
         groups: List[SourceDescription]
         groups = self.configuration_solver.get_source_groups_from_member(source)
         if len(groups) > 0:
@@ -342,7 +346,7 @@ class ConfigurationManager:
                 raise InUseError(f"Source:{source.name} is in use by Route {route.name}")
 
     def __verify_sink_unused(self, sink: SinkDescription) -> None:
-        """Verifies a sink is unused, throws exception if not"""
+        """Verifies a sink is unused by any routes, throws exception if not"""
         groups: List[SinkDescription] = self.configuration_solver.get_sink_groups_from_member(sink)
         if len(groups) > 0:
             group_names: List[str] = []
@@ -367,7 +371,7 @@ class ConfigurationManager:
                         _sink.update_source_volume(source)
         self.__save_config()
 
-# Configuration functions
+# Configuration load/save functions
 
     def __load_config(self) -> None:
         """Loads the config"""
@@ -390,28 +394,40 @@ class ConfigurationManager:
 
     def __multiprocess_save(self):
         """Saves the config to config.yaml"""
-        self.save_semaphore.acquire()
-        serverinfo: dict = {"api_port": self.api_port, "receiver_port": self.receiver_port,
-                        "logs_dir": logger.LOGS_DIR, "pipes_dir": self.pipes_dir,
-                        "console_log_level": logger.CONSOLE_LOG_LEVEL}
+        serverinfo: dict = {"api_port": self.api_port,
+                            "receiver_port": self.receiver_port,
+                            "logs_dir": logger.LOGS_DIR,
+                        "pipes_dir": self.pipes_dir,
+                        "console_log_level": logger.CONSOLE_LOG_LEVEL,
+                        "log_to_file": logger.LOG_TO_FILE}
         save_data: dict = {"sinks": self.sink_descriptions, "sources": self.source_descriptions,
                            "routes": self.route_descriptions, "serverinfo": serverinfo}
         with open('config.yaml', 'w', encoding="UTF-8") as yaml_file:
             yaml.dump(save_data, yaml_file)
-        self.save_semaphore.release()
 
     def __save_config(self) -> None:
         """Saves the config"""
+        self.save_semaphore.acquire()
         proc = Process(target=self.__multiprocess_save)
         proc.start()
+        self.save_semaphore.release()
 
 # Configuration processing functions
 
-    def __find_changed_sinks(self) -> Tuple[List[SinkDescription], List[SinkDescription],
-                                            List[SinkDescription], List[SinkDescription]]:
-        """Finds changed sinks, returns a list of the new sinks"""
+    def __find_added_removed_changed_sinks(self) -> Tuple[List[SinkDescription],
+                                            List[SinkDescription],
+                                            List[SinkDescription]]:
+        """Finds changed sinks
+        Returns a tuple
+        ( added_sinks: List[SinkDescription],
+          removed_sinks: List[SinkDescription],
+          changed_sinks: List[SinkDescription] )
+        Must be ran by __process_configuration while it still has the old and new states separated
+        When sinks, routes, or sources are compared it is
+        True if all of their properties are the same, or
+        False if any of they differ.
+        """
         added_sinks: List[SinkDescription] = []
-        unchanged_sinks: List[SinkDescription] = []
         changed_sinks: List[SinkDescription] = []
         removed_sinks: List[SinkDescription] = []
 
@@ -421,97 +437,131 @@ class ConfigurationManager:
         old_map: dict[SinkDescription,List[SourceDescription]]
         old_map = self.old_configuration_solver.real_sinks_to_real_sources
 
+        # Check entries in the new map against the old map to see if they're new or changed
         for sink, sources in new_map.items():
-            if not sink in old_map.keys():
+            if not sink in old_map.keys():  # If the sink is not in the old map
+                # Search for the sink in old_map by name to make sure it hasn't just changed
                 if sink.name in [old_sink.name for old_sink in old_map.keys()]:
+                    # If it was found under the name but didn't equal it's changed
                     changed_sinks.append(sink)
                 else:
-                    added_sinks.append(sink)
+                    added_sinks.append(sink)  # It wasn't found by name, it's new
                 continue
             old_sources: List[SourceDescription] = old_map[sink]
-            for source in sources:
-                if source not in old_sources:
+            # Check each one of the new sources for the sink to
+            # verify it was in and the same in the old sources
+            for old_source in sources:
+                if old_source not in old_sources:
                     changed_sinks.append(sink)
 
+        # Check entries in the old map against the new map to see if they're removed
         for old_sink, old_sources in old_map.items():
-            if not old_sink in new_map:
-                if old_sink.name in [sink.name for sink in new_map.keys()]:
-                    sink: SinkDescription = [sink for sink in new_map.keys()
-                                             if sink.name == old_sink.name][0]
-                    changed_sinks.append(sink)
-                else:
+            if not old_sink in new_map:  # If the sink was in the old map but not the new
+                # If no sink is found in new_map with the same name it's been removed
+                if not old_sink.name in [sink.name for sink in new_map.keys()]:
                     removed_sinks.append(old_sink)
                 continue
+            # Check for removed sources on a sink
             sources: List[SourceDescription] = new_map[old_sink]
-            for source in old_sources:
-                if source not in sources:
+            for old_source in old_sources:
+                # If a source is in old_sources but not in sources for the new config
+                if old_source not in sources:
+                    # Get the new sink by name from the new config so it can be appended
                     sink: SinkDescription = [sink for sink in new_map.keys()
                                              if sink.name == old_sink.name][0]
                     changed_sinks.append(sink)
 
 
-        return added_sinks, removed_sinks, changed_sinks, unchanged_sinks
+        return added_sinks, removed_sinks, changed_sinks
 
-    def __process_configuration(self) -> Tuple[List[SinkDescription], List[SinkDescription],
-                                               List[SinkDescription], List[SinkDescription]]:
-        """Rebuilds the configuration solver and updates the configuration"""
+    def __process_configuration(self) -> Tuple[List[SinkDescription],
+                                               List[SinkDescription],
+                                               List[SinkDescription]]:
+        """Rebuilds the configuration solver and returns what sinks changed
+           Returns a tuple
+        ( added_sinks: List[SinkDescription],
+          removed_sinks: List[SinkDescription],
+          changed_sinks: List[SinkDescription] )
+        """
+        # Get a new resolved configuration from the current state
         self.configuration_solver = ConfigurationSolver(self.source_descriptions,
                                                         self.sink_descriptions,
                                                         self.route_descriptions)
         added_sinks: List[SinkDescription]
         removed_sinks: List[SinkDescription]
         changed_sinks: List[SinkDescription]
-        unchanged_sinks: List[SinkDescription]
-        added_sinks, removed_sinks, changed_sinks, unchanged_sinks = self.__find_changed_sinks()
+        # While the old state is still set figure out the differences
+        added_sinks, removed_sinks, changed_sinks = self.__find_added_removed_changed_sinks()
+        # Set the old state to the new state
         self.old_configuration_solver = deepcopy(self.configuration_solver)
-        return added_sinks, removed_sinks, changed_sinks, unchanged_sinks
+        # Return what's changed
+        return added_sinks, removed_sinks, changed_sinks
 
     def __process_and_apply_configuration(self) -> None:
-        """Start or restart ScreamRouter engine"""
+        """Process the configuration, get which sinks have changed and need reloaded,
+           then reload them."""
         if not self.__loaded:
             return
         while self.__starting:
             time.sleep(.01)
         self.__starting = True
+
+        # Process new config, store what's changed
         added_sinks: List[SinkDescription]
         removed_sinks: List[SinkDescription]
         changed_sinks: List[SinkDescription]
-        unchanged_sinks: List[SinkDescription]
-        added_sinks, removed_sinks, changed_sinks, unchanged_sinks = self.__process_configuration()
-        _logger.debug("[Controller] Config Reload")
-        _logger.debug("New Sink Controllers: %s", [sink.name for sink in added_sinks])
-        _logger.debug("Unchanged Sink Controllers: %s", [sink.name for sink in unchanged_sinks])
-        _logger.debug("Changed Sink Controllers: %s", [sink.name for sink in changed_sinks])
-        _logger.debug("Removed Sink Controllers: %s", [sink.name for sink in removed_sinks])
+        added_sinks, removed_sinks, changed_sinks = self.__process_configuration()
+        _logger.info("[Controller] Config Reload")
+        _logger.info("[Controller] New Sink Controllers: %s",
+                     [sink.name for sink in added_sinks])
+        _logger.info("[Controller] Changed Sink Controllers: %s",
+                     [sink.name for sink in changed_sinks])
+        _logger.info("[Controller] Removed Sink Controllers: %s",
+                     [sink.name for sink in removed_sinks])
         original_audio_controllers: List[AudioController] = copy(self.audio_controllers)
 
+        # Controllers to be reloaded
         for sink in changed_sinks:
+            # Unload the old controller
             _logger.debug("Removing Audio Controller %s", sink.name)
-            self.__receiver.unregister_audio_controller_by_sink(sink)
+            #self.__receiver.unregister_audio_controller_by_sink(sink)
+            for receiver in self.__receivers:
+                receiver.unregister_audio_controller_by_sink(sink)
             for audio_controller in original_audio_controllers:
                 if audio_controller.sink_info.name == sink.name:
                     if audio_controller in self.audio_controllers:
                         self.audio_controllers.remove(audio_controller)
+            # Load a new controller
             sources: List[SourceDescription]
             sources = self.configuration_solver.real_sinks_to_real_sources[sink]
             audio_controller = AudioController(sink, sources, self.__api_webstream)
             _logger.debug("Adding Audio Controller %s", sink.name)
-            self.__receiver.register_audio_controller(audio_controller)
+            #self.__receiver.register_audio_controller(audio_controller)
+            for receiver in self.__receivers:
+                receiver.register_audio_controller(audio_controller)
             self.audio_controllers.append(audio_controller)
 
+        # Controllers to be removed
         for sink in removed_sinks:
+            # Unload the old controller
             _logger.debug("Removing Audio Controller %s", sink.name)
-            self.__receiver.unregister_audio_controller_by_sink(sink)
+            #self.__receiver.unregister_audio_controller_by_sink(sink)
+            for receiver in self.__receivers:
+                receiver.unregister_audio_controller_by_sink(sink)
             for audio_controller in original_audio_controllers:
                 if audio_controller.sink_info.name == sink.name:
                     self.audio_controllers.remove(audio_controller)
 
+        # Controllers to be added
         for sink in added_sinks:
+            # Load a new controller
             sources: List[SourceDescription]
             sources = self.configuration_solver.real_sinks_to_real_sources[sink]
             audio_controller = AudioController(sink, sources, self.__api_webstream)
             _logger.debug("Adding Audio Controller %s", sink.name)
-            self.__receiver.register_audio_controller(audio_controller)
+            #self.__receiver.register_audio_controller(audio_controller)
+            for receiver in self.__receivers:
+                receiver.register_audio_controller(audio_controller)
             self.audio_controllers.append(audio_controller)
         self.__starting = False
         self.__save_config()

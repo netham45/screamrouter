@@ -46,19 +46,31 @@ class ConfigurationSolver():
         for route_name, real_sinks in routes_to_real_sinks.items():
             for real_sink in real_sinks:
                 for real_source in routes_to_real_sources[route_name]:
+                    # Make a copy and set the volume and equalizer and delay
                     real_source_copy: SourceDescription = copy(real_source)
                     real_source_copy.volume = real_source.volume * real_sink.volume
                     real_source_copy.equalizer = real_source.equalizer * real_sink.equalizer
                     real_source_copy.delay = real_source.delay + real_sink.delay
+                    # Check if there's already a sink entry in the dict, if so just append sources
                     sink_to_append_to: List[SinkDescription]
+                    # Search for a sink by name
                     sink_to_append_to = [sink for sink in real_sinks_to_real_sources
                                               if sink.name == real_sink.name]
-                    if len(sink_to_append_to) == 0:
+                    if len(sink_to_append_to) == 0: # If a sink was found
                         if not real_sink in real_sinks_to_real_sources:
                             real_sinks_to_real_sources[real_sink] = []
                         real_sinks_to_real_sources[real_sink].append(real_source_copy)
-                    else:
-                        real_sinks_to_real_sources[sink_to_append_to[0]].append(real_source_copy)
+                    else: # If a sink was not found
+                        sources_to_append_to: List[SourceDescription]
+                        sources_to_append_to = real_sinks_to_real_sources[sink_to_append_to[0]]
+                        # Check if the source is already on the sink, if so ignore it
+                        found: bool = False
+                        for source in sources_to_append_to:
+                            if source.name == real_source_copy.name:
+                                found = True
+                                break
+                        if not found:
+                            sources_to_append_to.append(real_source_copy)
         return real_sinks_to_real_sources
 
     def __get_routes_to_real_sources(self) -> dict[RouteDescription, List[SourceDescription]]:
@@ -93,23 +105,32 @@ class ConfigurationSolver():
                                    delay_adjustment: Optional[DelayType] = None,
                                    return_groups: bool = False
                                    ) -> List[SinkDescription]:
-        """Resolves a sink group and returns a list of all sinks"""
+        """Resolves a sink group and returns a list of all sinks
+        active_only controls if only enabled sinks are returned
+        volume_adjustment (0.0-1.0) controls the multiplier for the volume of all the sinks
+        equalizer_adjustment (0.0-1.0)[B1-B18] controls the multiplier for all the Equalizer bands
+        delay_adjustment (0-5000) ms delay added to each sink
+        return_groups controls if the group SinkDescriptions are left in or if they're removed"""
+        # 1 is no change for volume and equalizer
         if volume_adjustment is None:
             volume_adjustment = 1
         if equalizer_adjustment is None:
-            equalizer_adjustment = Equalizer(b1=1,b2=1,b3=1,b4=1,b5=1,b6=1,
-                                             b7=1,b8=1,b9=1,b10=1,b11=1,b12=1,
-                                             b13=1,b14=1,b15=1,b16=1,b17=1,b18=1)
+            equalizer_adjustment = Equalizer()
+        # 0 is no change for delay_adjustment
         if delay_adjustment is None:
             delay_adjustment = 0
+
+        # Figure out the adjustments
         adjusted_volume: VolumeType  = volume_adjustment * sink.volume
         adjusted_equalizer: Equalizer = equalizer_adjustment * sink.equalizer
         adjusted_delay: DelayType = delay_adjustment + sink.delay
 
-
+        # active_only means only return enabled groups/sinks
         if active_only and not sink.enabled:
             return []
 
+        # If the sink is not a group then adjust it's volume, equalizer, delay
+        # and return it in a list
         if not sink.is_group:
             sink_copy: SinkDescription = copy(sink)
             sink_copy.volume = adjusted_volume
@@ -118,11 +139,14 @@ class ConfigurationSolver():
             return [sink_copy]
 
         # Sink is a group, get all group members
+
+        # Convert from List[SinkNameType] to List[SinkDescription]
         group_members: List[SinkDescription] = []
         for group_member_name in sink.group_members:
             group_member: SinkDescription = self.get_sink_from_name(group_member_name)
             group_members.append(group_member)
 
+        # For each group member recursively return it's real sinks
         combined_group_members: List[SinkDescription] = []
         for group_member in group_members:
             combined_group_members.extend(self.get_real_sinks_from_sink(group_member,
@@ -131,6 +155,7 @@ class ConfigurationSolver():
                                                                               adjusted_equalizer,
                                                                               adjusted_delay,
                                                                               return_groups))
+        # return_groups controls if the group SinkDescriptions are left in or if they're removed
         if return_groups:
             combined_group_members.append(sink)
         return combined_group_members
@@ -142,23 +167,32 @@ class ConfigurationSolver():
                                    delay_adjustment: Optional[DelayType] = None,
                                    return_groups: bool = False
                                    ) -> List[SourceDescription]:
-        """Resolves a source group and returns a list of all sources"""
+        """Resolves a source group and returns a list of all sources
+        active_only controls if only enabled sources are returned
+        volume_adjustment (0.0-1.0) controls the multiplier for the volume of all the sinks
+        equalizer_adjustment (0.0-1.0)[B1-B18] controls the multiplier for all the Equalizer bands
+        delay_adjustment (0-5000) ms delay added to each source
+        return_groups controls if the group SourceDescriptions are left in or if they're removed"""
+        # 1 is no change for volume and equalizer
         if volume_adjustment is None:
             volume_adjustment = 1
         if equalizer_adjustment is None:
-            equalizer_adjustment = Equalizer(b1=1,b2=1,b3=1,b4=1,b5=1,b6=1,
-                                             b7=1,b8=1,b9=1,b10=1,b11=1,b12=1,
-                                             b13=1,b14=1,b15=1,b16=1,b17=1,b18=1)
+            equalizer_adjustment = Equalizer()
+        # 0 is no change for delay_adjustment
         if delay_adjustment is None:
             delay_adjustment = 0
+
+        # Figure out the adjustments
         adjusted_volume: VolumeType  = volume_adjustment * source.volume
         adjusted_equalizer: Equalizer = equalizer_adjustment * source.equalizer
         adjusted_delay: DelayType = delay_adjustment + source.delay
 
-
+        # active_only means only return enabled groups/sources
         if active_only and not source.enabled:
             return []
 
+        # If the source is not a group then adjust it's volume, equalizer, delay
+        # and return it in a list
         if not source.is_group:
             source_copy: SourceDescription = copy(source)
             source_copy.volume = adjusted_volume
@@ -167,11 +201,14 @@ class ConfigurationSolver():
             return [source_copy]
 
         # Source is a group, get all group members
+
+        # Convert from List[SourceNameType] to List[SourceDescription]
         group_members: List[SourceDescription] = []
         for group_member_name in source.group_members:
             group_member: SourceDescription = self.get_source_from_name(group_member_name)
             group_members.append(group_member)
 
+        # For each group member recursively return it's real sources
         combined_group_members: List[SourceDescription] = []
         for group_member in group_members:
             combined_group_members.extend(self.get_real_sources_from_source(group_member,
@@ -180,6 +217,7 @@ class ConfigurationSolver():
                                                                               adjusted_equalizer,
                                                                               adjusted_delay,
                                                                               return_groups))
+        # return_groups controls if the group SourceDescriptions are left in or if they're removed
         if return_groups:
             combined_group_members.append(source)
         return combined_group_members
@@ -193,26 +231,26 @@ class ConfigurationSolver():
                                                                      False,
                                                                      return_groups=True)
         sinks.append(sink)
-        for route in self.routes:
-            for _sink in sinks:
-                if _sink.name == route.sink:
-                    _routes.append(copy(route))
-        return unique(_routes)
+        # Get all sink names in a list
+        sink_names: List[SinkNameType] = [sink.name for sink in sinks]
+        routes_from_sinks: List[RouteDescription]
+        # Go through each route and if it's name is in the sink list add it to the return
+        routes_from_sinks = [copy(route) for route in self.routes if route.sink in sink_names]
+        return unique(routes_from_sinks)
 
     def get_routes_by_source(self, source: SourceDescription) -> List[RouteDescription]:
         """Get all routes that use this source
            Volume levels for the returned routes will be adjusted based off the source levels
         """
-        _routes: List[RouteDescription] = []
         sources: List[SourceDescription] = self.get_real_sources_from_source(source,
                                                                              False,
                                                                              return_groups=True)
-        sources.append(source)
-        for route in self.routes:
-            for _source in sources:
-                if _source.ip == source.ip:
-                    _routes.append(copy(route))
-        return unique(_routes)
+        # Get all sink names in a list
+        source_names: List[SourceNameType] = [source.name for source in sources]
+        routes_from_sources: List[RouteDescription]
+        # Go through each route and if it's name is in the sink list add it to the return
+        routes_from_sources = [copy(route) for route in self.routes if route.source in source_names]
+        return unique(routes_from_sources)
 
     def get_sink_groups_from_member(self, sink: SinkDescription) -> List[SinkDescription]:
         """Returns all sink groups for the provided sink"""
@@ -220,6 +258,7 @@ class ConfigurationSolver():
         for _sink in self.sinks:
             if sink.name in _sink.group_members:
                 sink_groups.append(_sink)
+                # Recursively add any parent groups
                 sink_groups.extend(self.get_sink_groups_from_member(_sink))
         return sink_groups
 
@@ -229,26 +268,26 @@ class ConfigurationSolver():
         for _source in self.sources:
             if source.name in _source.group_members:
                 source_groups.append(_source)
+                # Recursively add any parent groups
                 source_groups.extend(self.get_source_groups_from_member(_source))
         return source_groups
 
     def get_sink_from_name(self, name: SinkNameType) -> SinkDescription:
-        """Returns a sink by name"""
-        for sink in self.sinks:
-            if sink.name == name:
-                return sink
-        return SinkDescription(name="Not Found")
+        """Returns a sink by name
+           Returns a dummy sink named 'Not Found' if not found"""
+        return ([sink for sink in self.sinks
+                if sink.name == name] or [SinkDescription(name="Not Found")])[0]
 
     def get_source_from_name(self, name: SourceNameType) -> SourceDescription:
-        """Get source by name"""
-        for source in self.sources:
-            if source.name == name:
-                return source
-        return SourceDescription(name="Not Found")
+        """Get source by name
+           Returns a dummy source named 'Not Found' if not found"""
+        return ([source for source in self.sources
+                if source.name == name] or [SourceDescription(name="Not Found")])[0]
 
     def get_route_from_name(self, name: RouteNameType) -> RouteDescription:
-        """Get route by name"""
-        for route in self.routes:
-            if route.name == name:
-                return route
-        return RouteDescription(name="Not Found", sink="", source="")
+        """Get route by name
+           Returns a dummy route named 'Not Found' if not found"""
+        return ([route for route in self.routes
+                if route.name == name] or [RouteDescription(name="Not Found",
+                                                              sink="",
+                                                              source="")])[0]

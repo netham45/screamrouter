@@ -87,6 +87,7 @@ class FFMpegURLPlayWriter(threading.Thread):
     def run(self):
         """Wait for data to be available from ffmpeg to put into the sink queue
            when ffmpeg ends the thread can end"""
+        logger.info("[URL Playback:%s] Playing back", self._url)
         self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(),
                                          shell=False,
                                          start_new_session=True,
@@ -101,3 +102,4 @@ class FFMpegURLPlayWriter(threading.Thread):
         if os.path.exists(self.__fifo_in_url):
             os.remove(self.__fifo_in_url)
         url_playback_semaphore.release()
+        logger.debug("[URL Playback:%s] Done", self._url)

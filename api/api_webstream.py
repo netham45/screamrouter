@@ -77,6 +77,7 @@ class APIWebStream():
         self._listeners: List[Listener] = []
         app.websocket("/ws/{sink_ip}/")(self.websocket_mp3_stream)
         app.get("/stream/{sink_ip}/", tags=["Stream"])(self.http_mp3_stream)
+        logger.info("[WebStream] MP3 Web Stream Available")
 
     def sink_callback(self, sink_ip: IPAddressType, data: bytes) -> None:
         """Callback for sinks to have data sent out to websockets"""
