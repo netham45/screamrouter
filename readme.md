@@ -141,3 +141,14 @@ The Sink Controller also manages two threads to read input from FFMPEG, both PCM
 
 
 The lifecycle of each thread and ffmpeg process is controlled from start to end by ScreamRouter so that a configuration change can fully unload and reload ScreamRouter.
+
+
+## Troubleshooting
+
+Here are some problems and solutions:
+
+* Problem: Audio frequently goes static and makes an awful noise
+* Solution: Change your sources to either 16 or 32-bit depth and network stream issues won't cause static anymore
+
+* Problem: The audio is choppy when I use high channel setups such as 7.1 32-bit
+* Solution: Turn down your bit depth. 8 channels at 32-bit 48000kHz is over 12Mb/s, this is a lot for real-time audio. 16-bit will halve your bitrate. Consider 5.1 or Stereo.

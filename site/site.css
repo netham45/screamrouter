@@ -13,14 +13,23 @@ TD.select {
 
 TD.column {
     vertical-align: top;
+    width: 33%;
 }
 
 TABLE.button {
     width: 95%;
 }
 
-INPUT {
-    width: 100%;
+DIV.dialog INPUT[TYPE="button"] {
+    width: 98%;
+}
+
+TR.buttonsandnames INPUT {
+    width: 48%;
+}
+
+INPUT[TYPE="range"] {
+    width: 95%;
 }
 
 TD.name {
@@ -139,6 +148,10 @@ DIV.dialog SELECT {
     width: 99%;
 }
 
+INPUT[TYPE="button"] {
+    display: absolute;
+}
+
 DIV.dialog H3 {
     display: block;
     padding: 0;
@@ -159,11 +172,65 @@ DIV#shadow {
 input.eq_slider {
     writing-mode: vertical-lr;
     display: inline;
-    padding-right; 30px;
-    padding-left: 30px;
     width: 20px;
+    padding-left: 30px;
 }
 
 TABLE#equalizer {
     text-align: center;
 }
+
+DIV#update_equalizer TABLE {
+    width: 100%;
+}
+
+DIV#update_equalizer TD.eq_slider {
+    font-size: 24px;
+    writing-mode: vertical-rl;
+    font-weight: bolder;
+}
+
+TABLE#equalizer {
+    vertical-align: bottom;
+}
+
+/* Mobile View */
+
+@media only screen and (max-width: 750px) {
+    body {
+      
+    }
+    TD.column {
+        display: block;
+    }
+    TR.buttonsandnames INPUT[TYPE="button"], DIV.dialog INPUT[TYPE="button"] {
+        padding: 20px;
+        border-radius: 25px;
+    }
+    DIV.dialog INPUT {
+        width: 100%;
+    }
+    TD.column SELECT {
+        padding-bottom: 20px;
+    }
+    TD.title {
+        font-size: 24pt;
+    }
+    TD.column {
+        width: 100%;
+    }
+    DIV#update_equalizer {
+        width: 90%;
+        margin-left: -50%;
+    }
+    INPUT.eq_slider,  DIV#update_equalizer LABEL {
+        padding-right: 0px;
+        padding-left: 0px;
+    }
+    INPUT.eq_slider {
+        height: 400px;
+    }
+    TABLE#equalizer {
+        zoom: 50%;
+    }
+  }

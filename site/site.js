@@ -43,6 +43,7 @@ function populate_sinks_callback(data) {
     sinks = data
     for (entry in data)
         document.getElementById("sinks").appendChild(create_option(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry, data[entry].ip, data[entry].is_group));
+    document.getElementById("sinks").size = data.length
 }
 
 function populate_sources() {
@@ -53,6 +54,8 @@ function populate_sources_callback(data) {
     sources = data
     for (entry in data)
         document.getElementById("sources").appendChild(create_option(data[entry].name, data[entry].name + (data[entry].is_group?" [" + data[entry].group_members.join(", ") + "]":"") + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry,data[entry].ip,data[entry].is_group));
+        document.getElementById("sources").size = data.length
+
 }
 
 function populate_routes() {
@@ -63,6 +66,7 @@ function populate_routes_callback(data){
     routes = data
     for (entry in data)
         document.getElementById("routes").appendChild(create_option(data[entry].name, data[entry].name + " [Sink: " + data[entry].sink + " Source: " + data[entry].source + "]" + (data[entry].enabled?"[Enabled]":"[Disabled]"), entry, null, false));
+    document.getElementById("routes").size = routes.length
 }
 
 function remove_sink(sink_name) {

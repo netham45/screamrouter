@@ -54,7 +54,7 @@ class FFMpegHandler(threading.Thread):
             channel_layout = source.stream_attributes.channel_layout
             file_name = source.fifo_file_name
             # This is optimized to reduce latency and initial ffmpeg processing time
-            ffmpeg_command.extend([#"-blocksize", str(1152 * 4),
+            ffmpeg_command.extend(["-blocksize", str(1152 * 4),
                                    "-max_delay", "0",
                                    "-audio_preload", "0",
                                    "-max_probe_packets", "0",
@@ -114,7 +114,16 @@ class FFMpegHandler(threading.Thread):
     def __get_ffmpeg_output(self) -> List[str]:
         """Returns the ffmpeg output"""
         ffmpeg_command_parts: List[str] = []
-        ffmpeg_command_parts.extend([#"-blocksize", str(1152 * 32),
+        ffmpeg_command_parts.extend(["-blocksize", "1152",
+                                     "-max_delay", "0",
+                                     "-audio_preload", "0",
+                                     "-max_probe_packets", "0",
+                                     "-rtbufsize", "0",
+                                     "-analyzeduration", "0",
+                                     "-probesize", "32",
+                                     "-fflags", "discardcorrupt",
+                                     "-flags", "low_delay",
+                                     "-fflags", "nobuffer",
                                      "-avioflags", "direct",
                                      "-y",
                                      "-f", f"s{self.__sink_info.bit_depth}le", 

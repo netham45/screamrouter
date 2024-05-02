@@ -96,7 +96,7 @@ class SourceInputThread(threading.Thread):
             fcntl.fcntl(fd, 1031, 1024*1024*1024*64)
             self.__fifo_file_handle = os.fdopen(fd, 'wb', -1)
             self.__open = True
-            logger.debug("[Sink:%s][Source:%s] Source Writer Opened", self.__sink_ip, self.tag)
+            logger.info("[Sink:%s][Source:%s] Opened", self.__sink_ip, self.tag)
         self.__notify_queue_read_condition()
         self.file_openclose_lock.release()
 
