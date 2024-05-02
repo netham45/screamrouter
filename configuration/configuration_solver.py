@@ -45,15 +45,20 @@ class ConfigurationSolver():
         # Combine them into a big table
         for route_name, real_sinks in routes_to_real_sinks.items():
             for real_sink in real_sinks:
-                if not real_sink in real_sinks_to_real_sources:
-                    real_sinks_to_real_sources[real_sink] = []
                 for real_source in routes_to_real_sources[route_name]:
                     real_source_copy: SourceDescription = copy(real_source)
                     real_source_copy.volume = real_source.volume * real_sink.volume
                     real_source_copy.equalizer = real_source.equalizer * real_sink.equalizer
                     real_source_copy.delay = real_source.delay + real_sink.delay
-                    real_sinks_to_real_sources[real_sink].append(real_source_copy)
-
+                    sink_to_append_to: List[SinkDescription]
+                    sink_to_append_to = [sink for sink in real_sinks_to_real_sources
+                                              if sink.name == real_sink.name]
+                    if len(sink_to_append_to) == 0:
+                        if not real_sink in real_sinks_to_real_sources:
+                            real_sinks_to_real_sources[real_sink] = []
+                        real_sinks_to_real_sources[real_sink].append(real_source_copy)
+                    else:
+                        real_sinks_to_real_sources[sink_to_append_to[0]].append(real_source_copy)
         return real_sinks_to_real_sources
 
     def __get_routes_to_real_sources(self) -> dict[RouteDescription, List[SourceDescription]]:

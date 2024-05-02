@@ -200,10 +200,9 @@ class FFMpegHandler(threading.Thread):
 
     def run(self) -> None:
         """This thread monitors ffmpeg and restarts it if it ends or otherwise needs restarted"""
-
         while self.__running:
             if len(self.__sources) == 0:
-                time.sleep(.005)
+                time.sleep(.05)
                 continue
             if self.__ffmpeg_started:
                 self.__ffmpeg.wait()

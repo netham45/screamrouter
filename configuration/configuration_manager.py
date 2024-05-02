@@ -52,15 +52,17 @@ class ConfigurationManager:
         """Holds rather start_receiver is running so multiple instances don't go off at once"""
         self.url_playback_lock: threading.Lock = threading.Lock()
         """Lock to ensure URL playback is only started by one thread at a time"""
-        self.__load_config()
-        self.__receiver: ReceiverThread =  ReceiverThread(self.receiver_port)
-        """Main receiver, handles receiving data from sources"""
         self.configuration_solver: ConfigurationSolver
         """Holds the solved configuration"""
-        self.old_configuration_solver: ConfigurationSolver = ConfigurationSolver([],[],[])
+        self.old_configuration_solver: ConfigurationSolver = ConfigurationSolver([], [], [])
         """Holds the previously solved configuration to compare against for changes"""
         self.save_semaphore: threading.Semaphore = threading.Semaphore(1)
         """Semaphore so only one thread can save to YAML at a time"""
+        self.__load_config()
+
+        # Needs config loaded
+        self.__receiver: ReceiverThread =  ReceiverThread(self.receiver_port)
+        """Main receiver, handles receiving data from sources"""
         self.__process_and_apply_configuration()
 
         print( "------------------------------------------------------------------------")
@@ -293,7 +295,7 @@ class ConfigurationManager:
     def set_webstream(self, webstream: APIWebStream) -> None:
         """Sets the webstream"""
         self.__api_webstream = webstream
-        #self.__start_receiver()
+        self.__process_and_apply_configuration()
 
     # Private Functions
 
@@ -420,7 +422,10 @@ class ConfigurationManager:
 
         for sink, sources in new_map.items():
             if sink not in old_map.keys():
-                added_sinks.append(sink)
+                if sink.name in [sink.name for sink in old_map.keys()]:
+                    changed_sinks.append(sink)
+                else:
+                    added_sinks.append(sink)
                 continue
             changed: bool = False
             old_sources: List[SourceDescription] = old_map[sink]

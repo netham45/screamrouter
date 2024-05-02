@@ -22,8 +22,6 @@ class AudioController():
                  sources: List[SourceDescription], websocket: Optional[APIWebStream]):
         """Initialize a sink"""
         super().__init__()
-        for source in sources:
-            print(f"New Audio Controller {sink_info.name}: {source.name}")
         self.sink_info = sink_info
         """Sink Info"""
         self.__stream_info: ScreamHeader = create_stream_info(sink_info.bit_depth,

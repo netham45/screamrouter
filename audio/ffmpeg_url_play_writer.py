@@ -17,7 +17,7 @@ from logger import get_logger
 
 logger = get_logger(__name__)
 
-url_playback_semaphore: threading.Semaphore = threading.Semaphore(8)
+url_playback_semaphore: threading.Semaphore = threading.Semaphore(5)
 """Max number of URLs playing at once, for limiting resource usage"""
 
 class FFMpegURLPlayWriter(threading.Thread):
