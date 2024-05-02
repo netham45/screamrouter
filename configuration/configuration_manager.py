@@ -417,32 +417,38 @@ class ConfigurationManager:
 
         new_map: dict[SinkDescription,List[SourceDescription]]
         new_map = self.configuration_solver.real_sinks_to_real_sources
+
         old_map: dict[SinkDescription,List[SourceDescription]]
         old_map = self.old_configuration_solver.real_sinks_to_real_sources
 
         for sink, sources in new_map.items():
-            if sink not in old_map.keys():
-                if sink.name in [sink.name for sink in old_map.keys()]:
+            if not sink in old_map.keys():
+                if sink.name in [old_sink.name for old_sink in old_map.keys()]:
                     changed_sinks.append(sink)
                 else:
                     added_sinks.append(sink)
                 continue
-            changed: bool = False
             old_sources: List[SourceDescription] = old_map[sink]
             for source in sources:
                 if source not in old_sources:
-                    changed = True
                     changed_sinks.append(sink)
-            if not changed:
-                unchanged_sinks.append(sink)
 
-        for old_sink in old_map:
-            found: bool = False
-            for sink in new_map:
-                if sink.name == old_sink.name:
-                    found = True
-            if not found:
-                removed_sinks.append(old_sink)
+        for old_sink, old_sources in old_map.items():
+            if not old_sink in new_map:
+                if old_sink.name in [sink.name for sink in new_map.keys()]:
+                    sink: SinkDescription = [sink for sink in new_map.keys()
+                                             if sink.name == old_sink.name][0]
+                    changed_sinks.append(sink)
+                else:
+                    removed_sinks.append(old_sink)
+                continue
+            sources: List[SourceDescription] = new_map[old_sink]
+            for source in old_sources:
+                if source not in sources:
+                    sink: SinkDescription = [sink for sink in new_map.keys()
+                                             if sink.name == old_sink.name][0]
+                    changed_sinks.append(sink)
+
 
         return added_sinks, removed_sinks, changed_sinks, unchanged_sinks
 
@@ -478,19 +484,20 @@ class ConfigurationManager:
         _logger.debug("Changed Sink Controllers: %s", [sink.name for sink in changed_sinks])
         _logger.debug("Removed Sink Controllers: %s", [sink.name for sink in removed_sinks])
         original_audio_controllers: List[AudioController] = copy(self.audio_controllers)
-        for sink in changed_sinks:
 
-            sources: List[SourceDescription]
-            sources = self.configuration_solver.real_sinks_to_real_sources[sink]
+        for sink in changed_sinks:
+            _logger.debug("Removing Audio Controller %s", sink.name)
+            self.__receiver.unregister_audio_controller_by_sink(sink)
             for audio_controller in original_audio_controllers:
                 if audio_controller.sink_info.name == sink.name:
-                    self.audio_controllers.remove(audio_controller)
-                    _logger.debug("Removing Audio Controller %s", sink.name)
-                    self.__receiver.unregister_audio_controller_by_sink(sink)
-                    audio_controller = AudioController(sink, sources, self.__api_webstream)
-                    _logger.debug("Adding Audio Controller %s", sink.name)
-                    self.__receiver.register_audio_controller(audio_controller)
-                    self.audio_controllers.append(audio_controller)
+                    if audio_controller in self.audio_controllers:
+                        self.audio_controllers.remove(audio_controller)
+            sources: List[SourceDescription]
+            sources = self.configuration_solver.real_sinks_to_real_sources[sink]
+            audio_controller = AudioController(sink, sources, self.__api_webstream)
+            _logger.debug("Adding Audio Controller %s", sink.name)
+            self.__receiver.register_audio_controller(audio_controller)
+            self.audio_controllers.append(audio_controller)
 
         for sink in removed_sinks:
             _logger.debug("Removing Audio Controller %s", sink.name)
