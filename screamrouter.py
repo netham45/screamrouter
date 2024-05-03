@@ -12,8 +12,13 @@ from configuration.configuration_manager import ConfigurationManager
 from api.api_configuration import APIConfiguration
 from api.api_webstream import APIWebStream
 from api.api_website import APIWebsite
-from logger import LOG_TO_FILE, get_logger
+from logger import get_logger
+import constants
+from plugin_manager.plugin_manager_thread import PluginManagerThread
 
+
+
+os.nice(-15)
 
 logger = get_logger(__name__)
 
@@ -60,13 +65,12 @@ app: FastAPI = FastAPI( title="ScreamRouter",
             "description": "HTTP media streams"
         }
     ])
-
-controller: ConfigurationManager = ConfigurationManager(None)
-api_controller = APIConfiguration(app, controller)
 webstream: APIWebStream = APIWebStream(app)
+controller: ConfigurationManager = ConfigurationManager(webstream)
+api_controller = APIConfiguration(app, controller)
 website: APIWebsite = APIWebsite(app)
-controller.set_webstream(webstream)
+PluginManagerThread(app, controller)
 uvicorn.run(app,
-            port=controller.api_port,
-            host='0.0.0.0',
-            log_config="uvicorn_log_config.yaml" if LOG_TO_FILE else None)
+            port=constants.API_PORT,
+            host=constants.API_HOST,
+            log_config="uvicorn_log_config.yaml" if constants.LOG_TO_FILE else None)

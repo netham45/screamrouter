@@ -1,9 +1,9 @@
 routes:
-- !!python/object:screamrouter_types.RouteDescription
+- !!python/object:screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -57,11 +57,11 @@ routes:
     source: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.RouteDescription
+- !!python/object:screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -114,11 +114,11 @@ routes:
     source: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.RouteDescription
+- !!python/object:screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -171,11 +171,11 @@ routes:
     source: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.RouteDescription
+- !!python/object:screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: false
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -228,11 +228,11 @@ routes:
     source: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.RouteDescription
+- !!python/object:screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -285,11 +285,11 @@ routes:
     source: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.RouteDescription
+- !!python/object:screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -342,11 +342,11 @@ routes:
     source: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.RouteDescription
+- !!python/object:screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -399,11 +399,11 @@ routes:
     source: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.RouteDescription
+- !!python/object:screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -456,21 +456,15 @@ routes:
     source: null
     volume: null
   __pydantic_private__: null
-serverinfo:
-  api_port: 8080
-  console_log_level: DEBUG
-  logs_dir: logs/
-  pipes_dir: pipes/
-  receiver_port: 16401
 sinks:
-- !!python/object:screamrouter_types.SinkDescription
+- !!python/object:screamrouter_types.configuration.SinkDescription
   __dict__:
     bit_depth: 32
     channel_layout: '5.1'
     channels: 6
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -533,14 +527,14 @@ sinks:
     sample_rate: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.SinkDescription
+- !!python/object:screamrouter_types.configuration.SinkDescription
   __dict__:
     bit_depth: 32
     channel_layout: stereo
     channels: 2
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -603,14 +597,14 @@ sinks:
     sample_rate: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.SinkDescription
+- !!python/object:screamrouter_types.configuration.SinkDescription
   __dict__:
     bit_depth: 32
     channel_layout: stereo
     channels: 2
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -673,14 +667,14 @@ sinks:
     sample_rate: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.SinkDescription
+- !!python/object:screamrouter_types.configuration.SinkDescription
   __dict__:
     bit_depth: 32
     channel_layout: stereo
     channels: 2
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -743,14 +737,14 @@ sinks:
     sample_rate: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.SinkDescription
+- !!python/object:screamrouter_types.configuration.SinkDescription
   __dict__:
     bit_depth: 32
     channel_layout: stereo
     channels: 2
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -813,14 +807,14 @@ sinks:
     sample_rate: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.SinkDescription
+- !!python/object:screamrouter_types.configuration.SinkDescription
   __dict__:
     bit_depth: 32
     channel_layout: stereo
     channels: 2
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -880,14 +874,14 @@ sinks:
     name: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.SinkDescription
+- !!python/object:screamrouter_types.configuration.SinkDescription
   __dict__:
     bit_depth: 32
     channel_layout: stereo
     channels: 2
     delay: 0
     enabled: false
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -946,11 +940,11 @@ sinks:
     volume: null
   __pydantic_private__: null
 sources:
-- !!python/object:screamrouter_types.SourceDescription
+- !!python/object:screamrouter_types.configuration.SourceDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -1004,11 +998,11 @@ sources:
     ip: null
     name: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.SourceDescription
+- !!python/object:screamrouter_types.configuration.SourceDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -1062,11 +1056,11 @@ sources:
     name: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.SourceDescription
+- !!python/object:screamrouter_types.configuration.SourceDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -1120,11 +1114,11 @@ sources:
     name: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.SourceDescription
+- !!python/object:screamrouter_types.configuration.SourceDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -1178,11 +1172,11 @@ sources:
     name: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.SourceDescription
+- !!python/object:screamrouter_types.configuration.SourceDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.Equalizer
+    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0

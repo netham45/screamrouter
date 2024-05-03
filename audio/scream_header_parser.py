@@ -3,7 +3,8 @@ import traceback
 from typing import Tuple, Union
 import numpy
 from pydantic import BaseModel
-from screamrouter_types import BitDepthType, ChannelLayoutType, ChannelsType, SampleRateType
+from screamrouter_types.annotations import BitDepthType, ChannelLayoutType
+from screamrouter_types.annotations import ChannelsType, SampleRateType
 
 from logger import get_logger
 

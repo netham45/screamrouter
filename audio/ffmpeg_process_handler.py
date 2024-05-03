@@ -1,26 +1,27 @@
 """Handles the ffmpeg process for each audio controller"""
 import subprocess
-import time
 import threading
 from typing import List
-from pathlib import Path
 
-from screamrouter_types import Equalizer, VolumeType
+from screamrouter_types.annotations import VolumeType
+from screamrouter_types.configuration import Equalizer
 from audio.source_input_writer import SourceInputThread
 from audio.scream_header_parser import ScreamHeader
-from logger import get_logger, CONSOLE_LOG_LEVEL
+from logger import get_logger
+import constants
 
 logger = get_logger(__name__)
 
-class FFMpegHandler(threading.Thread):
+
+class FFMpegHandler:
     """Handles an FFMpeg process for a sink"""
-    def __init__(self, tag, fifo_in_pcm: Path, fifo_in_mp3: Path,
+    def __init__(self, tag,
+                  fifo_in_pcm: int, fifo_in_mp3: int,
                   sources: List[SourceInputThread],
                   sink_info: ScreamHeader, equalizer: Equalizer):
-        super().__init__(name=f"[Sink:{tag}] ffmpeg Thread")
-        self.__fifo_in_pcm: Path = fifo_in_pcm
+        self.__fifo_in_pcm: int = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
-        self.__fifo_in_mp3: Path = fifo_in_mp3
+        self.__fifo_in_mp3: int = fifo_in_mp3
         """Holds the filename for ffmpeg to output MP3 to"""
         self.__tag = tag
         """Holds a tag to put on logs"""
@@ -41,20 +42,18 @@ class FFMpegHandler(threading.Thread):
            The thread is locked when ffmpeg is not running until ffmpeg starts again
            This is to prevent multiple threads from trying to restart it at once"""
         self.ffmpeg_not_running_lock.acquire()
+        self.start_ffmpeg()
 
-        self.start()
-
-    def __get_ffmpeg_inputs(self, sources: List[SourceInputThread]) -> List[str]:
+    def __get_ffmpeg_inputs(self, sources: List[SourceInputThread], fds: List) -> List[str]:
         """Add an input for each source"""
         ffmpeg_command: List[str] = []
-        for source in sources:
+        for index, source in enumerate(sources):
             bit_depth = source.stream_attributes.bit_depth
             sample_rate = source.stream_attributes.sample_rate
             channels = source.stream_attributes.channels
             channel_layout = source.stream_attributes.channel_layout
-            file_name = source.fifo_file_name
             # This is optimized to reduce latency and initial ffmpeg processing time
-            ffmpeg_command.extend(["-blocksize", str(1152 * 4),
+            ffmpeg_command.extend(["-blocksize", str(constants.INPUT_BUFFER_SIZE),
                                    "-max_delay", "0",
                                    "-audio_preload", "0",
                                    "-max_probe_packets", "0",
@@ -69,7 +68,7 @@ class FFMpegHandler(threading.Thread):
                                    "-f", f"s{bit_depth}le",
                                    "-ac", f"{channels}",
                                    "-ar", f"{sample_rate}",
-                                   "-i", f"{file_name}"])
+                                   "-i", f"pipe:{fds[index]}"])
         return ffmpeg_command
 
     def __get_ffmpeg_filters(self, sources: List[SourceInputThread]) -> List[str]:
@@ -96,7 +95,8 @@ class FFMpegHandler(threading.Thread):
             aresample_filter: str = "".join(["aresample=",
                                           f"isr={source.stream_attributes.sample_rate}:",
                                           f"osr={self.__sink_info.sample_rate}:",
-                                          "async=500000"])
+                                          "async=500000:",
+                                          "flags=+res"])
             input_filter_string = "".join([f"{input_filter_string}",
                                           f"[{index}]",
                                           f"{volume_filter},",
@@ -114,7 +114,7 @@ class FFMpegHandler(threading.Thread):
     def __get_ffmpeg_output(self) -> List[str]:
         """Returns the ffmpeg output"""
         ffmpeg_command_parts: List[str] = []
-        ffmpeg_command_parts.extend(["-blocksize", "1152",
+        ffmpeg_command_parts.extend(["-blocksize", str(constants.PACKET_DATA_SIZE),
                                      "-max_delay", "0",
                                      "-audio_preload", "0",
                                      "-max_probe_packets", "0",
@@ -129,25 +129,28 @@ class FFMpegHandler(threading.Thread):
                                      "-f", f"s{self.__sink_info.bit_depth}le", 
                                      "-ac", f"{self.__sink_info.channels}",
                                      "-ar", f"{self.__sink_info.sample_rate}",
-                                       f"{self.__fifo_in_pcm}"])  # ffmpeg PCM output
+                                    f"pipe:{self.__fifo_in_pcm}"])  # ffmpeg PCM output
         ffmpeg_command_parts.extend(["-avioflags", "direct",
                                      "-y",
                                      "-f", "mp3",
-                                     "-b:a", "320k",
+                                     "-b:a", f"{constants.MP3_STREAM_BITRATE}",
                                      "-ac", "2",
                                       "-ar", f"{self.__sink_info.sample_rate}",
                                       "-reservoir", "0",
-                                      f"{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
+                                      f"pipe:{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
         return ffmpeg_command_parts
 
-    def __get_ffmpeg_command(self, sources: List[SourceInputThread]) -> List[str]:
+    def __get_ffmpeg_command(self, sources: List[SourceInputThread], fds) -> List[str]:
         """Builds the ffmpeg command"""
         ffmpeg_command_parts: List[str] = ["ffmpeg", "-hide_banner"]  # Build ffmpeg command
-        ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(sources))
+        ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(sources, fds))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_filters(sources))
         ffmpeg_command_parts.extend(self.__get_ffmpeg_output())  # ffmpeg output
         logger.debug("[Sink:%s] ffmpeg command %s", self.__tag, ffmpeg_command_parts)
         return ffmpeg_command_parts
+
+    def ffmpeg_preexec(self):
+        """Preexec function for ffmpeg"""
 
     def start_ffmpeg(self):
         """Start ffmpeg if it's not running"""
@@ -155,15 +158,23 @@ class FFMpegHandler(threading.Thread):
             if not self.__ffmpeg_started:
                 logger.debug("[Sink:%s] ffmpeg started", self.__tag)
                 self.__ffmpeg_started = True
-                if CONSOLE_LOG_LEVEL == "DEBUG":
-                    self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources),
+                fds: List = []
+                for source in self.__sources:
+                    fds.append(source.fifo_fd_read)
+                fds.append(self.__fifo_in_pcm)
+                fds.append(self.__fifo_in_mp3)
+                if constants.CONSOLE_LOG_LEVEL == "DEBUG":
+                    self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources, fds),
                                                     shell=False,
                                                     start_new_session=True,
-                                                    stdin=subprocess.PIPE)
+                                                    pass_fds=fds,
+                                                    stdin=subprocess.PIPE,
+                                                    )
                 else:
-                    self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources),
+                    self.__ffmpeg = subprocess.Popen(self.__get_ffmpeg_command(self.__sources, fds),
                                                     shell=False,
                                                     start_new_session=True,
+                                                    pass_fds=fds,
                                                     stdin=subprocess.PIPE,
                                                     stdout=subprocess.DEVNULL,
                                                     stderr=subprocess.DEVNULL)
@@ -179,6 +190,7 @@ class FFMpegHandler(threading.Thread):
             self.ffmpeg_not_running_lock.acquire()  # Lock ffmpeg until it can restart
             self.__ffmpeg_started = False
             self.__ffmpeg.kill()
+        self.start_ffmpeg()
 
     def send_ffmpeg_command(self, command: str, command_char: str = "c") -> None:
         """Send ffmpeg a command.
@@ -212,17 +224,3 @@ class FFMpegHandler(threading.Thread):
         self.__ffmpeg_started = False
         if self.__ffmpeg_started:
             self.__ffmpeg.kill()
-
-    def run(self) -> None:
-        """This thread monitors ffmpeg and restarts it if it ends or otherwise needs restarted"""
-        while self.__running:
-            if len(self.__sources) == 0:
-                time.sleep(.05)
-                continue
-            if self.__ffmpeg_started:
-                self.__ffmpeg.wait()
-                self.__ffmpeg_started = False
-                logger.debug("[Sink:%s] ffmpeg ended", self.__tag)
-            if self.__running:
-                self.start_ffmpeg()
-        logger.debug("[Sink:%s] ffmpeg exit", self.__tag)

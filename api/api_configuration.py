@@ -33,8 +33,6 @@ class APIConfiguration():
             tags=["Sink Configuration"])(self._configuration_controller.update_sink_volume)
         self._app.post("/sinks/{sink_name}/equalizer/",
             tags=["Sink Configuration"])(self._configuration_controller.update_sink_equalizer)
-        self._app.post("/sinks/{sink_name}/play/{volume}",
-            tags=["Sink Playback"])(self._configuration_controller.play_url)
         self._app.get("/sources",
             tags=["Source Configuration"])(self._configuration_controller.get_sources)
         self._app.post("/sources",

@@ -1,5 +1,4 @@
 config.yaml
 __pycache__/
 *.py[cod]
-pipes/
 logs/

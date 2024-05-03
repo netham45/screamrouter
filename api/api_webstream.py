@@ -1,11 +1,14 @@
 """Holds the web stream queue and API endpoints, manages serving MP3s."""
 import asyncio
+import multiprocessing
+import threading
 from typing import List, Optional
 
 from fastapi import FastAPI, WebSocket
 
 from fastapi.responses import StreamingResponse
-from screamrouter_types import IPAddressType
+from screamrouter_types.packets import WebStreamFrames
+from screamrouter_types.annotations import IPAddressType
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -51,9 +54,6 @@ class HTTPListener(Listener):
         super().__init__(sink_ip)
         self._queue = asyncio.Queue(200)
 
-    async def open(self) -> None:
-        """Doesn't do anything for http"""
-
     def send(self, sink_ip: IPAddressType, data: bytes) -> bool:
         """Send data to the websocket, returns false if the socket is dead"""
         if self._active:
@@ -71,15 +71,18 @@ class HTTPListener(Listener):
             data = await self._queue.get()
             yield bytes(data)
 
-class APIWebStream():
+class APIWebStream(threading.Thread):
     """Holds the main websocket controller for the API that distributes messages to listeners"""
     def __init__(self, app: FastAPI):
+        super().__init__(name="WebStream API Thread")
         self._listeners: List[Listener] = []
         app.websocket("/ws/{sink_ip}/")(self.websocket_mp3_stream)
         app.get("/stream/{sink_ip}/", tags=["Stream"])(self.http_mp3_stream)
         logger.info("[WebStream] MP3 Web Stream Available")
+        self.queue: multiprocessing.Queue = multiprocessing.Queue()
+        self.start()
 
-    def sink_callback(self, sink_ip: IPAddressType, data: bytes) -> None:
+    def process_frame(self, sink_ip: IPAddressType, data: bytes) -> None:
         """Callback for sinks to have data sent out to websockets"""
         for _, listener in enumerate(self._listeners):
             if not listener.send(sink_ip, data):  # Returns false on receive error
@@ -100,3 +103,8 @@ class APIWebStream():
         await listener.open()
         self._listeners.append(listener)
         return StreamingResponse(listener.get_queue(), media_type="audio/mpeg")
+
+    def run(self):
+        while True:
+            packet: WebStreamFrames = self.queue.get()
+            self.process_frame(packet.sink_ip, packet.data)

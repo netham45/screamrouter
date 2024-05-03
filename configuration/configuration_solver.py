@@ -1,9 +1,10 @@
 """Contains the logic to solve a configuration into sinks to sources with volume and equalization"""
 from copy import copy
 from typing import List, Optional
-from screamrouter_types import DelayType, SourceNameType, SinkNameType, RouteNameType
-from screamrouter_types import SourceDescription, SinkDescription, RouteDescription
-from screamrouter_types import Equalizer, VolumeType
+from screamrouter_types.annotations import DelayType, SourceNameType, SinkNameType, RouteNameType
+from screamrouter_types.configuration import SourceDescription, SinkDescription
+from screamrouter_types.configuration import RouteDescription, Equalizer
+from screamrouter_types.annotations import VolumeType
 
 
 #def unique[T](list: List[T]) -> List[T]:  # One day

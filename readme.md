@@ -152,3 +152,6 @@ Here are some problems and solutions:
 
 * Problem: The audio is choppy when I use high channel setups such as 7.1 32-bit
 * Solution: Turn down your bit depth. 8 channels at 32-bit 48000kHz is over 12Mb/s, this is a lot for real-time audio. 16-bit will halve your bitrate. Consider 5.1 or Stereo.
+
+* Problem: My Raspberry Pi keeps cutting out during streaming
+* Solution: Consider a better USB wifi card for the Raspberry Pi. They have weak wifi reception. Consider setting the sink to the lowest possible bitrate, too.

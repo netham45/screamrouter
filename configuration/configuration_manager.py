@@ -6,19 +6,18 @@ import sys
 from copy import copy, deepcopy
 import threading
 import time
-from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 import yaml
 from configuration.configuration_solver import ConfigurationSolver
-from screamrouter_types import URL, SinkDescription, SourceDescription
-from screamrouter_types import RouteDescription, InUseError
-from screamrouter_types import DelayType, Equalizer, PortType, RouteNameType
-from screamrouter_types import SinkNameType, SourceNameType, VolumeType
+from screamrouter_types.configuration import SinkDescription, SourceDescription
+from screamrouter_types.configuration import RouteDescription, Equalizer
+from screamrouter_types.annotations import DelayType, RouteNameType
+from screamrouter_types.annotations import SinkNameType, SourceNameType, VolumeType
+from screamrouter_types.exceptions import InUseError
 from api.api_webstream import APIWebStream
-from audio.ffmpeg_url_play_writer import FFMpegURLPlayWriter
 from audio.receiver_thread import ReceiverThread
 from audio.audio_controller import AudioController
-from audio.source_input_writer import SourceInputThread
+import constants
 
 import logger
 
@@ -26,7 +25,7 @@ _logger = logger.get_logger(__name__)
 
 class ConfigurationManager:
     """Tracks configuration and loading the main receiver/sinks based off of it"""
-    def __init__(self, websocket: Optional[APIWebStream]):
+    def __init__(self, websocket: APIWebStream):
         """Initialize an empty controller"""
         self.sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
@@ -38,21 +37,11 @@ class ConfigurationManager:
         """Holds rather the config is loaded"""
         self.audio_controllers: List[AudioController] = []
         """Holds a list of active Audio Controllers"""
-        self.__url_play_counter: int = 0
-        """Holds URL play counter so ffmpeg pipes can have unique names"""
-        self.__api_webstream: Optional[APIWebStream] = websocket
+        self.__api_webstream: APIWebStream = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
-        self.api_port: PortType = 8080
-        """Port for Uvicorn API to listen on, can be changed by load_yaml"""
-        self.receiver_port: PortType = 16401
-        """Port for receiver to listen on, can be changed by load_yaml"""
-        self.pipes_dir: Path = Path("./pipes/")
-        """Folder for pipes to be stored in, can be changed by load_yaml"""
         self.__starting = False
         """Holds rather start_receiver is running so multiple instances don't go off at once"""
-        self.url_playback_lock: threading.Lock = threading.Lock()
-        """Lock to ensure URL playback is only started by one thread at a time"""
-        self.configuration_solver: ConfigurationSolver
+        self.active_configuration: ConfigurationSolver
         """Holds the solved configuration"""
         self.old_configuration_solver: ConfigurationSolver = ConfigurationSolver([], [], [])
         """Holds the previously solved configuration to compare against for changes"""
@@ -62,16 +51,13 @@ class ConfigurationManager:
 
         _logger.info("------------------------------------------------------------------------")
         _logger.info("  ScreamRouter")
-        _logger.info("     Console Log level: %s", logger.CONSOLE_LOG_LEVEL)
-        _logger.info("     Log Dir: %s", os.path.realpath(logger.LOGS_DIR))
-        _logger.info("     Pipe Dir: %s", os.path.realpath(self.pipes_dir))
+        _logger.info("     Console Log level: %s", constants.CONSOLE_LOG_LEVEL)
+        _logger.info("     Log Dir: %s", os.path.realpath(constants.LOGS_DIR))
         _logger.info("------------------------------------------------------------------------")
 
         # Needs config loaded
-        self.__receivers: List[ReceiverThread] = []
-        """Holds a list of receivers on different ports to receive data on"""
-        for i in range(0,10):
-            self.__receivers.append(ReceiverThread(self.receiver_port + i))
+        self.receiver: ReceiverThread = ReceiverThread()
+        """Holds the receiver"""
         self.__process_and_apply_configuration()
 
 
@@ -93,7 +79,7 @@ class ConfigurationManager:
 
     def update_sink(self, sink: SinkDescription) -> bool:
         """Updates a sink"""
-        original_sink: SinkDescription = self.configuration_solver.get_sink_from_name(sink.name)
+        original_sink: SinkDescription = self.active_configuration.get_sink_from_name(sink.name)
         existing_sink_index: int = self.sink_descriptions.index(original_sink)
         self.sink_descriptions[existing_sink_index] = sink
         self.__process_and_apply_configuration()
@@ -101,7 +87,7 @@ class ConfigurationManager:
 
     def delete_sink(self, sink_name: SinkNameType) -> bool:
         """Deletes a sink by name"""
-        sink: SinkDescription = self.configuration_solver.get_sink_from_name(sink_name)
+        sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         self.__verify_sink_unused(sink)
         self.sink_descriptions.remove(sink)
         self.__process_and_apply_configuration()
@@ -109,14 +95,14 @@ class ConfigurationManager:
 
     def enable_sink(self, sink_name: SinkNameType) -> bool:
         """Enables a sink by name"""
-        sink: SinkDescription = self.configuration_solver.get_sink_from_name(sink_name)
+        sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.enabled = True
         self.__process_and_apply_configuration()
         return True
 
     def disable_sink(self, sink_name: SinkNameType) -> bool:
         """Disables a sink by name"""
-        sink: SinkDescription = self.configuration_solver.get_sink_from_name(sink_name)
+        sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.enabled = False
         self.__process_and_apply_configuration()
         return True
@@ -132,10 +118,25 @@ class ConfigurationManager:
         self.__process_and_apply_configuration()
         return True
 
+    def add_one_time_source(self,
+                            source: SourceDescription,
+                            sink_names: List[SinkNameType]) -> bool:
+        """Add a one_time source"""
+        for sink_name in sink_names:
+            for audio_controller in self.audio_controllers:
+                if audio_controller.sink_info.name == sink_name:
+                    audio_controller.add_source(source)
+        return True
+
+    def remove_one_time_source(self, source_tag: str):
+        """Remove a one_time source"""
+        for audio_controller in self.audio_controllers:
+            audio_controller.remove_source(source_tag)
+
     def update_source(self, source: SourceDescription) -> bool:
         """Updates a source"""
         existing_source: SourceDescription
-        existing_source = self.configuration_solver.get_source_from_name(source.name)
+        existing_source = self.active_configuration.get_source_from_name(source.name)
         existing_source_index: int = self.source_descriptions.index(existing_source)
         self.source_descriptions[existing_source_index] = source
         self.__process_and_apply_configuration()
@@ -143,7 +144,7 @@ class ConfigurationManager:
 
     def delete_source(self, source_name: SourceNameType) -> bool:
         """Deletes a source by name"""
-        source: SourceDescription = self.configuration_solver.get_source_from_name(source_name)
+        source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         self.__verify_source_unused(source)
         self.source_descriptions.remove(source)
         self.__process_and_apply_configuration()
@@ -151,14 +152,14 @@ class ConfigurationManager:
 
     def enable_source(self, source_name: SourceNameType) -> bool:
         """Enables a source by index"""
-        source: SourceDescription = self.configuration_solver.get_source_from_name(source_name)
+        source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         source.enabled = True
         self.__process_and_apply_configuration()
         return True
 
     def disable_source(self, source_name: SourceNameType) -> bool:
         """Disables a source by index"""
-        source: SourceDescription = self.configuration_solver.get_source_from_name(source_name)
+        source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         source.enabled = False
         self.__process_and_apply_configuration()
         return True
@@ -176,7 +177,7 @@ class ConfigurationManager:
 
     def update_route(self, route: RouteDescription) -> bool:
         """Updates a route"""
-        existing_route: RouteDescription = self.configuration_solver.get_route_from_name(route.name)
+        existing_route: RouteDescription = self.active_configuration.get_route_from_name(route.name)
         existing_route_index: int = self.route_descriptions.index(existing_route)
         self.route_descriptions[existing_route_index] = route
         self.__process_and_apply_configuration()
@@ -184,114 +185,78 @@ class ConfigurationManager:
 
     def delete_route(self, route_name: RouteNameType) -> bool:
         """Deletes a route by name"""
-        route: RouteDescription = self.configuration_solver.get_route_from_name(route_name)
+        route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         self.route_descriptions.remove(route)
         self.__process_and_apply_configuration()
         return True
 
     def enable_route(self, route_name: RouteNameType) -> bool:
         """Enables a route by name"""
-        route: RouteDescription = self.configuration_solver.get_route_from_name(route_name)
+        route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         route.enabled = True
         self.__process_and_apply_configuration()
         return True
 
     def disable_route(self, route_name: RouteNameType) -> bool:
         """Disables a route by name"""
-        route: RouteDescription = self.configuration_solver.get_route_from_name(route_name)
+        route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         route.enabled = False
         self.__process_and_apply_configuration()
         return True
 
     def update_source_equalizer(self, source_name: SourceNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a source or source group"""
-        source: SourceDescription = self.configuration_solver.get_source_from_name(source_name)
+        source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         source.equalizer = equalizer
         self.__process_and_apply_configuration()
         return True
 
     def update_source_volume(self, source_name: SourceNameType, volume: VolumeType) -> bool:
         """Set the volume for a source or source group"""
-        source: SourceDescription = self.configuration_solver.get_source_from_name(source_name)
+        source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         source.volume = volume
         self.__apply_volume_change()
         return True
 
     def update_sink_equalizer(self, sink_name: SinkNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a sink or sink group"""
-        sink: SinkDescription = self.configuration_solver.get_sink_from_name(sink_name)
+        sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.equalizer = equalizer
         self.__process_and_apply_configuration()
         return True
 
     def update_sink_volume(self, sink_name: SinkNameType, volume: VolumeType) -> bool:
         """Set the volume for a sink or sink group"""
-        sink: SinkDescription = self.configuration_solver.get_sink_from_name(sink_name)
+        sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.volume = volume
         self.__apply_volume_change()
         return True
 
     def update_sink_delay(self, sink_name: SinkNameType, delay: DelayType) -> bool:
         """Set the delay for a sink"""
-        sink: SinkDescription = self.configuration_solver.get_sink_from_name(sink_name)
+        sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.delay = delay
         self.__process_and_apply_configuration()
         return True
 
     def update_route_equalizer(self, route_name: RouteNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a route"""
-        route: RouteDescription = self.configuration_solver.get_route_from_name(route_name)
+        route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         route.equalizer = equalizer
         self.__process_and_apply_configuration()
         return True
 
     def update_route_volume(self, route_name: RouteNameType, volume: VolumeType) -> bool:
         """Set the volume for a route"""
-        route: RouteDescription = self.configuration_solver.get_route_from_name(route_name)
+        route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         route.volume = volume
         self.__apply_volume_change()
         return True
 
-    def play_url(self, sink_name: SinkNameType, url: URL, volume: VolumeType) -> bool:
-        """Play a URL on a sink or group of sinks"""
-        self.url_playback_lock.acquire()
-        sink: SinkDescription = self.configuration_solver.get_sink_from_name(sink_name)
-        all_child_sinks: List[SinkDescription] = self.configuration_solver.get_real_sinks_from_sink(
-                                                                                            sink,
-                                                                                            True,
-                                                                                            volume)
-        found: bool = False
-        for sink_description in all_child_sinks:
-            for sink_controller in self.audio_controllers:
-                if sink_description.name == sink_controller.sink_info.name:
-                    found = True
-                    tag: str = f"ffmpeg{self.__url_play_counter}"
-                    pipe_name: str = f"{self.pipes_dir}scream-{sink_description.ip}-{tag}"
-                    pipe_path: Path = Path(pipe_name)
-                    ffmpeg_source_info: SourceInputThread
-                    ffmpeg_source_info = SourceInputThread(
-                                            tag, pipe_path,
-                                            sink_description.ip,
-                                            SourceDescription(
-                                                name=tag,
-                                                volume=sink_description.volume * volume))
-                    sink_controller.sources_lock.acquire()
-                    sink_controller.sources[tag] = ffmpeg_source_info
-                    sink_controller.sources_lock.release()
-        if found:  # If at least one sink is found start playback
-            tag: str = f"ffmpeg{self.__url_play_counter}"
-            pipe_name: str = f"{self.pipes_dir}ffmpeg{self.__url_play_counter}"
-            pipe_path: Path = Path(pipe_name)
-            FFMpegURLPlayWriter(url.url, 1, all_child_sinks[0], pipe_path, tag, self.__receivers[5])
-            self.__url_play_counter = self.__url_play_counter + 1
-        self.url_playback_lock.release()
-        return found
-
     def stop(self) -> bool:
         """Stop the receiver, this stops all ffmepg processes and all sinks."""
-        for receiver in self.__receivers:
-            receiver.stop()
-            receiver.join()
+        self.receiver.stop()
+        self.receiver.join()
         return True
 
     def set_webstream(self, webstream: APIWebStream) -> None:
@@ -310,10 +275,10 @@ class ConfigurationManager:
             if sink.name == _sink.name:
                 raise ValueError(f"Sink name '{sink.name}' already in use")
         for member in sink.group_members:
-            self.configuration_solver.get_sink_from_name(member)
+            self.active_configuration.get_sink_from_name(member)
         if sink.is_group:
             for member in sink.group_members:
-                self.configuration_solver.get_sink_from_name(member)
+                self.active_configuration.get_sink_from_name(member)
 
     def __verify_new_source(self, source: SourceDescription) -> None:
         """Verifies all source group members exist and the sink doesn't
@@ -323,38 +288,38 @@ class ConfigurationManager:
                 raise ValueError(f"Source name '{source.name}' already in use")
         if source.is_group:
             for member in source.group_members:
-                self.configuration_solver.get_source_from_name(member)
+                self.active_configuration.get_source_from_name(member)
 
     def __verify_new_rout(self, route: RouteDescription) -> None:
         """Verifies route sink and source exist, throws exception if not"""
-        self.configuration_solver.get_sink_from_name(route.sink)
-        self.configuration_solver.get_source_from_name(route.source)
+        self.active_configuration.get_sink_from_name(route.sink)
+        self.active_configuration.get_source_from_name(route.source)
 
     def __verify_source_unused(self, source: SourceDescription) -> None:
         """Verifies a source is unused by any routes, throws exception if not"""
         groups: List[SourceDescription]
-        groups = self.configuration_solver.get_source_groups_from_member(source)
+        groups = self.active_configuration.get_source_groups_from_member(source)
         if len(groups) > 0:
             group_names: List[str] = []
             for group in groups:
                 group_names.append(group.name)
             raise InUseError(f"Source:{source.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
-        routes = self.configuration_solver.get_routes_by_source(source)
+        routes = self.active_configuration.get_routes_by_source(source)
         for route in routes:
             if route.source == source.name:
                 raise InUseError(f"Source:{source.name} is in use by Route {route.name}")
 
     def __verify_sink_unused(self, sink: SinkDescription) -> None:
         """Verifies a sink is unused by any routes, throws exception if not"""
-        groups: List[SinkDescription] = self.configuration_solver.get_sink_groups_from_member(sink)
+        groups: List[SinkDescription] = self.active_configuration.get_sink_groups_from_member(sink)
         if len(groups) > 0:
             group_names: List[str] = []
             for group in groups:
                 group_names.append(group.name)
             raise InUseError(f"Sink:{sink.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
-        routes = self.configuration_solver.get_routes_by_sink(sink)
+        routes = self.active_configuration.get_routes_by_sink(sink)
         for route in routes:
             if route.sink == sink.name:
                 raise InUseError(f"Sink:{sink.name} is in use by Route {route.name}")
@@ -364,7 +329,7 @@ class ConfigurationManager:
     def __apply_volume_change(self) -> None:
         """Calculates the volume for each Source on each Sink and tells the Sink Controllers"""
         self.__process_configuration()
-        for sink_name, sources in self.configuration_solver.real_sinks_to_real_sources.items():
+        for sink_name, sources in self.active_configuration.real_sinks_to_real_sources.items():
             for _sink in self.audio_controllers:
                 if _sink.sink_info.name == sink_name:
                     for source in sources:
@@ -381,10 +346,6 @@ class ConfigurationManager:
                 self.sink_descriptions = savedata["sinks"]
                 self.source_descriptions = savedata["sources"]
                 self.route_descriptions = savedata["routes"]
-                serverinfo = savedata["serverinfo"]
-                self.api_port = serverinfo["api_port"]
-                self.receiver_port = serverinfo["receiver_port"]
-                self.pipes_dir = serverinfo["pipes_dir"]
         except FileNotFoundError:
             _logger.warning("[Controller] Configuration not found, starting with a blank config")
         except KeyError as exc:
@@ -394,14 +355,8 @@ class ConfigurationManager:
 
     def __multiprocess_save(self):
         """Saves the config to config.yaml"""
-        serverinfo: dict = {"api_port": self.api_port,
-                            "receiver_port": self.receiver_port,
-                            "logs_dir": logger.LOGS_DIR,
-                        "pipes_dir": self.pipes_dir,
-                        "console_log_level": logger.CONSOLE_LOG_LEVEL,
-                        "log_to_file": logger.LOG_TO_FILE}
         save_data: dict = {"sinks": self.sink_descriptions, "sources": self.source_descriptions,
-                           "routes": self.route_descriptions, "serverinfo": serverinfo}
+                           "routes": self.route_descriptions }
         with open('config.yaml', 'w', encoding="UTF-8") as yaml_file:
             yaml.dump(save_data, yaml_file)
 
@@ -410,6 +365,7 @@ class ConfigurationManager:
         self.save_semaphore.acquire()
         proc = Process(target=self.__multiprocess_save)
         proc.start()
+        proc.join()
         self.save_semaphore.release()
 
 # Configuration processing functions
@@ -432,7 +388,7 @@ class ConfigurationManager:
         removed_sinks: List[SinkDescription] = []
 
         new_map: dict[SinkDescription,List[SourceDescription]]
-        new_map = self.configuration_solver.real_sinks_to_real_sources
+        new_map = self.active_configuration.real_sinks_to_real_sources
 
         old_map: dict[SinkDescription,List[SourceDescription]]
         old_map = self.old_configuration_solver.real_sinks_to_real_sources
@@ -484,7 +440,7 @@ class ConfigurationManager:
           changed_sinks: List[SinkDescription] )
         """
         # Get a new resolved configuration from the current state
-        self.configuration_solver = ConfigurationSolver(self.source_descriptions,
+        self.active_configuration = ConfigurationSolver(self.source_descriptions,
                                                         self.sink_descriptions,
                                                         self.route_descriptions)
         added_sinks: List[SinkDescription]
@@ -493,7 +449,7 @@ class ConfigurationManager:
         # While the old state is still set figure out the differences
         added_sinks, removed_sinks, changed_sinks = self.__find_added_removed_changed_sinks()
         # Set the old state to the new state
-        self.old_configuration_solver = deepcopy(self.configuration_solver)
+        self.old_configuration_solver = deepcopy(self.active_configuration)
         # Return what's changed
         return added_sinks, removed_sinks, changed_sinks
 
@@ -525,29 +481,24 @@ class ConfigurationManager:
             # Unload the old controller
             _logger.debug("Removing Audio Controller %s", sink.name)
             #self.__receiver.unregister_audio_controller_by_sink(sink)
-            for receiver in self.__receivers:
-                receiver.unregister_audio_controller_by_sink(sink)
+            self.receiver.unregister_audio_controller_by_sink(sink)
             for audio_controller in original_audio_controllers:
                 if audio_controller.sink_info.name == sink.name:
                     if audio_controller in self.audio_controllers:
                         self.audio_controllers.remove(audio_controller)
             # Load a new controller
             sources: List[SourceDescription]
-            sources = self.configuration_solver.real_sinks_to_real_sources[sink]
+            sources = self.active_configuration.real_sinks_to_real_sources[sink]
             audio_controller = AudioController(sink, sources, self.__api_webstream)
             _logger.debug("Adding Audio Controller %s", sink.name)
-            #self.__receiver.register_audio_controller(audio_controller)
-            for receiver in self.__receivers:
-                receiver.register_audio_controller(audio_controller)
+            self.receiver.register_audio_controller(audio_controller)
             self.audio_controllers.append(audio_controller)
 
         # Controllers to be removed
         for sink in removed_sinks:
             # Unload the old controller
             _logger.debug("Removing Audio Controller %s", sink.name)
-            #self.__receiver.unregister_audio_controller_by_sink(sink)
-            for receiver in self.__receivers:
-                receiver.unregister_audio_controller_by_sink(sink)
+            self.receiver.unregister_audio_controller_by_sink(sink)
             for audio_controller in original_audio_controllers:
                 if audio_controller.sink_info.name == sink.name:
                     self.audio_controllers.remove(audio_controller)
@@ -556,12 +507,10 @@ class ConfigurationManager:
         for sink in added_sinks:
             # Load a new controller
             sources: List[SourceDescription]
-            sources = self.configuration_solver.real_sinks_to_real_sources[sink]
+            sources = self.active_configuration.real_sinks_to_real_sources[sink]
             audio_controller = AudioController(sink, sources, self.__api_webstream)
             _logger.debug("Adding Audio Controller %s", sink.name)
-            #self.__receiver.register_audio_controller(audio_controller)
-            for receiver in self.__receivers:
-                receiver.register_audio_controller(audio_controller)
+            self.receiver.register_audio_controller(audio_controller)
             self.audio_controllers.append(audio_controller)
         self.__starting = False
         self.__save_config()

@@ -6,25 +6,24 @@ import select
 
 from typing import List
 
-from screamrouter_types import PortType, SinkDescription
+from screamrouter_types.configuration import SinkDescription
 from audio.audio_controller import AudioController
+import constants
 from logger import get_logger
 
 logger = get_logger(__name__)
 
 class ReceiverThread(threading.Thread):
     """Handles the main socket that listens for incoming Scream streams and sends them to sinks"""
-    def __init__(self, port: PortType):
+    def __init__(self):
         """Takes the UDP port number to listen on"""
-        super().__init__(name=f"Receiver Thread {port}")
+        super().__init__(name="Receiver Thread")
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Main socket all sources send to"""
         self.audio_controllers: List[AudioController] = []
         """List of all sinks to forward data to"""
         self.running: bool = True
         """Rather the Recevier is running, when set to false the receiver ends"""
-        self.port: PortType = port
-        """UDP port to listen on"""
         self.start()
 
     def register_audio_controller(self, audio_controller: AudioController) -> None:
@@ -44,17 +43,18 @@ class ReceiverThread(threading.Thread):
 
     def stop(self) -> None:
         """Stops the Receiver and all sinks"""
-        logger.info("[Receiver:%s] Stopping", self.port)
+        logger.info("[Receiver] Stopping")
         self.running = False
         self.join()
 
     def __check_source_packet(self, tag: str, data: bytes) -> bool:
         """Verifies a packet is the right length"""
-        if len(data) != 1157:
-            logger.debug("[Source:%s] Got bad packet length %i != 1157 from source",
+        if len(data) != constants.PACKET_SIZE:
+            logger.debug("[Source:%s] Got bad packet length %i != %s from source",
                         tag,
-                        len(data))
-            return False
+                        len(data),
+                        constants.PACKET_SIZE)
+            return True
         return True
 
     def add_packet_to_queue(self, tag: str, data: bytes):
@@ -70,34 +70,33 @@ class ReceiverThread(threading.Thread):
 
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks"""
-        logger.info("[Receiver:%s] Receiver started on port %s", self.port, self.port)
+        logger.info("[Receiver] Receiver started on port %s", constants.RECEIVER_PORT)
         if self.running:
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1157 * 1024 * 1024)
-            self.sock.bind(("", self.port))
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
+                                 constants.PACKET_SIZE * 1024 * 1024)
+            self.sock.bind(("", constants.RECEIVER_PORT))
         else:
             return
 
-        recvbuf = bytearray(1157)
+        recvbuf = bytearray(constants.PACKET_SIZE)
         while self.running:
             ready = select.select([self.sock], [], [], .005)
             if ready[0]:
                 try:
-                    recvbuf, addr = self.sock.recvfrom(1157)  # 5 bytes header + 1152 bytes pcm
+                    recvbuf, addr = self.sock.recvfrom(constants.PACKET_SIZE)
                     if self.__check_source_packet(addr[0], recvbuf):
                         for sink in self.audio_controllers:
                             sink.add_packet_to_queue(addr[0], recvbuf)
                 except OSError:
-                    logger.warning("[Receiver:%s] Failed to read from incoming sock, exiting",
-                                    self.port)
+                    logger.warning("[Receiver] Failed to read from incoming sock, exiting")
                     break
-        logger.info("[Receiver:%s] Main thread ending sinks", self.port)
+        logger.info("[Receiver] Main thread ending sinks")
         for sink in self.audio_controllers:
-            logger.info("[Receiver:%s] Stopping sink %s", self.port, sink.sink_info.ip)
+            logger.info("[Receiver] Stopping sink %s", sink.sink_info.ip)
             sink.stop()
         for sink in self.audio_controllers:
-            logger.debug("[Receiver:%s] Waiting for sink %s to stop",
-                          self.port, sink.sink_info.ip)
+            logger.debug("[Receiver] Waiting for sink %s to stop", sink.sink_info.ip)
             sink.wait_for_threads_to_stop()
         self.sock.close()
 
-        logger.info("[Receiver:%s] Main thread stopped", self.port)
+        logger.info("[Receiver] Main thread stopped")
