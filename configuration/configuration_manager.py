@@ -49,6 +49,10 @@ class ConfigurationManager(threading.Thread):
         """Rather the thread is running or not"""
         self.receiver: ReceiverThread = ReceiverThread([])
         """Holds the thread that receives UDP packets from Scream"""
+        self.reload_config: bool = False
+        """Set to true to reload the config. Used so config
+           changes during another config reload still trigger
+           a reload"""
         self.__load_config()
 
         _logger.info("------------------------------------------------------------------------")
@@ -238,10 +242,11 @@ class ConfigurationManager(threading.Thread):
         return True
 
     def stop(self) -> bool:
-        """Stop the receiver, this stops all ffmepg processes and all sinks."""
+        """Stop all threads/processes"""
         self.receiver.stop()
         for audio_controller in self.audio_controllers:
             audio_controller.stop()
+        
         self.running = False
         if constants.WAIT_FOR_CLOSES:
             self.join()
@@ -434,6 +439,8 @@ class ConfigurationManager(threading.Thread):
         self.reload_condition.acquire()
         self.reload_condition.notify()
         self.reload_condition.release()
+        self.reload_config = True
+        _logger.debug("Marking config for reload")
 
     def __process_and_apply_configuration(self) -> None:
         """Process the configuration, get which sinks have changed and need reloaded,
@@ -499,8 +506,13 @@ class ConfigurationManager(threading.Thread):
     def run(self):
         self.__process_and_apply_configuration()
         while self.running:
+            
             self.reload_condition.acquire()
             if self.reload_condition.wait(timeout=.1):
-                _logger.info("Reloading the configuration")
-                self.__process_and_apply_configuration()
+                # This will get set to true if something else wants to reload the configuration
+                # while it's already reloading
+                while self.reload_config:
+                    self.reload_config = False
+                    _logger.info("Reloading the configuration")
+                    self.__process_and_apply_configuration()
         self.reload_condition.release()

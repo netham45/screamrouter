@@ -9,6 +9,8 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import StreamingResponse
 from screamrouter_types.packets import WebStreamFrames
 from screamrouter_types.annotations import IPAddressType
+import constants
+
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -80,7 +82,15 @@ class APIWebStream(threading.Thread):
         app.get("/stream/{sink_ip}/", tags=["Stream"])(self.http_mp3_stream)
         logger.info("[WebStream] MP3 Web Stream Available")
         self.queue: multiprocessing.Queue = multiprocessing.Queue()
+        self.running:bool = True
+        """Ends all websocket and MP3 streams when set to False"""
         self.start()
+
+    def stop(self):
+        """Stops the API webstream thread"""
+        self.running = False
+        if constants.WAIT_FOR_CLOSES:
+            self.join()
 
     def process_frame(self, sink_ip: IPAddressType, data: bytes) -> None:
         """Callback for sinks to have data sent out to websockets"""
@@ -94,8 +104,8 @@ class APIWebStream(threading.Thread):
         listener: WebsocketListener = WebsocketListener(sink_ip, websocket)
         await listener.open()
         self._listeners.append(listener)
-        while True:  # Keep the connection open until something external closes it.
-            await asyncio.sleep(10000)
+        while self.running:  # Keep the connection open until something external closes it.
+            await asyncio.sleep(1)
 
     async def http_mp3_stream(self, sink_ip: IPAddressType):
         """Streams MP3 frames from ScreamRouter"""
@@ -105,6 +115,9 @@ class APIWebStream(threading.Thread):
         return StreamingResponse(listener.get_queue(), media_type="audio/mpeg")
 
     def run(self):
-        while True:
-            packet: WebStreamFrames = self.queue.get()
-            self.process_frame(packet.sink_ip, packet.data)
+        while self.running:
+            try:
+                packet: WebStreamFrames = self.queue.get(timeout=.1)
+                self.process_frame(packet.sink_ip, packet.data)
+            except TimeoutError:
+                pass
