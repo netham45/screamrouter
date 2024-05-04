@@ -1,4 +1,5 @@
 """One audio controller per sink, handles taking in sources and tracking ffmpeg"""
+from ctypes import c_bool
 import multiprocessing
 import os
 from queue import Empty
@@ -87,7 +88,8 @@ class AudioController(multiprocessing.Process):
         """Holds the thread to listen to MP3 output from ffmpeg"""
         self.sources_lock: threading.Lock = threading.Lock()
         """This lock ensures the Sources list is only accessed by one thread at a time"""
-        self.count: int = 0
+        self.running = multiprocessing.Value(c_bool, True)
+        """Multiprocessing-passed flag to determine if the thread is running"""
         self.queue: multiprocessing.Queue = multiprocessing.Queue()
 
         self.sources_lock.acquire()
@@ -159,31 +161,32 @@ class AudioController(multiprocessing.Process):
         logger.debug("[Sink:%s] Stopping sources", self.sink_info.ip)
         for _, source in self.sources.items():
             source.stop()
-        self.kill()
+        self.running.value = c_bool(False)
         logger.debug("[Sink:%s] Stopping Audio Controller", self.sink_info.ip)
         self.sources_lock.release()
         self.wait_for_threads_to_stop()
 
     def wait_for_threads_to_stop(self) -> None:
         """Waits for threads to stop"""
-        self.sources_lock.acquire()
-        self.__pcm_thread.join()
-        logger.debug("[Sink:%s] PCM thread stopped", self.sink_info.ip)
-        self.__mp3_thread.join()
-        logger.debug("[Sink:%s] MP3 thread stopped", self.sink_info.ip)
-        for _, source in self.sources.items():
-            source.join()
-        logger.debug("[Sink:%s] sources stopped", self.sink_info.ip)
-        logger.debug("[Sink:%s] Audio Controller stopped", self.sink_info.ip)
-        logger.info("[Sink:%s] Stopped", self.sink_info.ip)
-        self.sources_lock.release()
+        if constants.WAIT_FOR_CLOSES:
+            self.sources_lock.acquire()
+            self.__pcm_thread.join()
+            logger.debug("[Sink:%s] PCM thread stopped", self.sink_info.ip)
+            self.__mp3_thread.join()
+            logger.debug("[Sink:%s] MP3 thread stopped", self.sink_info.ip)
+            for _, source in self.sources.items():
+                source.join()
+            logger.debug("[Sink:%s] sources stopped", self.sink_info.ip)
+            logger.debug("[Sink:%s] Audio Controller stopped", self.sink_info.ip)
+            logger.info("[Sink:%s] Stopped", self.sink_info.ip)
+            self.sources_lock.release()
 
     def run(self) -> None:
         """Constantly checks the queue
             notifies the Sink Controller callback when there's something in the queue"""
         logger.debug("[Sink:%s] PID %s", self.sink_info.ip, os.getpid())
-        while True:
+        while self.running.value:
             try:
-                self.process_packet_from_queue(self.queue.get())
+                self.process_packet_from_queue(self.queue.get(timeout=.1))
             except Empty:
                 pass

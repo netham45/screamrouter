@@ -27,10 +27,9 @@ def signal_handler(sig, frame):
     logger.error("Ctrl+C pressed %s %s", sig, frame)
     try:
         controller.stop()
+        os.kill(os.getpid(), signal.SIGTERM)
     except NameError:
         pass
-    # Wouldn't it be cool if uvicorn provided a real way to exit?
-    os.kill(os.getpid(), signal.SIGTERM)
 
 signal.signal(signal.SIGINT, signal_handler)
 

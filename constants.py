@@ -5,16 +5,16 @@
 # ##########
 
 RECEIVER_PORT: int = 16401
-"""This is the default port for the receiver"""
+"""This is the port for the receiver"""
 SINK_PORT: int = 4010
-"""This is the default port for a Scream Sink"""
+"""This is the port for a Scream Sink"""
 API_PORT: int = 8080
 """This is the port FastAPI runs on"""
 API_HOST: str = "0.0.0.0"
 """This is the host FastAPI binds to"""
 LOGS_DIR: str = "./logs/"
 """This is the directory logs are stored in"""
-CONSOLE_LOG_LEVEL: str = "DEBUG"
+CONSOLE_LOG_LEVEL: str = "INFO"
 """Log level for stdout"""
 LOG_TO_FILE: bool = True
 """Determines rather logs are written to files"""
@@ -39,3 +39,6 @@ MP3_HEADER_LENGTH: int = 4
 """Length of MP3 header"""
 SOURCE_INACTIVE_TIME_MS: int = 35
 """Inactive time for a source before it's closed"""
+WAIT_FOR_CLOSES: bool = False
+"""On configuration reload, wait for existing processes to close
+   before starting new processes"""

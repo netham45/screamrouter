@@ -1,6 +1,8 @@
 """Holds the Source Info and a thread for handling it's queue"""
+from ctypes import c_bool
 import fcntl
 import multiprocessing
+import multiprocessing.sharedctypes
 import os
 import queue
 import time
@@ -10,6 +12,7 @@ from screamrouter_types.annotations import IPAddressType
 from screamrouter_types.configuration import SourceDescription
 from audio.scream_header_parser import ScreamHeader
 from logger import get_logger
+import constants
 
 logger = get_logger(__name__)
 
@@ -31,13 +34,17 @@ class SourceInputThread(multiprocessing.Process):
         self.stream_attributes: ScreamHeader = ScreamHeader(bytearray([0, 32, 2, 0, 0]))
         """The source stream attributes (bit depth, sample rate, channels)"""
         self.fifo_fd_read: int
+        """Passed to ffmpeg at start"""
         self.fifo_fd_write: int
+        """output to ffmpeg for encoding and mixing"""
         self.fifo_fd_read, self.fifo_fd_write = os.pipe()
-        """The open handle to the ffmpeg named pipe"""
+
         self.__sink_ip: Optional[IPAddressType] = sink_ip
         """The sink that opened this source"""
         self._queue: multiprocessing.Queue = multiprocessing.Queue()
         """Holds the queue to read/write from"""
+        self.running = multiprocessing.Value(c_bool, True)
+        """Multiprocessing-passed flag to determine if the thread is running"""
         self.start()
 
     def is_active(self, active_time_ms: int = 200) -> bool:
@@ -54,8 +61,9 @@ class SourceInputThread(multiprocessing.Process):
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""
-        self.kill()
-        self.join()
+        self.running.value = c_bool(False)
+        if constants.WAIT_FOR_CLOSES:
+            self.join()
         if self.is_open:
             self.is_open = False
             logger.info("[Sink:%s][Source:%s] Stopping", self.__sink_ip, self.tag)
@@ -73,7 +81,7 @@ class SourceInputThread(multiprocessing.Process):
                      os.getpid())
         fcntl.fcntl(self.fifo_fd_write, 1031, 1024*1024*1024*64)
         fifo_file_handle = open(self.fifo_fd_write, 'wb', -1)
-        while True:
+        while self.running.value:
             try:
                 data: bytes = self._queue.get(timeout=.1)
                 fifo_file_handle.write(data)

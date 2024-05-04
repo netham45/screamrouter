@@ -1,4 +1,5 @@
 """Threads to handle the PCM and MP3 output from ffmpeg"""
+from ctypes import c_bool
 import multiprocessing
 import os
 import select
@@ -18,33 +19,34 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 class OutputThread(multiprocessing.Process):
-    """Handles listening for output from ffmpeg, extended by codec-specific classes"""
+    """Base class for processes that handle listening for output from ffmpeg"""
     def __init__(self, fifo_in: int, sink_ip: IPAddressType, threadname: str):
         super().__init__(name = threadname)
         self._fifo_in: int = fifo_in
-        """Holds the ffmpeg output pipe name this sink will use as a source"""
+        """input from ffmpeg to be sent to receivers and a browser"""
         self._sink_ip: IPAddressType = sink_ip
         """Holds the sink IP for the web api to filter based on"""
-        self._running: bool = True
-        """Rather this thread is running"""
         self.file: io.BufferedReader
-        """File handle"""
+        """ffmpeg output file handle"""
         fcntl.fcntl(self._fifo_in, 1031, 1024*1024*1024*64)
+        self.running = multiprocessing.Value(c_bool, True)
+        """Multiprocessing-passed flag to determine if the thread is running"""
         self.file = open(self._fifo_in, 'rb', -1)
         self.start()
 
     def stop(self) -> None:
         """Stop"""
-        self._running = False
         self.file.close()
-        self.kill()
+        self.running.value = c_bool(False)
+        if constants.WAIT_FOR_CLOSES:
+            self.join()
 
     def _read_bytes(self, count: int, firstread: bool = False) -> bytes:
         """Reads count bytes, blocks until self.__running goes false or count bytes are received.
         firstread indicates it should return the first read regardless of how many bytes it read
         as long as it read something."""
         dataout:bytearray = bytearray() # Data to return
-        while self._running and len(dataout) < count:
+        while self.running.value and len(dataout) < count:
             ready = select.select([self.file], [], [], .1)
             if ready[0]:
                 try:
@@ -105,7 +107,7 @@ class MP3OutputThread(OutputThread):
         # Send data to the web handler when it gets this many bytes buffered up
         available_data = bytearray()  # Holds the available frames
         available_frame_count: int = 0  # Holds the number of available frames
-        while self._running:
+        while self.running.value:
             mp3_header_parsed: MP3Header  # Holds the parsed header object
             mp3_header_raw: bytes  # Holds the raw header bytes
             mp3_frame: bytes  # Holds the currently processing MP3 frame
@@ -147,7 +149,7 @@ class PCMOutputThread(OutputThread):
         """This thread implements listening to self.fifoin and sending it out to dest_ip"""
         logger.debug("[Sink %s] PCM Thread PID %s", self._sink_ip, os.getpid())
         self.__sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, constants.PACKET_SIZE * 65535)
-        while self._running:
+        while self.running.value:
             # Send data from ffmpeg to the Scream receiver
             self.__sock.sendto(
                 self.__output_header + self._read_bytes(constants.PACKET_DATA_SIZE, True),

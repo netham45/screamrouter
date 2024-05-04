@@ -190,6 +190,7 @@ class FFMpegHandler:
             self.ffmpeg_not_running_lock.acquire()  # Lock ffmpeg until it can restart
             self.__ffmpeg_started = False
             self.__ffmpeg.kill()
+            self.__ffmpeg.wait()
         self.start_ffmpeg()
 
     def send_ffmpeg_command(self, command: str, command_char: str = "c") -> None:
@@ -224,3 +225,4 @@ class FFMpegHandler:
         self.__ffmpeg_started = False
         if self.__ffmpeg_started:
             self.__ffmpeg.kill()
+            self.__ffmpeg.wait()

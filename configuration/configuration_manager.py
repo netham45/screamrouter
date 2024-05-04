@@ -22,10 +22,11 @@ import logger
 
 _logger = logger.get_logger(__name__)
 
-class ConfigurationManager:
+class ConfigurationManager(threading.Thread):
     """Tracks configuration and loading the main receiver/sinks based off of it"""
     def __init__(self, websocket: APIWebStream):
-        """Initialize an empty controller"""
+        """Initialize the controller"""
+        super().__init__(name="Configuration Manager")
         self.sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
         self.source_descriptions:  List[SourceDescription] = []
@@ -42,6 +43,12 @@ class ConfigurationManager:
         """Holds the previously solved configuration to compare against for changes"""
         self.configuration_semaphore: threading.Semaphore = threading.Semaphore(1)
         """Semaphore so only one thread can reload the config or save to YAML at a time"""
+        self.reload_condition: threading.Condition = threading.Condition()
+        """Condition to indicate the Configuration Manager needs to reload"""
+        self.running: bool = True
+        """Rather the thread is running or not"""
+        self.receiver: ReceiverThread = ReceiverThread([])
+        """Holds the thread that receives UDP packets from Scream"""
         self.__load_config()
 
         _logger.info("------------------------------------------------------------------------")
@@ -50,10 +57,7 @@ class ConfigurationManager:
         _logger.info("     Log Dir: %s", os.path.realpath(constants.LOGS_DIR))
         _logger.info("------------------------------------------------------------------------")
 
-        # Needs config loaded
-        self.receiver: ReceiverThread = ReceiverThread([])
-        """Holds the receiver"""
-        self.__process_and_apply_configuration()
+        self.start()
 
 
     # Public functions
@@ -69,7 +73,7 @@ class ConfigurationManager:
         """Adds a sink or sink group"""
         self.__verify_new_sink(sink)
         self.sink_descriptions.append(sink)
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def update_sink(self, sink: SinkDescription) -> bool:
@@ -77,7 +81,7 @@ class ConfigurationManager:
         original_sink: SinkDescription = self.active_configuration.get_sink_from_name(sink.name)
         existing_sink_index: int = self.sink_descriptions.index(original_sink)
         self.sink_descriptions[existing_sink_index] = sink
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def delete_sink(self, sink_name: SinkNameType) -> bool:
@@ -85,21 +89,21 @@ class ConfigurationManager:
         sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         self.__verify_sink_unused(sink)
         self.sink_descriptions.remove(sink)
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def enable_sink(self, sink_name: SinkNameType) -> bool:
         """Enables a sink by name"""
         sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.enabled = True
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def disable_sink(self, sink_name: SinkNameType) -> bool:
         """Disables a sink by name"""
         sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.enabled = False
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def get_sources(self) -> List[SourceDescription]:
@@ -110,7 +114,7 @@ class ConfigurationManager:
         """Add a source or source group"""
         self.__verify_new_source(source)
         self.source_descriptions.append(source)
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def update_source(self, source: SourceDescription) -> bool:
@@ -119,7 +123,7 @@ class ConfigurationManager:
         existing_source = self.active_configuration.get_source_from_name(source.name)
         existing_source_index: int = self.source_descriptions.index(existing_source)
         self.source_descriptions[existing_source_index] = source
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def delete_source(self, source_name: SourceNameType) -> bool:
@@ -127,21 +131,21 @@ class ConfigurationManager:
         source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         self.__verify_source_unused(source)
         self.source_descriptions.remove(source)
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def enable_source(self, source_name: SourceNameType) -> bool:
         """Enables a source by index"""
         source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         source.enabled = True
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def disable_source(self, source_name: SourceNameType) -> bool:
         """Disables a source by index"""
         source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         source.enabled = False
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def get_routes(self) -> List[RouteDescription]:
@@ -152,7 +156,7 @@ class ConfigurationManager:
         """Adds a route"""
         self.__verify_new_rout(route)
         self.route_descriptions.append(route)
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def update_route(self, route: RouteDescription) -> bool:
@@ -160,89 +164,93 @@ class ConfigurationManager:
         existing_route: RouteDescription = self.active_configuration.get_route_from_name(route.name)
         existing_route_index: int = self.route_descriptions.index(existing_route)
         self.route_descriptions[existing_route_index] = route
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def delete_route(self, route_name: RouteNameType) -> bool:
         """Deletes a route by name"""
         route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         self.route_descriptions.remove(route)
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def enable_route(self, route_name: RouteNameType) -> bool:
         """Enables a route by name"""
         route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         route.enabled = True
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def disable_route(self, route_name: RouteNameType) -> bool:
         """Disables a route by name"""
         route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         route.enabled = False
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def update_source_equalizer(self, source_name: SourceNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a source or source group"""
         source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         source.equalizer = equalizer
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def update_source_volume(self, source_name: SourceNameType, volume: VolumeType) -> bool:
         """Set the volume for a source or source group"""
         source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         source.volume = volume
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def update_sink_equalizer(self, sink_name: SinkNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a sink or sink group"""
         sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.equalizer = equalizer
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def update_sink_volume(self, sink_name: SinkNameType, volume: VolumeType) -> bool:
         """Set the volume for a sink or sink group"""
         sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.volume = volume
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def update_sink_delay(self, sink_name: SinkNameType, delay: DelayType) -> bool:
         """Set the delay for a sink"""
         sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.delay = delay
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def update_route_equalizer(self, route_name: RouteNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a route"""
         route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         route.equalizer = equalizer
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def update_route_volume(self, route_name: RouteNameType, volume: VolumeType) -> bool:
         """Set the volume for a route"""
         route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         route.volume = volume
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
         return True
 
     def stop(self) -> bool:
         """Stop the receiver, this stops all ffmepg processes and all sinks."""
         self.receiver.stop()
-        self.receiver.join()
+        for audio_controller in self.audio_controllers:
+            audio_controller.stop()
+        self.running = False
+        if constants.WAIT_FOR_CLOSES:
+            self.join()
         return True
 
     def set_webstream(self, webstream: APIWebStream) -> None:
         """Sets the webstream"""
         self.__api_webstream = webstream
-        self.__process_and_apply_configuration()
+        self.__reload_configuration()
 
     # Private Functions
 
@@ -332,7 +340,8 @@ class ConfigurationManager:
         self.configuration_semaphore.acquire()
         proc = Process(target=self.__multiprocess_save)
         proc.start()
-        proc.join()
+        if constants.WAIT_FOR_CLOSES:
+            proc.join()
         self.configuration_semaphore.release()
 
 # Configuration processing functions
@@ -420,6 +429,12 @@ class ConfigurationManager:
         # Return what's changed
         return added_sinks, removed_sinks, changed_sinks
 
+    def __reload_configuration(self) -> None:
+        """Notifies the configuration manager to reload the configuration"""
+        self.reload_condition.acquire()
+        self.reload_condition.notify()
+        self.reload_condition.release()
+
     def __process_and_apply_configuration(self) -> None:
         """Process the configuration, get which sinks have changed and need reloaded,
            then reload them."""
@@ -471,9 +486,21 @@ class ConfigurationManager:
             audio_controller = AudioController(sink, sources, self.__api_webstream)
             _logger.debug("Adding Audio Controller %s", sink.name)
             self.audio_controllers.append(audio_controller)
-        old_receiver: ReceiverThread = self.receiver
-        self.receiver = ReceiverThread([audio_controller.queue for
-                                        audio_controller in self.audio_controllers])
-        old_receiver.stop()
+
+        # Check if there was a change before reloading
+        if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
+            old_receiver: ReceiverThread = self.receiver
+            self.receiver = ReceiverThread([audio_controller.queue for
+                                            audio_controller in self.audio_controllers])
+            old_receiver.stop()
         self.configuration_semaphore.release()
         self.__save_config()
+
+    def run(self):
+        self.__process_and_apply_configuration()
+        while self.running:
+            self.reload_condition.acquire()
+            if self.reload_condition.wait(timeout=.1):
+                _logger.info("Reloading the configuration")
+                self.__process_and_apply_configuration()
+        self.reload_condition.release()
