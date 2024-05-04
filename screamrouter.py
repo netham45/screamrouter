@@ -1,20 +1,18 @@
 #!/usr/bin/python3
 """ScreamRouter"""
 import os
-import threading
 import signal
-import uvicorn
+import threading
 
+import uvicorn
 from fastapi import FastAPI
 
-from configuration.configuration_manager import ConfigurationManager
-
-from api.api_configuration import APIConfiguration
-from api.api_webstream import APIWebStream
-from api.api_website import APIWebsite
-from logger import get_logger
 import constants
-
+from api.api_configuration import APIConfiguration
+from api.api_website import APIWebsite
+from api.api_webstream import APIWebStream
+from configuration.configuration_manager import ConfigurationManager
+from logger import get_logger
 
 os.nice(-15)
 

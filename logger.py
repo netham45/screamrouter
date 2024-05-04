@@ -4,6 +4,7 @@ import os
 
 import constants
 
+
 def get_logger(name: str) -> logging.Logger:
     """Creates a pre-configured logger"""
     logging.basicConfig()

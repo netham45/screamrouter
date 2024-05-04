@@ -1,12 +1,13 @@
 """Holds stream info and parses Scream headers."""
 import traceback
 from typing import Tuple, Union
+
 import numpy
 from pydantic import BaseModel
-from screamrouter_types.annotations import BitDepthType, ChannelLayoutType
-from screamrouter_types.annotations import ChannelsType, SampleRateType
 
 from logger import get_logger
+from screamrouter_types.annotations import (BitDepthType, ChannelLayoutType,
+                                            ChannelsType, SampleRateType)
 
 logger = get_logger(__name__)
 

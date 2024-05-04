@@ -1,6 +1,8 @@
 """Holds the MP3Header class that parses MP3 headers"""
 import numpy
+
 from logger import get_logger
+
 logger = get_logger(__name__)
 
 class InvalidHeaderException(Exception):

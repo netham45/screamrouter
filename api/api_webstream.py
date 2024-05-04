@@ -5,13 +5,12 @@ import threading
 from typing import List, Optional
 
 from fastapi import FastAPI, WebSocket
-
 from fastapi.responses import StreamingResponse
-from screamrouter_types.packets import WebStreamFrames
-from screamrouter_types.annotations import IPAddressType
-import constants
 
+import constants
 from logger import get_logger
+from screamrouter_types.annotations import IPAddressType
+from screamrouter_types.packets import WebStreamFrames
 
 logger = get_logger(__name__)
 

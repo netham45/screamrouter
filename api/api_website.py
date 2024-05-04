@@ -1,6 +1,7 @@
 """Holds the API endpoints to serve files for html/javascript/css"""
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
+
 from logger import get_logger
 
 logger = get_logger(__name__)

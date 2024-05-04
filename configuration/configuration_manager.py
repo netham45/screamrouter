@@ -1,24 +1,27 @@
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
-from multiprocessing import Process
 import os
 import sys
-from copy import copy, deepcopy
 import threading
+from copy import copy, deepcopy
+from multiprocessing import Process
 from typing import List, Tuple
-import yaml
-from configuration.configuration_solver import ConfigurationSolver
-from screamrouter_types.configuration import SinkDescription, SourceDescription
-from screamrouter_types.configuration import RouteDescription, Equalizer
-from screamrouter_types.annotations import DelayType, RouteNameType
-from screamrouter_types.annotations import SinkNameType, SourceNameType, VolumeType
-from screamrouter_types.exceptions import InUseError
-from api.api_webstream import APIWebStream
-from audio.receiver_thread import ReceiverThread
-from audio.audio_controller import AudioController
-import constants
 
+import yaml
+
+import constants
 import logger
+from api.api_webstream import APIWebStream
+from audio.audio_controller import AudioController
+from audio.receiver_thread import ReceiverThread
+from configuration.configuration_solver import ConfigurationSolver
+from screamrouter_types.annotations import (DelayType, RouteNameType,
+                                            SinkNameType, SourceNameType,
+                                            VolumeType)
+from screamrouter_types.configuration import (Equalizer, RouteDescription,
+                                              SinkDescription,
+                                              SourceDescription)
+from screamrouter_types.exceptions import InUseError
 
 _logger = logger.get_logger(__name__)
 
@@ -246,7 +249,7 @@ class ConfigurationManager(threading.Thread):
         self.receiver.stop()
         for audio_controller in self.audio_controllers:
             audio_controller.stop()
-        
+
         self.running = False
         if constants.WAIT_FOR_CLOSES:
             self.join()
@@ -506,7 +509,6 @@ class ConfigurationManager(threading.Thread):
     def run(self):
         self.__process_and_apply_configuration()
         while self.running:
-            
             self.reload_condition.acquire()
             if self.reload_condition.wait(timeout=.1):
                 # This will get set to true if something else wants to reload the configuration

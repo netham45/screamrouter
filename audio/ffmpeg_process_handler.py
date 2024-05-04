@@ -3,12 +3,12 @@ import subprocess
 import threading
 from typing import List
 
+import constants
+from audio.scream_header_parser import ScreamHeader
+from audio.source_input_writer import SourceInputThread
+from logger import get_logger
 from screamrouter_types.annotations import VolumeType
 from screamrouter_types.configuration import Equalizer
-from audio.source_input_writer import SourceInputThread
-from audio.scream_header_parser import ScreamHeader
-from logger import get_logger
-import constants
 
 logger = get_logger(__name__)
 

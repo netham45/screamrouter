@@ -2,8 +2,11 @@
 
 from copy import copy
 from typing import List, Optional
+
 from pydantic import BaseModel
+
 import screamrouter_types.annotations as annotations
+
 
 class Equalizer(BaseModel):
     """Holds data for the equalizer for a sink""" 

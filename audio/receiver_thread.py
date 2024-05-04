@@ -1,11 +1,10 @@
 """Receiver, handles a port for listening for sources to send UDP packets to
    Puts received data in sink queues"""
-from ctypes import c_bool
 import multiprocessing
 import os
-import socket
 import select
-
+import socket
+from ctypes import c_bool
 from typing import List
 
 import constants

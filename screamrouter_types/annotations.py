@@ -1,8 +1,8 @@
 """Holds custom annotations for fields"""
 from typing import Annotated, Literal
+
 from fastapi import Path
 from pydantic import AnyUrl, IPvAnyAddress
-
 
 VolumeType = Annotated[
     float,

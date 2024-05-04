@@ -3,6 +3,7 @@ import traceback
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+
 from configuration.configuration_manager import ConfigurationManager
 from logger import get_logger
 

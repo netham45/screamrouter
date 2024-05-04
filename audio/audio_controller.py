@@ -1,21 +1,20 @@
 """One audio controller per sink, handles taking in sources and tracking ffmpeg"""
-from ctypes import c_bool
 import multiprocessing
 import os
-from queue import Empty
 import threading
+from ctypes import c_bool
+from queue import Empty
 from typing import Dict, List
 
-from api.api_webstream import APIWebStream
-from screamrouter_types.packets import FFMpegInputQueueEntry
-from screamrouter_types.configuration import SinkDescription, SourceDescription
-from audio.ffmpeg_process_handler import FFMpegHandler
-from audio.source_input_writer import SourceInputThread
-from audio.scream_header_parser import ScreamHeader, create_stream_info
-from audio.output_threads import MP3OutputThread, PCMOutputThread
 import constants
-
+from api.api_webstream import APIWebStream
+from audio.ffmpeg_process_handler import FFMpegHandler
+from audio.output_threads import MP3OutputThread, PCMOutputThread
+from audio.scream_header_parser import ScreamHeader, create_stream_info
+from audio.source_input_writer import SourceInputThread
 from logger import get_logger
+from screamrouter_types.configuration import SinkDescription, SourceDescription
+from screamrouter_types.packets import FFMpegInputQueueEntry
 
 logger = get_logger(__name__)
 

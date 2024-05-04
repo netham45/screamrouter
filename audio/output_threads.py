@@ -1,20 +1,19 @@
 """Threads to handle the PCM and MP3 output from ffmpeg"""
-from ctypes import c_bool
+import fcntl
+import io
 import multiprocessing
 import os
 import select
 import socket
-import io
-import fcntl
+from ctypes import c_bool
 from typing import Tuple
 
+import constants
+from audio.mp3_header_parser import InvalidHeaderException, MP3Header
+from audio.scream_header_parser import ScreamHeader
+from logger import get_logger
 from screamrouter_types.annotations import IPAddressType, PortType
 from screamrouter_types.packets import WebStreamFrames
-
-from audio.mp3_header_parser import MP3Header, InvalidHeaderException
-from audio.scream_header_parser import ScreamHeader
-import constants
-from logger import get_logger
 
 logger = get_logger(__name__)
 

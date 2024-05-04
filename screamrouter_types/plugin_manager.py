@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel
 
+
 class SourcePluginDescription(BaseModel):
     """This describes a plugin"""
     name: str

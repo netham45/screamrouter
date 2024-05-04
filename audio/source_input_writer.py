@@ -1,18 +1,18 @@
 """Holds the Source Info and a thread for handling it's queue"""
-from ctypes import c_bool
 import fcntl
 import multiprocessing
 import multiprocessing.sharedctypes
 import os
 import queue
 import time
+from ctypes import c_bool
 from typing import Optional
 
-from screamrouter_types.annotations import IPAddressType
-from screamrouter_types.configuration import SourceDescription
+import constants
 from audio.scream_header_parser import ScreamHeader
 from logger import get_logger
-import constants
+from screamrouter_types.annotations import IPAddressType
+from screamrouter_types.configuration import SourceDescription
 
 logger = get_logger(__name__)
 
