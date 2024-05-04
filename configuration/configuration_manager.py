@@ -5,7 +5,6 @@ import os
 import sys
 from copy import copy, deepcopy
 import threading
-import time
 from typing import List, Tuple
 import yaml
 from configuration.configuration_solver import ConfigurationSolver
@@ -33,20 +32,16 @@ class ConfigurationManager:
         """List of Sources the controller knows of"""
         self.route_descriptions: List[RouteDescription] = []
         """List of Routes the controller knows of"""
-        self.__loaded: bool = False
-        """Holds rather the config is loaded"""
         self.audio_controllers: List[AudioController] = []
         """Holds a list of active Audio Controllers"""
         self.__api_webstream: APIWebStream = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
-        self.__starting = False
-        """Holds rather start_receiver is running so multiple instances don't go off at once"""
         self.active_configuration: ConfigurationSolver
         """Holds the solved configuration"""
         self.old_configuration_solver: ConfigurationSolver = ConfigurationSolver([], [], [])
         """Holds the previously solved configuration to compare against for changes"""
-        self.save_semaphore: threading.Semaphore = threading.Semaphore(1)
-        """Semaphore so only one thread can save to YAML at a time"""
+        self.configuration_semaphore: threading.Semaphore = threading.Semaphore(1)
+        """Semaphore so only one thread can reload the config or save to YAML at a time"""
         self.__load_config()
 
         _logger.info("------------------------------------------------------------------------")
@@ -56,7 +51,7 @@ class ConfigurationManager:
         _logger.info("------------------------------------------------------------------------")
 
         # Needs config loaded
-        self.receiver: ReceiverThread = ReceiverThread()
+        self.receiver: ReceiverThread = ReceiverThread([])
         """Holds the receiver"""
         self.__process_and_apply_configuration()
 
@@ -117,21 +112,6 @@ class ConfigurationManager:
         self.source_descriptions.append(source)
         self.__process_and_apply_configuration()
         return True
-
-    def add_one_time_source(self,
-                            source: SourceDescription,
-                            sink_names: List[SinkNameType]) -> bool:
-        """Add a one_time source"""
-        for sink_name in sink_names:
-            for audio_controller in self.audio_controllers:
-                if audio_controller.sink_info.name == sink_name:
-                    audio_controller.add_source(source)
-        return True
-
-    def remove_one_time_source(self, source_tag: str):
-        """Remove a one_time source"""
-        for audio_controller in self.audio_controllers:
-            audio_controller.remove_source(source_tag)
 
     def update_source(self, source: SourceDescription) -> bool:
         """Updates a source"""
@@ -215,7 +195,7 @@ class ConfigurationManager:
         """Set the volume for a source or source group"""
         source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
         source.volume = volume
-        self.__apply_volume_change()
+        self.__process_and_apply_configuration()
         return True
 
     def update_sink_equalizer(self, sink_name: SinkNameType, equalizer: Equalizer) -> bool:
@@ -229,7 +209,7 @@ class ConfigurationManager:
         """Set the volume for a sink or sink group"""
         sink: SinkDescription = self.active_configuration.get_sink_from_name(sink_name)
         sink.volume = volume
-        self.__apply_volume_change()
+        self.__process_and_apply_configuration()
         return True
 
     def update_sink_delay(self, sink_name: SinkNameType, delay: DelayType) -> bool:
@@ -250,7 +230,7 @@ class ConfigurationManager:
         """Set the volume for a route"""
         route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
         route.volume = volume
-        self.__apply_volume_change()
+        self.__process_and_apply_configuration()
         return True
 
     def stop(self) -> bool:
@@ -324,18 +304,6 @@ class ConfigurationManager:
             if route.sink == sink.name:
                 raise InUseError(f"Sink:{sink.name} is in use by Route {route.name}")
 
-# Adjust Audio Function
-
-    def __apply_volume_change(self) -> None:
-        """Calculates the volume for each Source on each Sink and tells the Sink Controllers"""
-        self.__process_configuration()
-        for sink_name, sources in self.active_configuration.real_sinks_to_real_sources.items():
-            for _sink in self.audio_controllers:
-                if _sink.sink_info.name == sink_name:
-                    for source in sources:
-                        _sink.update_source_volume(source)
-        self.__save_config()
-
 # Configuration load/save functions
 
     def __load_config(self) -> None:
@@ -351,7 +319,6 @@ class ConfigurationManager:
         except KeyError as exc:
             _logger.error("[Controller] Configuration key %s missing, exiting.", exc)
             sys.exit(-1)
-        self.__loaded = True
 
     def __multiprocess_save(self):
         """Saves the config to config.yaml"""
@@ -362,11 +329,11 @@ class ConfigurationManager:
 
     def __save_config(self) -> None:
         """Saves the config"""
-        self.save_semaphore.acquire()
+        self.configuration_semaphore.acquire()
         proc = Process(target=self.__multiprocess_save)
         proc.start()
         proc.join()
-        self.save_semaphore.release()
+        self.configuration_semaphore.release()
 
 # Configuration processing functions
 
@@ -456,12 +423,7 @@ class ConfigurationManager:
     def __process_and_apply_configuration(self) -> None:
         """Process the configuration, get which sinks have changed and need reloaded,
            then reload them."""
-        if not self.__loaded:
-            return
-        while self.__starting:
-            time.sleep(.01)
-        self.__starting = True
-
+        self.configuration_semaphore.acquire()
         # Process new config, store what's changed
         added_sinks: List[SinkDescription]
         removed_sinks: List[SinkDescription]
@@ -480,27 +442,25 @@ class ConfigurationManager:
         for sink in changed_sinks:
             # Unload the old controller
             _logger.debug("Removing Audio Controller %s", sink.name)
-            #self.__receiver.unregister_audio_controller_by_sink(sink)
-            self.receiver.unregister_audio_controller_by_sink(sink)
             for audio_controller in original_audio_controllers:
                 if audio_controller.sink_info.name == sink.name:
                     if audio_controller in self.audio_controllers:
+                        audio_controller.stop()
                         self.audio_controllers.remove(audio_controller)
             # Load a new controller
             sources: List[SourceDescription]
             sources = self.active_configuration.real_sinks_to_real_sources[sink]
             audio_controller = AudioController(sink, sources, self.__api_webstream)
             _logger.debug("Adding Audio Controller %s", sink.name)
-            self.receiver.register_audio_controller(audio_controller)
             self.audio_controllers.append(audio_controller)
 
         # Controllers to be removed
         for sink in removed_sinks:
             # Unload the old controller
             _logger.debug("Removing Audio Controller %s", sink.name)
-            self.receiver.unregister_audio_controller_by_sink(sink)
             for audio_controller in original_audio_controllers:
                 if audio_controller.sink_info.name == sink.name:
+                    audio_controller.stop()
                     self.audio_controllers.remove(audio_controller)
 
         # Controllers to be added
@@ -510,7 +470,10 @@ class ConfigurationManager:
             sources = self.active_configuration.real_sinks_to_real_sources[sink]
             audio_controller = AudioController(sink, sources, self.__api_webstream)
             _logger.debug("Adding Audio Controller %s", sink.name)
-            self.receiver.register_audio_controller(audio_controller)
             self.audio_controllers.append(audio_controller)
-        self.__starting = False
+        old_receiver: ReceiverThread = self.receiver
+        self.receiver = ReceiverThread([audio_controller.queue for
+                                        audio_controller in self.audio_controllers])
+        old_receiver.stop()
+        self.configuration_semaphore.release()
         self.__save_config()

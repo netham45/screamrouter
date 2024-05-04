@@ -14,8 +14,6 @@ from api.api_webstream import APIWebStream
 from api.api_website import APIWebsite
 from logger import get_logger
 import constants
-from plugin_manager.plugin_manager_thread import PluginManagerThread
-
 
 
 os.nice(-15)
@@ -27,7 +25,10 @@ threading.current_thread().name = "ScreamRouter Main Thread"
 def signal_handler(sig, frame):
     """Fired when Ctrl+C pressed"""
     logger.error("Ctrl+C pressed %s %s", sig, frame)
-    controller.stop()
+    try:
+        controller.stop()
+    except NameError:
+        pass
     # Wouldn't it be cool if uvicorn provided a real way to exit?
     os.kill(os.getpid(), signal.SIGTERM)
 
@@ -69,7 +70,6 @@ webstream: APIWebStream = APIWebStream(app)
 controller: ConfigurationManager = ConfigurationManager(webstream)
 api_controller = APIConfiguration(app, controller)
 website: APIWebsite = APIWebsite(app)
-PluginManagerThread(app, controller)
 uvicorn.run(app,
             port=constants.API_PORT,
             host=constants.API_HOST,

@@ -1,102 +1,54 @@
 """Receiver, handles a port for listening for sources to send UDP packets to
    Puts received data in sink queues"""
-import threading
+import multiprocessing
+import os
 import socket
 import select
 
 from typing import List
 
-from screamrouter_types.configuration import SinkDescription
-from audio.audio_controller import AudioController
 import constants
 from logger import get_logger
+from screamrouter_types.packets import FFMpegInputQueueEntry
 
 logger = get_logger(__name__)
 
-class ReceiverThread(threading.Thread):
+class ReceiverThread(multiprocessing.Process):
     """Handles the main socket that listens for incoming Scream streams and sends them to sinks"""
-    def __init__(self):
+    def __init__(self,  queue_list: List[multiprocessing.Queue]):
         """Takes the UDP port number to listen on"""
         super().__init__(name="Receiver Thread")
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Main socket all sources send to"""
-        self.audio_controllers: List[AudioController] = []
-        """List of all sinks to forward data to"""
-        self.running: bool = True
-        """Rather the Recevier is running, when set to false the receiver ends"""
+        self.queue_list: List[multiprocessing.Queue] = queue_list
+        """List of all sink queues to forward data to"""
         self.start()
-
-    def register_audio_controller(self, audio_controller: AudioController) -> None:
-        """Add a sink"""
-        for _audio_controller in self.audio_controllers:
-            if audio_controller.sink_info.name == _audio_controller.sink_info.name:
-                raise NameError(f"Duplicate sink controller {_audio_controller.sink_info.name}")
-        self.audio_controllers.append(audio_controller)
-
-    def unregister_audio_controller_by_sink(self, sink: SinkDescription) -> None:
-        """Remove a sink"""
-        for index, audio_controller in enumerate(self.audio_controllers):
-            if audio_controller.sink_info.name == sink.name:
-                self.audio_controllers.pop(index)
-                audio_controller.stop()
-                audio_controller.wait_for_threads_to_stop()
 
     def stop(self) -> None:
         """Stops the Receiver and all sinks"""
         logger.info("[Receiver] Stopping")
-        self.running = False
+        self.sock.close()
+        self.kill()
+        self.terminate()
         self.join()
-
-    def __check_source_packet(self, tag: str, data: bytes) -> bool:
-        """Verifies a packet is the right length"""
-        if len(data) != constants.PACKET_SIZE:
-            logger.debug("[Source:%s] Got bad packet length %i != %s from source",
-                        tag,
-                        len(data),
-                        constants.PACKET_SIZE)
-            return True
-        return True
-
-    def add_packet_to_queue(self, tag: str, data: bytes):
-        """Adds a packet to all sinks' queues"""
-        if self.__check_source_packet(tag, data):
-            for sink in self.audio_controllers:
-                sink.add_packet_to_queue(tag, data)
-
-    def notify_url_done_playing(self, tag: str):
-        """Notifies all registered sinks that a URL is done playing"""
-        for sink in self.audio_controllers:
-            sink.url_playback_done_callback(tag)
 
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks"""
+        logger.debug("[Receiver] Receiver Thread PID %s", os.getpid())
         logger.info("[Receiver] Receiver started on port %s", constants.RECEIVER_PORT)
-        if self.running:
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
-                                 constants.PACKET_SIZE * 1024 * 1024)
-            self.sock.bind(("", constants.RECEIVER_PORT))
-        else:
-            return
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
+                                constants.PACKET_SIZE * 1024 * 1024)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("", constants.RECEIVER_PORT))
 
-        recvbuf = bytearray(constants.PACKET_SIZE)
-        while self.running:
+        while True:
             ready = select.select([self.sock], [], [], .005)
             if ready[0]:
                 try:
-                    recvbuf, addr = self.sock.recvfrom(constants.PACKET_SIZE)
-                    if self.__check_source_packet(addr[0], recvbuf):
-                        for sink in self.audio_controllers:
-                            sink.add_packet_to_queue(addr[0], recvbuf)
+                    data, addr = self.sock.recvfrom(constants.PACKET_SIZE)
+                    for queue in self.queue_list:
+                        queue.put(FFMpegInputQueueEntry(addr[0], data))
                 except OSError:
                     logger.warning("[Receiver] Failed to read from incoming sock, exiting")
                     break
-        logger.info("[Receiver] Main thread ending sinks")
-        for sink in self.audio_controllers:
-            logger.info("[Receiver] Stopping sink %s", sink.sink_info.ip)
-            sink.stop()
-        for sink in self.audio_controllers:
-            logger.debug("[Receiver] Waiting for sink %s to stop", sink.sink_info.ip)
-            sink.wait_for_threads_to_stop()
-        self.sock.close()
-
         logger.info("[Receiver] Main thread stopped")

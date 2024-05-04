@@ -3,7 +3,7 @@ import multiprocessing
 import os
 from queue import Empty
 import threading
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from api.api_webstream import APIWebStream
 from screamrouter_types.packets import FFMpegInputQueueEntry
@@ -18,7 +18,7 @@ from logger import get_logger
 
 logger = get_logger(__name__)
 
-class AudioController(threading.Thread):
+class AudioController(multiprocessing.Process):
     """Handles ffmpeg, keeps a list of sources, sends passed data to the appropriate pipe
        One AudioController per active real output sink
        This thread listens to the input queue and sends it to ffmpeg"""
@@ -85,8 +85,6 @@ class AudioController(threading.Thread):
                                                              self.sink_info.ip,
                                                              self.__webstream.queue)
         """Holds the thread to listen to MP3 output from ffmpeg"""
-        self._running: bool = True
-        """If the thread is running"""
         self.sources_lock: threading.Lock = threading.Lock()
         """This lock ensures the Sources list is only accessed by one thread at a time"""
         self.count: int = 0
@@ -100,35 +98,6 @@ class AudioController(threading.Thread):
         self.sources_lock.release()
         self.start()
 
-    def update_source_volume(self, controllersource: SourceDescription) -> None:
-        """Updates the source volume to the specified volume.
-           Does nothing if the source is not playing to this sink."""
-        for tag, source in self.sources.items():
-            if tag == str(controllersource.ip) or tag == controllersource.tag:
-                source.source_info.volume = controllersource.volume
-                self.__ffmpeg.set_input_volume(source, controllersource.volume)
-
-    def add_source(self, source: SourceDescription):
-        """Adds a one-off source"""
-        self.sources_lock.acquire()
-        if not source.ip is None:
-            self.sources[str(source.ip)] = SourceInputThread(str(source.ip),
-                                                             None,
-                                                             source)
-        elif not source.tag is None:
-            self.sources[source.tag] = SourceInputThread(source.tag,
-                                                         None,
-                                                         source)
-        self.sources_lock.release()
-
-    def remove_source(self, source_tag: str):
-        """Removes a source thread if it's here"""
-        if source_tag in self.sources:
-            self.sources_lock.acquire()
-            del self.sources[source_tag]
-            self.sources_lock.release()
-
-
     def __get_open_sources(self) -> List[SourceInputThread]:
         """Build a list of active IPs, exclude ones that aren't open"""
         active_sources: List[SourceInputThread] = []
@@ -136,13 +105,6 @@ class AudioController(threading.Thread):
             if source.is_open:
                 active_sources.append(source)
         return active_sources
-
-    def __get_source_by_tag(self, tag: str) -> Optional[SourceInputThread]:
-        """Gets a SourceInfo by IP address"""
-        try:
-            return self.sources[tag]
-        except KeyError:
-            pass
 
     def __check_for_inactive_sources(self) -> None:
         """Looks for old pipes that are open and closes them"""
@@ -185,14 +147,6 @@ class AudioController(threading.Thread):
             self.__update_source_attributes_and_open_source(source, entry.data[:5])
             source.write(entry.data[5:])  # Write the data to the output fifo
 
-    def add_packet_to_queue(self, tag: str, data: bytes) -> None:
-        """Sends data from the main receiver to ffmpeg after verifying it's on our list"""
-        source: Optional[SourceInputThread]
-        source = self.__get_source_by_tag(tag)
-        if not source is None:
-            #self.process_packet_from_queue(FFMpegInputQueueEntry(tag, data))
-            self.queue.put(FFMpegInputQueueEntry(tag, data))
-
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
         self.sources_lock.acquire()
@@ -205,44 +159,31 @@ class AudioController(threading.Thread):
         logger.debug("[Sink:%s] Stopping sources", self.sink_info.ip)
         for _, source in self.sources.items():
             source.stop()
+        self.kill()
         logger.debug("[Sink:%s] Stopping Audio Controller", self.sink_info.ip)
-        self._running = False
         self.sources_lock.release()
+        self.wait_for_threads_to_stop()
 
     def wait_for_threads_to_stop(self) -> None:
         """Waits for threads to stop"""
         self.sources_lock.acquire()
-        self.__pcm_thread.kill()
         self.__pcm_thread.join()
         logger.debug("[Sink:%s] PCM thread stopped", self.sink_info.ip)
-        self.__mp3_thread.kill()
         self.__mp3_thread.join()
         logger.debug("[Sink:%s] MP3 thread stopped", self.sink_info.ip)
         for _, source in self.sources.items():
             source.join()
         logger.debug("[Sink:%s] sources stopped", self.sink_info.ip)
-        self.join()
         logger.debug("[Sink:%s] Audio Controller stopped", self.sink_info.ip)
         logger.info("[Sink:%s] Stopped", self.sink_info.ip)
         self.sources_lock.release()
 
-    def url_playback_done_callback(self, tag: str):
-        """Callback for ffmpeg to clean up when playback is done, tag is the Source tag"""
-        if tag in self.sources:
-            self.sources_lock.acquire()
-            self.sources[tag].close()
-            self.sources[tag].stop()
-            del self.sources[tag]
-            self.sources_lock.release()
-            self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
-
     def run(self) -> None:
         """Constantly checks the queue
             notifies the Sink Controller callback when there's something in the queue"""
-        while self._running:
-            while self._running:
-                try:
-                    self.process_packet_from_queue(self.queue.get(timeout=.1))
-                except Empty:
-                    pass
-        logger.debug("[Sink:%s] Output Queue thread exit", self.sink_info.ip)
+        logger.debug("[Sink:%s] PID %s", self.sink_info.ip, os.getpid())
+        while True:
+            try:
+                self.process_packet_from_queue(self.queue.get())
+            except Empty:
+                pass

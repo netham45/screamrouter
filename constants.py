@@ -14,7 +14,7 @@ API_HOST: str = "0.0.0.0"
 """This is the host FastAPI binds to"""
 LOGS_DIR: str = "./logs/"
 """This is the directory logs are stored in"""
-CONSOLE_LOG_LEVEL: str = "INFO"
+CONSOLE_LOG_LEVEL: str = "DEBUG"
 """Log level for stdout"""
 LOG_TO_FILE: bool = True
 """Determines rather logs are written to files"""
@@ -37,5 +37,5 @@ INPUT_BUFFER_SIZE: int = PACKET_DATA_SIZE * 64
 """-bufsize used for ffmpeg input"""
 MP3_HEADER_LENGTH: int = 4
 """Length of MP3 header"""
-SOURCE_INACTIVE_TIME_MS: int = 20
+SOURCE_INACTIVE_TIME_MS: int = 35
 """Inactive time for a source before it's closed"""

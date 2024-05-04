@@ -1,5 +1,6 @@
 """Threads to handle the PCM and MP3 output from ffmpeg"""
 import multiprocessing
+import os
 import select
 import socket
 import io
@@ -36,6 +37,7 @@ class OutputThread(multiprocessing.Process):
         """Stop"""
         self._running = False
         self.file.close()
+        self.kill()
 
     def _read_bytes(self, count: int, firstread: bool = False) -> bytes:
         """Reads count bytes, blocks until self.__running goes false or count bytes are received.
@@ -96,6 +98,7 @@ class MP3OutputThread(OutputThread):
         raise InvalidHeaderException("Invalid header")
 
     def run(self) -> None:
+        logger.debug("[Sink %s] MP3 Thread PID %s", self._sink_ip, os.getpid())
         target_frames_per_packet: int = 1
         # Send data to the web handler when it gets this many frames buffered up
         target_bytes_per_packet: int = 1500
@@ -142,6 +145,7 @@ class PCMOutputThread(OutputThread):
 
     def run(self) -> None:
         """This thread implements listening to self.fifoin and sending it out to dest_ip"""
+        logger.debug("[Sink %s] PCM Thread PID %s", self._sink_ip, os.getpid())
         self.__sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, constants.PACKET_SIZE * 65535)
         while self._running:
             # Send data from ffmpeg to the Scream receiver

@@ -59,6 +59,7 @@ class SourceInputThread(multiprocessing.Process):
         if self.is_open:
             self.is_open = False
             logger.info("[Sink:%s][Source:%s] Stopping", self.__sink_ip, self.tag)
+        logger.debug("Ended Source %s", self.source_info.name)
 
     def write(self, data: bytes) -> None:
         """Writes data to this source's FIFO"""
@@ -66,6 +67,10 @@ class SourceInputThread(multiprocessing.Process):
         self.update_activity()
 
     def run(self) -> None:
+        logger.debug("[Sink %s Source %s] Source Input Thread PID %s",
+                     self.__sink_ip,
+                     self.tag,
+                     os.getpid())
         fcntl.fcntl(self.fifo_fd_write, 1031, 1024*1024*1024*64)
         fifo_file_handle = open(self.fifo_fd_write, 'wb', -1)
         while True:
@@ -77,6 +82,3 @@ class SourceInputThread(multiprocessing.Process):
                                 self.__sink_ip, self.tag)
             except queue.Empty:
                 pass
-            if fifo_file_handle.closed:
-                print("Reopening handle")
-                fifo_file_handle = open(self.fifo_fd_write, 'wb', -1)
