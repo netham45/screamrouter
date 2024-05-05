@@ -1,5 +1,4 @@
 {
     "python.REPL.enableREPLSmartSend": false,
     "pylint.args": [],
-    "css.validate": false 
 }

@@ -1,33 +1,41 @@
 #!/usr/bin/python3
 """ScreamRouter"""
+import multiprocessing
 import os
 import signal
+import sys
 import threading
 
 import uvicorn
 from fastapi import FastAPI
 
-import constants
-from api.api_configuration import APIConfiguration
-from api.api_website import APIWebsite
-from api.api_webstream import APIWebStream
-from configuration.configuration_manager import ConfigurationManager
-from logger import get_logger
+import src.constants.constants as constants
+from src.api.api_configuration import APIConfiguration
+from src.api.api_website import APIWebsite
+from src.api.api_webstream import APIWebStream
+from src.configuration.configuration_manager import ConfigurationManager
+from src.screamrouter_logger.screamrouter_logger import get_logger
 
 os.nice(-15)
 
 logger = get_logger(__name__)
 
 threading.current_thread().name = "ScreamRouter Main Thread"
+main_pid: int = os.getpid()
+ctrl_c_pressed: int = 0
 
-def signal_handler(sig, frame):
+def signal_handler(_, __):
     """Fired when Ctrl+C pressed"""
-    logger.error("Ctrl+C pressed %s %s", sig, frame)
+    if os.getpid() != main_pid:
+        logger.error("Ctrl+C on non-main PID %s", os.getpid())
+        return
+    logger.error("Ctrl+C pressed")
     try:
-        controller.stop()
-        os.kill(os.getpid(), signal.SIGTERM)
+        screamrouter_configuration.stop()
     except NameError:
         pass
+    sys.exit(0)
+
 
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -63,11 +71,17 @@ app: FastAPI = FastAPI( title="ScreamRouter",
             "description": "HTTP media streams"
         }
     ])
+if constants.DEBUG_MULTIPROCESSING:
+    logger = multiprocessing.log_to_stderr()
+    logger.setLevel(multiprocessing.SUBDEBUG) # type: ignore
 webstream: APIWebStream = APIWebStream(app)
-controller: ConfigurationManager = ConfigurationManager(webstream)
-api_controller = APIConfiguration(app, controller)
-website: APIWebsite = APIWebsite(app)
-uvicorn.run(app,
-            port=constants.API_PORT,
-            host=constants.API_HOST,
-            log_config="uvicorn_log_config.yaml" if constants.LOG_TO_FILE else None)
+screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream)
+api_controller = APIConfiguration(app, screamrouter_configuration)
+website: APIWebsite = APIWebsite(app, screamrouter_configuration)
+config = uvicorn.Config(app=app,
+                        port=constants.API_PORT,
+                        host=constants.API_HOST,
+                        log_config="uvicorn_log_config.yaml" if constants.LOG_TO_FILE else None,
+                        timeout_keep_alive=30)
+server = uvicorn.Server(config)
+server.run()
