@@ -1,0 +1,13 @@
+{% macro text(label, name, enabled=true, placeholder="", value="")%}
+    <SPAN>
+        <LABEL FOR="{{name}}">{{label}}</LABEL>
+        <INPUT TYPE="TEXT" ID="{{name}}" NAME="{{name}}" PLACEHOLDER="{{placeholder}}" VALUE="{{value}}"{{" DISABLED" if not enabled}}>
+    </SPAN>
+{% endmacro %}
+
+{% macro text_number(label, name, min, max, enabled=true, placeholder="", value="")%}
+<SPAN>
+    <LABEL FOR="{{name}}">{{label}}</LABEL>
+    <INPUT TYPE="TEXT" ID="{{name}}" NAME="{{name}}" VALUE="{{value}}" PLACEHOLDER="{{placeholder}}"{{" DISABLED" if not enabled}}>
+</SPAN>
+{% endmacro %}

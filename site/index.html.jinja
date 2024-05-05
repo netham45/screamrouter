@@ -1,0 +1,116 @@
+{%- import "imports/selects.html.jinja" as selects %}
+{%- import "imports/buttons.html.jinja" as buttons -%}
+<!DOCTYPE html>
+<HTML>
+    <HEAD>
+        <META NAME="viewport" CONTENT="width=device-width, initial-scale=1" />
+        <TITLE>ScreamRouter</TITLE>
+        <SCRIPT TYPE="text/javascript" SRC="{{url_for('site_javascript')}}"></SCRIPT>
+        <LINK REL="stylesheet" TYPE="text/css" HREF="{{url_for('site_css')}}">
+    </HEAD>
+    <BODY>
+    <DIV ID="randomcontainer4" CLASS="title">
+        <DIV CLASS="blur">
+            ScreamRouter
+        <AUDIO ID="audio" PRELOAD="metadata" CONTROLS STYLE="display: none;"></audio>
+        </DIV>
+    </DIV>
+        <DIV ID="randomcontainer1" CLASS="section">
+            <DIV CLASS="blur">
+                <DIV CLASS="section-name">
+                    Sources
+                </DIV>
+                <DIV CLASS="section-buttons select-container">
+                    <INPUT TYPE="range" ID="source_volume" ONCHANGE="source_volume_change()" DISABLED>
+                    {{- buttons.button("add_source_button", "Add Source", "section-button")}}
+                    {{- buttons.button("remove_source_button", "Remove Source", "section-button")}}
+                    {{- buttons.button("update_source_button", "Edit Source", "section-button")}}
+                    {{- buttons.button("enable_source_button", "Enable Source", "section-button")}}
+                    {{- buttons.button("disable_source_button", "Disable Source", "section-button")}}
+                    {{- buttons.button("update_source_equalizer_button", "Equalizer", "section-button")}}
+                    {{- buttons.button("add_source_group_button", "Add Group", "section-button")}}
+                    <SELECT ID="select-sources" CLASS="main-select" SIZE="{{sources | length}}" ONCHANGE="select_source_change()" MULTIPLE>
+                        {%- set options = namespace(options=[]) %}
+                        {%- for source in sources %}
+                            {%- set enabled_str = "Enabled" if source.enabled else "Disabled" %}
+                            {%- set enabled_class_str = "enabled" if source.enabled else "disabled" %}
+                            {%- set _option = {"value": source.name,
+                                            "label": "%s [%s]" % (source.name, enabled_str),
+                                            "class": "option option-%s" % enabled_class_str,
+                                            "data": source} %}
+                            {%- set options.options = options.options + [_option] %}
+                        {%- endfor %}
+                        {{- selects.make_multiple_options(options.options, sources) }}
+                    </SELECT>
+                </DIV>
+            </DIV>
+        </DIV>
+        <DIV ID="randomcontainer2" CLASS="section">
+            <DIV CLASS="blur">
+                <DIV CLASS="section-name">
+                    Routes
+                </DIV>
+                <DIV CLASS="section-buttons select-container">
+                    <INPUT TYPE="range" ID="route_volume" ONCHANGE="route_volume_change()" DISABLED>
+                    {{- buttons.button("add_route_button", "Add Route", "section-button")}}
+                    {{- buttons.button("remove_route_button", "Remove Route", "section-button")}}
+                    {{- buttons.button("update_route_button", "Edit Route", "section-button")}}
+                    {{- buttons.button("enable_route_button", "Enable Route", "section-button")}}
+                    {{- buttons.button("disable_route_button", "Disable Route", "section-button")}}
+                    {{- buttons.button("update_route_equalizer_button", "Equalizer", "section-button")}}
+                    <SELECT ID="select-routes" CLASS="main-select" SIZE="{{routes | length}}" ONCHANGE="select_route_change()" MULTIPLE>
+                        {%- set options = namespace(options=[]) %}
+                        {%- for route in routes %}
+                            {%- set enabled_str = "Enabled" if route.enabled else "Disabled" %}
+                            {%- set enabled_class_str = "enabled" if route.enabled else "disabled" %}
+                            {%- set _option = {"value": route.name,
+                                            "label": "%s [%s->%s] [%s]" % (route.name,
+                                                                            route.source,
+                                                                            route.sink,
+                                                                            enabled_str),
+                                            "class": "option option-%s" % enabled_class_str,
+                                            "data": route} %}
+                            {%- set options.options = options.options + [_option] %}
+                        {%- endfor %}
+                        {{- selects.make_multiple_options(options.options, routes) }}
+                    </SELECT>
+                </DIV>
+            </DIV>
+        </DIV>
+        <DIV ID="randomcontainer3" CLASS="section">
+            <DIV CLASS="blur">
+                <DIV CLASS="section-name">
+                    Sinks
+                </DIV>
+                <DIV CLASS="section-buttons select-container">
+                    <INPUT TYPE="range" ID="sink_volume" ONCHANGE="sink_volume_change()" DISABLED>
+                    {{- buttons.button("add_sink_button", "Add Sink", "section-button")}}
+                    {{- buttons.button("remove_sink_button", "Remove Sink", "section-button")}}
+                    {{- buttons.button("update_sink_button", "Edit Sink", "section-button")}}
+                    {{- buttons.button("enable_sink_button", "Enable Sink", "section-button")}}
+                    {{- buttons.button("disable_sink_button", "Disable Sink", "section-button")}}
+                    {{- buttons.button("update_sink_equalizer_button", "Equalizer", "section-button")}}
+                    {{- buttons.button("listen_to_sink_button", "Listen to Sink", "section-button")}}
+                    {{- buttons.button("add_sink_group_button", "Add Group", "section-button")}}
+                    <SELECT ID="select-sinks" CLASS="main-select" SIZE="{{sinks | length}}" ONCHANGE="select_sink_change()" MULTIPLE>
+                        {%- set options = namespace(options=[]) %}
+                        {%- for sink in sinks %}
+                            {%- set enabled_str = "Enabled" if sink.enabled else "Disabled" %}
+                            {%- set enabled_class_str = "enabled" if sink.enabled else "disabled" %}
+                            {%- set _option = {"value": sink.name,
+                                            "label": "%s [%s]" % (sink.name, enabled_str),
+                                            "class": "option option-%s" % enabled_class_str,
+                                            "data": sink} %}
+                            {%- set options.options = options.options + [_option] %}
+                        {%- endfor %}
+                        {{- selects.make_multiple_options(options.options, sinks) }}
+                    </SELECT>
+                </DIV>
+            </DIV>
+        </DIV>
+        <DIV ID="shadow" ONCLICK="dialog_cancel()">
+        </DIV>
+        <DIV ID="dialog">
+        </DIV>
+    </BODY>
+</HTML>

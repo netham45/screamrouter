@@ -1,0 +1,448 @@
+
+function call_api(endpoint, method, data={}, callback=null_callback) {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, endpoint, true);
+    xhr.getResponseHeader("Content-type", "application/json");
+    data=JSON.stringify(data)
+    if (method.toLowerCase() == "post" || method.toLowerCase() == "put")
+        xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+
+    xhr.send(data)
+
+    xhr.onload = function() {
+        callback(this.responseText);
+        xhr.close();
+    }
+}
+
+function null_callback(response_text) {
+}
+
+function restart_callback(response_text) {
+    location.reload();
+}
+
+function show_dialog_callback(response_text) {
+    show_shadow();
+    document.getElementById("dialog").style.display = "block";
+    document.getElementById("dialog").innerHTML = response_text;
+    document.getElementById("dialog").scrollIntoView();
+}
+
+function dialog_add_source() {
+    call_api("site/add_source", "GET", "", show_dialog_callback);
+}
+
+function dialog_update_source(source_name) {
+    call_api("site/edit_source/" + source_name, "GET", "", show_dialog_callback);
+}
+
+function dialog_update_source_equalizer(source_name) {
+    call_api("site/edit_source/" + source_name + "/equalizer", "GET", "", show_dialog_callback);
+}
+
+function dialog_add_sink() {
+    call_api("site/add_sink", "GET", "", show_dialog_callback);
+}
+
+function dialog_update_sink(sink_name) {
+    call_api("site/edit_sink/" + sink_name, "GET", "", show_dialog_callback);
+}
+
+function dialog_update_sink_equalizer(sink_name) {
+    call_api("site/edit_sink/" + sink_name + "/equalizer", "GET", "", show_dialog_callback);
+}
+
+function dialog_add_route() {
+    call_api("site/add_route", "GET", "", show_dialog_callback);
+}
+
+function dialog_update_route(route_name) {
+    call_api("site/edit_route/" + route_name, "GET", "", show_dialog_callback);
+}
+
+function dialog_update_route_equalizer(route_name) {
+    call_api("site/edit_route/" + route_name + "/equalizer", "GET", "", show_dialog_callback);
+}
+
+function dialog_cancel() {
+    document.getElementById("dialog").style.display = "none";
+    dismiss_shadow();
+}
+
+function dialog_equalizer_default() {
+    var inputs = document.querySelectorAll("DIV#dialog INPUT[TYPE='range']");
+    for (index in inputs)
+        inputs[index].value = 100;
+}
+
+function dialog_submit(close) {
+    dismiss_shadow()
+    var result = {};
+    var inputs_and_selects = document.querySelectorAll("DIV#dialog INPUT, DIV#dialog SELECT");
+    var url = "";
+    var action = "";
+    var equalizer = {};
+    for (index in inputs_and_selects) {
+        entry = inputs_and_selects[index];
+        if (entry.id == undefined) {
+            continue;
+        }
+        if (entry.id == "dialog_url") {
+            url = entry.value;
+        }
+        else if (entry.id == "dialog_action") {
+            action = entry.value;
+        }
+        else if (entry.id.startsWith("eq_b")) {
+            equalizer[entry.name] = parseFloat(entry.value / 100);
+        }
+        else {
+            if (parseInt(entry.value).toString() == entry.value) {
+                result[entry.id] = parseInt(entry.value);
+            }
+            else {
+                result[entry.id] = entry.value;
+            }
+        }
+    }
+    console.log(equalizer);
+    if (Object.keys(equalizer).length > 0) {
+        result["equalizer"] = equalizer;
+    }
+    if (close) {
+        call_api(url, action, result, restart_callback);
+    } else {
+        call_api(url, action, result);
+    }
+}
+
+function dialog_submit_close() {
+    dialog_submit(true);
+}
+
+function dialog_submit_noclose() {
+    dialog_submit(false);
+}
+
+function get_selected_sources() {
+     return [... document.querySelectorAll("SELECT#select-sources OPTION:checked")];
+}
+
+function get_selected_sinks() {
+     return [... document.querySelectorAll("SELECT#select-sinks OPTION:checked")];
+}
+
+function get_selected_routes() {
+     return [... document.querySelectorAll("SELECT#select-routes OPTION:checked")];
+}
+
+function add_source_button() {
+    dialog_add_source();
+}
+
+function update_source_button() {
+    selected_sources = get_selected_sources();
+    if (selected_sources.length != 1) {
+        alert("Exactly one source must be selected to edit");
+        return;
+    }
+    if (selected_sources[0].dataset["is_group"] == "True") {
+        alert("Groups can't be edited yet");
+        return;
+    }
+    dialog_update_source(selected_sources[0].dataset["name"])
+}
+
+function update_source_equalizer_button() {
+    selected_sources = get_selected_sources();
+    if (selected_sources.length != 1) {
+        alert("Exactly one source must be selected to edit");
+        return;
+    }
+    dialog_update_source_equalizer(selected_sources[0].dataset["name"])
+}
+
+
+function remove_source_button() {
+    selected_sources = get_selected_sources();
+    if (selected_sources.length != 1) {
+        alert("Exactly one source must be selected to edit");
+    }
+    call_api("/sources/" + selected_sources[0].dataset["name"], "delete", 0, restart_callback)
+}
+
+function disable_source_button() {
+    selected_sources = get_selected_sources();
+    if (selected_sources.length != 1) {
+        alert("Exactly one source must be selected to edit");
+    }
+    call_api("/sources/" + selected_sources[0].dataset["name"] + "/disable", "get", 0, restart_callback)
+}
+
+function enable_source_button() {
+    selected_sources = get_selected_sources();
+    if (selected_sources.length != 1) {
+        alert("Exactly one source must be selected to edit");
+    }
+    call_api("/sources/" + selected_sources[0].dataset["name"] + "/enable", "get", 0, restart_callback)
+}
+
+function add_source_group_button() {
+    selected_sources = get_selected_sources();
+    if (selected_sources.length < 2) {
+        alert("More than one source must be selected to make a group");
+    }
+    name = prompt("Provide a source name")
+    if (!name) {
+        return;
+    }
+    group_members = []
+    for (index in selected_sources) {
+        group_members.push(selected_sources[index].dataset["name"])
+    }
+    group_data = {"name": name, "is_group": true, "group_members": group_members}
+    call_api("/sources/", "post", group_data, restart_callback)
+}
+
+function add_sink_button() {
+    dialog_add_sink();
+}
+
+function update_sink_button() {
+    selected_sinks = get_selected_sinks();
+    if (selected_sinks.length != 1) {
+        alert("Exactly one sink must be selected to edit");
+    }
+    if (selected_sinks[0].dataset["is_group"] == "True") {
+        alert("Groups can't be edited yet");
+        return;
+    }
+    dialog_update_sink(selected_sinks[0].dataset["name"])
+}
+
+function update_sink_equalizer_button() {
+    selected_sinks = get_selected_sinks();
+    if (selected_sinks.length != 1) {
+        alert("Exactly one sink must be selected to edit");
+    }
+    dialog_update_sink_equalizer(selected_sinks[0].dataset["name"])
+}
+
+function remove_sink_button() {
+    selected_sinks = get_selected_sinks();
+    if (selected_sinks.length != 1) {
+        alert("Exactly one sink must be selected to edit");
+    }
+    call_api("/sinks/" + selected_sinks[0].dataset["name"], "delete", 0, restart_callback)
+}
+
+function disable_sink_button() {
+    selected_sinks = get_selected_sinks();
+    if (selected_sinks.length != 1) {
+        alert("Exactly one sink must be selected to edit");
+    }
+    call_api("/sinks/" + selected_sinks[0].dataset["name"] + "/disable", "get", 0, restart_callback)
+}
+
+function enable_sink_button() {
+    selected_sinks = get_selected_sinks();
+    if (selected_sinks.length != 1) {
+        alert("Exactly one sink must be selected to edit");
+    }
+    call_api("/sinks/" + selected_sinks[0].dataset["name"] + "/enable", "get", 0, restart_callback)
+}
+
+function add_sink_group_button() {
+    selected_sinks = get_selected_sinks();
+    if (selected_sinks.length < 2) {
+        alert("More than one sink must be selected to make a group");
+    }
+    name = prompt("Provide a sink name")
+    if (!name) {
+        return;
+    }
+    group_members = []
+    for (index in selected_sinks) {
+        group_members.push(selected_sinks[index].dataset["name"])
+    }
+    group_data = {"name": name, "is_group": true, "group_members": group_members}
+    call_api("/sinks", "post", group_data, restart_callback)
+}
+
+function add_route_button() {
+    dialog_add_route();
+}
+
+function update_route_button() {
+    selected_routes = get_selected_routes();
+    if (selected_routes.length != 1) {
+        alert("Exactly one route must be selected to edit");
+    }
+    if (selected_routes[0].dataset["is_group"] == "True") {
+        alert("Groups can't be edited yet");
+        return;
+    }
+    dialog_update_route(selected_routes[0].dataset["name"], 0, restart_callback);
+}
+
+function update_route_equalizer_button() {
+    selected_routes = get_selected_routes();
+    if (selected_routes.length != 1) {
+        alert("Exactly one route must be selected to edit");
+    }
+    console.log("a");
+    dialog_update_route_equalizer(selected_routes[0].dataset["name"]);
+}
+
+function remove_route_button() {
+    selected_routes = get_selected_routes();
+    if (selected_routes.length != 1) {
+        alert("Exactly one route must be selected to edit");
+    }
+    call_api("/routes/" + selected_routes[0].dataset["name"], "delete", 0, restart_callback);
+}
+
+function disable_route_button() {
+    selected_routes = get_selected_routes();
+    if (selected_routes.length != 1) {
+        alert("Exactly one route must be selected to edit");
+    }
+    call_api("/routes/" + selected_routes[0].dataset["name"] + "/disable", "get", 0, restart_callback)
+}
+
+function enable_route_button() {
+    selected_routes = get_selected_routes();
+    if (selected_routes.length != 1) {
+        alert("Exactly one route must be selected to edit");
+    }
+    call_api("/routes/" + selected_routes[0].dataset["name"] + "/enable", "get", 0, restart_callback)
+}
+
+function select_sink_change() {
+    var selected_sinks = get_selected_sinks();
+    var volume_element = document.getElementById("sink_volume");
+    if (selected_sinks.length != 1) {
+        volume_element.disabled=true;
+        return
+    }
+    volume_element.disabled = false;
+    volume_level = selected_sinks[0].dataset["volume"];
+    volume_element.value = volume_level * 100
+}
+
+function sink_volume_change() {
+    var selected_sinks = get_selected_sinks();
+    if (selected_sinks.length != 1)
+        return
+    var selected_sink = selected_sinks[0];
+    var volume_element = document.getElementById("sink_volume");
+    var volume_level = volume_element.value / 100;
+    selected_sink.dataset["volume"] = volume_level;
+    call_api("/sinks/" + selected_sink.dataset["name"] + "/volume/" + volume_level, "get");
+}
+
+function select_source_change() {
+    var selected_sources = get_selected_sources();
+    var volume_element = document.getElementById("source_volume");
+    if (selected_sources.length != 1) {
+        volume_element.disabled=true;
+        return
+    }
+    volume_element.disabled = false;
+    volume_level = selected_sources[0].dataset["volume"];
+    volume_element.value = volume_level * 100
+}
+
+function source_volume_change() {
+    var selected_sources = get_selected_sources();
+    if (selected_sources.length != 1)
+        return
+    var selected_source = selected_sources[0];
+    var volume_element = document.getElementById("source_volume");
+    var volume_level = volume_element.value / 100;
+    selected_source.dataset["volume"] = volume_level;
+    call_api("/sources/" + selected_source.dataset["name"] + "/volume/" + volume_level, "get");
+}
+
+function select_route_change() {
+    var selected_routes = get_selected_routes();
+    var volume_element = document.getElementById("route_volume");
+    if (selected_routes.length != 1) {
+        volume_element.disabled=true;
+        return
+    }
+    volume_element.disabled = false;
+    volume_level = selected_routes[0].dataset["volume"];
+    volume_element.value = volume_level * 100
+}
+
+function route_volume_change() {
+    var selected_routes = get_selected_routes();
+    if (selected_routes.length != 1)
+        return
+    var selected_route = selected_routes[0];
+    var volume_element = document.getElementById("route_volume");
+    var volume_level = volume_element.value / 100;
+    selected_route.dataset["volume"] = volume_level;
+    call_api("/routes/" + selected_route.dataset["name"] + "/volume/" + volume_level, "get");
+}
+
+window.addEventListener("load", (event) => {
+    select_source_change();
+    select_sink_change();
+    select_route_change();
+});
+
+audio = {};
+audio_playing = false;
+
+function listen_to_sink_button() {
+    checkedoptions = get_selected_sinks()
+    if (audio_playing)
+    {
+        stop_audio();
+    }
+    else if (checkedoptions.length == 1)
+    {
+        if (checkedoptions[0].dataset["is_group"] != "True")
+        {
+            start_audio(checkedoptions[0].dataset["ip"]);
+        }
+        else
+            alert("Can't listen to group, must listen to sink endpoint");
+    }
+    else
+    {
+        alert("Select one sink to listen from");
+    }
+}
+
+function start_audio(sink_ip) {
+    audiotag = document.getElementById("audio")
+    audiotag.pause();
+    audiotag.src = "";
+    audiotag.src = 'http://192.168.3.114:8080/stream/' + sink_ip + '/';
+    audiotag.play();
+    audiotag.style.display = "inline";
+    audio_playing = true;
+    document.getElementById("listen_to_sink_button").innerHTML = "Stop playback";
+}
+
+function stop_audio() {
+    audiotag = document.getElementById("audio")
+    audiotag.pause();
+    audiotag.style.display = "none";
+    audio_playing = false;
+    document.getElementById("listen_to_sink_button").innerHTML = "Listen to sink";
+}
+
+function show_shadow() {
+    shadow = document.getElementById("shadow");
+    shadow.style.display = "block";
+}
+
+function dismiss_shadow() {
+    shadow = document.getElementById("shadow");
+    shadow.style.display = "none";
+}

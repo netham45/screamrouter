@@ -1,0 +1,9 @@
+{% macro option(value, label, class="", data="{}", checked=False) %}
+                    <OPTION VALUE="{{value}}" CLASS="{{class}}" {% for name, datum in data %}DATA-{{name}}="{{datum}}" {% endfor %}{{"SELECTED" if checked}}>{{label}}</OPTION>
+{%- endmacro %}
+
+{% macro make_multiple_options(options, data="{}") %}
+    {%- for _option in options %}
+        {{- option(_option["value"], _option["label"], _option["class"], _option["data"], _option["checked"]) }}
+    {%- endfor %}
+{%- endmacro %}

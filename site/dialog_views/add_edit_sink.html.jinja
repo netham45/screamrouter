@@ -1,0 +1,45 @@
+{%- import "imports/inputs.html.jinja" as inputs %}
+{%- import "imports/selects.html.jinja" as selects %}
+{%- import "imports/buttons.html.jinja" as buttons %}
+{% set data=request_info['data'] %}
+<H3>{{ 'Add Sink' if request_info['add_new'] else 'Edit Sink' }}</H3>
+<DIV ID="dialog_add_edit_sink">
+    <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
+    <INPUT TYPE="hidden" ID="dialog_url" VALUE="sinks">
+    {{- inputs.text("Sink Name", "name", request_info['add_new'], "Sink Name", data['name']) }}<BR />
+    {{- inputs.text("Sink IP", "ip", True, "Sink IP", data['ip']) }}<BR />
+    {{- inputs.text_number("Sink Port", "port", 1, 65535, True, "Sink Port", data['port']) }}<BR />
+    <SPAN>
+    <LABEL FOR="bit_depth">Bit Depth</LABEL>
+        <SELECT ID="bit_depth">
+            <OPTION VALUE="16">16</OPTION>
+            <OPTION VALUE="24">24</OPTION>
+            <OPTION VALUE="32" SELECTED>32</OPTION>
+        </SELECT>
+    </SPAN><BR />
+    <SPAN>
+        <LABEL FOR="sample_rate">Sample Rate</LABEL>
+        <SELECT ID="sample_rate">
+            <OPTION VALUE="44100"{{' SELECTED' if data['sample_rate'] == 44100}}>44100</OPTION>
+            <OPTION VALUE="48000"{{' SELECTED' if data['sample_rate'] == 48000}}>48000</OPTION>
+            <OPTION VALUE="88200"{{' SELECTED' if data['sample_rate'] == 88200}}>88200</OPTION>
+            <OPTION VALUE="96000"{{' SELECTED' if data['sample_rate'] == 96000}}>96000</OPTION>
+            <OPTION VALUE="192000"{{' SELECTED' if data['sample_rate'] == 192000}}>192000</OPTION>
+        </SELECT>
+    </SPAN><BR />
+    {{- inputs.text_number("Sink Channels", "channels", 1, 8, True, "Sink Channels", data['channels']) }}<BR />
+    <SPAN>
+    <LABEL FOR="channel_layout">Channel Layout</LABEL>
+        <SELECT ID="channel_layout">
+            <OPTION VALUE="mono"{{' SELECTED' if data['channel_layout'] =='mono'}}>Mono</OPTION>
+            <OPTION VALUE="stereo"{{' SELECTED' if data['channel_layout'] =='stereo'}}>Stereo</OPTION>
+            <OPTION VALUE="quad"{{' SELECTED' if data['channel_layout'] =='quad'}}>Quad</OPTION>
+            <OPTION VALUE="surround"{{' SELECTED' if data['channel_layout'] =='surround'}}>Surround</OPTION>
+            <OPTION VALUE="5.1"{{' SELECTED' if data['channel_layout'] =='5.1'}}>5.1</OPTION>
+            <OPTION VALUE="7.1"{{' SELECTED' if data['channel_layout'] =='7.1'}}>7.1</OPTION>
+        </SELECT>
+    </SPAN><BR />
+    {{- inputs.text_number("Delay", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
+    {{- buttons.button("dialog_submit_close", 'Add Sink' if request_info['add_new'] else 'Edit Sink' , "dialog-button")}}
+    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button")}}
+</DIV>

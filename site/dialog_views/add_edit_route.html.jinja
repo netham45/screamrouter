@@ -1,0 +1,45 @@
+{%- import "imports/inputs.html.jinja" as inputs %}
+{%- import "imports/selects.html.jinja" as selects %}
+{%- import "imports/buttons.html.jinja" as buttons %}
+{% set data=request_info['data'] %}
+<H3>{{ 'Add Route' if request_info['add_new'] else 'Edit Route' }}</H3>
+<DIV ID="dialog_add_edit_route">
+    <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
+    <INPUT TYPE="hidden" ID="dialog_url" VALUE="{{url_for('add_route')}}">
+    {{- inputs.text("Route Name", "name", request_info['add_new'], "Route Name", data['name']) }}<BR />
+    <SPAN>
+        <LABEL FOR="sink">Sink Name</LABEL>
+        <SELECT NAME="sink" ID="sink">
+            {%- set options = namespace(options=[]) %}
+            {%- for sink in sinks %}
+                {%- set _option = {"value": sink.name,
+                                    "label": sink.name,
+                                    "class": "option option-dialog",
+                                    "data": sink,
+                                    "checked": sink.name == data['sink']
+                                    } %}
+                {%- set options.options = options.options + [_option] %}
+            {%- endfor %}
+            {{- selects.make_multiple_options(options.options, sinks) }}
+        </SELECT>
+    </SPAN><BR />
+    <SPAN>
+        <LABEL FOR="source">Source Name</LABEL>
+        <SELECT NAME="source" ID="source">
+            {%- set options = namespace(options=[]) %}
+            {%- for source in sources %}
+                {%- set _option = {"value": source.name,
+                                    "label": source.name,
+                                    "class": "option option-dialog",
+                                    "data": source,
+                                    "checked": source.name == data['source']
+                                    } %}
+                {%- set options.options = options.options + [_option] %}
+            {%- endfor %}
+            {{- selects.make_multiple_options(options.options, sources) }}
+        </SELECT>
+    </SPAN><BR />
+    {{- inputs.text_number("Delay", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
+    {{- buttons.button("dialog_submit_close", 'Add Route' if request_info['add_new'] else 'Edit Route' , "dialog-button")}}
+    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button")}}
+</DIV>

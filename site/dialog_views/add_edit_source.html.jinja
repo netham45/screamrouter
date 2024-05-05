@@ -1,0 +1,14 @@
+{%- import "imports/inputs.html.jinja" as inputs %}
+{%- import "imports/selects.html.jinja" as selects %}
+{%- import "imports/buttons.html.jinja" as buttons %}
+{% set data=request_info['data'] %}
+<H3>{{ 'Add Source' if request_info['add_new'] else 'Edit Source' }}</H3>
+<DIV ID="dialog_add_edit_source">
+    <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
+    <INPUT TYPE="hidden" ID="dialog_url" VALUE="{{url_for('add_source')}}">
+    {{- inputs.text("Source Name", "name", request_info['add_new'], "Source Name", data['name']) }}<BR />
+    {{- inputs.text("Source IP", "ip", "Source IP", true, data['ip']) }}<BR />
+    {{- inputs.text_number("Delay", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
+    {{- buttons.button("dialog_submit_close", 'Add source' if request_info['add_new'] else 'Edit Source' , "dialog-button")}}
+    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button")}}
+</DIV>
