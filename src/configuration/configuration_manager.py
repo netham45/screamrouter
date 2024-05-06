@@ -1,5 +1,6 @@
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
+import multiprocessing
 import os
 import sys
 import threading
@@ -10,6 +11,7 @@ from typing import List, Tuple
 import yaml
 
 import src.constants.constants as constants
+from src.plugin_manager.plugin_manager import PluginManager
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
 from src.api.api_webstream import APIWebStream
 from src.audio.audio_controller import AudioController
@@ -27,7 +29,7 @@ _logger = screamrouter_logger.get_logger(__name__)
 
 class ConfigurationManager(threading.Thread):
     """Tracks configuration and loading the main receiver/sinks based off of it"""
-    def __init__(self, websocket: APIWebStream):
+    def __init__(self, websocket: APIWebStream, plugin_manager: PluginManager):
         """Initialize the controller"""
         super().__init__(name="Configuration Manager")
         self.sink_descriptions: List[SinkDescription] = []
@@ -56,6 +58,7 @@ class ConfigurationManager(threading.Thread):
         """Set to true to reload the config. Used so config
            changes during another config reload still trigger
            a reload"""
+        self.plugin_manager: PluginManager = plugin_manager
         self.__load_config()
 
         _logger.info("------------------------------------------------------------------------")
@@ -256,6 +259,9 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("Stopping webstream")
         self.__api_webstream.stop()
         _logger.debug("Webstream stopped")
+        _logger.debug("Stopping Plugin Manager")
+        self.plugin_manager.stop_registered_plugins()
+        _logger.debug("Plugin Manager Stopped")
         self.running = False
         if constants.WAIT_FOR_CLOSES:
             self.join()
@@ -465,10 +471,42 @@ class ConfigurationManager(threading.Thread):
           removed_sinks: List[SinkDescription],
           changed_sinks: List[SinkDescription] )
         """
+
+        # Add plugin sources, don't overwrite existing unless they were from the plugin
+        plugin_permanent_sources: List[SourceDescription]
+        plugin_permanent_sources = self.plugin_manager.get_permanent_sources()
+        for plugin_source in plugin_permanent_sources:
+            found: bool = False
+            for index, source in enumerate(self.source_descriptions):
+                if source.name == plugin_source.name:
+                    found = True
+                    if source.tag == plugin_source.tag:
+                        self.source_descriptions[index] = plugin_source
+            if not found:
+                self.source_descriptions.append(plugin_source)
+
         # Get a new resolved configuration from the current state
+
         self.active_configuration = ConfigurationSolver(self.source_descriptions,
                                                         self.sink_descriptions,
                                                         self.route_descriptions)
+
+        # Add temporary plugin sources
+        temporary_sources: dict[SinkNameType, List[SourceDescription]]
+        temporary_sources = self.plugin_manager.get_temporary_sources()
+        for plugin_sink_name, plugin_sources in temporary_sources.items():
+            found: bool = False
+            for sink, sources in self.active_configuration.real_sinks_to_real_sources.items():
+                if plugin_sink_name == sink.name:
+                    _logger.info("Adding temporary sources to existing sink %s", sink.name)
+                    found = True
+                    sources.extend(plugin_sources)
+            if not found:
+                sink: SinkDescription = self.get_sink_by_name(plugin_sink_name)
+                if sink.enabled:
+                    self.active_configuration.real_sinks_to_real_sources[sink] = plugin_sources
+                    _logger.info("Adding temporary sources to new sink %s", sink.name)
+
         added_sinks: List[SinkDescription]
         removed_sinks: List[SinkDescription]
         changed_sinks: List[SinkDescription]
@@ -547,15 +585,21 @@ class ConfigurationManager(threading.Thread):
             self.receiver = ReceiverThread([audio_controller.queue for
                                             audio_controller in self.audio_controllers])
             self.__save_config()
+            queues: List[multiprocessing.Queue] = []
+            for audio_controller in self.audio_controllers:
+                queues.append(audio_controller.queue)
+            self.plugin_manager.load_registered_plugins(queues)
 
     def run(self):
         self.__process_and_apply_configuration()
         if not self.reload_condition.acquire(timeout=1):
             raise TimeoutError("Failed to get configuration reload condition")
         while self.running:
-            if self.reload_condition.wait(timeout=.1):
+            if self.reload_condition.wait(timeout=.1) or self.plugin_manager.wants_reload:
                 # This will get set to true if something else wants to reload the configuration
                 # while it's already reloading
+                if self.plugin_manager.wants_reload():
+                    self.reload_config = True
                 while self.reload_config:
                     self.reload_config = False
                     _logger.info("Reloading the configuration")

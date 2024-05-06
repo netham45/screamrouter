@@ -6,7 +6,7 @@ import sys
 import threading
 from ctypes import c_bool
 from queue import Empty
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 import src.constants.constants as constants
 from src.api.api_webstream import APIWebStream
@@ -15,6 +15,7 @@ from src.audio.output_threads import MP3OutputThread, PCMOutputThread
 from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.audio.source_input_writer import SourceInputThread
 from src.screamrouter_logger.screamrouter_logger import get_logger
+from src.screamrouter_types.annotations import IPAddressType
 from src.screamrouter_types.configuration import (SinkDescription,
                                                   SourceDescription)
 from src.screamrouter_types.packets import FFMpegInputQueueEntry
@@ -98,9 +99,15 @@ class AudioController(multiprocessing.Process):
 
         if self.sources_lock.acquire(timeout=1):
             for source in self.__controller_sources:
-                self.sources[str(source.ip)] = SourceInputThread(str(source.ip),  # Tag, not IP
-                                                                    self.sink_info.ip,
-                                                                    source)
+                tag: str = ""
+                if source.ip is None:
+                    if not source.tag is None:
+                        tag = source.tag
+                else:
+                    tag = str(source.ip)
+                self.sources[tag] = SourceInputThread(tag,
+                                                                self.sink_info.ip,
+                                                                source)
             self.sources_lock.release()
         else:
             raise TimeoutError("Failed to acquire sources lock")

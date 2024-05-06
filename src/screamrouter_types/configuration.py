@@ -161,7 +161,7 @@ class SourceDescription(BaseModel):
     """
     Holds either a source IP or a group of source names
     """
-    name: annotations.SourceNameType
+    name: annotations.SourceNameType = ""
     """Source Name, Endpoint and Group"""
     ip: Optional[annotations.IPAddressType] = None
     """Source IP, Endpoint Only"""

@@ -43,7 +43,7 @@ INPUT_BUFFER_SIZE: int = PACKET_DATA_SIZE * 64
 """-bufsize used for ffmpeg input"""
 MP3_HEADER_LENGTH: int = 4
 """Length of MP3 header"""
-SOURCE_INACTIVE_TIME_MS: int = 35
+SOURCE_INACTIVE_TIME_MS: int = 350
 """Inactive time for a source before it's closed"""
 WAIT_FOR_CLOSES: bool = False
 """On configuration reload, wait for existing processes to close
