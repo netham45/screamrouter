@@ -16,6 +16,7 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Uses ffmpeg to mix sources together into final sink stream to be played to the Scream sink
 * Can use ffmpeg to delay any sink, route, source, or group so sinks line up better
 * Can adjust equalization for any sink, route, source, or group
+* Contains a plugin system to easily allow additional sources to be added
 
 ![Screenshot of ScreamRouter Equalizer](/images/Equalizer.png)
 
@@ -120,6 +121,62 @@ The MP3 stream provided from FFMPEG is tracked frame by frame so that ScreamRout
 
 The latency for streaming the MP3s to VLC is low, browsers will enforce a few seconds of caching. Mobile browsers sometimes more. Some clients refuse to play MP3s received one frame at a time, an option will be added to the configuration to adjust the number of frames buffered for MP3 data.
 
+
+### Plugins
+ScreamRouter supports Source Input Plugins. These plugins can be anything that outputs PCM. There is currently one plugin, PlayURL. It can be viewed as an example layout of plugins: https://github.com/netham45/screamrouter/blob/main/src/plugins/play_url.py
+
+Each plugin is a Multiprocessing thread that is provided a queue and functions to add/remove temporary and permanent sources.
+
+Notable functions are:
+
+    add_temporary_source(sink_name: SinkNameType, source: SourceDescription)
+
+    This adds a temporary source to a sink or sink group in ScreamRouter. They are 
+    not saved and will not persist across reloads.
+
+    remove_temporary_source(sink_name: SinkNameType)
+
+This removes a temporary source when it is done playing back
+
+    add_permanet_source(self, source: SourceDescription)
+
+Adds a permanent source that shows up in the API and gets saved
+If your plugin tag changes the source will break.
+Overwrites existing sources with the same name.
+Permanent sources can be removed from the UI or API once they're no longer
+in use.
+
+    def create_stream_info(bit_depth: BitDepthType,
+                           sample_rate: SampleRateType,
+                           channels: ChannelsType,
+                           channel_layout: ChannelLayoutType) -> ScreamHeader```
+
+This function lives under src.audio.scream_header_parser and handles generating
+  Scream headers.
+
+
+In the plugin the following functions are called during the plugin lifecycle:
+    
+    
+    def start_plugin(self)
+    
+This is called when the plugin is started. API endpoints should be added here. Any other startup tasks can be performed too.
+
+    def stop_plugin(self)
+
+This is called when the plugin is stopped or ScreamRouter unloaded. You may perform shutdown tasks here.
+
+    def load_plugin(self)
+
+This is called when the configuration is (re)loaded.
+
+    def unload_plugin(self)
+
+This is called when the configuration is unloaded.
+
+The loader is not fully implemented yet but will load Python stored in src/plugins as plugins.
+
+
 ### Processes
 This is a multi-processed application using Python Multiprocessing and can take advantage of multiple cores.
 
@@ -129,7 +186,7 @@ The proceses are:
 * Sink Queue process - This process watches the sink queue and fires a callback that sends any incoming data to the FFMPEG pipes.
 * Sink MP3 input process - This process watches the MP3 pipe output of FFMPEG and reads the data in. It sends the data to the WebStream queue that FastAPI watches when a stream request is made.
 * Sink PCM input process - This process watches the PCM pipe output of FFMPEG and reads the data in. It sends the data to each enabled Scream Sink.
-* API/Main process - FastAPI runs in it's own process and will send requests in their own processs. When the Stream endpoint is called it will delay in an async function to wait for the WebStream queue to have data.
+* API/Main process - FastAPI runs in it's own process and will send requests in their own threads. When the Stream endpoint is called it will delay in an async function to wait for the WebStream queue to have data and send data when available.
 
 ### More Technical Info
 Each Sink is associated with a Sink Controller. This controller reads into and out of the FIFO pipes for ffmpeg and tracks which sources are assigned and active.
