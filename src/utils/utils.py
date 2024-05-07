@@ -13,7 +13,7 @@ def set_process_name(shortname: str = "", fullname: str = ""):
     """Sets the process name so it can be viewed under top.
        Short name is limited to 14 chars."""
     shortname = shortname[:16]
-    logger.debug("Setting process name for pid %s to: short: %s long %s", 
+    logger.debug("Setting process name for pid %s to: short: %s long %s",
                  os.getpid(), shortname, fullname)
     if len(fullname) > 2:
         setproctitle.setproctitle(f"ScreamRouter ({os.getpid()}): {fullname}")

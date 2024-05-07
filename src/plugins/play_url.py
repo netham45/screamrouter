@@ -117,9 +117,9 @@ class PluginPlayURL(ScreamRouterPlugin):
         ffmpeg_command_parts.extend(["-re",
                                      "-i", url])
         ffmpeg_command_parts.extend(["-af", f"volume={volume}"])
-        ffmpeg_command_parts.extend(["-f", "s32le",
-                                     "-ac", "2",
-                                     "-ar", "48000",
+        ffmpeg_command_parts.extend(["-f", f"s{self.stream_info.bit_depth}le",
+                                     "-ac", f"{self.stream_info.channels}",
+                                     "-ar", f"{self.stream_info.sample_rate}",
                                     f"pipe:{self.fifo_write}"])
         logger.debug("[PlayURL] ffmpeg command line: %s", ffmpeg_command_parts)
 
