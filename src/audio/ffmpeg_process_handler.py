@@ -4,8 +4,8 @@ import threading
 from typing import List
 
 import src.constants.constants as constants
+from src.audio.ffmpeg_input_writer import FFMpegInputWriter
 from src.audio.scream_header_parser import ScreamHeader
-from src.audio.source_input_writer import SourceInputThread
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import VolumeType
 from src.screamrouter_types.configuration import Equalizer
@@ -17,7 +17,7 @@ class FFMpegHandler:
     """Handles an FFMpeg process for a sink"""
     def __init__(self, tag,
                   fifo_in_pcm: int, fifo_in_mp3: int,
-                  sources: List[SourceInputThread],
+                  sources: List[FFMpegInputWriter],
                   sink_info: ScreamHeader, equalizer: Equalizer):
         self.__fifo_in_pcm: int = fifo_in_pcm
         """Holds the filename for ffmpeg to output PCM to"""
@@ -31,7 +31,7 @@ class FFMpegHandler:
         """Holds rather ffmpeg is running"""
         self.__running: bool = True
         """Holds rather we're monitoring ffmpeg to restart it or waiting for the thread to end"""
-        self.__sources: List[SourceInputThread] = sources
+        self.__sources: List[FFMpegInputWriter] = sources
         """Holds a list of active sources"""
         self.__sink_info: ScreamHeader = sink_info
         """Holds the sink configuration"""
@@ -41,9 +41,8 @@ class FFMpegHandler:
         """Lock to ensure this ffmpeg instance is only accessed by one thread at a time
            The thread is locked when ffmpeg is not running or being issued a command.
            This is to prevent multiple threads from trying to restart it at once."""
-        self.ffmpeg_interaction_lock.acquire()
 
-    def __get_ffmpeg_inputs(self, sources: List[SourceInputThread], fds: List) -> List[str]:
+    def __get_ffmpeg_inputs(self, sources: List[FFMpegInputWriter], fds: List) -> List[str]:
         """Add an input for each source"""
         ffmpeg_command: List[str] = []
         for index, source in enumerate(sources):
@@ -52,7 +51,8 @@ class FFMpegHandler:
             channels = source.stream_attributes.channels
             channel_layout = source.stream_attributes.channel_layout
             # This is optimized to reduce latency and initial ffmpeg processing time
-            ffmpeg_command.extend(["-blocksize", str(constants.INPUT_BUFFER_SIZE),
+            ffmpeg_command.extend(["-re",
+                                   "-blocksize", str(constants.INPUT_BUFFER_SIZE),
                                    "-max_delay", "0",
                                    "-audio_preload", "0",
                                    "-max_probe_packets", "0",
@@ -70,7 +70,7 @@ class FFMpegHandler:
                                    "-i", f"pipe:{fds[index]}"])
         return ffmpeg_command
 
-    def __get_ffmpeg_filters(self, sources: List[SourceInputThread]) -> List[str]:
+    def __get_ffmpeg_filters(self, sources: List[FFMpegInputWriter]) -> List[str]:
         """Build complex filter"""
         ffmpeg_command_parts: List[str] = []
         input_filter_string: str = ""
@@ -113,7 +113,8 @@ class FFMpegHandler:
     def __get_ffmpeg_output(self) -> List[str]:
         """Returns the ffmpeg output"""
         ffmpeg_command_parts: List[str] = []
-        ffmpeg_command_parts.extend(["-blocksize", str(constants.PACKET_DATA_SIZE),
+        ffmpeg_command_parts.extend([
+                                     "-blocksize", str(constants.PACKET_DATA_SIZE),
                                      "-max_delay", "0",
                                      "-audio_preload", "0",
                                      "-max_probe_packets", "0",
@@ -139,7 +140,7 @@ class FFMpegHandler:
                                       f"pipe:{self.__fifo_in_mp3}"])  # ffmpeg MP3 output
         return ffmpeg_command_parts
 
-    def __get_ffmpeg_command(self, sources: List[SourceInputThread], fds) -> List[str]:
+    def __get_ffmpeg_command(self, sources: List[FFMpegInputWriter], fds) -> List[str]:
         """Builds the ffmpeg command"""
         ffmpeg_command_parts: List[str] = ["ffmpeg", "-hide_banner"]  # Build ffmpeg command
         ffmpeg_command_parts.extend(self.__get_ffmpeg_inputs(sources, fds))
@@ -181,16 +182,15 @@ class FFMpegHandler:
                 if self.ffmpeg_interaction_lock.locked():
                     self.ffmpeg_interaction_lock.release()
 
-    def reset_ffmpeg(self, sources: List[SourceInputThread]) -> None:
-        """Opens the ffmpeg instance"""       
-        if not self.ffmpeg_interaction_lock.locked:
-            self.ffmpeg_interaction_lock.acquire()
+    def reset_ffmpeg(self, sources: List[FFMpegInputWriter]) -> None:
+        """Opens the ffmpeg instance"""
+        self.ffmpeg_interaction_lock.acquire()
         logger.debug("[Sink:%s] Resetting ffmpeg", self.__tag)
         # Lock ffmpeg until it can restart
         self.__sources = sources
         self.__ffmpeg_started = False
         try:
-            logger.debug("killing ffmpeg thread %s", self.__ffmpeg.pid)
+            logger.debug("killing ffmpeg %s", self.__ffmpeg.pid)
             self.__ffmpeg.kill()
             logger.debug("Killed ffmpeg")
             self.__ffmpeg.wait()
@@ -216,7 +216,7 @@ class FFMpegHandler:
         self.ffmpeg_interaction_lock.release()
         # Release ffmpeg once a command is finished
 
-    def set_input_volume(self, source: SourceInputThread, volume: VolumeType):
+    def set_input_volume(self, source: FFMpegInputWriter, volume: VolumeType):
         """Run an ffmpeg command to set the input volume"""
         for index, _source in enumerate(self.__sources):
             if source.tag == _source.tag:

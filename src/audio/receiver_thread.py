@@ -10,7 +10,8 @@ from typing import List
 
 import src.constants.constants as constants
 from src.screamrouter_logger.screamrouter_logger import get_logger
-from src.screamrouter_types.packets import FFMpegInputQueueEntry
+from src.screamrouter_types.packets import InputQueueEntry
+from src.utils.utils import set_process_name
 
 logger = get_logger(__name__)
 
@@ -19,6 +20,7 @@ class ReceiverThread(multiprocessing.Process):
     def __init__(self,  queue_list: List[multiprocessing.Queue]):
         """Receives UDP packets and sends them to known queue lists"""
         super().__init__(name="Receiver Thread")
+        set_process_name("Receiver", "Receiver Thread")
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Main socket all sources send to"""
         self.queue_list: List[multiprocessing.Queue] = queue_list
@@ -42,7 +44,6 @@ class ReceiverThread(multiprocessing.Process):
                 pass
         if constants.WAIT_FOR_CLOSES and was_running:
             self.join()
-            self.close()
 
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks"""
@@ -58,9 +59,10 @@ class ReceiverThread(multiprocessing.Process):
                 logger.warning("Exiting because parent pid is 1")
                 self.stop()
                 sys.exit(3)
-            ready = select.select([self.sock], [], [], .1)
+            ready = select.select([self.sock], [], [], .3)
             if ready[0]:
                 data, addr = self.sock.recvfrom(constants.PACKET_SIZE)
-                for queue in self.queue_list:
-                    queue.put(FFMpegInputQueueEntry(addr[0], data))
+                for _queue in self.queue_list:
+                    _queue.put_nowait(InputQueueEntry(addr[0], data))
         logger.info("[Receiver] Main thread stopped")
+        self.close()

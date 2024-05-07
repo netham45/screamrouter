@@ -11,12 +11,12 @@ from typing import List, Tuple
 import yaml
 
 import src.constants.constants as constants
-from src.plugin_manager.plugin_manager import PluginManager
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
 from src.api.api_webstream import APIWebStream
 from src.audio.audio_controller import AudioController
 from src.audio.receiver_thread import ReceiverThread
 from src.configuration.configuration_solver import ConfigurationSolver
+from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_types.annotations import (DelayType, RouteNameType,
                                                 SinkNameType, SourceNameType,
                                                 VolumeType)
@@ -251,18 +251,18 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("Stopping receiver")
         self.receiver.stop()
         _logger.debug("Receiver stopped")
+        _logger.debug("Stopping Plugin Manager")
+        self.plugin_manager.stop_registered_plugins()
+        _logger.debug("Plugin Manager Stopped")
         _logger.debug("Stopping audio controllers")
         for audio_controller in self.audio_controllers:
             audio_controller.stop()
         _logger.debug("Audio controllers stopped")
-
         _logger.debug("Stopping webstream")
         self.__api_webstream.stop()
         _logger.debug("Webstream stopped")
-        _logger.debug("Stopping Plugin Manager")
-        self.plugin_manager.stop_registered_plugins()
-        _logger.debug("Plugin Manager Stopped")
         self.running = False
+
         if constants.WAIT_FOR_CLOSES:
             self.join()
         return True
@@ -595,7 +595,7 @@ class ConfigurationManager(threading.Thread):
         if not self.reload_condition.acquire(timeout=1):
             raise TimeoutError("Failed to get configuration reload condition")
         while self.running:
-            if self.reload_condition.wait(timeout=.1) or self.plugin_manager.wants_reload:
+            if self.reload_condition.wait(timeout=.3) or self.plugin_manager.wants_reload:
                 # This will get set to true if something else wants to reload the configuration
                 # while it's already reloading
                 if self.plugin_manager.wants_reload():

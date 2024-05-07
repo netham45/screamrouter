@@ -10,7 +10,7 @@ from src.screamrouter_types.annotations import (BitDepthType,
                                                 ChannelLayoutType,
                                                 ChannelsType, SampleRateType)
 
-logger = get_logger(__name__) 
+logger = get_logger(__name__)
 
 CHANNEL_LAYOUT_TABLE: dict[Tuple[int,int], str] = {(0x00, 0x00): "stereo", # No layout
                                                    (0x04, 0x00): "mono",

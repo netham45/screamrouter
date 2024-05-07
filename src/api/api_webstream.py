@@ -89,15 +89,6 @@ class APIWebStream(threading.Thread):
     def stop(self):
         """Stops the API webstream thread"""
         self.running = False
-        while True:
-            try:
-                self.queue.get_nowait()
-            except queue.Empty:
-                break
-            except ValueError:
-                break
-        self.queue.close()
-        self.queue.join_thread()
         if constants.WAIT_FOR_CLOSES:
             self.join()
 
@@ -126,16 +117,9 @@ class APIWebStream(threading.Thread):
     def run(self):
         while self.running:
             try:
-                packet: WebStreamFrames = self.queue.get(timeout=.1)
+                packet: WebStreamFrames = self.queue.get(timeout=.3)
                 self.process_frame(packet.sink_ip, packet.data)
             except TimeoutError:
                 pass
             except queue.Empty:
                 pass
-        while True:
-            try:
-                self.queue.get_nowait()
-            except queue.Empty:
-                break
-            except ValueError:
-                break

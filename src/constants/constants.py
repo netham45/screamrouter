@@ -18,7 +18,7 @@ MP3_STREAM_SAMPLERATE: int = 48000
 """MP3 stream sample for the web API"""
 LOGS_DIR: str = "./logs/"
 """This is the directory logs are stored in"""
-CONSOLE_LOG_LEVEL: str = "INFO"
+CONSOLE_LOG_LEVEL: str = "DEBUG"
 """Log level for stdout"""
 LOG_TO_FILE: bool = True
 """Determines rather logs are written to files"""
@@ -28,6 +28,10 @@ DEBUG_MULTIPROCESSING: bool = False
 """Debugs Multiprocessing to stdout."""
 SHOW_FFMPEG_OUTPUT: bool = False
 """Show ffmpeg output to stdout."""
+SOURCE_INACTIVE_TIME_MS: int = 150
+"""Inactive time for a source before it's closed. 
+   Some plugins may need this raised.
+   If this is too long there will be gaps when a source stops sending."""
 
 # ##########
 # Internal Options
@@ -43,8 +47,6 @@ INPUT_BUFFER_SIZE: int = PACKET_DATA_SIZE * 64
 """-bufsize used for ffmpeg input"""
 MP3_HEADER_LENGTH: int = 4
 """Length of MP3 header"""
-SOURCE_INACTIVE_TIME_MS: int = 350
-"""Inactive time for a source before it's closed"""
 WAIT_FOR_CLOSES: bool = False
 """On configuration reload, wait for existing processes to close
    before starting new processes, mostly for testing.
@@ -52,3 +54,5 @@ WAIT_FOR_CLOSES: bool = False
 KILL_AT_CLOSE: bool = False
 """Closes quickly but leaves lingering processes, doesn't reload any faster
    than disabling WAIT_FOR_CLOSES."""
+EXIT_HACK: bool = False
+"""Used as a workaround for when I can't locate a multiprocessing deadlock"""

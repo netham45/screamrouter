@@ -12,7 +12,7 @@ class WebStreamFrames(BaseModel):
     """The sink the data is from"""
 
 
-class FFMpegInputQueueEntry():
+class InputQueueEntry():
     """A data entry in the ffmpeg input queue, holds the data and the source IP address."""
     tag: str
     """Source IP address for data sent to an input queue"""

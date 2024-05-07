@@ -16,6 +16,7 @@ from src.api.api_webstream import APIWebStream
 from src.configuration.configuration_manager import ConfigurationManager
 from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_logger.screamrouter_logger import get_logger
+from src.utils.utils import set_process_name
 
 os.nice(-15)
 
@@ -25,17 +26,20 @@ threading.current_thread().name = "ScreamRouter Main Thread"
 main_pid: int = os.getpid()
 ctrl_c_pressed: int = 0
 
-def signal_handler(_, __):
+def signal_handler(_signal, __):
     """Fired when Ctrl+C pressed"""
-    if os.getpid() != main_pid:
-        logger.error("Ctrl+C on non-main PID %s", os.getpid())
-        return
-    logger.error("Ctrl+C pressed")
-    try:
-        screamrouter_configuration.stop()
-    except NameError:
-        pass
-    sys.exit(0)
+    if _signal == 2:
+        if os.getpid() != main_pid:
+            logger.error("Ctrl+C on non-main PID %s", os.getpid())
+            return
+        logger.error("Ctrl+C pressed")
+        try:
+            screamrouter_configuration.stop()
+        except NameError:
+            pass
+        if constants.EXIT_HACK:
+            os.kill(os.getpid(), signal.SIGTERM)
+        sys.exit(0)
 
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -72,6 +76,7 @@ app: FastAPI = FastAPI( title="ScreamRouter",
             "description": "HTTP media streams"
         }
     ])
+set_process_name("SR Scream Router", "Scream Router Main Thread")
 if constants.DEBUG_MULTIPROCESSING:
     logger = multiprocessing.log_to_stderr()
     logger.setLevel(multiprocessing.SUBDEBUG) # type: ignore
