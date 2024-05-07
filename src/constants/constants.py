@@ -19,7 +19,7 @@ MP3_STREAM_SAMPLERATE: int = 48000
 LOGS_DIR: str = "./logs/"
 """This is the directory logs are stored in"""
 CONSOLE_LOG_LEVEL: str = "DEBUG"
-"""Log level for stdout"""
+"""Log level for stdout. Log level for stdout, valid values are "DEBUG", "INFO", "WARNING", "ERROR"."""
 LOG_TO_FILE: bool = True
 """Determines rather logs are written to files"""
 CLEAR_LOGS_ON_RESTART: bool = True

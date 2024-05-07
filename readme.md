@@ -5,6 +5,11 @@
 ### What is it
 ScreamRouter is a Python-based audio router for Scream sources and sinks. It allows you to enter an IP address for all of your Scream audio sources and IP address, port, bit depth, sample rate, and channel configuration for all of your sinks. It has a web interface for managing the configuration and listening to sinks.
 
+### What is Scream
+[Scream is a virtual audio driver for Windows](https://github.com/duncanthrax/scream) created by Tom Kistner. It operates by sending any received PCM data from Windows's sound engine over the network unprocessed. This allows very low latency. Each packet from Scream is 1152 bytes worth of PCM from Windows's audio engine with a 5 byte header that describes the format of the stream.
+
+The simplicity of Scream allows it to be very easy to work with while retaining low latency.
+
 ### Features
 * Configure Sources based off of IP address, Configure Routes between Sources and Sinks, Configure Sinks with Bit Depth, Sample Rate, Channel Layout, Sink IP, and Port
 * Group together Sources and Sinks to control and play to multiple at a time
@@ -17,6 +22,7 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Can use ffmpeg to delay any sink, route, source, or group so sinks line up better
 * Can adjust equalization for any sink, route, source, or group
 * Contains a plugin system to easily allow additional sources to be added
+* There are playback sinks available for common OSes such as [Windows](https://github.com/duncanthrax/scream/tree/master/Receivers/dotnet-windows/ScreamReader), [Linux](https://github.com/duncanthrax/scream/tree/master/Receivers/unix), and [Android](https://github.com/martinellimarco/scream-android/tree/90d1364ee36dd12ec9d7d2798926150b370030f3), as well as some embedded devices such as [the ESP32](http://tomeko.net/projects/esp32_rtp_pager/).
 
 ![Screenshot of ScreamRouter Equalizer](/images/Equalizer.png)
 
@@ -28,7 +34,7 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Programatically enable/disable sinks, or adjust the volume through the FastAPI API, or through Home Assistant
 * Play back sound effects and Text to Speech to arbitrary Sinks from Home Assistant automations
 * Line up speakers with differing timings by delaying one
-* Adjusting EQ to a cheap speaker so it sounds better
+* Adjusting EQ for a cheap speaker so it sounds better
 
 ![Screenshot of HA media player for ScreamRouter Sink](/images/HAMediaPlayer.png)
 ## Prerequisites
@@ -37,6 +43,7 @@ ScreamRouter is a Python-based audio router for Scream sources and sinks. It all
 * Configure Scream to use UDP unicast, point it at ScreamRouter on a port between 16401 and 16411. The configuration for setting Unicast is in the Scream repo readme.md.
 * Install requirements.txt through either pip or your package manager of choice
 * Command line ffmpeg
+* ScreamRouter is Linux only. It should run in WSL2. Windows compatibility may be reviewed in the future.
 
 # Note on installing Scream
 
@@ -82,9 +89,25 @@ Each Source Group holds a name, a list of Sources, and a volume. Groups can be n
 
 The server configuration holds the port for the API to listen on and the port for the recevier to receive audio frames on. You can currently find it at src/constants/constants.py .
 
+These are the options in constants.py:
+
+* `RECEIVER_PORT` `Default: 16401` This is the port for the receiver
+* `SINK_PORT` `Default: 4010` This is the port for a Scream Sink
+* `API_PORT` `Default: 8080` This is the port FastAPI runs on
+* `API_HOST` `Default: "0.0.0.0"` This is the host FastAPI binds to
+* `MP3_STREAM_BITRATE` `Default: "320k"` MP3 stream bitrate for the web API
+* `MP3_STREAM_SAMPLERATE` `Default: 48000` MP3 stream sample for the web API
+* `LOGS_DIR` `Default: "./logs/"` This is the directory logs are stored in
+* `CONSOLE_LOG_LEVEL` `Default: "INFO"` Log level for stdout, valid values are `"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"`
+* `LOG_TO_FILE` `Default: True` Determines rather logs are written to files
+* `CLEAR_LOGS_ON_RESTART` `Default: True` Determines rather logs are cleared on restart
+* `DEBUG_MULTIPROCESSING`  `Default: False` Debugs Multiprocessing to stdout.
+* `SHOW_FFMPEG_OUTPUT` `Default: False` Show ffmpeg output to stdout.
+* `SOURCE_INACTIVE_TIME_MS` `Default: 150` Inactive time for a source before it's closed. Some plugins may need this raised. If this is too long there will be gaps when a source stops sending. Having the value as short as possible without false positives will perform the best.
+
 ### YAML
 
-The YAML is generated from Pydantic. It can be manually edited but it is messy and not user-friendly. Take a backup before you make any changes.
+The YAML is generated from Pydantic. It can be manually edited but it is messy and not user-friendly. Take a backup before you make any changes. It is verified on load and will error out if the configuration is invalid.
 
 ## General Info
 
@@ -195,13 +218,12 @@ On the reciving process receiving a packet it is forwarded to a queue for each S
 
 The Sink Controller also manages two processs to read input from FFMPEG, both PCM and MP3. The PCM process is sent to Scream Receiver Sources, the MP3 stream is forwarded to a queue handler to make it available to FastAPI.
 
-
 ## Troubleshooting
 
 Here are some problems and solutions:
 
-* Problem: Audio frequently goes static and makes an awful noise
-* Solution: Change your sources to either 16 or 32-bit depth and network stream issues won't cause static anymore
+* Problem: Audio frequently makes a loud static noise
+* Solution: Change your sources to either 16 or 32-bit depth, avoid using 24-bit.
 
 * Problem: There are crackles and pops in the audio
 * Solution: Try to keep the source and destinations configured the same. I've had best luck with 48kHz 32-bit.
