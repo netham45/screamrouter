@@ -1,11 +1,11 @@
 """ScreamRouter Plugin Manager"""
-import multiprocessing
 from typing import List
 
 from fastapi import FastAPI
 
 from src.plugin_manager.screamrouter_plugin import ScreamRouterPlugin
-from src.plugins.play_url import PluginPlayURL
+from src.plugins.play_url import PluginPlayURL          
+from src.plugins.play_url_multiple import PluginPlayURLMultiple
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import SinkNameType
 from src.screamrouter_types.configuration import SourceDescription
@@ -16,11 +16,13 @@ class PluginManager:
     """This implements the plugin manager that starts/stops/loads/unloads plugins
        Start/Stop = ScreamRouter starting/stopping
        load/unload = load/unload for configuration changes"""
+
     def __init__(self, api: FastAPI):
         """Initialize the Plugin Manager"""
         self.api: FastAPI = api
         self.plugin_list: List[ScreamRouterPlugin] = []
-        self.register_plugin(PluginPlayURL("Play URL"))
+        self.register_plugin(PluginPlayURL())
+        self.register_plugin(PluginPlayURLMultiple())
 
     def register_plugin(self, plugin: ScreamRouterPlugin):
         """Registers a plugin with the Plugin Manager"""
@@ -36,10 +38,10 @@ class PluginManager:
         for plugin in self.plugin_list:
             plugin.stop()
 
-    def load_registered_plugins(self, queue_list: List[multiprocessing.Queue]):
+    def load_registered_plugins(self, controller_write_fds: List[int]):
         """Plugins are loaded when the available source list changes"""
         for plugin in self.plugin_list:
-            plugin.load(queue_list)
+            plugin.load(controller_write_fds)
 
     def unload_registered_plugins(self):
         """Plugins are unloaded when the available source list changes"""

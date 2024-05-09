@@ -2,6 +2,7 @@
 import asyncio
 import multiprocessing
 import queue
+from subprocess import TimeoutExpired
 import threading
 from typing import List, Optional
 
@@ -90,7 +91,10 @@ class APIWebStream(threading.Thread):
         """Stops the API webstream thread"""
         self.running = False
         if constants.WAIT_FOR_CLOSES:
-            self.join()
+            try:
+                self.join(5)
+            except TimeoutExpired:
+                logger.warning("Webstream failed to close")
 
     def process_frame(self, sink_ip: IPAddressType, data: bytes) -> None:
         """Callback for sinks to have data sent out to websockets"""
@@ -115,6 +119,7 @@ class APIWebStream(threading.Thread):
         return StreamingResponse(listener.get_queue(), media_type="audio/mpeg")
 
     def run(self):
+        """Waits for packets to be sent from the ffmepg outputs and forwards it to listeners"""
         while self.running:
             try:
                 packet: WebStreamFrames = self.queue.get(timeout=.3)

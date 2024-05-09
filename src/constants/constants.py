@@ -18,12 +18,13 @@ MP3_STREAM_SAMPLERATE: int = 48000
 """MP3 stream sample for the web API"""
 LOGS_DIR: str = "./logs/"
 """This is the directory logs are stored in"""
-CONSOLE_LOG_LEVEL: str = "DEBUG"
-"""Log level for stdout. Log level for stdout, valid values are "DEBUG", "INFO", "WARNING", "ERROR"."""
+CONSOLE_LOG_LEVEL: str = "INFO"
+"""Log level for stdout. Log level for stdout
+   Valid values are "DEBUG", "INFO", "WARNING", "ERROR"."""
 LOG_TO_FILE: bool = True
 """Determines rather logs are written to files"""
-CLEAR_LOGS_ON_RESTART: bool = True
-"""Determines rather logs are cleared on restart"""
+LOG_ENTRIES_TO_RETAIN: int = 2
+"""Number of previous runs to retain logs for"""
 DEBUG_MULTIPROCESSING: bool = False
 """Debugs Multiprocessing to stdout."""
 SHOW_FFMPEG_OUTPUT: bool = False
@@ -56,3 +57,6 @@ KILL_AT_CLOSE: bool = False
    than disabling WAIT_FOR_CLOSES."""
 EXIT_HACK: bool = False
 """Used as a workaround for when I can't locate a multiprocessing deadlock"""
+TAG_MAX_LENGTH: int = 45
+"""Max length for an internal/plugin source tag, set to be long enough for a
+   full IPv6 address"""

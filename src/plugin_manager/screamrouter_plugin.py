@@ -1,9 +1,12 @@
 """This holds the base class for plugins to extend"""
 
+import fcntl
 import multiprocessing
 import multiprocessing.sharedctypes
-import queue
+import os
 from ctypes import c_bool
+import select
+from subprocess import TimeoutExpired
 from typing import List
 
 from fastapi import FastAPI
@@ -12,8 +15,7 @@ import src.constants.constants as constants
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import SinkNameType, SourceNameType
 from src.screamrouter_types.configuration import SourceDescription
-from src.screamrouter_types.packets import InputQueueEntry
-from src.utils.utils import set_process_name
+from src.utils.utils import close_all_pipes, close_pipe, set_process_name
 
 logger = get_logger(__name__)
 
@@ -46,11 +48,12 @@ class ScreamRouterPlugin(multiprocessing.Process):
     """
     def __init__(self, name: str):
         super().__init__(name=f"[ScreamRouter Plugin] {name}")
-        set_process_name(f"Plugin {name}", f"[ScreamRouter Plugin] {name}")
         self.name: str = name
-        self.out_queue_list: List[multiprocessing.Queue]
-        self.screamrouter_in_queue: multiprocessing.Queue = multiprocessing.Queue()
-        logger.info("[Plugin] queue %s", self.screamrouter_in_queue)
+        self.controller_write_fds: List[int]
+        self.screamrouter_write_fd: int
+        self.screamrouter_read_fd: int
+        self.screamrouter_read_fd, self.screamrouter_write_fd = os.pipe()
+        logger.info("[Plugin] queue %s", self.screamrouter_write_fd)
         self.running = multiprocessing.Value(c_bool, True)
         self.sender: ScreamRouterPluginSender
         self.api: FastAPI
@@ -72,19 +75,28 @@ class ScreamRouterPlugin(multiprocessing.Process):
         self.running.value = c_bool(False)
         self.sender.stop()
         self.stop_plugin()
+
         if constants.KILL_AT_CLOSE:
             self.kill()
         if constants.WAIT_FOR_CLOSES:
-            self.join()
+            try:
+                self.join(5)
+            except TimeoutExpired:
+                logger.warning("Plugin failed to close")
         logger.info("[Plugin] Stopped")
+        close_pipe(self.screamrouter_read_fd)
+        close_pipe(self.screamrouter_write_fd)
 
-    def load(self, queue_list: List[multiprocessing.Queue]):
+    def load(self, controller_write_fds: List[int]):
         """Load a new queue list and start sending to ScreamRouter"""
-        self.out_queue_list = queue_list
+        self.controller_write_fds = controller_write_fds
         if self.has_ran:
-            self.sender.stop(False)
-        self.sender = ScreamRouterPluginSender(self.name, self.screamrouter_in_queue,
-                                               self.out_queue_list)
+            logger.debug("[Plugin] Stopping sender")
+            self.sender.stop()
+            logger.debug("[Plugin] Sender stopped, making a new one")
+        self.sender = ScreamRouterPluginSender(self.name, self.screamrouter_read_fd,
+                                               self.screamrouter_write_fd,
+                                               self.controller_write_fds)
         self.has_ran = True
         self.load_plugin()
 
@@ -96,26 +108,26 @@ class ScreamRouterPlugin(multiprocessing.Process):
     def add_temporary_source(self, sink_name: SinkNameType,
                              source: SourceDescription) -> str:
         """Adds a temporary source, returns the source tag to put on the packets"""
+        logger.info("[Plugin] Adding temporary source %s", source.tag)
         if not sink_name in self.temporary_sink_names_to_sources:
             self.temporary_sink_names_to_sources[sink_name] = []
-        source.tag = f"{self.tag}"
+        if source.tag is None:
+            source.tag = f"{self.tag}"
         logger.info("Tag: %s", source.tag)
         source.name = f"{self.tag}"
         self.temporary_sink_names_to_sources[sink_name].append(source)
         self.temporary_source_tag_counter = self.temporary_source_tag_counter + 1
         self.wants_reload = True
-        logger.info("Adding temporary source %s", source.tag)
         return source.tag
-
 
     def remove_temporary_source(self, source_name: SourceNameType):
         """Removes a temporary source, such as when playback is done"""
+        logger.info("[Plugin] Removing temporary source %s", source_name)
         for sources in self.temporary_sink_names_to_sources.values():
             for index, source in enumerate(sources):
                 if source.name == source_name:
                     del sources[index]
                     self.wants_reload = True
-                    logger.info("Removing temporary source %s", source.tag)
                     return
 
     def add_permanet_source(self, source: SourceDescription):
@@ -125,6 +137,7 @@ class ScreamRouterPlugin(multiprocessing.Process):
            Permanent sources can be removed from the UI or API once they're no longer
            in use.
            """
+        logger.info("[Plugin] Adding permanent source %s", source.name)
         found: bool = False
         for index, permanent_source in enumerate(self.permanent_sources):
             if permanent_source.name == source.name:
@@ -133,6 +146,16 @@ class ScreamRouterPlugin(multiprocessing.Process):
         if not found:
             self.permanent_sources.append(source)
         self.wants_reload = True
+
+    def write_data(self, tag: str, data:bytes):
+        """Writes PCM data to ScreamRouter"""
+
+        # Get a buffer of TAG_MAX_LENGTH with the tag at the start
+        tag_data: bytes = tag.encode() + bytes([0] * (constants.TAG_MAX_LENGTH - len(tag)))
+        try:
+            os.write(self.screamrouter_write_fd, tag_data + data)
+        except BlockingIOError:
+            pass
 
     def start_plugin(self):
         """Empty function to be overridden by plugins"""
@@ -147,42 +170,53 @@ class ScreamRouterPlugin(multiprocessing.Process):
         """Empty function to be overridden by plugins"""
 
     def run(self):
-        """Empty function to be overridden by plugins"""
+        """Sets the process name, called by plugins"""
+        set_process_name(f"Plugin {self.name}", f"[ScreamRouter Plugin] {self.name}")
+        fcntl.fcntl(self.screamrouter_write_fd, fcntl.F_SETFL, os.O_NONBLOCK) 
 
 class ScreamRouterPluginSender(multiprocessing.Process):
     """Handles sending from a plugin to the ScreamRouter sources"""
 
     def __init__(self, name: str,
-                 in_queue: multiprocessing.Queue,
-                 out_queue_list: List[multiprocessing.Queue]):
+                 screamrouter_read_fd: int,
+                 screamrouter_write_fd: int,
+                 controller_write_fds: List[int]):
         super().__init__(name=f"[Plugin Reader] {name}")
-        set_process_name(f"PlgnRdr {name}", f"[Plugin Reader] {name}")
         self.name = name
         """This holds a list of queues listened to by the AudioControllers"""
-        self.out_queue_list: List[multiprocessing.Queue] = out_queue_list
+        self.controller_write_fds: List[int] = controller_write_fds
         """This holds a queue passed to the plugin process, it is monitored
            and sent to the AudioControllers."""
-        self.in_queue: multiprocessing.Queue = in_queue
+        self.screamrouter_read_fd: int = screamrouter_read_fd
         """Flag if the thread should exit"""
+        self.screamrouter_write_fd: int = screamrouter_write_fd
         self.running = multiprocessing.Value(c_bool, True)
         self.start()
 
-    def stop(self, force_join: bool = False):
+    def stop(self):
         """Stop the plugin sender"""
         self.running.value = c_bool(False)
         if constants.KILL_AT_CLOSE:
             self.kill()
-        if constants.WAIT_FOR_CLOSES or force_join:
-            self.join()
+        if constants.WAIT_FOR_CLOSES:
+            try:
+                self.join(5)
+            except TimeoutExpired:
+                logger.warning("Plugin Sender failed to close")
 
     def run(self):
-        logger.debug("[Plugin %s Sender] Thread PID %s",
-                     self.name, self.out_queue_list)
+        """This thread is created to work around a Multiprocessing limitation where a new queue
+           can not be passed to an existing process. When audio processes are reloaded this process
+           is reloaded as a way to provide the existing plugin a means of writing to a new
+           controller."""
+        set_process_name(f"PlgnRdr {self.name}", f"[Plugin Reader] {self.name}")
+        logger.debug("[Plugin %s Sender] PID %s",
+                     self.name, os.getpid())
         while self.running.value:
-            try:
-                in_packet: InputQueueEntry = self.in_queue.get(timeout=.3)
-                for out_queue in self.out_queue_list:
-                    out_queue.put(in_packet)
-            except queue.Empty:
-                pass
+            ready = select.select([self.screamrouter_read_fd], [], [], .3)
+            if ready[0]:
+                data = os.read(self.screamrouter_read_fd, constants.PACKET_SIZE + constants.TAG_MAX_LENGTH)
+                for out_queue in self.controller_write_fds:
+                    os.write(out_queue, data)
         logger.info("Ending Plugin Sender thread")
+        close_all_pipes()

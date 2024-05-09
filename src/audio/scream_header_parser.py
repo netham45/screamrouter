@@ -3,7 +3,6 @@ import traceback
 from typing import Tuple, Union
 
 import numpy
-from pydantic import BaseModel
 
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import (BitDepthType,
@@ -23,20 +22,8 @@ CHANNEL_LAYOUT_TABLE: dict[Tuple[int,int], str] = {(0x00, 0x00): "stereo", # No 
                                                    (0x3F, 0x06): "7.1",
                                                    (0x3F, 0x00): "5.1"} # 5.1 rear
 
-class ScreamHeader(BaseModel):
+class ScreamHeader():
     """Parses Scream headers to get sample rate, bit depth, and channels"""
-    sample_rate: SampleRateType
-    """Sample rate in Hz"""
-    bit_depth: BitDepthType
-    """Bit depth"""
-    channels: ChannelsType
-    """Channel count"""
-    channel_mask: bytes
-    """Channel Mask"""
-    channel_layout: ChannelLayoutType
-    """Holds the channel layout"""
-    header: bytes
-    """Holds the raw header bytes"""
 
     def __init__(self, scream_header: Union[bytearray, bytes]):
         scream_header_array: bytearray = bytearray(scream_header)
@@ -52,12 +39,20 @@ class ScreamHeader(BaseModel):
         sample_rate_multiplier: int = numpy.packbits(sample_rate_bits,bitorder='little')[0]
         if sample_rate_multiplier < 1:
             sample_rate_multiplier = 1
-        super().__init__(sample_rate=int(sample_rate_base * sample_rate_multiplier),
-                         bit_depth=int(scream_header_array[1]),
-                         channels=int(scream_header_array[2]),
-                         channel_mask=scream_header_array[3:],
-                         channel_layout=self.__parse_channel_mask(scream_header_array[3:]),
-                         header=scream_header_array)
+        # Bypassing pydantic verification for these
+        self.sample_rate: SampleRateType = sample_rate_base * sample_rate_multiplier # type: ignore
+        """Sample rate in Hz"""
+        self.bit_depth: BitDepthType = scream_header_array[1] # type: ignore
+        """Bit depth"""
+        self.channels: ChannelsType = scream_header_array[2] # type: ignore
+        """Channel count"""
+        self.channel_mask: bytes = scream_header_array[3:] # type: ignore
+        """Channel Mask"""
+        self.channel_layout: ChannelLayoutType
+        self.channel_layout = self.__parse_channel_mask(scream_header_array[3:]) # type: ignore
+        """Holds the channel layout"""
+        self.header: bytes = scream_header_array
+        """Holds the raw header bytes"""
 
     def __parse_channel_mask(self, channel_mask: bytes) -> str:
         """Converts the channel mask to a string to be fed to ffmpeg"""

@@ -1,5 +1,5 @@
 {% macro option(value, label, class="", data="{}", checked=False) %}
-                    <OPTION VALUE="{{value}}" CLASS="{{class}}" {% for name, datum in data %}DATA-{{name}}="{{datum}}" {% endfor %}{{"SELECTED" if checked}}>{{label}}</OPTION>
+                    <SPAN VALUE="{{value}}" CLASS="{{class}}" ONCLICK="option_onclick(event)" {% for name, datum in data %}DATA-{{name}}="{{datum}}" {% endfor %}DATA-TYPE="{{data.__class__.__name__}}" {{"SELECTED" if checked}}><SPAN CLASS="button-icon" ONCLICK="equalizer_icon_onclick(event)">🎚️</SPAN><SPAN CLASS="button-icon" ONCLICK="update_icon_onclick(event)">⚙️</SPAN><SPAN CLASS="button-icon" ONCLICK="volume_icon_onclick(event)">{{ "🔊" if data["enabled"] else "🔇"}}</SPAN><SPAN CLASS="button-icon" ONCLICK="remove_icon_onclick(event)">➖</SPAN>{% if (data.__class__.__name__ == "SinkDescription" and not data.is_group) %}<SPAN CLASS="button-icon" ONCLICK="listen_icon_onclick(event)">📻</SPAN>{% endif %}{{label}}</SPAN>
 {%- endmacro %}
 
 {% macro make_multiple_options(options, data="{}") %}

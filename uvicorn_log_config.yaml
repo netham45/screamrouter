@@ -14,32 +14,32 @@ handlers:
     stream: ext://sys.stderr
   default2:
     class: logging.FileHandler
-    level: INFO
+    level: DEBUG
     formatter: default
     filename: "./logs/uvicorn.log"
     encoding: utf8
     mode: a
   access:
     class: logging.FileHandler
-    level: INFO
+    level: DEBUG
     formatter: access
     filename: "./logs/uvicorn.log"
     encoding: utf8
     mode: a
 loggers:
   uvicorn.error:
-    level: INFO
+    level: DEBUG
     handlers:
       - default
       - default2
     propagate: no
   uvicorn.access:
-    level: INFO
+    level: DEBUG
     handlers:
       - access
     propagate: no
 root:
-  level: INFO
+  level: DEBUG
   handlers:
     - default
     - default2

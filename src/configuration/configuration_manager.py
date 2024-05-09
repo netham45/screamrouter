@@ -1,7 +1,7 @@
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
-import multiprocessing
 import os
+from subprocess import TimeoutExpired
 import sys
 import threading
 from copy import copy, deepcopy
@@ -14,7 +14,7 @@ import src.constants.constants as constants
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
 from src.api.api_webstream import APIWebStream
 from src.audio.audio_controller import AudioController
-from src.audio.receiver_thread import ReceiverThread
+from src.audio.udp_receiver import UDPReceiver
 from src.configuration.configuration_solver import ConfigurationSolver
 from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_types.annotations import (DelayType, RouteNameType,
@@ -52,7 +52,7 @@ class ConfigurationManager(threading.Thread):
         """Condition to indicate the Configuration Manager needs to reload"""
         self.running: bool = True
         """Rather the thread is running or not"""
-        self.receiver: ReceiverThread = ReceiverThread([])
+        self.receiver: UDPReceiver = UDPReceiver([])
         """Holds the thread that receives UDP packets from Scream"""
         self.reload_config: bool = False
         """Set to true to reload the config. Used so config
@@ -248,6 +248,9 @@ class ConfigurationManager(threading.Thread):
 
     def stop(self) -> bool:
         """Stop all threads/processes"""
+        _logger.debug("Stopping webstream")
+        self.__api_webstream.stop()
+        _logger.debug("Webstream stopped")
         _logger.debug("Stopping receiver")
         self.receiver.stop()
         _logger.debug("Receiver stopped")
@@ -258,13 +261,13 @@ class ConfigurationManager(threading.Thread):
         for audio_controller in self.audio_controllers:
             audio_controller.stop()
         _logger.debug("Audio controllers stopped")
-        _logger.debug("Stopping webstream")
-        self.__api_webstream.stop()
-        _logger.debug("Webstream stopped")
         self.running = False
 
         if constants.WAIT_FOR_CLOSES:
-            self.join()
+            try:
+                self.join(5)
+            except TimeoutExpired:
+                _logger.warning("Configuration Manager failed to close")
         return True
 
     def set_webstream(self, webstream: APIWebStream) -> None:
@@ -345,12 +348,12 @@ class ConfigurationManager(threading.Thread):
             group_names: List[str] = []
             for group in groups:
                 group_names.append(group.name)
-            raise InUseError(f"Source:{source.name} is in use by Groups {group_names}")
+            raise InUseError(f"Source: {source.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
         routes = self.active_configuration.get_routes_by_source(source)
         for route in routes:
             if route.source == source.name:
-                raise InUseError(f"Source:{source.name} is in use by Route {route.name}")
+                raise InUseError(f"Source: {source.name} is in use by Route {route.name}")
 
     def __verify_sink_unused(self, sink: SinkDescription) -> None:
         """Verifies a sink is unused by any routes, throws exception if not"""
@@ -359,12 +362,12 @@ class ConfigurationManager(threading.Thread):
             group_names: List[str] = []
             for group in groups:
                 group_names.append(group.name)
-            raise InUseError(f"Sink:{sink.name} is in use by Groups {group_names}")
+            raise InUseError(f"Sink: {sink.name} is in use by Groups {group_names}")
         routes: List[RouteDescription] = []
         routes = self.active_configuration.get_routes_by_sink(sink)
         for route in routes:
             if route.sink == sink.name:
-                raise InUseError(f"Sink:{sink.name} is in use by Route {route.name}")
+                raise InUseError(f"Sink: {sink.name} is in use by Route {route.name}")
 
 # Configuration load/save functions
 
@@ -472,6 +475,7 @@ class ConfigurationManager(threading.Thread):
           changed_sinks: List[SinkDescription] )
         """
 
+        _logger.debug("[Configuration Manager] Processing new configuration")
         # Add plugin sources, don't overwrite existing unless they were from the plugin
         plugin_permanent_sources: List[SourceDescription]
         plugin_permanent_sources = self.plugin_manager.get_permanent_sources()
@@ -486,11 +490,12 @@ class ConfigurationManager(threading.Thread):
                 self.source_descriptions.append(plugin_source)
 
         # Get a new resolved configuration from the current state
-
+        _logger.debug("[Configuration Manager] Solving Configuration")
         self.active_configuration = ConfigurationSolver(self.source_descriptions,
                                                         self.sink_descriptions,
                                                         self.route_descriptions)
-
+        
+        _logger.debug("[Configuration Manager] Configuration solved, adding temporary sources")
         # Add temporary plugin sources
         temporary_sources: dict[SinkNameType, List[SourceDescription]]
         temporary_sources = self.plugin_manager.get_temporary_sources()
@@ -521,7 +526,10 @@ class ConfigurationManager(threading.Thread):
         """Notifies the configuration manager to reload the configuration"""
         if not self.reload_condition.acquire(timeout=1):
             raise TimeoutError("Failed to get configuration reload condition")
-        self.reload_condition.notify()
+        try:
+            self.reload_condition.notify()
+        except RuntimeError:
+            pass
         self.reload_condition.release()
         self.reload_config = True
         _logger.debug("Marking config for reload")
@@ -529,6 +537,7 @@ class ConfigurationManager(threading.Thread):
     def __process_and_apply_configuration(self) -> None:
         """Process the configuration, get which sinks have changed and need reloaded,
            then reload them."""
+        _logger.debug("[Configuration Manager] Reloading configuration")
         # Process new config, store what's changed
         added_sinks: List[SinkDescription]
         removed_sinks: List[SinkDescription]
@@ -546,6 +555,8 @@ class ConfigurationManager(threading.Thread):
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
             self.receiver.stop()
 
+        _logger.debug("[Configuration Manager] Removing and re-adding changed sinks")
+
         # Controllers to be reloaded
         for sink in changed_sinks:
             # Unload the old controller
@@ -562,6 +573,8 @@ class ConfigurationManager(threading.Thread):
             _logger.debug("Adding Audio Controller %s", sink.name)
             self.audio_controllers.append(audio_controller)
 
+        _logger.debug("[Configuration Manager] Removing now unused sinks")
+
         # Controllers to be removed
         for sink in removed_sinks:
             # Unload the old controller
@@ -570,6 +583,8 @@ class ConfigurationManager(threading.Thread):
                 if audio_controller.sink_info.name == sink.name:
                     audio_controller.stop()
                     self.audio_controllers.remove(audio_controller)
+
+        _logger.debug("[Configuration Manager] Adding new sinks")
 
         # Controllers to be added
         for sink in added_sinks:
@@ -582,19 +597,23 @@ class ConfigurationManager(threading.Thread):
 
         # Check if there was a change before reloading or saving
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            self.receiver = ReceiverThread([audio_controller.queue for
+            self.receiver = UDPReceiver([audio_controller.controller_write_fd for
                                             audio_controller in self.audio_controllers])
+            _logger.debug("[Configuration Manager] Saving configuration")
             self.__save_config()
-            queues: List[multiprocessing.Queue] = []
+            _logger.debug("[Configuration Manager] Notifying plugin manager")
+            controller_write_fds: List[int] = []
             for audio_controller in self.audio_controllers:
-                queues.append(audio_controller.queue)
-            self.plugin_manager.load_registered_plugins(queues)
+                controller_write_fds.append(audio_controller.controller_write_fd)
+            self.plugin_manager.load_registered_plugins(controller_write_fds)
+            _logger.debug("[Configuration Manager] Reload done")
 
     def run(self):
+        """Monitors for the reload condition to be set and reloads the config when it is set"""
         self.__process_and_apply_configuration()
-        if not self.reload_condition.acquire(timeout=1):
-            raise TimeoutError("Failed to get configuration reload condition")
         while self.running:
+            if not self.reload_condition.acquire(timeout=1):
+                raise TimeoutError("Failed to get configuration reload condition")
             if self.reload_condition.wait(timeout=.3) or self.plugin_manager.wants_reload:
                 # This will get set to true if something else wants to reload the configuration
                 # while it's already reloading
@@ -604,4 +623,3 @@ class ConfigurationManager(threading.Thread):
                     self.reload_config = False
                     _logger.info("Reloading the configuration")
                     self.__process_and_apply_configuration()
-        self.reload_condition.release()

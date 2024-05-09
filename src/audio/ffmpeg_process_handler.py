@@ -51,7 +51,7 @@ class FFMpegHandler:
             channels = source.stream_attributes.channels
             channel_layout = source.stream_attributes.channel_layout
             # This is optimized to reduce latency and initial ffmpeg processing time
-            ffmpeg_command.extend(["-re",
+            ffmpeg_command.extend([
                                    "-blocksize", str(constants.INPUT_BUFFER_SIZE),
                                    "-max_delay", "0",
                                    "-audio_preload", "0",
@@ -160,7 +160,7 @@ class FFMpegHandler:
                 self.__ffmpeg_started = True
                 fds: List = []
                 for source in self.__sources:
-                    fds.append(source.fifo_fd_read)
+                    fds.append(source.ffmpeg_read_fd)
                 fds.append(self.__fifo_in_pcm)
                 fds.append(self.__fifo_in_mp3)
                 if constants.SHOW_FFMPEG_OUTPUT:

@@ -3,7 +3,7 @@ import multiprocessing
 import os
 import select
 import socket
-import sys
+from subprocess import TimeoutExpired
 import time
 from ctypes import c_bool
 from typing import Tuple
@@ -14,17 +14,16 @@ from src.audio.scream_header_parser import ScreamHeader
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import IPAddressType, PortType
 from src.screamrouter_types.packets import WebStreamFrames
-from src.utils.utils import set_process_name
+from src.utils.utils import close_all_pipes, set_process_name
 
 logger = get_logger(__name__)
 
-class OutputThread(multiprocessing.Process):
+class OutputReader(multiprocessing.Process):
     """Base class for processes that handle listening for output from ffmpeg"""
-    def __init__(self, fifo_in: int, fifo_out: int, sink_ip: IPAddressType, process_name: str):
+    def __init__(self, read_fd: int, write_fd: int, sink_ip: IPAddressType, process_name: str):
         super().__init__(name = process_name)
-        set_process_name(process_name, process_name)
-        self._fifo_out: int = fifo_out
-        self._fifo_in: int = fifo_in
+        self.write_fd: int = write_fd
+        self.read_fd: int = read_fd
         """input from ffmpeg to be sent to receivers and a browser"""
         self._sink_ip: IPAddressType = sink_ip
         """Holds the sink IP for the web api to filter based on"""
@@ -35,23 +34,13 @@ class OutputThread(multiprocessing.Process):
     def stop(self) -> None:
         """Stop"""
         self.running.value = c_bool(False)
-        try:
-            os.write(self._fifo_in, bytes([0] * 1152))
-        except OSError:
-            pass
-
-        try:
-            os.close(self._fifo_in)
-        except OSError:
-            pass
-        try:
-            os.close(self._fifo_out)
-        except OSError:
-            pass
         if constants.KILL_AT_CLOSE:
             self.kill()
         if constants.WAIT_FOR_CLOSES:
-            self.join()
+            try:
+                self.join(5)
+            except TimeoutExpired:
+                logger.warning("FFMpeg Output Reader failed to close")
 
     def _read_bytes(self, count: int, timeout: float, firstread: bool = False) -> bytes:
         """Reads count bytes, blocks until self.__running goes false or count bytes are received.
@@ -61,10 +50,10 @@ class OutputThread(multiprocessing.Process):
         dataout:bytearray = bytearray() # Data to return
         while (self.running.value and len(dataout) < count and
                ((time.time() - timeout) < start_time or timeout == 0)):
-            ready = select.select([self._fifo_in], [], [], .3)
+            ready = select.select([self.read_fd], [], [], .2)
             if ready[0]:
                 try:
-                    data: bytes = os.read(self._fifo_in, count - len(dataout))
+                    data: bytes = os.read(self.read_fd, count - len(dataout))
                     if data:
                         if firstread:
                             return data
@@ -73,18 +62,17 @@ class OutputThread(multiprocessing.Process):
                     pass
         return bytes(dataout)
 
-
-class MP3OutputThread(OutputThread):
+class MP3OutputReader(OutputReader):
     """Handles listening for MP3 output from ffmpeg and sends it to the WebStream handler"""
-    def __init__(self, fifo_in: int, fifo_out: int, sink_ip: IPAddressType,
+    def __init__(self, mp3_read_fd: int, mp3_write_fd: int, sink_ip: IPAddressType,
                  webstream_queue: multiprocessing.Queue):
         self.__webstream_queue: multiprocessing.Queue = webstream_queue
         """webstream queue to write frames to"""
-        super().__init__(fifo_in=fifo_in, fifo_out=fifo_out, sink_ip=sink_ip,
+        super().__init__(read_fd=mp3_read_fd, write_fd=mp3_write_fd, sink_ip=sink_ip,
                     process_name=f"[Sink:{sink_ip}] MP3 Thread")
 
     def __read_header(self) -> Tuple[MP3Header, bytes]:
-        """Returns a tuple of the parsed header and raw header data. Skips ID3 headers if found."""
+        """Returns a tuple of the parsed headr and raw header data. Skips ID3 headers if found."""
         header: bytearray = bytearray(self._read_bytes(constants.MP3_HEADER_LENGTH, 0))  # Header
         header_parsed: MP3Header  # Parsed header object
         max_bytes_to_search: int = 250
@@ -94,10 +82,10 @@ class MP3OutputThread(OutputThread):
         if header[0:3] == "ID3".encode():  # Found ID3 header, search for start of MP3 header
             while bytes_searched < max_bytes_to_search:
                 bytes_searched = bytes_searched + 1
-                bytesin: bytearray = bytearray(self._read_bytes(1, .1))
+                bytesin: bytearray = bytearray(self._read_bytes(1, 0))
                 if len(bytesin) == 0:
                     raise InvalidHeaderException(
-                        f"[Sink:{self._sink_ip}] Couldn't read from ffmpeg")
+                        f"[Sink: {self._sink_ip}] Couldn't read from ffmpeg")
                 if bytesin[0] == 255:
                     header = bytesin + self._read_bytes(constants.MP3_HEADER_LENGTH - 1, 0)
                     try:
@@ -107,14 +95,16 @@ class MP3OutputThread(OutputThread):
                         logger.warning("[Sink:%s] Bad MP3 Header: %s", self._sink_ip, exc)
             if bytes_searched == max_bytes_to_search:
                 raise InvalidHeaderException(
-                    f"[Sink:{self._sink_ip}] Couldn't find MP3 header after ID3 header")
+                    f"[Sink: {self._sink_ip}] Couldn't find MP3 header after ID3 header")
         else:
             header_parsed: MP3Header = MP3Header(header)
             return (header_parsed, header)
         raise InvalidHeaderException("Invalid header")
 
     def run(self) -> None:
+        """This look reads MP3 output from ffmpeg and passes MP3 frames to the WebStream handler"""
         logger.debug("[Sink %s] MP3 Thread PID %s", self._sink_ip, os.getpid())
+        set_process_name("PCMThread", f"[Sink {self._sink_ip}] MP3 Writer Thread")
         target_frames_per_packet: int = 1
         # Send data to the web handler when it gets this many frames buffered up
         target_bytes_per_packet: int = 1500
@@ -122,9 +112,6 @@ class MP3OutputThread(OutputThread):
         available_data = bytearray()  # Holds the available frames
         available_frame_count: int = 0  # Holds the number of available frames
         while self.running.value:
-            if os.getppid() == 1:
-                logger.warning("Exiting because parent pid is 1")
-                sys.exit(3)
             mp3_header_parsed: MP3Header  # Holds the parsed header object
             mp3_header_raw: bytes  # Holds the raw header bytes
             mp3_frame: bytes  # Holds the currently processing MP3 frame
@@ -146,11 +133,11 @@ class MP3OutputThread(OutputThread):
                 available_frame_count = 0
                 available_data = bytearray()
         logger.debug("[Sink:%s] MP3 thread exit", self._sink_ip)
+        close_all_pipes()
 
-
-class PCMOutputThread(OutputThread):
+class PCMOutputReader(OutputReader):
     """Handles listening for PCM output from ffmpeg and sends it to sinks"""
-    def __init__(self, fifo_in: int, fifo_out:int, sink_ip: IPAddressType,
+    def __init__(self, pcm_read_fd: int, pcm_write_fd:int, sink_ip: IPAddressType,
                  sink_port: PortType, output_info: ScreamHeader):
 
         self.__sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -158,24 +145,21 @@ class PCMOutputThread(OutputThread):
         self._sink_port: PortType = sink_port
         self.__output_header: bytes = output_info.header
         """Holds the header added onto packets sent to Scream receivers"""
+        self._sink_ip = sink_ip
 
-        super().__init__(fifo_in=fifo_in, fifo_out=fifo_out, sink_ip=sink_ip,
+        super().__init__(read_fd=pcm_read_fd, write_fd=pcm_write_fd, sink_ip=sink_ip,
                          process_name=f"[Sink:{sink_ip}] PCM Thread")
 
     def run(self) -> None:
-        """This thread implements listening to self.fifoin and sending it out to dest_ip"""
+        """Reads PCM output from ffmpeg, attaches a header, and sends it to Scream receivers."""
+        set_process_name("PCMThread", f"[Sink {self._sink_ip}] PCM Writer Thread")
         logger.debug("[Sink %s] PCM Thread PID %s", self._sink_ip, os.getpid())
         self.__sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, constants.PACKET_SIZE * 65535)
         while self.running.value:
-            if os.getppid() == 1:
-                logger.warning("Exiting because parent pid is 1")
-                self.stop()
-                sys.exit(3)
-            # Send data from ffmpeg to the Scream receiver
-            data = self._read_bytes(constants.PACKET_DATA_SIZE, .1)
+            data = self._read_bytes(constants.PACKET_DATA_SIZE, .3)
             if len(data) > 0:
                 self.__sock.sendto(
                     self.__output_header + data,
                     (str(self._sink_ip), int(self._sink_port)))
         logger.debug("[Sink:%s] PCM thread exit", self._sink_ip)
-        self.close()
+        close_all_pipes()

@@ -64,7 +64,7 @@ DIV.section-name {
 }
 
 DIV.section INPUT[TYPE="range"] {
-    width: 98%;
+    width: 95%;
     display: inline-block;
 }
 
@@ -91,7 +91,27 @@ SELECT.main-select {
     padding-bottom: 5px;
 }
 
-DIV.select-container {
+DIV.main-select {
+    width: 101%;
+    margin-left: -1%;
+    background:none;
+    width: 101%;
+    background-image: linear-gradient(rgba(60,221,90,.75),rgba(153,153,255,.75));
+    overflow: hidden;
+    padding-left: 2%;
+    font-size: 1.25vw;
+    color: #FFFFFF;
+    border: none;
+    outline: none;
+    padding-bottom: 15px;
+    border-radius: 25px;
+}
+
+SPAN.option {
+    width: 100%;
+    display: inline-block;
+    text-align: left;
+    color: #000000;
 }
 
 select[multiple] option:checked {
@@ -100,11 +120,6 @@ select[multiple] option:checked {
 
 select[multiple]:focus option:checked {
   background-image: linear-gradient(rgba(220,255,220,.75),rgba(0,192,0,.75),rgba(255,255,255,.75));
-}
-
-option.option-disabled {
-    background-color: rgba(55, 55, 55, .5);
-    color: #880000;
 }
 
 option:active, option:focus, option:hover, option:checked:after {
@@ -218,15 +233,32 @@ DIV#shadow {
     display: none;
 }
 
+
+#update_source_button, #update_sink_button, #update_route_button, 
+#update_source_equalizer_button, #update_sink_equalizer_button, #update_route_equalizer_button,
+#enable_disable_source_button, #enable_disable_route_button, #enable_disable_sink_button,
+#listen_to_sink_button
+{
+    display: none;
+}
+
 @media only screen and (max-width: 825px) {
     DIV.section {
         width: 100%;
+        margin-top: 5px;
     }
+
     BUTTON {
         padding-top: 5px;
         padding-bottom: 5px;
     }
-    SELECT.main-select {
+
+    DIV.select-container {
+        font-size: inherit;
+        position: relative;
+    }
+
+    DIV.main-select {
         font-size: inherit;
         position: relative;
     }
@@ -249,3 +281,48 @@ DIV#shadow {
         font-size: 7.8vw;
     }
   }
+
+@media (pointer: coarse)  {
+    #update_source_button, #update_sink_button, #update_route_button, 
+    #update_source_equalizer_button, #update_sink_equalizer_button, #update_route_equalizer_button,
+    #enable_disable_source_button, #enable_disable_route_button, #enable_disable_sink_button,
+    #listen_to_sink_button
+    {
+        display: inline;
+    }
+    span.button-icon {
+        font-size: 24pt;
+    }
+}
+
+SELECT.main-select option {
+    height: 14pt;
+    overflow: hidden;
+    padding-top: -15px;
+    padding-bottom: 10px;
+}
+
+SELECT.main-select option::before {
+    white-space: nowrap;
+    font-size: 14pt;
+}
+
+SELECT.main-select OPTION.option-enabled::before {
+    content: "🎚️⚙️🔊";
+}
+
+SELECT.main-select OPTION.option-disabled::before {
+    content: "🎚️⚙️🔇";
+}
+
+SELECT.main-select OPTION[DATA-TYPE="SinkDescription"].option-enabled::before {
+    content: "🎚️⚙️🔊📻";
+}
+
+SELECT.main-select OPTION[DATA-TYPE="SinkDescription"].option-disabled::before {
+    content: "🎚️⚙️🔇📻";
+}
+
+SPAN.option-label {
+    overflow: visible;
+}

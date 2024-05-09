@@ -10,11 +10,20 @@ function call_api(endpoint, method, data={}, callback=null_callback) {
     xhr.send(data)
 
     xhr.onload = function() {
+        console.log(this.responseText)
+        try {
+            data = JSON.parse(this.responseText);
+            a = data
+            if (data.error != undefined)
+            {
+                alert(data.error);
+            }
+        } catch(error) {}
+
         callback(this.responseText);
-        xhr.close();
     }
 }
-
+a = 0
 function null_callback(response_text) {
 }
 
@@ -125,263 +134,36 @@ function dialog_submit_noclose() {
     dialog_submit(false);
 }
 
-function get_selected_sources() {
-     return [... document.querySelectorAll("SELECT#select-sources OPTION:checked")];
-}
-
-function get_selected_sinks() {
-     return [... document.querySelectorAll("SELECT#select-sinks OPTION:checked")];
-}
-
-function get_selected_routes() {
-     return [... document.querySelectorAll("SELECT#select-routes OPTION:checked")];
-}
-
 function add_source_button() {
     dialog_add_source();
-}
-
-function update_source_button() {
-    selected_sources = get_selected_sources();
-    if (selected_sources.length != 1) {
-        alert("Exactly one source must be selected to edit");
-        return;
-    }
-    if (selected_sources[0].dataset["is_group"] == "True") {
-        alert("Groups can't be edited yet");
-        return;
-    }
-    dialog_update_source(selected_sources[0].dataset["name"])
-}
-
-function update_source_equalizer_button() {
-    selected_sources = get_selected_sources();
-    if (selected_sources.length != 1) {
-        alert("Exactly one source must be selected to edit");
-        return;
-    }
-    dialog_update_source_equalizer(selected_sources[0].dataset["name"])
-}
-
-
-function remove_source_button() {
-    selected_sources = get_selected_sources();
-    if (selected_sources.length != 1) {
-        alert("Exactly one source must be selected to edit");
-    }
-    call_api("/sources/" + selected_sources[0].dataset["name"], "delete", 0, restart_callback)
-}
-
-function disable_source_button() {
-    selected_sources = get_selected_sources();
-    if (selected_sources.length != 1) {
-        alert("Exactly one source must be selected to edit");
-    }
-    call_api("/sources/" + selected_sources[0].dataset["name"] + "/disable", "get", 0, restart_callback)
-}
-
-function enable_source_button() {
-    selected_sources = get_selected_sources();
-    if (selected_sources.length != 1) {
-        alert("Exactly one source must be selected to edit");
-    }
-    call_api("/sources/" + selected_sources[0].dataset["name"] + "/enable", "get", 0, restart_callback)
-}
-
-function add_source_group_button() {
-    selected_sources = get_selected_sources();
-    if (selected_sources.length < 2) {
-        alert("More than one source must be selected to make a group");
-    }
-    name = prompt("Provide a source name")
-    if (!name) {
-        return;
-    }
-    group_members = []
-    for (index in selected_sources) {
-        group_members.push(selected_sources[index].dataset["name"])
-    }
-    group_data = {"name": name, "is_group": true, "group_members": group_members}
-    call_api("/sources/", "post", group_data, restart_callback)
 }
 
 function add_sink_button() {
     dialog_add_sink();
 }
 
-function update_sink_button() {
-    selected_sinks = get_selected_sinks();
-    if (selected_sinks.length != 1) {
-        alert("Exactly one sink must be selected to edit");
-    }
-    if (selected_sinks[0].dataset["is_group"] == "True") {
-        alert("Groups can't be edited yet");
-        return;
-    }
-    dialog_update_sink(selected_sinks[0].dataset["name"])
-}
-
-function update_sink_equalizer_button() {
-    selected_sinks = get_selected_sinks();
-    if (selected_sinks.length != 1) {
-        alert("Exactly one sink must be selected to edit");
-    }
-    dialog_update_sink_equalizer(selected_sinks[0].dataset["name"])
-}
-
-function remove_sink_button() {
-    selected_sinks = get_selected_sinks();
-    if (selected_sinks.length != 1) {
-        alert("Exactly one sink must be selected to edit");
-    }
-    call_api("/sinks/" + selected_sinks[0].dataset["name"], "delete", 0, restart_callback)
-}
-
-function disable_sink_button() {
-    selected_sinks = get_selected_sinks();
-    if (selected_sinks.length != 1) {
-        alert("Exactly one sink must be selected to edit");
-    }
-    call_api("/sinks/" + selected_sinks[0].dataset["name"] + "/disable", "get", 0, restart_callback)
-}
-
-function enable_sink_button() {
-    selected_sinks = get_selected_sinks();
-    if (selected_sinks.length != 1) {
-        alert("Exactly one sink must be selected to edit");
-    }
-    call_api("/sinks/" + selected_sinks[0].dataset["name"] + "/enable", "get", 0, restart_callback)
-}
-
-function add_sink_group_button() {
-    selected_sinks = get_selected_sinks();
-    if (selected_sinks.length < 2) {
-        alert("More than one sink must be selected to make a group");
-    }
-    name = prompt("Provide a sink name")
-    if (!name) {
-        return;
-    }
-    group_members = []
-    for (index in selected_sinks) {
-        group_members.push(selected_sinks[index].dataset["name"])
-    }
-    group_data = {"name": name, "is_group": true, "group_members": group_members}
-    call_api("/sinks", "post", group_data, restart_callback)
-}
-
 function add_route_button() {
     dialog_add_route();
 }
 
-function update_route_button() {
-    selected_routes = get_selected_routes();
-    if (selected_routes.length != 1) {
-        alert("Exactly one route must be selected to edit");
-    }
-    if (selected_routes[0].dataset["is_group"] == "True") {
-        alert("Groups can't be edited yet");
-        return;
-    }
-    dialog_update_route(selected_routes[0].dataset["name"], 0, restart_callback);
-}
-
-function update_route_equalizer_button() {
-    selected_routes = get_selected_routes();
-    if (selected_routes.length != 1) {
-        alert("Exactly one route must be selected to edit");
-    }
-    console.log("a");
-    dialog_update_route_equalizer(selected_routes[0].dataset["name"]);
-}
-
-function remove_route_button() {
-    selected_routes = get_selected_routes();
-    if (selected_routes.length != 1) {
-        alert("Exactly one route must be selected to edit");
-    }
-    call_api("/routes/" + selected_routes[0].dataset["name"], "delete", 0, restart_callback);
-}
-
-function disable_route_button() {
-    selected_routes = get_selected_routes();
-    if (selected_routes.length != 1) {
-        alert("Exactly one route must be selected to edit");
-    }
-    call_api("/routes/" + selected_routes[0].dataset["name"] + "/disable", "get", 0, restart_callback)
-}
-
-function enable_route_button() {
-    selected_routes = get_selected_routes();
-    if (selected_routes.length != 1) {
-        alert("Exactly one route must be selected to edit");
-    }
-    call_api("/routes/" + selected_routes[0].dataset["name"] + "/enable", "get", 0, restart_callback)
-}
-
-function select_sink_change() {
-    var selected_sinks = get_selected_sinks();
-    var volume_element = document.getElementById("sink_volume");
-    if (selected_sinks.length != 1) {
-        volume_element.disabled=true;
-        return
-    }
-    volume_element.disabled = false;
-    volume_level = selected_sinks[0].dataset["volume"];
-    volume_element.value = volume_level * 100
-}
-
+var selected_sink = "";
 function sink_volume_change() {
-    var selected_sinks = get_selected_sinks();
-    if (selected_sinks.length != 1)
-        return
-    var selected_sink = selected_sinks[0];
     var volume_element = document.getElementById("sink_volume");
     var volume_level = volume_element.value / 100;
     selected_sink.dataset["volume"] = volume_level;
     call_api("/sinks/" + selected_sink.dataset["name"] + "/volume/" + volume_level, "get");
 }
 
-function select_source_change() {
-    var selected_sources = get_selected_sources();
-    var volume_element = document.getElementById("source_volume");
-    if (selected_sources.length != 1) {
-        volume_element.disabled=true;
-        return
-    }
-    volume_element.disabled = false;
-    volume_level = selected_sources[0].dataset["volume"];
-    volume_element.value = volume_level * 100
-}
-
+var selected_source = "";
 function source_volume_change() {
-    var selected_sources = get_selected_sources();
-    if (selected_sources.length != 1)
-        return
-    var selected_source = selected_sources[0];
     var volume_element = document.getElementById("source_volume");
     var volume_level = volume_element.value / 100;
     selected_source.dataset["volume"] = volume_level;
     call_api("/sources/" + selected_source.dataset["name"] + "/volume/" + volume_level, "get");
 }
 
-function select_route_change() {
-    var selected_routes = get_selected_routes();
-    var volume_element = document.getElementById("route_volume");
-    if (selected_routes.length != 1) {
-        volume_element.disabled=true;
-        return
-    }
-    volume_element.disabled = false;
-    volume_level = selected_routes[0].dataset["volume"];
-    volume_element.value = volume_level * 100
-}
-
+var selected_route = "";
 function route_volume_change() {
-    var selected_routes = get_selected_routes();
-    if (selected_routes.length != 1)
-        return
-    var selected_route = selected_routes[0];
     var volume_element = document.getElementById("route_volume");
     var volume_level = volume_element.value / 100;
     selected_route.dataset["volume"] = volume_level;
@@ -389,32 +171,23 @@ function route_volume_change() {
 }
 
 window.addEventListener("load", (event) => {
-    select_source_change();
-    select_sink_change();
-    select_route_change();
 });
 
 audio = {};
 audio_playing = false;
 
-function listen_to_sink_button() {
-    checkedoptions = get_selected_sinks()
+function listen_to_sink_button(option) {
     if (audio_playing)
     {
         stop_audio();
-    }
-    else if (checkedoptions.length == 1)
-    {
-        if (checkedoptions[0].dataset["is_group"] != "True")
+    } else {
+        console.log(option)
+        if (option.dataset["is_group"] != "True")
         {
-            start_audio(checkedoptions[0].dataset["ip"]);
+            start_audio(option.dataset["ip"]);
         }
         else
             alert("Can't listen to group, must listen to sink endpoint");
-    }
-    else
-    {
-        alert("Select one sink to listen from");
     }
 }
 
@@ -426,7 +199,6 @@ function start_audio(sink_ip) {
     audiotag.play();
     audiotag.style.display = "inline";
     audio_playing = true;
-    document.getElementById("listen_to_sink_button").innerHTML = "Stop playback";
 }
 
 function stop_audio() {
@@ -434,7 +206,6 @@ function stop_audio() {
     audiotag.pause();
     audiotag.style.display = "none";
     audio_playing = false;
-    document.getElementById("listen_to_sink_button").innerHTML = "Listen to sink";
 }
 
 function show_shadow() {
@@ -445,4 +216,126 @@ function show_shadow() {
 function dismiss_shadow() {
     shadow = document.getElementById("shadow");
     shadow.style.display = "none";
+}
+
+function option_onclick(e) {
+    console.log("option_onclick");
+    var node = e.target;
+    console.log(node);
+    console.log(node.dataset["volume"]);
+    if (node.dataset["type"] == "SourceDescription")
+    {
+        selected_source = node;
+        var volume_element = document.getElementById("source_volume");
+        volume_element.value = parseFloat(selected_source.dataset["volume"]) * 100
+        volume_element.disabled = false;
+    }   
+    else if (node.dataset["type"] == "SinkDescription")
+    {
+        selected_sink = node;
+        var volume_element = document.getElementById("sink_volume");
+        volume_element.value = parseFloat(selected_sink.dataset["volume"]) * 100
+        volume_element.disabled = false;
+    }
+    else if (node.dataset["type"] == "RouteDescription")
+    {
+        selected_route = node;
+        var volume_element = document.getElementById("route_volume");
+        volume_element.value = parseFloat(selected_route.dataset["volume"]) * 100
+        volume_element.disabled = false;
+    }
+}
+
+function enable_disable_source_button() {
+    selected_sources = get_selected_sources();
+    if (selected_sources.length != 1) {
+        alert("Exactly one source must be selected to edit");
+    }
+    var enable_disable = "/enable";
+    var classname = selected_sources[0];
+    if (classname.indexOf("enabled") >= 0)
+    var enable_disable = "/disable";
+    call_api("/sources/" + selected_sources[0].dataset["name"] + enable_disable, "get", 0, restart_callback)   
+}
+
+function equalizer_icon_onclick(e) {
+    var parent_node = e.target.parentNode;
+    if (parent_node.dataset["type"] == "SourceDescription")
+        dialog_update_source_equalizer(parent_node.dataset["name"])
+    else if (parent_node.dataset["type"] == "SinkDescription")
+        dialog_update_sink_equalizer(parent_node.dataset["name"])
+    else if (parent_node.dataset["type"] == "RouteDescription")
+        dialog_update_route_equalizer(parent_node.dataset["name"])
+}
+
+function update_icon_onclick(e) {
+    var parent_node = e.target.parentNode;
+    if (parent_node.dataset["type"] == "SourceDescription")
+        dialog_update_source(parent_node.dataset["name"])
+    else if (parent_node.dataset["type"] == "SinkDescription")
+        dialog_update_sink(parent_node.dataset["name"])
+    else if (parent_node.dataset["type"] == "RouteDescription")
+        dialog_update_route(parent_node.dataset["name"])
+}
+
+function volume_icon_onclick(e) {
+    var parent_node = e.target.parentNode;
+    var endpoint = "";
+    var enabledisable = "";
+    if (parent_node.dataset["type"] == "SourceDescription")
+    {
+        endpoint = "/sources/";
+        if (parent_node.dataset["enabled"] == "True")
+            enabledisable = "/disable";
+        else
+            enabledisable = "/enable";
+    }
+    else if (parent_node.dataset["type"] == "SinkDescription")
+    {
+        endpoint = "/sinks/";
+        if (parent_node.dataset["enabled"] == "True")
+            enabledisable = "/disable";
+        else
+            enabledisable = "/enable";
+    }
+    else if (parent_node.dataset["type"] == "RouteDescription")
+    {
+        endpoint = "/routes/";
+        if (parent_node.dataset["enabled"] == "True")
+            enabledisable = "/disable";
+        else
+            enabledisable = "/enable";
+    }
+            
+    call_api(endpoint + parent_node.dataset["name"] + enabledisable, "get", 0, restart_callback)
+}
+
+function remove_icon_onclick(e) {
+    var parent_node = e.target.parentNode;
+    var endpoint = "";
+    var type = "";
+    if (parent_node.dataset["type"] == "SourceDescription")
+    {
+        endpoint = "/sources/";
+        type = "source";
+    }
+    else if (parent_node.dataset["type"] == "SinkDescription")
+    {
+        endpoint = "/sinks/";
+        type = "sink";
+    }
+    else if (parent_node.dataset["type"] == "RouteDescription")
+    {
+        endpoint = "/routes/";
+        type = "route";
+    }
+            
+    var do_it = confirm("Are you sure you want to remove the " + type + " '" + parent_node.dataset["name"] + "'?");
+    if (do_it) {
+        call_api(endpoint + parent_node.dataset["name"], "delete", 0, restart_callback)
+    }
+}
+
+function listen_icon_onclick(e) {
+    listen_to_sink_button(e.target.parentNode);
 }

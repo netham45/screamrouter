@@ -1,7 +1,8 @@
 """One audio controller per sink, handles taking in sources and tracking ffmpeg"""
 import multiprocessing
 import os
-import sys
+import select
+from subprocess import TimeoutExpired
 import threading
 from ctypes import c_bool
 from queue import Empty
@@ -11,13 +12,12 @@ import src.constants.constants as constants
 from src.api.api_webstream import APIWebStream
 from src.audio.ffmpeg_input_writer import FFMpegInputWriter
 from src.audio.ffmpeg_process_handler import FFMpegHandler
-from src.audio.output_threads import MP3OutputThread, PCMOutputThread
+from src.audio.ffmpeg_output_readers import MP3OutputReader, PCMOutputReader
 from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.configuration import (SinkDescription,
                                                   SourceDescription)
-from src.screamrouter_types.packets import InputQueueEntry
-from src.utils.utils import set_process_name
+from src.utils.utils import close_all_pipes, close_pipe, set_process_name
 
 logger = get_logger(__name__)
 
@@ -30,7 +30,6 @@ class AudioController(multiprocessing.Process):
                  sources: List[SourceDescription], websocket: APIWebStream):
         """Initialize a sink queue"""
         super().__init__(name=f"[Sink {sink_info.name}] Audio Controller")
-        set_process_name(f"Sink{sink_info.name}", "[Sink {sink_info.name}] Audio Controller")
         logger.info("[Sink %s] Loading audio controller", sink_info.name)
         logger.info("[Sink %s] Sources:", sink_info.name)
         for source in sources:
@@ -60,119 +59,47 @@ class AudioController(multiprocessing.Process):
         """Sources this Sink has"""
         self.sources: Dict[str, FFMpegInputWriter] = {}
         """Sources this Sink is playing"""
-        self.__fifo_in_pcm_read: int
+        self.pcm_read_fd: int
         """ffmpeg PCM output read file descriptor"""
-        self.__fifo_in_pcm_write: int
+        self.pcm_write_fd: int
         """ffmpeg PCM output write file descriptor"""
-        self.__fifo_in_pcm_read, self.__fifo_in_pcm_write = os.pipe()
-        self.__fifo_in_mp3_read: int
+        self.pcm_read_fd, self.pcm_write_fd = os.pipe()
+        self.mp3_read_fd: int
         """ffmpeg MP3 output read file descriptor"""
-        self.__fifo_in_mp3_write: int
+        self.mp3_write_fd: int
         """ffmpeg MP3 output write file descriptor"""
-        self.__fifo_in_mp3_read, self.__fifo_in_mp3_write = os.pipe()
+        self.mp3_read_fd, self.mp3_write_fd = os.pipe()
         self.__ffmpeg: FFMpegHandler = FFMpegHandler(self.sink_info.ip,
-                                                     self.__fifo_in_pcm_write,
-                                                     self.__fifo_in_mp3_write,
-                                                     self.__get_open_sources(),
+                                                     self.pcm_write_fd,
+                                                     self.mp3_write_fd,
+                                                     self.get_open_sources(),
                                                      self.__stream_info,
                                                      self.sink_info.equalizer)
         """ffmpeg handler"""
         self.__webstream: APIWebStream = websocket
         """Holds the websock object to copy audio to, passed through to MP3 listener thread"""
-        self.__pcm_thread: PCMOutputThread = PCMOutputThread(self.__fifo_in_pcm_read,
-                                                             self.__fifo_in_pcm_write,
+        self.__pcm_thread: PCMOutputReader = PCMOutputReader(self.pcm_read_fd,
+                                                             self.pcm_write_fd,
                                                              self.sink_info.ip,
                                                              self.sink_info.port,
                                                              self.__stream_info)
         """Holds the thread to listen to PCM output from ffmpeg"""
 
-        self.__mp3_thread: MP3OutputThread = MP3OutputThread(self.__fifo_in_mp3_read,
-                                                             self.__fifo_in_mp3_write,
+        self.__mp3_thread: MP3OutputReader = MP3OutputReader(self.mp3_read_fd,
+                                                             self.mp3_write_fd,
                                                              self.sink_info.ip,
                                                              self.__webstream.queue)
         """Holds the thread to listen to MP3 output from ffmpeg"""
         self.sources_lock: threading.Lock = threading.Lock()
         """This lock ensures the Sources list is only accessed by one thread at a time"""
+        self.controller_read_fd: int
+        """Controller input write file descriptor"""
+        self.controller_write_fd: int
+        """Controller input read file descriptor"""
+        self.controller_read_fd, self.controller_write_fd = os.pipe()
         self.running = multiprocessing.Value(c_bool, True)
         """Multiprocessing-passed flag to determine if the thread is running"""
-        self.queue: multiprocessing.Queue = multiprocessing.Queue()
-        logger.info("[Sink:%s] Queue %s", self.sink_info.ip, self.queue)
-
-        self.start()
-
-    def __get_open_sources(self) -> List[FFMpegInputWriter]:
-        """Build a list of active IPs, exclude ones that aren't open"""
-        active_sources: List[FFMpegInputWriter] = []
-        for _, source in self.sources.items():
-            if source.is_open:
-                active_sources.append(source)
-        return active_sources
-
-    def __check_for_inactive_sources(self) -> None:
-        """Looks for old pipes that are open and closes them"""
-        if self.sources_lock.acquire(timeout=.2):
-            for _, source in self.sources.items():
-                if source.is_open and not source.is_active(constants.SOURCE_INACTIVE_TIME_MS):
-                    logger.info("[Sink:%s][Source:%s] Closing (Timeout = %sms)",
-                                self.sink_info.ip,
-                                source.tag,
-                                constants.SOURCE_INACTIVE_TIME_MS)
-                    source.is_open = False
-                    self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
-            self.sources_lock.release()
-
-    def __update_source_attributes_and_open_source(self,
-                                                   source: FFMpegInputWriter,
-                                                   header: bytes) -> None:
-        """Opens and verifies the target pipe header matches what we have, updates it if not."""
-        if not source.is_open:
-            parsed_scream_header = ScreamHeader(header)
-            if not source.stream_attributes == parsed_scream_header:
-                logger.debug("".join([f"[Sink:{self.sink_info.ip}][Source:{source.tag}] ",
-                                    "Closing source, stream attribute change detected. ",
-                                    f"Was: {source.stream_attributes.bit_depth}-bit ",
-                                    f"at {source.stream_attributes.sample_rate}kHz ",
-                                    f"{source.stream_attributes.channel_layout} layout is now ",
-                                    f"{parsed_scream_header.bit_depth}-bit at ",
-                                    f"{parsed_scream_header.sample_rate}kHz ",
-                                    f"{parsed_scream_header.channel_layout} layout."]))
-                source.stream_attributes = parsed_scream_header
-            source.update_activity()
-            source.is_open = True
-            self.__ffmpeg.reset_ffmpeg(self.__get_open_sources())
-
-    def process_packet_from_queue(self, entry: InputQueueEntry) -> None:
-        """Callback for the queue thread to pass packets for processing"""
-        if entry.tag in self.sources:
-            source = self.sources[entry.tag]
-            self.__update_source_attributes_and_open_source(source, entry.data[:5])
-            source.write(entry.data[5:])  # Write the data to the output fifo
-
-    def stop(self) -> None:
-        """Stops the Sink, closes all handles"""
-        self.running.value = c_bool(False)
-        logger.debug("[Sink:%s] Stopping PCM thread", self.sink_info.ip)
-        self.__pcm_thread.stop()
-        logger.debug("[Sink:%s] Stopping MP3 thread", self.sink_info.ip)
-        self.__mp3_thread.stop()
-        logger.debug("[Sink:%s] Stopping ffmpeg thread", self.sink_info.ip)
-        self.__ffmpeg.stop()
-        logger.debug("[Sink:%s] Stopping sources", self.sink_info.ip)
-        logger.debug("[Sink:%s] Stopping Audio Controller", self.sink_info.ip)
-        self.wait_for_threads_to_stop()
-
-    def wait_for_threads_to_stop(self) -> None:
-        """Waits for threads to stop"""
-        if constants.WAIT_FOR_CLOSES:
-            logger.debug("[Sink:%s] Waiting for Audio Controller Stop", self.sink_info.ip)
-            self.join()
-            logger.debug("[Sink:%s] Audio Controller stopped", self.sink_info.ip)
-            logger.info("[Sink:%s] Stopped", self.sink_info.ip)
-
-    def run(self) -> None:
-        """Constantly checks the queue
-            notifies the Sink Controller callback when there's something in the queue"""
-        logger.debug("[Sink:%s] PID %s Queue %s ", self.sink_info.ip, os.getpid(), self.queue)
+        logger.info("[Sink:%s] Queue %s", self.sink_info.ip, self.controller_write_fd)
         if self.sources_lock.acquire(timeout=1):
             for source in self.__controller_sources:
                 tag: str = ""
@@ -181,22 +108,89 @@ class AudioController(multiprocessing.Process):
                         tag = source.tag
                 else:
                     tag = str(source.ip)
-                self.sources[tag] = FFMpegInputWriter(tag,
-                                                        self.sink_info.ip,
-                                                        source)
+                self.sources[tag] = FFMpegInputWriter(tag, self.sink_info.ip, source)
             self.sources_lock.release()
         else:
             raise TimeoutError("Failed to acquire sources lock")
-        while self.running.value:
-            if os.getppid() == 1:
-                logger.warning("Exiting because parent pid is 1")
-                sys.exit(3)
-            try:
-                self.__check_for_inactive_sources()
-                self.process_packet_from_queue(self.queue.get(timeout=.3))
-            except Empty:
-                pass
+        self.start()
+
+    def get_open_sources(self) -> List[FFMpegInputWriter]:
+        """Build a list of active IPs, exclude ones that aren't open"""
+        active_sources: List[FFMpegInputWriter] = []
+        for _, source in self.sources.items():
+            if source.is_open.value:
+                active_sources.append(source)
+        return active_sources
+
+    def process_packet_from_queue(self, entry: bytes) -> None:
+        """Callback for the queue thread to pass packets for processing"""
+        try:
+            tag = entry[:constants.TAG_MAX_LENGTH].decode("ascii").split("\x00")[0]
+        except UnicodeDecodeError as exc:
+            logger.debug("Error decoding packet, discarding. Exception: %s", exc)
+            return
+
+        data: bytes = entry[constants.TAG_MAX_LENGTH:]
+        if tag in self.sources:
+            source = self.sources[tag]
+            source.write(data)  # Write the data to the output fifo
+
+    def stop(self) -> None:
+        """Stops the Sink, closes all handles"""
+        logger.debug("[Sink:%s] Stopping PCM thread", self.sink_info.ip)
+        self.__pcm_thread.stop()
+        logger.debug("[Sink:%s] Stopping MP3 thread", self.sink_info.ip)
+        self.__mp3_thread.stop()
+        logger.debug("[Sink:%s] Stopping ffmpeg thread", self.sink_info.ip)
+        self.__ffmpeg.stop()
+        logger.debug("[Sink:%s] Stopping sources", self.sink_info.ip)
         for _, source in self.sources.items():
             logger.debug("[Sink:%s] Stopping source %s", self.sink_info.ip, source.name)
             source.stop()
             logger.debug("[Sink:%s] Stopped source %s", self.sink_info.ip, source.name)
+        logger.debug("[Sink:%s] Stopping Audio Controller", self.sink_info.ip)
+        self.running.value = c_bool(False)
+
+        if constants.WAIT_FOR_CLOSES:
+            logger.debug("[Sink:%s] Waiting for Audio Controller Stop", self.sink_info.ip)
+            try:
+                self.join(5)
+            except TimeoutExpired:
+                logger.warning("Audio Controller failed to close")
+            logger.debug("[Sink:%s] Audio Controller stopped", self.sink_info.ip)
+            logger.info("[Sink:%s] Stopped", self.sink_info.ip)
+        close_pipe(self.mp3_read_fd)
+        close_pipe(self.mp3_write_fd)
+        close_pipe(self.pcm_read_fd)
+        close_pipe(self.pcm_write_fd)
+        close_pipe(self.controller_read_fd)
+        close_pipe(self.controller_write_fd)
+
+    def wants_restart(self) -> bool:
+        """Returns true of any of the sources want a restart"""
+        flag: bool = False
+        for source in self.sources.values():
+            if source.wants_restart.value:
+                source.wants_restart.value = c_bool(False)
+                flag = True
+        return flag
+
+    def run(self) -> None:
+        """This loop checks the queue
+            notifies the Sink Controller callback when there's something in the queue"""
+        logger.debug("[Sink:%s] PID %s Write fd %s ",
+                     self.sink_info.ip, os.getpid(), self.controller_write_fd)
+        set_process_name(f"Sink{self.sink_info.name}",
+                         f"[Sink {self.sink_info.name}] Audio Controller")
+
+        while self.running.value:
+            ready = select.select([self.controller_read_fd], [], [], .3)
+            if ready[0]:
+                try:
+                    data = os.read(self.controller_read_fd, constants.PACKET_SIZE + constants.TAG_MAX_LENGTH)
+                    self.process_packet_from_queue(data)
+                except Empty:
+                    pass
+            if self.wants_restart():
+                self.__ffmpeg.reset_ffmpeg(self.get_open_sources())
+        close_all_pipes()

@@ -1,37 +1,44 @@
 """ScreamRouter Logger"""
 import logging
+import logging.handlers
 import os
+import sys
 
 import src.constants.constants as constants
 
+if not os.path.exists(constants.LOGS_DIR):
+    os.makedirs(constants.LOGS_DIR)
+
+FORMATTER = logging.Formatter("".join(['[%(levelname)s:%(asctime)s]',
+                                       '[%(filename)s:%(lineno)s:%(process)s]%(message)s']))
+
+if constants.LOG_TO_FILE:
+    MAIN_LOGGER = logging.getLogger()
+
+    all_rotating_handler = logging.handlers.RotatingFileHandler(f"{constants.LOGS_DIR}all.log",
+                                    maxBytes=10000000, backupCount=constants.LOG_ENTRIES_TO_RETAIN)
+    all_rotating_handler.setLevel(logging.INFO)
+    all_rotating_handler.setFormatter(FORMATTER)
+    MAIN_LOGGER.addHandler(all_rotating_handler)
+    all_rotating_handler.doRollover()
 
 def get_logger(name: str) -> logging.Logger:
     """Creates a pre-configured logger"""
-    logging.basicConfig()
-    if not os.path.exists(constants.LOGS_DIR):
-        os.makedirs(constants.LOGS_DIR)
-    if constants.CLEAR_LOGS_ON_RESTART:
-        for filename in os.listdir(constants.LOGS_DIR):
-            os.remove(f"{constants.LOGS_DIR}/{filename}")
     logger = logging.getLogger(name)
-    logger.setLevel(constants.CONSOLE_LOG_LEVEL)
+    logger.propagate = False
 
-    while len(logger.handlers) > 0:
-        logger.removeHandler(logger.handlers[0])
+    console = logging.StreamHandler(sys.stderr)
+    console.setLevel(constants.CONSOLE_LOG_LEVEL)
+    console.setFormatter(FORMATTER)
+    logger.addHandler(console)
 
     if constants.LOG_TO_FILE:
-        file_log_formatter = logging.Formatter(
-            '[%(levelname)s:%(asctime)s][%(filename)s:%(lineno)s:%(process)s]%(message)s'
-        )
+        rotating_handler = logging.handlers.RotatingFileHandler(f"{constants.LOGS_DIR}{name}.log",
+                                    maxBytes=100000, backupCount=constants.LOG_ENTRIES_TO_RETAIN)
+        rotating_handler.setLevel(logging.DEBUG)
+        rotating_handler.setFormatter(FORMATTER)
 
-        file_handler = logging.FileHandler(f"{constants.LOGS_DIR}{name}.log", delay=True)
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(file_log_formatter)
 
-        all_files_file_handler = logging.FileHandler(f"{constants.LOGS_DIR}all.log", delay=True)
-        all_files_file_handler.setLevel(logging.INFO)
-        all_files_file_handler.setFormatter(file_log_formatter)
-
-        logger.addHandler(all_files_file_handler)
-        logger.addHandler(file_handler)
+        logger.addHandler(rotating_handler)
+        rotating_handler.doRollover()
     return logger
