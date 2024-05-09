@@ -22,6 +22,7 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * Can use ffmpeg to delay any sink, route, source, or group so sinks line up better
 * Can adjust equalization for any sink, route, source, or group
 * Contains a plugin system to easily allow additional sources to be added
+* Milkdrop Visualizations thanks to the browser-based [Butterchurn](https://github.com/jberg/butterchurn) project
 * There are playback sinks available for common OSes such as [Windows](https://github.com/duncanthrax/scream/tree/master/Receivers/dotnet-windows/ScreamReader), [Linux](https://github.com/duncanthrax/scream/tree/master/Receivers/unix), and [Android](https://github.com/martinellimarco/scream-android/tree/90d1364ee36dd12ec9d7d2798926150b370030f3), as well as some embedded devices such as [the ESP32](http://tomeko.net/projects/esp32_rtp_pager/).
 
 ![Screenshot of ScreamRouter Equalizer](/images/Equalizer.png)

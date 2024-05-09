@@ -2,97 +2,57 @@
 {%- import "imports/buttons.html.jinja" as buttons -%}
 <!DOCTYPE html>
 <HTML>
-    <HEAD>
-        <META NAME="viewport" CONTENT="width=device-width, initial-scale=1" />
-        <TITLE>ScreamRouter</TITLE>
-        <SCRIPT TYPE="text/javascript" SRC="{{url_for('site_javascript')}}"></SCRIPT>
-        <LINK REL="stylesheet" TYPE="text/css" HREF="{{url_for('site_css')}}">
-    </HEAD>
-    <BODY>
+
+<HEAD>
+    <META NAME="viewport" CONTENT="width=device-width, initial-scale=1" />
+    <TITLE>ScreamRouter</TITLE>
+    <LINK REL="stylesheet" TYPE="text/css" HREF="{{url_for('site_css')}}">
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="description" content="Butterchurn Demo Example">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <script type="text/javascript" src="https://unpkg.com/lodash"></script>
+    <script type="text/javascript" src="https://unpkg.com/butterchurn"></script>
+    <script type="text/javascript" src="https://unpkg.com/butterchurn-presets"></script>
+    <script type="text/javascript" src="https://unpkg.com/butterchurn-presets/lib/butterchurnPresetsExtra.min.js"></script>
+
+    <link rel="stylesheet" href="https://unpkg.com/normalize.css/normalize.css" />
+    <SCRIPT TYPE="text/javascript" SRC="{{url_for('site_javascript')}}"></SCRIPT>
+</HEAD>
+
+<BODY>
     <DIV ID="randomcontainer4" CLASS="title">
         <DIV CLASS="blur">
             ScreamRouter
-        <AUDIO ID="audio" PRELOAD="metadata" CONTROLS STYLE="display: none;"></audio>
+            <AUDIO ID="audio" PRELOAD="metadata" CONTROLS STYLE="display: none;"></audio>
+            <AUDIO ID="audio_visualizer" PRELOAD="metadata" CONTROLS STYLE="display: none;"></audio>
         </DIV>
     </DIV>
-        <DIV ID="randomcontainer1" CLASS="section">
+    <DIV ID="reload">
+        {%- import "index_body.html.jinja" as index_body %}
+        {{ index_body.main_body(sources, sinks, routes) }}
+    </DIV>
+    <DIV ID="shadow" ONCLICK="dialog_cancel()">
+    </DIV>
+    <DIV ID="dialog">
+    </DIV>
+    <DIV ID="randomcontainer5">
+        <div id="mainWrapper" CLASS="section">
             <DIV CLASS="blur">
-                <DIV CLASS="section-name">
-                    Sources
-                </DIV>
-                <DIV CLASS="section-buttons select-container">
-                    <INPUT TYPE="range" ID="source_volume" ONCHANGE="source_volume_change()" DISABLED>
-                    {{- buttons.button("add_source_button", "➕", "section-button")}}
-                    {{- buttons.button("add_source_group_button", "Add Group", "section-button")}}
-                    <DIV ID="select-sources" CLASS="main-select" SIZE="{{sources | length}}" ONCHANGE="select_source_change()" MULTIPLE>
-                        {%- set options = namespace(options=[]) %}
-                        {%- for source in sources %}
-                            {{- source.type }}
-                            {%- set enabled_class_str = "enabled" if source.enabled else "disabled" %}
-                            {%- set _option = {"value": source.name,
-                                            "label": source.name,
-                                            "class": "option option-%s" % enabled_class_str,
-                                            "data": source} %}
-                            {%- set options.options = options.options + [_option] %}
-                        {%- endfor %}
-                        {{- selects.make_multiple_options(options.options, sources) }}
-                    </DIV>
-                </DIV>
-            </DIV>
+                <div id="presetControls">
+                    <div>Preset: <select id="presetSelect" ONCHANGE="presetSelect_change(e)"></select></div>
+                    <div>Cycle:
+                        <input type="checkbox" id="presetCycle" ONCHANGE="presetCycle_change(e)" checked></input>
+                        <input type="number" id="presetCycleLength" step="1" value="15" min="1" ONCHANGE="presetCycleLength_change(e)"></input>
+                    </div>
+                    <div>Random: <input type="checkbox" id="presetRandom" ONCHANGE="presetRandom_change(e)" checked></input></div>
+                </div>
+                <canvas id='canvas' width="3840" height="2160" ONCLICK="canvas_click()" tabindex="0" ONKEYDOWN="canvas_onkeydown(event)" >
+                </canvas>
+            </div>
         </DIV>
-        <DIV ID="randomcontainer2" CLASS="section">
-            <DIV CLASS="blur">
-                <DIV CLASS="section-name">
-                    Routes
-                </DIV>
-                <DIV CLASS="section-buttons select-container">
-                    <INPUT TYPE="range" ID="route_volume" ONCHANGE="route_volume_change()" DISABLED>
-                    {{- buttons.button("add_route_button", "➕", "section-button")}}
-                    <DIV ID="select-routes" CLASS="main-select" SIZE="{{routes | length}}" ONCHANGE="select_route_change()" MULTIPLE>
-                        {%- set options = namespace(options=[]) %}
-                        {%- for route in routes %}
-                            {{- route.type }}
-                            {%- set enabled_class_str = "enabled" if route.enabled else "disabled" %}
-                            {%- set _option = {"value": route.name,
-                                            "label": "%s [%s->%s]" % (route.name,
-                                                                            route.source,
-                                                                            route.sink),
-                                            "class": "option option-%s" % enabled_class_str,
-                                            "data": route} %}
-                            {%- set options.options = options.options + [_option] %}
-                        {%- endfor %}
-                        {{- selects.make_multiple_options(options.options, routes) }}
-                    </DIV>
-                </DIV>
-            </DIV>
-        </DIV>
-        <DIV ID="randomcontainer3" CLASS="section">
-            <DIV CLASS="blur">
-                <DIV CLASS="section-name">
-                    Sinks
-                </DIV>
-                <DIV CLASS="section-buttons select-container">
-                    <INPUT TYPE="range" ID="sink_volume" ONCHANGE="sink_volume_change()" DISABLED>
-                    {{- buttons.button("add_sink_button", "➕", "section-button")}}
-                    {{- buttons.button("add_sink_group_button", "Add Group", "section-button")}}
-                    <DIV ID="select-sinks" CLASS="main-select" SIZE="{{sinks | length}}" ONCHANGE="select_sink_change()" MULTIPLE>
-                        {%- set options = namespace(options=[]) %}
-                        {%- for sink in sinks %}
-                            {%- set enabled_class_str = "enabled" if sink.enabled else "disabled" %}
-                            {%- set _option = {"value": sink.name,
-                                            "label": sink.name,
-                                            "class": "option option-%s" % enabled_class_str,
-                                            "data": sink} %}
-                            {%- set options.options = options.options + [_option] %}
-                        {%- endfor %}
-                        {{- selects.make_multiple_options(options.options, sinks) }}
-                    </DIV>
-                </DIV>
-            </DIV>
-        </DIV>
-        <DIV ID="shadow" ONCLICK="dialog_cancel()">
-        </DIV>
-        <DIV ID="dialog">
-        </DIV>
-    </BODY>
+    </DIV>
+</BODY>
+
 </HTML>

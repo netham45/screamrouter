@@ -1,24 +1,23 @@
 
-function call_api(endpoint, method, data={}, callback=null_callback) {
+function call_api(endpoint, method, data = {}, callback = null_callback) {
     const xhr = new XMLHttpRequest();
     xhr.open(method, endpoint, true);
     xhr.getResponseHeader("Content-type", "application/json");
-    data=JSON.stringify(data)
+    data = JSON.stringify(data)
     if (method.toLowerCase() == "post" || method.toLowerCase() == "put")
         xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
 
     xhr.send(data)
 
-    xhr.onload = function() {
+    xhr.onload = function () {
         console.log(this.responseText)
         try {
             data = JSON.parse(this.responseText);
             a = data
-            if (data.error != undefined)
-            {
+            if (data.error != undefined) {
                 alert(data.error);
             }
-        } catch(error) {}
+        } catch (error) { }
 
         callback(this.responseText);
     }
@@ -28,7 +27,14 @@ function null_callback(response_text) {
 }
 
 function restart_callback(response_text) {
-    location.reload();
+    call_api("/body", "get", {}, restart_callback_2)
+}
+
+function restart_callback_2(response_text) {
+    var reload_div = document.getElementById("reload");
+    console.log(response_text);
+    reload_div.innerHTML = "";
+    reload_div.innerHTML = response_text;
 }
 
 function show_dialog_callback(response_text) {
@@ -175,15 +181,14 @@ window.addEventListener("load", (event) => {
 
 audio = {};
 audio_playing = false;
+visual_playing = false;
 
 function listen_to_sink_button(option) {
-    if (audio_playing)
-    {
+    if (audio_playing) {
         stop_audio();
     } else {
         console.log(option)
-        if (option.dataset["is_group"] != "True")
-        {
+        if (option.dataset["is_group"] != "True") {
             start_audio(option.dataset["ip"]);
         }
         else
@@ -191,20 +196,40 @@ function listen_to_sink_button(option) {
     }
 }
 
+function visualizer_icon_onclick(e) {
+    option = e.target.parentNode;
+    if (visual_playing) {
+        stop_visualizer();
+    } else {
+        console.log(option)
+        if (option.dataset["is_group"] != "True") {
+            start_visualizer(option.dataset["ip"]);
+        }
+        else
+            alert("Can't listen to group, must listen to sink endpoint");
+    }
+}
+
+already_connected = false;
+visual_already_connected = false;
+
+
 function start_audio(sink_ip) {
     audiotag = document.getElementById("audio")
     audiotag.pause();
-    audiotag.src = "";
+    audiotag.src = ""
     audiotag.src = 'http://192.168.3.114:8080/stream/' + sink_ip + '/';
     audiotag.play();
     audiotag.style.display = "inline";
     audio_playing = true;
+
 }
 
 function stop_audio() {
     audiotag = document.getElementById("audio")
     audiotag.pause();
     audiotag.style.display = "none";
+    document.getElementById("mainWrapper").style.display = "none";
     audio_playing = false;
 }
 
@@ -223,22 +248,19 @@ function option_onclick(e) {
     var node = e.target;
     console.log(node);
     console.log(node.dataset["volume"]);
-    if (node.dataset["type"] == "SourceDescription")
-    {
+    if (node.dataset["type"] == "SourceDescription") {
         selected_source = node;
         var volume_element = document.getElementById("source_volume");
         volume_element.value = parseFloat(selected_source.dataset["volume"]) * 100
         volume_element.disabled = false;
-    }   
-    else if (node.dataset["type"] == "SinkDescription")
-    {
+    }
+    else if (node.dataset["type"] == "SinkDescription") {
         selected_sink = node;
         var volume_element = document.getElementById("sink_volume");
         volume_element.value = parseFloat(selected_sink.dataset["volume"]) * 100
         volume_element.disabled = false;
     }
-    else if (node.dataset["type"] == "RouteDescription")
-    {
+    else if (node.dataset["type"] == "RouteDescription") {
         selected_route = node;
         var volume_element = document.getElementById("route_volume");
         volume_element.value = parseFloat(selected_route.dataset["volume"]) * 100
@@ -254,8 +276,8 @@ function enable_disable_source_button() {
     var enable_disable = "/enable";
     var classname = selected_sources[0];
     if (classname.indexOf("enabled") >= 0)
-    var enable_disable = "/disable";
-    call_api("/sources/" + selected_sources[0].dataset["name"] + enable_disable, "get", 0, restart_callback)   
+        var enable_disable = "/disable";
+    call_api("/sources/" + selected_sources[0].dataset["name"] + enable_disable, "get", 0, restart_callback)
 }
 
 function equalizer_icon_onclick(e) {
@@ -282,31 +304,28 @@ function volume_icon_onclick(e) {
     var parent_node = e.target.parentNode;
     var endpoint = "";
     var enabledisable = "";
-    if (parent_node.dataset["type"] == "SourceDescription")
-    {
+    if (parent_node.dataset["type"] == "SourceDescription") {
         endpoint = "/sources/";
         if (parent_node.dataset["enabled"] == "True")
             enabledisable = "/disable";
         else
             enabledisable = "/enable";
     }
-    else if (parent_node.dataset["type"] == "SinkDescription")
-    {
+    else if (parent_node.dataset["type"] == "SinkDescription") {
         endpoint = "/sinks/";
         if (parent_node.dataset["enabled"] == "True")
             enabledisable = "/disable";
         else
             enabledisable = "/enable";
     }
-    else if (parent_node.dataset["type"] == "RouteDescription")
-    {
+    else if (parent_node.dataset["type"] == "RouteDescription") {
         endpoint = "/routes/";
         if (parent_node.dataset["enabled"] == "True")
             enabledisable = "/disable";
         else
             enabledisable = "/enable";
     }
-            
+
     call_api(endpoint + parent_node.dataset["name"] + enabledisable, "get", 0, restart_callback)
 }
 
@@ -314,22 +333,19 @@ function remove_icon_onclick(e) {
     var parent_node = e.target.parentNode;
     var endpoint = "";
     var type = "";
-    if (parent_node.dataset["type"] == "SourceDescription")
-    {
+    if (parent_node.dataset["type"] == "SourceDescription") {
         endpoint = "/sources/";
         type = "source";
     }
-    else if (parent_node.dataset["type"] == "SinkDescription")
-    {
+    else if (parent_node.dataset["type"] == "SinkDescription") {
         endpoint = "/sinks/";
         type = "sink";
     }
-    else if (parent_node.dataset["type"] == "RouteDescription")
-    {
+    else if (parent_node.dataset["type"] == "RouteDescription") {
         endpoint = "/routes/";
         type = "route";
     }
-            
+
     var do_it = confirm("Are you sure you want to remove the " + type + " '" + parent_node.dataset["name"] + "'?");
     if (do_it) {
         call_api(endpoint + parent_node.dataset["name"], "delete", 0, restart_callback)
@@ -338,4 +354,222 @@ function remove_icon_onclick(e) {
 
 function listen_icon_onclick(e) {
     listen_to_sink_button(e.target.parentNode);
+}
+
+canvas_mode = 0;
+
+function canvas_click() {
+    if (canvas_mode == 0) {
+        var canvas_holder = document.getElementById("mainWrapper");
+        var canvas = document.getElementById("canvas");
+        canvas_holder.style.width = "100%";
+        canvas_holder.style.height = "100%";
+        canvas.style.width = "100%";
+        canvas.style.height = "100%";
+        canvas.style.top = 0;
+        canvas.style.left = 0;
+        canvas_holder.style.position = "absolute";
+        canvas.style.position = "absolute";
+        document.getElementsByTagName("body")[0].requestFullscreen()
+        //canvas.width = window.innerWidth;
+        //canvas.height = window.innerHeight;
+        canvas_holder.style.zIndex = 50;
+    }
+    else if (canvas_mode == 1) {
+        var canvas = document.getElementById("canvas");
+        var canvas_holder = document.getElementById("mainWrapper");
+        canvas.style.width = "100%";
+        canvas.style.height = "100%";
+        canvas.style.top = 0;
+        canvas.style.left = 0;
+        canvas.style.position = "absolute";
+
+        canvas_holder.style.zIndex = -50;
+        if (document.fullscreen)
+            document.exitFullscreen();
+    }
+    else if (canvas_mode == 2) {
+        var canvas_holder = document.getElementById("mainWrapper");
+        var canvas = document.getElementById("canvas");
+        canvas.style.position = "relative";
+        canvas_holder.style.position = "relative";
+        canvas.top = 300;
+        canvas.style.width = "720px";
+        canvas.style.height = "480px";
+        canvas_holder.style.width = "";
+        canvas_holder.style.height = "";
+        //canvas.width = 720;
+        //canvas.height = 480;
+        canvas_holder.style.zIndex = 0;
+    }
+
+    canvas_mode = canvas_mode + 1
+    if (canvas_mode > 2)
+        canvas_mode = 0;
+    console.log(canvas_mode);
+
+
+}
+
+
+visualizer = null;
+rendering = false;
+audioContext = null;
+sourceNode = null;
+delayedAudible = null;
+cycleInterval = null;
+presets = {};
+presetKeys = [];
+presetIndexHist = [];
+presetIndex = 0;
+presetCycle = true;
+presetCycleLength = 15000;
+presetRandom = true;
+canvas = document.getElementById('canvas');
+
+function connectToAudioAnalyzer(sourceNode) {
+    if (delayedAudible) {
+        delayedAudible.disconnect();
+    }
+
+    delayedAudible = audioContext.createDelay();
+    delayedAudible.delayTime.value = 0.26;
+
+    sourceNode.connect(delayedAudible)
+    //delayedAudible.connect(audioContext.destination);
+
+    visualizer.connectAudio(delayedAudible);
+}
+
+function startRenderer() {
+    requestAnimationFrame(() => startRenderer());
+    visualizer.render();
+}
+
+function nextPreset(blendTime = 5.7) {
+    presetIndexHist.push(presetIndex);
+
+    var numPresets = presetKeys.length;
+    if (presetRandom) {
+        presetIndex = Math.floor(Math.random() * presetKeys.length);
+    } else {
+        presetIndex = (presetIndex + 1) % numPresets;
+    }
+
+    visualizer.loadPreset(presets[presetKeys[presetIndex]], blendTime);
+    document.getElementById('presetSelect').children[presetIndex].value;
+}
+
+function prevPreset(blendTime = 5.7) {
+    var numPresets = presetKeys.length;
+    if (presetIndexHist.length > 0) {
+        presetIndex = presetIndexHist.pop();
+    } else {
+        presetIndex = ((presetIndex - 1) + numPresets) % numPresets;
+    }
+
+    visualizer.loadPreset(presets[presetKeys[presetIndex]], blendTime);
+    document.getElementById('presetSelect').children[presetIndex].value;
+}
+
+function restartCycleInterval() {
+    if (cycleInterval) {
+        clearInterval(cycleInterval);
+        cycleInterval = null;
+    }
+
+    if (presetCycle) {
+        cycleInterval = setInterval(() => nextPreset(2.7), presetCycleLength);
+    }
+}
+
+function canvas_onkeydown(e) {
+    if (e.keyCode === 32 || e.keyCode === 39) {
+        nextPreset();
+    } else if (e.keyCode === 8 || e.keyCode === 37) {
+        prevPreset();
+    } else if (e.keyCode === 72) {
+        nextPreset(0);
+    } else if (e.keyCode === 70) {
+        canvas_click();
+    }
+}
+
+
+function preSelect_change(e) {
+    presetIndexHist.push(presetIndex);
+    presetIndex = parseInt(e.target.value);
+    visualizer.loadPreset(presets[presetKeys[presetIndex]], 5.7);
+}
+
+function presetCycle_change(e) {
+    presetCycle = e.target.checked;
+    restartCycleInterval();
+}
+function presetCycleLength_change(e) {
+    presetCycleLength = parseInt(e.target.value * 1000);
+    restartCycleInterval();
+}
+
+function presetRandom_change(e) {
+    presetRandom = e.target.checked;
+}
+
+function initPlayer() {
+    audioContext = new AudioContext();
+
+    presets = {};
+    if (window.butterchurnPresets) {
+        Object.assign(presets, butterchurnPresets.getPresets());
+    }
+    if (window.butterchurnPresetsExtra) {
+        Object.assign(presets, butterchurnPresetsExtra.getPresets());
+    }
+    presets = _(presets).toPairs().sortBy(([k, v]) => k.toLowerCase()).fromPairs().value();
+    presetKeys = _.keys(presets);
+    presetIndex = Math.floor(Math.random() * presetKeys.length);
+
+    presetSelect = document.getElementById('presetSelect');
+    for (var i = 0; i < presetKeys.length; i++) {
+        var opt = document.createElement('option');
+        opt.innerHTML = presetKeys[i].substring(0, 60) + (presetKeys[i].length > 60 ? '...' : '');
+        opt.value = i;
+        presetSelect.appendChild(opt);
+    }
+    canvas = document.getElementById('canvas');
+    visualizer = butterchurn.default.createVisualizer(audioContext, canvas, {
+        width: 3840,
+        height: 2160,
+        pixelRatio: window.devicePixelRatio || 1,
+        textureRatio: 1,
+    });
+    nextPreset(0);
+    cycleInterval = setInterval(() => nextPreset(2.7), presetCycleLength);
+}
+
+function start_visualizer(sink_ip) {
+    visualtag = document.getElementById("audio_visualizer")
+    visualtag.pause();
+    visualtag.src = "";
+    visualtag.src = 'http://192.168.3.114:8080/stream/' + sink_ip + '/';
+    visualtag.play();
+    visual_playing = true;
+    if (!visual_already_connected) {
+        initPlayer();
+        var source = audioContext.createMediaElementSource(visualtag);
+        visual_already_connected = true;
+        source.disconnect(audioContext);
+        startRenderer()
+        connectToAudioAnalyzer(source);
+    }
+    document.getElementById("mainWrapper").style.display = "inherit";
+}
+
+function stop_visualizer() {
+    visualtag = document.getElementById("audio_visualizer")
+    visualtag.pause();
+
+    document.getElementById("mainWrapper").style.display = "none";
+    var source = audioContext.createMediaElementSource(visualtag);
+    visual_playing = false;
 }

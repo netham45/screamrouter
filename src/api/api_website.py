@@ -30,6 +30,7 @@ class APIWebsite():
         self.screamrouter_configuration:ConfigurationManager = screamrouter_configuration
         """ScreamRouter Configuration Manager"""
         self.main_api.get("/", tags=["Site"])(self.site_index)
+        self.main_api.get("/body", tags=["Site"])(self.site_index_body)
         self.main_api.get(f"{SITE_PREFIX}/screamrouter.js",
                           tags=["Site Resources"],)(self.site_javascript)
         self.main_api.get(f"{SITE_PREFIX}/screamrouter.css",
@@ -79,6 +80,11 @@ class APIWebsite():
     def site_index(self, request: Request):
         """Index page"""
         return self.return_template(request, "index.html.jinja")
+
+    def site_index_body(self, request: Request):
+        """Index page"""
+        return self.return_template(request, "index_body.html.jinja")
+
 
     def site_javascript(self, request: Request):
         """Javascript page"""

@@ -7,7 +7,7 @@ DIV#dialog {
     height: auto;
     top: 12.5%;
     margin-left: -16.5%;
-    background: linear-gradient(-45deg, rgba(0,10,0,.35), rgba(0,200,0,.7));
+    background: linear-gradient(-45deg, rgba(0,10,0,.15), rgba(0,200,0,.4));
     border-radius: 30px;
     display: none;
     backdrop-filter: blur(5px);
@@ -34,7 +34,7 @@ DIV.title {
     width: 100%;
     overflow: hidden;
     border-collapse: collapse;
-    background-color: #004400;
+    background-color: rgba(00,120,00,.2);
     border-radius: 25px;
     background-size: 60vmin 60vmin;
     display: inline-block;
@@ -44,7 +44,7 @@ DIV.title {
 DIV.section {
     overflow: hidden;
     border-collapse: collapse;
-    background-color: #004400;
+    background-color: rgba(00,120,00,.2);
     border-radius: 25px;
     background-size: 60vmin 60vmin;
     width: 33%;
@@ -81,7 +81,7 @@ SELECT.main-select {
     margin-left: -1%;
     background:none;
     width: 101%;
-    background-image: linear-gradient(rgba(60,221,90,.75),rgba(153,153,255,.75));
+    background-image: linear-gradient(rgba(60,221,90,.45),rgba(153,153,255,.45));
     overflow: hidden;
     padding-left: 2%;
     font-size: 1.25vw;
@@ -96,7 +96,7 @@ DIV.main-select {
     margin-left: -1%;
     background:none;
     width: 101%;
-    background-image: linear-gradient(rgba(60,221,90,.75),rgba(153,153,255,.75));
+    background-image: linear-gradient(rgba(60,221,90,.45),rgba(153,153,255,.45));
     overflow: hidden;
     padding-left: 2%;
     font-size: 1.25vw;
@@ -128,12 +128,14 @@ option:active, option:focus, option:hover, option:checked:after {
 
 
 HTML, BODY {
-    height: 99%;
+    height: 100%;
     background-color: #000100;
     font-family: "Arial";
     user-select: none; /* Standard */
     overflow: auto;
     text-align: center;
+    position: relative;
+    z-index: -500;
 }
 
 
@@ -163,8 +165,16 @@ DIV#randomcontainer4 {
     border-radius: 25px;
 }
 
+DIV#randomcontainer5 {
+    background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;
+    overflow: hidden;
+    border-radius: 25px;
+    float: left;
+}
+
 DIV.blur {
-    backdrop-filter: blur(30px);
+    backdrop-filter: blur(15px);
     height: 100%;
     width: 100%;
     border-collapse: collapse;
@@ -325,4 +335,26 @@ SELECT.main-select OPTION[DATA-TYPE="SinkDescription"].option-disabled::before {
 
 SPAN.option-label {
     overflow: visible;
+}
+
+DIV#presetControls {
+    padding-top: 15px;
+    color: #000000;
+    font-size: 14pt;
+    text-shadow: 0 0 20px #fff, 0 0 30px #AA7777, 0 0 40px #AA7777, 0 0 50px #AA7777, 0 0 60px #AA7777, 0 0 70px #AA7777, 0 0 80px #AA7777;
+    text-align: left;
+}
+
+DIV#mainWrapper {
+    display: none;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+}
+
+canvas#canvas {  
+    bottom: 0px;
+    margin-bottom: -5px;
+    width: 720px;
+    height: 480px;
 }
