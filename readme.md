@@ -24,8 +24,9 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * Contains a plugin system to easily allow additional sources to be added
 * Milkdrop Visualizations thanks to the browser-based [Butterchurn](https://github.com/jberg/butterchurn) project
 * There are playback sinks available for common OSes such as [Windows](https://github.com/duncanthrax/scream/tree/master/Receivers/dotnet-windows/ScreamReader), [Linux](https://github.com/duncanthrax/scream/tree/master/Receivers/unix), and [Android](https://github.com/martinellimarco/scream-android/tree/90d1364ee36dd12ec9d7d2798926150b370030f3), as well as some embedded devices such as [the ESP32](http://tomeko.net/projects/esp32_rtp_pager/).
+* Embedded noVNC for controlling remote computers playing music
 
-![Screenshot of ScreamRouter Equalizer](/images/Equalizer.png)
+![Screenshot of ScreamRouter noVNC](/images/noVNC.png)
 
 ### Use Cases
 * Mixing one or many Scream Sources to one or many Scream Receivers for a whole-house audio setup
@@ -129,6 +130,8 @@ Each Source, Route, and Sink has a volume control. The default volume of 1 is un
 
 ### Equalizer
 Much like the volume, Source, Route, and Sink has an equalizer. The default equalizer is 1, it has a minimum of 0 and a maximum of 2. The equalizations for each sink, sink group, route, source group, and source it passes through are multiplied together per band to come up with a final volume.
+
+![Screenshot of ScreamRouter Equalizer](/images/Equalizer.png)
 
 ### Delay
 Delays will add gaps to streams when sources come in and drop out. To avoid this set delays to 0.
