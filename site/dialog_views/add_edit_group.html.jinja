@@ -1,0 +1,23 @@
+{%- import "imports/inputs.html.jinja" as inputs %}
+{%- import "imports/selects.html.jinja" as selects %}
+{%- import "imports/buttons.html.jinja" as buttons %}
+{%- set data = request_info['data'] %}
+{%- set dataset = sources if holder_type == "source" else sinks %}
+<H3>{{ 'Add Group' if request_info['add_new'] else 'Edit Group' }}</H3>
+<DIV ID="dialog_add_edit_group">
+    <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
+    <INPUT TYPE="hidden" ID="dialog_url" VALUE="/{{holder_type}}s/">
+    <INPUT TYPE="hidden" ID="is_group" VALUE="true">
+    <LABEL FOR="name">Group Name</LABEL><INPUT TYPE="text" ID="name" VALUE="{{holder_name}}"{{ " DISABLED" if not request_info['add_new']}}><BR />
+    <LABEL FOR="group_members">Group Members</LABEL>
+    <SELECT ID="group_members" SIZE="{{(dataset | length) - 1}}" MULTIPLE>
+        {%- for entry in dataset %}
+            {%- if entry.name != holder_name %}
+                <OPTION VALUE="{{entry.name}}"{{" SELECTED" if entry.name in data['group_members']}}>{{entry.name}}</OPTION>
+            {%- endif %}
+        {%- endfor %}
+    </SELECT>
+    {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
+    {{- buttons.button("dialog_submit_close", 'Add Group' if request_info['add_new'] else 'Edit Group' , "dialog-button", {}, "Submit")}}
+    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button", {}, "Cancel")}}
+</DIV>

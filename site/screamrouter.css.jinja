@@ -64,8 +64,9 @@ DIV.section-name {
 }
 
 DIV.section INPUT[TYPE="range"] {
-    width: 95%;
+    width: 96%;
     display: inline-block;
+    margin-left: 2%;
 }
 
 DIV.section-buttons BUTTON {
@@ -76,22 +77,14 @@ DIV.section-buttons {
     text-align: center;
 }
 
-SELECT.main-select {
-    width: 101%;
-    margin-left: -1%;
-    background:none;
-    width: 101%;
-    background-image: linear-gradient(rgba(60,221,90,.45),rgba(153,153,255,.45));
-    overflow: hidden;
-    padding-left: 2%;
-    font-size: 1.25vw;
-    color: #FFFFFF;
-    border: none;
-    outline: none;
-    padding-bottom: 5px;
+
+DIV#reload {
+    height: 33%;
 }
 
 DIV.main-select {
+    height: 100%;
+    text-align: left;
     width: 101%;
     margin-left: -1%;
     background:none;
@@ -108,7 +101,7 @@ DIV.main-select {
 }
 
 SPAN.option {
-    width: 100%;
+    width: 95%;
     display: inline-block;
     text-align: left;
     color: #000000;
@@ -171,6 +164,13 @@ DIV#randomcontainer5 {
     overflow: hidden;
     border-radius: 25px;
     float: left;
+}
+
+DIV#randomcontainer6 {
+    background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;
+    overflow: hidden;
+    border-radius: 25px;
 }
 
 DIV.blur {
@@ -243,6 +243,14 @@ DIV#shadow {
     display: none;
 }
 
+span.button-icon {
+    font-size: 16pt;
+}
+BUTTON#add_sink_group_button, BUTTON#add_source_group_button {
+    letter-spacing: -6px;
+    text-align: left;
+    padding-right: 11px;
+}
 
 #update_source_button, #update_sink_button, #update_route_button, 
 #update_source_equalizer_button, #update_sink_equalizer_button, #update_route_equalizer_button,
@@ -357,4 +365,20 @@ canvas#canvas {
     margin-bottom: -5px;
     width: 720px;
     height: 480px;
+}
+
+IFRAME#vnc-iframe {
+}
+
+SPAN.route-label {
+    font-size: 12pt;
+    color: #111111;
+    pointer-events: none;
+}
+
+DIV#enable_disable {
+    z-index: -100;
+    position:  relative;
+    min-height: 100%;
+
 }

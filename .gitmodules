@@ -1,0 +1,6 @@
+[submodule "noVNC"]
+	path = noVNC
+	url = https://github.com/novnc/noVNC.git
+[submodule "site/noVNC"]
+	path = site/noVNC
+	url = https://github.com/novnc/noVNC.git

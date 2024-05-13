@@ -22,36 +22,38 @@
 </HEAD>
 
 <BODY>
-    <DIV ID="randomcontainer4" CLASS="title">
-        <DIV CLASS="blur">
-            ScreamRouter
-            <AUDIO ID="audio" PRELOAD="metadata" CONTROLS STYLE="display: none;"></audio>
-            <AUDIO ID="audio_visualizer" PRELOAD="metadata" CONTROLS STYLE="display: none;"></audio>
+    <DIV ID="enable_disable">
+        <DIV ID="randomcontainer4" CLASS="title">
+            <DIV CLASS="blur">
+                ScreamRouter
+                <AUDIO ID="audio" PRELOAD="metadata" CONTROLS STYLE="display: none;"></audio>
+                <AUDIO ID="audio_visualizer" PRELOAD="metadata" CONTROLS STYLE="display: none;"></audio>
+            </DIV>
         </DIV>
-    </DIV>
-    <DIV ID="reload">
-        {%- import "index_body.html.jinja" as index_body %}
-        {{ index_body.main_body(sources, sinks, routes) }}
+        <DIV ID="reload">
+            {%- import "index_body.html.jinja" as index_body %}
+            {{ index_body.main_body(sources, sinks, routes) }}
+        </DIV>
+        <DIV ID="randomcontainer5">
+            <div id="mainWrapper" CLASS="section">
+                <DIV CLASS="blur">
+                    <div id="presetControls">
+                        <div>Preset: <select id="presetSelect" ONCHANGE="presetSelect_change(e)"></select></div>
+                        <div>Cycle:
+                            <input type="checkbox" id="presetCycle" ONCHANGE="presetCycle_change(e)" checked></input>
+                            <input type="number" id="presetCycleLength" step="1" value="15" min="1" ONCHANGE="presetCycleLength_change(e)"></input>
+                        </div>
+                        <div>Random: <input type="checkbox" id="presetRandom" ONCHANGE="presetRandom_change(e)" checked></input></div>
+                    </div>
+                    <canvas id='canvas' width="3840" height="2160" ONCLICK="canvas_click()" tabindex="0" ONKEYDOWN="canvas_onkeydown(event)" >
+                    </canvas>
+                </div>
+            </DIV>
+        </DIV>
     </DIV>
     <DIV ID="shadow" ONCLICK="dialog_cancel()">
     </DIV>
     <DIV ID="dialog">
-    </DIV>
-    <DIV ID="randomcontainer5">
-        <div id="mainWrapper" CLASS="section">
-            <DIV CLASS="blur">
-                <div id="presetControls">
-                    <div>Preset: <select id="presetSelect" ONCHANGE="presetSelect_change(e)"></select></div>
-                    <div>Cycle:
-                        <input type="checkbox" id="presetCycle" ONCHANGE="presetCycle_change(e)" checked></input>
-                        <input type="number" id="presetCycleLength" step="1" value="15" min="1" ONCHANGE="presetCycleLength_change(e)"></input>
-                    </div>
-                    <div>Random: <input type="checkbox" id="presetRandom" ONCHANGE="presetRandom_change(e)" checked></input></div>
-                </div>
-                <canvas id='canvas' width="3840" height="2160" ONCLICK="canvas_click()" tabindex="0" ONKEYDOWN="canvas_onkeydown(event)" >
-                </canvas>
-            </div>
-        </DIV>
     </DIV>
 </BODY>
 

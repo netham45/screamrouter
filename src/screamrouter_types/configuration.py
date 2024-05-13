@@ -181,8 +181,10 @@ class SourceDescription(BaseModel):
                                      b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
                                      b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
     """Audio Equalizer"""
-    has_no_header: bool = False
-    """Set to True if the packet has no header"""
+    vnc_ip: Optional[annotations.IPAddressType] = None
+    """IP Address for VNC connections"""
+    vnc_port: Optional[annotations.PortType] = None
+    """Port for VNC connections"""
 
     def __eq__(self, other):
         """Compares the name if a string.

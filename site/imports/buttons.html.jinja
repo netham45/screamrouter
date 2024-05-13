@@ -1,3 +1,3 @@
-{% macro button(callback, label, class="", data="{}") %}
-                    <BUTTON ID="{{callback}}" ONCLICK="{{callback}}()" CLASS="{{class}}" DATA-DATA="{{data}}">{{label}}</BUTTON>
+{% macro button(callback, label, class="", data="{}", alt="") %}
+                    <BUTTON ID="{{callback}}" ONCLICK="{{callback}}()" CLASS="{{class}}" DATA-DATA="{{data}}" ALT="{{alt}}" TITLE="{{alt}}">{{label}}</BUTTON>
 {%- endmacro %}

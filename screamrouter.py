@@ -5,7 +5,6 @@ import os
 import signal
 import sys
 import threading
-
 import uvicorn
 from fastapi import FastAPI
 
@@ -33,6 +32,7 @@ def signal_handler(_signal, __):
             logger.error("Ctrl+C on non-main PID %s", os.getpid())
             return
         logger.error("Ctrl+C pressed")
+        website.stop()
         try:
             screamrouter_configuration.stop()
         except NameError:
@@ -86,10 +86,13 @@ plugin_manager.start_registered_plugins()
 screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream, plugin_manager)
 api_controller = APIConfiguration(app, screamrouter_configuration)
 website: APIWebsite = APIWebsite(app, screamrouter_configuration)
+
 config = uvicorn.Config(app=app,
                         port=constants.API_PORT,
                         host=constants.API_HOST,
                         log_config="uvicorn_log_config.yaml" if constants.LOG_TO_FILE else None,
-                        timeout_keep_alive=30)
+                        timeout_keep_alive=30,
+                        ssl_keyfile=constants.CERTIFICATE_KEY,
+                        ssl_certfile=constants.CERTIFICATE)
 server = uvicorn.Server(config)
 server.run()

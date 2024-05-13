@@ -32,6 +32,7 @@ class AudioController(multiprocessing.Process):
         super().__init__(name=f"[Sink {sink_info.name}] Audio Controller")
         logger.info("[Sink %s] Loading audio controller", sink_info.name)
         logger.info("[Sink %s] Sources:", sink_info.name)
+
         for source in sources:
             logger.info("[Sink %s] %s:%s", sink_info.name, source.name, source.ip)
         logger.info("[Sink %s] Stream mode: Bit Depth      : %s", sink_info.name,
@@ -46,7 +47,7 @@ class AudioController(multiprocessing.Process):
                     sink_info.port)
         self.sink_info = sink_info
         """Sink Info"""
-        self.__stream_info: ScreamHeader = create_stream_info(sink_info.bit_depth,
+        self.stream_info: ScreamHeader = create_stream_info(sink_info.bit_depth,
                                                               sink_info.sample_rate,
                                                               sink_info.channels,
                                                               sink_info.channel_layout)
@@ -69,26 +70,26 @@ class AudioController(multiprocessing.Process):
         self.mp3_write_fd: int
         """ffmpeg MP3 output write file descriptor"""
         self.mp3_read_fd, self.mp3_write_fd = os.pipe()
-        self.__ffmpeg: FFMpegHandler = FFMpegHandler(self.sink_info.ip,
+        self.ffmpeg: FFMpegHandler = FFMpegHandler(self.sink_info.ip,
                                                      self.pcm_write_fd,
                                                      self.mp3_write_fd,
                                                      self.get_open_sources(),
-                                                     self.__stream_info,
+                                                     self.stream_info,
                                                      self.sink_info.equalizer)
         """ffmpeg handler"""
-        self.__webstream: APIWebStream = websocket
+        self.webstream: APIWebStream = websocket
         """Holds the websock object to copy audio to, passed through to MP3 listener thread"""
-        self.__pcm_thread: PCMOutputReader = PCMOutputReader(self.pcm_read_fd,
+        self.pcm_thread: PCMOutputReader = PCMOutputReader(self.pcm_read_fd,
                                                              self.pcm_write_fd,
                                                              self.sink_info.ip,
                                                              self.sink_info.port,
-                                                             self.__stream_info)
+                                                             self.stream_info)
         """Holds the thread to listen to PCM output from ffmpeg"""
 
-        self.__mp3_thread: MP3OutputReader = MP3OutputReader(self.mp3_read_fd,
+        self.mp3_thread: MP3OutputReader = MP3OutputReader(self.mp3_read_fd,
                                                              self.mp3_write_fd,
                                                              self.sink_info.ip,
-                                                             self.__webstream.queue)
+                                                             self.webstream.queue)
         """Holds the thread to listen to MP3 output from ffmpeg"""
         self.sources_lock: threading.Lock = threading.Lock()
         """This lock ensures the Sources list is only accessed by one thread at a time"""
@@ -138,11 +139,11 @@ class AudioController(multiprocessing.Process):
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
         logger.debug("[Sink:%s] Stopping PCM thread", self.sink_info.ip)
-        self.__pcm_thread.stop()
+        self.pcm_thread.stop()
         logger.debug("[Sink:%s] Stopping MP3 thread", self.sink_info.ip)
-        self.__mp3_thread.stop()
+        self.mp3_thread.stop()
         logger.debug("[Sink:%s] Stopping ffmpeg thread", self.sink_info.ip)
-        self.__ffmpeg.stop()
+        self.ffmpeg.stop()
         logger.debug("[Sink:%s] Stopping sources", self.sink_info.ip)
         for _, source in self.sources.items():
             logger.debug("[Sink:%s] Stopping source %s", self.sink_info.ip, source.name)
@@ -187,10 +188,11 @@ class AudioController(multiprocessing.Process):
             ready = select.select([self.controller_read_fd], [], [], .3)
             if ready[0]:
                 try:
-                    data = os.read(self.controller_read_fd, constants.PACKET_SIZE + constants.TAG_MAX_LENGTH)
+                    data = os.read(self.controller_read_fd,
+                                   constants.PACKET_SIZE + constants.TAG_MAX_LENGTH)
                     self.process_packet_from_queue(data)
                 except Empty:
                     pass
             if self.wants_restart():
-                self.__ffmpeg.reset_ffmpeg(self.get_open_sources())
+                self.ffmpeg.reset_ffmpeg(self.get_open_sources())
         close_all_pipes()

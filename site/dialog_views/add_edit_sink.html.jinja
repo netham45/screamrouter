@@ -12,9 +12,9 @@
     <SPAN>
     <LABEL FOR="bit_depth">Bit Depth</LABEL>
         <SELECT ID="bit_depth">
-            <OPTION VALUE="16">16</OPTION>
-            <OPTION VALUE="24">24</OPTION>
-            <OPTION VALUE="32" SELECTED>32</OPTION>
+            <OPTION VALUE="16"{{' SELECTED' if data['bit_depth'] == 16}}>16</OPTION>
+            <OPTION VALUE="24"{{' SELECTED' if data['bit_depth'] == 24}}>24</OPTION>
+            <OPTION VALUE="32"{{' SELECTED' if data['bit_depth'] == 32}}>32</OPTION>
         </SELECT>
     </SPAN><BR />
     <SPAN>
@@ -39,7 +39,7 @@
             <OPTION VALUE="7.1"{{' SELECTED' if data['channel_layout'] =='7.1'}}>7.1</OPTION>
         </SELECT>
     </SPAN><BR />
-    {{- inputs.text_number("Delay", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
-    {{- buttons.button("dialog_submit_close", 'Add Sink' if request_info['add_new'] else 'Edit Sink' , "dialog-button")}}
-    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button")}}
+    {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
+    {{- buttons.button("dialog_submit_close", 'Add Sink' if request_info['add_new'] else 'Edit Sink' , "dialog-button", {}, "Submit")}}
+    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button", {}, "Cancel")}}
 </DIV>

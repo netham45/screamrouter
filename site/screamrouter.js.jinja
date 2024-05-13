@@ -35,6 +35,8 @@ function restart_callback_2(response_text) {
     console.log(response_text);
     reload_div.innerHTML = "";
     reload_div.innerHTML = response_text;
+    dialog_cancel();
+    dismiss_shadow();
 }
 
 function show_dialog_callback(response_text) {
@@ -48,6 +50,14 @@ function dialog_add_source() {
     call_api("site/add_source", "GET", "", show_dialog_callback);
 }
 
+function dialog_add_source_group() {
+    call_api("site/add_source_group", "GET", "", show_dialog_callback);
+}
+
+function dialog_vnc(source_name) {
+    call_api("site/vnc/" + source_name, "GET", "", show_dialog_callback);
+}
+
 function dialog_update_source(source_name) {
     call_api("site/edit_source/" + source_name, "GET", "", show_dialog_callback);
 }
@@ -58,6 +68,10 @@ function dialog_update_source_equalizer(source_name) {
 
 function dialog_add_sink() {
     call_api("site/add_sink", "GET", "", show_dialog_callback);
+}
+
+function dialog_add_sink_group() {
+    call_api("site/add_sink_group", "GET", "", show_dialog_callback);
 }
 
 function dialog_update_sink(sink_name) {
@@ -82,6 +96,7 @@ function dialog_update_route_equalizer(route_name) {
 
 function dialog_cancel() {
     document.getElementById("dialog").style.display = "none";
+    document.getElementById("dialog").innerHTML = "";
     dismiss_shadow();
 }
 
@@ -92,7 +107,6 @@ function dialog_equalizer_default() {
 }
 
 function dialog_submit(close) {
-    dismiss_shadow()
     var result = {};
     var inputs_and_selects = document.querySelectorAll("DIV#dialog INPUT, DIV#dialog SELECT");
     var url = "";
@@ -103,7 +117,15 @@ function dialog_submit(close) {
         if (entry.id == undefined) {
             continue;
         }
-        if (entry.id == "dialog_url") {
+        if (entry.type == "select-multiple") {
+            var result_array = [];
+            for (option in entry.selectedOptions) {
+                var value = entry.selectedOptions[option].value;
+                if (value != undefined)
+                    result_array.push(value);
+            }            
+            result[entry.id] = result_array;
+        } else if (entry.id == "dialog_url") {
             url = entry.value;
         }
         else if (entry.id == "dialog_action") {
@@ -115,6 +137,12 @@ function dialog_submit(close) {
         else {
             if (parseInt(entry.value).toString() == entry.value) {
                 result[entry.id] = parseInt(entry.value);
+            }
+            else if (entry.value == "true"){
+                result[entry.id] = true;
+            }
+            else if (entry.value == "false"){
+                result[entry.id] = false;
             }
             else {
                 result[entry.id] = entry.value;
@@ -144,8 +172,16 @@ function add_source_button() {
     dialog_add_source();
 }
 
+function add_source_group_button() {
+    dialog_add_source_group();
+}
+
 function add_sink_button() {
     dialog_add_sink();
+}
+
+function add_sink_group_button() {
+    dialog_add_sink_group();
 }
 
 function add_route_button() {
@@ -177,6 +213,12 @@ function route_volume_change() {
 }
 
 window.addEventListener("load", (event) => {
+    navigator.mediaSession.setActionHandler('play', () => {document.getElementsByTagName("IFRAME")[0].contentWindow.UI.sendKey(0x20, "pause");});
+    navigator.mediaSession.setActionHandler('pause', () => {document.getElementsByTagName("IFRAME")[0].contentWindow.UI.sendKey(0x20, "pause");});
+    navigator.mediaSession.setActionHandler('seekbackward', () => console.log('seekbackward'));
+    navigator.mediaSession.setActionHandler('seekforward', () => console.log('seekforward'));
+    navigator.mediaSession.setActionHandler('previoustrack', () => {document.getElementsByTagName("IFRAME")[0].contentWindow.UI.sendKey(0xFF51, "left");});
+    navigator.mediaSession.setActionHandler('nexttrack', () => {document.getElementsByTagName("IFRAME")[0].contentWindow.UI.sendKey(0xFF53, "right");});
 });
 
 audio = {};
@@ -218,7 +260,7 @@ function start_audio(sink_ip) {
     audiotag = document.getElementById("audio")
     audiotag.pause();
     audiotag.src = ""
-    audiotag.src = 'http://192.168.3.114:8080/stream/' + sink_ip + '/';
+    audiotag.src = '/stream/' + sink_ip + '/';
     audiotag.play();
     audiotag.style.display = "inline";
     audio_playing = true;
@@ -236,11 +278,15 @@ function stop_audio() {
 function show_shadow() {
     shadow = document.getElementById("shadow");
     shadow.style.display = "block";
+    var enable_disable = document.getElementById("enable_disable");
+    enable_disable.inert = true;
 }
 
 function dismiss_shadow() {
-    shadow = document.getElementById("shadow");
+    var shadow = document.getElementById("shadow");
     shadow.style.display = "none";
+    var enable_disable = document.getElementById("enable_disable");
+    enable_disable.inert = false;
 }
 
 function option_onclick(e) {
@@ -251,20 +297,29 @@ function option_onclick(e) {
     if (node.dataset["type"] == "SourceDescription") {
         selected_source = node;
         var volume_element = document.getElementById("source_volume");
+        volume_element.alt = "Source " + selected_source.dataset["name"] + " Volume";
+        volume_element.title = "Source " + selected_source.dataset["name"] + " Volume";
         volume_element.value = parseFloat(selected_source.dataset["volume"]) * 100
         volume_element.disabled = false;
+        volume_element.focus();
     }
     else if (node.dataset["type"] == "SinkDescription") {
         selected_sink = node;
         var volume_element = document.getElementById("sink_volume");
+        volume_element.alt = "Sink " + selected_sink.dataset["name"] + " Volume";
+        volume_element.title = "Sink " + selected_sink.dataset["name"] + " Volume";
         volume_element.value = parseFloat(selected_sink.dataset["volume"]) * 100
         volume_element.disabled = false;
+        volume_element.focus();
     }
     else if (node.dataset["type"] == "RouteDescription") {
         selected_route = node;
         var volume_element = document.getElementById("route_volume");
+        volume_element.alt = "Route " + selected_route.dataset["name"] + " Volume";
+        volume_element.title = "Route " + selected_route.dataset["name"] + " Volume";
         volume_element.value = parseFloat(selected_route.dataset["volume"]) * 100
         volume_element.disabled = false;
+        volume_element.focus();
     }
 }
 
@@ -278,6 +333,10 @@ function enable_disable_source_button() {
     if (classname.indexOf("enabled") >= 0)
         var enable_disable = "/disable";
     call_api("/sources/" + selected_sources[0].dataset["name"] + enable_disable, "get", 0, restart_callback)
+}
+
+function vnc_icon_onclick(e) {
+    dialog_vnc(e.target.parentNode.dataset["name"]);
 }
 
 function equalizer_icon_onclick(e) {
@@ -551,7 +610,7 @@ function start_visualizer(sink_ip) {
     visualtag = document.getElementById("audio_visualizer")
     visualtag.pause();
     visualtag.src = "";
-    visualtag.src = 'http://192.168.3.114:8080/stream/' + sink_ip + '/';
+    visualtag.src = '/stream/' + sink_ip + '/';
     visualtag.play();
     visual_playing = true;
     if (!visual_already_connected) {
@@ -572,4 +631,36 @@ function stop_visualizer() {
     document.getElementById("mainWrapper").style.display = "none";
     var source = audioContext.createMediaElementSource(visualtag);
     visual_playing = false;
+}
+
+function keypress_handler(event) {
+    if (event.key == "Enter" || event.key == "Space") {
+        event.target.onclick(event);
+    }
+}
+
+iframe_interval = false;
+function iframe_onload() {
+    if (iframe_interval != false)
+        clearInterval(iframe_interval);
+    iframe_interval = setInterval(iframe_resize, 1000);
+    iframe_resize();
+    setTimeout(iframe_resize, 200);
+    setTimeout(iframe_resize, 400);
+    setTimeout(iframe_resize, 600);
+    setTimeout(iframe_resize, 800);
+}
+
+function iframe_resize() {
+    var iframe = document.querySelectorAll("DIV#dialog IFRAME")[0];
+    var canvas = iframe.contentWindow.document.getElementsByTagName("canvas")[0];
+    if (canvas.width > 0 && canvas.height > 0) {
+        iframe.style.width = (canvas.width / 2) + "px";
+        iframe.style.height = (canvas.height / 2) + "px";
+    }
+    else
+    {
+        iframe.style.width = "400px";
+        iframe.style.height = "600px";
+    }
 }

@@ -8,7 +8,7 @@ RECEIVER_PORT: int = 16401
 """This is the port for the receiver"""
 SINK_PORT: int = 4010
 """This is the port for a Scream Sink"""
-API_PORT: int = 8080
+API_PORT: int = 443
 """This is the port FastAPI runs on"""
 API_HOST: str = "0.0.0.0"
 """This is the host FastAPI binds to"""
@@ -33,6 +33,10 @@ SOURCE_INACTIVE_TIME_MS: int = 150
 """Inactive time for a source before it's closed. 
    Some plugins may need this raised.
    If this is too long there will be gaps when a source stops sending."""
+CERTIFICATE: str = "/root/screamrouter/cert/cert.pem"
+"""SSL Cert"""
+CERTIFICATE_KEY: str = "/root/screamrouter/cert/privkey.pem"
+"""SSL Cert Key"""
 
 # ##########
 # Internal Options

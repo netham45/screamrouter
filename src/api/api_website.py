@@ -1,10 +1,15 @@
 """Holds the API endpoints to serve files for html/javascript/css"""
 import mimetypes
+import multiprocessing
 from typing import List, Optional
 
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.templating import _TemplateResponse
+
+import websockify
+import websockify.websocketproxy
 
 from src.configuration.configuration_manager import ConfigurationManager
 from src.screamrouter_logger.screamrouter_logger import get_logger
@@ -16,6 +21,8 @@ from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
 from src.screamrouter_types.website import (AddEditRouteInfo, AddEditSinkInfo,
                                             AddEditSourceInfo,
                                             EditEqualizerInfo)
+
+from src.constants import constants
 
 logger = get_logger(__name__)
 
@@ -37,12 +44,18 @@ class APIWebsite():
                           tags=["Site Resources"])(self.site_css)
         self.main_api.get(f"{SITE_PREFIX}/add_sink",
                           tags=["Site Resources"])(self.add_sink)
+        self.main_api.get(f"{SITE_PREFIX}/add_sink_group",
+                          tags=["Site Resources"])(self.add_sink_group)
         self.main_api.get(f"{SITE_PREFIX}/edit_sink/{{sink_name}}",
                           tags=["Site Resources"])(self.edit_sink)
         self.main_api.get(f"{SITE_PREFIX}/edit_sink/{{sink_name}}/equalizer",
                           tags=["Site Resources"])(self.edit_sink_equalizer)
         self.main_api.get(f"{SITE_PREFIX}/add_source",
                           tags=["Site Resources"])(self.add_source)
+        self.main_api.get(f"{SITE_PREFIX}/add_source_group",
+                          tags=["Site Resources"])(self.add_source_group)
+        self.main_api.get(f"{SITE_PREFIX}/vnc/{{source_name}}",
+                          tags=["Site Resources"])(self.vnc)
         self.main_api.get(f"{SITE_PREFIX}/edit_source/{{source_name}}",
                           tags=["Site Resources"])(self.edit_source)
         self.main_api.get(f"{SITE_PREFIX}/edit_source/{{source_name}}/equalizer",
@@ -53,10 +66,15 @@ class APIWebsite():
                           tags=["Site Resources"])(self.edit_route)
         self.main_api.get(f"{SITE_PREFIX}/edit_route/{{route_name}}/equalizer",
                           tags=["Site Resources"])(self.edit_route_equalizer)
+        self.main_api.mount("/site/noVNC", StaticFiles(directory="./site/noVNC"), name="noVNC")
         self._templates = Jinja2Templates(directory="./site/")
         mimetypes.add_type('application/javascript', '.js')
         mimetypes.add_type('text/css', '.css')
         logger.info("[Website] Endpoints added")
+        self.vnc_websockifiys: List[multiprocessing.Process] = []
+        """Holds a list of websockify processes to kill"""
+        self.vnc_port: int = 5900
+        """Holds the current vnc port, gets incremented by one per connection"""
 
 
     def return_template(self, request: Request,
@@ -71,10 +89,41 @@ class APIWebsite():
         context: dict = {"sources": sources, "sinks": sinks, "routes": routes}
         if not additional_context is None:
             context.update(additional_context)
-
         return self._templates.TemplateResponse(
             request=request, name=template_name,
             context=context, media_type=media_type)
+
+    # VNC endpoint
+    def vnc(self, request: Request, source_name: SourceNameType):
+        """Starts a Websockify proxy to the configured VNC host and returns the dialog for it"""
+        source: SourceDescription = self.screamrouter_configuration.get_source_by_name(source_name)
+        port: int = self.vnc_port
+        self.vnc_port = self.vnc_port + 1
+        vnc_websocket = websockify.WebSocketProxy(
+                                          verbose=True,
+                                          listen_port=port,
+                                          target_host=str(source.vnc_ip),
+                                          target_port=source.vnc_port,
+                                          cert=constants.CERTIFICATE,
+                                          key=constants.CERTIFICATE_KEY,
+                                          run_once=True
+                                          )
+        logger.info("[Website] Starting VNC session, inbound port %s, target %s:%s",
+                    port,
+                    source.vnc_ip,
+                    source.vnc_port)
+        vnc_websocket_process = multiprocessing.Process(target=vnc_websocket.start_server)
+        vnc_websocket_process.start()
+        self.vnc_websockifiys.append(vnc_websocket_process)
+
+        return self.return_template(request,
+                "dialog_views/vnc.html.jinja",
+                {"port": port})
+
+    def stop(self):
+        """Kills all websockify processes"""
+        for process in self.vnc_websockifiys:
+            process.kill()
 
     # Site resource endpoints
     def site_index(self, request: Request):
@@ -105,6 +154,16 @@ class APIWebsite():
                                     "dialog_views/add_edit_sink.html.jinja",
                                     {"request_info": request_info})
 
+    def add_sink_group(self, request: Request):
+        """Return the HTML dialog to add a sink group"""
+        request_info: AddEditSinkInfo
+        request_info = AddEditSinkInfo(add_new=True,
+                                       data=SinkDescription(name="New Sink"))
+        return self.return_template(request,
+                                "dialog_views/add_edit_group.html.jinja",
+                                {"request_info": request_info,
+                                "holder_type": "sink"})
+
     def edit_sink(self, request: Request, sink_name: SinkNameType):
         """Return the HTML dialog to edit a sink"""
         existing_sink: SinkDescription
@@ -112,9 +171,16 @@ class APIWebsite():
         request_info: AddEditSinkInfo
         request_info = AddEditSinkInfo(add_new=False,
                                        data=existing_sink)
-        return self.return_template(request,
-                                    "dialog_views/add_edit_sink.html.jinja",
-                                    {"request_info": request_info})
+        if existing_sink.is_group:
+            return self.return_template(request,
+                                    "dialog_views/add_edit_group.html.jinja",
+                                    {"request_info": request_info,
+                                     "holder_name": existing_sink.name,
+                                     "holder_type": "sink"})
+        else:
+            return self.return_template(request,
+                                        "dialog_views/add_edit_sink.html.jinja",
+                                        {"request_info": request_info})
 
     def edit_sink_equalizer(self, request: Request, sink_name: SinkNameType):
         """Return the HTML dialog to edit a sink"""
@@ -138,6 +204,16 @@ class APIWebsite():
                                     "dialog_views/add_edit_source.html.jinja",
                                     {"request_info": request_info})
 
+    def add_source_group(self, request: Request):
+        """Return the HTML dialog to add a source group"""
+        request_info: AddEditSourceInfo
+        request_info = AddEditSourceInfo(add_new=True,
+                                       data=SourceDescription(name="New Source"))
+        return self.return_template(request,
+                                "dialog_views/add_edit_group.html.jinja",
+                                {"request_info": request_info,
+                                "holder_type": "source"})
+
     def edit_source(self, request: Request, source_name: SourceNameType):
         """Return the HTML dialog to edit a source"""
         existing_source: SourceDescription
@@ -145,9 +221,16 @@ class APIWebsite():
         request_info: AddEditSourceInfo
         request_info = AddEditSourceInfo(add_new=False,
                                        data=existing_source)
-        return self.return_template(request,
-                                    "dialog_views/add_edit_source.html.jinja",
-                                    {"request_info": request_info})
+        if existing_source.is_group:
+            return self.return_template(request,
+                                    "dialog_views/add_edit_group.html.jinja",
+                                    {"request_info": request_info,
+                                     "holder_name": existing_source.name,
+                                     "holder_type": "source"})
+        else:
+            return self.return_template(request,
+                                        "dialog_views/add_edit_source.html.jinja",
+                                        {"request_info": request_info})
 
     def edit_source_equalizer(self, request: Request, source_name: SourceNameType):
         """Return the HTML dialog to edit a source"""

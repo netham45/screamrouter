@@ -1,15 +1,13 @@
 {%- import "imports/selects.html.jinja" as selects %}
 {%- import "imports/buttons.html.jinja" as buttons -%}
 {% macro main_body(sources, sinks, routes)%}
-<DIV ID="randomcontainer1" CLASS="section">
+        <DIV ID="randomcontainer1" CLASS="section">
             <DIV CLASS="blur">
                 <DIV CLASS="section-name">
                     Sources
                 </DIV>
                 <DIV CLASS="section-buttons select-container">
-                    <INPUT TYPE="range" ID="source_volume" ONCHANGE="source_volume_change()" DISABLED>
-                    {{- buttons.button("add_source_button", "➕", "section-button")}}
-                    {{- buttons.button("add_source_group_button", "Add Group", "section-button")}}
+                    <INPUT TABINDEX="0" TYPE="range" ID="source_volume" ONCHANGE="source_volume_change()" ALT="Source Volume" TITLE="Source Volume" DISABLED>
                     <DIV ID="select-sources" CLASS="main-select" SIZE="{{sources | length}}"
                         ONCHANGE="select_source_change()" MULTIPLE>
                         {%- set options = namespace(options=[]) %}
@@ -17,12 +15,16 @@
                         {{- source.type }}
                         {%- set enabled_class_str = "enabled" if source.enabled else "disabled" %}
                         {%- set _option = {"value": source.name,
-                        "label": source.name,
+                        "label": source.name + (' <SPAN CLASS="route-label">%s</SPAN>' % (source.group_members | join(", "))) | safe,
                         "class": "option option-%s" % enabled_class_str,
+                        "alt": ("Source Group " if source.is_group else "Source ") + source.name + ((" Group Members: " + source.group_members | join(", ")) if (source.is_group) else ""),
+                        "shortalt": ("Source Group " if source.is_group else "Source ") + source.name,
                         "data": source} %}
                         {%- set options.options = options.options + [_option] %}
                         {%- endfor %}
                         {{- selects.make_multiple_options(options.options, sources) }}
+                        {{- buttons.button("add_source_button", "➕", "section-button", {}, "Add Source")}}
+                        {{- buttons.button("add_source_group_button", "➕➕", "section-button", {}, "Add Source Group")}}
                     </DIV>
                 </DIV>
             </DIV>
@@ -33,8 +35,7 @@
                     Routes
                 </DIV>
                 <DIV CLASS="section-buttons select-container">
-                    <INPUT TYPE="range" ID="route_volume" ONCHANGE="route_volume_change()" DISABLED>
-                    {{- buttons.button("add_route_button", "➕", "section-button")}}
+                    <INPUT TABINDEX="0" TYPE="range" ID="route_volume" ONCHANGE="route_volume_change()" ALT="Route Volume" TITLE="Route Volume" DISABLED>
                     <DIV ID="select-routes" CLASS="main-select" SIZE="{{routes | length}}"
                         ONCHANGE="select_route_change()" MULTIPLE>
                         {%- set options = namespace(options=[]) %}
@@ -42,14 +43,17 @@
                         {{- route.type }}
                         {%- set enabled_class_str = "enabled" if route.enabled else "disabled" %}
                         {%- set _option = {"value": route.name,
-                        "label": "%s [%s->%s]" % (route.name,
+                        "label": ('%s <SPAN CLASS="route-label">%s→%s</SPAN>' % (route.name,
                         route.source,
-                        route.sink),
+                        route.sink)) | safe,
                         "class": "option option-%s" % enabled_class_str,
+                        "alt": "Route " + route.name + ", Source Name: %s, Sink Name: %s" % (route.source, route.sink),
+                        "shortalt": "Route " + route.name,
                         "data": route} %}
                         {%- set options.options = options.options + [_option] %}
                         {%- endfor %}
                         {{- selects.make_multiple_options(options.options, routes) }}
+                        {{- buttons.button("add_route_button", "➕", "section-button", {}, "Add Route")}}
                     </DIV>
                 </DIV>
             </DIV>
@@ -60,21 +64,23 @@
                     Sinks
                 </DIV>
                 <DIV CLASS="section-buttons select-container">
-                    <INPUT TYPE="range" ID="sink_volume" ONCHANGE="sink_volume_change()" DISABLED>
-                    {{- buttons.button("add_sink_button", "➕", "section-button")}}
-                    {{- buttons.button("add_sink_group_button", "Add Group", "section-button")}}
+                    <INPUT TABINDEX="0" TYPE="range" ID="sink_volume" ONCHANGE="sink_volume_change()" ALT="Sink Volume" TITLE="Sink Volume" DISABLED>
                     <DIV ID="select-sinks" CLASS="main-select" SIZE="{{sinks | length}}" ONCHANGE="select_sink_change()"
                         MULTIPLE>
                         {%- set options = namespace(options=[]) %}
                         {%- for sink in sinks %}
                         {%- set enabled_class_str = "enabled" if sink.enabled else "disabled" %}
                         {%- set _option = {"value": sink.name,
-                        "label": sink.name,
+                        "label": sink.name + (' <SPAN CLASS="route-label">%s</SPAN>' % (sink.group_members | join(", "))) | safe,
                         "class": "option option-%s" % enabled_class_str,
+                        "alt": ("Sink Group " if sink.is_group else "Sink ") + sink.name + ((" Group Members: " + sink.group_members | join(", ")) if (sink.is_group) else ""),
+                        "shortalt": ("Sink Group " if sink.is_group else "Sink ") + sink.name,
                         "data": sink} %}
                         {%- set options.options = options.options + [_option] %}
                         {%- endfor %}
                         {{- selects.make_multiple_options(options.options, sinks) }}
+                        {{- buttons.button("add_sink_button", "➕", "section-button", {}, "Add Sink")}}
+                        {{- buttons.button("add_sink_group_button", "➕➕", "section-button", {}, "Add Sink Group")}}
                     </DIV>
                 </DIV>
             </DIV>

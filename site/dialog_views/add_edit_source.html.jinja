@@ -7,8 +7,10 @@
     <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
     <INPUT TYPE="hidden" ID="dialog_url" VALUE="{{url_for('add_source')}}">
     {{- inputs.text("Source Name", "name", request_info['add_new'], "Source Name", data['name']) }}<BR />
-    {{- inputs.text("Source IP", "ip", "Source IP", true, data['ip']) }}<BR />
-    {{- inputs.text_number("Delay", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
-    {{- buttons.button("dialog_submit_close", 'Add source' if request_info['add_new'] else 'Edit Source' , "dialog-button")}}
-    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button")}}
+    {{- inputs.text("Source IP", "ip", true, "Source IP", data['ip']) }}<BR />
+    {{- inputs.text("VNC IP", "vnc_ip", true, "VNC IP", data['vnc_ip']) }}<BR />
+    {{- inputs.text("VNC Port", "vnc_port", true, "VNC Port", data['vnc_port']) }}<BR />
+    {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
+    {{- buttons.button("dialog_submit_close", 'Add source' if request_info['add_new'] else 'Edit Source' , "dialog-button", {}, "Submit")}}
+    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button", {}, "Cancel")}}
 </DIV>
