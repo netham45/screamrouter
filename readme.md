@@ -58,7 +58,7 @@ Scream has an expired certificate of a type Windows verifies the date of. In ord
 
 ScreamRouter will start up with a blank profile by default. There will be no sources, sinks, or routers configured. You can add them by editing the yaml or by using the interface.
 
-ScreamRouter's web interface listens on port 8080.
+ScreamRouter's web interface listens on port 443.
 
 The interface will update the yaml so any notes, non-standard fields, or custom layouts in the yaml will be lost. The interface will prompt you for the required information when you go to add an entry.
 
