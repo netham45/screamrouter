@@ -46,6 +46,7 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * Install requirements.txt through either pip or your package manager of choice
 * Command line ffmpeg
 * ScreamRouter is Linux only. It should run in WSL2. Windows compatibility may be reviewed in the future.
+* ScreamRouter is configured to use SSL. See src/constants/constants.py to set the path to your certificate. In the future ScreamRouter will be configure to automatically generate a self-signed SSL certificate if none is present.
 
 # Note on installing Scream
 
