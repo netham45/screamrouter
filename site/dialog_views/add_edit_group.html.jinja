@@ -6,9 +6,9 @@
 <H3>{{ 'Add Group' if request_info['add_new'] else 'Edit Group' }}</H3>
 <DIV ID="dialog_add_edit_group">
     <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
-    <INPUT TYPE="hidden" ID="dialog_url" VALUE="/{{holder_type}}s/">
+    <INPUT TYPE="hidden" ID="dialog_url" VALUE="/{{holder_type}}s/{{holder_name}}">
     <INPUT TYPE="hidden" ID="is_group" VALUE="true">
-    <LABEL FOR="name">Group Name</LABEL><INPUT TYPE="text" ID="name" VALUE="{{holder_name}}"{{ " DISABLED" if not request_info['add_new']}}><BR />
+    <LABEL FOR="name">Group Name</LABEL><INPUT TYPE="text" ID="name" VALUE="{{holder_name}}"><BR />
     <LABEL FOR="group_members">Group Members</LABEL>
     <SELECT ID="group_members" SIZE="{{(dataset | length) - 1}}" MULTIPLE>
         {%- for entry in dataset %}

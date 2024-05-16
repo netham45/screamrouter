@@ -304,7 +304,7 @@ SinkNameType = Annotated[
 RouteNameType = Annotated[
     str,
     Path(
-        description="A Sink Name",
+        description="A Route Name",
         json_schema_extra={"example": "Music"},
     )
 ]

@@ -1,9 +1,9 @@
 routes:
-- !!python/object:screamrouter_types.configuration.RouteDescription
+- !!python/object:src.screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
+    equalizer: &id001 !!python/object:src.screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -44,431 +44,132 @@ routes:
         b8: null
         b9: null
       __pydantic_private__: null
-    name: Music to All
-    sink: All
+    name: Bedroom Music
+    sink: Bedroom
     source: Music
-    volume: 1.0
+    volume: 0.08
   __pydantic_extra__: null
   __pydantic_fields_set__: !!set
-    enabled: null
-    equalizer: null
+    delay: null
     name: null
     sink: null
     source: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.RouteDescription
+- !!python/object:src.screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
+    equalizer: *id001
+    name: Bathroom Music
+    sink: Bathroom
+    source: Music
+    volume: 0.19
+  __pydantic_extra__: null
+  __pydantic_fields_set__: !!set
+    delay: null
+    name: null
+    sink: null
+    source: null
+    volume: null
+  __pydantic_private__: null
+- !!python/object:src.screamrouter_types.configuration.RouteDescription
+  __dict__:
+    delay: 0
+    enabled: true
+    equalizer: *id001
+    name: Office Music
+    sink: Office
+    source: Music
+    volume: 0.47
+  __pydantic_extra__: null
+  __pydantic_fields_set__: !!set
+    delay: null
+    enabled: null
+    name: null
+    sink: null
+    source: null
+    volume: null
+  __pydantic_private__: null
+- !!python/object:src.screamrouter_types.configuration.RouteDescription
+  __dict__:
+    delay: 0
+    enabled: true
+    equalizer: *id001
+    name: Livingroom Music
+    sink: Livingroom
+    source: Music
+    volume: 1
+  __pydantic_extra__: null
+  __pydantic_fields_set__: !!set
+    delay: null
+    name: null
+    sink: null
+    source: null
+  __pydantic_private__: null
+- !!python/object:src.screamrouter_types.configuration.RouteDescription
+  __dict__:
+    delay: 0
+    enabled: true
+    equalizer: *id001
     name: Office
     sink: Office
     source: Office PC
-    volume: 1.0
+    volume: 1
   __pydantic_extra__: null
   __pydantic_fields_set__: !!set
+    delay: null
     enabled: null
     name: null
     sink: null
     source: null
-    volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.RouteDescription
+- !!python/object:src.screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
-    name: Office 2
-    sink: Office
-    source: Office PC Management VLAN
-    volume: 1.0
-  __pydantic_extra__: null
-  __pydantic_fields_set__: !!set
-    enabled: null
-    name: null
-    sink: null
-    source: null
-    volume: null
-  __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.RouteDescription
-  __dict__:
-    delay: 0
-    enabled: false
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
-    name: Office to all
-    sink: All
-    source: Office PC
-    volume: 1.0
-  __pydantic_extra__: null
-  __pydantic_fields_set__: !!set
-    enabled: null
-    name: null
-    sink: null
-    source: null
-    volume: null
-  __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.RouteDescription
-  __dict__:
-    delay: 0
-    enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
+    equalizer: *id001
     name: Livingroom
     sink: Livingroom
     source: Livingroom PC
-    volume: 1.0
+    volume: 1
   __pydantic_extra__: null
   __pydantic_fields_set__: !!set
-    enabled: null
+    delay: null
     name: null
     sink: null
     source: null
-    volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.RouteDescription
+- !!python/object:src.screamrouter_types.configuration.RouteDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
-    name: Livingroom to All
-    sink: All
-    source: Livingroom PC
-    volume: 1.0
-  __pydantic_extra__: null
-  __pydantic_fields_set__: !!set
-    enabled: null
-    name: null
-    sink: null
-    source: null
-    volume: null
-  __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.RouteDescription
-  __dict__:
-    delay: 0
-    enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
-    name: Office to Phone
-    sink: Phone
-    source: Office PC
-    volume: 1.0
-  __pydantic_extra__: null
-  __pydantic_fields_set__: !!set
-    enabled: null
-    name: null
-    sink: null
-    source: null
-    volume: null
-  __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.RouteDescription
-  __dict__:
-    delay: 0
-    enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
-    name: Music to Bedroom
+    equalizer: *id001
+    name: Tablet to Bedroom
     sink: Bedroom
-    source: Music
-    volume: 1.0
+    source: Tablet
+    volume: 0.23
   __pydantic_extra__: null
   __pydantic_fields_set__: !!set
-    enabled: null
+    delay: null
     name: null
     sink: null
     source: null
     volume: null
   __pydantic_private__: null
 sinks:
-- !!python/object:screamrouter_types.configuration.SinkDescription
+- !!python/object:src.screamrouter_types.configuration.SinkDescription
   __dict__:
     bit_depth: 32
-    channel_layout: '5.1'
-    channels: 6
+    channel_layout: stereo
+    channels: 2
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
+    equalizer: !!python/object:src.screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
-        b10: 1.0
-        b11: 1.0
+        b10: 0.64
+        b11: 0.78
         b12: 1.0
         b13: 1.0
         b14: 1.0
@@ -481,9 +182,9 @@ sinks:
         b4: 1.0
         b5: 1.0
         b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
+        b7: 0.94
+        b8: 0.83
+        b9: 0.68
       __pydantic_extra__: null
       __pydantic_fields_set__: !!set
         b1: null
@@ -507,12 +208,12 @@ sinks:
       __pydantic_private__: null
     group_members: []
     ip: !!python/object/apply:ipaddress.IPv4Address
-    - 3232236466
+    - 3232236460
     is_group: false
     name: Livingroom
     port: 4010
     sample_rate: 48000
-    volume: 0.3
+    volume: 1.0
   __pydantic_extra__: null
   __pydantic_fields_set__: !!set
     bit_depth: null
@@ -527,154 +228,14 @@ sinks:
     sample_rate: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.SinkDescription
+- !!python/object:src.screamrouter_types.configuration.SinkDescription
   __dict__:
     bit_depth: 32
     channel_layout: stereo
     channels: 2
-    delay: 0
+    delay: 80
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
-    group_members: []
-    ip: !!python/object/apply:ipaddress.IPv4Address
-    - 3232236399
-    is_group: false
-    name: Bedroom
-    port: 4010
-    sample_rate: 48000
-    volume: 0.26
-  __pydantic_extra__: null
-  __pydantic_fields_set__: !!set
-    bit_depth: null
-    channel_layout: null
-    channels: null
-    delay: null
-    enabled: null
-    equalizer: null
-    ip: null
-    name: null
-    port: null
-    sample_rate: null
-    volume: null
-  __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.SinkDescription
-  __dict__:
-    bit_depth: 32
-    channel_layout: stereo
-    channels: 2
-    delay: 0
-    enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
-    group_members: []
-    ip: !!python/object/apply:ipaddress.IPv4Address
-    - 3232236390
-    is_group: false
-    name: Bathroom
-    port: 4010
-    sample_rate: 48000
-    volume: 0.27
-  __pydantic_extra__: null
-  __pydantic_fields_set__: !!set
-    bit_depth: null
-    channel_layout: null
-    channels: null
-    delay: null
-    enabled: null
-    equalizer: null
-    ip: null
-    name: null
-    port: null
-    sample_rate: null
-    volume: null
-  __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.SinkDescription
-  __dict__:
-    bit_depth: 32
-    channel_layout: stereo
-    channels: 2
-    delay: 0
-    enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
+    equalizer: !!python/object:src.screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -722,7 +283,7 @@ sinks:
     name: Office
     port: 4010
     sample_rate: 48000
-    volume: 0.42
+    volume: 1.0
   __pydantic_extra__: null
   __pydantic_fields_set__: !!set
     bit_depth: null
@@ -737,14 +298,84 @@ sinks:
     sample_rate: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.SinkDescription
+- !!python/object:src.screamrouter_types.configuration.SinkDescription
   __dict__:
-    bit_depth: 32
+    bit_depth: 16
+    channel_layout: stereo
+    channels: 2
+    delay: 80
+    enabled: false
+    equalizer: !!python/object:src.screamrouter_types.configuration.Equalizer
+      __dict__:
+        b1: 1.0
+        b10: 1.0
+        b11: 0.74
+        b12: 0.65
+        b13: 0.7
+        b14: 0.73
+        b15: 0.85
+        b16: 1.0
+        b17: 1.0
+        b18: 1.0
+        b2: 1.0
+        b3: 1.0
+        b4: 1.0
+        b5: 1.0
+        b6: 1.0
+        b7: 1.0
+        b8: 1.0
+        b9: 1.0
+      __pydantic_extra__: null
+      __pydantic_fields_set__: !!set
+        b1: null
+        b10: null
+        b11: null
+        b12: null
+        b13: null
+        b14: null
+        b15: null
+        b16: null
+        b17: null
+        b18: null
+        b2: null
+        b3: null
+        b4: null
+        b5: null
+        b6: null
+        b7: null
+        b8: null
+        b9: null
+      __pydantic_private__: null
+    group_members: []
+    ip: !!python/object/apply:ipaddress.IPv4Address
+    - 3232236396
+    is_group: false
+    name: Tablet
+    port: 4010
+    sample_rate: 48000
+    volume: 1.0
+  __pydantic_extra__: null
+  __pydantic_fields_set__: !!set
+    bit_depth: null
+    channel_layout: null
+    channels: null
+    delay: null
+    enabled: null
+    equalizer: null
+    ip: null
+    name: null
+    port: null
+    sample_rate: null
+    volume: null
+  __pydantic_private__: null
+- !!python/object:src.screamrouter_types.configuration.SinkDescription
+  __dict__:
+    bit_depth: 16
     channel_layout: stereo
     channels: 2
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
+    equalizer: &id002 !!python/object:src.screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -792,6 +423,73 @@ sinks:
     name: Phone
     port: 4010
     sample_rate: 48000
+    volume: 1
+  __pydantic_extra__: null
+  __pydantic_fields_set__: !!set
+    bit_depth: null
+    channel_layout: null
+    channels: null
+    delay: null
+    ip: null
+    name: null
+    port: null
+    sample_rate: null
+  __pydantic_private__: null
+- !!python/object:src.screamrouter_types.configuration.SinkDescription
+  __dict__:
+    bit_depth: 16
+    channel_layout: stereo
+    channels: 2
+    delay: 0
+    enabled: true
+    equalizer: !!python/object:src.screamrouter_types.configuration.Equalizer
+      __dict__:
+        b1: 1.0
+        b10: 1.36
+        b11: 1.49
+        b12: 1.42
+        b13: 1.59
+        b14: 1.46
+        b15: 1.32
+        b16: 1.27
+        b17: 1.0
+        b18: 1.0
+        b2: 1.0
+        b3: 1.0
+        b4: 1.0
+        b5: 1.0
+        b6: 1.0
+        b7: 1.0
+        b8: 1.27
+        b9: 1.4
+      __pydantic_extra__: null
+      __pydantic_fields_set__: !!set
+        b1: null
+        b10: null
+        b11: null
+        b12: null
+        b13: null
+        b14: null
+        b15: null
+        b16: null
+        b17: null
+        b18: null
+        b2: null
+        b3: null
+        b4: null
+        b5: null
+        b6: null
+        b7: null
+        b8: null
+        b9: null
+      __pydantic_private__: null
+    group_members: []
+    ip: !!python/object/apply:ipaddress.IPv4Address
+    - 3232236399
+    is_group: false
+    name: Bedroom
+    port: 4010
+    sample_rate: 48000
     volume: 1.0
   __pydantic_extra__: null
   __pydantic_fields_set__: !!set
@@ -807,14 +505,43 @@ sinks:
     sample_rate: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.SinkDescription
+- !!python/object:src.screamrouter_types.configuration.SinkDescription
+  __dict__:
+    bit_depth: 16
+    channel_layout: stereo
+    channels: 2
+    delay: 0
+    enabled: true
+    equalizer: *id002
+    group_members: []
+    ip: !!python/object/apply:ipaddress.IPv4Address
+    - 3232236390
+    is_group: false
+    name: Bathroom
+    port: 4010
+    sample_rate: 48000
+    volume: 1.0
+  __pydantic_extra__: null
+  __pydantic_fields_set__: !!set
+    bit_depth: null
+    channel_layout: null
+    channels: null
+    delay: null
+    enabled: null
+    ip: null
+    name: null
+    port: null
+    sample_rate: null
+    volume: null
+  __pydantic_private__: null
+- !!python/object:src.screamrouter_types.configuration.SinkDescription
   __dict__:
     bit_depth: 32
     channel_layout: stereo
     channels: 2
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
+    equalizer: !!python/object:src.screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -857,94 +584,30 @@ sinks:
       __pydantic_private__: null
     group_members:
     - Livingroom
+    - Office
+    - Tablet
+    - Phone
     - Bedroom
     - Bathroom
-    - Office
     ip: null
     is_group: true
     name: All
     port: 4010
     sample_rate: 48000
-    volume: 1.0
+    volume: 1
   __pydantic_extra__: null
   __pydantic_fields_set__: !!set
     enabled: null
     group_members: null
     is_group: null
     name: null
-    volume: null
-  __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.SinkDescription
-  __dict__:
-    bit_depth: 32
-    channel_layout: stereo
-    channels: 2
-    delay: 0
-    enabled: false
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
-    group_members:
-    - Bedroom
-    - Bathroom
-    ip: null
-    is_group: true
-    name: Bedroom Group
-    port: 4010
-    sample_rate: 48000
-    volume: 1.0
-  __pydantic_extra__: null
-  __pydantic_fields_set__: !!set
-    enabled: null
-    group_members: null
-    is_group: null
-    name: null
-    volume: null
   __pydantic_private__: null
 sources:
-- !!python/object:screamrouter_types.configuration.SourceDescription
+- !!python/object:src.screamrouter_types.configuration.SourceDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
+    equalizer: !!python/object:src.screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -990,19 +653,26 @@ sources:
     - 3232236407
     is_group: false
     name: Server
-    volume: 1
+    vnc_ip: !!python/object/apply:ipaddress.IPv4Address
+    - 3232236407
+    vnc_port: 5901
+    volume: 1.0
   __pydantic_extra__: null
   __pydantic_fields_set__: !!set
     delay: null
+    enabled: null
     equalizer: null
     ip: null
     name: null
+    vnc_ip: null
+    vnc_port: null
+    volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.SourceDescription
+- !!python/object:src.screamrouter_types.configuration.SourceDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
+    equalizer: !!python/object:src.screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -1051,16 +721,17 @@ sources:
     volume: 1.0
   __pydantic_extra__: null
   __pydantic_fields_set__: !!set
+    delay: null
     enabled: null
     ip: null
     name: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.SourceDescription
+- !!python/object:src.screamrouter_types.configuration.SourceDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
+    equalizer: !!python/object:src.screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -1114,69 +785,11 @@ sources:
     name: null
     volume: null
   __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.SourceDescription
+- !!python/object:src.screamrouter_types.configuration.SourceDescription
   __dict__:
     delay: 0
     enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
-      __dict__:
-        b1: 1.0
-        b10: 1.0
-        b11: 1.0
-        b12: 1.0
-        b13: 1.0
-        b14: 1.0
-        b15: 1.0
-        b16: 1.0
-        b17: 1.0
-        b18: 1.0
-        b2: 1.0
-        b3: 1.0
-        b4: 1.0
-        b5: 1.0
-        b6: 1.0
-        b7: 1.0
-        b8: 1.0
-        b9: 1.0
-      __pydantic_extra__: null
-      __pydantic_fields_set__: !!set
-        b1: null
-        b10: null
-        b11: null
-        b12: null
-        b13: null
-        b14: null
-        b15: null
-        b16: null
-        b17: null
-        b18: null
-        b2: null
-        b3: null
-        b4: null
-        b5: null
-        b6: null
-        b7: null
-        b8: null
-        b9: null
-      __pydantic_private__: null
-    group_members: []
-    ip: !!python/object/apply:ipaddress.IPv4Address
-    - 3232235623
-    is_group: false
-    name: Office PC Management VLAN
-    volume: 1.0
-  __pydantic_extra__: null
-  __pydantic_fields_set__: !!set
-    enabled: null
-    ip: null
-    name: null
-    volume: null
-  __pydantic_private__: null
-- !!python/object:screamrouter_types.configuration.SourceDescription
-  __dict__:
-    delay: 0
-    enabled: true
-    equalizer: !!python/object:screamrouter_types.configuration.Equalizer
+    equalizer: !!python/object:src.screamrouter_types.configuration.Equalizer
       __dict__:
         b1: 1.0
         b10: 1.0
@@ -1231,4 +844,64 @@ sources:
     is_group: null
     name: null
     volume: null
+  __pydantic_private__: null
+- !!python/object:src.screamrouter_types.configuration.SourceDescription
+  __dict__:
+    delay: 0
+    enabled: true
+    equalizer: !!python/object:src.screamrouter_types.configuration.Equalizer
+      __dict__:
+        b1: 1.0
+        b10: 1.0
+        b11: 1.0
+        b12: 1.0
+        b13: 1.0
+        b14: 1.0
+        b15: 1.0
+        b16: 1.0
+        b17: 1.0
+        b18: 1.0
+        b2: 1.0
+        b3: 1.0
+        b4: 1.0
+        b5: 1.0
+        b6: 1.0
+        b7: 1.0
+        b8: 1.0
+        b9: 1.0
+      __pydantic_extra__: null
+      __pydantic_fields_set__: !!set
+        b1: null
+        b10: null
+        b11: null
+        b12: null
+        b13: null
+        b14: null
+        b15: null
+        b16: null
+        b17: null
+        b18: null
+        b2: null
+        b3: null
+        b4: null
+        b5: null
+        b6: null
+        b7: null
+        b8: null
+        b9: null
+      __pydantic_private__: null
+    group_members: []
+    has_no_header: false
+    ip: !!python/object/apply:ipaddress.IPv4Address
+    - 3232236396
+    is_group: false
+    name: Tablet
+    tag: null
+    volume: 1
+  __pydantic_extra__: null
+  __pydantic_fields_set__: !!set
+    delay: null
+    enabled: null
+    ip: null
+    name: null
   __pydantic_private__: null

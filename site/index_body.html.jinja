@@ -22,7 +22,7 @@
                         "data": source} %}
                         {%- set options.options = options.options + [_option] %}
                         {%- endfor %}
-                        {{- selects.make_multiple_options(options.options, sources) }}
+                        {{- selects.make_multiple_options(options.options, sources) }}<BR />
                         {{- buttons.button("add_source_button", "➕", "section-button", {}, "Add Source")}}
                         {{- buttons.button("add_source_group_button", "➕➕", "section-button", {}, "Add Source Group")}}
                     </DIV>
@@ -52,7 +52,7 @@
                         "data": route} %}
                         {%- set options.options = options.options + [_option] %}
                         {%- endfor %}
-                        {{- selects.make_multiple_options(options.options, routes) }}
+                        {{- selects.make_multiple_options(options.options, routes) }}<BR />
                         {{- buttons.button("add_route_button", "➕", "section-button", {}, "Add Route")}}
                     </DIV>
                 </DIV>
@@ -78,7 +78,7 @@
                         "data": sink} %}
                         {%- set options.options = options.options + [_option] %}
                         {%- endfor %}
-                        {{- selects.make_multiple_options(options.options, sinks) }}
+                        {{- selects.make_multiple_options(options.options, sinks) }}<BR />
                         {{- buttons.button("add_sink_button", "➕", "section-button", {}, "Add Sink")}}
                         {{- buttons.button("add_sink_group_button", "➕➕", "section-button", {}, "Add Sink Group")}}
                     </DIV>

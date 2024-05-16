@@ -1,6 +1,6 @@
 {%- import "imports/buttons.html.jinja" as buttons %}
 <INPUT TYPE="hidden" ID="dialog_action" VALUE="put">
-<INPUT TYPE="hidden" ID="dialog_url" VALUE="/{{request_info['equalizer_holder_type']}}s/">
+<INPUT TYPE="hidden" ID="dialog_url" VALUE="/{{request_info['equalizer_holder_type']}}s/{{request_info['equalizer_holder_name']}}">
 <INPUT TYPE="hidden" ID="name" VALUE="{{request_info['equalizer_holder_name']}}">
 <SPAN CLASS="equalizer">65 Hz<BR /><INPUT ALT="65 Hertz Band" TITLE="65 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b1" ORIENT="vertical" NAME="b1" MAX="200" MIN="0" VALUE={{request_info["data"]['b1'] * 100}} /></SPAN>
 <SPAN CLASS="equalizer">92 Hz<BR /><INPUT ALT="92 Hertz Band" TITLE="92 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b2" ORIENT="vertical" NAME="b2" MAX="200" MIN="0" VALUE={{request_info["data"]['b2'] * 100}} /></SPAN>

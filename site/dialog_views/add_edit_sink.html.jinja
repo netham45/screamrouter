@@ -5,10 +5,10 @@
 <H3>{{ 'Add Sink' if request_info['add_new'] else 'Edit Sink' }}</H3>
 <DIV ID="dialog_add_edit_sink">
     <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
-    <INPUT TYPE="hidden" ID="dialog_url" VALUE="sinks">
-    {{- inputs.text("Sink Name", "name", request_info['add_new'], "Sink Name", data['name']) }}<BR />
-    {{- inputs.text("Sink IP", "ip", True, "Sink IP", data['ip']) }}<BR />
-    {{- inputs.text_number("Sink Port", "port", 1, 65535, True, "Sink Port", data['port']) }}<BR />
+    <INPUT TYPE="hidden" ID="dialog_url" VALUE="sinks/{{data['name'] if not request_info['add_new']}}">
+    {{- inputs.text("Sink Name", "name", true, "Sink Name", data['name']) }}<BR />
+    {{- inputs.text("Sink IP", "ip", true, "Sink IP", data['ip']) }}<BR />
+    {{- inputs.text_number("Sink Port", "port", 1, 65535, true, "Sink Port", data['port']) }}<BR />
     <SPAN>
     <LABEL FOR="bit_depth">Bit Depth</LABEL>
         <SELECT ID="bit_depth">

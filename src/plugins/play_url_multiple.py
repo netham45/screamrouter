@@ -1,11 +1,11 @@
 """This plugin implements an API endpoint to play a URL back over a Sink."""
 
-from ctypes import c_bool
 import multiprocessing
 import os
 import select
 import signal
 import subprocess
+from ctypes import c_bool
 from typing import List, Optional
 
 from pydantic import BaseModel

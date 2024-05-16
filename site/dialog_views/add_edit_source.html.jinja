@@ -5,8 +5,8 @@
 <H3>{{ 'Add Source' if request_info['add_new'] else 'Edit Source' }}</H3>
 <DIV ID="dialog_add_edit_source">
     <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
-    <INPUT TYPE="hidden" ID="dialog_url" VALUE="{{url_for('add_source')}}">
-    {{- inputs.text("Source Name", "name", request_info['add_new'], "Source Name", data['name']) }}<BR />
+    <INPUT TYPE="hidden" ID="dialog_url" VALUE="{{url_for('add_source')}}/{{data['name'] if not request_info['add_new']}}">
+    {{- inputs.text("Source Name", "name", true, "Source Name", data['name']) }}<BR />
     {{- inputs.text("Source IP", "ip", true, "Source IP", data['ip']) }}<BR />
     {{- inputs.text("VNC IP", "vnc_ip", true, "VNC IP", data['vnc_ip']) }}<BR />
     {{- inputs.text("VNC Port", "vnc_port", true, "VNC Port", data['vnc_port']) }}<BR />

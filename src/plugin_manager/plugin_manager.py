@@ -4,7 +4,7 @@ from typing import List
 from fastapi import FastAPI
 
 from src.plugin_manager.screamrouter_plugin import ScreamRouterPlugin
-from src.plugins.play_url import PluginPlayURL          
+from src.plugins.play_url import PluginPlayURL
 from src.plugins.play_url_multiple import PluginPlayURLMultiple
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import SinkNameType

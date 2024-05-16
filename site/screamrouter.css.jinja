@@ -260,59 +260,6 @@ BUTTON#add_sink_group_button, BUTTON#add_source_group_button {
     display: none;
 }
 
-@media only screen and (max-width: 825px) {
-    DIV.section {
-        width: 100%;
-        margin-top: 5px;
-    }
-
-    BUTTON {
-        padding-top: 5px;
-        padding-bottom: 5px;
-    }
-
-    DIV.select-container {
-        font-size: inherit;
-        position: relative;
-    }
-
-    DIV.main-select {
-        font-size: inherit;
-        position: relative;
-    }
-
-    DIV#dialog {
-        position: absolute;
-        top: 0%;
-        left: 0px;
-        padding-top: 0px;
-        padding-left: 0px;
-        padding-right: 0px;
-        margin-left: 0px;
-        width: 100%;
-        max-width: 100%;
-
-    }
-    DIV.title {
-        font-family: "Courier";
-        font-weight: 1000;
-        font-size: 7.8vw;
-    }
-  }
-
-@media (pointer: coarse)  {
-    #update_source_button, #update_sink_button, #update_route_button, 
-    #update_source_equalizer_button, #update_sink_equalizer_button, #update_route_equalizer_button,
-    #enable_disable_source_button, #enable_disable_route_button, #enable_disable_sink_button,
-    #listen_to_sink_button
-    {
-        display: inline;
-    }
-    span.button-icon {
-        font-size: 24pt;
-    }
-}
-
 SELECT.main-select option {
     height: 14pt;
     overflow: hidden;
@@ -371,7 +318,7 @@ IFRAME#vnc-iframe {
 }
 
 SPAN.route-label {
-    font-size: 12pt;
+    font-size: .8vw;
     color: #111111;
     pointer-events: none;
 }
@@ -381,4 +328,64 @@ DIV#enable_disable {
     position:  relative;
     min-height: 100%;
 
+}
+
+@media only screen and (max-width: 825px) {
+    DIV.section {
+        width: 100%;
+        margin-top: 5px;
+    }
+
+    BUTTON {
+        padding-top: 5px;
+        padding-bottom: 5px;
+    }
+
+    DIV.select-container {
+        font-size: inherit;
+        position: relative;
+    }
+
+    DIV.main-select {
+        font-size: inherit;
+        position: relative;
+    }
+
+    SPAN.route-label {
+        font-size: 8pt;
+        color: #111111;
+        pointer-events: none;
+    }
+
+
+    DIV#dialog {
+        position: absolute;
+        top: 0%;
+        left: 0px;
+        padding-top: 0px;
+        padding-left: 0px;
+        padding-right: 0px;
+        margin-left: 0px;
+        width: 100%;
+        max-width: 100%;
+
+    }
+    DIV.title {
+        font-family: "Courier";
+        font-weight: 1000;
+        font-size: 7.8vw;
+    }
+  }
+
+@media (pointer: coarse)  {
+    #update_source_button, #update_sink_button, #update_route_button, 
+    #update_source_equalizer_button, #update_sink_equalizer_button, #update_route_equalizer_button,
+    #enable_disable_source_button, #enable_disable_route_button, #enable_disable_sink_button,
+    #listen_to_sink_button
+    {
+        display: inline;
+    }
+    span.button-icon {
+        font-size: 24pt;
+    }
 }

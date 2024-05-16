@@ -4,7 +4,6 @@ import os
 import select
 import signal
 import subprocess
-
 from typing import List, Optional, Tuple
 
 from pydantic import BaseModel

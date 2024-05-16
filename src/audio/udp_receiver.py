@@ -64,6 +64,6 @@ class UDPReceiver(multiprocessing.Process):
 
                 for controller_write_fd in self.controller_write_fd_list:
                     os.write(controller_write_fd,
-                             bytes(addr[0].encode("ascii") + bytes([0] * (constants.TAG_MAX_LENGTH - addrlen)) + data))
+        bytes(addr[0].encode("ascii") + bytes([0] * (constants.TAG_MAX_LENGTH - addrlen)) + data))
         logger.info("[Receiver] Main thread stopped")
         close_all_pipes()

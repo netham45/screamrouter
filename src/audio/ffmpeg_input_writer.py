@@ -3,9 +3,9 @@ import multiprocessing
 import multiprocessing.sharedctypes
 import os
 import select
-from subprocess import TimeoutExpired
 import time
 from ctypes import c_bool, c_double
+from subprocess import TimeoutExpired
 from typing import Optional
 
 import src.constants.constants as constants

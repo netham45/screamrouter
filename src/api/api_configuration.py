@@ -22,7 +22,7 @@ class APIConfiguration():
             tags=["Sink Configuration"])(self._configuration_controller.get_sinks)
         self._app.post("/sinks",
             tags=["Sink Configuration"])(self._configuration_controller.add_sink)
-        self._app.put("/sinks",
+        self._app.put("/sinks/{old_sink_name}",
             tags=["Sink Configuration"])(self._configuration_controller.update_sink)
         self._app.delete("/sinks/{sink_name}",
             tags=["Sink Configuration"])(self._configuration_controller.delete_sink)
@@ -38,7 +38,7 @@ class APIConfiguration():
             tags=["Source Configuration"])(self._configuration_controller.get_sources)
         self._app.post("/sources",
             tags=["Source Configuration"])(self._configuration_controller.add_source)
-        self._app.put("/sources",
+        self._app.put("/sources/{old_source_name}",
             tags=["Source Configuration"])(self._configuration_controller.update_source)
         self._app.delete("/sources/{source_name}",
             tags=["Source Configuration"])(self._configuration_controller.delete_source)
@@ -54,7 +54,7 @@ class APIConfiguration():
             tags=["Route Configuration"])(self._configuration_controller.get_routes)
         self._app.post("/routes",
             tags=["Route Configuration"])(self._configuration_controller.add_route)
-        self._app.put("/routes",
+        self._app.put("/routes/{old_route_name}",
             tags=["Route Configuration"])(self._configuration_controller.update_route)
         self._app.delete("/routes/{route_name}",
             tags=["Route Configuration"])(self._configuration_controller.delete_route)

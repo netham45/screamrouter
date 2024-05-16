@@ -1,7 +1,7 @@
 """Contains models used by the configuration manager"""
 
 from copy import copy
-from typing import List, Optional
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel
 
@@ -181,9 +181,9 @@ class SourceDescription(BaseModel):
                                      b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
                                      b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
     """Audio Equalizer"""
-    vnc_ip: Optional[annotations.IPAddressType] = None
+    vnc_ip: Union[annotations.IPAddressType, Literal[""]] = ""
     """IP Address for VNC connections"""
-    vnc_port: Optional[annotations.PortType] = None
+    vnc_port: Union[annotations.PortType, Literal[""]] = ""
     """Port for VNC connections"""
 
     def __eq__(self, other):

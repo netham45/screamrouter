@@ -4,8 +4,8 @@ import fcntl
 import multiprocessing
 import multiprocessing.sharedctypes
 import os
-from ctypes import c_bool
 import select
+from ctypes import c_bool
 from subprocess import TimeoutExpired
 from typing import List
 

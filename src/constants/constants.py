@@ -18,7 +18,7 @@ MP3_STREAM_SAMPLERATE: int = 48000
 """MP3 stream sample for the web API"""
 LOGS_DIR: str = "./logs/"
 """This is the directory logs are stored in"""
-CONSOLE_LOG_LEVEL: str = "INFO"
+CONSOLE_LOG_LEVEL: str = "DEBUG"
 """Log level for stdout. Log level for stdout
    Valid values are "DEBUG", "INFO", "WARNING", "ERROR"."""
 LOG_TO_FILE: bool = True

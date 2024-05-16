@@ -5,8 +5,8 @@
 <H3>{{ 'Add Route' if request_info['add_new'] else 'Edit Route' }}</H3>
 <DIV ID="dialog_add_edit_route">
     <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
-    <INPUT TYPE="hidden" ID="dialog_url" VALUE="{{url_for('add_route')}}">
-    {{- inputs.text("Route Name", "name", request_info['add_new'], "Route Name", data['name']) }}<BR />
+    <INPUT TYPE="hidden" ID="dialog_url" VALUE="{{url_for('add_route')}}/{{data['name'] if not request_info['add_new']}}">
+    {{- inputs.text("Route Name", "name", true, "Route Name", data['name']) }}<BR />
     <SPAN>
         <LABEL FOR="source">Source Name</LABEL>
         <SELECT NAME="source" ID="source">

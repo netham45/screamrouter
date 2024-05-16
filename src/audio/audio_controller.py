@@ -2,17 +2,17 @@
 import multiprocessing
 import os
 import select
-from subprocess import TimeoutExpired
 import threading
 from ctypes import c_bool
 from queue import Empty
+from subprocess import TimeoutExpired
 from typing import Dict, List
 
 import src.constants.constants as constants
 from src.api.api_webstream import APIWebStream
 from src.audio.ffmpeg_input_writer import FFMpegInputWriter
-from src.audio.ffmpeg_process_handler import FFMpegHandler
 from src.audio.ffmpeg_output_readers import MP3OutputReader, PCMOutputReader
+from src.audio.ffmpeg_process_handler import FFMpegHandler
 from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.configuration import (SinkDescription,

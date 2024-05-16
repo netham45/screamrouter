@@ -3,15 +3,15 @@ import mimetypes
 import multiprocessing
 from typing import List, Optional
 
+import websockify
+import websockify.websocketproxy
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.templating import _TemplateResponse
 
-import websockify
-import websockify.websocketproxy
-
 from src.configuration.configuration_manager import ConfigurationManager
+from src.constants import constants
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import (RouteNameType, SinkNameType,
                                                 SourceNameType)
@@ -21,8 +21,6 @@ from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
 from src.screamrouter_types.website import (AddEditRouteInfo, AddEditSinkInfo,
                                             AddEditSourceInfo,
                                             EditEqualizerInfo)
-
-from src.constants import constants
 
 logger = get_logger(__name__)
 
@@ -100,7 +98,7 @@ class APIWebsite():
         port: int = self.vnc_port
         self.vnc_port = self.vnc_port + 1
         vnc_websocket = websockify.WebSocketProxy(
-                                          verbose=True,
+                                          verbose=False,
                                           listen_port=port,
                                           target_host=str(source.vnc_ip),
                                           target_port=source.vnc_port,

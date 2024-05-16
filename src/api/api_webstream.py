@@ -2,8 +2,8 @@
 import asyncio
 import multiprocessing
 import queue
-from subprocess import TimeoutExpired
 import threading
+from subprocess import TimeoutExpired
 from typing import List, Optional
 
 from fastapi import FastAPI, WebSocket

@@ -1,11 +1,11 @@
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
 import os
-from subprocess import TimeoutExpired
 import sys
 import threading
 from copy import copy, deepcopy
 from multiprocessing import Process
+from subprocess import TimeoutExpired
 from typing import List, Tuple
 
 import yaml
@@ -86,11 +86,24 @@ class ConfigurationManager(threading.Thread):
         self.__reload_configuration()
         return True
 
-    def update_sink(self, new_sink: SinkDescription) -> bool:
-        """Updates a sink"""
-        sink: SinkDescription = self.get_sink_by_name(new_sink.name)
+    def update_sink(self, new_sink: SinkDescription, old_sink_name: SinkNameType) -> bool:
+        """Updates fields on the sink indicated by old_sink_name to what is specified in new_sink
+           Undefined fields are ignored"""
+        changed_sink: SinkDescription = self.get_sink_by_name(old_sink_name)
+        if new_sink.name != old_sink_name:
+            for sink in self.sink_descriptions:
+                if sink.name == new_sink.name:
+                    raise ValueError(f"Name {new_sink.name} already used")
         for field in new_sink.model_fields_set:
-            setattr(sink, field, getattr(new_sink, field))
+            setattr(changed_sink, field, getattr(new_sink, field))
+        for sink in self.sink_descriptions:
+            for index, group_member in enumerate(sink.group_members):
+                if group_member == old_sink_name:
+                    sink.group_members[index] = changed_sink.name
+        for route in self.route_descriptions:
+            if route.sink == old_sink_name:
+                route.sink = changed_sink.name
+
         self.__reload_configuration()
         return True
 
@@ -127,11 +140,24 @@ class ConfigurationManager(threading.Thread):
         self.__reload_configuration()
         return True
 
-    def update_source(self, new_source: SourceDescription) -> bool:
-        """Updates a source"""
-        source: SourceDescription = self.get_source_by_name(new_source.name)
+    def update_source(self, new_source: SourceDescription, old_source_name: SourceNameType) -> bool:
+        """Updates fields on source 'old_source_name' to what's specified in new_source
+           Undefined fields are not changed"""
+        changed_source: SourceDescription = self.get_source_by_name(old_source_name)
+        if new_source.name != old_source_name:
+            for source in self.source_descriptions:
+                if source.name == new_source.name:
+                    raise ValueError(f"Name {new_source.name} already used")
         for field in new_source.model_fields_set:
-            setattr(source, field, getattr(new_source, field))
+            setattr(changed_source, field, getattr(new_source, field))
+        for source in self.source_descriptions:
+            for index, group_member in enumerate(source.group_members):
+                if group_member == old_source_name:
+                    source.group_members[index] = changed_source.name
+        for route in self.route_descriptions:
+            if route.source == old_source_name:
+                route.source = changed_source.name
+
         self.__reload_configuration()
         return True
 
@@ -168,11 +194,16 @@ class ConfigurationManager(threading.Thread):
         self.__reload_configuration()
         return True
 
-    def update_route(self, new_route: RouteDescription) -> bool:
-        """Updates a route"""
-        route: RouteDescription = self.get_route_by_name(new_route.name)
+    def update_route(self, new_route: RouteDescription, old_route_name: RouteNameType) -> bool:
+        """Updates fields on the route indicated by old_route_name to what is specified in new_route
+           Undefined fields are ignored"""
+        changed_route: RouteDescription = self.get_route_by_name(old_route_name)
+        if new_route.name != old_route_name:
+            for route in self.route_descriptions:
+                if route.name == new_route.name:
+                    raise ValueError(f"Name {new_route.name} already used")
         for field in new_route.model_fields_set:
-            setattr(route, field, getattr(new_route, field))
+            setattr(changed_route, field, getattr(new_route, field))
         self.__reload_configuration()
         return True
 
@@ -494,7 +525,7 @@ class ConfigurationManager(threading.Thread):
         self.active_configuration = ConfigurationSolver(self.source_descriptions,
                                                         self.sink_descriptions,
                                                         self.route_descriptions)
-        
+
         _logger.debug("[Configuration Manager] Configuration solved, adding temporary sources")
         # Add temporary plugin sources
         temporary_sources: dict[SinkNameType, List[SourceDescription]]
