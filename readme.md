@@ -56,11 +56,9 @@ Scream has an expired certificate of a type Windows verifies the date of. In ord
 
 ## Configuration
 
-ScreamRouter will start up with a blank profile by default. There will be no sources, sinks, or routers configured. You can add them by editing the yaml or by using the interface.
+ScreamRouter will start up with a blank profile by default. There will be no sources, sinks, or routers configured. You can add them using the web interface.
 
 ScreamRouter's web interface listens on port 443.
-
-The interface will update the yaml so any notes, non-standard fields, or custom layouts in the yaml will be lost. The interface will prompt you for the required information when you go to add an entry.
 
 Each Sink, Source, and Route has a name. This name is used as the reference for routes and groups to track members. Clicking Add Sink will prompt you for the information to make one. The names must be unique between Sinks and Sink Groups, Sources and Source Groups, and all Routes.
 
@@ -107,6 +105,8 @@ These are the options in constants.py:
 * `DEBUG_MULTIPROCESSING`  `Default: False` Debugs Multiprocessing to stdout.
 * `SHOW_FFMPEG_OUTPUT` `Default: False` Show ffmpeg output to stdout.
 * `SOURCE_INACTIVE_TIME_MS` `Default: 150` Inactive time for a source before it's closed. Some plugins may need this raised. If this is too long there will be gaps when a source stops sending. Having the value as short as possible without false positives will perform the best.
+* `CERTIFICATE` Needs set to the path to your SSL certificate
+* `CERTIFICATE_KEY` Needs set to the path to your SSL certificate private key
 
 ### YAML
 
