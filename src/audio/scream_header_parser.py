@@ -55,7 +55,7 @@ class ScreamHeader():
         """Holds the raw header bytes"""
 
     def __parse_channel_mask(self, channel_mask: bytes) -> str:
-        """Converts the channel mask to a string to be fed to ffmpeg"""
+        """Converts the channel mask to a string for ffmpeg"""
         try:
             return CHANNEL_LAYOUT_TABLE[(channel_mask[0], channel_mask[1])]
         except KeyError as exc:

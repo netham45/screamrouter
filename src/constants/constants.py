@@ -27,9 +27,7 @@ LOG_ENTRIES_TO_RETAIN: int = 2
 """Number of previous runs to retain logs for"""
 DEBUG_MULTIPROCESSING: bool = False
 """Debugs Multiprocessing to stdout."""
-SHOW_FFMPEG_OUTPUT: bool = False
-"""Show ffmpeg output to stdout."""
-SOURCE_INACTIVE_TIME_MS: int = 150
+SOURCE_INACTIVE_TIME_MS: int = 35
 """Inactive time for a source before it's closed. 
    Some plugins may need this raised.
    If this is too long there will be gaps when a source stops sending."""
@@ -48,8 +46,6 @@ PACKET_HEADER_SIZE: int = 5
 """This is the packet header size"""
 PACKET_SIZE = PACKET_HEADER_SIZE + PACKET_DATA_SIZE
 """This is the total packet size"""
-INPUT_BUFFER_SIZE: int = PACKET_DATA_SIZE * 64
-"""-bufsize used for ffmpeg input"""
 MP3_HEADER_LENGTH: int = 4
 """Length of MP3 header"""
 WAIT_FOR_CLOSES: bool = False
