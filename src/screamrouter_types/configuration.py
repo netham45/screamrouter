@@ -10,41 +10,41 @@ import src.screamrouter_types.annotations as annotations
 
 class Equalizer(BaseModel):
     """Holds data for the equalizer for a sink""" 
-    b1: annotations.EqualizerBandType1 = 1
+    b1: annotations.EqualizerBandType1 = float(1.0)
     """Set 65Hz band gain."""
-    b2: annotations.EqualizerBandType2 = 1
+    b2: annotations.EqualizerBandType2 = float(1.0)
     """Set 92Hz band gain."""
-    b3: annotations.EqualizerBandType3 = 1
+    b3: annotations.EqualizerBandType3 = float(1.0)
     """Set 131Hz band gain."""
-    b4: annotations.EqualizerBandType4 = 1
+    b4: annotations.EqualizerBandType4 = float(1.0)
     """Set 185Hz band gain.`"""
-    b5: annotations.EqualizerBandType5 = 1
+    b5: annotations.EqualizerBandType5 = float(1.0)
     """Set 262Hz band gain."""
-    b6: annotations.EqualizerBandType6 = 1
+    b6: annotations.EqualizerBandType6 = float(1.0)
     """Set 370Hz band gain."""
-    b7: annotations.EqualizerBandType7 = 1
+    b7: annotations.EqualizerBandType7 = float(1.0)
     """Set 523Hz band gain."""
-    b8: annotations.EqualizerBandType8 = 1
+    b8: annotations.EqualizerBandType8 = float(1.0)
     """Set 740Hz band gain."""
-    b9: annotations.EqualizerBandType9 = 1
+    b9: annotations.EqualizerBandType9 = float(1.0)
     """Set 1047Hz band gain."""
-    b10: annotations.EqualizerBandType10 = 1
+    b10: annotations.EqualizerBandType10 = float(1.0)
     """Set 1480Hz band gain."""
-    b11: annotations.EqualizerBandType11 = 1
+    b11: annotations.EqualizerBandType11 = float(1.0)
     """Set 2093Hz band gain."""
-    b12: annotations.EqualizerBandType12 = 1
+    b12: annotations.EqualizerBandType12 = float(1.0)
     """Set 2960Hz band gain."""
-    b13: annotations.EqualizerBandType13 = 1
+    b13: annotations.EqualizerBandType13 = float(1.0)
     """Set 4186Hz band gain."""
-    b14: annotations.EqualizerBandType14 = 1
+    b14: annotations.EqualizerBandType14 = float(1.0)
     """Set 5920Hz band gain."""
-    b15: annotations.EqualizerBandType15 = 1
+    b15: annotations.EqualizerBandType15 = float(1.0)
     """Set 8372Hz band gain."""
-    b16: annotations.EqualizerBandType16 = 1
+    b16: annotations.EqualizerBandType16 = float(1.0)
     """Set 11840Hz band gain."""
-    b17: annotations.EqualizerBandType17 = 1
+    b17: annotations.EqualizerBandType17 = float(1.0)
     """Set 16744Hz band gain."""
-    b18: annotations.EqualizerBandType18 = 1
+    b18: annotations.EqualizerBandType18 = float(1.0)
     """Set 20000Hz band gain."""
 
     def __eq__(self, other):
@@ -52,15 +52,11 @@ class Equalizer(BaseModel):
            Compares all properties."""
         if isinstance(other, type(self)):
             for field_name in self.model_fields:
-                if (field_name in list(self.model_fields_set) and
-                    not field_name in list(other.model_fields_set) or
-                    field_name in list(other.model_fields_set) and
-                    not field_name in list(self.model_fields_set)):
-                    return False
                 if (not field_name in list(self.model_fields_set) and
                 not field_name in list(self.model_fields_set)):
                     continue
                 if not getattr(self, field_name) == getattr(other, field_name):
+                    print(f"{getattr(self, field_name)} != {getattr(other, field_name)}")
                     return False
             return True
         raise TypeError(f"Can't compare {type(self)} against {type(other)}")

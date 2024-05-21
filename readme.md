@@ -18,8 +18,8 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * Can play a URL out of a sink or sink group
 * Has a Home Assistant Custom Component for managing Sinks and playing media back through Sinks (See: https://github.com/netham45/screamrouter_ha_component )
 * Automatically saves to YAML on setting change
-* Uses ffmpeg to mix sources together into final sink stream to be played to the Scream sink
-* Can use ffmpeg to delay any sink, route, source, or group so sinks line up better
+* Uses a custom mixer with no additional functions so latency can be minimized when ffmpeg is not required in the chain
+* Can use ffmpeg to delay any sink, route, source, or group so sinks line up better, can use ffmpeg to adjust mismatched sources so they can be mixed
 * Can adjust equalization for any sink, route, source, or group
 * Contains a plugin system to easily allow additional sources to be added
 * Milkdrop Visualizations thanks to the browser-based [Butterchurn](https://github.com/jberg/butterchurn) project
@@ -61,6 +61,13 @@ ScreamRouter will start up with a blank profile by default. There will be no sou
 ScreamRouter's web interface listens on port 443.
 
 Each Sink, Source, and Route has a name. This name is used as the reference for routes and groups to track members. Clicking Add Sink will prompt you for the information to make one. The names must be unique between Sinks and Sink Groups, Sources and Source Groups, and all Routes.
+
+### Latency
+ScreamReader will use ffmpeg to convert incompatible streams to the same format, but at the cost of added latency. To avoid using ffmpeg to convert source input:
+
+* Ensure that your Sources and Sink is using the same sample rate, resampling requires ffmpeg.
+* Ensure that you are not using an equalizer, the equalizer will require ffmpeg.
+* Ensure that you are not using audio delays, they will require ffmpeg.
 
 ### Sinks
 Each Sink holds information for the destination IP, port, volume, sample rate, bit depth, channels, channel layout, and the sink name, and how many ms it is delayed
@@ -211,17 +218,22 @@ This is a multi-processed application using Python Multiprocessing and can take 
 The proceses are:
 
 * Receiver process - This receives all data over UDP from sources and puts it in a queue for each sink.
-* Sink Queue process - This process watches the sink queue and fires a callback that sends any incoming data to the FFMPEG pipes.
-* Sink MP3 input process - This process watches the MP3 pipe output of FFMPEG and reads the data in. It sends the data to the WebStream queue that FastAPI watches when a stream request is made.
-* Sink PCM input process - This process watches the PCM pipe output of FFMPEG and reads the data in. It sends the data to each enabled Scream Sink.
-* API/Main process - FastAPI runs in it's own process and will send requests in their own threads. When the Stream endpoint is called it will delay in an async function to wait for the WebStream queue to have data and send data when available.
+* Audio Controller - One instance for each sink, receives data from the receiver process and passes it to each source input processor for handling
+* Source Input Processor - This process adjusts the bit depth to match the sink and applies volume controls. If resampling, equalization, or delays are required it will use ffmpeg for these features, if they are not used ffmpeg is skipped.
+* Source Input Processor FFMPEG - This is optional and is only ran if the equalization, sample rate, or delay needs adjusted for a source
+* Sink Output Processor - This process mixes the various source inputs together and sends them to the sink. It also passes the stream to ffmpeg so it can be converted to MP3 and streamed to the web interface.
+* Sink MP3 Processor FFMPEG  - This runs for each sink and converts PCM audio to MP3 for streaming.
+* Sink MP3 Processor - This process reads the MP3 output of FFMPEG in and divides it into MP3 frames. It sends the data to the WebStream queue that FastAPI watches when a stream request is made.
+* API/Main process - FastAPI runs in it's own process and will send requests in their own threads. When the MP3 Stream endpoint is called it will delay in an async function to wait for the WebStream queue to have data and send data when available.
 
 ### More Technical Info
-Each Sink is associated with a Sink Controller. This controller reads into and out of the FIFO pipes for ffmpeg and tracks which sources are assigned and active.
+Each Sink is associated with a Sink Controller.
 
-On the reciving process receiving a packet it is forwarded to a queue for each Sink Controller. Each Sink controller will wait for the queue and check if the data matches a source it tracks. If so they send the data to the appropriate input in FFMPEG over a pipe.
+On the reciving process receiving a packet it is forwarded to a queue for each Sink Controller. Each Sink controller will wait for the queue and check if the data matches a source it tracks. If so they send the data to the appropriate source for processing.
 
-The Sink Controller also manages two processs to read input from FFMPEG, both PCM and MP3. The PCM process is sent to Scream Receiver Sources, the MP3 stream is forwarded to a queue handler to make it available to FastAPI.
+Each source will process data to ensure the bit depth and samplerate match. Bit depth and volume are corrected by the low latency codepath, equalization, mismatched sample rates, and adding a static delay go through the ffmpeg codepath.
+
+After the source has processed the data it is sent to the sink mixing thread. This thread mixes all the sources into one output and sends it to a Scream receiver and to ffmpeg to be converted to an MP3 stream for the web interface.
 
 ## Troubleshooting
 

@@ -172,7 +172,7 @@ class ScreamRouterPlugin(multiprocessing.Process):
     def run(self):
         """Sets the process name, called by plugins"""
         set_process_name(f"Plugin {self.name}", f"[ScreamRouter Plugin] {self.name}")
-        fcntl.fcntl(self.screamrouter_write_fd, fcntl.F_SETFL, os.O_NONBLOCK) 
+        fcntl.fcntl(self.screamrouter_write_fd, fcntl.F_SETFL, os.O_NONBLOCK)
 
 class ScreamRouterPluginSender(multiprocessing.Process):
     """Handles sending from a plugin to the ScreamRouter sources"""
@@ -215,7 +215,8 @@ class ScreamRouterPluginSender(multiprocessing.Process):
         while self.running.value:
             ready = select.select([self.screamrouter_read_fd], [], [], .3)
             if ready[0]:
-                data = os.read(self.screamrouter_read_fd, constants.PACKET_SIZE + constants.TAG_MAX_LENGTH)
+                data = os.read(self.screamrouter_read_fd,
+                               constants.PACKET_SIZE + constants.TAG_MAX_LENGTH)
                 for out_queue in self.controller_write_fds:
                     os.write(out_queue, data)
         logger.info("Ending Plugin Sender thread")
