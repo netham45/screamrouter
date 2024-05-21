@@ -7,16 +7,14 @@ import time
 from ctypes import c_bool, c_double
 from subprocess import TimeoutExpired
 from typing import Optional
-import av.buffer
 import numpy
-import av
-from av.filter.context import FilterContext
 
+from src.audio.source_ffmpeg_processor import SourceFFMpegProcessor
 from src.constants import constants
 from src.audio.scream_header_parser import ScreamHeader
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import IPAddressType
-from src.screamrouter_types.configuration import SourceDescription
+from src.screamrouter_types.configuration import Equalizer, SourceDescription
 from src.utils.utils import close_all_pipes, close_pipe, set_process_name
 
 logger = get_logger(__name__)
@@ -25,9 +23,11 @@ class SourceInputProcessor(multiprocessing.Process):
     """Stores the status for a single Source to a single Sink
        Handles writing from a queue to an output processor pipe"""
     def __init__(self, tag: str,
-                 sink_ip: Optional[IPAddressType], source_info: SourceDescription):
+                 sink_ip: Optional[IPAddressType],
+                 source_info: SourceDescription,
+                 sink_info: ScreamHeader):
         """Initializes a new Source object"""
-        super().__init__(name=f"[Sink:{sink_ip}][Source:{tag}] Pipe Writer")
+        super().__init__(name=f"[Sink:{sink_ip}][Source:{tag}] Input Processor")
         self.source_info = source_info
         """Source Description for this source"""
         self.tag: str = tag
@@ -54,7 +54,30 @@ class SourceInputProcessor(multiprocessing.Process):
         """Multiprocessing-passed flag to determine if the thread is running"""
         self.wants_restart = multiprocessing.Value(c_bool, False)
         """Set to true to indicate this thread wants a config reload due to a source change"""
-        self.bandpass_cache = {}
+        self.sink_info = sink_info
+        """Holds the active sink info to see if ffmpeg needs to be used"""
+        self.using_ffmpeg: bool = (
+            self.stream_attributes.sample_rate != self.sink_info.sample_rate or
+            self.stream_attributes.channels != self.sink_info.channels or
+            self.stream_attributes.channel_layout != self.sink_info.channel_layout or
+            self.source_info.equalizer != Equalizer() or
+            self.source_info.delay != 0)
+        if self.stream_attributes.sample_rate != self.sink_info.sample_rate:
+            print("Sample Rate Difference")
+        if self.stream_attributes.channels != self.sink_info.channels:
+            print("Channels Difference")
+        if self.stream_attributes.channel_layout != self.sink_info.channel_layout:
+            print("Channel Layout Difference")
+        if self.source_info.equalizer != Equalizer():
+            print("Equalizer Difference")
+            print(self.source_info.equalizer)
+            print(Equalizer())
+        if self.source_info.delay != float(0):
+            print("Delay Difference")
+        self.ffmpeg_read: int
+        self.ffmpeg_write: int
+        self.ffmpeg_read, self.ffmpeg_write = os.pipe()
+        self.ffmpeg_handler: Optional[SourceFFMpegProcessor] = None
         self.start()
 
     def is_active(self, active_time_ms: int = 200) -> bool:
@@ -85,6 +108,16 @@ class SourceInputProcessor(multiprocessing.Process):
                                     f"{parsed_scream_header.channel_layout} layout."]))
                 self.stream_attributes = parsed_scream_header
                 self.wants_restart.value = c_bool(True)
+                if self.using_ffmpeg:
+                    if not self.ffmpeg_handler is None:
+                        self.ffmpeg_handler.stop()
+                    self.ffmpeg_handler = SourceFFMpegProcessor(
+                        f"[Sink: {self.__sink_ip}][Source: {self.source_info.ip}]FFMpeg",
+                        self.source_input_fd,
+                        self.ffmpeg_read,
+                        self.source_info,
+                        self.stream_attributes,
+                        self.sink_info)
             self.update_activity()
             self.is_open.value = c_bool(True)
 
@@ -96,14 +129,16 @@ class SourceInputProcessor(multiprocessing.Process):
                         self.tag,
                         constants.SOURCE_INACTIVE_TIME_MS)
             self.is_open.value = c_bool(False)
-            os.write(self.source_input_fd, bytes([0] * 1152))
+            os.write(self.source_input_fd, bytes([0] * constants.PACKET_DATA_SIZE))
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""
         self.running.value = c_bool(False)
         if self.is_open.value:
             self.is_open.value = c_bool(False)
-            logger.info("[Sink:%s][Source:%s] Stopping", self.__sink_ip, self.tag)
+        logger.info("[Sink:%s][Source:%s] Stopping", self.__sink_ip, self.tag)
+        if not self.ffmpeg_handler is None:
+            self.ffmpeg_handler.stop()
         if constants.KILL_AT_CLOSE:
             try:
                 self.kill()
@@ -114,7 +149,8 @@ class SourceInputProcessor(multiprocessing.Process):
                 self.join(5)
             except TimeoutExpired:
                 logger.warning("Input writer failed to close")
-
+        close_pipe(self.ffmpeg_read)
+        close_pipe(self.ffmpeg_write)
         close_pipe(self.source_output_fd)
         close_pipe(self.source_input_fd)
 
@@ -123,96 +159,83 @@ class SourceInputProcessor(multiprocessing.Process):
         os.write(self.writer_write, data)
         self.update_activity()
 
-    def link_nodes(self, *nodes: FilterContext) -> None:
-        for c, n in zip(nodes, nodes[1:]):
-            c.link_to(n)
-
-    def equalizer_filter(self, stream):
-        filter_graph = av.filter.Graph()
-        self.link_nodes(
-            filter_graph.add_abuffer(stream),
-            filter_graph.add("superequalizer", b1=str(self.source_info.equalizer.b1),
-                                            b2=str(self.source_info.equalizer.b2),
-                                            b3=str(self.source_info.equalizer.b3),
-                                            b4=str(self.source_info.equalizer.b4),
-                                            b5=str(self.source_info.equalizer.b5),
-                                            b6=str(self.source_info.equalizer.b6),
-                                            b7=str(self.source_info.equalizer.b7),
-                                            b8=str(self.source_info.equalizer.b8),
-                                            b9=str(self.source_info.equalizer.b9),
-                                            b10=str(self.source_info.equalizer.b10),
-                                            b11=str(self.source_info.equalizer.b11),
-                                            b12=str(self.source_info.equalizer.b12),
-                                            b13=str(self.source_info.equalizer.b13),
-                                            b14=str(self.source_info.equalizer.b14),
-                                            b15=str(self.source_info.equalizer.b15),
-                                            b16=str(self.source_info.equalizer.b16),
-                                            b17=str(self.source_info.equalizer.b17),
-                                            b18=str(self.source_info.equalizer.b18)),
-            filter_graph.add("abuffersink"))
-        filter_graph.configure()
-
-        return filter_graph
-
-    def equalizer_18band(self, data, sample_rate: int):
-        """Equalizer"""
-        audio_frame = av.AudioFrame.from_ndarray(data, format="s32", layout="stereo")
-        av_data = av.open(audio_frame, format="s32le", options={"rate": str(sample_rate)})
-        filter_graph = self.equalizer_filter(av_data)
-        filter_graph.push(data)
-        data = numpy.frombuffer(filter_graph.pull().to_ndarray(), numpy.int32)
-        return data
-
     def equalizer(self, data: numpy.ndarray):
         """Equalizer"""
         return data
-        left_channel = data[::2]
-        right_channel = data[1::2]
-        stereo = numpy.array([left_channel, right_channel], numpy.int32)
-        result = self.equalizer_18band(data, 48000)
-        result = numpy.insert(right_channel_equalized, obj=range(left_channel_equalized.shape[0]), values=left_channel_equalized)
-        return result
 
     def run(self) -> None:
         """This loop reads from the writer's pipe and writes it to the output processor"""
-        set_process_name("Source Writer", f"[Sink:{self.__sink_ip}][Source:{self.tag}] Pipe Writer")
+        set_process_name("Source Writer",
+                         f"[Sink:{self.__sink_ip}][Source:{self.tag}] Input Processor")
         logger.debug("[Sink %s Source %s] Source Input Thread PID %s",
                      self.__sink_ip,
                      self.tag,
                      os.getpid())
         samples_left_over = numpy.array([], numpy.int32)
+
+        if self.using_ffmpeg:
+            self.ffmpeg_handler = SourceFFMpegProcessor(
+                f"[Sink: {self.__sink_ip}][Source: {self.source_info.ip}] FFMpeg",
+                self.source_input_fd,
+                self.ffmpeg_read,
+                self.source_info,
+                self.stream_attributes,
+                self.sink_info)
         while self.running.value:
             self.check_if_inactive()
             ready = select.select([self.writer_read], [], [], .01)
             if ready[0]:
                 data: bytes = os.read(self.writer_read, constants.PACKET_SIZE)
-                self.update_source_attributes_and_open_source(data[:5])
+                self.update_source_attributes_and_open_source(data[:constants.PACKET_HEADER_SIZE])
                 if self.stream_attributes.bit_depth == 16:
-                    pcm_data = numpy.frombuffer(data[5:], numpy.int16)
+                    pcm_data = numpy.frombuffer(data[constants.PACKET_HEADER_SIZE:], numpy.int16)
                     pcm_data = numpy.array(pcm_data * self.source_info.volume, numpy.int32)
                     pcm_data = numpy.left_shift(pcm_data, 16)
                     # Two 32-bit packets per upscaled 16-bit packet
                     pcm_data = self.equalizer(pcm_data)
-                    os.write(self.source_input_fd, pcm_data[:288].tobytes())
-                    os.write(self.source_input_fd, pcm_data[288:].tobytes())
+                    if self.using_ffmpeg:
+                        os.write(self.ffmpeg_write,
+                             pcm_data[:constants.PACKET_DATA_SIZE_INT32].tobytes())
+                        os.write(self.ffmpeg_write,
+                             pcm_data[constants.PACKET_DATA_SIZE_INT32:].tobytes())
+                    else:
+                        os.write(self.source_input_fd,
+                             pcm_data[:constants.PACKET_DATA_SIZE_INT32].tobytes())
+                        os.write(self.source_input_fd,
+                             pcm_data[constants.PACKET_DATA_SIZE_INT32:].tobytes())
                 elif self.stream_attributes.bit_depth == 24:
                     # Pad 24-bit to make it 32-bit
-                    pcm_data = numpy.frombuffer(data[5:], numpy.int8)
+                    pcm_data = numpy.frombuffer(data[constants.PACKET_HEADER_SIZE:], numpy.int8)
                     pcm_data = numpy.insert(pcm_data, range(0, len(pcm_data), 3), 0)
                     pcm_data = numpy.frombuffer(pcm_data, numpy.int32)
                     pcm_data = numpy.array(pcm_data * self.source_info.volume, numpy.int32)
-                    pcm_data = self.equalizer(pcm_data)
                     pcm_data = numpy.insert(pcm_data, 0, samples_left_over)
-                    os.write(self.source_input_fd, pcm_data[:288].tobytes())
-                    if len(pcm_data) >= (288 * 2):  # Send another packet if there's enough bytes
-                        os.write(self.source_input_fd, pcm_data[288:(288*2)].tobytes())
-                        samples_left_over = pcm_data[(288 * 2):]
+                    if self.using_ffmpeg:
+                        os.write(self.ffmpeg_write,
+                            pcm_data[:constants.PACKET_DATA_SIZE_INT32].tobytes())
                     else:
-                        samples_left_over = pcm_data[288:] # Save leftover bytes
+                        os.write(self.source_input_fd,
+                                pcm_data[:constants.PACKET_DATA_SIZE_INT32].tobytes())
+                    if len(pcm_data) >= (constants.PACKET_DATA_SIZE_INT32 * 2):
+                        if self.using_ffmpeg:
+                            os.write(self.ffmpeg_write,
+                                pcm_data[constants.PACKET_DATA_SIZE_INT32:
+                                        (constants.PACKET_DATA_SIZE_INT32*2)].tobytes())
+                        else:
+                            os.write(self.source_input_fd,
+                                pcm_data[constants.PACKET_DATA_SIZE_INT32:
+                                        (constants.PACKET_DATA_SIZE_INT32*2)].tobytes())
+                        samples_left_over = pcm_data[(constants.PACKET_DATA_SIZE_INT32 * 2):]
+                    else:
+                        samples_left_over = pcm_data[constants.PACKET_DATA_SIZE_INT32:]
                 elif self.stream_attributes.bit_depth == 32:
-                    pcm_data = numpy.frombuffer(data[5:], numpy.int32)
+                    pcm_data = numpy.frombuffer(data[constants.PACKET_HEADER_SIZE:], numpy.int32)
                     pcm_data = numpy.array(pcm_data * self.source_info.volume, numpy.int32)
-                    pcm_data = self.equalizer(pcm_data)
-                    os.write(self.source_input_fd, pcm_data.tobytes())
+                    if self.using_ffmpeg:
+                        os.write(self.ffmpeg_write, pcm_data.tobytes())
+                    else:
+                        os.write(self.source_input_fd, pcm_data.tobytes())
                 self.update_activity()
+        if not self.ffmpeg_handler is None:
+            self.ffmpeg_handler.stop()
         close_all_pipes()

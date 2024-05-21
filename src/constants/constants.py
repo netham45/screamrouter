@@ -25,6 +25,8 @@ LOG_TO_FILE: bool = True
 """Determines rather logs are written to files"""
 LOG_ENTRIES_TO_RETAIN: int = 2
 """Number of previous runs to retain logs for"""
+SHOW_FFMPEG_OUTPUT: bool = True
+"""Show ffmpeg output"""
 DEBUG_MULTIPROCESSING: bool = False
 """Debugs Multiprocessing to stdout."""
 SOURCE_INACTIVE_TIME_MS: int = 35
@@ -42,6 +44,8 @@ CERTIFICATE_KEY: str = "/root/screamrouter/cert/privkey.pem"
 
 PACKET_DATA_SIZE: int = 1152
 """This is the packet size minus the header"""
+PACKET_DATA_SIZE_INT32: int = int(PACKET_DATA_SIZE / 8)
+"""This is the number of int32's in a packet"""
 PACKET_HEADER_SIZE: int = 5
 """This is the packet header size"""
 PACKET_SIZE = PACKET_HEADER_SIZE + PACKET_DATA_SIZE

@@ -8,10 +8,12 @@ from queue import Empty
 from subprocess import TimeoutExpired
 from typing import Dict, List
 
+from src.audio.mp3_ffmpeg_process import MP3FFMpegProcess
+from src.audio.sink_mp3_parser import MP3OutputReader
 import src.constants.constants as constants
 from src.api.api_webstream import APIWebStream
 from src.audio.source_input_processor import SourceInputProcessor
-from src.audio.sink_output_processor import PCMOutputReader
+from src.audio.sink_mixer import SinkMixer
 from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.configuration import (SinkDescription,
@@ -79,19 +81,37 @@ class AudioController(multiprocessing.Process):
                         tag = source.tag
                 else:
                     tag = str(source.ip)
-                self.sources[tag] = SourceInputProcessor(tag, self.sink_info.ip, source)
+                self.sources[tag] = SourceInputProcessor(tag, self.sink_info.ip, source,
+                                                 create_stream_info(self.sink_info.bit_depth,
+                                                                    self.sink_info.sample_rate,
+                                                                    self.sink_info.channels,
+                                                                    self.sink_info.channel_layout))
             self.sources_lock.release()
         else:
             raise TimeoutError("Failed to acquire sources lock")
-        self.pcm_thread: PCMOutputReader = PCMOutputReader(self.sink_info.ip,
-                                                           self.sink_info.port,
-                                                           self.stream_info,
-                                                           list(self.sources.values()))
+        self.mp3_ffmpeg_input_read: int
+        self.mp3_ffmpeg_input_write: int
+        self.mp3_ffmpeg_output_read: int
+        self.mp3_ffmpeg_output_write: int
+        self.mp3_ffmpeg_input_read, self.mp3_ffmpeg_input_write = os.pipe()
+        self.mp3_ffmpeg_output_read, self.mp3_ffmpeg_output_write = os.pipe()
+        self.pcm_thread: SinkMixer = SinkMixer(self.sink_info.ip,
+                                               self.sink_info.port,
+                                               self.stream_info,
+                                               list(self.sources.values()),
+                                               self.mp3_ffmpeg_input_write)
         """Holds the thread to listen to PCM output from a Source"""
 
-        #self.mp3_thread: MP3OutputReader = MP3OutputReader(self.sink_info.ip,
-        #                                                   self.webstream.queue)
-        #"""Holds the thread to generaet MP3 output from a PCM reader"""
+        self.mp3_ffmpeg_processor = MP3FFMpegProcess(f"[Sink {self.sink_info.ip}] MP3 Process",
+                                                       self.mp3_ffmpeg_output_write,
+                                                       self.mp3_ffmpeg_input_read,
+                                                       self.sink_info
+                                                       )
+
+        self.mp3_thread: MP3OutputReader = MP3OutputReader(self.sink_info.ip,
+                                                           self.mp3_ffmpeg_output_read,
+                                                           self.webstream.queue)
+        """Holds the thread to generaet MP3 output from a PCM reader"""
         self.start()
 
     def get_open_sources(self) -> List[SourceInputProcessor]:
@@ -119,8 +139,10 @@ class AudioController(multiprocessing.Process):
         """Stops the Sink, closes all handles"""
         logger.debug("[Sink:%s] Stopping PCM thread", self.sink_info.ip)
         self.pcm_thread.stop()
-        #logger.debug("[Sink:%s] Stopping MP3 thread", self.sink_info.ip)
-        #self.mp3_thread.stop()
+        logger.debug("[Sink:%s] Stopping MP3 Receiver", self.sink_info.ip)
+        self.mp3_thread.stop()
+        logger.debug("[Sink:%s] Stopping ffmpeg MP3 Converter", self.sink_info.ip)
+        self.mp3_ffmpeg_processor.stop()
         logger.debug("[Sink:%s] Stopping sources", self.sink_info.ip)
         for _, source in self.sources.items():
             logger.debug("[Sink:%s] Stopping source %s", self.sink_info.ip, source.name)

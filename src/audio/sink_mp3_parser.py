@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 class MP3OutputReader(multiprocessing.Process):
     """Handles listening for MP3 output from ffmpeg and sends it to the WebStream handler"""
-    def __init__(self, sink_ip: IPAddressType,
+    def __init__(self, sink_ip: IPAddressType, ffmpeg_output_fd: int,
                  webstream_queue: multiprocessing.Queue):
         super().__init__(name=f"[Sink:{sink_ip}] MP3 Thread")
         self.__webstream_queue: multiprocessing.Queue = webstream_queue
@@ -29,7 +29,9 @@ class MP3OutputReader(multiprocessing.Process):
         """Holds the sink IP for the web api to filter based on"""
         self.running = multiprocessing.Value(c_bool, True)
         """Multiprocessing-passed flag to determine if the thread is running"""
-        #self.start()
+        self.ffmpeg_output_fd = ffmpeg_output_fd
+        """FD for ffmpeg output to be read from"""
+        self.start()
 
     def _read_bytes(self, count: int, timeout: float, firstread: bool = False) -> bytes:
         """Reads count bytes, blocks until self.__running goes false or count bytes are received.
@@ -39,10 +41,10 @@ class MP3OutputReader(multiprocessing.Process):
         dataout:bytearray = bytearray() # Data to return
         while (self.running.value and len(dataout) < count and
                ((time.time() - timeout) < start_time or timeout == 0)):
-            ready = select.select([0], [], [], .2)
+            ready = select.select([self.ffmpeg_output_fd], [], [], .2)
             if ready[0]:
                 try:
-                    data: bytes = os.read(0, count - len(dataout))
+                    data: bytes = os.read(self.ffmpeg_output_fd, count - len(dataout))
                     if data:
                         if firstread:
                             return data
