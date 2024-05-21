@@ -9,11 +9,11 @@ from subprocess import TimeoutExpired
 from typing import Dict, List
 
 from src.audio.mp3_ffmpeg_process import MP3FFMpegProcess
-from src.audio.sink_mp3_parser import MP3OutputReader
+from src.audio.sink_mp3_processor import SinkMP3Processor
 import src.constants.constants as constants
 from src.api.api_webstream import APIWebStream
 from src.audio.source_input_processor import SourceInputProcessor
-from src.audio.sink_mixer import SinkMixer
+from src.audio.sink_output_mixer import SinkOutputMixer
 from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.configuration import (SinkDescription,
@@ -95,7 +95,7 @@ class AudioController(multiprocessing.Process):
         self.mp3_ffmpeg_output_write: int
         self.mp3_ffmpeg_input_read, self.mp3_ffmpeg_input_write = os.pipe()
         self.mp3_ffmpeg_output_read, self.mp3_ffmpeg_output_write = os.pipe()
-        self.pcm_thread: SinkMixer = SinkMixer(self.sink_info.ip,
+        self.pcm_thread: SinkOutputMixer = SinkOutputMixer(self.sink_info.ip,
                                                self.sink_info.port,
                                                self.stream_info,
                                                list(self.sources.values()),
@@ -108,7 +108,7 @@ class AudioController(multiprocessing.Process):
                                                        self.sink_info
                                                        )
 
-        self.mp3_thread: MP3OutputReader = MP3OutputReader(self.sink_info.ip,
+        self.mp3_thread: SinkMP3Processor = SinkMP3Processor(self.sink_info.ip,
                                                            self.mp3_ffmpeg_output_read,
                                                            self.webstream.queue)
         """Holds the thread to generaet MP3 output from a PCM reader"""
@@ -180,7 +180,7 @@ class AudioController(multiprocessing.Process):
                          f"[Sink {self.sink_info.name}] Audio Controller")
 
         while self.running.value:
-            ready = select.select([self.controller_read_fd], [], [], .3)
+            ready = select.select([self.controller_read_fd], [], [], .05)
             if ready[0]:
                 try:
                     data = os.read(self.controller_read_fd,

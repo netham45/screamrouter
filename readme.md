@@ -42,7 +42,7 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 ## Prerequisites
 
 * Scream - https://github.com/duncanthrax/scream
-* Configure Scream to use UDP unicast, point it at ScreamRouter on a port between 16401 and 16411. The configuration for setting Unicast is in the Scream repo readme.md.
+* Configure Scream to use UDP unicast, point it at ScreamRouter on port 16401. The configuration for setting Unicast on the source is in the Scream repo readme.md.
 * Install requirements.txt through either pip or your package manager of choice
 * Command line ffmpeg
 * ScreamRouter is Linux only. It should run in WSL2. Windows compatibility may be reviewed in the future.

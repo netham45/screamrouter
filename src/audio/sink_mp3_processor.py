@@ -18,7 +18,7 @@ from src.utils.utils import close_all_pipes, set_process_name
 
 logger = get_logger(__name__)
 
-class MP3OutputReader(multiprocessing.Process):
+class SinkMP3Processor(multiprocessing.Process):
     """Handles listening for MP3 output from ffmpeg and sends it to the WebStream handler"""
     def __init__(self, sink_ip: IPAddressType, ffmpeg_output_fd: int,
                  webstream_queue: multiprocessing.Queue):

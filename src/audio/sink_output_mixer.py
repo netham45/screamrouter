@@ -20,7 +20,7 @@ from src.utils.utils import close_all_pipes, set_process_name
 
 logger = get_logger(__name__)
 
-class SinkMixer(multiprocessing.Process):
+class SinkOutputMixer(multiprocessing.Process):
     """Handles listening for PCM output from sources and sends it to sinks"""
     def __init__(self, sink_ip: IPAddressType,
                  sink_port: PortType, output_info: ScreamHeader,
