@@ -89,7 +89,7 @@ Each Source holds information for the source IP, volume, and the Source name.
 
 ### PulseAudio
 
-PulseAudio can send to ScreamRouter over RTP. The RTP recevier needs a set MTU size to match Scream's packet size. The following command will send the Dummy source to a ScreamRouter Receiver:
+PulseAudio can send to ScreamRouter over RTP. The RTP sender needs a set MTU size to match Scream's packet size. The following command will send the Dummy source to a ScreamRouter Receiver:
 
     pactl load-module module-rtp-send format=s16le source=auto_null.monitor destination=<ScreamRouter Receiver> port=40000 mtu=1164
 
