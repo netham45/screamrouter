@@ -35,6 +35,7 @@ class SinkOutputMixer(multiprocessing.Process):
         """Output socket for sink"""
         self._sink_port: PortType = sink_port
         self.__output_header: bytes = output_info.header
+        self.__output_info: ScreamHeader = output_info
         """Holds the header added onto packets sent to Scream receivers"""
         self._sink_ip = sink_ip
         self.read_fds: List[int] = []
@@ -72,6 +73,7 @@ class SinkOutputMixer(multiprocessing.Process):
         logger.debug("[Sink %s] Mixer Thread PID %s", self._sink_ip, os.getpid())
         self.__sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, constants.PACKET_SIZE * 65535)
         output_data = numpy.array(constants.PACKET_DATA_SIZE, numpy.int64)
+        output_buffer = numpy.array([], numpy.int8)
         while self.running.value:
             first_value: bool = True
             for index, fd in enumerate(self.read_fds):
@@ -90,11 +92,27 @@ class SinkOutputMixer(multiprocessing.Process):
             if first_value:  # No active source, sleep for 100ms to not burn CPU.
                 time.sleep(.1)
             else:
-                output_data = numpy.clip(output_data, -2147483648, 2147483647)
-                self.__sock.sendto(
-                    self.__output_header + numpy.int32(output_data).tobytes(),
-                (str(self._sink_ip), int(self._sink_port)))
-                os.write(self.ffmpeg_mp3_write_fd, numpy.int32(output_data).tobytes())
+                os.write(
+                        self.ffmpeg_mp3_write_fd,
+                        numpy.array(output_data, numpy.int32).tobytes())
+                if self.__output_info.bit_depth == 32:
+                    output_data = numpy.array(output_data, numpy.uint32)
+                    output_buffer = numpy.insert(
+                                        numpy.frombuffer(output_data, numpy.uint8), 0, output_buffer)
+                elif self.__output_info.bit_depth == 24:
+                    output_data = numpy.array(output_data, numpy.uint32)
+                    output_data = numpy.frombuffer(output_data, numpy.uint8)
+                    output_data = numpy.delete(output_data, range(0, len(output_data), 4))
+                    output_buffer = numpy.insert(output_data, 0, output_buffer)
+                elif self.__output_info.bit_depth == 16:
+                    output_data = numpy.array(output_data, numpy.uint16)
+                    output_buffer = numpy.insert(
+                                        numpy.frombuffer(output_data, numpy.uint8), 0, output_buffer)
+                if len(output_buffer) >= constants.PACKET_DATA_SIZE:
+                    self.__sock.sendto(
+                        self.__output_header + output_buffer[:constants.PACKET_DATA_SIZE].tobytes(),
+                        (str(self._sink_ip), int(self._sink_port)))
+                    output_buffer = output_buffer[constants.PACKET_DATA_SIZE:]
         logger.debug("[Sink:%s] Mixer thread exit", self._sink_ip)
         close_all_pipes()
 

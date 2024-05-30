@@ -14,7 +14,8 @@ import src.constants.constants as constants
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
 from src.api.api_webstream import APIWebStream
 from src.audio.audio_controller import AudioController
-from src.audio.udp_receiver import UDPReceiver
+from src.audio.scream_receiver import ScreamReceiver
+from src.audio.rtp_recevier import RTPReceiver
 from src.configuration.configuration_solver import ConfigurationSolver
 from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_types.annotations import (DelayType, RouteNameType,
@@ -52,8 +53,10 @@ class ConfigurationManager(threading.Thread):
         """Condition to indicate the Configuration Manager needs to reload"""
         self.running: bool = True
         """Rather the thread is running or not"""
-        self.receiver: UDPReceiver = UDPReceiver([])
+        self.scream_recevier: ScreamReceiver = ScreamReceiver([])
         """Holds the thread that receives UDP packets from Scream"""
+        self.rtp_receiver: RTPReceiver = RTPReceiver([])
+        """Holds the thread that receives UDP packets from an RTP source"""
         self.reload_config: bool = False
         """Set to true to reload the config. Used so config
            changes during another config reload still trigger
@@ -283,7 +286,8 @@ class ConfigurationManager(threading.Thread):
         self.__api_webstream.stop()
         _logger.debug("Webstream stopped")
         _logger.debug("Stopping receiver")
-        self.receiver.stop()
+        self.scream_recevier.stop()
+        self.rtp_receiver.stop()
         _logger.debug("Receiver stopped")
         _logger.debug("Stopping Plugin Manager")
         self.plugin_manager.stop_registered_plugins()
@@ -584,7 +588,8 @@ class ConfigurationManager(threading.Thread):
         original_audio_controllers: List[AudioController] = copy(self.audio_controllers)
 
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            self.receiver.stop()
+            self.scream_recevier.stop()
+            self.rtp_receiver.stop()
 
         _logger.debug("[Configuration Manager] Removing and re-adding changed sinks")
 
@@ -628,7 +633,9 @@ class ConfigurationManager(threading.Thread):
 
         # Check if there was a change before reloading or saving
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            self.receiver = UDPReceiver([audio_controller.controller_write_fd for
+            self.scream_recevier = ScreamReceiver([audio_controller.controller_write_fd for
+                                            audio_controller in self.audio_controllers])
+            self.rtp_receiver = RTPReceiver([audio_controller.controller_write_fd for
                                             audio_controller in self.audio_controllers])
             _logger.debug("[Configuration Manager] Saving configuration")
             self.__save_config()

@@ -25,6 +25,7 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * Milkdrop Visualizations thanks to the browser-based [Butterchurn](https://github.com/jberg/butterchurn) project
 * There are playback sinks available for common OSes such as [Windows](https://github.com/duncanthrax/scream/tree/master/Receivers/dotnet-windows/ScreamReader), [Linux](https://github.com/duncanthrax/scream/tree/master/Receivers/unix), and [Android](https://github.com/martinellimarco/scream-android/tree/90d1364ee36dd12ec9d7d2798926150b370030f3), as well as some embedded devices such as [the ESP32](http://tomeko.net/projects/esp32_rtp_pager/).
 * Embedded noVNC for controlling remote computers playing music
+* Can accept streams from PulseAudio
 
 ![Screenshot of ScreamRouter noVNC](/images/noVNC.png)
 
@@ -84,6 +85,15 @@ Each Route holds one Sink name and one Source name, and volume.
 Each Source holds information for the source IP, volume, and the Source name.
 
 ![Screenshot of Add Source Dialog](/images/AddSource.png)
+
+
+### PulseAudio
+
+PulseAudio can send to ScreamRouter over RTP. The RTP recevier needs a set MTU size to match Scream's packet size. The following command will send the Dummy source to a ScreamRouter Receiver:
+
+    pactl load-module module-rtp-send format=s16le source=auto_null.monitor destination=<ScreamRouter Receiver> port=40000 mtu=1164
+
+Currently the RTP receiver assumes 16-bit 44100kHz audio with 1152 bytes of PCM in the payload.
 
 
 ### Sink Groups

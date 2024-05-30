@@ -4,8 +4,10 @@
 # User Configurable Options
 # ##########
 
-RECEIVER_PORT: int = 16401
-"""This is the port for the receiver"""
+SCREAM_RECEIVER_PORT: int = 16401
+"""This is the port to receive Scream data at"""
+RTP_RECEIVER_PORT: int = 40000
+"""This is the port to receive RTP data at"""
 SINK_PORT: int = 4010
 """This is the port for a Scream Sink"""
 API_PORT: int = 443
@@ -44,7 +46,7 @@ CERTIFICATE_KEY: str = "/root/screamrouter/cert/privkey.pem"
 
 PACKET_DATA_SIZE: int = 1152
 """This is the packet size minus the header"""
-PACKET_DATA_SIZE_INT32: int = int(PACKET_DATA_SIZE / 8)
+PACKET_DATA_SIZE_INT32: int = int(PACKET_DATA_SIZE / 4)
 """This is the number of int32's in a packet"""
 PACKET_HEADER_SIZE: int = 5
 """This is the packet header size"""

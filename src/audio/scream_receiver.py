@@ -14,17 +14,18 @@ from src.utils.utils import close_all_pipes, set_process_name
 
 logger = get_logger(__name__)
 
-class UDPReceiver(multiprocessing.Process):
+class ScreamReceiver(multiprocessing.Process):
     """Handles the main socket that listens for incoming Scream streams and sends them to sinks"""
     def __init__(self,  controller_write_fd_list: List[int]):
         """Receives UDP packets and sends them to known queue lists"""
-        super().__init__(name="Receiver Thread")
+        super().__init__(name="Scream Receiver Thread")
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         """Main socket all sources send to"""
         self.controller_write_fd_list: List[int] = controller_write_fd_list
         """List of all sink queues to forward data to"""
         self.running = multiprocessing.Value(c_bool, True)
         """Multiprocessing-passed flag to determine if the thread is running"""
+        self.known_ips = multiprocessing.Manager().list()
         if len(controller_write_fd_list) == 0:  # Will be zero if this is just a placeholder.
             self.running.value = c_bool(False)
             return
@@ -32,7 +33,7 @@ class UDPReceiver(multiprocessing.Process):
 
     def stop(self) -> None:
         """Stops the Receiver and all sinks"""
-        logger.info("[Receiver] Stopping")
+        logger.info("[Scream Receiver] Stopping")
         was_running: bool = bool(self.running.value)
         self.running.value = c_bool(False)
         if constants.KILL_AT_CLOSE:
@@ -48,22 +49,23 @@ class UDPReceiver(multiprocessing.Process):
 
     def run(self) -> None:
         """This thread listens for traffic from all sources and sends it to sinks"""
-        set_process_name("Receiver", "Receiver Thread")
-        logger.debug("[Receiver] Receiver Thread PID %s", os.getpid())
-        logger.info("[Receiver] Receiver started on port %s", constants.RECEIVER_PORT)
+        set_process_name("ScreamReceiver", "Scream Receiver Thread")
+        logger.debug("[Scream Receiver] Receiver Thread PID %s", os.getpid())
+        logger.info("[Scream Receiver] Receiver started on port %s", constants.SCREAM_RECEIVER_PORT)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
                                 constants.PACKET_SIZE * 1024 * 1024)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(("", constants.RECEIVER_PORT))
+        self.sock.bind(("", constants.SCREAM_RECEIVER_PORT))
 
         while self.running.value:
             ready = select.select([self.sock], [], [], .3)
             if ready[0]:
                 data, addr = self.sock.recvfrom(constants.PACKET_SIZE)
                 addrlen = len(addr[0])
-
+                if addr[0] not in self.known_ips:
+                    self.known_ips.append(addr[0])
                 for controller_write_fd in self.controller_write_fd_list:
                     os.write(controller_write_fd,
         bytes(addr[0].encode("ascii") + bytes([0] * (constants.TAG_MAX_LENGTH - addrlen)) + data))
-        logger.info("[Receiver] Main thread stopped")
+        logger.info("[Scream Receiver] Main thread stopped")
         close_all_pipes()

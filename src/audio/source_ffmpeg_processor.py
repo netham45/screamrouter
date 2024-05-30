@@ -43,6 +43,7 @@ class SourceFFMpegProcessor:
     def __get_ffmpeg_inputs(self) -> List[str]:
         """Add an input for each source"""
         ffmpeg_command: List[str] = []
+        bit_depth = self.__source_stream_attributes.bit_depth
         sample_rate = self.__source_stream_attributes.sample_rate
         channels = self.__source_stream_attributes.channels
         channel_layout = self.__source_stream_attributes.channel_layout
@@ -60,7 +61,7 @@ class SourceFFMpegProcessor:
                                 "-fflags", "nobuffer",
                                 "-thread_queue_size", "128",
                                 "-channel_layout", f"{channel_layout}",
-                                "-f", "s32le",
+                                "-f", f"s{bit_depth}le",
                                 "-ac", f"{channels}",
                                 "-ar", f"{sample_rate}",
                                 "-i", f"pipe:{self.__ffmpeg_input_pipe}"])
@@ -110,7 +111,7 @@ class SourceFFMpegProcessor:
                                      "-fflags", "nobuffer",
                                      "-avioflags", "direct",
                                      "-y",
-                                     "-f", f"s{self.__sink_info.bit_depth}le", 
+                                     "-f", "s32le",
                                      "-ac", f"{self.__sink_info.channels}",
                                      "-ar", f"{self.__sink_info.sample_rate}",
                                     f"pipe:{self.__ffmpeg_output_pipe}"])  # ffmpeg PCM output

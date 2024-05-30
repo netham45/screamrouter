@@ -187,22 +187,18 @@ class SourceInputProcessor(multiprocessing.Process):
             if ready[0]:
                 data: bytes = os.read(self.writer_read, constants.PACKET_SIZE)
                 self.update_source_attributes_and_open_source(data[:constants.PACKET_HEADER_SIZE])
-                if self.stream_attributes.bit_depth == 16:
+                if self.using_ffmpeg:
+                    os.write(self.ffmpeg_write, data[constants.PACKET_HEADER_SIZE:])
+                elif self.stream_attributes.bit_depth == 16:
                     pcm_data = numpy.frombuffer(data[constants.PACKET_HEADER_SIZE:], numpy.int16)
                     pcm_data = numpy.array(pcm_data * self.source_info.volume, numpy.int32)
                     pcm_data = numpy.left_shift(pcm_data, 16)
                     # Two 32-bit packets per upscaled 16-bit packet
                     pcm_data = self.equalizer(pcm_data)
-                    if self.using_ffmpeg:
-                        os.write(self.ffmpeg_write,
-                             pcm_data[:constants.PACKET_DATA_SIZE_INT32].tobytes())
-                        os.write(self.ffmpeg_write,
-                             pcm_data[constants.PACKET_DATA_SIZE_INT32:].tobytes())
-                    else:
-                        os.write(self.source_input_fd,
-                             pcm_data[:constants.PACKET_DATA_SIZE_INT32].tobytes())
-                        os.write(self.source_input_fd,
-                             pcm_data[constants.PACKET_DATA_SIZE_INT32:].tobytes())
+                    os.write(self.source_input_fd,
+                            pcm_data[:constants.PACKET_DATA_SIZE_INT32].tobytes())
+                    os.write(self.source_input_fd,
+                            pcm_data[constants.PACKET_DATA_SIZE_INT32:].tobytes())
                 elif self.stream_attributes.bit_depth == 24:
                     # Pad 24-bit to make it 32-bit
                     pcm_data = numpy.frombuffer(data[constants.PACKET_HEADER_SIZE:], numpy.int8)
@@ -210,31 +206,19 @@ class SourceInputProcessor(multiprocessing.Process):
                     pcm_data = numpy.frombuffer(pcm_data, numpy.int32)
                     pcm_data = numpy.array(pcm_data * self.source_info.volume, numpy.int32)
                     pcm_data = numpy.insert(pcm_data, 0, samples_left_over)
-                    if self.using_ffmpeg:
-                        os.write(self.ffmpeg_write,
+                    os.write(self.source_input_fd,
                             pcm_data[:constants.PACKET_DATA_SIZE_INT32].tobytes())
-                    else:
-                        os.write(self.source_input_fd,
-                                pcm_data[:constants.PACKET_DATA_SIZE_INT32].tobytes())
                     if len(pcm_data) >= (constants.PACKET_DATA_SIZE_INT32 * 2):
-                        if self.using_ffmpeg:
-                            os.write(self.ffmpeg_write,
-                                pcm_data[constants.PACKET_DATA_SIZE_INT32:
-                                        (constants.PACKET_DATA_SIZE_INT32*2)].tobytes())
-                        else:
-                            os.write(self.source_input_fd,
-                                pcm_data[constants.PACKET_DATA_SIZE_INT32:
-                                        (constants.PACKET_DATA_SIZE_INT32*2)].tobytes())
+                        os.write(self.source_input_fd,
+                            pcm_data[constants.PACKET_DATA_SIZE_INT32:
+                                    (constants.PACKET_DATA_SIZE_INT32*2)].tobytes())
                         samples_left_over = pcm_data[(constants.PACKET_DATA_SIZE_INT32 * 2):]
                     else:
                         samples_left_over = pcm_data[constants.PACKET_DATA_SIZE_INT32:]
                 elif self.stream_attributes.bit_depth == 32:
                     pcm_data = numpy.frombuffer(data[constants.PACKET_HEADER_SIZE:], numpy.int32)
                     pcm_data = numpy.array(pcm_data * self.source_info.volume, numpy.int32)
-                    if self.using_ffmpeg:
-                        os.write(self.ffmpeg_write, pcm_data.tobytes())
-                    else:
-                        os.write(self.source_input_fd, pcm_data.tobytes())
+                    os.write(self.source_input_fd, pcm_data.tobytes())
                 self.update_activity()
         if not self.ffmpeg_handler is None:
             self.ffmpeg_handler.stop()
