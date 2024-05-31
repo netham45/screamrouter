@@ -26,6 +26,7 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * There are playback sinks available for common OSes such as [Windows](https://github.com/duncanthrax/scream/tree/master/Receivers/dotnet-windows/ScreamReader), [Linux](https://github.com/duncanthrax/scream/tree/master/Receivers/unix), and [Android](https://github.com/martinellimarco/scream-android/tree/90d1364ee36dd12ec9d7d2798926150b370030f3), as well as some embedded devices such as [the ESP32](http://tomeko.net/projects/esp32_rtp_pager/).
 * Embedded noVNC for controlling remote computers playing music
 * Can accept streams from PulseAudio
+* Docker containers to add support for [Amazon Music](https://github.com/netham45/screamrouter-amazon-music-docker), [Firefox](https://github.com/netham45/screamrouter-firefox-docker), [Spotify](https://github.com/netham45/screamrouter-spotify-docker)
 
 ![Screenshot of ScreamRouter noVNC](/images/noVNC.png)
 
@@ -98,7 +99,6 @@ Currently the RTP receiver assumes 16-bit 44100kHz audio with 1152 bytes of PCM 
 ### Source Auto-Detection
 
 When a source sends to ScreamRouter and it's not already added to the Sources list it will be added with it's hostname set as it's name if it can be determined, else it's IP. It will be checked at the time of adding to see if it has VNC available on port 5900 and, if so, VNC will be configured too.
-
 
 ### Sink Groups
 Each Sink Group holds a name, a list of Sinks, and a volume. Groups can be nested.
