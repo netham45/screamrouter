@@ -77,7 +77,8 @@ class RTPReceiver(multiprocessing.Process):
                 if addr[0] not in self.known_ips:
                     self.known_ips.append(addr[0])
                 padded_tag: bytes
-                padded_tag = bytes(addr[0].encode("ascii")) + bytes([0] * (constants.TAG_MAX_LENGTH - len(addr[0])))
+                padded_tag = bytes(addr[0].encode("ascii"))
+                padded_tag += bytes([0] * (constants.TAG_MAX_LENGTH - len(addr[0])))
                 header: bytes = mono_header.header
                 if rtp_packet.payloadType in [PayloadType.L16_2chan,
                                               PayloadType.DYNAMIC_127]:

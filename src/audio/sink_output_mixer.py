@@ -98,7 +98,7 @@ class SinkOutputMixer(multiprocessing.Process):
                 if self.__output_info.bit_depth == 32:
                     output_data = numpy.array(output_data, numpy.uint32)
                     output_buffer = numpy.insert(
-                                        numpy.frombuffer(output_data, numpy.uint8), 0, output_buffer)
+                                    numpy.frombuffer(output_data, numpy.uint8), 0, output_buffer)
                 elif self.__output_info.bit_depth == 24:
                     output_data = numpy.array(output_data, numpy.uint32)
                     output_data = numpy.frombuffer(output_data, numpy.uint8)
@@ -107,7 +107,7 @@ class SinkOutputMixer(multiprocessing.Process):
                 elif self.__output_info.bit_depth == 16:
                     output_data = numpy.array(output_data, numpy.uint16)
                     output_buffer = numpy.insert(
-                                        numpy.frombuffer(output_data, numpy.uint8), 0, output_buffer)
+                                    numpy.frombuffer(output_data, numpy.uint8), 0, output_buffer)
                 if len(output_buffer) >= constants.PACKET_DATA_SIZE:
                     self.__sock.sendto(
                         self.__output_header + output_buffer[:constants.PACKET_DATA_SIZE].tobytes(),

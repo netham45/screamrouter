@@ -84,6 +84,7 @@ class SourceFFMpegProcessor:
             f"15b={self.__source_info.equalizer.b11}:16b={self.__source_info.equalizer.b16}:",
             f"17b={self.__source_info.equalizer.b13}:18b={self.__source_info.equalizer.b18}"])
         delay_filter: str = f"adelay=delays={self.__source_info.delay}:all=1"
+        volume_filter: str = f"volume={self.__source_info.volume}"
         aresample_filter: str = "".join(["aresample=",
                                         f"isr={self.__source_stream_attributes.sample_rate}:",
                                         f"osr={self.__sink_info.sample_rate}:",
@@ -91,6 +92,7 @@ class SourceFFMpegProcessor:
                                         "flags=+res"])
         complex_filter_string = "".join([f"{delay_filter},",
                                          f"{aresample_filter},",
+                                         f"{volume_filter},",
                                          f"{equalizer_filter}"])
         ffmpeg_command_parts.extend(["-filter_complex", complex_filter_string])
         return ffmpeg_command_parts

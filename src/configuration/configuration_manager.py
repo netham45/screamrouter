@@ -1,6 +1,7 @@
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
 import os
+import socket
 import sys
 import threading
 from copy import copy, deepcopy
@@ -18,7 +19,7 @@ from src.audio.scream_receiver import ScreamReceiver
 from src.audio.rtp_recevier import RTPReceiver
 from src.configuration.configuration_solver import ConfigurationSolver
 from src.plugin_manager.plugin_manager import PluginManager
-from src.screamrouter_types.annotations import (DelayType, RouteNameType,
+from src.screamrouter_types.annotations import (DelayType, IPAddressType, RouteNameType,
                                                 SinkNameType, SourceNameType,
                                                 VolumeType)
 from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
@@ -646,6 +647,27 @@ class ConfigurationManager(threading.Thread):
             self.plugin_manager.load_registered_plugins(controller_write_fds)
             _logger.debug("[Configuration Manager] Reload done")
 
+    def auto_add_source(self, ip: IPAddressType):
+        """Checks if VNC is available and adds a source by IP with the correct options"""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        try:
+            sock.connect((ip, 5900))
+            self.add_source(SourceDescription(name=str(ip), ip=ip, vnc_ip=ip, vnc_port=5900))
+            sock.close()
+        except OSError:
+            self.add_source(SourceDescription(name=str(ip), ip=ip))
+
+    def check_receiver_sources(self):
+        """This checks the IPs receivers have seen and adds any as sources if they don't exist"""
+        known_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
+        for ip in self.scream_recevier.known_ips:
+            if not ip in known_ips:
+                self.auto_add_source(ip)
+        for ip in self.rtp_receiver.known_ips:
+            if not ip in known_ips:
+                self.auto_add_source(ip)
+
     def run(self):
         """Monitors for the reload condition to be set and reloads the config when it is set"""
         self.__process_and_apply_configuration()
@@ -661,3 +683,4 @@ class ConfigurationManager(threading.Thread):
                     self.reload_config = False
                     _logger.info("Reloading the configuration")
                     self.__process_and_apply_configuration()
+            self.check_receiver_sources()
