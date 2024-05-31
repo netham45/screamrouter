@@ -60,8 +60,8 @@ class RTPReceiver(multiprocessing.Process):
                                 constants.PACKET_SIZE * 1024 * 1024)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("", constants.RTP_RECEIVER_PORT))
-        mono_header = create_stream_info(16, 44100, 1, "mono")
-        stereo_header = create_stream_info(16, 44100, 2, "stereo")
+        mono_header = create_stream_info(16, 48000, 1, "mono")
+        stereo_header = create_stream_info(16, 48000, 2, "stereo")
 
         while self.running.value:
             ready = select.select([self.sock], [], [], .3)

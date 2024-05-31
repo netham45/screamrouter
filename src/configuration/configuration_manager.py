@@ -682,6 +682,14 @@ class ConfigurationManager(threading.Thread):
                 _logger.debug(
                     "[Configuration Manager] Adding source %s couldn't get hostname, using IP",
                     ip)
+        try:
+            original_hostname: str = hostname
+            counter: int = 1
+            while self.get_source_by_name(hostname):
+                hostname = f"{original_hostname} ({counter})"
+                counter += 1
+        except NameError:
+            pass
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
         try:
