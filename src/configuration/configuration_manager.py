@@ -9,6 +9,12 @@ from multiprocessing import Process
 from subprocess import TimeoutExpired
 from typing import List, Tuple
 
+import dns.rdtypes.ANY
+import dns.rdtypes.ANY.PTR
+import dns.resolver
+import dns.nameserver
+import dns.rdtypes
+import dns.rrset
 import yaml
 
 import src.constants.constants as constants
@@ -649,14 +655,31 @@ class ConfigurationManager(threading.Thread):
 
     def auto_add_source(self, ip: IPAddressType):
         """Checks if VNC is available and adds a source by IP with the correct options"""
+        hostname: str = str(ip)
+        try:
+            hostname = socket.gethostbyaddr(str(ip))[0].split(".")[0]
+        except socket.herror:
+            try:
+                resolver = dns.resolver.Resolver()
+                resolver.nameservers = [str(ip)]
+                resolver.nameserver_ports = {str(ip): 5353}
+                answer = resolver.resolve_address(str(ip))
+                rrset: dns.rrset.RRset = answer.response.answer[0]
+                print(f"rrset{rrset}")
+                if isinstance(rrset[0], dns.rdtypes.ANY.PTR.PTR):
+                    ptr: dns.rdtypes.ANY.PTR.PTR = rrset[0] # type: ignore
+                    hostname = str(ptr.target).split(".", maxsplit=1)[0]
+                    print(answer)
+            except dns.resolver.LifetimeTimeout:
+                pass
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
         try:
             sock.connect((ip, 5900))
-            self.add_source(SourceDescription(name=str(ip), ip=ip, vnc_ip=ip, vnc_port=5900))
+            self.add_source(SourceDescription(name=hostname, ip=ip, vnc_ip=ip, vnc_port=5900))
             sock.close()
         except OSError:
-            self.add_source(SourceDescription(name=str(ip), ip=ip))
+            self.add_source(SourceDescription(name=hostname, ip=ip))
 
     def check_receiver_sources(self):
         """This checks the IPs receivers have seen and adds any as sources if they don't exist"""

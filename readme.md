@@ -95,9 +95,9 @@ PulseAudio can send to ScreamRouter over RTP. The RTP sender needs a set MTU siz
 
 Currently the RTP receiver assumes 16-bit 44100kHz audio with 1152 bytes of PCM in the payload.
 
-### Source Auto-Discovery
+### Source Auto-Detection
 
-When a source sends to ScreamRouter and it's not already added to the Sources list it will be added with it's IP set as it's name. It will be checked at the time of adding to see if it has VNC available on port 5900 and, if so, VNC will be configured too.
+When a source sends to ScreamRouter and it's not already added to the Sources list it will be added with it's hostname set as it's name if it can be determined, else it's IP. It will be checked at the time of adding to see if it has VNC available on port 5900 and, if so, VNC will be configured too.
 
 
 ### Sink Groups
