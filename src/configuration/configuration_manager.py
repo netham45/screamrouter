@@ -289,27 +289,27 @@ class ConfigurationManager(threading.Thread):
 
     def stop(self) -> bool:
         """Stop all threads/processes"""
-        _logger.debug("Stopping webstream")
+        _logger.debug("[Configuration Manager] Stopping webstream")
         self.__api_webstream.stop()
-        _logger.debug("Webstream stopped")
-        _logger.debug("Stopping receiver")
+        _logger.debug("[Configuration Manager] Webstream stopped")
+        _logger.debug("[Configuration Manager] Stopping receiver")
         self.scream_recevier.stop()
         self.rtp_receiver.stop()
-        _logger.debug("Receiver stopped")
-        _logger.debug("Stopping Plugin Manager")
+        _logger.debug("[Configuration Manager] Receiver stopped")
+        _logger.debug("[Configuration Manager] Stopping Plugin Manager")
         self.plugin_manager.stop_registered_plugins()
-        _logger.debug("Plugin Manager Stopped")
-        _logger.debug("Stopping audio controllers")
+        _logger.debug("[Configuration Manager] Plugin Manager Stopped")
+        _logger.debug("[Configuration Manager] Stopping audio controllers")
         for audio_controller in self.audio_controllers:
             audio_controller.stop()
-        _logger.debug("Audio controllers stopped")
+        _logger.debug("[Configuration Manager] Audio controllers stopped")
         self.running = False
 
         if constants.WAIT_FOR_CLOSES:
             try:
                 self.join(5)
             except TimeoutExpired:
-                _logger.warning("Configuration Manager failed to close")
+                _logger.warning("[Configuration Manager] Configuration Manager failed to close")
         return True
 
     def set_webstream(self, webstream: APIWebStream) -> None:
@@ -422,9 +422,9 @@ class ConfigurationManager(threading.Thread):
                 self.source_descriptions = savedata["sources"]
                 self.route_descriptions = savedata["routes"]
         except FileNotFoundError:
-            _logger.warning("[Controller] Configuration not found, starting with a blank config")
+            _logger.warning("[Configuration Manager] Configuration not found., making new config")
         except KeyError as exc:
-            _logger.error("[Controller] Configuration key %s missing, exiting.", exc)
+            _logger.error("[Configuration Manager] Configuration key %s missing, exiting.", exc)
             sys.exit(-1)
 
     def __multiprocess_save(self):
@@ -545,14 +545,16 @@ class ConfigurationManager(threading.Thread):
             found: bool = False
             for sink, sources in self.active_configuration.real_sinks_to_real_sources.items():
                 if plugin_sink_name == sink.name:
-                    _logger.info("Adding temporary sources to existing sink %s", sink.name)
+                    _logger.info("[Configuration Manager] Adding temp sources to existing sink %s",
+                                 sink.name)
                     found = True
                     sources.extend(plugin_sources)
             if not found:
                 sink: SinkDescription = self.get_sink_by_name(plugin_sink_name)
                 if sink.enabled:
                     self.active_configuration.real_sinks_to_real_sources[sink] = plugin_sources
-                    _logger.info("Adding temporary sources to new sink %s", sink.name)
+                    _logger.info("[Configuration Manager] Adding temp sources to new sink %s",
+                                 sink.name)
 
         added_sinks: List[SinkDescription]
         removed_sinks: List[SinkDescription]
@@ -574,7 +576,7 @@ class ConfigurationManager(threading.Thread):
             pass
         self.reload_condition.release()
         self.reload_config = True
-        _logger.debug("Marking config for reload")
+        _logger.debug("[Configuration Manager] Marking config for reload")
 
     def __process_and_apply_configuration(self) -> None:
         """Process the configuration, get which sinks have changed and need reloaded,
@@ -585,12 +587,12 @@ class ConfigurationManager(threading.Thread):
         removed_sinks: List[SinkDescription]
         changed_sinks: List[SinkDescription]
         added_sinks, removed_sinks, changed_sinks = self.__process_configuration()
-        _logger.info("[Controller] Config Reload")
-        _logger.info("[Controller] Enabled Sink Controllers: %s",
+        _logger.info("[Configuration Manager] Config Reload")
+        _logger.info("[Configuration Manager] Enabled Sink Controllers: %s",
                      [sink.name for sink in added_sinks])
-        _logger.info("[Controller] Changed Sink Controllers: %s",
+        _logger.info("[Configuration Manager] Changed Sink Controllers: %s",
                      [sink.name for sink in changed_sinks])
-        _logger.info("[Controller] Disabled Sink Controllers: %s",
+        _logger.info("[Configuration Manager] Disabled Sink Controllers: %s",
                      [sink.name for sink in removed_sinks])
         original_audio_controllers: List[AudioController] = copy(self.audio_controllers)
 
@@ -603,7 +605,7 @@ class ConfigurationManager(threading.Thread):
         # Controllers to be reloaded
         for sink in changed_sinks:
             # Unload the old controller
-            _logger.debug("Removing Audio Controller %s", sink.name)
+            _logger.debug("[Configuration Manager] Removing Audio Controller %s", sink.name)
             for audio_controller in original_audio_controllers:
                 if audio_controller.sink_info.name == sink.name:
                     if audio_controller in self.audio_controllers:
@@ -613,7 +615,7 @@ class ConfigurationManager(threading.Thread):
             sources: List[SourceDescription]
             sources = self.active_configuration.real_sinks_to_real_sources[sink]
             audio_controller = AudioController(sink, sources, self.__api_webstream)
-            _logger.debug("Adding Audio Controller %s", sink.name)
+            _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
             self.audio_controllers.append(audio_controller)
 
         _logger.debug("[Configuration Manager] Removing now unused sinks")
@@ -635,7 +637,7 @@ class ConfigurationManager(threading.Thread):
             sources: List[SourceDescription]
             sources = self.active_configuration.real_sinks_to_real_sources[sink]
             audio_controller = AudioController(sink, sources, self.__api_webstream)
-            _logger.debug("Adding Audio Controller %s", sink.name)
+            _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
             self.audio_controllers.append(audio_controller)
 
         # Check if there was a change before reloading or saving
@@ -658,27 +660,37 @@ class ConfigurationManager(threading.Thread):
         hostname: str = str(ip)
         try:
             hostname = socket.gethostbyaddr(str(ip))[0].split(".")[0]
+            _logger.debug("[Configuration Manager] Adding source %s got hostname %s via DNS",
+                          ip, hostname)
         except socket.herror:
             try:
+                _logger.debug(
+                    "[Configuration Manager] Adding source %s couldn't get DNS, trying mDNS",
+                    ip)
                 resolver = dns.resolver.Resolver()
                 resolver.nameservers = [str(ip)]
                 resolver.nameserver_ports = {str(ip): 5353}
                 answer = resolver.resolve_address(str(ip))
                 rrset: dns.rrset.RRset = answer.response.answer[0]
-                print(f"rrset{rrset}")
                 if isinstance(rrset[0], dns.rdtypes.ANY.PTR.PTR):
                     ptr: dns.rdtypes.ANY.PTR.PTR = rrset[0] # type: ignore
                     hostname = str(ptr.target).split(".", maxsplit=1)[0]
-                    print(answer)
+                    _logger.debug(
+                        "[Configuration Manager] Adding source %s got hostname %s via mDNS",
+                        ip, hostname)
             except dns.resolver.LifetimeTimeout:
-                pass
+                _logger.debug(
+                    "[Configuration Manager] Adding source %s couldn't get hostname, using IP",
+                    ip)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
         try:
             sock.connect((ip, 5900))
+            _logger.debug("[Configuration Manager] Adding source %s, VNC available", ip)
             self.add_source(SourceDescription(name=hostname, ip=ip, vnc_ip=ip, vnc_port=5900))
             sock.close()
         except OSError:
+            _logger.debug("[Configuration Manager] Adding source %s, VNC not available", ip)
             self.add_source(SourceDescription(name=hostname, ip=ip))
 
     def check_receiver_sources(self):
@@ -686,9 +698,11 @@ class ConfigurationManager(threading.Thread):
         known_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
         for ip in self.scream_recevier.known_ips:
             if not ip in known_ips:
+                _logger.info("[Configuration Manager] Adding new source from Scream port %s", ip)
                 self.auto_add_source(ip)
         for ip in self.rtp_receiver.known_ips:
             if not ip in known_ips:
+                _logger.info("[Configuration Manager] Adding new source from RTP port %s", ip)
                 self.auto_add_source(ip)
 
     def run(self):
@@ -704,6 +718,6 @@ class ConfigurationManager(threading.Thread):
                     self.reload_config = True
                 while self.reload_config:
                     self.reload_config = False
-                    _logger.info("Reloading the configuration")
+                    _logger.info("[Configuration Manager] Reloading the configuration")
                     self.__process_and_apply_configuration()
             self.check_receiver_sources()
