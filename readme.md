@@ -27,6 +27,7 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * Embedded noVNC for controlling remote computers playing music
 * Can accept streams from PulseAudio
 * Docker containers to add support for [Amazon Music](https://github.com/netham45/screamrouter-amazon-music-docker), [Firefox](https://github.com/netham45/screamrouter-firefox-docker), [Spotify](https://github.com/netham45/screamrouter-spotify-docker)
+* Ability to send media control commands to containers from API and web interface
 
 ![Screenshot of ScreamRouter noVNC](/images/noVNC.png)
 
@@ -224,6 +225,11 @@ This is called when the configuration is (re)loaded.
 This is called when the configuration is unloaded.
 
 The loader is not fully implemented yet but will load Python stored in src/plugins as plugins.
+
+### Media Controls
+ScreamRouter can send Play/Next/Previous commands to sources. They will be sent as UDP packetscontaining 'n', 'p', or 'P' for next track, previous track, and play/pause respectively. They will be sent to port 9999 on the source. These are currently listened to by a bash script in the media containers.
+
+They will be visible in the UI as long as a VNC host is configured.
 
 
 ### Processes
