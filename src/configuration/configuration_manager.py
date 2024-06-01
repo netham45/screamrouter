@@ -173,7 +173,7 @@ class ConfigurationManager(threading.Thread):
 
     def delete_source(self, source_name: SourceNameType) -> bool:
         """Deletes a source by name"""
-        source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
+        source: SourceDescription = self.get_source_by_name(source_name)
         self.__verify_source_unused(source)
         self.source_descriptions.remove(source)
         self.__reload_configuration()
@@ -181,14 +181,14 @@ class ConfigurationManager(threading.Thread):
 
     def enable_source(self, source_name: SourceNameType) -> bool:
         """Enables a source by index"""
-        source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
+        source: SourceDescription = self.get_source_by_name(source_name)
         source.enabled = True
         self.__reload_configuration()
         return True
 
     def disable_source(self, source_name: SourceNameType) -> bool:
         """Disables a source by index"""
-        source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
+        source: SourceDescription = self.get_source_by_name(source_name)
         source.enabled = False
         self.__reload_configuration()
         return True
@@ -219,37 +219,59 @@ class ConfigurationManager(threading.Thread):
 
     def delete_route(self, route_name: RouteNameType) -> bool:
         """Deletes a route by name"""
-        route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
+        route: RouteDescription = self.get_route_by_name(route_name)
         self.route_descriptions.remove(route)
         self.__reload_configuration()
         return True
 
     def enable_route(self, route_name: RouteNameType) -> bool:
         """Enables a route by name"""
-        route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
+        route: RouteDescription = self.get_route_by_name(route_name)
         route.enabled = True
         self.__reload_configuration()
         return True
 
     def disable_route(self, route_name: RouteNameType) -> bool:
         """Disables a route by name"""
-        route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
+        route: RouteDescription = self.get_route_by_name(route_name)
         route.enabled = False
         self.__reload_configuration()
         return True
 
     def update_source_equalizer(self, source_name: SourceNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a source or source group"""
-        source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
+        source: SourceDescription = self.get_source_by_name(source_name)
         source.equalizer = equalizer
         self.__reload_configuration()
         return True
 
     def update_source_volume(self, source_name: SourceNameType, volume: VolumeType) -> bool:
         """Set the volume for a source or source group"""
-        source: SourceDescription = self.active_configuration.get_source_from_name(source_name)
+        source: SourceDescription = self.get_source_by_name(source_name)
         source.volume = volume
         self.__reload_configuration()
+        return True
+
+    def source_next_track(self, source_name: SourceNameType) -> bool:
+        """Send a Next Track command to the source"""
+        source: SourceDescription = self.get_source_by_name(source_name)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.sendto("n".encode("ascii"), (str(source.vnc_ip), 9999))
+        return True
+
+    def source_previous_track(self, source_name: SourceNameType) -> bool:
+        """Send a Previous Track command to the source"""
+        source: SourceDescription = self.get_source_by_name(source_name)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.sendto("p".encode("ascii"), (str(source.vnc_ip), 9999))
+        return True
+
+    def source_play(self, source_name: SourceNameType) -> bool:
+        """Send a Next Track command to the source"""
+        source: SourceDescription = self.get_source_by_name(source_name)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _logger.info("[Controller Manager] Sending Play/Pause to %s", source.vnc_ip)
+        sock.sendto("P".encode("ascii"), (str(source.vnc_ip), 9999))
         return True
 
     def update_sink_equalizer(self, sink_name: SinkNameType, equalizer: Equalizer) -> bool:
@@ -275,14 +297,14 @@ class ConfigurationManager(threading.Thread):
 
     def update_route_equalizer(self, route_name: RouteNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a route"""
-        route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
+        route: RouteDescription = self.get_route_by_name(route_name)
         route.equalizer = equalizer
         self.__reload_configuration()
         return True
 
     def update_route_volume(self, route_name: RouteNameType, volume: VolumeType) -> bool:
         """Set the volume for a route"""
-        route: RouteDescription = self.active_configuration.get_route_from_name(route_name)
+        route: RouteDescription = self.get_route_by_name(route_name)
         route.volume = volume
         self.__reload_configuration()
         return True
@@ -375,12 +397,12 @@ class ConfigurationManager(threading.Thread):
                 raise ValueError(f"Source name '{source.name}' already in use")
         if source.is_group:
             for member in source.group_members:
-                self.active_configuration.get_source_from_name(member)
+                self.get_source_by_name(member)
 
     def __verify_new_route(self, route: RouteDescription) -> None:
         """Verifies route sink and source exist, throws exception if not"""
         self.get_sink_by_name(route.sink)
-        self.active_configuration.get_source_from_name(route.source)
+        self.get_source_by_name(route.source)
 
     def __verify_source_unused(self, source: SourceDescription) -> None:
         """Verifies a source is unused by any routes, throws exception if not"""

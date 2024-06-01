@@ -48,8 +48,14 @@ class APIConfiguration():
             tags=["Source Configuration"])(self._configuration_controller.enable_source)
         self._app.get("/sources/{source_name}/volume/{volume}",
             tags=["Source Configuration"])(self._configuration_controller.update_source_volume)
-        self._app.post("/sources/{source_name}/equalizer/",
+        self._app.post("/sources/{source_name}/equalizer",
             tags=["Source Configuration"])(self._configuration_controller.update_source_equalizer)
+        self._app.get("/sources/{source_name}/play",
+            tags=["Source Configuration"])(self._configuration_controller.source_play)
+        self._app.get("/sources/{source_name}/nexttrack",
+            tags=["Source Configuration"])(self._configuration_controller.source_next_track)
+        self._app.get("/sources/{source_name}/prevtrack",
+            tags=["Source Configuration"])(self._configuration_controller.source_previous_track)
         self._app.get("/routes",
             tags=["Route Configuration"])(self._configuration_controller.get_routes)
         self._app.post("/routes",

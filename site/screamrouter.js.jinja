@@ -339,6 +339,19 @@ function vnc_icon_onclick(e) {
     dialog_vnc(e.target.parentNode.dataset["name"]);
 }
 
+function playpause_icon_onclick(e) {
+    call_api("/sources/" + e.target.parentNode.dataset["name"] + "/play", "get", 0, null_callback)
+}
+
+function next_track_icon_onclick(e) {
+    call_api("/sources/" + e.target.parentNode.dataset["name"] + "/nexttrack", "get", 0, null_callback)
+}
+
+function previous_track_icon_onclick(e) {
+    call_api("/sources/" + e.target.parentNode.dataset["name"] + "/prevtrack", "get", 0, null_callback)
+}
+
+
 function equalizer_icon_onclick(e) {
     var parent_node = e.target.parentNode;
     if (parent_node.dataset["type"] == "SourceDescription")
