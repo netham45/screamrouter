@@ -41,7 +41,7 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * Line up speakers with differing timings by delaying one
 * Adjusting EQ for a cheap speaker so it sounds better
 
-![Screenshot of HA media player for ScreamRouter Sink](/images/HAMediaPlayer.png)
+![Screenshot of HA for ScreamRouter](/images/HAMediaPlayer.png)
 ## Prerequisites
 
 * Scream - https://github.com/duncanthrax/scream

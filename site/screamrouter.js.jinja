@@ -668,8 +668,8 @@ function iframe_resize() {
     var iframe = document.querySelectorAll("DIV#dialog IFRAME")[0];
     var canvas = iframe.contentWindow.document.getElementsByTagName("canvas")[0];
     if (canvas.width > 0 && canvas.height > 0) {
-        iframe.style.width = (canvas.width / 2) + "px";
-        iframe.style.height = (canvas.height / 2) + "px";
+        iframe.style.width = (canvas.width) + "px";
+        iframe.style.height = (canvas.height) + "px";
     }
     else
     {

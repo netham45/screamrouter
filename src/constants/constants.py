@@ -27,7 +27,7 @@ LOG_TO_FILE: bool = True
 """Determines rather logs are written to files"""
 LOG_ENTRIES_TO_RETAIN: int = 2
 """Number of previous runs to retain logs for"""
-SHOW_FFMPEG_OUTPUT: bool = True
+SHOW_FFMPEG_OUTPUT: bool = False
 """Show ffmpeg output"""
 DEBUG_MULTIPROCESSING: bool = False
 """Debugs Multiprocessing to stdout."""

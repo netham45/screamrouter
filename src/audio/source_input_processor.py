@@ -62,6 +62,17 @@ class SourceInputProcessor(multiprocessing.Process):
             self.stream_attributes.channel_layout != self.sink_info.channel_layout or
             self.source_info.equalizer != Equalizer() or
             self.source_info.delay != 0)
+
+        if self.stream_attributes.sample_rate != self.sink_info.sample_rate:
+            logger.debug("[Source %s] Using ffmpeg because sample rate", self.source_info.ip)
+        if self.stream_attributes.channels != self.sink_info.channels:
+            logger.debug("[Source %s] Using ffmpeg because channels", self.source_info.ip)
+        if self.stream_attributes.channel_layout != self.sink_info.channel_layout:
+            logger.debug("[Source %s] Using ffmpeg because channel layout", self.source_info.ip)
+        if self.source_info.equalizer != Equalizer():
+            logger.debug("[Source %s] Using ffmpeg because equalizer", self.source_info.ip)
+        if self.source_info.delay != 0:
+            logger.debug("[Source %s] Using ffmpeg because delay", self.source_info.ip)
         if self.stream_attributes.sample_rate != self.sink_info.sample_rate:
             print("Sample Rate Difference")
         if self.stream_attributes.channels != self.sink_info.channels:
