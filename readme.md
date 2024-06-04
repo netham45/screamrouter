@@ -27,6 +27,7 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * Embedded noVNC for controlling remote computers playing music
 * Can accept streams from PulseAudio
 * Docker containers to add support for [Amazon Music](https://github.com/netham45/screamrouter-amazon-music-docker), [Firefox](https://github.com/netham45/screamrouter-firefox-docker), [Spotify](https://github.com/netham45/screamrouter-spotify-docker)
+* Linux tool for sending PCM data from the command line [ScreamSender](https://github.com/netham45/screamsender/)
 * Ability to send media control commands to containers from API and web interface
 
 ![Screenshot of ScreamRouter noVNC](/images/noVNC.png)
