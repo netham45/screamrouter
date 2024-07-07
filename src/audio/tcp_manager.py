@@ -34,6 +34,8 @@ class TCPManager(threading.Thread):
                 logger.warning("Binding to port %s failed, retrying in .5 seconds", 4010)
                 time.sleep(.5)
         self.known_connections: List[Tuple[IPAddressType, socket.socket]] = []
+        self.wants_reload: bool = False
+        """Set to true when TCP manager wants a config reload"""
         self.sock.listen(12321312)
         self.start()
 
@@ -42,8 +44,8 @@ class TCPManager(threading.Thread):
         logger.info("[TCP Manager] Stopping")
         was_running: bool = self.running
         self.running = False
-        for connection in self.known_connections:
-            connection[1].close()
+        #for connection in self.known_connections:
+            #connection[1].close()
         self.sock.close()
         if constants.WAIT_FOR_CLOSES and was_running:
             try:
@@ -61,18 +63,23 @@ class TCPManager(threading.Thread):
             return None
         for connection in reversed(self.known_connections):
             if str(connection[0]) == str(sink_ip):
-                return connection[1].fileno()
+                return connection[1]
         return None
 
     def run(self) -> None:
+        self.sock.set_inheritable(True)
         while self.running:
             client, address = self.sock.accept()
-            logger.info("[TCP Manager] New connection from %s", address[0])
-            self.known_connections.append((address[0], client))
+            logger.info("[TCP Manager] New connection from %s fd: %s", address[0], client.fileno())
+            self.known_connections.append((address[0], client.fileno()))
+            client.set_inheritable(True)
             for audio_controller in self.audio_controllers:
                 logger.info("Comparing IP %s to %s",
                             audio_controller.pcm_thread.sink_info.ip, address[0])
                 if str(audio_controller.pcm_thread.sink_info.ip) == str(address[0]):
                     logger.info("[TCP Manager] Wrote FD to mixer %s, fd %s",
                                 address[0], client.fileno())
+                    time.sleep(4)
                     audio_controller.restart_mixer(client.fileno())
+                    self.wants_reload = True
+            client.detach()

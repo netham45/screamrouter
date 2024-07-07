@@ -5,4 +5,8 @@
         "**/*.c": true,
         "**/*.so": true
     },
+    "files.associations": {
+        "string": "cpp",
+        "ostream": "cpp"
+    },
 }

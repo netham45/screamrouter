@@ -1,5 +1,4 @@
 """One audio controller per sink, handles taking in packets and distributing them to sources"""
-import fcntl
 import multiprocessing
 import os
 import select
@@ -120,9 +119,11 @@ class AudioController(multiprocessing.Process):
                                           self.mp3_ffmpeg_input_write)
         self.start()
 
-    def restart_mixer(self, tcp_client_fd: Optional[int]):
+    def restart_mixer(self, tcp_fd: int):
         """(Re)starts the mixer"""
         logger.info("[Audio Controller] Requesting config reloaed")
+        self.pcm_thread.tcp_client_fd = tcp_fd
+        self.pcm_thread.update_active_sources()
         self.request_restart = c_bool(True)
 
     def get_open_sources(self) -> List[SourceInputProcessor]:
@@ -140,7 +141,7 @@ class AudioController(multiprocessing.Process):
         except UnicodeDecodeError as exc:
             logger.debug("Error decoding packet, discarding. Exception: %s", exc)
             return
-
+        self.pcm_thread.update_active_sources()
         data: bytes = entry[constants.TAG_MAX_LENGTH:]
         if tag in self.sources:
             source = self.sources[tag]

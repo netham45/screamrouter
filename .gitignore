@@ -4,3 +4,4 @@ __pycache__/
 logs/
 cert/
 build/
+c_utils/bin/

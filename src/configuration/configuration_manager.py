@@ -762,7 +762,11 @@ class ConfigurationManager(threading.Thread):
                 for audio_controller in self.audio_controllers:
                     if audio_controller.wants_reload():
                         self.reload_config = True
-                while self.reload_config:
+                if self.tcp_manager.wants_reload:
+                    _logger.info("[Configuration Manager] TCP Manager Wants Reload")
+                    self.tcp_manager.wants_reload = False
+                    self.reload_config = True
+                if self.reload_config:
                     self.reload_config = False
                     _logger.info("[Configuration Manager] Reloading the configuration")
                     self.__process_and_apply_configuration()
