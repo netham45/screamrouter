@@ -32,10 +32,6 @@ class SourceInputProcessor(multiprocessing.Process):
         """Source Description for this source"""
         self.tag: str = tag
         """The source's tag, generally it's IP."""
-        self.is_open = multiprocessing.Value(c_bool, False)
-        """Rather the Source is open for writing or not"""
-        self.__last_data_time = multiprocessing.Value(c_double, 0)
-        """The time in milliseconds we last received data"""
         self.stream_attributes: ScreamHeader = ScreamHeader(bytearray([0, 32, 2, 0, 0]))
         """The source stream attributes (bit depth, sample rate, channels)"""
         self.source_output_fd: int
@@ -91,95 +87,68 @@ class SourceInputProcessor(multiprocessing.Process):
         self.ffmpeg_handler: Optional[SourceFFMpegProcessor] = None
         self.start()
 
-    def is_active(self, active_time_ms: int = 200) -> bool:
-        """Returns if the source has been active in the last active_time_ms ms"""
-        now: float = time.time() * 1000
-        if now - float(self.__last_data_time.value) > active_time_ms:
-            return False
-        return True
-
-    def update_activity(self) -> None:
-        """Sets the source last active time"""
-        now: float = time.time() * 1000
-        self.__last_data_time.value = now # type: ignore
-
-    def update_source_attributes_and_open_source(self,
+    def update_source_attributes(self,
                                                 header: bytes) -> None:
         """Opens and verifies the target pipe header matches what we have, updates it if not."""
-        if not self.is_open.value:
-            parsed_scream_header = ScreamHeader(header)
-            if self.stream_attributes != parsed_scream_header:
-                logger.debug("".join([f"[Sink:{self.__sink_ip}][Source:{self.tag}] ",
-                                    "Closing source, stream attribute change detected. ",
-                                    f"Was: {self.stream_attributes.bit_depth}-bit ",
-                                    f"at {self.stream_attributes.sample_rate}k",
-                                    f"{self.stream_attributes.channel_layout} layout is now ",
-                                    f"{parsed_scream_header.bit_depth}-bit at ",
-                                    f"{parsed_scream_header.sample_rate}k",
-                                    f"{parsed_scream_header.channel_layout} layout."]))
-                self.stream_attributes = parsed_scream_header
-                self.wants_restart.value = c_bool(True) # type: ignore
-                if self.using_ffmpeg:
-                    if not self.ffmpeg_handler is None:
-                        self.ffmpeg_handler.stop()
-                self.using_ffmpeg = (
-                self.stream_attributes.sample_rate != self.sink_info.sample_rate or
-                self.stream_attributes.channels != self.sink_info.channels or
-                self.stream_attributes.channel_layout != self.sink_info.channel_layout or
-                self.source_info.equalizer != Equalizer() or
-                self.source_info.delay != 0)
+        parsed_scream_header = ScreamHeader(header)
+        if self.stream_attributes != parsed_scream_header:
+            logger.debug("".join([f"[Sink:{self.__sink_ip}][Source:{self.tag}] ",
+                                "Closing source, stream attribute change detected. ",
+                                f"Was: {self.stream_attributes.bit_depth}-bit ",
+                                f"at {self.stream_attributes.sample_rate}k",
+                                f"{self.stream_attributes.channel_layout} layout is now ",
+                                f"{parsed_scream_header.bit_depth}-bit at ",
+                                f"{parsed_scream_header.sample_rate}k",
+                                f"{parsed_scream_header.channel_layout} layout."]))
+            self.stream_attributes = parsed_scream_header
+            self.wants_restart.value = c_bool(True) # type: ignore
+            if self.using_ffmpeg:
+                if not self.ffmpeg_handler is None:
+                    self.ffmpeg_handler.stop()
+            self.using_ffmpeg = (
+            self.stream_attributes.sample_rate != self.sink_info.sample_rate or
+            self.stream_attributes.channels != self.sink_info.channels or
+            self.stream_attributes.channel_layout != self.sink_info.channel_layout or
+            self.source_info.equalizer != Equalizer() or
+            self.source_info.delay != 0)
 
-                if self.stream_attributes.sample_rate != self.sink_info.sample_rate:
-                    logger.debug("[Source %s] Using ffmpeg because sample rate",
-                                 self.source_info.ip)
-                    logger.debug("[Source %s] Sample Rate %s != %s",
-                                 self.source_info.ip,
-                                 self.stream_attributes.sample_rate,
-                                 self.sink_info.sample_rate)
-                if self.stream_attributes.channels != self.sink_info.channels:
-                    logger.debug("[Source %s] Using ffmpeg because channels",
-                                 self.source_info.ip)
-                    logger.debug("[Source %s] Channels %s != %s",
-                                 self.source_info.ip,
-                                 self.stream_attributes.channels,
-                                 self.sink_info.channels)
-                if self.stream_attributes.channel_layout != self.sink_info.channel_layout:
-                    logger.debug("[Source %s] Using ffmpeg because channel layout",
-                                 self.source_info.ip)
-                    logger.debug("[Source %s] Channel_Layout %s != %s",
-                                 self.source_info.ip,
-                                 self.stream_attributes.channel_layout,
-                                 self.sink_info.channel_layout)
-                if self.source_info.equalizer != Equalizer():
-                    logger.debug("[Source %s] Using ffmpeg because equalizer", self.source_info.ip)
-                if self.source_info.delay != 0:
-                    logger.debug("[Source %s] Using ffmpeg because delay", self.source_info.ip)
-                if self.using_ffmpeg:
-                    self.ffmpeg_handler = SourceFFMpegProcessor(
-                        f"[Sink: {self.__sink_ip}][Source: {self.source_info.ip}]FFMpeg",
-                        self.source_input_fd,
-                        self.ffmpeg_read,
-                        self.source_info,
-                        self.stream_attributes,
-                        self.sink_info)
-            self.update_activity()
-            self.is_open.value = c_bool(True) # type: ignore
-
-    def check_if_inactive(self) -> None:
-        """Looks for old pipes that are open and closes them"""
-        if self.is_open.value and not self.is_active(constants.SOURCE_INACTIVE_TIME_MS):
-            logger.info("[Sink:%s][Source:%s] Closing (Timeout = %sms)",
-                        self.__sink_ip,
-                        self.tag,
-                        constants.SOURCE_INACTIVE_TIME_MS)
-            self.is_open.value = c_bool(False) # type: ignore
-            os.write(self.source_input_fd, bytes([0] * constants.PACKET_DATA_SIZE))
+            if self.stream_attributes.sample_rate != self.sink_info.sample_rate:
+                logger.debug("[Source %s] Using ffmpeg because sample rate",
+                                self.source_info.ip)
+                logger.debug("[Source %s] Sample Rate %s != %s",
+                                self.source_info.ip,
+                                self.stream_attributes.sample_rate,
+                                self.sink_info.sample_rate)
+            if self.stream_attributes.channels != self.sink_info.channels:
+                logger.debug("[Source %s] Using ffmpeg because channels",
+                                self.source_info.ip)
+                logger.debug("[Source %s] Channels %s != %s",
+                                self.source_info.ip,
+                                self.stream_attributes.channels,
+                                self.sink_info.channels)
+            if self.stream_attributes.channel_layout != self.sink_info.channel_layout:
+                logger.debug("[Source %s] Using ffmpeg because channel layout",
+                                self.source_info.ip)
+                logger.debug("[Source %s] Channel_Layout %s != %s",
+                                self.source_info.ip,
+                                self.stream_attributes.channel_layout,
+                                self.sink_info.channel_layout)
+            if self.source_info.equalizer != Equalizer():
+                logger.debug("[Source %s] Using ffmpeg because equalizer", self.source_info.ip)
+            if self.source_info.delay != 0:
+                logger.debug("[Source %s] Using ffmpeg because delay", self.source_info.ip)
+            if self.using_ffmpeg:
+                self.ffmpeg_handler = SourceFFMpegProcessor(
+                    f"[Sink: {self.__sink_ip}][Source: {self.source_info.ip}]FFMpeg",
+                    self.source_input_fd,
+                    self.ffmpeg_read,
+                    self.source_info,
+                    self.stream_attributes,
+                    self.sink_info)
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""
         self.running.value = c_bool(False) # type: ignore
-        if self.is_open.value:
-            self.is_open.value = c_bool(False) # type: ignore
         logger.info("[Sink:%s][Source:%s] Stopping", self.__sink_ip, self.tag)
         if not self.ffmpeg_handler is None:
             self.ffmpeg_handler.stop()
@@ -201,7 +170,7 @@ class SourceInputProcessor(multiprocessing.Process):
     def write(self, data: bytes) -> None:
         """Writes data to this source's FIFO"""
         os.write(self.writer_write, data)
-        self.update_activity()
+
 
     def equalizer(self, data: numpy.ndarray):
         """Equalizer"""
@@ -226,10 +195,8 @@ class SourceInputProcessor(multiprocessing.Process):
                 self.stream_attributes,
                 self.sink_info)
         while self.running.value:
-            self.check_if_inactive()
             ready = select.select([self.writer_read], [], [], .3)
             if ready[0]:
-                self.update_activity()
                 data: bytes = os.read(self.writer_read, constants.PACKET_SIZE)
                 if self.using_ffmpeg:
                     ready = select.select([], [self.ffmpeg_write], [], 0)
@@ -240,7 +207,7 @@ class SourceInputProcessor(multiprocessing.Process):
                 if len(data) < constants.PACKET_SIZE:
                     logger.warning("Got bad packet length %s", len(data))
                     continue
-                self.update_source_attributes_and_open_source(data[:constants.PACKET_HEADER_SIZE])
+                self.update_source_attributes(data[:constants.PACKET_HEADER_SIZE])
                 if self.using_ffmpeg:
                     os.write(self.ffmpeg_write, data[constants.PACKET_HEADER_SIZE:])
                 elif self.stream_attributes.bit_depth == 16:

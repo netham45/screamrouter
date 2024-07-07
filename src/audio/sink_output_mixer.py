@@ -1,7 +1,5 @@
-"""Thread to mix each source together for the result
-   Do mixing in process instead of forwarding to ffmpeg for latency"""
+"""Manages the C++ program that mixes audio streams"""
 from copy import copy
-import os
 import subprocess
 from typing import List, Optional
 
@@ -28,21 +26,19 @@ class SinkOutputMixer():
         """List of source FDs to read from"""
         self.sources: List[SourceInputProcessor] = sources
         """List of all sources"""
-        for source in self.sources:
-            if source.is_open.value:
-                self.read_fds.append(source.source_output_fd)
         self.ffmpeg_mp3_write_fd = ffmpeg_mp3_write_fd
         """FD for ffmpeg mp3 conversion"""
         self.__mixer: Optional[subprocess.Popen] = None
         """Mixer process"""
-        if len(self.read_fds) > 0:
-            self.start()
-        else:
-            logger.warning("[Audio Mixer: %s] Started mixer with no active sources",
-                           self.sink_info.ip)
+        self.update_active_sources()
+
 
     def start(self):
         """Starts the sink mixer"""
+        if len(self.read_fds) == 0:        
+            logger.info("[Audio Mixer: %s] Started mixer with no active sources",
+                           self.sink_info.ip)
+            return
         pass_fds: List[int] = copy(self.read_fds)
         if self.tcp_client_fd is not None:
             pass_fds.append(self.tcp_client_fd)
@@ -64,8 +60,8 @@ class SinkOutputMixer():
         original_fds: List[int] = self.read_fds
         self.read_fds = []
         for source in self.sources:
-            if source.is_open.value:
-                self.read_fds.append(source.source_output_fd)
+            #if source.is_open.value:
+            self.read_fds.append(source.source_output_fd)
         if original_fds != self.read_fds:
             self.stop()
             self.start()

@@ -126,14 +126,6 @@ class AudioController(multiprocessing.Process):
         self.pcm_thread.update_active_sources()
         self.request_restart = c_bool(True)
 
-    def get_open_sources(self) -> List[SourceInputProcessor]:
-        """Build a list of active IPs, exclude ones that aren't open"""
-        active_sources: List[SourceInputProcessor] = []
-        for _, source in self.sources.items():
-            if source.is_open.value:
-                active_sources.append(source)
-        return active_sources
-
     def process_packet_from_queue(self, entry: bytes) -> None:
         """Callback for the queue thread to pass packets for processing"""
         try:

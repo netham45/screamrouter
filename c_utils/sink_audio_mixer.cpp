@@ -24,6 +24,7 @@ int udp_output_fd = 0;
 
 int tcp_output_fd = 0;
 vector<int> input_fds;
+vector<bool> active;
 string output_ip = "";
 int output_port = 0;
 int output_bitdepth = 0;
@@ -56,8 +57,10 @@ void process_base_args(int argc, char* argv[]) { // Processes fixed arguments
 }
 
 void process_fd_args(int argc, char* argv[]) { // Processes variable number of fds to use as inputs
-    for (int argi = config_argc; argi < argc; argi++)
+    for (int argi = config_argc; argi < argc; argi++) {
         input_fds.push_back(atoi(argv[argi]));
+        active.push_back(false);
+    }
 }
 
 void setup_header() { // Sets up the Scream header
@@ -84,13 +87,23 @@ void setup_buffers() { // Sets up buffers to receive data from input fds
 
 void handle_receive_buffers() {  // Receive data frominput fds
     for (int fd_idx = 0; fd_idx < input_fds.size(); fd_idx++) {
-        int bytes_in = 0;
-        while (running && bytes_in < CHUNK_SIZE) {
-            int bytes_read = read(input_fds[fd_idx], receive_buffers[fd_idx] + bytes_in, CHUNK_SIZE - bytes_in);
-            bytes_in += bytes_read;
-            if (!bytes_read > 0)
-                ::exit(-2);
-        }
+        struct timeval timeout;
+        timeout.tv_sec = 0;
+        if (!active[fd_idx])
+            timeout.tv_usec = 100; // 100uS, just check if it's got data
+        else    
+            timeout.tv_usec = 35000; // 10ms, wait for a chunk.
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(input_fds[fd_idx], &readfds);
+        bool prev_state = active[fd_idx];
+        active[fd_idx] = select(input_fds[fd_idx] + 1, &readfds, NULL, NULL, &timeout) > 0;
+        if (prev_state != active[fd_idx])
+            cout << "Setting " << input_fds[fd_idx] << " Active: " << active[fd_idx] << endl;
+
+        if (active[fd_idx])
+            for (int bytes_in = 0; running && bytes_in < CHUNK_SIZE;)
+                bytes_in += read(input_fds[fd_idx], receive_buffers[fd_idx] + bytes_in, CHUNK_SIZE - bytes_in);
     }
 }
 
@@ -140,10 +153,10 @@ int main(int argc, char* argv[]) {
         handle_receive_buffers();
         mix_buffers();
         downscale_buffer();
-        if (output_buffer_pos >= CHUNK_SIZE) {
-            send_buffer();
-            rotate_buffer();
-        }
+        if (output_buffer_pos < CHUNK_SIZE)
+          continue;
+        send_buffer();
+        rotate_buffer();
     }
     return 0;
 }
