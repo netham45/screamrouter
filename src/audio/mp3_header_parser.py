@@ -309,11 +309,11 @@ class MP3Header():
         for i in range(5, 7):
             if byte_2[i] != 1:
                 raise InvalidHeaderException("Invalid MP3 Header (Second byte has invalid marker)")
-        self.mpeg_version = numpy.packbits(byte_2[3:5], bitorder='little')[0]
-        self.layer_description = numpy.packbits(byte_2[1:2], bitorder='little')[0]
+        self.mpeg_version = int(numpy.packbits(byte_2[3:5], bitorder='little')[0])
+        self.layer_description = int(numpy.packbits(byte_2[1:2], bitorder='little')[0])
         self.protected = byte_2[0] == 1
-        self.bitrate_index = numpy.packbits(byte_3[4:8], bitorder='little')[0]
-        self.samplerate_index = numpy.packbits(byte_3[2:3], bitorder='little')[0]
+        self.bitrate_index = int(numpy.packbits(byte_3[4:8], bitorder='little')[0])
+        self.samplerate_index = int(numpy.packbits(byte_3[2:3], bitorder='little')[0])
         self.padding = byte_3[1]
         self.private = byte_3[0] == 1
         self.channelmode = numpy.packbits(byte_4[6:8], bitorder='little')[0]
@@ -321,7 +321,7 @@ class MP3Header():
         self.copyright = byte_4[3] == 1
         self.original = byte_4[2] == 1
         self.emphasis = numpy.packbits(byte_4[0:2], bitorder='little')[0]
-        self.samplerate = self.__mp3_process_samplerate(self.mpeg_version, self.samplerate_index)
+        self.samplerate = int(self.__mp3_process_samplerate(self.mpeg_version, self.samplerate_index))
         self.bitrate = self.__mp3_parse_bitrate(self.bitrate_index,
                                                 1 if self.mpeg_version == 3 else 2,
                                                 (3 - self.layer_description) + 1)

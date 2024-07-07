@@ -1,6 +1,6 @@
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
-import os
+import os   
 import socket
 import sys
 import threading
@@ -17,6 +17,7 @@ import dns.rdtypes
 import dns.rrset
 import yaml
 
+from src.audio.tcp_manager import TCPManager
 import src.constants.constants as constants
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
 from src.api.api_webstream import APIWebStream
@@ -64,6 +65,7 @@ class ConfigurationManager(threading.Thread):
         """Holds the thread that receives UDP packets from Scream"""
         self.rtp_receiver: RTPReceiver = RTPReceiver([])
         """Holds the thread that receives UDP packets from an RTP source"""
+        self.tcp_manager: TCPManager = TCPManager([])
         self.reload_config: bool = False
         """Set to true to reload the config. Used so config
            changes during another config reload still trigger
@@ -317,6 +319,7 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("[Configuration Manager] Stopping receiver")
         self.scream_recevier.stop()
         self.rtp_receiver.stop()
+        self.tcp_manager.stop()
         _logger.debug("[Configuration Manager] Receiver stopped")
         _logger.debug("[Configuration Manager] Stopping Plugin Manager")
         self.plugin_manager.stop_registered_plugins()
@@ -526,6 +529,15 @@ class ConfigurationManager(threading.Thread):
                     if sink not in changed_sinks:
                         changed_sinks.append(sink)
 
+        # Add sinks requesting a reload
+        for audio_controller in self.audio_controllers:
+            if audio_controller.wants_reload():
+                _logger.info("[Configuration Manager] Controller %s wants a reload", audio_controller.sink_info.name)
+                for sink in new_map.keys():
+                    if sink.name == audio_controller.sink_info.name:
+                        if sink not in changed_sinks:
+                            changed_sinks.append(sink)
+
 
         return added_sinks, removed_sinks, changed_sinks
 
@@ -636,7 +648,7 @@ class ConfigurationManager(threading.Thread):
             # Load a new controller
             sources: List[SourceDescription]
             sources = self.active_configuration.real_sinks_to_real_sources[sink]
-            audio_controller = AudioController(sink, sources, self.__api_webstream)
+            audio_controller = AudioController(sink, sources, self.tcp_manager.get_fd(sink.ip), self.__api_webstream)
             _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
             self.audio_controllers.append(audio_controller)
 
@@ -658,7 +670,7 @@ class ConfigurationManager(threading.Thread):
             # Load a new controller
             sources: List[SourceDescription]
             sources = self.active_configuration.real_sinks_to_real_sources[sink]
-            audio_controller = AudioController(sink, sources, self.__api_webstream)
+            audio_controller = AudioController(sink, sources, self.tcp_manager.get_fd(sink.ip), self.__api_webstream)
             _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
             self.audio_controllers.append(audio_controller)
 
@@ -674,6 +686,7 @@ class ConfigurationManager(threading.Thread):
             controller_write_fds: List[int] = []
             for audio_controller in self.audio_controllers:
                 controller_write_fds.append(audio_controller.controller_write_fd)
+            self.tcp_manager.replace_mixers(self.audio_controllers)
             self.plugin_manager.load_registered_plugins(controller_write_fds)
             _logger.debug("[Configuration Manager] Reload done")
 
@@ -746,6 +759,9 @@ class ConfigurationManager(threading.Thread):
                 # while it's already reloading
                 if self.plugin_manager.wants_reload():
                     self.reload_config = True
+                for audio_controller in self.audio_controllers:
+                    if audio_controller.wants_reload():
+                        self.reload_config = True
                 while self.reload_config:
                     self.reload_config = False
                     _logger.info("[Configuration Manager] Reloading the configuration")

@@ -19,7 +19,7 @@ class ScreamReceiver(multiprocessing.Process):
     def __init__(self,  controller_write_fd_list: List[int]):
         """Receives UDP packets and sends them to known queue lists"""
         super().__init__(name="Scream Receiver Thread")
-        self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock: socket.socket
         """Main socket all sources send to"""
         self.controller_write_fd_list: List[int] = controller_write_fd_list
         """List of all sink queues to forward data to"""
@@ -27,7 +27,7 @@ class ScreamReceiver(multiprocessing.Process):
         """Multiprocessing-passed flag to determine if the thread is running"""
         self.known_ips = multiprocessing.Manager().list()
         if len(controller_write_fd_list) == 0:  # Will be zero if this is just a placeholder.
-            self.running.value = c_bool(False)
+            self.running.value = c_bool(False) # type: ignore
             return
         self.start()
 
@@ -35,7 +35,7 @@ class ScreamReceiver(multiprocessing.Process):
         """Stops the Receiver and all sinks"""
         logger.info("[Scream Receiver] Stopping")
         was_running: bool = bool(self.running.value)
-        self.running.value = c_bool(False)
+        self.running.value = c_bool(False) # type: ignore
         if constants.KILL_AT_CLOSE:
             try:
                 self.kill()
@@ -52,20 +52,26 @@ class ScreamReceiver(multiprocessing.Process):
         set_process_name("ScreamReceiver", "Scream Receiver Thread")
         logger.debug("[Scream Receiver] Receiver Thread PID %s", os.getpid())
         logger.info("[Scream Receiver] Receiver started on port %s", constants.SCREAM_RECEIVER_PORT)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF,
                                 constants.PACKET_SIZE * 1024 * 1024)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("", constants.SCREAM_RECEIVER_PORT))
 
         while self.running.value:
-            ready = select.select([self.sock], [], [], .3)
-            if ready[0]:
-                data, addr = self.sock.recvfrom(constants.PACKET_SIZE)
-                addrlen = len(addr[0])
-                if addr[0] not in self.known_ips:
-                    self.known_ips.append(addr[0])
-                for controller_write_fd in self.controller_write_fd_list:
-                    os.write(controller_write_fd,
-        bytes(addr[0].encode("ascii") + bytes([0] * (constants.TAG_MAX_LENGTH - addrlen)) + data))
+            try:
+                ready = select.select([self.sock], [], [], .3)
+                if ready[0]:
+                    data, addr = self.sock.recvfrom(constants.PACKET_SIZE)
+                    addrlen = len(addr[0])
+                    if addr[0] not in self.known_ips:
+                        self.known_ips.append(addr[0])
+                    for controller_write_fd in self.controller_write_fd_list:
+                        os.write(controller_write_fd,
+                            bytes(addr[0].encode("ascii") +
+                                bytes([0] * (constants.TAG_MAX_LENGTH - addrlen)) +
+                                data))
+            except ValueError:
+                pass
         logger.info("[Scream Receiver] Main thread stopped")
         close_all_pipes()

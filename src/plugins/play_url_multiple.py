@@ -166,8 +166,14 @@ class PluginPlayURLInstance(multiprocessing.Process):
                 self.join(5)
             except subprocess.TimeoutExpired:
                 logger.warning("Play URL Multiple failed to close")
-        close_pipe(self.fifo_read)
-        close_pipe(self.fifo_write)
+        try:
+            os.close(self.fifo_read)
+        except OSError:
+            pass
+        try:
+            os.close(self.fifo_write)
+        except OSError:
+            pass
 
     def check_ffmpeg_done(self) -> bool:
         """Checks if ffmpeg is done"""

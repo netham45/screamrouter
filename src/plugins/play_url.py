@@ -60,8 +60,14 @@ class PluginPlayURL(ScreamRouterPlugin):
     def stop_plugin(self):
         """This is called when the plugin is stopped. You may perform shutdown
            tasks here."""
-        os.close(self.ffmpeg_read)
-        os.close(self.ffmpeg_write)
+        try:
+            os.close(self.ffmpeg_read)
+        except OSError:
+            pass
+        try:
+            os.close(self.ffmpeg_write)
+        except OSError:
+            pass
 
     def load_plugin(self):
         """This is called when the configuration is loaded."""

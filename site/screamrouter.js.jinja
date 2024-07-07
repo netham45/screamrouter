@@ -117,7 +117,9 @@ function dialog_submit(close) {
         if (entry.id == undefined) {
             continue;
         }
-        if (entry.type == "select-multiple") {
+        if (entry.type == "checkbox") {
+            result[entry.id] = entry.checked;
+        } else if (entry.type == "select-multiple") {
             var result_array = [];
             for (option in entry.selectedOptions) {
                 var value = entry.selectedOptions[option].value;

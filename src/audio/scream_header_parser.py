@@ -36,7 +36,7 @@ class ScreamHeader():
         sample_rate_base: int = 44100 if sample_rate_bits[7] == 1 else 48000
         sample_rate_bits = numpy.delete(sample_rate_bits, 7)  # Remove the uppermost bit
         # Convert it back into a number without the top bit, this is the multiplier
-        sample_rate_multiplier: int = numpy.packbits(sample_rate_bits,bitorder='little')[0]
+        sample_rate_multiplier: int = int(numpy.packbits(sample_rate_bits,bitorder='little')[0])
         if sample_rate_multiplier < 1:
             sample_rate_multiplier = 1
         # Bypassing pydantic verification for these
@@ -49,7 +49,7 @@ class ScreamHeader():
         self.channel_mask: bytes = scream_header_array[3:] # type: ignore
         """Channel Mask"""
         self.channel_layout: ChannelLayoutType
-        self.channel_layout = self.__parse_channel_mask(scream_header_array[3:]) # type: ignore
+        self.channel_layout = self.__parse_channel_mask(bytes(scream_header_array[3:])) # type: ignore
         """Holds the channel layout"""
         self.header: bytes = scream_header_array
         """Holds the raw header bytes"""

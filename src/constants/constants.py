@@ -31,7 +31,7 @@ SHOW_FFMPEG_OUTPUT: bool = False
 """Show ffmpeg output"""
 DEBUG_MULTIPROCESSING: bool = False
 """Debugs Multiprocessing to stdout."""
-SOURCE_INACTIVE_TIME_MS: int = 35
+SOURCE_INACTIVE_TIME_MS: int = 350
 """Inactive time for a source before it's closed. 
    Some plugins may need this raised.
    If this is too long there will be gaps when a source stops sending."""
@@ -39,6 +39,9 @@ CERTIFICATE: str = "/root/screamrouter/cert/cert.pem"
 """SSL Cert"""
 CERTIFICATE_KEY: str = "/root/screamrouter/cert/privkey.pem"
 """SSL Cert Key"""
+SYNCED_TIME_BUFFER: int = 5
+"""Number of ms that synced players play out in the future
+   negative delays can be up to this amount"""
 
 # ##########
 # Internal Options
@@ -58,7 +61,7 @@ WAIT_FOR_CLOSES: bool = False
 """On configuration reload, wait for existing processes to close
    before starting new processes, mostly for testing.
    Configuration changes reload faster when set to False."""
-KILL_AT_CLOSE: bool = False
+KILL_AT_CLOSE: bool = True
 """Closes quickly but leaves lingering processes, doesn't reload any faster
    than disabling WAIT_FOR_CLOSES."""
 EXIT_HACK: bool = False

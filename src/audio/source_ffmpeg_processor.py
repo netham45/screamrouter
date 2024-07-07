@@ -115,6 +115,7 @@ class SourceFFMpegProcessor:
                                      "-y",
                                      "-f", "s32le",
                                      "-ac", f"{self.__sink_info.channels}",
+                                     "-channel_layout", f"{self.__sink_info.channel_layout}",
                                      "-ar", f"{self.__sink_info.sample_rate}",
                                     f"pipe:{self.__ffmpeg_output_pipe}"])  # ffmpeg PCM output
         return ffmpeg_command_parts

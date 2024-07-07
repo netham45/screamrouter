@@ -65,26 +65,26 @@ class SourceInputProcessor(multiprocessing.Process):
 
         if self.stream_attributes.sample_rate != self.sink_info.sample_rate:
             logger.debug("[Source %s] Using ffmpeg because sample rate", self.source_info.ip)
+            logger.debug("[Source %s] Sample Rate %s != %s",
+                         self.source_info.ip,
+                         self.stream_attributes.sample_rate,
+                         self.sink_info.sample_rate)
         if self.stream_attributes.channels != self.sink_info.channels:
             logger.debug("[Source %s] Using ffmpeg because channels", self.source_info.ip)
+            logger.debug("[Source %s] Channels %s != %s",
+                         self.source_info.ip,
+                         self.stream_attributes.channels,
+                         self.sink_info.channels)
         if self.stream_attributes.channel_layout != self.sink_info.channel_layout:
             logger.debug("[Source %s] Using ffmpeg because channel layout", self.source_info.ip)
+            logger.debug("[Source %s] Channel_Layout %s != %s",
+                         self.source_info.ip,
+                         self.stream_attributes.channel_layout,
+                         self.sink_info.channel_layout)
         if self.source_info.equalizer != Equalizer():
             logger.debug("[Source %s] Using ffmpeg because equalizer", self.source_info.ip)
         if self.source_info.delay != 0:
             logger.debug("[Source %s] Using ffmpeg because delay", self.source_info.ip)
-        if self.stream_attributes.sample_rate != self.sink_info.sample_rate:
-            print("Sample Rate Difference")
-        if self.stream_attributes.channels != self.sink_info.channels:
-            print("Channels Difference")
-        if self.stream_attributes.channel_layout != self.sink_info.channel_layout:
-            print("Channel Layout Difference")
-        if self.source_info.equalizer != Equalizer():
-            print("Equalizer Difference")
-            print(self.source_info.equalizer)
-            print(Equalizer())
-        if self.source_info.delay != float(0):
-            print("Delay Difference")
         self.ffmpeg_read: int
         self.ffmpeg_write: int
         self.ffmpeg_read, self.ffmpeg_write = os.pipe()
@@ -118,10 +118,43 @@ class SourceInputProcessor(multiprocessing.Process):
                                     f"{parsed_scream_header.sample_rate}k",
                                     f"{parsed_scream_header.channel_layout} layout."]))
                 self.stream_attributes = parsed_scream_header
-                self.wants_restart.value = c_bool(True)
+                self.wants_restart.value = c_bool(True) # type: ignore
                 if self.using_ffmpeg:
                     if not self.ffmpeg_handler is None:
                         self.ffmpeg_handler.stop()
+                self.using_ffmpeg = (
+                self.stream_attributes.sample_rate != self.sink_info.sample_rate or
+                self.stream_attributes.channels != self.sink_info.channels or
+                self.stream_attributes.channel_layout != self.sink_info.channel_layout or
+                self.source_info.equalizer != Equalizer() or
+                self.source_info.delay != 0)
+
+                if self.stream_attributes.sample_rate != self.sink_info.sample_rate:
+                    logger.debug("[Source %s] Using ffmpeg because sample rate",
+                                 self.source_info.ip)
+                    logger.debug("[Source %s] Sample Rate %s != %s",
+                                 self.source_info.ip,
+                                 self.stream_attributes.sample_rate,
+                                 self.sink_info.sample_rate)
+                if self.stream_attributes.channels != self.sink_info.channels:
+                    logger.debug("[Source %s] Using ffmpeg because channels",
+                                 self.source_info.ip)
+                    logger.debug("[Source %s] Channels %s != %s",
+                                 self.source_info.ip,
+                                 self.stream_attributes.channels,
+                                 self.sink_info.channels)
+                if self.stream_attributes.channel_layout != self.sink_info.channel_layout:
+                    logger.debug("[Source %s] Using ffmpeg because channel layout",
+                                 self.source_info.ip)
+                    logger.debug("[Source %s] Channel_Layout %s != %s",
+                                 self.source_info.ip,
+                                 self.stream_attributes.channel_layout,
+                                 self.sink_info.channel_layout)
+                if self.source_info.equalizer != Equalizer():
+                    logger.debug("[Source %s] Using ffmpeg because equalizer", self.source_info.ip)
+                if self.source_info.delay != 0:
+                    logger.debug("[Source %s] Using ffmpeg because delay", self.source_info.ip)
+                if self.using_ffmpeg:
                     self.ffmpeg_handler = SourceFFMpegProcessor(
                         f"[Sink: {self.__sink_ip}][Source: {self.source_info.ip}]FFMpeg",
                         self.source_input_fd,
@@ -130,7 +163,7 @@ class SourceInputProcessor(multiprocessing.Process):
                         self.stream_attributes,
                         self.sink_info)
             self.update_activity()
-            self.is_open.value = c_bool(True)
+            self.is_open.value = c_bool(True) # type: ignore
 
     def check_if_inactive(self) -> None:
         """Looks for old pipes that are open and closes them"""
@@ -139,14 +172,14 @@ class SourceInputProcessor(multiprocessing.Process):
                         self.__sink_ip,
                         self.tag,
                         constants.SOURCE_INACTIVE_TIME_MS)
-            self.is_open.value = c_bool(False)
+            self.is_open.value = c_bool(False) # type: ignore
             os.write(self.source_input_fd, bytes([0] * constants.PACKET_DATA_SIZE))
 
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""
-        self.running.value = c_bool(False)
+        self.running.value = c_bool(False) # type: ignore
         if self.is_open.value:
-            self.is_open.value = c_bool(False)
+            self.is_open.value = c_bool(False) # type: ignore
         logger.info("[Sink:%s][Source:%s] Stopping", self.__sink_ip, self.tag)
         if not self.ffmpeg_handler is None:
             self.ffmpeg_handler.stop()
@@ -194,9 +227,19 @@ class SourceInputProcessor(multiprocessing.Process):
                 self.sink_info)
         while self.running.value:
             self.check_if_inactive()
-            ready = select.select([self.writer_read], [], [], .01)
+            ready = select.select([self.writer_read], [], [], .3)
             if ready[0]:
+                self.update_activity()
                 data: bytes = os.read(self.writer_read, constants.PACKET_SIZE)
+                if self.using_ffmpeg:
+                    ready = select.select([], [self.ffmpeg_write], [], 0)
+                else:
+                    ready = select.select([], [self.source_input_fd], [], 0)
+                if not ready[1]:
+                    continue
+                if len(data) < constants.PACKET_SIZE:
+                    logger.warning("Got bad packet length %s", len(data))
+                    continue
                 self.update_source_attributes_and_open_source(data[:constants.PACKET_HEADER_SIZE])
                 if self.using_ffmpeg:
                     os.write(self.ffmpeg_write, data[constants.PACKET_HEADER_SIZE:])
@@ -230,7 +273,6 @@ class SourceInputProcessor(multiprocessing.Process):
                     pcm_data = numpy.frombuffer(data[constants.PACKET_HEADER_SIZE:], numpy.int32)
                     pcm_data = numpy.array(pcm_data * self.source_info.volume, numpy.int32)
                     os.write(self.source_input_fd, pcm_data.tobytes())
-                self.update_activity()
         if not self.ffmpeg_handler is None:
             self.ffmpeg_handler.stop()
         close_all_pipes()

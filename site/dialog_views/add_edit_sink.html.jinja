@@ -10,7 +10,7 @@
     {{- inputs.text("Sink IP", "ip", true, "Sink IP", data['ip']) }}<BR />
     {{- inputs.text_number("Sink Port", "port", 1, 65535, true, "Sink Port", data['port']) }}<BR />
     <SPAN>
-    <LABEL FOR="bit_depth">Bit Depth</LABEL>
+        <LABEL FOR="bit_depth">Bit Depth</LABEL>
         <SELECT ID="bit_depth">
             <OPTION VALUE="16"{{' SELECTED' if data['bit_depth'] == 16}}>16</OPTION>
             <OPTION VALUE="24"{{' SELECTED' if data['bit_depth'] == 24}}>24</OPTION>
@@ -29,7 +29,7 @@
     </SPAN><BR />
     {{- inputs.text_number("Sink Channels", "channels", 1, 8, True, "Sink Channels", data['channels']) }}<BR />
     <SPAN>
-    <LABEL FOR="channel_layout">Channel Layout</LABEL>
+        <LABEL FOR="channel_layout">Channel Layout</LABEL>
         <SELECT ID="channel_layout">
             <OPTION VALUE="mono"{{' SELECTED' if data['channel_layout'] =='mono'}}>Mono</OPTION>
             <OPTION VALUE="stereo"{{' SELECTED' if data['channel_layout'] =='stereo'}}>Stereo</OPTION>
@@ -39,7 +39,10 @@
             <OPTION VALUE="7.1"{{' SELECTED' if data['channel_layout'] =='7.1'}}>7.1</OPTION>
         </SELECT>
     </SPAN><BR />
-    {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
+    {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR />
+    <LABEL FOR="checkbox">Time Sync Protocol</LABEL>
+    <INPUT TYPE="checkbox" NAME="time_sync" ID="time_sync"{{ " checked" if data['time_sync'] }}><BR/>
+    {{- inputs.text_number("Timesync Delay in ms", "time_sync_delay", 0, 5000, True, "Timesync Delay", data['time_sync_delay']) }}<BR /><BR />
     {{- buttons.button("dialog_submit_close", 'Add Sink' if request_info['add_new'] else 'Edit Sink' , "dialog-button", {}, "Submit")}}
     {{- buttons.button("dialog_cancel", 'Close' , "dialog-button", {}, "Cancel")}}
 </DIV>

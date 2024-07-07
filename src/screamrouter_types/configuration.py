@@ -64,8 +64,12 @@ class Equalizer(BaseModel):
     def __hash__(self):
         """Returns a hash"""
         hashstr: str = ""
-        for field_name in self.model_fields:
-            hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+        for field_name, field_info in self.model_fields.items():
+            try:
+                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+            except AttributeError:
+                setattr(self, field_name, field_info.default)
+                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
         return hash(hashstr)
 
     def __mul__(self, other):
@@ -124,6 +128,10 @@ class SinkDescription(BaseModel):
                                      b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
                                      b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
     """Audio Equalizer"""
+    time_sync: bool = False
+    """Rather the sink is timesynced (Normal Scream receivers are not compatible)"""
+    time_sync_delay: int = 0
+    """Delay for time sync in ms"""
 
     def __eq__(self, other):
         """Compares the name if a string.
@@ -149,8 +157,12 @@ class SinkDescription(BaseModel):
     def __hash__(self):
         """Returns a hash"""
         hashstr: str = ""
-        for field_name in self.model_fields:
-            hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+        for field_name, field_info in self.model_fields.items():
+            try:
+                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+            except AttributeError:
+                setattr(self, field_name, field_info.default)
+                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
         return hash(hashstr)
 
 class SourceDescription(BaseModel):
@@ -206,8 +218,12 @@ class SourceDescription(BaseModel):
     def __hash__(self):
         """Returns a hash"""
         hashstr: str = ""
-        for field_name in self.model_fields:
-            hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+        for field_name, field_info in self.model_fields.items():
+            try:
+                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+            except AttributeError:
+                setattr(self, field_name, field_info.default)
+                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
         return hash(hashstr)
 
 
@@ -256,6 +272,10 @@ class RouteDescription(BaseModel):
     def __hash__(self):
         """Returns a hash"""
         hashstr: str = ""
-        for field_name in self.model_fields:
-            hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+        for field_name, field_info in self.model_fields.items():
+            try:
+                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
+            except AttributeError:
+                setattr(self, field_name, field_info.default)
+                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
         return hash(hashstr)

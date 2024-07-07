@@ -71,16 +71,16 @@ class SinkMP3Processor(multiprocessing.Process):
                 if bytesin[0] == 255:
                     header = bytesin + self._read_bytes(constants.MP3_HEADER_LENGTH - 1, 0)
                     try:
-                        header_parsed: MP3Header = MP3Header(header)
-                        return (header_parsed, header)
+                        header_parsed: MP3Header = MP3Header(bytes(header))
+                        return (header_parsed, bytes(header))
                     except InvalidHeaderException as exc:
                         logger.warning("[Sink:%s] Bad MP3 Header: %s", self._sink_ip, exc)
             if bytes_searched == max_bytes_to_search:
                 raise InvalidHeaderException(
                     f"[Sink: {self._sink_ip}] Couldn't find MP3 header after ID3 header")
         else:
-            header_parsed: MP3Header = MP3Header(header)
-            return (header_parsed, header)
+            header_parsed: MP3Header = MP3Header(bytes(header))
+            return (header_parsed, bytes(header))
         raise InvalidHeaderException("Invalid header")
 
     def run(self) -> None:

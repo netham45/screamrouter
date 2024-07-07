@@ -31,7 +31,7 @@ class RTPReceiver(multiprocessing.Process):
         """Multiprocessing-passed flag to determine if the thread is running"""
         self.known_ips = multiprocessing.Manager().list()
         if len(controller_write_fd_list) == 0:  # Will be zero if this is just a placeholder.
-            self.running.value = c_bool(False)
+            self.running.value = c_bool(False) # type: ignore
             return
         self.start()
 
@@ -39,7 +39,7 @@ class RTPReceiver(multiprocessing.Process):
         """Stops the Receiver and all sinks"""
         logger.info("[RTP Receiver] Stopping")
         was_running: bool = bool(self.running.value)
-        self.running.value = c_bool(False)
+        self.running.value = c_bool(False) # type: ignore
         if constants.KILL_AT_CLOSE:
             try:
                 self.kill()
@@ -64,27 +64,29 @@ class RTPReceiver(multiprocessing.Process):
         stereo_header = create_stream_info(16, 48000, 2, "stereo")
 
         while self.running.value:
-            ready = select.select([self.sock], [], [], .3)
-            if ready[0]:
-                data, addr = self.sock.recvfrom(constants.PACKET_SIZE + 500)
-                rtp_packet = RTP.fromBytearray(bytearray(data))
-                if not rtp_packet.payloadType in [PayloadType.L16_1chan,
-                                                  PayloadType.L16_2chan,
-                                                  PayloadType.DYNAMIC_127]:
-                    logger.warning("Can only decode 16-bit LPCM, unsupported type %s from %s:%s",
-                                   rtp_packet.payloadType, addr[0], addr[1])
-                    continue
-                if addr[0] not in self.known_ips:
-                    self.known_ips.append(addr[0])
-                padded_tag: bytes
-                padded_tag = bytes(addr[0].encode("ascii"))
-                padded_tag += bytes([0] * (constants.TAG_MAX_LENGTH - len(addr[0])))
-                header: bytes = mono_header.header
-                if rtp_packet.payloadType in [PayloadType.L16_2chan,
-                                              PayloadType.DYNAMIC_127]:
-                    header = stereo_header.header
-                for controller_write_fd in self.controller_write_fd_list:
-                    os.write(controller_write_fd, padded_tag + header + rtp_packet.payload)
-
+            try:
+                ready = select.select([self.sock], [], [], .3)
+                if ready[0]:
+                    data, addr = self.sock.recvfrom(constants.PACKET_SIZE + 500)
+                    rtp_packet = RTP.fromBytearray(bytearray(data))
+                    if not rtp_packet.payloadType in [PayloadType.L16_1chan,
+                                                    PayloadType.L16_2chan,
+                                                    PayloadType.DYNAMIC_127]:
+                        logger.warning("Can only decode S16_LE, unsupported type %s from %s:%s",
+                                    rtp_packet.payloadType, addr[0], addr[1])
+                        continue
+                    if addr[0] not in self.known_ips:
+                        self.known_ips.append(addr[0])
+                    padded_tag: bytes
+                    padded_tag = bytes(addr[0].encode("ascii"))
+                    padded_tag += bytes([0] * (constants.TAG_MAX_LENGTH - len(addr[0])))
+                    header: bytes = bytes(mono_header.header)
+                    if rtp_packet.payloadType in [PayloadType.L16_2chan,
+                                                PayloadType.DYNAMIC_127]:
+                        header = bytes(stereo_header.header)
+                    for controller_write_fd in self.controller_write_fd_list:
+                        os.write(controller_write_fd, padded_tag + header + rtp_packet.payload)
+            except ValueError:
+                pass
         logger.info("[RTP Receiver] Main thread stopped")
         close_all_pipes()

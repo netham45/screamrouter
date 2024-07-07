@@ -1,4 +1,8 @@
 {
     "python.REPL.enableREPLSmartSend": false,
     "pylint.args": [],
+    "files.exclude": {
+        "**/*.c": true,
+        "**/*.so": true
+    },
 }

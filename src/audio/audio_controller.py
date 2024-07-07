@@ -1,4 +1,5 @@
 """One audio controller per sink, handles taking in packets and distributing them to sources"""
+import fcntl
 import multiprocessing
 import os
 import select
@@ -6,7 +7,7 @@ import threading
 from ctypes import c_bool
 from queue import Empty
 from subprocess import TimeoutExpired
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from src.audio.mp3_ffmpeg_process import MP3FFMpegProcess
 from src.audio.sink_mp3_processor import SinkMP3Processor
@@ -28,7 +29,9 @@ class AudioController(multiprocessing.Process):
        This thread listens to the input queue and passes it to each Source processor"""
 
     def __init__(self, sink_info: SinkDescription,
-                 sources: List[SourceDescription], websocket: APIWebStream):
+                 sources: List[SourceDescription],
+                 tcp_fd: Optional[int],
+                 websocket: APIWebStream):
         """Initialize a sink queue"""
         super().__init__(name=f"[Sink {sink_info.name}] Audio Controller")
         logger.info("[Sink %s] Loading audio controller", sink_info.name)
@@ -72,6 +75,8 @@ class AudioController(multiprocessing.Process):
         self.controller_read_fd, self.controller_write_fd = os.pipe()
         self.running = multiprocessing.Value(c_bool, True)
         """Multiprocessing-passed flag to determine if the thread is running"""
+        self.request_restart = multiprocessing.Value(c_bool, False)
+        """Set true if we want a config reload"""
         logger.info("[Sink:%s] Queue %s", self.sink_info.ip, self.controller_write_fd)
         if self.sources_lock.acquire(timeout=1):
             for source in self.__controller_sources:
@@ -95,11 +100,7 @@ class AudioController(multiprocessing.Process):
         self.mp3_ffmpeg_output_write: int
         self.mp3_ffmpeg_input_read, self.mp3_ffmpeg_input_write = os.pipe()
         self.mp3_ffmpeg_output_read, self.mp3_ffmpeg_output_write = os.pipe()
-        self.pcm_thread: SinkOutputMixer = SinkOutputMixer(self.sink_info.ip,
-                                               self.sink_info.port,
-                                               self.stream_info,
-                                               list(self.sources.values()),
-                                               self.mp3_ffmpeg_input_write)
+        self.pcm_thread: SinkOutputMixer
         """Holds the thread to listen to PCM output from a Source"""
 
         self.mp3_ffmpeg_processor = MP3FFMpegProcess(f"[Sink {self.sink_info.ip}] MP3 Process",
@@ -112,7 +113,17 @@ class AudioController(multiprocessing.Process):
                                                            self.mp3_ffmpeg_output_read,
                                                            self.webstream.queue)
         """Holds the thread to generaet MP3 output from a PCM reader"""
+        self.pcm_thread = SinkOutputMixer(self.sink_info,
+                                          self.stream_info,
+                                          tcp_fd,
+                                          list(self.sources.values()),
+                                          self.mp3_ffmpeg_input_write)
         self.start()
+
+    def restart_mixer(self, tcp_client_fd: Optional[int]):
+        """(Re)starts the mixer"""
+        logger.info("[Audio Controller] Requesting config reloaed")
+        self.request_restart = c_bool(True)
 
     def get_open_sources(self) -> List[SourceInputProcessor]:
         """Build a list of active IPs, exclude ones that aren't open"""
@@ -149,7 +160,7 @@ class AudioController(multiprocessing.Process):
             source.stop()
             logger.debug("[Sink:%s] Stopped source %s", self.sink_info.ip, source.name)
         logger.debug("[Sink:%s] Stopping Audio Controller", self.sink_info.ip)
-        self.running.value = c_bool(False)
+        self.running.value = c_bool(False) # type: ignore
 
         if constants.WAIT_FOR_CLOSES:
             logger.debug("[Sink:%s] Waiting for Audio Controller Stop", self.sink_info.ip)
@@ -162,12 +173,14 @@ class AudioController(multiprocessing.Process):
         close_pipe(self.controller_read_fd)
         close_pipe(self.controller_write_fd)
 
-    def wants_restart(self) -> bool:
+    def wants_reload(self) -> bool:
         """Returns true of any of the sources want a restart"""
         flag: bool = False
+        if self.request_restart.value:
+            return True
         for source in self.sources.values():
             if source.wants_restart.value:
-                source.wants_restart.value = c_bool(False)
+                source.wants_restart.value = c_bool(False) # type: ignore
                 flag = True
         return flag
 
