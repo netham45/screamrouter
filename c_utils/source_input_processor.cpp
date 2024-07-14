@@ -9,7 +9,8 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <fcntl.h>
-#include "libsamplerate-0.1.9/src/samplerate.h"
+#include "libsamplerate/include/samplerate.h"
+#include "biquad/biquad.h"
 using namespace std;
 
 // Configuration variables
@@ -24,13 +25,28 @@ uint8_t packet_in_buffer[PACKET_SIZE];
 uint8_t receive_buffer[CHUNK_SIZE];
 int32_t scaled_buffer[CHUNK_SIZE * 8];
 uint8_t *scaled_buffer_int8 = (uint8_t*)scaled_buffer;
+
+int32_t processed_buffer[CHUNK_SIZE * 8];
+uint8_t *processed_buffer_int8 = (uint8_t*)processed_buffer;
+
+int32_t resampled_buffer[CHUNK_SIZE * 16];
+uint8_t *resampled_buffer_int8 = (uint8_t*)resampled_buffer;
+
 int32_t channel_buffers[MAX_CHANNELS][CHUNK_SIZE];
 int32_t remixed_channel_buffers[MAX_CHANNELS][CHUNK_SIZE];
+int32_t resampled_channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 2];
 int32_t pre_eq_buffer[MAX_CHANNELS][CHUNK_SIZE * 1024] = {0};
 int32_t post_eq_buffer[MAX_CHANNELS][CHUNK_SIZE * 1024] = {0};
-int scale_buffer_uint8_pos = 0;
+int scale_buffer_pos = 0;
+int process_buffer_pos = 0;
+int resample_buffer_pos = 0;
 int channel_buffer_pos = 0;
 float speaker_mix[MAX_CHANNELS][MAX_CHANNELS] = {{0}};
+
+SRC_STATE* sampler = NULL;
+float resampler_data_in[CHUNK_SIZE * MAX_CHANNELS] = {0};
+float resampler_data_out[CHUNK_SIZE * MAX_CHANNELS * 8] = {0};
+SRC_DATA resampler_config = {0};
 
 int fd_in = 0;
 int fd_out = 0;
@@ -53,6 +69,10 @@ int input_samplerate = 0;
 int input_bitdepth = 0;
 int input_chlayout1 = 0;
 int input_chlayout2 = 0;
+
+#define EQ_BANDS 18
+Biquad *filters[MAX_CHANNELS][EQ_BANDS] = {0};
+
 
 // Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
 int* int_args[] = { 
@@ -120,7 +140,7 @@ void log(string message) {
 }
 
 // Function to process fixed command line arguments like IP address and output port
-void process_base_args(int argc, char* argv[]) {
+void process_args (int argc, char* argv[]) {
     if (argc <= config_argc)
         ::exit(-1);
     log("args");
@@ -136,7 +156,34 @@ void process_base_args(int argc, char* argv[]) {
             *(float_args[argi]) = atof(argv[argi + 1]);
 }
 
-void build_speaker_mix() {
+float get_eq_db(int i) { // return 0f<->2f mapped to -10f<->10f for the specified eq index
+    return 10.0f*(eq[i]-1); 
+}
+
+void setup_biquad() { // Set up the biquad filters for the equalizer, sets filters
+    for (int channel=0;channel<MAX_CHANNELS;channel++) {
+        filters[channel][0] = new Biquad(bq_type_peak, 65.406392 / output_samplerate, 1.0, get_eq_db(0));
+        filters[channel][1] = new Biquad(bq_type_peak, 92.498606 / output_samplerate, 1.0, get_eq_db(1));
+        filters[channel][2] = new Biquad(bq_type_peak, 130.81278 / output_samplerate, 1.0, get_eq_db(2));
+        filters[channel][3] = new Biquad(bq_type_peak, 184.99721 / output_samplerate, 1.0, get_eq_db(3));
+        filters[channel][4] = new Biquad(bq_type_peak, 261.62557 / output_samplerate, 1.0, get_eq_db(4));
+        filters[channel][5] = new Biquad(bq_type_peak, 369.99442 / output_samplerate, 1.0, get_eq_db(5));
+        filters[channel][6] = new Biquad(bq_type_peak, 523.25113 / output_samplerate, 1.0, get_eq_db(6));
+        filters[channel][7] = new Biquad(bq_type_peak, 739.9884 / output_samplerate, 1.0, get_eq_db(7));
+        filters[channel][8] = new Biquad(bq_type_peak, 1046.5023 / output_samplerate, 1.0, get_eq_db(8));
+        filters[channel][9] = new Biquad(bq_type_peak, 1479.9768 / output_samplerate, 1.0, get_eq_db(9));
+        filters[channel][10] = new Biquad(bq_type_peak, 2093.0045 / output_samplerate, 1.0, get_eq_db(10));
+        filters[channel][11] = new Biquad(bq_type_peak, 2959.9536 / output_samplerate, 1.0, get_eq_db(11));
+        filters[channel][12] = new Biquad(bq_type_peak, 4186.0091 / output_samplerate, 1.0, get_eq_db(12));
+        filters[channel][13] = new Biquad(bq_type_peak, 5919.9072 / output_samplerate, 1.0, get_eq_db(13));
+        filters[channel][14] = new Biquad(bq_type_peak, 8372.0181 / output_samplerate, 1.0, get_eq_db(14));
+        filters[channel][15] = new Biquad(bq_type_peak, 11839.814 / output_samplerate, 1.0, get_eq_db(15));
+        filters[channel][16] = new Biquad(bq_type_peak, 16744.036 / output_samplerate, 1.0, get_eq_db(16));
+        filters[channel][17] = new Biquad(bq_type_peak, 20000.0 / output_samplerate, 1.0, get_eq_db(17));
+    }
+}
+
+void build_speaker_mix() { // Fills out the speaker mix table speaker_mix[][] with the current configuration.
     memset(speaker_mix, 0, sizeof(speaker_mix));
     // speaker_mix[input channel][output channel] = gain;
     // Ex: To map Left on Stereo to Right on Stereo at half volume you would do:
@@ -158,12 +205,10 @@ void build_speaker_mix() {
                     speaker_mix[1][1] = 1; // Right to Right
                     break;
                 case 4: 
-                    if (output_chlayout1 == 0x33 && output_chlayout2 == 0x00) { // Stereo -> Quad
-                        speaker_mix[0][0] = 1; // Left to Front Left
-                        speaker_mix[1][1] = 1; // Right to Front Right
-                        speaker_mix[0][2] = 1; // Left to Back Left
-                        speaker_mix[1][3] = 1; // Right to Back Right
-                    }
+                    speaker_mix[0][0] = 1; // Left to Front Left
+                    speaker_mix[1][1] = 1; // Right to Front Right
+                    speaker_mix[0][2] = 1; // Left to Back Left
+                    speaker_mix[1][3] = 1; // Right to Back Right
                     break;
                 case 6: // Stereo -> 5.1 Surround
                     // FL FR C LFE BL BR
@@ -192,59 +237,55 @@ void build_speaker_mix() {
             }
             break;
         case 4:
-            if (output_chlayout1 == 0x33 && output_chlayout2 == 0x00) { // Quad
-                switch (output_channels) {
-                    case 1: // Quad -> Mono
-                        speaker_mix[0][0] = .25; // Front Left to Mono
-                        speaker_mix[1][0] = .25; // Front Right to Mono
-                        speaker_mix[2][0] = .25; // Rear Left to Mono
-                        speaker_mix[3][0] = .25; // Rear Right to Mono
-                        break;
-                    case 2: // Quad -> Stereo
-                        speaker_mix[0][0] = .5; // Front Left to Left
-                        speaker_mix[1][1] = .5; // Front Right to Right
-                        speaker_mix[2][0] = .5; // Rear Left to Left
-                        speaker_mix[3][1] = .5; // Rear Right to Right
-                        break;
-                    case 4: 
-                        if (output_chlayout1 == 0x33 && output_chlayout2 == 0x00) { // Quad -> Quad
-                            speaker_mix[0][0] = 1; // Front Left to Front Left
-                            speaker_mix[1][1] = 1; // Front Right to Front Right
-                            speaker_mix[2][2] = 1; // Rear Left to Rear Left
-                            speaker_mix[3][3] = 1; // Rear Right to Rear Right
-                        }
-                        break;
-                    case 6: // Quad -> 5.1 Surround
-                        // FL FR C LFE BL BR
-                        speaker_mix[0][0] = 1; // Front Left to Front Left
-                        speaker_mix[1][1] = 1; // Front Right to Front Right
-                        speaker_mix[0][2] = .5; // Front Left to Center
-                        speaker_mix[0][2] = .5; // Front Right to Center
-                        speaker_mix[0][3] = .25; // Front Left to LFE
-                        speaker_mix[1][3] = .25; // Front Right to LFE
-                        speaker_mix[2][3] = .25; // Rear Left to LFE
-                        speaker_mix[3][3] = .25; // Rear Right to LFE
-                        speaker_mix[2][4] = 1; // Rear Left to Rear Left
-                        speaker_mix[3][5] = 1; // Rear Right to Rear Right
-                        break;
-                    case 8: // Quad -> 7.1 Surround
-                        // FL FR C LFE BL BR SL SR
-                        speaker_mix[0][0] = 1; // Front Left to Front Left
-                        speaker_mix[1][1] = 1; // Front Right to Front Right
-                        speaker_mix[0][2] = .5; // Front Left to Center
-                        speaker_mix[0][2] = .5; // Front Right to Center
-                        speaker_mix[0][3] = .25; // Front Left to LFE
-                        speaker_mix[1][3] = .25; // Front Right to LFE
-                        speaker_mix[2][3] = .25; // Rear Left to LFE
-                        speaker_mix[3][3] = .25; // Rear Right to LFE
-                        speaker_mix[2][4] = 1; // Rear Left to Rear Left
-                        speaker_mix[3][5] = 1; // Rear Right to Rear Right
-                        speaker_mix[0][6] = .5; // Front Left to Side Left
-                        speaker_mix[1][7] = .5; // Front Right to Side Right
-                        speaker_mix[2][6] = .5; // Rear Left to Side Left
-                        speaker_mix[3][7] = .5; // Rear Right to Side Right
-                        break;
-                }
+            switch (output_channels) {
+                case 1: // Quad -> Mono
+                    speaker_mix[0][0] = .25; // Front Left to Mono
+                    speaker_mix[1][0] = .25; // Front Right to Mono
+                    speaker_mix[2][0] = .25; // Rear Left to Mono
+                    speaker_mix[3][0] = .25; // Rear Right to Mono
+                    break;
+                case 2: // Quad -> Stereo
+                    speaker_mix[0][0] = .5; // Front Left to Left
+                    speaker_mix[1][1] = .5; // Front Right to Right
+                    speaker_mix[2][0] = .5; // Rear Left to Left
+                    speaker_mix[3][1] = .5; // Rear Right to Right
+                    break;
+                case 4: 
+                    speaker_mix[0][0] = 1; // Front Left to Front Left
+                    speaker_mix[1][1] = 1; // Front Right to Front Right
+                    speaker_mix[2][2] = 1; // Rear Left to Rear Left
+                    speaker_mix[3][3] = 1; // Rear Right to Rear Right
+                    break;
+                case 6: // Quad -> 5.1 Surround
+                    // FL FR C LFE BL BR
+                    speaker_mix[0][0] = 1; // Front Left to Front Left
+                    speaker_mix[1][1] = 1; // Front Right to Front Right
+                    speaker_mix[0][2] = .5; // Front Left to Center
+                    speaker_mix[0][2] = .5; // Front Right to Center
+                    speaker_mix[0][3] = .25; // Front Left to LFE
+                    speaker_mix[1][3] = .25; // Front Right to LFE
+                    speaker_mix[2][3] = .25; // Rear Left to LFE
+                    speaker_mix[3][3] = .25; // Rear Right to LFE
+                    speaker_mix[2][4] = 1; // Rear Left to Rear Left
+                    speaker_mix[3][5] = 1; // Rear Right to Rear Right
+                    break;
+                case 8: // Quad -> 7.1 Surround
+                    // FL FR C LFE BL BR SL SR
+                    speaker_mix[0][0] = 1; // Front Left to Front Left
+                    speaker_mix[1][1] = 1; // Front Right to Front Right
+                    speaker_mix[0][2] = .5; // Front Left to Center
+                    speaker_mix[0][2] = .5; // Front Right to Center
+                    speaker_mix[0][3] = .25; // Front Left to LFE
+                    speaker_mix[1][3] = .25; // Front Right to LFE
+                    speaker_mix[2][3] = .25; // Rear Left to LFE
+                    speaker_mix[3][3] = .25; // Rear Right to LFE
+                    speaker_mix[2][4] = 1; // Rear Left to Rear Left
+                    speaker_mix[3][5] = 1; // Rear Right to Rear Right
+                    speaker_mix[0][6] = .5; // Front Left to Side Left
+                    speaker_mix[1][7] = .5; // Front Right to Side Right
+                    speaker_mix[2][6] = .5; // Rear Left to Side Left
+                    speaker_mix[3][7] = .5; // Rear Right to Side Right
+                    break;
             }
             break;
         case 6:
@@ -265,14 +306,12 @@ void build_speaker_mix() {
                     speaker_mix[5][1] = .33; // Rear Right to Right
                     break;
                 case 4: 
-                    if (output_chlayout1 == 0x33 && output_chlayout2 == 0x00) { // 5.1 Surround -> Quad
-                        speaker_mix[0][0] = .66; // Front Left to Front Left
-                        speaker_mix[1][1] = .66; // Front Right to Front Right
-                        speaker_mix[2][0] = .33; // Center to Front Left
-                        speaker_mix[2][1] = .33; // Center to Front Right
-                        speaker_mix[4][2] = 1; // Rear Left to Rear Left
-                        speaker_mix[5][3] = 1; // Rear Right to Rear Right
-                    }
+                    speaker_mix[0][0] = .66; // Front Left to Front Left
+                    speaker_mix[1][1] = .66; // Front Right to Front Right
+                    speaker_mix[2][0] = .33; // Center to Front Left
+                    speaker_mix[2][1] = .33; // Center to Front Right
+                    speaker_mix[4][2] = 1; // Rear Left to Rear Left
+                    speaker_mix[5][3] = 1; // Rear Right to Rear Right
                     break;
                 case 6: // 5.1 Surround -> 5.1 Surround
                     // FL FR C LFE BL BR
@@ -310,16 +349,16 @@ void build_speaker_mix() {
                     speaker_mix[7][0] = 1.0f/7.0f; // Side Right to Mono
                     break;
                 case 2: // 7.1 Surround -> Stereo
-                    speaker_mix[0][0] = 1.0f/7.0f; // Front Left to Mono
-                    speaker_mix[1][0] = 1.0f/7.0f; // Front Right to Mono
-                    speaker_mix[2][0] = 1.0f/7.0f; // Center to Mono
-                    speaker_mix[4][0] = 1.0f/7.0f; // Rear Left to Mono
-                    speaker_mix[5][0] = 1.0f/7.0f; // Rear Right to Mono
-                    speaker_mix[6][0] = 1.0f/7.0f; // Side Left to Mono
-                    speaker_mix[7][0] = 1.0f/7.0f; // Side Right to Mono
+                    speaker_mix[0][0] = .5; // Front Left to Left
+                    speaker_mix[1][1] = .5; // Front Right to Right
+                    speaker_mix[2][0] = .25; // Center to Left
+                    speaker_mix[2][1] = .25; // Center to Right
+                    speaker_mix[4][0] = .125; // Rear Left to Left
+                    speaker_mix[5][1] = .125; // Rear Right to Right
+                    speaker_mix[6][0] = .125; // Side Left to Left
+                    speaker_mix[7][1] = .125; // Side Right to Right
                     break;
-                case 4: 
-                    if (output_chlayout1 == 0x33 && output_chlayout2 == 0x00) { // 7.1 Surround -> Quad
+                case 4: // 7.1 Surround -> Quad
                         speaker_mix[0][0] = .5; // Front Left to Front Left
                         speaker_mix[1][1] = .5; // Front Right to Front Right
                         speaker_mix[2][0] = .25; // Center to Front Left
@@ -330,7 +369,6 @@ void build_speaker_mix() {
                         speaker_mix[7][1] = .25; // Side Left to Front Right
                         speaker_mix[6][2] = .33; // Side Left to Rear Left
                         speaker_mix[7][3] = .33; // Side Left to Rear Right
-                    }
                     break;
                 case 6: // 7.1 Surround -> 5.1 Surround
                     // FL FR C LFE BL BR
@@ -359,10 +397,16 @@ void build_speaker_mix() {
             }
             break;
     }
-    log("Speaker config: " + to_string(input_channels) + " -> " + to_string(output_channels));
 }
 
-void check_header() {
+void initialize_sampler() { // Initialize sampler based on the number of input channels
+    if (sampler)
+        src_delete(sampler);
+    int error = 0;
+    sampler = src_new(0, input_channels, &error);
+}
+
+void check_header() { // Check the header in packet_in_buffer, if it's changed then figure out how to do the speaker mix and reinitialize the biquad filters and sampler
     if (memcmp(input_header, packet_in_buffer, HEADER_SIZE) != 0) {
         log("Got new header");
         memcpy(input_header, packet_in_buffer, HEADER_SIZE);
@@ -371,14 +415,15 @@ void check_header() {
         input_channels = input_header[2];
         input_chlayout1 = input_header[3];
         input_chlayout2 = input_header[4];
-        log("Sample Rate: " + to_string(input_samplerate));
-        log("Bit Depth: " + to_string(input_bitdepth));
-        log("Channels: " + to_string(input_channels));
+        log("Sample Rate: " + to_string(input_samplerate)  + " -> " + to_string(output_samplerate));
+        log("Bit Depth: " + to_string(input_bitdepth) + " -> 32");
+        log("Channels: " + to_string(input_channels) + " -> " + to_string(output_channels));
         build_speaker_mix();
+        initialize_sampler();
     }
 }
 
-bool handle_receive_buffer() {  // Receive data from input fd
+bool handle_receive_buffer() {  // Receive data from input fd and write it to receive_buffer, check the header
     int bytes_in = read(fd_in, packet_in_buffer, PACKET_SIZE);
     if (bytes_in != PACKET_SIZE) {
         //log("Warn: Got bad input size " + to_string(bytes_in) + " fd: " + to_string(fd_in));
@@ -388,10 +433,12 @@ bool handle_receive_buffer() {  // Receive data from input fd
     return true;
 }
 
-void scale_buffer() {
+void scale_buffer() { // Scales receive_buffer to 32-bit and puts it in scaled_buffer
+    scale_buffer_pos = 0;
     if (input_bitdepth != 16 && input_bitdepth != 24 && input_bitdepth != 32)
         return;
     for (int i = 0; i < CHUNK_SIZE; i+=input_bitdepth / 8) {
+        int scale_buffer_uint8_pos = scale_buffer_pos * sizeof(int32_t);
         switch(input_bitdepth) {
             case 16:
                 scaled_buffer_int8[scale_buffer_uint8_pos + 0] = 0;
@@ -412,34 +459,32 @@ void scale_buffer() {
                 scaled_buffer_int8[scale_buffer_uint8_pos + 3] = receive_buffer[i + 3];
                 break;
         }
-        scale_buffer_uint8_pos += 4;
+        scale_buffer_pos++;
     }
 }
 
-void volume_buffer() {
-    for (int i=0;i<scale_buffer_uint8_pos / sizeof(uint32_t); i++)
+void volume_buffer() { // Adjusts the volume of scaled_buffer
+    for (int i=0;i<scale_buffer_pos; i++)
         scaled_buffer[i] = scaled_buffer[i] * volume;
 }
 
-void break_buffer_to_channels() {
-    for (int i=0;i<scale_buffer_uint8_pos / sizeof(uint32_t); i++) {
+void break_buffer_to_channels() { // Separates resampled_buffer out into channels and stores in channel_buffers[channel][]
+    for (int i=0;i<resample_buffer_pos; i++) {
         int channel = i % input_channels;
         int pos = i / input_channels;
-        channel_buffers[channel][pos] = scaled_buffer[i];
+        channel_buffers[channel][pos] = resampled_buffer[i];
     }
-    channel_buffer_pos = scale_buffer_uint8_pos / sizeof(uint32_t) / input_channels;
+    channel_buffer_pos = resample_buffer_pos / input_channels;
 }
 
-void merge_channels_to_buffer() {
+void merge_channels_to_buffer() { // Merges the buffers in remixed_channel_buffers into processed_buffer
     for (int channel=0; channel < output_channels; channel++)
-        for (int pos=0; pos < channel_buffer_pos; pos++) {
-            int eq_buffer_pos = sizeof(post_eq_buffer[channel]) / sizeof(uint32_t) - channel_buffer_pos + pos;
-            scaled_buffer[pos * output_channels + channel] = remixed_channel_buffers[channel][pos];
-        }
-    scale_buffer_uint8_pos = channel_buffer_pos * sizeof(uint32_t) * output_channels;
+        for (int pos=0; pos < channel_buffer_pos; pos++)
+            processed_buffer[pos * output_channels + channel + process_buffer_pos] = remixed_channel_buffers[channel][pos];
+    process_buffer_pos += channel_buffer_pos * output_channels;
 }
 
-void mix_speakers() {
+void mix_speakers() { // Handles mixing audio data in channel_buffers and writing it to remixed_channel_buffers
     memset(remixed_channel_buffers, 0, sizeof(remixed_channel_buffers));
     for (int pos=0;pos < channel_buffer_pos; pos++)
         for (int input_channel=0;input_channel<input_channels;input_channel++)
@@ -447,39 +492,66 @@ void mix_speakers() {
                 remixed_channel_buffers[output_channel][pos] += channel_buffers[input_channel][pos] * speaker_mix[input_channel][output_channel];
 }
 
-void resample() {
-
+void resample() { // Resamples the daata in scaled_buffer from input_samplerate to output_samplerate and stores it in resampled_buffer
+    if (input_samplerate != output_samplerate) {
+        if (sampler == NULL)
+            initialize_sampler();
+        int datalen = scale_buffer_pos / input_channels;
+        src_int_to_float_array(scaled_buffer, resampler_data_in, datalen * input_channels);        
+        resampler_config.data_in = resampler_data_in;
+        resampler_config.data_out = resampler_data_out;
+        resampler_config.src_ratio = (float)output_samplerate / (float)input_samplerate;
+        resampler_config.input_frames = datalen;
+        resampler_config.output_frames = datalen * 2;
+        int err = src_process(sampler, &resampler_config);
+        if (err != 0)
+            log("Error: " + string(src_strerror(err)));
+        src_float_to_int_array(resampler_data_out, resampled_buffer, resampler_config.output_frames_gen * input_channels);
+        resample_buffer_pos = resampler_config.output_frames_gen * input_channels;
+    } else {
+        memcpy(resampled_buffer, scaled_buffer, scale_buffer_pos * sizeof(int32_t));
+        resample_buffer_pos = scale_buffer_pos;
+    }
 }
 
-void rotate_eq_buffer() {
-
+void equalize() { // Equalizes the buffer in remixed_channel_buffers and stores it in the same buffer
+    for (int filter=0; filter < EQ_BANDS; filter++)
+        if (eq[filter] != 1.0f)
+            for (int channel=0;channel<output_channels;channel++)
+                for (int pos=0;pos<channel_buffer_pos;pos++)
+                {
+                    float fin = 0;
+                    float fout = 0;
+                    int iout = 0;
+                    src_int_to_float_array(&remixed_channel_buffers[channel][pos], &fin, 1);
+                    fout = filters[channel][filter]->process(fin);
+                    src_float_to_int_array(&fout,&iout,1);
+                    remixed_channel_buffers[channel][pos] = iout;
+                }
 }
 
-void equalize() {
-
-}
-
-void write_output_buffer() {
-    write(fd_out, scaled_buffer_int8, CHUNK_SIZE);
-    memcpy(scaled_buffer_int8, scaled_buffer_int8 + CHUNK_SIZE, sizeof(scaled_buffer) - CHUNK_SIZE);
-    scale_buffer_uint8_pos -= CHUNK_SIZE;
+void write_output_buffer() { // Sends the first CHUNK_SIZE in process_buffer, rotates process_buffer
+    write(fd_out, processed_buffer_int8, CHUNK_SIZE);
+    memcpy(processed_buffer_int8, processed_buffer_int8 + CHUNK_SIZE, sizeof(processed_buffer) - CHUNK_SIZE); // TODO: Convert this to a ring buffer
+    process_buffer_pos -= CHUNK_SIZE / sizeof(int32_t);
 }
 
 int main(int argc, char* argv[]) {
     log("Starting");
-    process_base_args(argc, argv);
+    process_args(argc, argv);
+    setup_biquad();
     while (running) {
         if (!handle_receive_buffer())
             continue;
         check_header();
         scale_buffer();
         volume_buffer();
+        resample();
         break_buffer_to_channels();
         mix_speakers();
-        rotate_eq_buffer();
-        //equalize();
+        equalize();
         merge_channels_to_buffer();
-        while (scale_buffer_uint8_pos >= CHUNK_SIZE) {     
+        while (process_buffer_pos >= CHUNK_SIZE / sizeof(int32_t)) { 
             write_output_buffer();
         }
     }

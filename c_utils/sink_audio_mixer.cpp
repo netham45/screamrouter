@@ -18,8 +18,8 @@ using namespace std;
 
 bool running = true; // Flag to control loop execution
 
-vector<uint32_t*> receive_buffers; // Vector of pointers to receive buffers for input streams
-uint32_t* mixing_buffer = new uint32_t[CHUNK_SIZE / sizeof(uint32_t)]; // Mixing buffer to mix received audio data
+vector<int32_t*> receive_buffers; // Vector of pointers to receive buffers for input streams
+int32_t* mixing_buffer = new int32_t[CHUNK_SIZE / sizeof(int32_t)]; // Mixing buffer to mix received audio data
 char output_buffer[PACKET_SIZE * 2] = {0}; // Buffer to store mixed audio data before sending over the network
 int output_buffer_pos = 0; // Position in output_buffer for storing audio data
 
@@ -58,7 +58,7 @@ void log(string message) {
 }
 
 // Function to process fixed command line arguments like IP address and output port
-void process_base_args(int argc, char* argv[]) {
+void process_args(int argc, char* argv[]) {
     if (argc <= config_argc)
         ::exit(-1);
     output_ip = string(argv[1]);
@@ -117,7 +117,7 @@ void setup_buffers() { // Sets up buffers to receive data from input fds
     log("Buffers Set Up");
     setbuf(stdout, NULL);
     for (int buf_idx = 0; buf_idx < input_fds.size(); buf_idx++)
-        receive_buffers.push_back((uint32_t*)malloc(CHUNK_SIZE));
+        receive_buffers.push_back((int32_t*)malloc(CHUNK_SIZE));
 }
 
 bool handle_receive_buffers() {  // Receive data frominput fds
@@ -127,7 +127,7 @@ bool handle_receive_buffers() {  // Receive data frominput fds
         if (!active[fd_idx])
             receive_timeout.tv_usec = 100; // 100uS, just check if it's got data
         else    
-            receive_timeout.tv_usec = 70000; // 10ms, wait for a chunk.
+            receive_timeout.tv_usec = 70000; // 70ms, wait for a chunk.
         FD_ZERO(&read_fds);
         FD_SET(input_fds[fd_idx], &read_fds);
         bool prev_state = active[fd_idx];
@@ -151,9 +151,9 @@ void mix_buffers() { // Mix all received buffers
     for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
         if (!active[input_buf_idx])
             continue;
-        for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(uint32_t); buf_pos++) {
-            if (mixing_buffer[buf_pos] + receive_buffers[input_buf_idx][buf_pos] > UINT32_MAX) {
-                mixing_buffer[buf_pos] = UINT32_MAX;
+        for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos++) {
+            if (mixing_buffer[buf_pos] + receive_buffers[input_buf_idx][buf_pos] > INT32_MAX) {
+                mixing_buffer[buf_pos] = INT32_MAX;
             } else if (first_buffer) {
                 mixing_buffer[buf_pos] = receive_buffers[input_buf_idx][buf_pos];
             } else {
@@ -165,7 +165,7 @@ void mix_buffers() { // Mix all received buffers
 }
 
 void downscale_buffer() { // Copies 32-bit mixing_buffer to <output_bitdepth>-bit output_buffer
-    for (int i = 0; i < CHUNK_SIZE/sizeof(uint32_t); i++) {
+    for (int i = 0; i < CHUNK_SIZE/sizeof(int32_t); i++) {
         uint8_t* p = (uint8_t*)&mixing_buffer[i];
         if (output_bitdepth >= 32)
             output_buffer[HEADER_SIZE + output_buffer_pos++] = p[0];
@@ -198,7 +198,7 @@ void rotate_buffer() { // Shifts the last CHUNK_SIZE bytes in output_buffer up t
 }
 
 int main(int argc, char* argv[]) {
-    process_base_args(argc, argv);
+    process_args(argc, argv);
 
     log("Starting Ouput Mixer, sending UDP to " + output_ip +  ":" + to_string(output_port) + ", TCP Enabled: " + (tcp_output_fd > 0?"Yes":"No"));
     process_fd_args(argc, argv);

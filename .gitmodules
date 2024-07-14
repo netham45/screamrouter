@@ -1,3 +1,6 @@
 [submodule "site/noVNC"]
 	path = site/noVNC
 	url = https://github.com/novnc/noVNC.git
+[submodule "c_utils/libsamplerate"]
+	path = c_utils/libsamplerate
+	url = https://github.com/libsndfile/libsamplerate.git
