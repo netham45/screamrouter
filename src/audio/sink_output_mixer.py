@@ -1,5 +1,6 @@
 """Manages the C++ program that mixes audio streams"""
 from copy import copy
+import socket
 import subprocess
 from typing import List, Optional
 
@@ -31,7 +32,6 @@ class SinkOutputMixer():
         self.__mixer: Optional[subprocess.Popen] = None
         """Mixer process"""
         self.update_active_sources()
-
 
     def start(self):
         """Starts the sink mixer"""
@@ -76,7 +76,7 @@ class SinkOutputMixer():
                         str(self.__output_info.sample_rate),
                         str(0 if self.tcp_client_fd is None else self.tcp_client_fd),
                         str(self.__output_info.channels),
-                        str(0),
+                        str(self.__output_info.header[3]),
                         str(self.__output_info.header[4])])
         for fd in self.read_fds:
             command.append(str(fd))

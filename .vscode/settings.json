@@ -2,11 +2,11 @@
     "python.REPL.enableREPLSmartSend": false,
     "pylint.args": [],
     "files.exclude": {
-        "**/*.c": true,
         "**/*.so": true
     },
     "files.associations": {
         "string": "cpp",
-        "ostream": "cpp"
+        "ostream": "cpp",
+        "config.h": "c"
     },
 }

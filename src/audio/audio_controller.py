@@ -149,9 +149,9 @@ class AudioController(multiprocessing.Process):
         self.mp3_ffmpeg_processor.stop()
         logger.debug("[Sink:%s] Stopping sources", self.sink_info.ip)
         for _, source in self.sources.items():
-            logger.debug("[Sink:%s] Stopping source %s", self.sink_info.ip, source.name)
+            logger.debug("[Sink:%s] Stopping source", self.sink_info.ip)
             source.stop()
-            logger.debug("[Sink:%s] Stopped source %s", self.sink_info.ip, source.name)
+            logger.debug("[Sink:%s] Stopped source", self.sink_info.ip)
         logger.debug("[Sink:%s] Stopping Audio Controller", self.sink_info.ip)
         self.running.value = c_bool(False) # type: ignore
 
@@ -171,10 +171,6 @@ class AudioController(multiprocessing.Process):
         flag: bool = False
         if self.request_restart.value:
             return True
-        for source in self.sources.values():
-            if source.wants_restart.value:
-                source.wants_restart.value = c_bool(False) # type: ignore
-                flag = True
         return flag
 
     def run(self) -> None:

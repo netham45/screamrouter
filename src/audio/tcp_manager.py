@@ -67,19 +67,16 @@ class TCPManager(threading.Thread):
         return None
 
     def run(self) -> None:
-        self.sock.set_inheritable(True)
         while self.running:
             client, address = self.sock.accept()
             logger.info("[TCP Manager] New connection from %s fd: %s", address[0], client.fileno())
             self.known_connections.append((address[0], client.fileno()))
-            client.set_inheritable(True)
             for audio_controller in self.audio_controllers:
                 logger.info("Comparing IP %s to %s",
                             audio_controller.pcm_thread.sink_info.ip, address[0])
                 if str(audio_controller.pcm_thread.sink_info.ip) == str(address[0]):
                     logger.info("[TCP Manager] Wrote FD to mixer %s, fd %s",
                                 address[0], client.fileno())
-                    time.sleep(4)
                     audio_controller.restart_mixer(client.fileno())
                     self.wants_reload = True
             client.detach()
