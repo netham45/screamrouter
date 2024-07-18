@@ -116,7 +116,6 @@ void setup_udp() { // Sets up the UDP socket for output
         setsockopt(tcp_output_fd, SOL_SOCKET, SO_SNDBUF, &newsize, sizeof(newsize));
         setsockopt (tcp_output_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         log("TCP Set Up");
-
     }
 }
 
@@ -235,7 +234,8 @@ int main(int argc, char* argv[]) {
             continue;
         }
         mix_buffers();
-        write_lame();
+        if (output_channels == 2)
+            write_lame();
         downscale_buffer();
         if (output_buffer_pos < CHUNK_SIZE)
           continue;

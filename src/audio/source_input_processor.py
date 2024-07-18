@@ -52,14 +52,12 @@ class SourceInputProcessor():
         close_pipe(self.source_output_fd)
         close_pipe(self.source_input_fd)
 
-    def write(self, data: bytes) -> None:
-        """Writes data to this source's FIFO"""
-        os.write(self.writer_write, data)
-
     def __build_command(self) -> List[str]:
         """Builds Command to run"""
         command: List[str] = []
         command.extend(["c_utils/bin/source_input_processor",
+                        str(self.source_info.tag if "tag" in
+                            self.source_info.model_fields_set else self.source_info.ip),
                         str(self.writer_read),
                         str(self.source_input_fd),
                         str(self.sink_info.channels),

@@ -681,10 +681,12 @@ class ConfigurationManager(threading.Thread):
 
         # Check if there was a change before reloading or saving
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            self.scream_recevier = ScreamReceiver([audio_controller.controller_write_fd for
-                                            audio_controller in self.audio_controllers])
-            self.rtp_receiver = RTPReceiver([audio_controller.controller_write_fd for
-                                            audio_controller in self.audio_controllers])
+            source_write_fds: List[int] = []
+            for audio_controller in self.audio_controllers:
+                source_write_fds.extend([source.writer_write for
+                                         source in audio_controller.sources.values()])
+            self.scream_recevier = ScreamReceiver(source_write_fds)
+            self.rtp_receiver = RTPReceiver(source_write_fds)
             _logger.debug("[Configuration Manager] Saving configuration")
             self.__save_config()
             _logger.debug("[Configuration Manager] Notifying plugin manager")

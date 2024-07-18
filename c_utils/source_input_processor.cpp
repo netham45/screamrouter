@@ -19,10 +19,11 @@ using namespace std;
 #define PACKET_SIZE (CHUNK_SIZE + HEADER_SIZE) // Total packet size including header and chunk
 #define MAX_CHANNELS 8
 #define EQ_BANDS 18
+#define TAG_SIZE 45
 
 bool running = true; // Flag to control loop execution
 
-uint8_t packet_in_buffer[PACKET_SIZE];
+uint8_t packet_in_buffer[PACKET_SIZE + TAG_SIZE];
 uint8_t receive_buffer[CHUNK_SIZE];
 int32_t scaled_buffer[CHUNK_SIZE * 8];
 uint8_t *scaled_buffer_int8 = (uint8_t *)scaled_buffer;
@@ -48,6 +49,8 @@ SRC_STATE *sampler = NULL;
 float resampler_data_in[CHUNK_SIZE * MAX_CHANNELS] = {0};
 float resampler_data_out[CHUNK_SIZE * MAX_CHANNELS * 8] = {0};
 SRC_DATA resampler_config = {0};
+
+string input_ip = "";
 
 int fd_in = 0;
 int fd_out = 0;
@@ -75,6 +78,7 @@ Biquad *filters[MAX_CHANNELS][EQ_BANDS] = {0};
 
 // Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
 int *int_args[] = {
+    NULL, // IP to receive from
     &fd_in,
     &fd_out,
     &output_channels,
@@ -105,6 +109,7 @@ int *int_args[] = {
 
 // Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
 float *float_args[] = {
+    NULL, // IP to receive from
     NULL,
     NULL,
     NULL,
@@ -141,9 +146,11 @@ void log(const string& message)
 // Function to process fixed command line arguments like IP address and output port
 void process_args(int argc, char *argv[])
 {
-    if (argc <= config_argc)
+    if (argc <= config_argc) {
+        log("Too few args");
         ::exit(-1);
-    log("args");
+    }
+    input_ip = string(argv[1]);
     for (int argi = 0; argi < config_argc; argi++)
         if (int_args[argi] == NULL)
             continue;
@@ -418,10 +425,10 @@ void initialize_sampler()
 
 void check_update_header()
 { // Check the header in packet_in_buffer, if it's changed then figure out how to do the speaker mix and reinitialize the biquad filters and sampler
-    if (memcmp(input_header, packet_in_buffer, HEADER_SIZE) != 0)
+    if (memcmp(input_header, packet_in_buffer + TAG_SIZE, HEADER_SIZE) != 0)
     {
         log("Got new header");
-        memcpy(input_header, packet_in_buffer, HEADER_SIZE);
+        memcpy(input_header, packet_in_buffer + TAG_SIZE, HEADER_SIZE);
         input_samplerate = (input_header[0] & 0x7F) * ((input_header[0] & 0x80) ? 44100 : 48000);
         input_bitdepth = input_header[1];
         input_channels = input_header[2];
@@ -437,10 +444,13 @@ void check_update_header()
 
 bool receive_data()
 { // Receive data from input fd and write it to receive_buffer, check the header
-    int bytes_in = read(fd_in, packet_in_buffer, PACKET_SIZE);
-    if (bytes_in != PACKET_SIZE)
+
+    int bytes_in = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE);
+    if (bytes_in != TAG_SIZE + PACKET_SIZE)
         return false;
-    memcpy(receive_buffer, packet_in_buffer + HEADER_SIZE, CHUNK_SIZE);
+    if (strcmp(input_ip.c_str(), (const char*)packet_in_buffer) != 0)
+        return false;
+    memcpy(receive_buffer, packet_in_buffer + HEADER_SIZE + TAG_SIZE, CHUNK_SIZE);
     return true;
 }
 
@@ -561,7 +571,6 @@ void write_output_buffer()
 
 int main(int argc, char *argv[])
 {
-    log("Starting");
     process_args(argc, argv);
     setup_biquad();
     while (running) {

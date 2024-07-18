@@ -1,27 +1,20 @@
 """One audio controller per sink, handles taking in packets and distributing them to sources"""
-import multiprocessing
 import os
-import select
 import threading
-from ctypes import c_bool
-from queue import Empty
-from subprocess import TimeoutExpired
 from typing import Dict, List, Optional
 
+from src.audio.sink_output_mixer import SinkOutputMixer
 from src.audio.sink_mp3_processor import SinkMP3Processor
-import src.constants.constants as constants
 from src.api.api_webstream import APIWebStream
 from src.audio.source_input_processor import SourceInputProcessor
-from src.audio.sink_output_mixer import SinkOutputMixer
 from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.configuration import (SinkDescription,
                                                   SourceDescription)
-from src.utils.utils import close_all_pipes, close_pipe, set_process_name
 
 logger = get_logger(__name__)
 
-class AudioController(multiprocessing.Process):
+class AudioController():
     """Handles a sink, keeps a list of sources, sends passed data to the appropriate pipe
        One AudioController per active real output sink
        This thread listens to the input queue and passes it to each Source processor"""
@@ -31,7 +24,6 @@ class AudioController(multiprocessing.Process):
                  tcp_fd: Optional[int],
                  websocket: APIWebStream):
         """Initialize a sink queue"""
-        super().__init__(name=f"[Sink {sink_info.name}] Audio Controller")
         logger.info("[Sink %s] Loading audio controller", sink_info.name)
         logger.info("[Sink %s] Sources:", sink_info.name)
 
@@ -71,9 +63,7 @@ class AudioController(multiprocessing.Process):
         self.controller_write_fd: int
         """Controller input read file descriptor"""
         self.controller_read_fd, self.controller_write_fd = os.pipe()
-        self.running = multiprocessing.Value(c_bool, True)
-        """Multiprocessing-passed flag to determine if the thread is running"""
-        self.request_restart = multiprocessing.Value(c_bool, False)
+        self.request_restart: bool = False
         """Set true if we want a config reload"""
         logger.info("[Sink:%s] Queue %s", self.sink_info.ip, self.controller_write_fd)
         if self.sources_lock.acquire(timeout=1):
@@ -101,12 +91,6 @@ class AudioController(multiprocessing.Process):
         self.pcm_thread: SinkOutputMixer
         """Holds the thread to listen to PCM output from a Source"""
 
-        #self.mp3_ffmpeg_processor = MP3FFMpegProcess(f"[Sink {self.sink_info.ip}] MP3 Process",
-        #                                               self.mp3_ffmpeg_output_write,
-        #                                               self.mp3_ffmpeg_input_read,
-        #                                               self.sink_info
-        #                                               )
-
         self.mp3_thread: SinkMP3Processor = SinkMP3Processor(self.sink_info.ip,
                                                            self.mp3_ffmpeg_output_read,
                                                            self.webstream.queue)
@@ -116,26 +100,13 @@ class AudioController(multiprocessing.Process):
                                           tcp_fd,
                                           list(self.sources.values()),
                                           self.mp3_ffmpeg_output_write)
-        self.start()
 
     def restart_mixer(self, tcp_fd: int):
         """(Re)starts the mixer"""
         logger.info("[Audio Controller] Requesting config reloaed")
         self.pcm_thread.tcp_client_fd = tcp_fd
         self.pcm_thread.update_active_sources()
-        self.request_restart = c_bool(True)
-
-    def process_packet_from_queue(self, entry: bytes) -> None:
-        """Callback for the queue thread to pass packets for processing"""
-        try:
-            tag = entry[:constants.TAG_MAX_LENGTH].decode("ascii").split("\x00")[0]
-        except UnicodeDecodeError as exc:
-            logger.debug("Error decoding packet, discarding. Exception: %s", exc)
-            return
-        data: bytes = entry[constants.TAG_MAX_LENGTH:]
-        if tag in self.sources:
-            source = self.sources[tag]
-            source.write(data)  # Write the data to the output fifo
+        self.request_restart = True
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""
@@ -151,41 +122,7 @@ class AudioController(multiprocessing.Process):
             source.stop()
             logger.debug("[Sink:%s] Stopped source", self.sink_info.ip)
         logger.debug("[Sink:%s] Stopping Audio Controller", self.sink_info.ip)
-        self.running.value = c_bool(False) # type: ignore
-
-        if constants.WAIT_FOR_CLOSES:
-            logger.debug("[Sink:%s] Waiting for Audio Controller Stop", self.sink_info.ip)
-            try:
-                self.join(5)
-            except TimeoutExpired:
-                logger.warning("Audio Controller failed to close")
-            logger.debug("[Sink:%s] Audio Controller stopped", self.sink_info.ip)
-            logger.info("[Sink:%s] Stopped", self.sink_info.ip)
-        close_pipe(self.controller_read_fd)
-        close_pipe(self.controller_write_fd)
 
     def wants_reload(self) -> bool:
         """Returns true of any of the sources want a restart"""
-        flag: bool = False
-        if self.request_restart.value:
-            return True
-        return flag
-
-    def run(self) -> None:
-        """This loop checks the queue
-            notifies the Sink Controller callback when there's something in the queue"""
-        logger.debug("[Sink:%s] PID %s Write fd %s ",
-                     self.sink_info.ip, os.getpid(), self.controller_write_fd)
-        set_process_name(f"Sink{self.sink_info.name}",
-                         f"[Sink {self.sink_info.name}] Audio Controller")
-
-        while self.running.value:
-            ready = select.select([self.controller_read_fd], [], [], .05)
-            if ready[0]:
-                try:
-                    data = os.read(self.controller_read_fd,
-                                   constants.PACKET_SIZE + constants.TAG_MAX_LENGTH)
-                    self.process_packet_from_queue(data)
-                except Empty:
-                    pass
-        close_all_pipes()
+        return self.request_restart
