@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <fcntl.h>
+#include <lame/lame.h>
 using namespace std;
 
 // Configuration variables
@@ -22,6 +23,10 @@ vector<int32_t*> receive_buffers; // Vector of pointers to receive buffers for i
 int32_t* mixing_buffer = new int32_t[CHUNK_SIZE / sizeof(int32_t)]; // Mixing buffer to mix received audio data
 char output_buffer[PACKET_SIZE * 2] = {0}; // Buffer to store mixed audio data before sending over the network
 int output_buffer_pos = 0; // Position in output_buffer for storing audio data
+uint8_t mp3_buffer[CHUNK_SIZE * 8];
+int mp3_buffer_pos = 0;
+
+lame_t lame = lame_init();
 
 struct sockaddr_in udp_dest_addr = {}; // Socket address structure for UDP socket destination
 int udp_output_fd = 0; // File descriptor for the UDP socket
@@ -30,7 +35,8 @@ struct timeval receive_timeout;
 fd_set read_fds;
 
 int tcp_output_fd = 0; // File descriptor for the TCP socket
-vector<int> input_fds; // Vector of file descriptors for audio input streams
+int mp3_write_fd = 0; // File descriptor to write mp3 to
+vector<int> output_fds; // Vector of file descriptors for audio input streams
 vector<bool> active; // Vector to store whether each input stream is active or not
 bool output_active = false; // Flag to indicate if there's any data to be sent over the network
 string output_ip = ""; // IP address of the UDP socket destination
@@ -47,18 +53,19 @@ int* config_argv[] = {NULL, // Process File Name
                       &output_port,
                       &output_bitdepth,
                       &output_samplerate,
-                      &tcp_output_fd,
                       &output_channels,
                       &output_chlayout1,
-                      &output_chlayout2};
+                      &output_chlayout2,
+                      &tcp_output_fd,
+                      &mp3_write_fd};
 int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
 
-void log(string message) {
+void log(const string &message) {
     printf("[Sink Output Processor %s:%i] %s\n", output_ip.c_str(), output_port, message.c_str());
 }
 
 // Function to process fixed command line arguments like IP address and output port
-void process_args(int argc, char* argv[]) {
+void process_args(int argc, char** argv) {
     if (argc <= config_argc)
         ::exit(-1);
     output_ip = string(argv[1]);
@@ -72,7 +79,7 @@ void process_args(int argc, char* argv[]) {
 // Function to process variable number of command line arguments representing file descriptors for input streams
 void process_fd_args(int argc, char* argv[]) {
     for (int argi = config_argc; argi < argc; argi++) {
-        input_fds.push_back(atoi(argv[argi]));
+        output_fds.push_back(atoi(argv[argi]));
         active.push_back(false);
     }
 }
@@ -116,30 +123,42 @@ void setup_udp() { // Sets up the UDP socket for output
 void setup_buffers() { // Sets up buffers to receive data from input fds
     log("Buffers Set Up");
     setbuf(stdout, NULL);
-    for (int buf_idx = 0; buf_idx < input_fds.size(); buf_idx++)
+    for (int buf_idx = 0; buf_idx < output_fds.size(); buf_idx++)
         receive_buffers.push_back((int32_t*)malloc(CHUNK_SIZE));
 }
 
-bool handle_receive_buffers() {  // Receive data frominput fds
+void setup_lame() {
+    lame_set_in_samplerate(lame, output_samplerate);
+    lame_set_VBR(lame, vbr_off);
+    lame_init_params(lame);
+}
+
+void write_lame() {
+    mp3_buffer_pos = lame_encode_buffer_interleaved_int(lame, mixing_buffer, CHUNK_SIZE/sizeof(uint32_t)/2, mp3_buffer, CHUNK_SIZE * 8);
+    if (mp3_buffer_pos > 0)
+        write(mp3_write_fd, mp3_buffer, mp3_buffer_pos);
+}
+
+bool handle_receive_buffers() {  // Receive data from input fds
     output_active = false;
-    for (int fd_idx = 0; fd_idx < input_fds.size(); fd_idx++) {
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
         receive_timeout.tv_sec = 0;
         if (!active[fd_idx])
             receive_timeout.tv_usec = 100; // 100uS, just check if it's got data
         else    
-            receive_timeout.tv_usec = 70000; // 70ms, wait for a chunk.
+            receive_timeout.tv_usec = 30000; // 70ms, wait for a chunk.
         FD_ZERO(&read_fds);
-        FD_SET(input_fds[fd_idx], &read_fds);
+        FD_SET(output_fds[fd_idx], &read_fds);
         bool prev_state = active[fd_idx];
-        if (select(input_fds[fd_idx] + 1, &read_fds, NULL, NULL, &receive_timeout) < 0)
+        if (select(output_fds[fd_idx] + 1, &read_fds, NULL, NULL, &receive_timeout) < 0)
             cout << "Select failure: " << errno << strerror(errno) << endl;
-        active[fd_idx] = FD_ISSET(input_fds[fd_idx], &read_fds);
+        active[fd_idx] = FD_ISSET(output_fds[fd_idx], &read_fds);
         if (prev_state != active[fd_idx])
-            log("Setting Input FD #" + to_string(input_fds[fd_idx]) + (active[fd_idx]?" Active":" Inactive"));
+            log("Setting Input FD #" + to_string(output_fds[fd_idx]) + (active[fd_idx]?" Active":" Inactive"));
 
         if (active[fd_idx]) {
             for (int bytes_in = 0; running && bytes_in < CHUNK_SIZE;)
-                bytes_in += read(input_fds[fd_idx], receive_buffers[fd_idx] + bytes_in, CHUNK_SIZE - bytes_in);
+                bytes_in += read(output_fds[fd_idx], receive_buffers[fd_idx] + bytes_in, CHUNK_SIZE - bytes_in);
             output_active = true;
         }
     }
@@ -203,18 +222,20 @@ int main(int argc, char* argv[]) {
     log("Starting Ouput Mixer, sending UDP to " + output_ip +  ":" + to_string(output_port) + ", TCP Enabled: " + (tcp_output_fd > 0?"Yes":"No"));
     process_fd_args(argc, argv);
     log("Input FDs: ");
-    for (int fd_idx = 0; fd_idx < input_fds.size(); fd_idx++)
-        log(to_string(input_fds[fd_idx]));
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
+        log(to_string(output_fds[fd_idx]));
     setup_header();
+    setup_lame();
     setup_udp();
     setup_buffers();
 
     while (running) {
         if (!handle_receive_buffers()) {
-            sleep(.2);
+            sleep(.5);
             continue;
         }
         mix_buffers();
+        write_lame();
         downscale_buffer();
         if (output_buffer_pos < CHUNK_SIZE)
           continue;

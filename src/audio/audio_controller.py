@@ -8,7 +8,6 @@ from queue import Empty
 from subprocess import TimeoutExpired
 from typing import Dict, List, Optional
 
-from src.audio.mp3_ffmpeg_process import MP3FFMpegProcess
 from src.audio.sink_mp3_processor import SinkMP3Processor
 import src.constants.constants as constants
 from src.api.api_webstream import APIWebStream
@@ -102,11 +101,11 @@ class AudioController(multiprocessing.Process):
         self.pcm_thread: SinkOutputMixer
         """Holds the thread to listen to PCM output from a Source"""
 
-        self.mp3_ffmpeg_processor = MP3FFMpegProcess(f"[Sink {self.sink_info.ip}] MP3 Process",
-                                                       self.mp3_ffmpeg_output_write,
-                                                       self.mp3_ffmpeg_input_read,
-                                                       self.sink_info
-                                                       )
+        #self.mp3_ffmpeg_processor = MP3FFMpegProcess(f"[Sink {self.sink_info.ip}] MP3 Process",
+        #                                               self.mp3_ffmpeg_output_write,
+        #                                               self.mp3_ffmpeg_input_read,
+        #                                               self.sink_info
+        #                                               )
 
         self.mp3_thread: SinkMP3Processor = SinkMP3Processor(self.sink_info.ip,
                                                            self.mp3_ffmpeg_output_read,
@@ -116,7 +115,7 @@ class AudioController(multiprocessing.Process):
                                           self.stream_info,
                                           tcp_fd,
                                           list(self.sources.values()),
-                                          self.mp3_ffmpeg_input_write)
+                                          self.mp3_ffmpeg_output_write)
         self.start()
 
     def restart_mixer(self, tcp_fd: int):
@@ -133,7 +132,6 @@ class AudioController(multiprocessing.Process):
         except UnicodeDecodeError as exc:
             logger.debug("Error decoding packet, discarding. Exception: %s", exc)
             return
-        self.pcm_thread.update_active_sources()
         data: bytes = entry[constants.TAG_MAX_LENGTH:]
         if tag in self.sources:
             source = self.sources[tag]
@@ -146,7 +144,7 @@ class AudioController(multiprocessing.Process):
         logger.debug("[Sink:%s] Stopping MP3 Receiver", self.sink_info.ip)
         self.mp3_thread.stop()
         logger.debug("[Sink:%s] Stopping ffmpeg MP3 Converter", self.sink_info.ip)
-        self.mp3_ffmpeg_processor.stop()
+        #self.mp3_ffmpeg_processor.stop()
         logger.debug("[Sink:%s] Stopping sources", self.sink_info.ip)
         for _, source in self.sources.items():
             logger.debug("[Sink:%s] Stopping source", self.sink_info.ip)

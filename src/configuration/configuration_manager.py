@@ -1,6 +1,6 @@
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
-import os   
+import os
 import socket
 import sys
 import threading
@@ -532,7 +532,8 @@ class ConfigurationManager(threading.Thread):
         # Add sinks requesting a reload
         for audio_controller in self.audio_controllers:
             if audio_controller.wants_reload():
-                _logger.info("[Configuration Manager] Controller %s wants a reload", audio_controller.sink_info.name)
+                _logger.info("[Configuration Manager] Controller %s wants a reload",
+                             audio_controller.sink_info.name)
                 for sink in new_map.keys():
                     if sink.name == audio_controller.sink_info.name:
                         if sink not in changed_sinks:
@@ -648,7 +649,9 @@ class ConfigurationManager(threading.Thread):
             # Load a new controller
             sources: List[SourceDescription]
             sources = self.active_configuration.real_sinks_to_real_sources[sink]
-            audio_controller = AudioController(sink, sources, self.tcp_manager.get_fd(sink.ip), self.__api_webstream)
+            audio_controller = AudioController(sink, sources,
+                                               self.tcp_manager.get_fd(sink.ip),
+                                               self.__api_webstream)
             _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
             self.audio_controllers.append(audio_controller)
 
@@ -670,7 +673,9 @@ class ConfigurationManager(threading.Thread):
             # Load a new controller
             sources: List[SourceDescription]
             sources = self.active_configuration.real_sinks_to_real_sources[sink]
-            audio_controller = AudioController(sink, sources, self.tcp_manager.get_fd(sink.ip), self.__api_webstream)
+            audio_controller = AudioController(sink, sources,
+                                               self.tcp_manager.get_fd(sink.ip),
+                                               self.__api_webstream)
             _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
             self.audio_controllers.append(audio_controller)
 
@@ -739,14 +744,14 @@ class ConfigurationManager(threading.Thread):
     def check_receiver_sources(self):
         """This checks the IPs receivers have seen and adds any as sources if they don't exist"""
         known_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
-        for ip in self.scream_recevier.known_ips:
-            if not ip in known_ips:
-                _logger.info("[Configuration Manager] Adding new source from Scream port %s", ip)
-                self.auto_add_source(ip)
-        for ip in self.rtp_receiver.known_ips:
-            if not ip in known_ips:
-                _logger.info("[Configuration Manager] Adding new source from RTP port %s", ip)
-                self.auto_add_source(ip)
+        #for ip in self.scream_recevier.known_ips:
+        #    if not ip in known_ips:
+        #        _logger.info("[Configuration Manager] Adding new source from Scream port %s", ip)
+        #        self.auto_add_source(ip)
+        #for ip in self.rtp_receiver.known_ips:
+        #    if not ip in known_ips:
+        #        _logger.info("[Configuration Manager] Adding new source from RTP port %s", ip)
+        #        self.auto_add_source(ip)
 
     def run(self):
         """Monitors for the reload condition to be set and reloads the config when it is set"""

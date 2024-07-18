@@ -2,7 +2,8 @@
     "python.REPL.enableREPLSmartSend": false,
     "pylint.args": [],
     "files.exclude": {
-        "**/*.so": true
+        "**/*.so": true,
+        "src/**/*.c": true
     },
     "files.associations": {
         "string": "cpp",

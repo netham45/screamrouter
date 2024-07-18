@@ -1,6 +1,4 @@
 """Holds the Source Info and a thread for handling it's queue"""
-import multiprocessing
-import multiprocessing.sharedctypes
 import os
 import subprocess
 from typing import List, Optional
@@ -47,8 +45,8 @@ class SourceInputProcessor():
         """Fully stops and closes the source, closes fifo handles"""
         logger.info("[Sink:%s][Source:%s] Stopping", self.__sink_ip, self.tag)
         if self.__processor is not None:
-                self.__processor.kill()
-                self.__processor.wait()
+            self.__processor.kill()
+            self.__processor.wait()
         close_pipe(self.writer_read)
         close_pipe(self.writer_write)
         close_pipe(self.source_output_fd)
