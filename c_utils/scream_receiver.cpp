@@ -31,6 +31,10 @@ int* config_argv[] = {NULL, // Process File Name
                       &listen_fd};
 int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
 
+struct sockaddr_in receive_addr;
+
+socklen_t receive_addr_len = sizeof(receive_addr);
+
 void log(const string &message, bool endl = true, bool tag = true) {
     printf("%s %s%s", tag?"[RTP Listener]":"", message.c_str(), endl?"\n":"");
 }
@@ -53,10 +57,6 @@ void process_fd_args(int argc, char* argv[]) {
     }
 }
 
-struct sockaddr_in receive_addr;
-
-socklen_t receive_addr_len = sizeof(receive_addr);
-
 bool receive() {
     int bytes = recvfrom(listen_fd, buffer + TAG_LENGTH, PACKET_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
     if (bytes == -1) 
@@ -68,7 +68,7 @@ bool receive() {
 
 void send() {
     memset(buffer, 0, TAG_LENGTH);
-    strcpy((char*)buffer, inet_ntoa(receive_addr.sin_addr));
+    strcpy(reinterpret_cast<char*>(buffer), inet_ntoa(receive_addr.sin_addr));
     for (int fd_idx=0;fd_idx<output_fds.size();fd_idx++)
         write(output_fds[fd_idx], buffer, PACKET_SIZE + TAG_LENGTH);
 }

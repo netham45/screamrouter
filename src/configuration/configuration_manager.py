@@ -578,16 +578,31 @@ class ConfigurationManager(threading.Thread):
         temporary_sources = self.plugin_manager.get_temporary_sources()
         for plugin_sink_name, plugin_sources in temporary_sources.items():
             found: bool = False
-            for sink, sources in self.active_configuration.real_sinks_to_real_sources.items():
+            for sink in self.active_configuration.real_sinks_to_real_sources:
                 if plugin_sink_name == sink.name:
                     _logger.info("[Configuration Manager] Adding temp sources to existing sink %s",
                                  sink.name)
                     found = True
-                    sources.extend(plugin_sources)
+                    for plugin_source in plugin_sources:
+                        source_copy: SourceDescription = deepcopy(plugin_source)
+                        source_copy.volume *= sink.volume
+                        source_copy.equalizer *= sink.equalizer
+                        source_copy.delay += sink.delay
+                        _logger.info("Adding Plugin Source %s to %s", source_copy.tag, sink.name)
+                        self.active_configuration.real_sinks_to_real_sources[sink].append(
+                            source_copy)
             if not found:
                 sink: SinkDescription = self.get_sink_by_name(plugin_sink_name)
                 if sink.enabled:
-                    self.active_configuration.real_sinks_to_real_sources[sink] = plugin_sources
+                    new_plugins: List[SourceDescription] = []
+                    for plugin_source in plugin_sources:
+                        source_copy: SourceDescription = deepcopy(plugin_source)
+                        source_copy.volume *= sink.volume
+                        source_copy.equalizer *= sink.equalizer
+                        source_copy.delay += sink.delay
+                        new_plugins.append(source_copy)
+                        _logger.info("Adding Plugin Source %s to %s", source_copy.tag, sink.name)
+                    self.active_configuration.real_sinks_to_real_sources[sink] = new_plugins
                     _logger.info("[Configuration Manager] Adding temp sources to new sink %s",
                                  sink.name)
 
@@ -694,7 +709,7 @@ class ConfigurationManager(threading.Thread):
             for audio_controller in self.audio_controllers:
                 controller_write_fds.append(audio_controller.controller_write_fd)
             self.tcp_manager.replace_mixers(self.audio_controllers)
-            self.plugin_manager.load_registered_plugins(controller_write_fds)
+            self.plugin_manager.load_registered_plugins(source_write_fds)
             _logger.debug("[Configuration Manager] Reload done")
 
     def auto_add_source(self, ip: IPAddressType):
@@ -745,7 +760,7 @@ class ConfigurationManager(threading.Thread):
 
     def check_receiver_sources(self):
         """This checks the IPs receivers have seen and adds any as sources if they don't exist"""
-        known_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
+        #known_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
         #for ip in self.scream_recevier.known_ips:
         #    if not ip in known_ips:
         #        _logger.info("[Configuration Manager] Adding new source from Scream port %s", ip)
@@ -761,10 +776,11 @@ class ConfigurationManager(threading.Thread):
         while self.running:
             if not self.reload_condition.acquire(timeout=1):
                 raise TimeoutError("Failed to get configuration reload condition")
-            if self.reload_condition.wait(timeout=.3) or self.plugin_manager.wants_reload:
+            if self.reload_condition.wait(timeout=.3) or self.plugin_manager.wants_reload(False):
                 # This will get set to true if something else wants to reload the configuration
                 # while it's already reloading
                 if self.plugin_manager.wants_reload():
+                    _logger.info("[Configuration Manager] Plugin Manager")
                     self.reload_config = True
                 for audio_controller in self.audio_controllers:
                     if audio_controller.wants_reload():

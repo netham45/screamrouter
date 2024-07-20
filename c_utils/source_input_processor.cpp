@@ -11,6 +11,8 @@
 #include <fcntl.h>
 #include "libsamplerate/include/samplerate.h"
 #include "biquad/biquad.h"
+#include <emmintrin.h>
+#include <immintrin.h>
 using namespace std;
 
 // Configuration variables
@@ -150,6 +152,7 @@ void process_args(int argc, char *argv[])
         log("Too few args");
         ::exit(-1);
     }
+    // cppcheck-suppress ctuArrayIndex
     input_ip = string(argv[1]);
     for (int argi = 0; argi < config_argc; argi++)
         if (int_args[argi] == NULL)
@@ -442,16 +445,13 @@ void check_update_header()
     }
 }
 
-bool receive_data()
+void receive_data()
 { // Receive data from input fd and write it to receive_buffer, check the header
-
-    int bytes_in = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE);
-    if (bytes_in != TAG_SIZE + PACKET_SIZE)
-        return false;
-    if (strcmp(input_ip.c_str(), (const char*)packet_in_buffer) != 0)
-        return false;
+    while (int bytes = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE) != TAG_SIZE + PACKET_SIZE ||
+           strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)
+        if (bytes == -1)
+            ::exit(-1);
     memcpy(receive_buffer, packet_in_buffer + HEADER_SIZE + TAG_SIZE, CHUNK_SIZE);
-    return true;
 }
 
 void scale_buffer()
@@ -530,26 +530,48 @@ void split_buffer_to_channels()
 void mix_speakers()
 { // Handles mixing audio data in channel_buffers and writing it to remixed_channel_buffers
     memset(remixed_channel_buffers, 0, sizeof(remixed_channel_buffers));
+    
+    #ifdef __AVX2__
+    // AVX2 implementation
+    for (int pos = 0; pos < channel_buffer_pos; pos += 8) {
+        for (int input_channel = 0; input_channel < input_channels; input_channel++) {
+            __m256i input_data = _mm256_loadu_si256((__m256i*)&channel_buffers[input_channel][pos]);
+            for (int output_channel = 0; output_channel < output_channels; output_channel++) {
+                __m256 mix_factor = _mm256_set1_ps(speaker_mix[input_channel][output_channel]);
+                __m256 output_data = _mm256_cvtepi32_ps(_mm256_loadu_si256((__m256i*)&remixed_channel_buffers[output_channel][pos]));
+                __m256 mixed_data = _mm256_fmadd_ps(_mm256_cvtepi32_ps(input_data), mix_factor, output_data);
+                _mm256_storeu_si256((__m256i*)&remixed_channel_buffers[output_channel][pos], _mm256_cvtps_epi32(mixed_data));
+            }
+        }
+    }
+    #elif defined(__SSE2__)
+    // SSE2 implementation
+    for (int pos = 0; pos < channel_buffer_pos; pos += 4) {
+        for (int input_channel = 0; input_channel < input_channels; input_channel++) {
+            __m128i input_data = _mm_loadu_si128((__m128i*)&channel_buffers[input_channel][pos]);
+            for (int output_channel = 0; output_channel < output_channels; output_channel++) {
+                __m128 mix_factor = _mm_set1_ps(speaker_mix[input_channel][output_channel]);
+                __m128 output_data = _mm_cvtepi32_ps(_mm_loadu_si128((__m128i*)&remixed_channel_buffers[output_channel][pos]));
+                __m128 mixed_data = _mm_add_ps(_mm_mul_ps(_mm_cvtepi32_ps(input_data), mix_factor), output_data);
+                _mm_storeu_si128((__m128i*)&remixed_channel_buffers[output_channel][pos], _mm_cvtps_epi32(mixed_data));
+            }
+        }
+    }
+    #else
+    // Fallback implementation
     for (int pos = 0; pos < channel_buffer_pos; pos++)
         for (int input_channel = 0; input_channel < input_channels; input_channel++)
             for (int output_channel = 0; output_channel < output_channels; output_channel++)
                 remixed_channel_buffers[output_channel][pos] += channel_buffers[input_channel][pos] * speaker_mix[input_channel][output_channel];
+    #endif
 }
-
 void equalize()
 { // Equalizes the buffer in remixed_channel_buffers and stores it in the same buffer
     for (int filter = 0; filter < EQ_BANDS; filter++)
         if (eq[filter] != 1.0f)
             for (int channel = 0; channel < output_channels; channel++)
-                for (int pos = 0; pos < channel_buffer_pos; pos++) {
-                    float fin = 0;
-                    float fout = 0;
-                    int iout = 0;
-                    src_int_to_float_array(&remixed_channel_buffers[channel][pos], &fin, 1);
-                    fout = filters[channel][filter]->process(fin);
-                    src_float_to_int_array(&fout, &iout, 1);
-                    remixed_channel_buffers[channel][pos] = iout;
-                }
+                for (int pos = 0; pos < channel_buffer_pos; pos++)
+                    remixed_channel_buffers[channel][pos] = filters[channel][filter]->process(remixed_channel_buffers[channel][pos]);
 }
 
 void merge_channels_to_buffer()
@@ -572,10 +594,10 @@ void write_output_buffer()
 int main(int argc, char *argv[])
 {
     process_args(argc, argv);
+    log("Starting source input processor " + input_ip);
     setup_biquad();
     while (running) {
-        if (!receive_data())
-            continue;
+        receive_data();
         check_update_header();
         scale_buffer();
         volume_buffer();

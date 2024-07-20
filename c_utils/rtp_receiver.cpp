@@ -35,6 +35,10 @@ int* config_argv[] = {NULL, // Process File Name
                       &listen_fd};
 int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
 
+struct sockaddr_in receive_addr;
+
+socklen_t receive_addr_len = sizeof(receive_addr);
+
 void log(const string &message, bool endl = true, bool tag = true) {
     printf("%s %s%s", tag?"[RTP Listener]":"", message.c_str(), endl?"\n":"");
 }
@@ -64,6 +68,7 @@ void setup_header() { // Sets up the Scream header
     int output_chlayout1 = 0x03;
     int output_chlayout2 = 0x00;
     bool output_samplerate_44100_base = (output_samplerate % 44100) == 0;
+    // cppcheck-suppress knownConditionTrueFalse
     uint8_t output_samplerate_mult = (output_samplerate_44100_base?44100:48000) / output_samplerate;
     header[0] = output_samplerate_mult + (output_samplerate_44100_base << 7);
     header[1] = output_bitdepth;
@@ -72,9 +77,6 @@ void setup_header() { // Sets up the Scream header
     header[4] = output_chlayout2;
     log("Set up Header, Rate: " + to_string(output_samplerate) + ", Bit-Depth" + to_string(output_bitdepth) + ", Channels" + to_string(output_channels));
 }
-struct sockaddr_in receive_addr;
-
-socklen_t receive_addr_len = sizeof(receive_addr);
 
 bool receive() {
     int bytes = recvfrom(listen_fd, buffer + DATA_RECEIVE_POS, RTP_HEADER_SIZE+CHUNK_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
@@ -87,12 +89,11 @@ bool receive() {
 
 void send() {
     memset(buffer, 0, TAG_LENGTH);
-    strcpy((char*)buffer, inet_ntoa(receive_addr.sin_addr));
+    strcpy(reinterpret_cast<char*>(buffer), inet_ntoa(receive_addr.sin_addr));
     memcpy(buffer + TAG_LENGTH, header, HEADER_SIZE);
     for (int fd_idx=0;fd_idx<output_fds.size();fd_idx++)
         write(output_fds[fd_idx], buffer, PACKET_SIZE + TAG_LENGTH);
 }
-
 
 int main(int argc, char* argv[]) {
     process_args(argc, argv);

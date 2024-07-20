@@ -6,3 +6,4 @@ cert/
 build/
 c_utils/bin/
 src/**/*.c
+**/callgrind.out.*

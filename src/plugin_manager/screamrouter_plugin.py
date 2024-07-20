@@ -13,9 +13,9 @@ from fastapi import FastAPI
 
 import src.constants.constants as constants
 from src.screamrouter_logger.screamrouter_logger import get_logger
-from src.screamrouter_types.annotations import SinkNameType, SourceNameType
+from src.screamrouter_types.annotations import SinkNameType
 from src.screamrouter_types.configuration import SourceDescription
-from src.utils.utils import close_all_pipes, close_pipe, set_process_name
+from src.utils.utils import close_pipe, set_process_name
 
 logger = get_logger(__name__)
 
@@ -120,12 +120,12 @@ class ScreamRouterPlugin(multiprocessing.Process):
         self.wants_reload = True
         return source.tag
 
-    def remove_temporary_source(self, source_name: SourceNameType):
+    def remove_temporary_source(self, source_tag: str):
         """Removes a temporary source, such as when playback is done"""
-        logger.info("[Plugin] Removing temporary source %s", source_name)
+        logger.info("[Plugin] Removing temporary source %s", source_tag)
         for sources in self.temporary_sink_names_to_sources.values():
             for index, source in enumerate(sources):
-                if source.name == source_name:
+                if source.tag == source_tag:
                     del sources[index]
                     self.wants_reload = True
                     return
@@ -203,6 +203,7 @@ class ScreamRouterPluginSender(multiprocessing.Process):
                 self.join(5)
             except TimeoutExpired:
                 logger.warning("Plugin Sender failed to close")
+        logger.info("Plugin sender closed")
 
     def run(self):
         """This thread is created to work around a Multiprocessing limitation where a new queue
@@ -220,4 +221,3 @@ class ScreamRouterPluginSender(multiprocessing.Process):
                 for out_queue in self.controller_write_fds:
                     os.write(out_queue, data)
         logger.info("Ending Plugin Sender thread")
-        close_all_pipes()

@@ -56,7 +56,6 @@ class Equalizer(BaseModel):
                 not field_name in list(self.model_fields_set)):
                     continue
                 if not getattr(self, field_name) == getattr(other, field_name):
-                    print(f"{getattr(self, field_name)} != {getattr(other, field_name)}")
                     return False
             return True
         raise TypeError(f"Can't compare {type(self)} against {type(other)}")

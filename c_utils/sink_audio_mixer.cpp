@@ -10,6 +10,9 @@
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <lame/lame.h>
+#ifdef __SSE2__
+#include <emmintrin.h>
+#endif
 using namespace std;
 
 // Configuration variables
@@ -65,9 +68,10 @@ void log(const string &message) {
 }
 
 // Function to process fixed command line arguments like IP address and output port
-void process_args(int argc, char** argv) {
+void process_args(char* argv[], int argc) {
     if (argc <= config_argc)
         ::exit(-1);
+    // cppcheck-suppress ctuArrayIndex
     output_ip = string(argv[1]);
     for (int argi = 0; argi < config_argc; argi++)
         if (config_argv[argi] == 0)
@@ -77,7 +81,7 @@ void process_args(int argc, char** argv) {
 }
 
 // Function to process variable number of command line arguments representing file descriptors for input streams
-void process_fd_args(int argc, char* argv[]) {
+void process_fd_args(char* argv[], int argc) {
     for (int argi = config_argc; argi < argc; argi++) {
         output_fds.push_back(atoi(argv[argi]));
         active.push_back(false);
@@ -123,7 +127,7 @@ void setup_buffers() { // Sets up buffers to receive data from input fds
     log("Buffers Set Up");
     setbuf(stdout, NULL);
     for (int buf_idx = 0; buf_idx < output_fds.size(); buf_idx++)
-        receive_buffers.push_back((int32_t*)malloc(CHUNK_SIZE));
+        receive_buffers.push_back(static_cast<int32_t*>(malloc(CHUNK_SIZE)));
 }
 
 void setup_lame() {
@@ -132,10 +136,25 @@ void setup_lame() {
     lame_init_params(lame);
 }
 
+bool lame_active = true;
+struct timeval lame_timeout;
+fd_set lame_fd;
+
 void write_lame() {
     mp3_buffer_pos = lame_encode_buffer_interleaved_int(lame, mixing_buffer, CHUNK_SIZE/sizeof(uint32_t)/2, mp3_buffer, CHUNK_SIZE * 8);
-    if (mp3_buffer_pos > 0)
-        write(mp3_write_fd, mp3_buffer, mp3_buffer_pos);
+    if (mp3_buffer_pos > 0) {
+        FD_ZERO(&lame_fd);
+        FD_SET(mp3_write_fd, &lame_fd);
+        lame_timeout.tv_sec = 0;
+        lame_timeout.tv_usec = lame_active ? 15000 : 100;
+        int result = select(mp3_write_fd + 1, NULL, &lame_fd, NULL, &lame_timeout);
+        if (result > 0 && FD_ISSET(mp3_write_fd, &lame_fd)) {
+            write(mp3_write_fd, mp3_buffer, mp3_buffer_pos);
+            lame_active = true;
+        }
+        else
+            lame_active = false;
+    }
 }
 
 bool handle_receive_buffers() {  // Receive data from input fds
@@ -165,7 +184,27 @@ bool handle_receive_buffers() {  // Receive data from input fds
 }
 
 void mix_buffers() { // Mix all received buffers
+#ifdef __SSE2__
     bool first_buffer = true;
+    for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
+        if (!active[input_buf_idx])
+            continue;   
+        __m128i mixing, receive;
+        for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos += 4) {
+            if (first_buffer) {
+                mixing = _mm_load_si128((__m128i*)&receive_buffers[input_buf_idx][buf_pos]);
+                _mm_store_si128((__m128i*)&mixing_buffer[buf_pos], mixing);
+            } else {
+                mixing = _mm_load_si128((__m128i*)&mixing_buffer[buf_pos]);
+                receive = _mm_load_si128((__m128i*)&receive_buffers[input_buf_idx][buf_pos]);
+                mixing = _mm_add_epi32(mixing, receive);
+                _mm_store_si128((__m128i*)&mixing_buffer[buf_pos], mixing);
+            }
+        }
+        first_buffer = false;
+    }
+#else
+        bool first_buffer = true;
     for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
         if (!active[input_buf_idx])
             continue;
@@ -180,17 +219,25 @@ void mix_buffers() { // Mix all received buffers
         }
         first_buffer = false;
     }
+#endif
 }
 
 void downscale_buffer() { // Copies 32-bit mixing_buffer to <output_bitdepth>-bit output_buffer
-    for (int i = 0; i < CHUNK_SIZE/sizeof(int32_t); i++) {
-        uint8_t* p = (uint8_t*)&mixing_buffer[i];
-        if (output_bitdepth >= 32)
-            output_buffer[HEADER_SIZE + output_buffer_pos++] = p[0];
-        if (output_bitdepth >= 24)
+    if (output_bitdepth == 32) {
+        memcpy(output_buffer + HEADER_SIZE, mixing_buffer, CHUNK_SIZE);
+        output_buffer_pos += CHUNK_SIZE;
+    } else if (output_bitdepth == 24) {
+        for (int i = 0; i < CHUNK_SIZE/sizeof(int32_t); i++) {
+            uint8_t* p = (uint8_t*)&mixing_buffer[i];
             output_buffer[HEADER_SIZE + output_buffer_pos++] = p[1];
-        output_buffer[HEADER_SIZE + output_buffer_pos++] = p[2];
-        output_buffer[HEADER_SIZE + output_buffer_pos++] = p[3];
+            output_buffer[HEADER_SIZE + output_buffer_pos++] = p[2];
+            output_buffer[HEADER_SIZE + output_buffer_pos++] = p[3];
+        }
+    } else if (output_bitdepth == 16) {
+        int16_t *output_buffer_int16 = reinterpret_cast<int16_t*>(output_buffer + HEADER_SIZE);
+        for (int i=0;i<CHUNK_SIZE / sizeof(int32_t);i++)
+            output_buffer_int16[i + output_buffer_pos / sizeof(int16_t)] = mixing_buffer[i] >> 16;
+        output_buffer_pos += CHUNK_SIZE / sizeof(int32_t) * sizeof(int16_t);
     }
 }
 
@@ -216,15 +263,16 @@ void rotate_buffer() { // Shifts the last CHUNK_SIZE bytes in output_buffer up t
 }
 
 int main(int argc, char* argv[]) {
-    process_args(argc, argv);
+    process_args(argv, argc);
 
     log("Starting Ouput Mixer, sending UDP to " + output_ip +  ":" + to_string(output_port) + ", TCP Enabled: " + (tcp_output_fd > 0?"Yes":"No"));
-    process_fd_args(argc, argv);
+    process_fd_args(argv, argc);
     log("Input FDs: ");
     for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
         log(to_string(output_fds[fd_idx]));
     setup_header();
-    setup_lame();
+    if (output_channels == 2)
+        setup_lame();
     setup_udp();
     setup_buffers();
 

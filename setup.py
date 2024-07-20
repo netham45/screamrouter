@@ -1,7 +1,7 @@
 """Setup script for cpython for src.audio module"""
 from setuptools import setup
 from Cython.Build import cythonize
-from distutils.extension import Extension
+from distutils.extension import Extension # ignore: type
 
 packages = [Extension("src.audio.audio_controller",["src/audio/audio_controller.py"]),
             Extension("src.audio.mp3_header_parser",["src/audio/mp3_header_parser.py"]),
@@ -12,7 +12,6 @@ packages = [Extension("src.audio.audio_controller",["src/audio/audio_controller.
             Extension("src.audio.sink_output_mixer",["src/audio/sink_output_mixer.py"]),
             Extension("src.audio.source_input_processor",["src/audio/source_input_processor.py"]),
             Extension("src.audio.tcp_manager",["src/audio/tcp_manager.py"])]
-print(packages)
 
 setup(
     name='ScreamRouter',

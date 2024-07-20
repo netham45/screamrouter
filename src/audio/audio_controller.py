@@ -28,7 +28,10 @@ class AudioController():
         logger.info("[Sink %s] Sources:", sink_info.name)
 
         for source in sources:
-            logger.info("[Sink %s] %s:%s", sink_info.name, source.name, source.ip)
+            logger.info("[Sink %s] %s:%s:%s", sink_info.name,
+                        source.name,
+                        source.ip,
+                        source.tag if 'tag' in source.model_fields_set else 'No Tag')
         logger.info("[Sink %s] Stream mode: Bit Depth      : %s", sink_info.name,
                     sink_info.bit_depth)
         logger.info("[Sink %s]              Sample Rate    : %s", sink_info.name,

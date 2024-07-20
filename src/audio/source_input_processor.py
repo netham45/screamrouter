@@ -55,7 +55,8 @@ class SourceInputProcessor():
     def __build_command(self) -> List[str]:
         """Builds Command to run"""
         command: List[str] = []
-        command.extend(["c_utils/bin/source_input_processor",
+        command.extend([#"/usr/bin/valgrind", "--tool=callgrind",
+                        "c_utils/bin/source_input_processor",
                         str(self.source_info.tag if "tag" in
                             self.source_info.model_fields_set else self.source_info.ip),
                         str(self.writer_read),
@@ -85,7 +86,6 @@ class SourceInputProcessor():
                         str(self.source_info.equalizer.b18),
                         str(self.source_info.delay)
                         ])
-        print(command)
         return command
 
     def start(self) -> None:

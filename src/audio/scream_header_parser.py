@@ -49,7 +49,8 @@ class ScreamHeader():
         self.channel_mask: bytes = scream_header_array[3:] # type: ignore
         """Channel Mask"""
         self.channel_layout: ChannelLayoutType
-        self.channel_layout = self.__parse_channel_mask(bytes(scream_header_array[3:])) # type: ignore
+        self.channel_layout = self.__parse_channel_mask(
+            bytes(scream_header_array[3:])) # type: ignore
         """Holds the channel layout"""
         self.header: bytes = scream_header_array
         """Holds the raw header bytes"""

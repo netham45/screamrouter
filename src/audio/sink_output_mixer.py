@@ -69,7 +69,8 @@ class SinkOutputMixer():
     def __build_mixer_command(self) -> List[str]:
         """Builds Command to run"""
         command: List[str] = []
-        command.extend(["c_utils/bin/sink_audio_mixer",
+        command.extend([#s"/usr/bin/valgrind", "--tool=callgrind", "--dump-instr=yes",
+                        "c_utils/bin/sink_audio_mixer",
                         str(self.sink_info.ip),
                         str(self.sink_info.port),
                         str(self.sink_info.bit_depth),
@@ -81,5 +82,4 @@ class SinkOutputMixer():
                         str(self.ffmpeg_mp3_write_fd)])
         for fd in self.read_fds:
             command.append(str(fd))
-        print(command)
         return command

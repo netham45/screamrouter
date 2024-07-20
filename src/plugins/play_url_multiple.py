@@ -16,7 +16,7 @@ from src.plugin_manager.screamrouter_plugin import ScreamRouterPlugin
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import SinkNameType, VolumeType
 from src.screamrouter_types.configuration import SourceDescription
-from src.utils.utils import close_all_pipes, close_pipe
+from src.utils.utils import close_all_pipes
 
 logger = get_logger(__name__)
 

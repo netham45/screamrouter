@@ -23,6 +23,7 @@ class PluginManager:
         self.plugin_list: List[ScreamRouterPlugin] = []
         self.register_plugin(PluginPlayURL())
         self.register_plugin(PluginPlayURLMultiple())
+        self._wants_reload: bool = False
 
     def register_plugin(self, plugin: ScreamRouterPlugin):
         """Registers a plugin with the Plugin Manager"""
@@ -66,12 +67,24 @@ class PluginManager:
             return_list.extend(plugin.permanent_sources)
         return return_list
 
-    def wants_reload(self):
+    def want_reload(self):
+        """Sets the plugin manager as wanting a reload"""
+        self._wants_reload = True
+
+    def wants_reload(self, reset: bool = True):
         """Returns if any plugins want a reload, resets the reload flag"""
         wants_reload: bool = False
         for plugin in self.plugin_list:
             if plugin.wants_reload:
-                plugin.wants_reload = False
+                if reset:
+                    plugin.wants_reload = False
+                logger.info("Plugin %s wants reload", plugin.name)
                 wants_reload = True
+        if self._wants_reload:
+            if reset:
+                self._wants_reload = False
+            wants_reload = True
+        if not reset:
+            self._wants_reload = wants_reload
 
         return wants_reload

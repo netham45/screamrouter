@@ -33,7 +33,6 @@ class ScreamReceiver():
         command.extend(["c_utils/bin/scream_receiver",
                         str(self.socket_fd)])
         command.extend([str(fd) for fd in self.controller_write_fd_list])
-        print(command)
         return command
 
     def start(self):
