@@ -5,7 +5,6 @@ import os
 import signal
 import sys
 import threading
-import pyximport
 
 import uvicorn
 from fastapi import FastAPI
