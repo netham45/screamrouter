@@ -390,7 +390,7 @@ function highlight_active_sink() {
     for (sink in sinks) {
         if (sinks[sink] == selected_sink) {
             sinks[sink].style.backgroundColor = "rgb(192,128,128)";
-        } else if (selected_sink.dataset["group_members"].search(sinks[sink].dataset['name']) > 0 || sinks[sink].dataset["group_members"].search(selected_sink.name) > 0) {
+        } else if (selected_sink.dataset["group_members"].search(sinks[sink].dataset['name']) > 0 || sinks[sink].dataset["group_members"].search(selected_sink.dataset['name']) > 0) {
             sinks[sink].style.backgroundColor = "rgb(128,96,96)";
         } else {
             sinks[sink].style.backgroundColor = "";
