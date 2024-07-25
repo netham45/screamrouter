@@ -18,7 +18,6 @@ from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.utils.utils import set_process_name
 
-pyximport.install()
 
 os.nice(-15)
 
