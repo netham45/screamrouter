@@ -196,7 +196,6 @@ inline bool handle_receive_buffers() {  // Receive data from input fds
 }
 
 void mix_buffers() { // Mix all received buffers
-#if defined()
 #if defined(__AVX2__)
     for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos += 8) {
         __m256i mixing = _mm256_setzero_si256();
