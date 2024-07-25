@@ -31,9 +31,44 @@ function restart_callback(response_text) {
 }
 
 function restart_callback_2(response_text) {
+    var selected_sink_name = "";
+    if (selected_sink)
+        selected_sink_name = selected_sink.dataset['name'];
+    var selected_source_name = "";
+    if (selected_source)
+        selected_source_name = selected_source.dataset['name'];
+    var selected_route_name = "";
+    if (selected_route)
+        selected_route_name = selected_route.dataset['name'];
+    var selected_element_id = document.activeElement.id;
+    console.log("Selected element:" + selected_element_id);
     var reload_div = document.getElementById("reload");
     reload_div.innerHTML = "";
     reload_div.innerHTML = response_text;
+    var selected_sink_query = document.querySelectorAll("DIV#select-sinks SPAN[DATA-NAME='" + selected_sink_name + "']");
+    if (selected_sink_query.length > 0)
+        selected_sink = selected_sink_query[0];
+    else
+        selected_sink = "";
+    selected_source_query = document.querySelectorAll("DIV#select-sources SPAN[DATA-NAME='" + selected_source_name + "']");
+    if (selected_source_query.length  >  0)
+        selected_source  = selected_source_query[0];
+    else
+        selected_source  = "";
+    selected_route_query = document.querySelectorAll("DIV#select-routes SPAN[DATA-NAME='"  + selected_route_name  + "']");
+    if (selected_route_query.length > 0)
+        selected_route = selected_route_query[0];
+    else
+        selected_route = "";
+    if (selected_sink) highlight_active_sink();
+    if (selected_source) highlight_active_source();
+    highlight_active_routes();
+    if (selected_sink) update_sink_volume_selected();
+    if (selected_source) update_source_volume_selected();
+    if (selected_route) update_route_volume_selected();
+    var selected_element_query = document.getElementById(selected_element_id);
+    if (selected_element_query)
+        selected_element_query.focus();
     dialog_cancel();
     dismiss_shadow();
 }
@@ -312,7 +347,7 @@ function get_associated_sources() {
     return retlist;
 }
 
-function hightlight_active_routes() {
+function highlight_active_routes() {
     var routes = [... document.querySelectorAll('span[data-type="RouteDescription"]')];
     var associated_sinks = [];
     var associated_sources = [];
@@ -397,10 +432,10 @@ function highlight_active_sink() {
             sinks[sink].style.backgroundColor = "";
         }
     }
-    hightlight_active_routes();
+    highlight_active_routes();
 }
 
-function hightlight_active_source() {
+function highlight_active_source() {
     var sources = [... document.querySelectorAll('span[data-type="SourceDescription"]')];
     for (source in sources) {
         if (sources[source] == selected_source) {
@@ -411,40 +446,52 @@ function hightlight_active_source() {
             sources[source].style.backgroundColor = "";
         }
     }
-    hightlight_active_routes();
+    highlight_active_routes();
+}
+
+function update_source_volume_selected() {
+    var volume_element = document.getElementById("source_volume");
+    volume_element.alt = "Source " + selected_source.dataset["name"] + " Volume";
+    volume_element.title = "Source " + selected_source.dataset["name"] + " Volume";
+    volume_element.value = parseFloat(selected_source.dataset["volume"]) * 100
+    volume_element.disabled = false;
+    volume_element.focus();
+}
+
+function update_sink_volume_selected() {
+    var volume_element = document.getElementById("sink_volume");
+    volume_element.alt = "Sink " + selected_sink.dataset["name"] + " Volume";
+    volume_element.title = "Sink " + selected_sink.dataset["name"] + " Volume";
+    volume_element.value = parseFloat(selected_sink.dataset["volume"]) * 100
+    volume_element.disabled = false;
+    volume_element.focus();
+}
+
+function update_route_volume_selected() {
+    var volume_element = document.getElementById("route_volume");
+    volume_element.alt = "Route " + selected_route.dataset["name"] + " Volume";
+    volume_element.title = "Route " + selected_route.dataset["name"] + " Volume";
+    volume_element.value = parseFloat(selected_route.dataset["volume"]) * 100
+    volume_element.disabled = false;
+    volume_element.focus();
 }
 
 function option_onclick(e) {
     var node = e.target;
     if (node.dataset["type"] == "SourceDescription") {
         selected_source = node;
-        var volume_element = document.getElementById("source_volume");
-        volume_element.alt = "Source " + selected_source.dataset["name"] + " Volume";
-        volume_element.title = "Source " + selected_source.dataset["name"] + " Volume";
-        volume_element.value = parseFloat(selected_source.dataset["volume"]) * 100
-        volume_element.disabled = false;
-        volume_element.focus();
-        hightlight_active_source();
+        update_source_volume_selected();
+        highlight_active_source();
     }
     else if (node.dataset["type"] == "SinkDescription") {
         selected_sink = node;
-        var volume_element = document.getElementById("sink_volume");
-        volume_element.alt = "Sink " + selected_sink.dataset["name"] + " Volume";
-        volume_element.title = "Sink " + selected_sink.dataset["name"] + " Volume";
-        volume_element.value = parseFloat(selected_sink.dataset["volume"]) * 100
-        volume_element.disabled = false;
-        volume_element.focus();
+        update_sink_volume_selected();
         highlight_active_sink();
     }
     else if (node.dataset["type"] == "RouteDescription") {
         selected_route = node;
-        var volume_element = document.getElementById("route_volume");
-        volume_element.alt = "Route " + selected_route.dataset["name"] + " Volume";
-        volume_element.title = "Route " + selected_route.dataset["name"] + " Volume";
-        volume_element.value = parseFloat(selected_route.dataset["volume"]) * 100
-        volume_element.disabled = false;
-        volume_element.focus();
-        hightlight_active_routes();
+        update_route_volume_selected();
+        highlight_active_routes();
     }
 }
 
@@ -814,3 +861,11 @@ addEventListener("fullscreenchange", (event) => {
       if (!document.fullscreenElement && document.getElementsByClassName("vnc-on-click").length > 0 && matchMedia('(pointer:coarse)').matches)
         dialog_cancel();
 });
+
+var mousedown = false;
+
+addEventListener("mousedown", (event) => { mousedown = true;});
+addEventListener("mouseup", (event) => { mousedown = false;});
+
+setInterval(function(){if (!mousedown)call_api("/body", "get", {}, restart_callback_2);}, 5000);
+setInterval(function(){console.log(mousedown);},1000);
