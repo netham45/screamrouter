@@ -242,11 +242,4 @@ The proceses are:
 Data comes in through the RTC and Scream recevers. It is duplicated there and sent to FDs leading to each Source Input Processor. Each Source Input Processor verifies the IP is what it's programmed to care about and if so processes the packet (equalization, delay, volume, resampling, channel layout) and sends it on to the Sink Output Processor. The Sink Output Process will handle mixing the converted streams and downscaling to the desired output bitdepth, then send the data to Scream/TCP sinks. It will also convert it to an MP3 via lame and send it to the Sink MP3 Processor. The Sink MP3 Processor will then divide that stream into individual MP3 frames, which are sent to the WebStream queue to be sent to MP3 clients.
 
 # Install
-These instructions are not thorough.
-
-* Clone the repo
-* Install dependencies TODO: List Python and C++ dependencies
-* Build C++ backend `cd c_utils;./build`
-* Put SSL certs in certs/
-* Verify configuration in src/constants/constants.py
-* Run the Python server `./screamrouter.py`
+See [docker/README.md](docker/README.md)
