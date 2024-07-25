@@ -3,7 +3,8 @@
     "pylint.args": [],
     "files.exclude": {
         "**/*.so": true,
-        "src/**/*.c": true
+        "src/**/*.c": true,
+        "callgrind.out.*": true
     },
     "files.associations": {
         "string": "cpp",

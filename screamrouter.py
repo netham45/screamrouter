@@ -41,8 +41,9 @@ def signal_handler(_signal, __):
             screamrouter_configuration.stop()
         except NameError:
             pass
-        if constants.EXIT_HACK:
-            os.kill(os.getpid(), signal.SIGTERM)
+        server.should_exit = True
+        server.force_exit = True
+        os.kill(os.getpid(), signal.SIGTERM)
         sys.exit(0)
 
 

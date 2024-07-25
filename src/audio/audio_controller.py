@@ -96,7 +96,8 @@ class AudioController():
 
         self.mp3_thread: SinkMP3Processor = SinkMP3Processor(self.sink_info.ip,
                                                            self.mp3_ffmpeg_output_read,
-                                                           self.webstream.queue)
+                                                           self.webstream.queue,
+                                                           self.webstream)
         """Holds the thread to generaet MP3 output from a PCM reader"""
         self.pcm_thread = SinkOutputMixer(self.sink_info,
                                           self.stream_info,

@@ -10,7 +10,6 @@ function call_api(endpoint, method, data = {}, callback = null_callback) {
     xhr.send(data)
 
     xhr.onload = function () {
-        console.log(this.responseText)
         try {
             data = JSON.parse(this.responseText);
             a = data
@@ -32,7 +31,6 @@ function restart_callback(response_text) {
 
 function restart_callback_2(response_text) {
     var reload_div = document.getElementById("reload");
-    console.log(response_text);
     reload_div.innerHTML = "";
     reload_div.innerHTML = response_text;
     dialog_cancel();
@@ -54,8 +52,11 @@ function dialog_add_source_group() {
     call_api("site/add_source_group", "GET", "", show_dialog_callback);
 }
 
-function dialog_vnc(source_name) {
+async function dialog_vnc(source_name) {
     call_api("site/vnc/" + source_name, "GET", "", show_dialog_callback);
+    await new Promise(r => setTimeout(r, 500));
+    if (matchMedia('(pointer:coarse)').matches)
+        document.getElementById("vnc-iframe").requestFullscreen()
 }
 
 function dialog_update_source(source_name) {
@@ -151,7 +152,6 @@ function dialog_submit(close) {
             }
         }
     }
-    console.log(equalizer);
     if (Object.keys(equalizer).length > 0) {
         result["equalizer"] = equalizer;
     }
@@ -231,7 +231,6 @@ function listen_to_sink_button(option) {
     if (audio_playing) {
         stop_audio();
     } else {
-        console.log(option)
         if (option.dataset["is_group"] != "True") {
             start_audio(option.dataset["ip"]);
         }
@@ -245,7 +244,6 @@ function visualizer_icon_onclick(e) {
     if (visual_playing) {
         stop_visualizer();
     } else {
-        console.log(option)
         if (option.dataset["is_group"] != "True") {
             start_visualizer(option.dataset["ip"]);
         }
@@ -291,11 +289,132 @@ function dismiss_shadow() {
     enable_disable.inert = false;
 }
 
+function get_associated_sinks() {
+    var retlist = [];
+    var sinks = [... document.querySelectorAll('span[data-type="SinkDescription"]')];
+    for (sink in sinks)
+        if (selected_sink.dataset["group_members"].indexOf(sinks[sink].dataset['name']) > -1 || sinks[sink].dataset["group_members"].indexOf(selected_sink.dataset['name']) > -1)
+            retlist.push(sinks[sink].dataset['name']);
+    if (selected_sink)
+        retlist.push(selected_sink.dataset['name']);
+    return retlist;
+}
+
+function get_associated_sources() {
+    var retlist = [];
+    var sources = [... document.querySelectorAll('span[data-type="SourceDescription"]')];
+    for (source in sources)
+        if (selected_source.dataset["group_members"].indexOf(sources[source].dataset['name']) > -1 || sources[source].dataset["group_members"].indexOf(selected_source.dataset['name']) > -1)
+            retlist.push(sources[source].dataset['name']);
+    if (selected_source)
+        retlist.push(selected_source.dataset['name']);
+    return retlist;
+}
+
+function hightlight_active_routes() {
+    var routes = [... document.querySelectorAll('span[data-type="RouteDescription"]')];
+    var associated_sinks = [];
+    var associated_sources = [];
+    if (selected_sink)
+        associated_sinks = get_associated_sinks();
+    if (selected_source)
+        associated_sources = get_associated_sources();
+    for (route in routes) {
+        var r1 = 0;
+        var g1 = 0;
+        var b1 = 0;
+        var r2 = 0;
+        var g2 = 0;
+        var b2 = 0;
+        var selected = false;
+        if (routes[route] == selected_route) { // Green highlight
+            selected = true;
+        }
+        if (selected_sink && (routes[route].dataset["sink"] == selected_sink.dataset["name"] || associated_sinks.indexOf(routes[route].dataset["sink"]) >= 0)) {
+            if (selected_source && associated_sources.indexOf(routes[route].dataset["source"]) > -1) { // If both source and sink higlights then do blue to red
+                r1 = 192;
+                g1 = 192;
+                b1 = 256;
+                r2 = 192;
+                g2 = 128;
+                b2 = 128;
+                if (selected) { // Tint it green if highlighted
+                    g1 += 32;
+                    g2 += 32;
+                }
+            } else { // If it's a sink with no source
+                if (selected) { // If sink and selected do green to red
+                    r1 = 128;
+                    g1 = 192;
+                    b1 = 128;
+                    r2 = 192;
+                    g2 = 128;
+                    b2 = 128;
+                } else { // If just sink do just red
+                    r1 = 192;
+                    g1 = 128;
+                    b1 = 128;
+                }
+            }
+        } else if (selected_source && associated_sources.indexOf(routes[route].dataset["source"]) > -1) { // If it's a source with no sink do blue
+            r1 = 96;
+            g1 = 128;
+            b1 = 192;
+            if (selected) { // If it's a selected source with no sink do blue to green
+                r2 = 128;
+                g2 = 192;
+                b2 = 128;
+            }
+         }
+        if (selected && !r1 && !b1 && !g1) { // If selected and not source or sink highlighted make it green
+            r1 = 128;
+            g1 = 192;
+            b1 = 128;
+        }
+        if (!r1 && !b1 && !g1) { // No color
+           routes[route].style.backgroundColor  = "";
+           routes[route].style.background = "";
+        } else if (!r2 && !b2 && !g2) { // One color
+           routes[route].style.background = "";
+           routes[route].style.backgroundColor  = "rgb(" + r1 + "," + g1 + "," + b1 +")";
+        } else { // Two colors
+            routes[route].style.backgroundColor  = "";
+            routes[route].style.background  = "linear-gradient(90deg, rgb(" + r1 + "," + g1 + "," + b1 +"), rgb(" + r2 + "," + g2 + "," + b2 + "))";
+        }
+    }
+}
+
+function highlight_active_sink() {
+    var sinks = [... document.querySelectorAll('span[data-type="SinkDescription"]')];
+    
+    for (sink in sinks) {
+        if (sinks[sink] == selected_sink) {
+            sinks[sink].style.backgroundColor = "rgb(192,128,128)";
+        } else if (selected_sink.dataset["group_members"].search(sinks[sink].dataset['name']) > 0 || sinks[sink].dataset["group_members"].search(selected_sink.name) > 0) {
+            sinks[sink].style.backgroundColor = "rgb(128,96,96)";
+        } else {
+            sinks[sink].style.backgroundColor = "";
+        }
+    }
+    hightlight_active_routes();
+}
+
+function hightlight_active_source() {
+    var sources = [... document.querySelectorAll('span[data-type="SourceDescription"]')];
+    for (source in sources) {
+        if (sources[source] == selected_source) {
+            sources[source].style.backgroundColor = "rgb(96,128,192)";
+        } else if (selected_source.dataset["group_members"].search(sources[source].dataset['name']) > 0 || sources[source].dataset["group_members"].search(selected_source.dataset['name']) > 0) {
+            sources[source].style.backgroundColor = "rgb(32,64,128)";
+        } else  {
+            sources[source].style.backgroundColor = "";
+        }
+    }
+    hightlight_active_routes();
+}
+
 function option_onclick(e) {
-    console.log("option_onclick");
     var node = e.target;
-    console.log(node);
-    console.log(node.dataset["volume"]);
     if (node.dataset["type"] == "SourceDescription") {
         selected_source = node;
         var volume_element = document.getElementById("source_volume");
@@ -304,6 +423,7 @@ function option_onclick(e) {
         volume_element.value = parseFloat(selected_source.dataset["volume"]) * 100
         volume_element.disabled = false;
         volume_element.focus();
+        hightlight_active_source();
     }
     else if (node.dataset["type"] == "SinkDescription") {
         selected_sink = node;
@@ -313,6 +433,7 @@ function option_onclick(e) {
         volume_element.value = parseFloat(selected_sink.dataset["volume"]) * 100
         volume_element.disabled = false;
         volume_element.focus();
+        highlight_active_sink();
     }
     else if (node.dataset["type"] == "RouteDescription") {
         selected_route = node;
@@ -322,6 +443,7 @@ function option_onclick(e) {
         volume_element.value = parseFloat(selected_route.dataset["volume"]) * 100
         volume_element.disabled = false;
         volume_element.focus();
+        hightlight_active_routes();
     }
 }
 
@@ -480,7 +602,6 @@ function canvas_click() {
     canvas_mode = canvas_mode + 1
     if (canvas_mode > 2)
         canvas_mode = 0;
-    console.log(canvas_mode);
 
 
 }
@@ -664,6 +785,7 @@ function iframe_onload() {
     setTimeout(iframe_resize, 400);
     setTimeout(iframe_resize, 600);
     setTimeout(iframe_resize, 800);
+    setTimeout(iframe_resize, 800);
 }
 
 function iframe_resize() {
@@ -678,4 +800,16 @@ function iframe_resize() {
         iframe.style.width = "400px";
         iframe.style.height = "600px";
     }
+    if (matchMedia('(pointer:coarse)').matches)
+        document.getElementById("vnc-iframe").contentDocument.getElementById("noVNC_fullscreen_button").onclick = function() {dialog_cancel();}
+    document.getElementById("vnc-iframe").contentDocument.getElementById("noVNC_disconnect_button").onclick = function() {dialog_cancel();}
 }
+
+function vnc_fullscreen_click() { 
+    document.getElementById("vnc-iframe").contentDocument.getElementById("noVNC_fullscreen_button").click();
+}
+
+addEventListener("fullscreenchange", (event) => {
+      if (!document.fullscreenElement && document.getElementsByClassName("vnc-on-click").length > 0 && matchMedia('(pointer:coarse)').matches)
+        dialog_cancel();
+});

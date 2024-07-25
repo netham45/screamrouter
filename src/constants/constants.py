@@ -61,11 +61,9 @@ WAIT_FOR_CLOSES: bool = False
 """On configuration reload, wait for existing processes to close
    before starting new processes, mostly for testing.
    Configuration changes reload faster when set to False."""
-KILL_AT_CLOSE: bool = True
+KILL_AT_CLOSE: bool = False
 """Closes quickly but leaves lingering processes, doesn't reload any faster
    than disabling WAIT_FOR_CLOSES."""
-EXIT_HACK: bool = False
-"""Used as a workaround for when I can't locate a multiprocessing deadlock"""
 TAG_MAX_LENGTH: int = 45
 """Max length for an internal/plugin source tag, set to be long enough for a
    full IPv6 address"""

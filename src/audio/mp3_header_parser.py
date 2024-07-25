@@ -334,4 +334,4 @@ class MP3Header():
                                     self.samplecount / self.samplerate +
                                     (self.padding * self.slotsize)) - 4)
         except Exception as exc:
-            raise InvalidHeaderException(f"Invalid MP3 Header (Failed to parse) {exc}")
+            raise InvalidHeaderException("Invalid MP3 Header (Failed to parse)") from exc

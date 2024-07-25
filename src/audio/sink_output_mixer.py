@@ -69,7 +69,7 @@ class SinkOutputMixer():
     def __build_mixer_command(self) -> List[str]:
         """Builds Command to run"""
         command: List[str] = []
-        command.extend([#s"/usr/bin/valgrind", "--tool=callgrind", "--dump-instr=yes",
+        command.extend([#"/usr/bin/valgrind", "--tool=callgrind", "--dump-instr=yes",
                         "c_utils/bin/sink_audio_mixer",
                         str(self.sink_info.ip),
                         str(self.sink_info.port),

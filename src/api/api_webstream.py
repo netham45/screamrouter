@@ -1,6 +1,8 @@
 """Holds the web stream queue and API endpoints, manages serving MP3s."""
 import asyncio
 import multiprocessing
+import multiprocessing.managers
+from os import close
 import queue
 import threading
 from subprocess import TimeoutExpired
@@ -83,9 +85,16 @@ class APIWebStream(threading.Thread):
         app.get("/stream/{sink_ip}/", tags=["Stream"])(self.http_mp3_stream)
         logger.info("[WebStream] MP3 Web Stream Available")
         self.queue: multiprocessing.Queue = multiprocessing.Queue()
-        self.running:bool = True
+        self.manager: multiprocessing.Manager = multiprocessing.Manager()
+        self.active_ips = self.manager.list()
+        self.update_ip = self.manager.Event()
+        self.running: bool = True
         """Ends all websocket and MP3 streams when set to False"""
         self.start()
+
+    def check_ip_is_active(self, sink_ip: IPAddressType) -> None:
+        """Checks if a sink IP is active, returns True or False"""
+        return sink_ip in self.active_ips
 
     def stop(self):
         """Stops the API webstream thread"""
@@ -95,28 +104,40 @@ class APIWebStream(threading.Thread):
                 self.join(5)
             except TimeoutExpired:
                 logger.warning("Webstream failed to close")
+        try:
+            self.manager.shutdown()
+        except OSError:
+            pass
 
     def process_frame(self, sink_ip: IPAddressType, data: bytes) -> None:
         """Callback for sinks to have data sent out to websockets"""
-        for _, listener in enumerate(self._listeners):
-            if not listener.send(sink_ip, data):  # Returns false on receive error
-                #self._listeners.remove(self._listeners[idx])
-                pass
+        listeners_to_remove = []
+        for listener in self._listeners:
+            if not listener.send(sink_ip, data):
+                listeners_to_remove.append(listener)
 
-    async def websocket_mp3_stream(self, websocket: WebSocket, sink_ip: IPAddressType):
-        """FastAPI handler"""
-        listener: WebsocketListener = WebsocketListener(sink_ip, websocket)
-        await listener.open()
-        self._listeners.append(listener)
-        while self.running:  # Keep the connection open until something external closes it.
-            await asyncio.sleep(1)
+        for listener in listeners_to_remove:
+            self.active_ips.remove(listener._sink_ip)
+            self._listeners.remove(listener)
 
     async def http_mp3_stream(self, sink_ip: IPAddressType):
         """Streams MP3 frames from ScreamRouter"""
         listener: HTTPListener = HTTPListener(sink_ip)
         await listener.open()
         self._listeners.append(listener)
+        self.active_ips.append(sink_ip)
+        self.update_ip.set()
         return StreamingResponse(listener.get_queue(), media_type="audio/mpeg")
+    
+    async def websocket_mp3_stream(self, websocket: WebSocket, sink_ip: IPAddressType):
+        """FastAPI handler"""
+        listener: WebsocketListener = WebsocketListener(sink_ip, websocket)
+        await listener.open()
+        self._listeners.append(listener)
+        self.active_ips.append(sink_ip)
+        self.update_ip.set()
+        while self.running:  # Keep the connection open until something external closes it.
+            await asyncio.sleep(1)
 
     def run(self):
         """Waits for packets to be sent from the ffmepg outputs and forwards it to listeners"""
@@ -128,3 +149,7 @@ class APIWebStream(threading.Thread):
                 pass
             except queue.Empty:
                 pass
+        try:
+            self.manager.shutdown()
+        except OSError:
+            pass

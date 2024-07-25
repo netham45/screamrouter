@@ -335,6 +335,7 @@ class ConfigurationManager(threading.Thread):
                 self.join(5)
             except TimeoutExpired:
                 _logger.warning("[Configuration Manager] Configuration Manager failed to close")
+        _logger.debug("[Configuration Manager] Done, returning")
         return True
 
     def set_webstream(self, webstream: APIWebStream) -> None:

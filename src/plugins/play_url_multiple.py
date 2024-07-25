@@ -44,7 +44,7 @@ class PluginPlayURLMultiple(ScreamRouterPlugin):
         self.__mainpid = os.getpid()
         """Holds the main pid so the sigchild interrupt doesn't run on child processes"""
         self.write_lock = multiprocessing.Lock()
-        self.start()
+        #self.start()
         # Start the run loop in a new process. any variables to be available to run()
         # need to be delcared before this.
 
@@ -57,6 +57,7 @@ class PluginPlayURLMultiple(ScreamRouterPlugin):
     def stop_plugin(self):
         """This is called when the plugin is stopped. You may perform shutdown
            tasks here."""
+        logger.info("Stopping plugin %s", self.name)
         for instance in self.playing_instances:
             instance.stop()
 

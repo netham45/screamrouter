@@ -1,3 +1,6 @@
 {%- import "imports/buttons.html.jinja" as buttons %}
-<IFRAME ONLOAD="iframe_onload();" ID="vnc-iframe" SRC="/site/noVNC/vnc.html?autoconnect=true&resize=scale&port={{port}}"></IFRAME><BR /><BR />
+<DIV>
+    <DIV ID="vnc-on-clck" CLASS="vnc-on-click" onclick="vnc_fullscreen_click();"></DIV>
+    <IFRAME ONLOAD="iframe_onload();" ID="vnc-iframe" SRC="/site/noVNC/vnc.html?autoconnect=true&resize=scale&port={{port}}"></IFRAME><BR /><BR />
+</DIV>
 {{- buttons.button("dialog_cancel", 'Close VNC' , "dialog-button", {}, "Close VNC")}}

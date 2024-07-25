@@ -102,6 +102,8 @@ SPAN.option {
     display: inline-block;
     text-align: left;
     color: #000000;
+    border-radius: 15px 15px 15px 15px;
+    border: 0px 0px 2px 0px;
 }
 
 select[multiple] option:checked {
@@ -312,6 +314,11 @@ canvas#canvas {
 }
 
 IFRAME#vnc-iframe {
+    z-index: 1000;
+}
+
+DIV#vnc-on-clck {
+    display:none;
 }
 
 SPAN.route-label {
@@ -382,5 +389,14 @@ DIV#enable_disable {
     }
     span.button-icon {
         font-size: 24pt;
+    }
+    DIV#vnc-on-clck {
+        display: block;
+        z-index: 2000;
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
     }
 }

@@ -13,6 +13,7 @@
 #ifdef __SSE2__
 #include <emmintrin.h>
 #endif
+#include <immintrin.h>
 using namespace std;
 
 // Configuration variables
@@ -24,6 +25,7 @@ bool running = true; // Flag to control loop execution
 
 vector<int32_t*> receive_buffers; // Vector of pointers to receive buffers for input streams
 int32_t* mixing_buffer = new int32_t[CHUNK_SIZE / sizeof(int32_t)]; // Mixing buffer to mix received audio data
+uint8_t *mixing_buffer_uint8 = (uint8_t*)mixing_buffer;
 char output_buffer[PACKET_SIZE * 2] = {0}; // Buffer to store mixed audio data before sending over the network
 int output_buffer_pos = 0; // Position in output_buffer for storing audio data
 uint8_t mp3_buffer[CHUNK_SIZE * 8];
@@ -40,7 +42,7 @@ fd_set read_fds;
 int tcp_output_fd = 0; // File descriptor for the TCP socket
 int mp3_write_fd = 0; // File descriptor to write mp3 to
 vector<int> output_fds; // Vector of file descriptors for audio input streams
-vector<bool> active; // Vector to store whether each input stream is active or not
+bool active[1024] = {0}; // Vector to store whether each input stream is active or not
 bool output_active = false; // Flag to indicate if there's any data to be sent over the network
 string output_ip = ""; // IP address of the UDP socket destination
 int output_port = 0; // Port number of the UDP socket destination
@@ -63,12 +65,12 @@ int* config_argv[] = {NULL, // Process File Name
                       &mp3_write_fd};
 int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
 
-void log(const string &message) {
+inline void log(const string &message) {
     printf("[Sink Output Processor %s:%i] %s\n", output_ip.c_str(), output_port, message.c_str());
 }
 
 // Function to process fixed command line arguments like IP address and output port
-void process_args(char* argv[], int argc) {
+inline void process_args(char* argv[], int argc) {
     if (argc <= config_argc)
         ::exit(-1);
     // cppcheck-suppress ctuArrayIndex
@@ -81,14 +83,12 @@ void process_args(char* argv[], int argc) {
 }
 
 // Function to process variable number of command line arguments representing file descriptors for input streams
-void process_fd_args(char* argv[], int argc) {
-    for (int argi = config_argc; argi < argc; argi++) {
+inline void process_fd_args(char* argv[], int argc) {
+    for (int argi = config_argc; argi < argc; argi++)
         output_fds.push_back(atoi(argv[argi]));
-        active.push_back(false);
-    }
 }
 
-void setup_header() { // Sets up the Scream header
+inline void setup_header() { // Sets up the Scream header
     bool output_samplerate_44100_base = (output_samplerate % 44100) == 0;
     uint8_t output_samplerate_mult = (output_samplerate_44100_base?44100:48000) / output_samplerate;
     output_buffer[0] = output_samplerate_mult + (output_samplerate_44100_base << 7);
@@ -99,7 +99,7 @@ void setup_header() { // Sets up the Scream header
     log("Set up Header, Rate: " + to_string(output_samplerate) + ", Bit-Depth" + to_string(output_bitdepth) + ", Channels" + to_string(output_channels));
 }
 
-void setup_udp() { // Sets up the UDP socket for output
+inline void setup_udp() { // Sets up the UDP socket for output
     log("UDP Set Up");
     udp_output_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     udp_dest_addr.sin_family = AF_INET;
@@ -118,19 +118,21 @@ void setup_udp() { // Sets up the UDP socket for output
         setsockopt(tcp_output_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
         int newsize = 1152 * 16;
         setsockopt(tcp_output_fd, SOL_SOCKET, SO_SNDBUF, &newsize, sizeof(newsize));
+        newsize = 1152 * 8;
+        setsockopt(mp3_write_fd, SOL_SOCKET, SO_SNDBUF, &newsize, sizeof(newsize));
         setsockopt (tcp_output_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         log("TCP Set Up");
     }
 }
 
-void setup_buffers() { // Sets up buffers to receive data from input fds
+inline void setup_buffers() { // Sets up buffers to receive data from input fds
     log("Buffers Set Up");
     setbuf(stdout, NULL);
     for (int buf_idx = 0; buf_idx < output_fds.size(); buf_idx++)
         receive_buffers.push_back(static_cast<int32_t*>(malloc(CHUNK_SIZE)));
 }
 
-void setup_lame() {
+inline void setup_lame() {
     lame_set_in_samplerate(lame, output_samplerate);
     lame_set_VBR(lame, vbr_off);
     lame_init_params(lame);
@@ -140,41 +142,51 @@ bool lame_active = true;
 struct timeval lame_timeout;
 fd_set lame_fd;
 
-void write_lame() {
-    mp3_buffer_pos = lame_encode_buffer_interleaved_int(lame, mixing_buffer, CHUNK_SIZE/sizeof(uint32_t)/2, mp3_buffer, CHUNK_SIZE * 8);
-    if (mp3_buffer_pos > 0) {
-        FD_ZERO(&lame_fd);
-        FD_SET(mp3_write_fd, &lame_fd);
-        lame_timeout.tv_sec = 0;
-        lame_timeout.tv_usec = lame_active ? 15000 : 100;
-        int result = select(mp3_write_fd + 1, NULL, &lame_fd, NULL, &lame_timeout);
-        if (result > 0 && FD_ISSET(mp3_write_fd, &lame_fd)) {
-            write(mp3_write_fd, mp3_buffer, mp3_buffer_pos);
+inline void write_lame() {
+    FD_ZERO(&lame_fd);
+    FD_SET(mp3_write_fd, &lame_fd);
+    lame_timeout.tv_sec = 0;
+    lame_timeout.tv_usec = lame_active ? 15000 : 100;
+    int result = select(mp3_write_fd + 1, NULL, &lame_fd, NULL, &lame_timeout);
+    // ScreamRouter will stop reading from the MP3 FD if there's no clients. Don't encode if there's no reader.
+    if (result > 0 && FD_ISSET(mp3_write_fd, &lame_fd)) {
+        if (!lame_active) {
             lame_active = true;
+            log("MP3 Stream Active");
         }
-        else
+        mp3_buffer_pos = lame_encode_buffer_interleaved_int(lame, mixing_buffer, CHUNK_SIZE/sizeof(uint32_t)/2, mp3_buffer, CHUNK_SIZE * 8);
+        if (mp3_buffer_pos > 0)
+            write(mp3_write_fd, mp3_buffer, mp3_buffer_pos);
+    }
+    else {
+        if (lame_active) {
             lame_active = false;
+            log("MP3 Stream Inactive");
+        }
     }
 }
 
-bool handle_receive_buffers() {  // Receive data from input fds
-    output_active = false;
-    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
-        receive_timeout.tv_sec = 0;
-        if (!active[fd_idx])
+inline bool check_fd_active(int fd, bool is_active) {
+    receive_timeout.tv_sec = 0;
+        if (!is_active)
             receive_timeout.tv_usec = 100; // 100uS, just check if it's got data
         else    
             receive_timeout.tv_usec = 30000; // 70ms, wait for a chunk.
         FD_ZERO(&read_fds);
-        FD_SET(output_fds[fd_idx], &read_fds);
-        bool prev_state = active[fd_idx];
-        if (select(output_fds[fd_idx] + 1, &read_fds, NULL, NULL, &receive_timeout) < 0)
+        FD_SET(fd, &read_fds);
+        bool prev_state = is_active;
+        if (select(fd + 1, &read_fds, NULL, NULL, &receive_timeout) < 0)
             cout << "Select failure: " << errno << strerror(errno) << endl;
-        active[fd_idx] = FD_ISSET(output_fds[fd_idx], &read_fds);
-        if (prev_state != active[fd_idx])
-            log("Setting Input FD #" + to_string(output_fds[fd_idx]) + (active[fd_idx]?" Active":" Inactive"));
+        is_active = FD_ISSET(fd, &read_fds);
+        if (prev_state != is_active)
+            log("Setting Input FD #" + to_string(fd) + (fd?" Active":" Inactive"));
+        return is_active;
+}
 
-        if (active[fd_idx]) {
+inline bool handle_receive_buffers() {  // Receive data from input fds
+    output_active = false;
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
+        if (active[fd_idx] = check_fd_active(output_fds[fd_idx], active[fd_idx])) {
             for (int bytes_in = 0; running && bytes_in < CHUNK_SIZE;)
                 bytes_in += read(output_fds[fd_idx], receive_buffers[fd_idx] + bytes_in, CHUNK_SIZE - bytes_in);
             output_active = true;
@@ -184,64 +196,56 @@ bool handle_receive_buffers() {  // Receive data from input fds
 }
 
 void mix_buffers() { // Mix all received buffers
-#ifdef __SSE2__
-    bool first_buffer = true;
-    for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
-        if (!active[input_buf_idx])
-            continue;   
-        __m128i mixing, receive;
-        for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos += 4) {
-            if (first_buffer) {
-                mixing = _mm_load_si128((__m128i*)&receive_buffers[input_buf_idx][buf_pos]);
-                _mm_store_si128((__m128i*)&mixing_buffer[buf_pos], mixing);
-            } else {
-                mixing = _mm_load_si128((__m128i*)&mixing_buffer[buf_pos]);
-                receive = _mm_load_si128((__m128i*)&receive_buffers[input_buf_idx][buf_pos]);
-                mixing = _mm_add_epi32(mixing, receive);
-                _mm_store_si128((__m128i*)&mixing_buffer[buf_pos], mixing);
-            }
+#if defined()
+#if defined(__AVX2__)
+    for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos += 8) {
+        __m256i mixing = _mm256_setzero_si256();
+        for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
+            if (!active[input_buf_idx])
+                continue;
+            __m256i receive = _mm256_loadu_si256((__m256i*)&receive_buffers[input_buf_idx][buf_pos]);
+            mixing = _mm256_add_epi32(mixing, receive);
         }
-        first_buffer = false;
+        _mm256_storeu_si256((__m256i*)&mixing_buffer[buf_pos], mixing);
+    }
+#elif defined(__SSE2__)
+    for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos += 4) {
+        __m128i mixing = _mm_setzero_si128();
+        for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
+            if (!active[input_buf_idx])
+                continue;
+            __m128i receive = _mm_load_si128((__m128i*)&receive_buffers[input_buf_idx][buf_pos]);
+            mixing = _mm_add_epi32(mixing, receive);
+        }
+        _mm_store_si128((__m128i*)&mixing_buffer[buf_pos], mixing);
     }
 #else
-        bool first_buffer = true;
-    for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
-        if (!active[input_buf_idx])
-            continue;
-        for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos++) {
-            if (mixing_buffer[buf_pos] + receive_buffers[input_buf_idx][buf_pos] > INT32_MAX) {
-                mixing_buffer[buf_pos] = INT32_MAX;
-            } else if (first_buffer) {
-                mixing_buffer[buf_pos] = receive_buffers[input_buf_idx][buf_pos];
-            } else {
-                mixing_buffer[buf_pos] += receive_buffers[input_buf_idx][buf_pos];
-            }
+    for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos++) {
+        mixing_buffer[buf_pos] = 0;
+        for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
+            if (!active[input_buf_idx])
+                continue;
+            mixing_buffer[buf_pos] += receive_buffers[input_buf_idx][buf_pos];
         }
-        first_buffer = false;
+        if (mixing_buffer[buf_pos] > INT32_MAX) {
+            mixing_buffer[buf_pos] = INT32_MAX;
+        } else if (mixing_buffer[buf_pos] < INT32_MIN) {
+            mixing_buffer[buf_pos] = INT32_MIN;
+        }
     }
 #endif
 }
 
-void downscale_buffer() { // Copies 32-bit mixing_buffer to <output_bitdepth>-bit output_buffer
-    if (output_bitdepth == 32) {
-        memcpy(output_buffer + HEADER_SIZE, mixing_buffer, CHUNK_SIZE);
-        output_buffer_pos += CHUNK_SIZE;
-    } else if (output_bitdepth == 24) {
-        for (int i = 0; i < CHUNK_SIZE/sizeof(int32_t); i++) {
-            uint8_t* p = (uint8_t*)&mixing_buffer[i];
-            output_buffer[HEADER_SIZE + output_buffer_pos++] = p[1];
-            output_buffer[HEADER_SIZE + output_buffer_pos++] = p[2];
-            output_buffer[HEADER_SIZE + output_buffer_pos++] = p[3];
-        }
-    } else if (output_bitdepth == 16) {
-        int16_t *output_buffer_int16 = reinterpret_cast<int16_t*>(output_buffer + HEADER_SIZE);
-        for (int i=0;i<CHUNK_SIZE / sizeof(int32_t);i++)
-            output_buffer_int16[i + output_buffer_pos / sizeof(int16_t)] = mixing_buffer[i] >> 16;
-        output_buffer_pos += CHUNK_SIZE / sizeof(int32_t) * sizeof(int16_t);
+inline void downscale_buffer() { // Copies 32-bit mixing_buffer to <output_bitdepth>-bit output_buffer
+    int output_bytedepth = output_bitdepth / 8;
+    for (int input_pos = 0;input_pos < CHUNK_SIZE; input_pos++) {
+        if (output_buffer_pos % output_bytedepth == 0)
+            input_pos += sizeof(uint32_t) - output_bytedepth;
+        output_buffer[HEADER_SIZE + output_buffer_pos++] = mixing_buffer_uint8[input_pos];
     }
 }
 
-void send_buffer() { // Sends a buffer over TCP or UDP depending on which is active
+inline void send_buffer() { // Sends a buffer over TCP or UDP depending on which is active
     if (tcp_output_fd) {
         int result = send(tcp_output_fd, output_buffer + HEADER_SIZE, CHUNK_SIZE, 0);
         if (result <= 0) {
@@ -255,7 +259,7 @@ void send_buffer() { // Sends a buffer over TCP or UDP depending on which is act
         sendto(udp_output_fd, output_buffer, PACKET_SIZE, 0, (struct sockaddr *)&udp_dest_addr, sizeof(udp_dest_addr));
 }
 
-void rotate_buffer() { // Shifts the last CHUNK_SIZE bytes in output_buffer up to the top
+inline void rotate_buffer() { // Shifts the last CHUNK_SIZE bytes in output_buffer up to the top
     if (output_buffer_pos >= CHUNK_SIZE) {
         memcpy(output_buffer + HEADER_SIZE, output_buffer + PACKET_SIZE, CHUNK_SIZE);
         output_buffer_pos -= CHUNK_SIZE;

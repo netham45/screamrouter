@@ -7,6 +7,7 @@ import os
 import select
 from ctypes import c_bool
 from subprocess import TimeoutExpired
+import time
 from typing import List
 
 from fastapi import FastAPI
@@ -15,7 +16,7 @@ import src.constants.constants as constants
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import SinkNameType
 from src.screamrouter_types.configuration import SourceDescription
-from src.utils.utils import close_pipe, set_process_name
+from src.utils.utils import close_all_pipes, close_pipe, set_process_name
 
 logger = get_logger(__name__)
 
@@ -172,7 +173,9 @@ class ScreamRouterPlugin(multiprocessing.Process):
     def run(self):
         """Sets the process name, called by plugins"""
         set_process_name(f"Plugin {self.name}", f"[ScreamRouter Plugin] {self.name}")
-        fcntl.fcntl(self.screamrouter_write_fd, fcntl.F_SETFL, os.O_NONBLOCK)
+        while self.running.value:
+            time.sleep(.5)
+        close_all_pipes()
 
 class ScreamRouterPluginSender(multiprocessing.Process):
     """Handles sending from a plugin to the ScreamRouter sources"""
@@ -221,3 +224,4 @@ class ScreamRouterPluginSender(multiprocessing.Process):
                 for out_queue in self.controller_write_fds:
                     os.write(out_queue, data)
         logger.info("Ending Plugin Sender thread")
+        close_all_pipes()

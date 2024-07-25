@@ -9,6 +9,7 @@ from ctypes import c_bool
 from subprocess import TimeoutExpired
 from typing import Tuple
 
+from src.api.api_webstream import APIWebStream
 import src.constants.constants as constants
 from src.audio.mp3_header_parser import InvalidHeaderException, MP3Header
 from src.screamrouter_logger.screamrouter_logger import get_logger
@@ -21,17 +22,27 @@ logger = get_logger(__name__)
 class SinkMP3Processor(multiprocessing.Process):
     """Handles listening for MP3 output from ffmpeg and sends it to the WebStream handler"""
     def __init__(self, sink_ip: IPAddressType, ffmpeg_output_fd: int,
-                 webstream_queue: multiprocessing.Queue):
+                 webstream_queue: multiprocessing.Queue,
+                 webstream: APIWebStream):
         super().__init__(name=f"[Sink:{sink_ip}] MP3 Thread")
+        self.webstream = webstream
+        """Webstream, checked if the mp3 reader should be active or not"""
         self.__webstream_queue: multiprocessing.Queue = webstream_queue
         """webstream queue to write frames to"""
         self._sink_ip: IPAddressType = sink_ip
         """Holds the sink IP for the web api to filter based on"""
         self.running = multiprocessing.Value(c_bool, True)
         """Multiprocessing-passed flag to determine if the thread is running"""
+        self.processing = multiprocessing.Value(c_bool, False)
+        """Multiprocessing-passed flag to determine if the thread is reading from fd because an mp3 client is active"""
         self.ffmpeg_output_fd = ffmpeg_output_fd
         """FD for ffmpeg output to be read from"""
+        self.update_active()
         self.start()
+
+    def update_active(self) -> None:
+        """Checks if the sink IP is active in the webstream and enables or disables processing"""
+        self.processing.value = self.webstream.check_ip_is_active(self._sink_ip)
 
     def _read_bytes(self, count: int, timeout: float, firstread: bool = False) -> bytes:
         """Reads count bytes, blocks until self.__running goes false or count bytes are received.
@@ -94,26 +105,34 @@ class SinkMP3Processor(multiprocessing.Process):
         available_data = bytearray()  # Holds the available frames
         available_frame_count: int = 0  # Holds the number of available frames
         while self.running.value:
-            mp3_header_parsed: MP3Header  # Holds the parsed header object
-            mp3_header_raw: bytes  # Holds the raw header bytes
-            mp3_frame: bytes  # Holds the currently processing MP3 frame
             try:
-                mp3_header_parsed, mp3_header_raw = self.__read_header()
-            except InvalidHeaderException as exc:
-                logger.debug("[Sink:%s] Failed processing MP3 header: %s",  self._sink_ip, exc)
-                logger.debug("[Sink:%s] This is probably because ffmpeg quit", self._sink_ip)
-                continue
-            available_data.extend(mp3_header_raw)
-            mp3_frame = self._read_bytes(mp3_header_parsed.framelength, .1)
-            available_data.extend(mp3_frame)
-            available_frame_count = available_frame_count + 1
-            if (available_frame_count == target_frames_per_packet or
-                                    len(available_data) >= target_bytes_per_packet):
-            # Send the buffered data when target frames per packet or target bytes per packet hit
-                self.__webstream_queue.put(WebStreamFrames(sink_ip=self._sink_ip,
-                                                           data=available_data))
-                available_frame_count = 0
-                available_data = bytearray()
+                if self.webstream.update_ip.is_set():
+                    self.update_active()
+                if not self.processing.value:
+                    time.sleep(.05)
+                    continue
+                mp3_header_parsed: MP3Header  # Holds the parsed header object
+                mp3_header_raw: bytes  # Holds the raw header bytes
+                mp3_frame: bytes  # Holds the currently processing MP3 frame
+                try:
+                    mp3_header_parsed, mp3_header_raw = self.__read_header()
+                except InvalidHeaderException as exc:
+                    logger.debug("[Sink:%s] Failed processing MP3 header: %s",  self._sink_ip, exc)
+                    logger.debug("[Sink:%s] This is probably because ffmpeg quit", self._sink_ip)
+                    continue
+                available_data.extend(mp3_header_raw)
+                mp3_frame = self._read_bytes(mp3_header_parsed.framelength, .1)
+                available_data.extend(mp3_frame)
+                available_frame_count = available_frame_count + 1
+                if (available_frame_count == target_frames_per_packet or
+                                        len(available_data) >= target_bytes_per_packet):
+                # Send the buffered data when target frames per packet or target bytes per packet hit
+                    self.__webstream_queue.put(WebStreamFrames(sink_ip=self._sink_ip,
+                                                            data=available_data))
+                    available_frame_count = 0
+                    available_data = bytearray()
+            except OSError:
+                break
         logger.debug("[Sink:%s] MP3 thread exit", self._sink_ip)
         close_all_pipes()
 
