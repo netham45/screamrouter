@@ -18,8 +18,7 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * Can play a URL out of a sink or sink group
 * Has a Home Assistant Custom Component for managing Sinks and playing media back through Sinks (See: https://github.com/netham45/screamrouter_ha_component )
 * Automatically saves to YAML on setting change
-* Uses a custom mixer with no additional functions so latency can be minimized when ffmpeg is not required in the chain
-* Can use ffmpeg to delay any sink, route, source, or group so sinks line up better, can use ffmpeg to adjust mismatched sources so they can be mixed
+* Uses a custom mixer/equalizer/channel layout up/downmixer so latency can be minimized
 * Can adjust equalization for any sink, route, source, or group
 * Contains a plugin system to easily allow additional sources to be added
 * Milkdrop Visualizations thanks to the browser-based [Butterchurn](https://github.com/jberg/butterchurn) project
@@ -48,7 +47,6 @@ The simplicity of Scream allows it to be very easy to work with while retaining 
 * Scream - https://github.com/duncanthrax/scream
 * Configure Scream to use UDP unicast, point it at ScreamRouter on port 16401. The configuration for setting Unicast on the source is in the Scream repo readme.md.
 * Install requirements.txt through either pip or your package manager of choice
-* Command line ffmpeg
 * ScreamRouter is Linux only. It should run in WSL2. Windows compatibility may be reviewed in the future.
 * ScreamRouter is configured to use SSL. See src/constants/constants.py to set the path to your certificate. In the future ScreamRouter will be configure to automatically generate a self-signed SSL certificate if none is present.
 
@@ -65,13 +63,6 @@ ScreamRouter will start up with a blank profile by default. There will be no sou
 ScreamRouter's web interface listens on port 443.
 
 Each Sink, Source, and Route has a name. This name is used as the reference for routes and groups to track members. Clicking Add Sink will prompt you for the information to make one. The names must be unique between Sinks and Sink Groups, Sources and Source Groups, and all Routes.
-
-### Latency
-ScreamReader will use ffmpeg to convert incompatible streams to the same format, but at the cost of added latency. To avoid using ffmpeg to convert source input:
-
-* Ensure that your Sources and Sink is using the same sample rate, resampling requires ffmpeg.
-* Ensure that you are not using an equalizer, the equalizer will require ffmpeg.
-* Ensure that you are not using audio delays, they will require ffmpeg.
 
 ### Sinks
 Each Sink holds information for the destination IP, port, volume, sample rate, bit depth, channels, channel layout, and the sink name, and how many ms it is delayed
@@ -168,7 +159,7 @@ ScreamRouter uses FastAPI. The API documentation is enabled and can be viewed by
 ### MP3 Stream
 It also exposes an MP3 stream of each sink. This is available at both `http://<Your ScreamRouter Server>:8080/stream/<IP of sink>/` and `ws://<Your ScreamRouter Server>:8080/ws/<IP of sink>/` (Note the trailing slashes)
 
-The MP3 stream provided from FFMPEG is tracked frame by frame so that ScreamRouter can always start a connection on a new MP3 frame. FFMPEG is configured to generate MP3 with no inter-frame dependencies so files from it can be played back as normal MP3s or streamed to a player starting from any frame.
+The MP3 stream provided from liblame is tracked frame by frame so that ScreamRouter can always start a connection on a new MP3 frame.
 
 The latency for streaming the MP3s to VLC is low, browsers will enforce a few seconds of caching. Mobile browsers sometimes more. Some clients refuse to play MP3s received one frame at a time, an option will be added to the configuration to adjust the number of frames buffered for MP3 data.
 
@@ -227,6 +218,9 @@ This is called when the configuration is unloaded.
 
 The loader is not fully implemented yet but will load Python stored in src/plugins as plugins.
 
+### TCP Client
+TCP client support was added. A client can connect to TCP on the port configured in constants.py to receive PCM data destined for that Sink Source. This will stop UDP output on the port. Currently stream parameters are not sent over TCP.
+
 ### Media Controls
 ScreamRouter can send Play/Next/Previous commands to sources. They will be sent as UDP packetscontaining 'n', 'p', or 'P' for next track, previous track, and play/pause respectively. They will be sent to port 9999 on the source. These are currently listened to by a bash script in the media containers.
 
@@ -238,36 +232,21 @@ This is a multi-processed application using Python Multiprocessing and can take 
 
 The proceses are:
 
-* Receiver process - This receives all data over UDP from sources and puts it in a queue for each sink.
-* Audio Controller - One instance for each sink, receives data from the receiver process and passes it to each source input processor for handling
-* Source Input Processor - This process adjusts the bit depth to match the sink and applies volume controls. If resampling, equalization, or delays are required it will use ffmpeg for these features, if they are not used ffmpeg is skipped.
-* Source Input Processor FFMPEG - This is optional and is only ran if the equalization, sample rate, or delay needs adjusted for a source
-* Sink Output Processor - This process mixes the various source inputs together and sends them to the sink. It also passes the stream to ffmpeg so it can be converted to MP3 and streamed to the web interface.
-* Sink MP3 Processor FFMPEG  - This runs for each sink and converts PCM audio to MP3 for streaming.
-* Sink MP3 Processor - This process reads the MP3 output of FFMPEG in and divides it into MP3 frames. It sends the data to the WebStream queue that FastAPI watches when a stream request is made.
+* Receiver processes - These receives all data over UDP from sources and puts it in a queue for each sink.
+* Source Input Processor - This process adjusts the bit depth to match the sink and applies volume controls. This is a C++ process.
+* Sink Output Processor - This process mixes the various source inputs together and sends them to the sink, as well as generating an MP3 stream to send to the browser. This is a C++ process.
+* Sink MP3 Processor - This process reads the MP3 output from the sink output processor in and divides it into individual MP3 frames. It sends the data to the WebStream queue that FastAPI watches when a stream request is made.
 * API/Main process - FastAPI runs in it's own process and will send requests in their own threads. When the MP3 Stream endpoint is called it will delay in an async function to wait for the WebStream queue to have data and send data when available.
 
 ### More Technical Info
-Each Sink is associated with a Sink Controller.
+Data comes in through the RTC and Scream recevers in Python. It is duplicated there and sent to FDs leading to each Source Input Processor. Each Source Input Processor verifies the IP is what it's programmed to care about and if so processes the packet (equalization, delay, volume, resampling, channel layout) and sends it on to the Sink Output Processor. The Sink Output Process will handle mixing the converted streams and downscaling to the desired output bitdepth, then send the data to Scream/TCP sinks. It will also convert it to an MP3 via lame and send it to the Sink MP3 Processor. The Sink MP3 Processor will then divide that stream into individual MP3 frames, which are sent to the WebStream queue to be sent to MP3 clients.
 
-On the reciving process receiving a packet it is forwarded to a queue for each Sink Controller. Each Sink controller will wait for the queue and check if the data matches a source it tracks. If so they send the data to the appropriate source for processing.
+# Install
+These instructions are not thorough.
 
-Each source will process data to ensure the bit depth and samplerate match. Bit depth and volume are corrected by the low latency codepath, equalization, mismatched sample rates, and adding a static delay go through the ffmpeg codepath.
-
-After the source has processed the data it is sent to the sink mixing thread. This thread mixes all the sources into one output and sends it to a Scream receiver and to ffmpeg to be converted to an MP3 stream for the web interface.
-
-## Troubleshooting
-
-Here are some problems and solutions:
-
-* Problem: Audio frequently makes a loud static noise
-* Solution: Change your sources to either 16 or 32-bit depth, avoid using 24-bit.
-
-* Problem: There are crackles and pops in the audio
-* Solution: Try to keep the source and destinations configured the same. I've had best luck with 48kHz 32-bit.
-
-* Problem: The audio is choppy when I use high channel setups such as 7.1 32-bit
-* Solution: Turn down your bit depth. 8 channels at 32-bit 48000kHz is over 12Mb/s, this is a lot for real-time audio. 16-bit will halve your bitrate. Consider 5.1 or Stereo.
-
-* Problem: My Raspberry Pi keeps cutting out during streaming
-* Solution: Consider a better USB wifi card for the Raspberry Pi. They have weak wifi reception. Consider setting the sink to the lowest possible bitrate, too.
+* Clone the repo
+* Install dependencies TODO: List Python and C++ dependencies
+* Build C++ backend `cd c_utils;./build`
+* Put SSL certs in certs/
+* Verify configuration in src/constants/constants.py
+* Run the Python server `./screamrouter.py`
