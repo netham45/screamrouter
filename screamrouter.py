@@ -19,7 +19,10 @@ from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.utils.utils import set_process_name
 
 
-os.nice(-15)
+try:
+    os.nice(-15)
+except PermissionError:
+    pass
 
 logger = get_logger(__name__)
 
