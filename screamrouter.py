@@ -21,7 +21,7 @@ from src.utils.utils import set_process_name
 
 try:
     os.nice(-15)
-except PermissionError:
+except:
     pass
 
 logger = get_logger(__name__)
