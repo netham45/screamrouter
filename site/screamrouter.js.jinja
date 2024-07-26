@@ -31,6 +31,9 @@ function restart_callback(response_text) {
 }
 
 function restart_callback_2(response_text) {
+    if (document.getElementById("dialog").style.display != "none" && 
+        document.getElementById("dialog").style.display != "")
+        return;
     var selected_sink_name = "";
     if (selected_sink)
         selected_sink_name = selected_sink.dataset['name'];
@@ -336,6 +339,17 @@ function get_associated_sinks() {
     return retlist;
 }
 
+function get_parent_sinks() {
+    var retlist = [];
+    var sinks = [... document.querySelectorAll('span[data-type="SinkDescription"]')];
+    for (sink in sinks)
+        if (sinks[sink].dataset["group_members"].indexOf(selected_sink.dataset['name']) > -1)
+            retlist.push(sinks[sink].dataset['name']);
+    if (selected_sink)
+        retlist.push(selected_sink.dataset['name']);
+    return retlist;
+}
+
 function get_associated_sources() {
     var retlist = [];
     var sources = [... document.querySelectorAll('span[data-type="SourceDescription"]')];
@@ -347,14 +361,47 @@ function get_associated_sources() {
     return retlist;
 }
 
+function get_parent_sources() {
+    var retlist = [];
+    var sources = [... document.querySelectorAll('span[data-type="SourceDescription"]')];
+    for (source in sources)
+        if (sources[source].dataset["group_members"].indexOf(selected_source.dataset['name']) > -1)
+            retlist.push(sources[source].dataset['name']);
+    if (selected_source)
+        retlist.push(selected_source.dataset['name']);
+    return retlist;
+}
+
+var sink_r = 255;
+var sink_g = 192;
+var sink_b = 192;
+var sink_faded_r = 192;
+var sink_faded_g = 128;
+var sink_faded_b = 128;
+var source_r = 128;
+var source_g = 192;
+var source_b = 255;
+var source_faded_r = 96;
+var source_faded_g = 128;
+var source_faded_b = 192;
+var route_r = 128;
+var route_g = 255;
+var route_b = 128;
+
 function highlight_active_routes() {
     var routes = [... document.querySelectorAll('span[data-type="RouteDescription"]')];
     var associated_sinks = [];
     var associated_sources = [];
-    if (selected_sink)
+    var parent_sinks = [];
+    var parent_sources = [];
+    if (selected_sink) {
         associated_sinks = get_associated_sinks();
-    if (selected_source)
+        parent_sinks = get_parent_sinks();
+    }
+    if (selected_source) {
         associated_sources = get_associated_sources();
+        parent_sources = get_parent_sources();
+    }
     for (route in routes) {
         var r1 = 0;
         var g1 = 0;
@@ -366,56 +413,56 @@ function highlight_active_routes() {
         if (routes[route] == selected_route) { // Green highlight
             selected = true;
         }
-        if (selected_sink && (routes[route].dataset["sink"] == selected_sink.dataset["name"] || associated_sinks.indexOf(routes[route].dataset["sink"]) >= 0)) {
-            if (selected_source && associated_sources.indexOf(routes[route].dataset["source"]) > -1) { // If both source and sink higlights then do blue to red
-                r1 = 192;
-                g1 = 192;
-                b1 = 256;
-                r2 = 192;
-                g2 = 128;
-                b2 = 128;
+        if (selected_sink && ( routes[route].dataset["sink"] == selected_sink.dataset["name"] || parent_sinks.indexOf(routes[route].dataset["sink"]) > -1)) {
+            if (selected_source && (routes[route].dataset["source"] == selected_source.dataset["name"] || parent_sources.indexOf(routes[route].dataset["source"]) > -1)) { // If both source and sink higlights then do blue to red
+                r1 = source_r;
+                g1 = source_g;
+                b1 = source_b;
+                r2 = sink_r;
+                g2 = sink_g;
+                b2 = sink_b;
                 if (selected) { // Tint it green if highlighted
-                    g1 += 32;
-                    g2 += 32;
+                    g1 += 48;
+                    g2 += 48;
                 }
             } else { // If it's a sink with no source
                 if (selected) { // If sink and selected do green to red
-                    r1 = 128;
-                    g1 = 192;
-                    b1 = 128;
-                    r2 = 192;
-                    g2 = 128;
-                    b2 = 128;
+                    r1 = route_r;
+                    g1 = route_g;
+                    b1 = route_b;
+                    r2 = sink_r;
+                    g2 = sink_g;
+                    b2 = sink_b;
                 } else { // If just sink do just red
-                    r1 = 192;
-                    g1 = 128;
-                    b1 = 128;
+                    r1 = sink_r;
+                    g1 = sink_g;
+                    b1 = sink_b;
                 }
             }
-        } else if (selected_source && associated_sources.indexOf(routes[route].dataset["source"]) > -1) { // If it's a source with no sink do blue
-            r1 = 96;
-            g1 = 128;
-            b1 = 192;
+        } else if (selected_source && (routes[route].dataset["source"] == selected_source.dataset["name"] || parent_sources.indexOf(routes[route].dataset["source"]) > -1)) { // If it's a source with no sink do blue
+            r1 = source_r;
+            g1 = source_g;
+            b1 = source_b;
             if (selected) { // If it's a selected source with no sink do blue to green
-                r2 = 128;
-                g2 = 192;
-                b2 = 128;
+                r2 = route_r;
+                g2 = route_g;
+                b2 = route_b;
             }
          }
         if (selected && !r1 && !b1 && !g1) { // If selected and not source or sink highlighted make it green
-            r1 = 128;
-            g1 = 192;
-            b1 = 128;
+            r1 = route_r;
+            g1 = route_g;
+            b1 = route_b;
         }
         if (!r1 && !b1 && !g1) { // No color
            routes[route].style.backgroundColor  = "";
            routes[route].style.background = "";
         } else if (!r2 && !b2 && !g2) { // One color
            routes[route].style.background = "";
-           routes[route].style.backgroundColor  = "rgb(" + r1 + "," + g1 + "," + b1 +")";
+           routes[route].style.backgroundColor  = "rgba(" + r1 + ", " + g1 + ", " + b1 + ", .6)";
         } else { // Two colors
             routes[route].style.backgroundColor  = "";
-            routes[route].style.background  = "linear-gradient(90deg, rgb(" + r1 + "," + g1 + "," + b1 +"), rgb(" + r2 + "," + g2 + "," + b2 + "))";
+            routes[route].style.background  = "linear-gradient(90deg, rgba(" + r1 + ", " + g1 + ", " + b1 + ", .6), rgba(" + r2 + ", " + g2 + ", " + b2 + ", .6))";
         }
     }
 }
@@ -425,9 +472,9 @@ function highlight_active_sink() {
     
     for (sink in sinks) {
         if (sinks[sink] == selected_sink) {
-            sinks[sink].style.backgroundColor = "rgb(192,128,128)";
+            sinks[sink].style.backgroundColor = "rgba(" + sink_r + ", " + sink_g + ", " + sink_b + ", .6)";
         } else if (selected_sink.dataset["group_members"].search(sinks[sink].dataset['name']) > 0 || sinks[sink].dataset["group_members"].search(selected_sink.dataset['name']) > 0) {
-            sinks[sink].style.backgroundColor = "rgb(128,96,96)";
+            sinks[sink].style.backgroundColor = "rgba(" + sink_faded_r + ", " + sink_faded_g + ", " + sink_faded_b + ", .6)";
         } else {
             sinks[sink].style.backgroundColor = "";
         }
@@ -439,9 +486,9 @@ function highlight_active_source() {
     var sources = [... document.querySelectorAll('span[data-type="SourceDescription"]')];
     for (source in sources) {
         if (sources[source] == selected_source) {
-            sources[source].style.backgroundColor = "rgb(96,128,192)";
+            sources[source].style.backgroundColor = "rgba(" + source_r + ", " + source_g + ", " + source_b + ", .6)";
         } else if (selected_source.dataset["group_members"].search(sources[source].dataset['name']) > 0 || sources[source].dataset["group_members"].search(selected_source.dataset['name']) > 0) {
-            sources[source].style.backgroundColor = "rgb(32,64,128)";
+            sources[source].style.backgroundColor = "rgba(" + source_faded_r + ", " + source_faded_g + ", " + source_faded_b + ", .6)";
         } else  {
             sources[source].style.backgroundColor = "";
         }
@@ -749,6 +796,7 @@ function presetCycle_change(e) {
     presetCycle = e.target.checked;
     restartCycleInterval();
 }
+
 function presetCycleLength_change(e) {
     presetCycleLength = parseInt(e.target.value * 1000);
     restartCycleInterval();
@@ -867,5 +915,9 @@ var mousedown = false;
 addEventListener("mousedown", (event) => { mousedown = true;});
 addEventListener("mouseup", (event) => { mousedown = false;});
 
-setInterval(function(){if (!mousedown)call_api("/body", "get", {}, restart_callback_2);}, 5000);
-setInterval(function(){console.log(mousedown);},1000);
+setInterval(
+    function() {
+        if (!mousedown)
+            call_api("/body", "get", {}, restart_callback_2);
+    }, 5000);
+setInterval(function(){console.log(mousedown);}, 1000);

@@ -14,10 +14,6 @@ API_PORT: int = 443
 """This is the port FastAPI runs on"""
 API_HOST: str = "0.0.0.0"
 """This is the host FastAPI binds to"""
-MP3_STREAM_BITRATE: str = "320k"
-"""MP3 stream bitrate for the web API"""
-MP3_STREAM_SAMPLERATE: int = 48000
-"""MP3 stream sample for the web API"""
 LOGS_DIR: str = "./logs/"
 """This is the directory logs are stored in"""
 CONSOLE_LOG_LEVEL: str = "DEBUG"
@@ -31,17 +27,10 @@ SHOW_FFMPEG_OUTPUT: bool = False
 """Show ffmpeg output"""
 DEBUG_MULTIPROCESSING: bool = False
 """Debugs Multiprocessing to stdout."""
-SOURCE_INACTIVE_TIME_MS: int = 350
-"""Inactive time for a source before it's closed. 
-   Some plugins may need this raised.
-   If this is too long there will be gaps when a source stops sending."""
 CERTIFICATE: str = "/root/screamrouter/cert/cert.pem"
 """SSL Cert"""
 CERTIFICATE_KEY: str = "/root/screamrouter/cert/privkey.pem"
 """SSL Cert Key"""
-SYNCED_TIME_BUFFER: int = 5
-"""Number of ms that synced players play out in the future
-   negative delays can be up to this amount"""
 
 # ##########
 # Internal Options
