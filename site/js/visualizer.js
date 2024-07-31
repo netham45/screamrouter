@@ -1,6 +1,6 @@
 let already_connected = false;
 let visual_already_connected = false;
-let canvas_mode = 0;
+let canvas_mode = 1;
 
 function start_visualizer(sink_ip) {
     const visualtag = document.getElementById("audio_visualizer");
@@ -19,6 +19,8 @@ function start_visualizer(sink_ip) {
     }
 
     document.getElementById("mainWrapper").style.display = "inherit";
+    canvas_mode = 1;
+    canvas_click();
 }
 
 function stop_visualizer() {
@@ -46,10 +48,13 @@ function canvas_click() {
             canvas_holder.style.zIndex = 50;
             break;
         case 1:
+            canvas_holder.style.width = "100%";
+            canvas_holder.style.height = "100%";
             canvas.style.width = "100%";
             canvas.style.height = "100%";
             canvas.style.top = 0;
             canvas.style.left = 0;
+            canvas_holder.style.position = "absolute";
             canvas.style.position = "absolute";
             canvas_holder.style.zIndex = -50;
             if (document.fullscreen) document.exitFullscreen();
@@ -66,7 +71,7 @@ function canvas_click() {
             break;
     }
 
-    canvas_mode = (canvas_mode + 1) % 3;
+    canvas_mode = (canvas_mode + 1) % 2;
 }
 
 let visualizer = null;
