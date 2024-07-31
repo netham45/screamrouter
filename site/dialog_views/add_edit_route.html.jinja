@@ -27,6 +27,6 @@
         </SELECT>
     </SPAN><BR />
     {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
-    {{- buttons.button("dialog_submit_close", 'Add Route' if request_info['add_new'] else 'Edit Route' , "dialog-button", {}, "Submit")}}
-    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button", {}, "Cancel")}}
+    {{- buttons.button("dialogSubmitClose", 'Add Route' if request_info['add_new'] else 'Edit Route' , "dialog-button", {}, "Submit")}}
+    {{- buttons.button("dialogCancel", 'Close' , "dialog-button", {}, "Cancel")}}
 </DIV>

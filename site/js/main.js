@@ -47,6 +47,6 @@ function restart_callback_2(response_text) {
     var selected_element_query = document.getElementById(selected_element_id);
     if (selected_element_query)
         selected_element_query.focus();
-    dialog_cancel();
-    dismiss_shadow();
+    dialogCancel();
+    dismissShadow();
 }

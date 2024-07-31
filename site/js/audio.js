@@ -32,8 +32,6 @@ function stop_audio() {
 }
 
 window.addEventListener("load", () => {
-    const iframe = document.getElementsByTagName("IFRAME")[0];
-    const UI = iframe.contentWindow.UI;
 
     navigator.mediaSession.setActionHandler('play', () => {
         UI.sendKey(0x20, "pause");

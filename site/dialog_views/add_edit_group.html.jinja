@@ -32,7 +32,7 @@
     {# Include the text_number input field from imports/inputs for Delay in ms, setting the min to 0 and max to 5000 #}
     {{ inputs.text_number("Delay", "delay", 0, 5000, True, "Delay (ms)", data['delay']) }}<BR /><BR />
 
-    {# Include two buttons from imports/buttons: dialog_submit_close for submitting and closing the form and dialog_cancel for canceling #}
-    {{ buttons.button("dialog_submit_close", 'Add Group' if request_info['add_new'] else 'Edit Group', "dialog-button", {}, "Submit") }}
-    {{ buttons.button("dialog_cancel", 'Close', "dialog-button", {}, "Cancel") }}
+    {# Include two buttons from imports/buttons: dialog_submit_close for submitting and closing the form and dialogCancel for canceling #}
+    {{ buttons.button("dialogSubmitClose", 'Add Group' if request_info['add_new'] else 'Edit Group', "dialog-button", {}, "Submit") }}
+    {{ buttons.button("dialogCancel", 'Close', "dialog-button", {}, "Cancel") }}
 </DIV>

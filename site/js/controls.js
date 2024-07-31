@@ -1,21 +1,21 @@
 function add_source_button() {
-    dialog_add_source();
+    dialogAddSource();
 }
 
 function add_source_group_button() {
-    dialog_add_source_group();
+    dialogAddSourceGroup();
 }
 
 function add_sink_button() {
-    dialog_add_sink();
+    dialogAddSink();
 }
 
 function add_sink_group_button() {
-    dialog_add_sink_group();
+    dialogAddSinkGroup();
 }
 
 function add_route_button() {
-    dialog_add_route();
+    dialogAddRoute();
 }
 
 let selected_sink = "";
@@ -66,7 +66,7 @@ function enable_disable_source_button() {
 }
 
 function vnc_icon_onclick(e) {
-    dialog_vnc(e.target.parentNode.parentNode.dataset["name"]);
+    dialogVNC(e.target.parentNode.parentNode.dataset["name"]);
 }
 
 function playpause_icon_onclick(e) {
@@ -86,11 +86,11 @@ function equalizer_icon_onclick(e) {
     const type = parent_node.dataset["type"];
     const name = parent_node.dataset["name"];
     if (type === "SourceDescription") {
-        dialog_update_source_equalizer(name);
+        dialogUpdateSourceEqualizer(name);
     } else if (type === "SinkDescription") {
-        dialog_update_sink_equalizer(name);
+        dialogUpdateSinkEqualizer(name);
     } else if (type === "RouteDescription") {
-        dialog_update_route_equalizer(name);
+        dialogUpdateRouteEqualizer(name);
     }
 }
 
@@ -99,11 +99,11 @@ function update_icon_onclick(e) {
     const type = parent_node.dataset["type"];
     const name = parent_node.dataset["name"];
     if (type === "SourceDescription") {
-        dialog_update_source(name);
+        dialogUpdateSource(name);
     } else if (type === "SinkDescription") {
-        dialog_update_sink(name);
+        dialogUpdateSink(name);
     } else if (type === "RouteDescription") {
-        dialog_update_route(name);
+        dialogUpdateRoute(name);
     }
 }
 

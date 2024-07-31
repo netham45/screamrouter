@@ -1,21 +1,22 @@
 function call_api(endpoint, method, data = {}, callback = null_callback) {
-    console.log(`Calling API ${endpoint} as ${method} with data:`, data);
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, endpoint, true);
+    xhr.getResponseHeader("Content-type", "application/json");
+    data = JSON.stringify(data)
+    if (method.toLowerCase() == "post" || method.toLowerCase() == "put")
+        xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
 
-    return fetch(endpoint, {
-        method: method,
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(data)
-    })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
+    xhr.send(data)
+
+    xhr.onload = function () {
+        try {
+            data = JSON.parse(this.responseText);
+            a = data
+            if (data.error != undefined) {
                 alert(data.error);
             }
-            callback(data);
-        })
-        .catch(error => {
-            console.error('Error:', error);
-        });
+        } catch (error) { }
+
+        callback(this.responseText);
+    }
 }

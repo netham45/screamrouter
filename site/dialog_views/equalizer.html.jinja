@@ -1,25 +1,31 @@
 {%- import "imports/buttons.html.jinja" as buttons %}
+
+{% macro equalizer_band(freq, band_id) -%}
+<SPAN CLASS="equalizer">{{ freq }} Hz<BR /><INPUT ALT="{{ freq }} Hertz Band" TITLE="{{ freq }} Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_{{ band_id }}" ORIENT="vertical" NAME="{{ band_id }}" MAX="200" MIN="0" VALUE={{request_info["data"][band_id] * 100}} /></SPAN>
+{%- endmacro %}
+
 <INPUT TYPE="hidden" ID="dialog_action" VALUE="put">
 <INPUT TYPE="hidden" ID="dialog_url" VALUE="/{{request_info['equalizer_holder_type']}}s/{{request_info['equalizer_holder_name']}}">
 <INPUT TYPE="hidden" ID="name" VALUE="{{request_info['equalizer_holder_name']}}">
-<SPAN CLASS="equalizer">65 Hz<BR /><INPUT ALT="65 Hertz Band" TITLE="65 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b1" ORIENT="vertical" NAME="b1" MAX="200" MIN="0" VALUE={{request_info["data"]['b1'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">92 Hz<BR /><INPUT ALT="92 Hertz Band" TITLE="92 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b2" ORIENT="vertical" NAME="b2" MAX="200" MIN="0" VALUE={{request_info["data"]['b2'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">131 Hz<BR /><INPUT ALT="131 Hertz Band" TITLE="131 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b3" ORIENT="vertical" NAME="b3" MAX="200" MIN="0" VALUE={{request_info["data"]['b3'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">185 Hz<BR /><INPUT ALT="185 Hertz Band" TITLE="185 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b4" ORIENT="vertical" NAME="b4" MAX="200" MIN="0" VALUE={{request_info["data"]['b4'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">262 Hz<BR /><INPUT ALT="262 Hertz Band" TITLE="262 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b5" ORIENT="vertical" NAME="b5" MAX="200" MIN="0" VALUE={{request_info["data"]['b5'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">370 Hz<BR /><INPUT ALT="370 Hertz Band" TITLE="370 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b6" ORIENT="vertical" NAME="b6" MAX="200" MIN="0" VALUE={{request_info["data"]['b6'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">523 Hz<BR /><INPUT ALT="523 Hertz Band" TITLE="523 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b7" ORIENT="vertical" NAME="b7" MAX="200" MIN="0" VALUE={{request_info["data"]['b7'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">740 Hz<BR /><INPUT ALT="740 Hertz Band" TITLE="740 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b8" ORIENT="vertical" NAME="b8" MAX="200" MIN="0" VALUE={{request_info["data"]['b8'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">1047 Hz<BR /><INPUT ALT="1047 Hertz Band" TITLE="1047 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b9" ORIENT="vertical" NAME="b9" MAX="200" MIN="0" VALUE={{request_info["data"]['b9'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">1480 Hz<BR /><INPUT ALT="1480 Hertz Band" TITLE="1480 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b10" ORIENT="vertical" NAME="b10" MAX="200" MIN="0" VALUE={{request_info["data"]['b10'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">2093 Hz<BR /><INPUT ALT="2093 Hertz Band" TITLE="2093 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b11" ORIENT="vertical" NAME="b11" MAX="200" MIN="0" VALUE={{request_info["data"]['b11'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">2960 Hz<BR /><INPUT ALT="2960 Hertz Band" TITLE="2960 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b12" ORIENT="vertical" NAME="b12" MAX="200" MIN="0" VALUE={{request_info["data"]['b12'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">4186 Hz<BR /><INPUT ALT="4186 Hertz Band" TITLE="4186 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b13" ORIENT="vertical" NAME="b13" MAX="200" MIN="0" VALUE={{request_info["data"]['b13'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">5920 Hz<BR /><INPUT ALT="5920 Hertz Band" TITLE="5920 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b14" ORIENT="vertical" NAME="b14" MAX="200" MIN="0" VALUE={{request_info["data"]['b14'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">8372 Hz<BR /><INPUT ALT="8372 Hertz Band" TITLE="8372 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b15" ORIENT="vertical" NAME="b15" MAX="200" MIN="0" VALUE={{request_info["data"]['b15'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">11840 Hz<BR /><INPUT ALT="11840 Hertz Band" TITLE="11840 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b16" ORIENT="vertical" NAME="b16" MAX="200" MIN="0" VALUE={{request_info["data"]['b16'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">16744 Hz<BR /><INPUT ALT="16744 Hertz Band" TITLE="16744 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b17" ORIENT="vertical" NAME="b17" MAX="200" MIN="0" VALUE={{request_info["data"]['b17'] * 100}} /></SPAN>
-<SPAN CLASS="equalizer">20000 Hz<BR /><INPUT ALT="20000 Hertz Band" TITLE="20000 Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_b18" ORIENT="vertical" NAME="b18" MAX="200" MIN="0" VALUE={{request_info["data"]['b18'] * 100}} /></SPAN>
-{{- buttons.button("dialog_submit_noclose", 'Update Equalizer' , "dialog-button", {}, "Apply Changes")}}
-{{- buttons.button("dialog_equalizer_default", 'Default' , "dialog-button", {}, "Default Equalizer Settings")}}
-{{- buttons.button("dialog_cancel", 'Close' , "dialog-button", {}, "Close Equalizer")}}
+
+{{ equalizer_band(65, 'b1') }}
+{{ equalizer_band(92, 'b2') }}
+{{ equalizer_band(131, 'b3') }}
+{{ equalizer_band(185, 'b4') }}
+{{ equalizer_band(262, 'b5') }}
+{{ equalizer_band(370, 'b6') }}
+{{ equalizer_band(523, 'b7') }}
+{{ equalizer_band(740, 'b8') }}
+{{ equalizer_band(1047, 'b9') }}
+{{ equalizer_band(1480, 'b10') }}
+{{ equalizer_band(2093, 'b11') }}
+{{ equalizer_band(2960, 'b12') }}
+{{ equalizer_band(4186, 'b13') }}
+{{ equalizer_band(5920, 'b14') }}
+{{ equalizer_band(8372, 'b15') }}
+{{ equalizer_band(11840, 'b16') }}
+{{ equalizer_band(16744, 'b17') }}
+{{ equalizer_band(20000, 'b18') }}
+{{- buttons.button("dialogSubmitNoClose", 'Update Equalizer' , "dialog-button", {}, "Apply Changes")}}
+{{- buttons.button("dialogEqualizerDefault", 'Default' , "dialog-button", {}, "Default Equalizer Settings")}}
+{{- buttons.button("dialogCancel", 'Close' , "dialog-button", {}, "Close Equalizer")}}

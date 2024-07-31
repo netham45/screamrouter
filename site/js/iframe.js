@@ -24,8 +24,8 @@ function iframe_resize() {
         iframe.style.height = "600px";
     }
     if (matchMedia('(pointer:coarse)').matches)
-        document.getElementById("vnc-iframe").contentDocument.getElementById("noVNC_fullscreen_button").onclick = function() {dialog_cancel();}
-    document.getElementById("vnc-iframe").contentDocument.getElementById("noVNC_disconnect_button").onclick = function() {dialog_cancel();}
+        document.getElementById("vnc-iframe").contentDocument.getElementById("noVNC_fullscreen_button").onclick = function() {dialogCancel();}
+    document.getElementById("vnc-iframe").contentDocument.getElementById("noVNC_disconnect_button").onclick = function() {dialogCancel();}
 }
 
 function vnc_fullscreen_click() { 
@@ -34,5 +34,5 @@ function vnc_fullscreen_click() {
 
 addEventListener("fullscreenchange", (event) => {
       if (!document.fullscreenElement && document.getElementsByClassName("vnc-on-click").length > 0 && matchMedia('(pointer:coarse)').matches)
-        dialog_cancel();
+        dialogCancel();
 });

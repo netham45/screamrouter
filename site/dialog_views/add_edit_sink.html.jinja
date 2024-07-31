@@ -43,6 +43,6 @@
     <LABEL FOR="checkbox">Time Sync Protocol</LABEL>
     <INPUT TYPE="checkbox" NAME="time_sync" ID="time_sync"{{ " checked" if data['time_sync'] }}><BR/>
     {{- inputs.text_number("Timesync Delay in ms", "time_sync_delay", 0, 5000, True, "Timesync Delay", data['time_sync_delay']) }}<BR /><BR />
-    {{- buttons.button("dialog_submit_close", 'Add Sink' if request_info['add_new'] else 'Edit Sink' , "dialog-button", {}, "Submit")}}
-    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button", {}, "Cancel")}}
+    {{- buttons.button("dialogSubmitClose", 'Add Sink' if request_info['add_new'] else 'Edit Sink' , "dialog-button", {}, "Submit")}}
+    {{- buttons.button("dialogCancel", 'Close' , "dialog-button", {}, "Cancel")}}
 </DIV>

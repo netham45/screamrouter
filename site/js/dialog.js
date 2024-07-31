@@ -1,16 +1,16 @@
-function show_dialog_callback(response_text) {
-    show_shadow();
+function showDialogCallback(response_text) {
+    showShadow();
     document.getElementById("dialog").style.display = "block";
     document.getElementById("dialog").innerHTML = response_text;
     document.getElementById("dialog").scrollIntoView();
 }
 
-async function call_dialog(url, source_name = "") {
+async function callDialog(url, source_name = "") {
     let full_url = "site/" + url;
     if (source_name) {
         full_url += "/" + source_name;
     }
-    call_api(full_url, "GET", "", show_dialog_callback);
+    call_api(full_url, "GET", "", showDialogCallback);
     if (url === "vnc") {
         await new Promise(r => setTimeout(r, 500));
         if (matchMedia('(pointer:coarse)').matches)
@@ -18,65 +18,65 @@ async function call_dialog(url, source_name = "") {
     }
 }
 
-function dialog_add_source() {
-    call_dialog("add_source");
+function dialogAddSource() {
+    callDialog("add_source");
 }
 
-function dialog_add_source_group() {
-    call_dialog("add_source_group");
+function dialogAddSourceGroup() {
+    callDialog("add_source_group");
 }
 
-function dialog_vnc(source_name) {
-    call_dialog("vnc", source_name);
+function dialogVNC(source_name) {
+    callDialog("vnc", source_name);
 }
 
-function dialog_update_source(source_name) {
-    call_dialog("edit_source", source_name);
+function dialogUpdateSource(source_name) {
+    callDialog("edit_source", source_name);
 }
 
-function dialog_update_source_equalizer(source_name) {
-    call_dialog("edit_source", source_name + "/equalizer");
+function dialogUpdateSourceEqualizer(source_name) {
+    callDialog("edit_source", source_name + "/equalizer");
 }
 
-function dialog_add_sink() {
-    call_dialog("add_sink");
+function dialogAddSink() {
+    callDialog("add_sink");
 }
 
-function dialog_add_sink_group() {
-    call_dialog("add_sink_group");
+function dialogAddSinkGroup() {
+    callDialog("add_sink_group");
 }
 
-function dialog_update_sink(sink_name) {
-    call_dialog("edit_sink", sink_name);
+function dialogUpdateSink(sink_name) {
+    callDialog("edit_sink", sink_name);
 }
 
-function dialog_update_sink_equalizer(sink_name) {
-    call_dialog("edit_sink", sink_name + "/equalizer");
+function dialogUpdateSinkEqualizer(sink_name) {
+    callDialog("edit_sink", sink_name + "/equalizer");
 }
 
-function dialog_add_route() {
-    call_dialog("add_route");
+function dialogAddRoute() {
+    callDialog("add_route");
 }
 
-function dialog_update_route(route_name) {
-    call_dialog("edit_route", route_name);
+function dialogUpdateRoute(route_name) {
+    callDialog("edit_route", route_name);
 }
 
-function dialog_update_route_equalizer(route_name) {
-    call_dialog("edit_route", route_name + "/equalizer");
+function dialogUpdateRouteEqualizer(route_name) {
+    callDialog("edit_route", route_name + "/equalizer");
 }
 
-function dialog_cancel() {
+function dialogCancel() {
     document.getElementById("dialog").style.display = "none";
     document.getElementById("dialog").innerHTML = "";
-    dismiss_shadow();
+    dismissShadow();
 }
 
-function dialog_equalizer_default() {
+function dialogEqualizerDefault() {
     document.querySelectorAll("DIV#dialog INPUT[TYPE='range']").forEach(input => input.value = 100);
 }
 
-function dialog_submit(close) {
+function dialogSubmit(close) {
     const result = {};
     let url = "";
     let action = "";
@@ -112,20 +112,21 @@ function dialog_submit(close) {
     }
     call_api(url, action, result, close ? restart_callback : undefined);
 }
-function dialog_submit_close() {
-    dialog_submit(true);
+
+function dialogSubmitClose() {
+    dialogSubmit(true);
 }
 
-function dialog_submit_noclose() {
-    dialog_submit(false);
+function dialogSubmitNoClose() {
+    dialogSubmit(false);
 }
 
-function show_shadow() {
+function showShadow() {
     document.getElementById("shadow").style.display = "block";
     document.getElementById("enable_disable").inert = true;
 }
 
-function dismiss_shadow() {
+function dismissShadow() {
     document.getElementById("shadow").style.display = "none";
     document.getElementById("enable_disable").inert = false;
 }
