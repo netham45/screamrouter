@@ -10,7 +10,7 @@
         {%- for name, datum in data %} data-{{name}}="{{datum}}"{% endfor %} data-type="{{data.__class__.__name__}}" {{"selected" if checked}}>
         {{label}}
         <br />
-        <div id="{{data.name}}_options" class="option-buttons">
+        <div id="{{data.name}}_options" class="option-buttons"><BR />
             {{- button('🎚️', shortalt ~ ' Equalizer', shortalt ~ ' Equalizer', 'equalizer_icon_onclick(event)') -}}
             {{- button('⚙️', shortalt ~ ' Settings', shortalt ~ ' Settings', 'update_icon_onclick(event)') -}}
             {{- button('🔊' if data["enabled"] else '🔇', 'Disable ' ~ shortalt if data["enabled"] else 'Enable ' ~ shortalt, 'Disable ' ~ shortalt if data["enabled"] else 'Enable ' ~ shortalt, 'volume_icon_onclick(event)') }}
