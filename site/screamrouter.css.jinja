@@ -80,15 +80,13 @@ DIV#reload {
 }
 
 DIV.main-select {
-    height: 100%;
-    text-align: left;
-    width: 101%;
-    margin-left: -1%;
-    background:none;
-    width: 101%;
-    background-image: linear-gradient(rgba(60,221,90,.45),rgba(153,153,255,.45));
-    overflow: hidden;
-    padding-left: 2%;
+    font-family: Padauk, sans-serif;
+    overflow: auto;
+    max-height: 400px;
+    text-align: center;
+    width: 100%;
+    background: none;
+    background-image: linear-gradient(rgba(60,221,90,.7),rgba(60,180,90,.5));
     font-size: 1.25vw;
     color: #FFFFFF;
     border: none;
@@ -97,13 +95,20 @@ DIV.main-select {
     border-radius: 25px;
 }
 
-SPAN.option {
+DIV.main-select > SPAN:nth-child(odd) {
+    background-image: linear-gradient(rgba(0,0,0,.1), rgba(0,0,0,.1));
+}
+
+SPAN.option{
+    padding-left: 2%;
     width: 95%;
     display: inline-block;
     text-align: left;
     color: #000000;
     border-radius: 15px 15px 15px 15px;
     border: 0px 0px 2px 0px;
+    padding-top: 5px;
+    padding-bottom: 5px;
 }
 
 select[multiple] option:checked {
@@ -132,19 +137,19 @@ HTML, BODY {
 
 
 DIV#randomcontainer1 {
-    background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 200) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
-    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;
+    /*background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 200) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;*/
     float: left;
 }
 
 DIV#randomcontainer2 {
-    background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
-    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;
+    /*background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;*/
 }
 
 DIV#randomcontainer3 {
-    background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
-    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;
+/*    background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;*/
     float: right;
 }
 
@@ -158,16 +163,16 @@ DIV#randomcontainer4 {
 }
 
 DIV#randomcontainer5 {
-    background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
-    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;
+    /*background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;*/
     overflow: hidden;
     border-radius: 25px;
     float: left;
 }
 
 DIV#randomcontainer6 {
-    background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
-    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;
+    /*background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;*/
     overflow: hidden;
     border-radius: 25px;
 }
@@ -400,3 +405,12 @@ DIV#enable_disable {
         height: 100%;
     }
 }
+
+DIV.option-buttons {
+    display: none;
+}
+
+SPAN.option-selected DIV.option-buttons {
+    display: block !important;
+}
+

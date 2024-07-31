@@ -22,6 +22,7 @@ using namespace std;
 #define MAX_CHANNELS 8
 #define EQ_BANDS 18
 #define TAG_SIZE 45
+#define NORMALIZE_EQ_GAIN 1
 
 bool running = true; // Flag to control loop execution
 
@@ -173,6 +174,14 @@ float get_biquad_band_db(int i)
 
 void setup_biquad()
 { // Set up the biquad filters for the equalizer, sets filters
+#ifdef NORMALIZE_EQ_GAIN
+    float max_gain = 0;
+    for (int i=0;i<EQ_BANDS;i++)
+        if (eq[i] > max_gain)
+            max_gain = eq[i];
+    for (int i=0;i<EQ_BANDS;i++)
+        eq[i] /= max_gain;
+#endif
     for (int channel = 0; channel < MAX_CHANNELS; channel++)
     {
         filters[channel][0] = new Biquad(bq_type_peak, 65.406392 / output_samplerate, 1.0, get_biquad_band_db(0));

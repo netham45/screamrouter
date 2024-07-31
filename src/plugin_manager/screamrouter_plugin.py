@@ -78,12 +78,17 @@ class ScreamRouterPlugin(multiprocessing.Process):
         self.stop_plugin()
 
         if constants.KILL_AT_CLOSE:
-            self.kill()
+            try:
+                self.kill()
+            except AttributeError:
+                pass
         if constants.WAIT_FOR_CLOSES:
             try:
                 self.join(5)
             except TimeoutExpired:
                 logger.warning("Plugin failed to close")
+            except AttributeError:
+                pass
         logger.info("[Plugin] Stopped")
         close_pipe(self.screamrouter_read_fd)
         close_pipe(self.screamrouter_write_fd)

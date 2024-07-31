@@ -1,14 +1,25 @@
+{# Import necessary Jinja templates #}
 {%- import "imports/inputs.html.jinja" as inputs %}
 {%- import "imports/selects.html.jinja" as selects %}
 {%- import "imports/buttons.html.jinja" as buttons %}
+
+{# Set variables from request information #}
 {%- set data = request_info['data'] %}
 {%- set dataset = sources if holder_type == "source" else sinks %}
-<H3>{{ 'Add Group' if request_info['add_new'] else 'Edit Group' }}</H3>
-<DIV ID="dialog_add_edit_group">
-    <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
-    <INPUT TYPE="hidden" ID="dialog_url" VALUE="/{{holder_type}}s/{{holder_name}}">
-    <INPUT TYPE="hidden" ID="is_group" VALUE="true">
-    <LABEL FOR="name">Group Name</LABEL><INPUT TYPE="text" ID="name" VALUE="{{holder_name}}"><BR />
+
+<H3>{{ 'Add Group' if request_info['add_new'] else 'Edit Group' }}</H3> <!-- Display either 'Add Group' or 'Edit Group' depending on the value of add_new in request_info. -->
+
+<DIV ID="dialog_add_edit_group"> <!-- Create a div to contain the form elements for adding/editing a group. -->
+    <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}"> <!-- Set the HTTP method based on add_new value. -->
+    <INPUT TYPE="hidden" ID="dialog_url" VALUE="/{{holder_type}}s/{{holder_name}}"> <!-- Define the URL for the POST or PUT request. -->
+    <INPUT TYPE="hidden" ID="is_group" VALUE="true"> <!-- Set is_group to true since this form is for adding/editing a group. -->
+
+    {# Create an input field for Group Name and set its value based on the holder_name variable #}
+    <LABEL FOR="name">Group Name</LABEL>
+    <INPUT TYPE="text" ID="name" VALUE="{{holder_name}}">
+    <BR />
+
+    {# Create a select box for Group Members with multiple selection enabled. Only show entries other than the one corresponding to holder_name #}
     <LABEL FOR="group_members">Group Members</LABEL>
     <SELECT ID="group_members" SIZE="{{(dataset | length) - 1}}" MULTIPLE>
         {%- for entry in dataset %}
@@ -17,7 +28,11 @@
             {%- endif %}
         {%- endfor %}
     </SELECT>
-    {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
-    {{- buttons.button("dialog_submit_close", 'Add Group' if request_info['add_new'] else 'Edit Group' , "dialog-button", {}, "Submit")}}
-    {{- buttons.button("dialog_cancel", 'Close' , "dialog-button", {}, "Cancel")}}
+    
+    {# Include the text_number input field from imports/inputs for Delay in ms, setting the min to 0 and max to 5000 #}
+    {{ inputs.text_number("Delay", "delay", 0, 5000, True, "Delay (ms)", data['delay']) }}<BR /><BR />
+
+    {# Include two buttons from imports/buttons: dialog_submit_close for submitting and closing the form and dialog_cancel for canceling #}
+    {{ buttons.button("dialog_submit_close", 'Add Group' if request_info['add_new'] else 'Edit Group', "dialog-button", {}, "Submit") }}
+    {{ buttons.button("dialog_cancel", 'Close', "dialog-button", {}, "Cancel") }}
 </DIV>

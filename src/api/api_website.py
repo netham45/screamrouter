@@ -65,6 +65,7 @@ class APIWebsite():
         self.main_api.get(f"{SITE_PREFIX}/edit_route/{{route_name}}/equalizer",
                           tags=["Site Resources"])(self.edit_route_equalizer)
         self.main_api.mount("/site/noVNC", StaticFiles(directory="./site/noVNC"), name="noVNC")
+        self.main_api.mount("/site/js", StaticFiles(directory="./site/js"), name="Site Javascript")
         self._templates = Jinja2Templates(directory="./site/")
         mimetypes.add_type('application/javascript', '.js')
         mimetypes.add_type('text/css', '.css')

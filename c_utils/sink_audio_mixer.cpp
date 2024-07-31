@@ -105,7 +105,11 @@ inline void setup_udp() { // Sets up the UDP socket for output
     udp_dest_addr.sin_family = AF_INET;
     udp_dest_addr.sin_port = htons(output_port);
     inet_pton(AF_INET, output_ip.c_str(), &udp_dest_addr.sin_addr);
+    int dscp = 63;
+    int val = dscp << 2;
+    setsockopt(udp_output_fd, IPPROTO_IP, IP_TOS, &val, sizeof(val));
     if (tcp_output_fd > 0) {
+        setsockopt(tcp_output_fd, IPPROTO_IP, IP_TOS, &val, sizeof(val));
         fd_set fd;
         timeval tv;
         FD_ZERO(&fd);
@@ -179,7 +183,7 @@ inline bool check_fd_active(int fd, bool is_active) {
             cout << "Select failure: " << errno << strerror(errno) << endl;
         is_active = FD_ISSET(fd, &read_fds);
         if (prev_state != is_active)
-            log("Setting Input FD #" + to_string(fd) + (fd?" Active":" Inactive"));
+            log("Setting Input FD #" + to_string(fd) + (is_active ?" Active":" Inactive"));
         return is_active;
 }
 

@@ -50,7 +50,7 @@ WAIT_FOR_CLOSES: bool = False
 """On configuration reload, wait for existing processes to close
    before starting new processes, mostly for testing.
    Configuration changes reload faster when set to False."""
-KILL_AT_CLOSE: bool = False
+KILL_AT_CLOSE: bool = True
 """Closes quickly but leaves lingering processes, doesn't reload any faster
    than disabling WAIT_FOR_CLOSES."""
 TAG_MAX_LENGTH: int = 45
