@@ -1,8 +1,10 @@
 function call_api(endpoint, method, data = {}, callback = null_callback) {
+    data = JSON.stringify(data)
+    console.log("Calling API " + endpoint + " as " + method + " With data " + data);
     const xhr = new XMLHttpRequest();
     xhr.open(method, endpoint, true);
     xhr.getResponseHeader("Content-type", "application/json");
-    data = JSON.stringify(data)
+    
     if (method.toLowerCase() == "post" || method.toLowerCase() == "put")
         xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
 

@@ -110,6 +110,7 @@ function dialogSubmit(close) {
     if (Object.keys(equalizer).length > 0) {
         result["equalizer"] = equalizer;
     }
+    console.log("Calling API");
     call_api(url, action, result, close ? restart_callback : undefined);
 }
 
