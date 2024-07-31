@@ -38,9 +38,9 @@ const COLORS = {
         g: 192,
         b: 192,
         faded: {
-            r: 192,
-            g: 128,
-            b: 128
+            r: 128,
+            g: 96,
+            b: 96
         }
     },
     source: {
@@ -48,9 +48,9 @@ const COLORS = {
         g: 192,
         b: 255,
         faded: {
-            r: 96,
-            g: 128,
-            b: 192
+            r: 64,
+            g: 96,
+            b: 128
         }
     },
     route: {
@@ -163,68 +163,17 @@ function highlight_active_source() {
     highlight_active_routes();
 }
 
-function update_source_volume_selected() {
-    const volumeElement = document.getElementById("source_volume");
-
-    if (!selected_source) {
-        volumeElement.disabled = true;
-        volumeElement.value = 100;
-        return;
-    }
-
-    volumeElement.alt = `Source ${selected_source.dataset["name"]} Volume`;
-    volumeElement.title = `Source ${selected_source.dataset["name"]} Volume`;
-    volumeElement.value = parseFloat(selected_source.dataset["volume"]) * 100;
-    volumeElement.disabled = false;
-    volumeElement.focus();
-}
-
-function update_sink_volume_selected() {
-    const volumeElement = document.getElementById("sink_volume");
-
-    if (!selected_sink) {
-        volumeElement.disabled = true;
-        volumeElement.value = 100;
-        return;
-    }
-
-    volumeElement.alt = `Sink ${selected_sink.dataset["name"]} Volume`;
-    volumeElement.title = `Sink ${selected_sink.dataset["name"]} Volume`;
-    volumeElement.value = parseFloat(selected_sink.dataset["volume"]) * 100;
-    volumeElement.disabled = false;
-    volumeElement.focus();
-}
-
-function update_route_volume_selected() {
-    const volumeElement = document.getElementById("route_volume");
-
-    if (!selected_route) {
-        volumeElement.disabled = true;
-        volumeElement.value = 100;
-        return;
-    }
-
-    volumeElement.alt = `Route ${selected_route.dataset["name"]} Volume`;
-    volumeElement.title = `Route ${selected_route.dataset["name"]} Volume`;
-    volumeElement.value = parseFloat(selected_route.dataset["volume"]) * 100;
-    volumeElement.disabled = false;
-    volumeElement.focus();
-}
-
 function option_onclick(e) {
     const node = e.target;
 
     if (node.dataset["type"] === "SourceDescription") {
         selected_source = selected_source === node ? "" : node;
-        update_source_volume_selected();
         highlight_active_source();
     } else if (node.dataset["type"] === "SinkDescription") {
         selected_sink = selected_sink === node ? "" : node;
-        update_sink_volume_selected();
         highlight_active_sink();
     } else if (node.dataset["type"] === "RouteDescription") {
         selected_route = selected_route === node ? "" : node;
-        update_route_volume_selected();
         highlight_active_routes();
     }
 }

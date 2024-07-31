@@ -1,35 +1,37 @@
 """Constant variables"""
 
+import os
+
 # ##########
 # User Configurable Options
 # ##########
 
-SCREAM_RECEIVER_PORT: int = 16401
+SCREAM_RECEIVER_PORT: int = int(os.getenv("SCREAM_RECEIVER_PORT", "16401"))
 """This is the port to receive Scream data at"""
-RTP_RECEIVER_PORT: int = 40000
+RTP_RECEIVER_PORT: int = int(os.getenv("RTP_RECEIVER_PORT", "40000"))
 """This is the port to receive RTP data at"""
-SINK_PORT: int = 4010
+SINK_PORT: int = int(os.getenv("SINK_PORT", "4010"))
 """This is the port for a Scream Sink"""
-API_PORT: int = 443
+API_PORT: int = int(os.getenv("API_PORT", "443"))
 """This is the port FastAPI runs on"""
-API_HOST: str = "0.0.0.0"
+API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
 """This is the host FastAPI binds to"""
-LOGS_DIR: str = "./logs/"
+LOGS_DIR: str = os.getenv("LOGS_DIR", "./logs/")
 """This is the directory logs are stored in"""
-CONSOLE_LOG_LEVEL: str = "DEBUG"
-"""Log level for stdout. Log level for stdout
+CONSOLE_LOG_LEVEL: str = os.getenv("CONSOLE_LOG_LEVEL", "DEBUG")
+"""Log level for stdout
    Valid values are "DEBUG", "INFO", "WARNING", "ERROR"."""
-LOG_TO_FILE: bool = True
+LOG_TO_FILE: bool = os.getenv("LOG_TO_FILE", "True").lower() == "true"
 """Determines rather logs are written to files"""
-LOG_ENTRIES_TO_RETAIN: int = 2
+LOG_ENTRIES_TO_RETAIN: int = int(os.getenv("LOG_ENTRIES_TO_RETAIN", "2"))
 """Number of previous runs to retain logs for"""
-SHOW_FFMPEG_OUTPUT: bool = False
+SHOW_FFMPEG_OUTPUT: bool = os.getenv("SHOW_FFMPEG_OUTPUT", "False").lower() == "true"
 """Show ffmpeg output"""
-DEBUG_MULTIPROCESSING: bool = False
+DEBUG_MULTIPROCESSING: bool = os.getenv("DEBUG_MULTIPROCESSING", "False").lower() == "true"
 """Debugs Multiprocessing to stdout."""
-CERTIFICATE: str = "/root/screamrouter/cert/cert.pem"
+CERTIFICATE: str = os.getenv("CERTIFICATE", "/root/screamrouter/cert/cert.pem")
 """SSL Cert"""
-CERTIFICATE_KEY: str = "/root/screamrouter/cert/privkey.pem"
+CERTIFICATE_KEY: str = os.getenv("CERTIFICATE_KEY", "/root/screamrouter/cert/privkey.pem")
 """SSL Cert Key"""
 
 # ##########

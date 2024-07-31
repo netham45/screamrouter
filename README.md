@@ -110,15 +110,12 @@ These are the options in constants.py:
 * `SINK_PORT` `Default: 4010` This is the port for a Scream Sink
 * `API_PORT` `Default: 8080` This is the port FastAPI runs on
 * `API_HOST` `Default: "0.0.0.0"` This is the host FastAPI binds to
-* `MP3_STREAM_BITRATE` `Default: "320k"` MP3 stream bitrate for the web API
-* `MP3_STREAM_SAMPLERATE` `Default: 48000` MP3 stream sample for the web API
 * `LOGS_DIR` `Default: "./logs/"` This is the directory logs are stored in
 * `CONSOLE_LOG_LEVEL` `Default: "INFO"` Log level for stdout, valid values are `"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"`
 * `LOG_TO_FILE` `Default: True` Determines rather logs are written to files
 * `CLEAR_LOGS_ON_RESTART` `Default: True` Determines rather logs are cleared on restart
 * `DEBUG_MULTIPROCESSING`  `Default: False` Debugs Multiprocessing to stdout.
 * `SHOW_FFMPEG_OUTPUT` `Default: False` Show ffmpeg output to stdout.
-* `SOURCE_INACTIVE_TIME_MS` `Default: 150` Inactive time for a source before it's closed. Some plugins may need this raised. If this is too long there will be gaps when a source stops sending. Having the value as short as possible without false positives will perform the best.
 * `CERTIFICATE` Needs set to the path to your SSL certificate
 * `CERTIFICATE_KEY` Needs set to the path to your SSL certificate private key
 

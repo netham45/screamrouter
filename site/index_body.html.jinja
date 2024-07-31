@@ -7,9 +7,7 @@
                     Sources
                 </DIV>
                 <DIV CLASS="section-buttons select-container">
-                    <INPUT TABINDEX="0" TYPE="range" ID="source_volume" ONCHANGE="source_volume_change()" ALT="Source Volume" TITLE="Source Volume" DISABLED>
-                    <DIV ID="select-sources" CLASS="main-select" SIZE="{{sources | length}}"
-                        ONCHANGE="select_source_change()" MULTIPLE>
+                    <DIV ID="select-sources" CLASS="main-select" SIZE="{{sources | length}}">
                         {%- set options = namespace(options=[]) %}
                         {%- for source in sources %}
                         {{- source.type }}
@@ -35,9 +33,7 @@
                     Routes
                 </DIV>
                 <DIV CLASS="section-buttons select-container">
-                    <INPUT TABINDEX="0" TYPE="range" ID="route_volume" ONCHANGE="route_volume_change()" ALT="Route Volume" TITLE="Route Volume" DISABLED>
-                    <DIV ID="select-routes" CLASS="main-select" SIZE="{{routes | length}}"
-                        ONCHANGE="select_route_change()" MULTIPLE>
+                    <DIV ID="select-routes" CLASS="main-select" SIZE="{{routes | length}}">
                         {%- set options = namespace(options=[]) %}
                         {%- for route in routes %}
                         {{- route.type }}
@@ -64,9 +60,7 @@
                     Sinks
                 </DIV>
                 <DIV CLASS="section-buttons select-container">
-                    <INPUT TABINDEX="0" TYPE="range" ID="sink_volume" ONCHANGE="sink_volume_change()" ALT="Sink Volume" TITLE="Sink Volume" DISABLED>
-                    <DIV ID="select-sinks" CLASS="main-select" SIZE="{{sinks | length}}" ONCHANGE="select_sink_change()"
-                        MULTIPLE>
+                    <DIV ID="select-sinks" CLASS="main-select" SIZE="{{sinks | length}}">
                         {%- set options = namespace(options=[]) %}
                         {%- for sink in sinks %}
                         {%- set enabled_class_str = "enabled" if sink.enabled else "disabled" %}

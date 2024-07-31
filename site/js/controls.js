@@ -19,27 +19,15 @@ function add_route_button() {
 }
 
 let selected_sink = "";
-function sink_volume_change() {
-    const volume_element = document.getElementById("sink_volume");
-    const volume_level = volume_element.value / 100;
-    selected_sink.dataset["volume"] = volume_level;
-    call_api(`/sinks/${selected_sink.dataset["name"]}/volume/${volume_level}`, "get");
-}
-
 let selected_source = "";
-function source_volume_change() {
-    const volume_element = document.getElementById("source_volume");
-    const volume_level = volume_element.value / 100;
-    selected_source.dataset["volume"] = volume_level;
-    call_api(`/sources/${selected_source.dataset["name"]}/volume/${volume_level}`, "get");
-}
-
 let selected_route = "";
-function route_volume_change() {
-    const volume_element = document.getElementById("route_volume");
+
+function volume_slider_change(e) {
+    const volume_element = e.target;
+    const option_element = e.target.parentNode.parentNode;
+    const type = option_element.dataset["type"].replace("Description","").toLowerCase();
     const volume_level = volume_element.value / 100;
-    selected_route.dataset["volume"] = volume_level;
-    call_api(`/routes/${selected_route.dataset["name"]}/volume/${volume_level}`, "get");
+    call_api(`/${type}s/${option_element.dataset["name"]}/volume/${volume_level}`, "get");
 }
 
 function visualizer_icon_onclick(e) {

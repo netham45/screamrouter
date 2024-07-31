@@ -82,7 +82,6 @@ DIV#reload {
 DIV.main-select {
     font-family: Padauk, sans-serif;
     overflow: auto;
-    max-height: 400px;
     text-align: center;
     width: 100%;
     background: none;
@@ -109,6 +108,7 @@ SPAN.option{
     border: 0px 0px 2px 0px;
     padding-top: 5px;
     padding-bottom: 5px;
+    margin-bottom: 1px;
 }
 
 select[multiple] option:checked {
@@ -248,8 +248,10 @@ DIV#shadow {
 }
 
 span.button-icon {
-    font-size: 16pt;
+    font-size: 24pt;
+    text-shadow: 0 0 2px #777, 0 0 12px #444;
 }
+
 BUTTON#add_sink_group_button, BUTTON#add_source_group_button {
     letter-spacing: -6px;
     text-align: left;
@@ -413,4 +415,5 @@ DIV.option-buttons {
 SPAN.option-selected DIV.option-buttons {
     display: block !important;
 }
+
 

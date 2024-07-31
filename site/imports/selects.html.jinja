@@ -20,12 +20,12 @@
                 {{- button('✨', 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'visualizer_icon_onclick(event)') -}}
             {%- endif -%}
             {%- if (data.vnc_ip and data.vnc_port) -%}
-                <br />
                 {{- button('🖥️', 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'vnc_icon_onclick(event)') -}}
                 {{- button('⏮️', 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'previous_track_icon_onclik(event)') -}}
                 {{- button('⏯️', 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'playpause_icon_onclick(event)') -}}
                 {{- button('⏭️', 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'next_track_icon_onclick(event)') -}}
             {%- endif -%}
+            <INPUT TABINDEX="0" TYPE="range" ID="{{shortalt}}_volume" ONCHANGE="volume_slider_change(event)" ALT="{{shortalt}} Volume" TITLE="{{shortalt}} Volume" VALUE="{{data['volume'] * 100}}">
         </div>
     </span>
 {%- endmacro %}
