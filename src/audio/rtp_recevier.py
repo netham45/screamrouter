@@ -6,6 +6,7 @@ from typing import List, Optional
 
 import src.constants.constants as constants
 from src.screamrouter_logger.screamrouter_logger import get_logger
+
 logger = get_logger(__name__)
 
 class RTPReceiver():

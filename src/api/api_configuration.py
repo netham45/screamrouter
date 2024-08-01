@@ -34,6 +34,8 @@ class APIConfiguration():
             tags=["Sink Configuration"])(self._configuration_controller.update_sink_volume)
         self._app.post("/sinks/{sink_name}/equalizer/",
             tags=["Sink Configuration"])(self._configuration_controller.update_sink_equalizer)
+        self._app.get("/sinks/{sink_name}/reorder/{new_index}",
+            tags=["Sink Configuration"])(self._configuration_controller.update_sink_position)
         self._app.get("/sources",
             tags=["Source Configuration"])(self._configuration_controller.get_sources)
         self._app.post("/sources",
@@ -56,6 +58,8 @@ class APIConfiguration():
             tags=["Source Configuration"])(self._configuration_controller.source_next_track)
         self._app.get("/sources/{source_name}/prevtrack",
             tags=["Source Configuration"])(self._configuration_controller.source_previous_track)
+        self._app.get("/sources/{source_name}/reorder/{new_index}",
+            tags=["Source Configuration"])(self._configuration_controller.update_source_position)
         self._app.get("/routes",
             tags=["Route Configuration"])(self._configuration_controller.get_routes)
         self._app.post("/routes",
@@ -72,6 +76,8 @@ class APIConfiguration():
             tags=["Route Configuration"])(self._configuration_controller.update_route_volume)
         self._app.post("/routes/{route_name}/equalizer/",
             tags=["Route Configuration"])(self._configuration_controller.update_route_equalizer)
+        self._app.get("/routes/{route_name}/reorder/{new_index}",
+            tags=["Route Configuration"])(self._configuration_controller.update_route_position)
         self._app.add_exception_handler(Exception, self.__api_exception_handler)
         logger.info("[API] API loaded")
 

@@ -2,9 +2,9 @@
 import asyncio
 import multiprocessing
 import multiprocessing.managers
-from os import close
 import queue
 import threading
+from os import close
 from subprocess import TimeoutExpired
 from typing import List, Optional
 

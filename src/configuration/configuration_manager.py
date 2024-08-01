@@ -9,26 +9,26 @@ from multiprocessing import Process
 from subprocess import TimeoutExpired
 from typing import List, Tuple
 
+import dns.nameserver
+import dns.rdtypes
 import dns.rdtypes.ANY
 import dns.rdtypes.ANY.PTR
 import dns.resolver
-import dns.nameserver
-import dns.rdtypes
 import dns.rrset
 import yaml
 
-from src.audio.tcp_manager import TCPManager
 import src.constants.constants as constants
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
 from src.api.api_webstream import APIWebStream
 from src.audio.audio_controller import AudioController
-from src.audio.scream_receiver import ScreamReceiver
 from src.audio.rtp_recevier import RTPReceiver
+from src.audio.scream_receiver import ScreamReceiver
+from src.audio.tcp_manager import TCPManager
 from src.configuration.configuration_solver import ConfigurationSolver
 from src.plugin_manager.plugin_manager import PluginManager
-from src.screamrouter_types.annotations import (DelayType, IPAddressType, RouteNameType,
-                                                SinkNameType, SourceNameType,
-                                                VolumeType)
+from src.screamrouter_types.annotations import (DelayType, IPAddressType,
+                                                RouteNameType, SinkNameType,
+                                                SourceNameType, VolumeType)
 from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
                                                   SinkDescription,
                                                   SourceDescription)
@@ -246,6 +246,12 @@ class ConfigurationManager(threading.Thread):
         source.equalizer = equalizer
         self.__reload_configuration()
         return True
+    
+    def update_source_position(self, source_name: SourceNameType, new_index: int):
+        """Set the position of a source in the list of sources"""
+        source = self.get_source_by_name(source_name)
+        self.source_descriptions.remove(source)
+        self.source_descriptions.insert(new_index, source)
 
     def update_source_volume(self, source_name: SourceNameType, volume: VolumeType) -> bool:
         """Set the volume for a source or source group"""
@@ -282,6 +288,13 @@ class ConfigurationManager(threading.Thread):
         sink.equalizer = equalizer
         self.__reload_configuration()
         return True
+    
+    def update_sink_position(self, sink_name: SinkNameType, new_index: int):
+        """Set the position of a sink in the list of sinks"""
+        sink = self.get_sink_by_name(sink_name)
+        self.sink_descriptions.remove(sink)
+        self.sink_descriptions.insert(new_index, sink)
+    
 
     def update_sink_volume(self, sink_name: SinkNameType, volume: VolumeType) -> bool:
         """Set the volume for a sink or sink group"""
@@ -303,6 +316,12 @@ class ConfigurationManager(threading.Thread):
         route.equalizer = equalizer
         self.__reload_configuration()
         return True
+    
+    def update_route_position(self, route_name: RouteNameType, new_index: int):
+        """Set the position of a route in the list of routes"""
+        route = self.get_route_by_name(route_name)
+        self.route_descriptions.remove(route)
+        self.route_descriptions.insert(new_index, route)
 
     def update_route_volume(self, route_name: RouteNameType, volume: VolumeType) -> bool:
         """Set the volume for a route"""

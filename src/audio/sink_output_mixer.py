@@ -1,12 +1,12 @@
 """Manages the C++ program that mixes audio streams"""
-from copy import copy
 import subprocess
+from copy import copy
 from typing import List, Optional
 
-from src.screamrouter_types.configuration import SinkDescription
-from src.audio.source_input_processor import SourceInputProcessor
 from src.audio.scream_header_parser import ScreamHeader
+from src.audio.source_input_processor import SourceInputProcessor
 from src.screamrouter_logger.screamrouter_logger import get_logger
+from src.screamrouter_types.configuration import SinkDescription
 
 logger = get_logger(__name__)
 

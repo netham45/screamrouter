@@ -5,9 +5,9 @@ import multiprocessing
 import multiprocessing.sharedctypes
 import os
 import select
+import time
 from ctypes import c_bool
 from subprocess import TimeoutExpired
-import time
 from typing import List
 
 from fastapi import FastAPI

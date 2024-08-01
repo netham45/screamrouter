@@ -16,7 +16,6 @@ function restart_callback_2(response_text) {
     if (selected_route)
         selected_route_name = selected_route.dataset['name'];
     var selected_element_id = document.activeElement.id;
-    console.log("Selected element:" + selected_element_id);
     var reload_div = document.getElementById("reload");
     reload_div.innerHTML = "";
     reload_div.innerHTML = response_text;

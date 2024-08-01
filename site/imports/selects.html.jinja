@@ -1,30 +1,35 @@
-{% macro button(icon, alt, title, onclick) -%}
-<span tabindex="0" alt="{{alt}}" title="{{title}}" class="button-icon" onclick="{{onclick}}">{{icon}}</span>
+{% macro button(icon, id, alt, title, onclick) -%}
+<span id="{{id}}" tabindex="0" alt="{{alt}}" title="{{title}}" class="button-icon" onclick="{{onclick}}">{{icon}}</span>
 {%- endmacro %}
 
-{% macro option(value, label, class="", data="{}", checked=False, alt="", shortalt="") %}
+{% macro option(value, label, sublabel, class="", data="{}", checked=False, alt="", shortalt="") %}
 {%- if (shortalt == "") %}
 {%- set shortalt = alt %}
 {%- endif -%}
     <span tabindex="0" alt="{{alt}}" title="{{alt}}" value="{{value}}" class="{{class}}" onclick="option_onclick(event)" onkeypress="keypress_handler(event)"
         {%- for name, datum in data %} data-{{name}}="{{datum}}"{% endfor %} data-type="{{data.__class__.__name__}}" {{"selected" if checked}}>
         {{label}}
-        <br />
-        <div id="{{data.name}}_options" class="option-buttons"><BR />
-            {{- button('🎚️', shortalt ~ ' Equalizer', shortalt ~ ' Equalizer', 'equalizer_icon_onclick(event)') -}}
-            {{- button('⚙️', shortalt ~ ' Settings', shortalt ~ ' Settings', 'update_icon_onclick(event)') -}}
-            {{- button('🔊' if data["enabled"] else '🔇', 'Disable ' ~ shortalt if data["enabled"] else 'Enable ' ~ shortalt, 'Disable ' ~ shortalt if data["enabled"] else 'Enable ' ~ shortalt, 'volume_icon_onclick(event)') }}
-            {{- button('🗑️', 'Remove ' ~ shortalt, 'Remove ' ~ shortalt, 'remove_icon_onclick(event)') -}}
+        <span class="option-drag" onmousedown="onOptionDragPress(event)">
+            ≡&nbsp;    
+        </span>
+        <div id="{{data.name}}_options" class="option-buttons">
+            {%- if (sublabel) -%}
+                <SPAN CLASS="route-label">{{sublabel}}</SPAN><BR />
+            {%- endif -%}
+            {{- button('🎚️', shortalt ~ ' Equalizer', shortalt ~ ' Equalizer', shortalt ~ ' Equalizer', 'equalizer_icon_onclick(event)') -}}
+            {{- button('⚙️', shortalt ~ ' Settings', shortalt ~ ' Settings', shortalt ~ ' Settings', 'update_icon_onclick(event)') -}}
+            {{- button('🔊' if data["enabled"] else '🔇', shortalt ~ "Enable_Disable", 'Disable ' ~ shortalt if data["enabled"] else 'Enable ' ~ shortalt, 'Disable ' ~ shortalt if data["enabled"] else 'Enable ' ~ shortalt, 'volume_icon_onclick(event)') }}
+            {{- button('🗑️', 'Remove ' ~ shortalt, 'Remove ' ~ shortalt, 'Remove ' ~ shortalt, 'remove_icon_onclick(event)') -}}
             {%- if (data.__class__.__name__ == "SinkDescription" and not data.is_group) -%}
-                {{- button('📻', 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'listen_icon_onclick(event)') -}}
-                {{- button('✨', 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'visualizer_icon_onclick(event)') -}}
+                {{- button('📻', 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'listen_icon_onclick(event)') -}}
+                {{- button('✨', 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'visualizer_icon_onclick(event)') -}}
             {%- endif -%}
             {%- if (data.vnc_ip and data.vnc_port) -%}
-                {{- button('🖥️', 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'vnc_icon_onclick(event)') -}}
-                {{- button('⏮️', 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'previous_track_icon_onclik(event)') -}}
-                {{- button('⏯️', 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'playpause_icon_onclick(event)') -}}
-                {{- button('⏭️', 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'next_track_icon_onclick(event)') -}}
-            {%- endif -%}
+                {{- button('🖥️', 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'vnc_icon_onclick(event)') -}}
+                {{- button('⏮️', 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'previous_track_icon_onclik(event)') -}}
+                {{- button('⏯️', 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'playpause_icon_onclick(event)') -}}
+                {{- button('⏭️', 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'next_track_icon_onclick(event)') -}}
+            {%- endif -%}<BR />
             <INPUT TABINDEX="0" TYPE="range" ID="{{shortalt}}_volume" ONCHANGE="volume_slider_change(event)" ALT="{{shortalt}} Volume" TITLE="{{shortalt}} Volume" VALUE="{{data['volume'] * 100}}">
         </div>
     </span>
@@ -32,6 +37,6 @@
 
 {% macro make_multiple_options(options, data="{}") %}
     {%- for _option in options %}
-        {{- option(_option["value"], _option["label"], _option["class"], _option["data"], _option["checked"], _option["alt"], _option["shortalt"]) }}
-    {%- endfor %}
+        {{- option(_option["value"], _option["label"], _option["sublabel"], _option["class"], _option["data"], _option["checked"], _option["alt"], _option["shortalt"]) }}
+    {%- endfor -%}
 {%- endmacro %}

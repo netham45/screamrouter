@@ -3,16 +3,17 @@ DIV#dialog {
     padding-bottom: 20px;
     position: absolute;
     min-width: 400px;
+    max-width: 95%;
     height: auto;
     top: 12.5%;
     margin-left: -16.5%;
-    background: linear-gradient(-45deg, rgba(0,10,0,.15), rgba(0,200,0,.4));
-    border-radius: 30px;
+    background-image: linear-gradient(rgba(150,230,221,.7),rgba(120,180,220,.7));
+    border-radius: 8px;
     display: none;
     backdrop-filter: blur(5px);
     font-family: "Courier";
     font-weight: 1000;
-    text-shadow: 0 0 20px #fff, 0 0 30px #AA7777, 0 0 40px #AA7777, 0 0 50px #AA7777, 0 0 60px #AA7777, 0 0 70px #AA7777, 0 0 80px #AA7777;
+    text-shadow: 0 0 20px #fff, 0 0 30px #AA7777, 0 0 40px #AA7777;
     text-align: center;
     margin-left: auto;
     margin-right: auto;
@@ -24,7 +25,8 @@ DIV.title {
     font-family: "Courier";
     font-weight: 1000;
     font-size: 48pt;
-    text-shadow: 0 0 20px #fff, 0 0 30px #AA7777, 0 0 40px #AA7777, 0 0 50px #AA7777, 0 0 60px #AA7777, 0 0 70px #AA7777, 0 0 80px #AA7777;
+    text-shadow: 0 0 20px #224422, 0 0 30px #224422, 0 0 40px #224422, 0 0 50px #224422;
+    color: rgb(150,230,221);
     text-align: center;
     padding-top: 10px;
     padding-bottom: 10px;
@@ -32,17 +34,18 @@ DIV.title {
     overflow: hidden;
     border-collapse: collapse;
     background-color: rgba(00,120,00,.2);
-    border-radius: 25px;
+    border-radius: 5px;
     background-size: 60vmin 60vmin;
     display: inline-block;
     border-collapse: collapse;
 }
 
 DIV.section {
+    pointer-events: auto;
     overflow: hidden;
     border-collapse: collapse;
     background-color: rgba(00,120,00,.2);
-    border-radius: 25px;
+    border-radius: 5px;
     background-size: 60vmin 60vmin;
     width: 33%;
     border-collapse: collapse;
@@ -55,9 +58,11 @@ DIV.section-name {
     font-family: "Courier";
     font-weight: 1000;
     font-size: 24pt;
+    color: rgb(150,230,221);
 
-    text-shadow: 0 0 20px #fff, 0 0 30px #AA7777, 0 0 40px #AA7777, 0 0 50px #AA7777, 0 0 60px #AA7777, 0 0 70px #AA7777, 0 0 80px #AA7777;
+    text-shadow: 0 0 10px #000, 0 0 15px #99F;
     text-align: center;
+    background-image: linear-gradient( rgba(80,160,120,.4), rgba(20,40,30,.1));
 }
 
 DIV.section INPUT[TYPE="range"] {
@@ -77,25 +82,32 @@ DIV.section-buttons {
 
 DIV#reload {
     height: 33%;
+    pointer-events: none;
 }
 
 DIV.main-select {
-    font-family: Padauk, sans-serif;
+    margin-top: 5px;
+    padding-top: 8px;
+    font-family: sans-serif;
     overflow: auto;
     text-align: center;
     width: 100%;
     background: none;
-    background-image: linear-gradient(rgba(60,221,90,.7),rgba(60,180,90,.5));
-    font-size: 1.25vw;
+    background-image: linear-gradient( rgba(80,160,120,.9), rgba(72,144,108,.7));
+    font-size: 1.5vw;
     color: #FFFFFF;
     border: none;
     outline: none;
     padding-bottom: 15px;
-    border-radius: 25px;
+    border-radius: 5px;
 }
 
-DIV.main-select > SPAN:nth-child(odd) {
-    background-image: linear-gradient(rgba(0,0,0,.1), rgba(0,0,0,.1));
+DIV.main-select > SPAN.option:nth-child(even) {
+    background-image: linear-gradient(rgba(0,0,0,.2), rgba(0,0,0,.2));
+}
+
+DIV#select-sinks > SPAN.option:nth-child(odd) {
+    background-image: linear-gradient(rgba(0,0,0,.05), rgba(0,0,0,.05));
 }
 
 SPAN.option{
@@ -103,12 +115,14 @@ SPAN.option{
     width: 95%;
     display: inline-block;
     text-align: left;
-    color: #000000;
-    border-radius: 15px 15px 15px 15px;
+
     border: 0px 0px 2px 0px;
-    padding-top: 5px;
+    padding-top: 8px;
     padding-bottom: 5px;
-    margin-bottom: 1px;
+    border-radius: 10px;
+    color: #000;
+    margin-top: .5px;
+    margin-bottom: .5px;
 }
 
 select[multiple] option:checked {
@@ -154,19 +168,20 @@ DIV#randomcontainer3 {
 }
 
 DIV#randomcontainer4 {
-    background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
-    background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;
+    /*background-image:  {% for i in range(0, 70) %}radial-gradient(rgba({{ range(40, 80) | random}}, {{ range(40, 120) | random}}, {{ range(120, 255) | random}}, {{ range(0, 120) | random}}) {{ range(0, 12) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
+    background-position: {% for i in range(0, 70) %}{{ range(-1000, 1000) | random}}px {{ range(-1000, 1000) | random}}px, {% endfor %}{{ range(-1000, 1000) | random}}% {{ range(-1000, 1000) | random}}%;*/
     vertical-align: center;
     border-collapse: collapse;
     overflow: hidden;
-    border-radius: 25px;
+    border-radius: 5px;
+    background-size: 2000px 2000px;
 }
 
 DIV#randomcontainer5 {
     /*background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
     background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;*/
     overflow: hidden;
-    border-radius: 25px;
+    border-radius: 5px;
     float: left;
 }
 
@@ -174,7 +189,7 @@ DIV#randomcontainer6 {
     /*background-image:  {% for i in range(0, 30) %}radial-gradient(rgba({{ range(0, 10) | random}}, {{ range(40, 255) | random}}, {{ range(0, 10) | random}}, {{ range(0, 250) | random}}) {{ range(0, 20) | random}}%, transparent 0), {% endfor %}radial-gradient(#{{ "%02X" | format(range(0,45) | random | int) }}{{ "%02X" | format(range(0,150) | random | int) }}{{ "%02X" | format(range(0,45) | random | int) }} {{ range(0, 30) | random}}%, transparent 0);
     background-position: {% for i in range(0, 30) %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%, {% endfor %}{{ range(0, 250) | random}}% {{ range(0, 250) | random}}%;*/
     overflow: hidden;
-    border-radius: 25px;
+    border-radius: 5px;
 }
 
 DIV.blur {
@@ -248,7 +263,7 @@ DIV#shadow {
 }
 
 span.button-icon {
-    font-size: 24pt;
+    font-size: 1.5vw;
     text-shadow: 0 0 2px #777, 0 0 12px #444;
 }
 
@@ -329,9 +344,13 @@ DIV#vnc-on-clck {
 }
 
 SPAN.route-label {
-    font-size: .8vw;
-    color: #111111;
+    font-size: 1vw;
     pointer-events: none;
+    display: inline-block;
+    padding-bottom: 15px;
+    color: #333;
+    font-weight: bold;
+    font-style: italic;
 }
 
 DIV#enable_disable {
@@ -377,7 +396,7 @@ DIV#enable_disable {
         padding-left: 0px;
         padding-right: 0px;
         margin-left: 0px;
-
+        max-width: 100%;
     }
     DIV.title {
         font-family: "Courier";
@@ -395,7 +414,7 @@ DIV#enable_disable {
         display: inline;
     }
     span.button-icon {
-        font-size: 24pt;
+        font-size: 1.5vw;
     }
     DIV#vnc-on-clck {
         display: block;
@@ -416,4 +435,6 @@ SPAN.option-selected DIV.option-buttons {
     display: block !important;
 }
 
-
+SPAN.option-drag {
+    float: right;
+}

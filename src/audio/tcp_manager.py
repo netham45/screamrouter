@@ -1,15 +1,15 @@
 """Receiver, handles a port for listening for sources to send UDP packets to
    Puts received data in sink queues"""
-import threading
 import socket
-from subprocess import TimeoutExpired
+import threading
 import time
+from subprocess import TimeoutExpired
 from typing import List, Optional, Tuple
 
-from src.audio.audio_controller import AudioController
-from src.screamrouter_types.annotations import IPAddressType
 import src.constants.constants as constants
+from src.audio.audio_controller import AudioController
 from src.screamrouter_logger.screamrouter_logger import get_logger
+from src.screamrouter_types.annotations import IPAddressType
 
 logger = get_logger(__name__)
 

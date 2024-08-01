@@ -1,4 +1,4 @@
-function call_api(endpoint, method, data = {}, callback = null_callback) {
+function call_api(endpoint, method = "get", data = {}, callback = null_callback) {
     data = JSON.stringify(data);
     const xhr = new XMLHttpRequest();
     xhr.open(method, endpoint, true);

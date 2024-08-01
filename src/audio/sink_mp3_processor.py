@@ -9,8 +9,8 @@ from ctypes import c_bool
 from subprocess import TimeoutExpired
 from typing import Tuple
 
-from src.api.api_webstream import APIWebStream
 import src.constants.constants as constants
+from src.api.api_webstream import APIWebStream
 from src.audio.mp3_header_parser import InvalidHeaderException, MP3Header
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import IPAddressType
