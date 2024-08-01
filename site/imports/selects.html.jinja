@@ -2,14 +2,15 @@
 <span id="{{id}}" tabindex="0" alt="{{alt}}" title="{{title}}" class="button-icon" onclick="{{onclick}}">{{icon}}</span>
 {%- endmacro %}
 
-{% macro option(value, label, sublabel, class="", data="{}", checked=False, alt="", shortalt="") %}
-{%- if (shortalt == "") %}
-{%- set shortalt = alt %}
+{% macro option(value, label, sublabel, class="", data="{}", checked=False, alt="", shortalt="", index=0) %}
+{%- if (shortalt == "") -%}
+{%- set shortalt = alt -%}
 {%- endif -%}
     <span tabindex="0" alt="{{alt}}" title="{{alt}}" value="{{value}}" class="{{class}}" onclick="option_onclick(event)" onkeypress="keypress_handler(event)"
         {%- for name, datum in data %} data-{{name}}="{{datum}}"{% endfor %} data-type="{{data.__class__.__name__}}" {{"selected" if checked}}>
         {{label}}
-        <span class="option-drag" onmousedown="onOptionDragPress(event)">
+        <span id="{{shortalt}}_reorder" alt="Reorder {{shortalt}} Index: {{index}}" title="Reorder {{shortalt}} Index: {{index}}" class="option-drag"
+              onmousedown="onOptionDragStart(event)" onkeydown="onOptionDragKeyDown(event)" TABINDEX="0" ontouchstart="onOptionDragTouchStart(event)">
             ≡&nbsp;    
         </span>
         <div id="{{data.name}}_options" class="option-buttons">
@@ -37,6 +38,6 @@
 
 {% macro make_multiple_options(options, data="{}") %}
     {%- for _option in options %}
-        {{- option(_option["value"], _option["label"], _option["sublabel"], _option["class"], _option["data"], _option["checked"], _option["alt"], _option["shortalt"]) }}
+        {{- option(_option["value"], _option["label"], _option["sublabel"], _option["class"], _option["data"], _option["checked"], _option["alt"], _option["shortalt"], loop.index) }}
     {%- endfor -%}
 {%- endmacro %}

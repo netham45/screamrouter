@@ -1,6 +1,7 @@
 let optionContainer;
 let options;
 let selectedOption = null;
+let selectedOptionKeyboard = null;
 let mouseOffsetY = 0;
 
 function getClosestOptionToMouse(mouseX, mouseY) {
@@ -14,40 +15,77 @@ function getClosestOptionToMouse(mouseX, mouseY) {
     }, { option: null, distance: Infinity }).option;
 }
 
-function onOptionDragPress(event) {
+function setupOptionDrag(event, touchEvent = false) {
     optionContainer = event.target.parentNode.parentNode;
     options = [...optionContainer.querySelectorAll(":scope > span")];
     selectedOption = event.target.parentNode;
     const rect = selectedOption.getBoundingClientRect();
-    mouseOffsetY = rect.top - event.screenY;
+    mouseOffsetY = rect.top - (touchEvent ? event.changedTouches[0].screenY : event.screenY);
 }
 
-function onOptionDragMove(event) {
+function onOptionDragStart(event) {
+    event.preventDefault();
+    setupOptionDrag(event);
+}
+
+function onOptionDragTouchStart(event) {
+    event.preventDefault();
+    setupOptionDrag(event, true);
+}
+
+function moveSelectedOption(event, touchEvent = false) {
     if (!selectedOption) return;
-    const closestOption = getClosestOptionToMouse(event.screenX, event.screenY + mouseOffsetY);
+    event.preventDefault();
+    const screenX = touchEvent ? event.changedTouches[0].screenX : event.screenX;
+    const screenY = touchEvent ? event.changedTouches[0].screenY : event.screenY;
+    const closestOption = getClosestOptionToMouse(screenX, screenY + mouseOffsetY);
     const rect = closestOption.getBoundingClientRect();
     const closestOptionTop = rect.top;
     if (selectedOption !== closestOption) {
         optionContainer.removeChild(selectedOption);
-        event.screenY + mouseOffsetY < closestOptionTop
+        screenY + mouseOffsetY < closestOptionTop
             ? closestOption.before(selectedOption)
             : closestOption.after(selectedOption);
     }
 }
 
-function onOptionDragRelease() {
+function onOptionDragMove(event) {
+    moveSelectedOption(event);
+}
+
+function onOptionDragTouchMove(event) {
+    moveSelectedOption(event, true);
+}
+
+function onOptionDragEnd(event) {
     if (!selectedOption) return;
+    event.preventDefault();
     options = [...optionContainer.querySelectorAll(":scope > span")];
-    let i=0;
-    let name = selectedOption.dataset['name'];
-    let type = "";
-    for (;i<options.length;i++) {
-        if (options[i] == selectedOption) {
-            type = options[i].dataset["type"].replace("Description","").toLowerCase();
-            call_api(type + "s/" + name + "/reorder/" + i);
-            break;
-        }
-    }
+    const index = options.findIndex(option => option === selectedOption);
+    const name = selectedOption.dataset['name'];
+    const type = selectedOption.dataset["type"].replace("Description", "").toLowerCase();
+    call_api(`${type}s/${name}/reorder/${index}`);
     selectedOption = null;
     mouseOffsetY = 0;
+}
+
+function onOptionDragKeyDown(event) {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault(); 
+
+    if (selectedOptionKeyboard !== event.target.parentNode) {
+        optionContainer = event.target.parentNode.parentNode;
+        options = [...optionContainer.querySelectorAll(":scope > span")];
+        selectedOptionKeyboard = event.target.parentNode;
+    }
+
+    const index = options.findIndex(option => option === selectedOptionKeyboard);
+    if (index === -1) return;
+
+    const newIndex = event.key === "ArrowUp" ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= options.length) return;
+
+    const type = options[newIndex].dataset["type"].replace("Description", "").toLowerCase();
+    const name = selectedOptionKeyboard.dataset["name"];
+    call_api(`${type}s/${name}/reorder/${newIndex}`, "get", {}, restart_callback);
 }

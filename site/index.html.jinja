@@ -26,7 +26,8 @@
     <SCRIPT TYPE="text/javascript" SRC="site/js/visualizer.js"></SCRIPT>
 </HEAD>
 
-<BODY onmousemove="onOptionDragMove(event)"  onmouseup="onOptionDragRelease(event)">
+<BODY onmousemove="onOptionDragMove(event)" onmouseup="onOptionDragEnd(event)"
+      ontouchmove="onOptionDragTouchMove(event)" ontouchend="onOptionDragEnd(event)">
     <DIV ID="enable_disable">
         <DIV ID="randomcontainer4" CLASS="title">
             <DIV CLASS="blur">

@@ -136,6 +136,7 @@ function listen_icon_onclick(e) {
 
 function keypress_handler(event) {
     if (event.key === "Enter" || event.key === "Space") {
-        event.target.onclick(event);
+        if (event.target.onclick)
+            event.target.onclick(event);
     }
 }
