@@ -43,6 +43,12 @@ function visualizer_icon_onclick(e) {
     }
 }
 
+function enable_disable_button(event) {
+    let option = event.target.parentNode.parentNode;
+    const type = option.dataset["type"].replace("Description","").toLowerCase();
+    call_api("/" + type + "s/" + option.dataset["name"] + (option.dataset["enabled"] == "True"? "/disable" : "/enable"), 'get', {}, restart_callback);
+}
+
 function enable_disable_source_button() {
     const selected_sources = get_selected_sources();
     if (selected_sources.length !== 1) {

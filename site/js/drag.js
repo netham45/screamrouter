@@ -67,6 +67,7 @@ function onOptionDragEnd(event) {
     call_api(`${type}s/${name}/reorder/${index}`);
     selectedOption = null;
     mouseOffsetY = 0;
+    drawLines();
 }
 
 function onOptionDragKeyDown(event) {

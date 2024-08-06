@@ -115,51 +115,61 @@ function highlight_active_routes() {
             route.style.background = `linear-gradient(90deg, rgba(${r1}, ${g1}, ${b1}, 0.6), rgba(${r2}, ${g2}, ${b2}, 0.6))`;
         }
     });
+    drawLines();
 }
 
-function highlight_active_sink() {
+function highlight_active_sink(color=true) {
     const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
 
     sinks.forEach(sink => {
         if (selected_sink) {
             if (sink === selected_sink) {
                 sink.classList.add("option-selected");
-                sink.style.backgroundColor = `rgba(${COLORS.sink.r}, ${COLORS.sink.g}, ${COLORS.sink.b}, 0.6)`;
+                if (color)
+                    sink.style.backgroundColor = `rgba(${COLORS.sink.r}, ${COLORS.sink.g}, ${COLORS.sink.b}, 0.6)`;
             } else if (selected_sink.dataset["group_members"].includes(sink.dataset['name']) || sink.dataset["group_members"].includes(selected_sink.dataset['name'])) {
                 sink.classList.remove("option-selected");
-                sink.style.backgroundColor = `rgba(${COLORS.sink.faded.r}, ${COLORS.sink.faded.g}, ${COLORS.sink.faded.b}, 0.6)`;
+                if (color)
+                    sink.style.backgroundColor = `rgba(${COLORS.sink.faded.r}, ${COLORS.sink.faded.g}, ${COLORS.sink.faded.b}, 0.6)`;
             } else {
                 sink.classList.remove("option-selected");
-                sink.style.backgroundColor = "";
+                if (color)
+                    sink.style.backgroundColor = "";
             }
         } else {
             sink.classList.remove("option-selected");
             sink.style.backgroundColor = "";
         }
     });
+    updateRouteButtons();
     highlight_active_routes();
 }
 
-function highlight_active_source() {
+function highlight_active_source(color=true) {
     const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
 
     sources.forEach(source => {
         if (selected_source) {
             if (source === selected_source) {
                 source.classList.add("option-selected");
-                source.style.backgroundColor = `rgba(${COLORS.source.r}, ${COLORS.source.g}, ${COLORS.source.b}, 0.6)`;
+                if (color)
+                    source.style.backgroundColor = `rgba(${COLORS.source.r}, ${COLORS.source.g}, ${COLORS.source.b}, 0.6)`;
             } else if (selected_source.dataset["group_members"].includes(source.dataset['name']) || source.dataset["group_members"].includes(selected_source.dataset['name'])) {
                 source.classList.remove("option-selected");
-                source.style.backgroundColor = `rgba(${COLORS.source.faded.r}, ${COLORS.source.faded.g}, ${COLORS.source.faded.b}, 0.6)`;
+                if (color)
+                    source.style.backgroundColor = `rgba(${COLORS.source.faded.r}, ${COLORS.source.faded.g}, ${COLORS.source.faded.b}, 0.6)`;
             } else {
                 source.classList.remove("option-selected");
-                source.style.backgroundColor = "";
+                if (color)
+                    source.style.backgroundColor = "";
             }
         } else {
             source.classList.remove("option-selected");
-            source.style.backgroundColor = "";
+            if (color)
+                source.style.backgroundColor = "";
         }
     });
+    updateRouteButtons();
     highlight_active_routes();
 }
 

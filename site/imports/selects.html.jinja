@@ -1,36 +1,81 @@
-{% macro button(icon, id, alt, title, onclick) -%}
+{% macro button(icon, id, alt, title, onclick, class="") -%}
+<button id="{{id}}" tabindex="0" alt="{{alt}}" title="{{title}}" onclick="{{onclick}}" class="{{class}}">{{icon}}</button>
+{%- endmacro %}
+
+{% macro button_icon(icon, id, alt, title, onclick) -%}
 <span id="{{id}}" tabindex="0" alt="{{alt}}" title="{{title}}" class="button-icon" onclick="{{onclick}}">{{icon}}</span>
+{%- endmacro %}
+
+{% macro icon(icon, id, alt, title) -%}
+<span id="{{id}}" tabindex="0" alt="{{alt}}" title="{{title}}" class="icon">{{icon}}</span>
+{%- endmacro %}
+
+{% macro editor_option(value, label, sublabel, class="", data="{}", checked=False, alt="", shortalt="", main_option=true, main_class=true, index=0) %}
+{%- if (shortalt == "") -%}
+{%- set shortalt = alt -%}
+{%- endif -%}
+    <span alt="{{alt}}" title="{{alt}}" value="{{value}}" class="{{class}} {{ 'disabled' if not data["enabled"] }}" data-routeEditEnabled="true" 
+        {%- for name, datum in data %} data-{{name}}="{{datum}}"{% endfor %} data-type="{{data.__class__.__name__}}" {{"selected" if checked}}>
+        {{label}}
+        <span id="{{shortalt}}_reorder" alt="Reorder {{shortalt}} Index: {{index}}" title="Reorder {{shortalt}} Index: {{index}}" class="option-drag"
+              onmousedown="onOptionDragStart(event)" onkeydown="onOptionDragKeyDown(event)" TABINDEX="0" ontouchstart="onOptionDragTouchStart(event)">
+              ≡&nbsp;    
+        </span>
+        <span class="icon-enabledisable">
+            {%- if not main_option and not main_class -%}
+                {{- button('🎚️', shortalt ~ ' Route Equalizer', shortalt ~ ' Route Equalizer', shortalt ~ ' Route Equalizer', 'editorEqualizerOnclick(event)') -}}
+                {{- button('⚙️', shortalt ~ ' Route Settings', shortalt ~ ' Route Settings', shortalt ~ ' Route Settings', 'editorConfigOnclick(event)') -}}
+                {{- button('✅', "Enable " ~ shortalt, "Enable " ~ shortalt, "Enable " ~ shortalt, 'editorEnableOnclick(event)') -}}
+                {{- button('❌', "Disable " ~ shortalt, "Disable " ~ shortalt, "Disable " ~ shortalt, 'editorDisableOnclick(event)') -}}
+            {%- endif -%}
+            {{- icon('🔊' if data["enabled"] else '🔇', shortalt ~ "Enable_Disable", shortalt ~ " Enabled" if data["enabled"] else shortalt ~ " Disabled", shortalt ~ " Enabled" if data["enabled"] else shortalt ~ " Disabled") }}
+        </span>
+        <div id="{{data.name}}_options" class="option-buttons">
+            {%- if (sublabel) -%}
+                <SPAN CLASS="route-label">{{sublabel}}</SPAN><BR />
+            {%- endif -%}
+                {%- if main_option -%}
+                    {{- button('💾', "Save Route Selection for " ~ shortalt, "Save Route Selection for " ~ shortalt, "Save Route Selection for " ~ shortalt, 'editorSaveOnclick(event)') -}}
+                    {{- button('❌', "Disable " ~ shortalt, "Cancel Route Selection for " ~ shortalt, "Cancel Route Selection for " ~ shortalt, 'editorCancelOnclick(event)') -}}
+                {%- endif -%}
+                <BR/>
+                <BR/>
+        </div>
+    </span>
 {%- endmacro %}
 
 {% macro option(value, label, sublabel, class="", data="{}", checked=False, alt="", shortalt="", index=0) %}
 {%- if (shortalt == "") -%}
 {%- set shortalt = alt -%}
 {%- endif -%}
-    <span tabindex="0" alt="{{alt}}" title="{{alt}}" value="{{value}}" class="{{class}}" onclick="option_onclick(event)" onkeypress="keypress_handler(event)"
+    <span tabindex="0" alt="{{alt}}" title="{{alt}}" value="{{value}}" class="{{class}} {{ 'disabled' if not data["enabled"] }}" onclick="option_onclick(event)" onkeypress="keypress_handler(event)" data-routeEditEnabled="true" 
         {%- for name, datum in data %} data-{{name}}="{{datum}}"{% endfor %} data-type="{{data.__class__.__name__}}" {{"selected" if checked}}>
         {{label}}
         <span id="{{shortalt}}_reorder" alt="Reorder {{shortalt}} Index: {{index}}" title="Reorder {{shortalt}} Index: {{index}}" class="option-drag"
               onmousedown="onOptionDragStart(event)" onkeydown="onOptionDragKeyDown(event)" TABINDEX="0" ontouchstart="onOptionDragTouchStart(event)">
-            ≡&nbsp;    
+              ≡&nbsp;    
         </span>
+        <span class="icon-enabledisable">{{- button('Enabled' if data["enabled"] else 'Disabled', shortalt ~ "Enable_Disable", 'Disable ' ~ shortalt if data["enabled"] else 'Enable ' ~ shortalt, 'Disable ' ~ shortalt if data["enabled"] else 'Enable ' ~ shortalt, 'enable_disable_button(event)', 'button-option-enable' if data["enabled"] else 'button-option-disable') }}</span>
         <div id="{{data.name}}_options" class="option-buttons">
             {%- if (sublabel) -%}
                 <SPAN CLASS="route-label">{{sublabel}}</SPAN><BR />
             {%- endif -%}
-            {{- button('🎚️', shortalt ~ ' Equalizer', shortalt ~ ' Equalizer', shortalt ~ ' Equalizer', 'equalizer_icon_onclick(event)') -}}
-            {{- button('⚙️', shortalt ~ ' Settings', shortalt ~ ' Settings', shortalt ~ ' Settings', 'update_icon_onclick(event)') -}}
-            {{- button('🔊' if data["enabled"] else '🔇', shortalt ~ "Enable_Disable", 'Disable ' ~ shortalt if data["enabled"] else 'Enable ' ~ shortalt, 'Disable ' ~ shortalt if data["enabled"] else 'Enable ' ~ shortalt, 'volume_icon_onclick(event)') }}
-            {{- button('🗑️', 'Remove ' ~ shortalt, 'Remove ' ~ shortalt, 'Remove ' ~ shortalt, 'remove_icon_onclick(event)') -}}
+            {%- set thistype="Sink" if data.__class__.__name__ == "SinkDescription" else "Source" -%}
+            {%- set othertype="Sources" if data.__class__.__name__ == "SinkDescription" else "Sinks" -%}
+            {{- button('Equalizer', shortalt ~ ' Equalizer', shortalt ~ ' Equalizer', shortalt ~ ' Equalizer', 'equalizer_icon_onclick(event)') -}}
+            {{- button('Settings', shortalt ~ ' Settings', shortalt ~ ' Settings', shortalt ~ ' Settings', 'update_icon_onclick(event)') -}}
+            {{- button('Delete', 'Remove ' ~ shortalt, 'Remove ' ~ shortalt, 'Remove ' ~ shortalt, 'remove_icon_onclick(event)') -}}
             {%- if (data.__class__.__name__ == "SinkDescription" and not data.is_group) -%}
-                {{- button('📻', 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'listen_icon_onclick(event)') -}}
-                {{- button('✨', 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'visualizer_icon_onclick(event)') -}}
+                {{- button('Listen', 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'listen_icon_onclick(event)') -}}
+                {{- button('Visualize', 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'visualizer_icon_onclick(event)') -}}
             {%- endif -%}
             {%- if (data.vnc_ip and data.vnc_port) -%}
-                {{- button('🖥️', 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'vnc_icon_onclick(event)') -}}
-                {{- button('⏮️', 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'previous_track_icon_onclik(event)') -}}
-                {{- button('⏯️', 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'playpause_icon_onclick(event)') -}}
-                {{- button('⏭️', 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'next_track_icon_onclick(event)') -}}
-            {%- endif -%}<BR />
+                {{- button('VNC', 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'vnc_icon_onclick(event)') -}}
+                {{- button_icon('⏮️', 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'previous_track_icon_onclik(event)') -}}
+                {{- button_icon('⏯️', 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'playpause_icon_onclick(event)') -}}
+                {{- button_icon('⏭️', 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'next_track_icon_onclick(event)') -}}
+            {%- endif -%}
+            <BR />
             <INPUT TABINDEX="0" TYPE="range" ID="{{shortalt}}_volume" ONCHANGE="volume_slider_change(event)" ALT="{{shortalt}} Volume" TITLE="{{shortalt}} Volume" VALUE="{{data['volume'] * 100}}">
         </div>
     </span>
@@ -39,5 +84,11 @@
 {% macro make_multiple_options(options, data="{}") %}
     {%- for _option in options %}
         {{- option(_option["value"], _option["label"], _option["sublabel"], _option["class"], _option["data"], _option["checked"], _option["alt"], _option["shortalt"], loop.index) }}
+    {%- endfor -%}
+{%- endmacro %}
+
+{% macro make_editor_options(options, data="{}") %}
+    {%- for _option in options %}
+        {{- editor_option(_option["value"], _option["label"], _option["sublabel"], _option["class"], _option["data"], _option["checked"], _option["alt"], _option["shortalt"], _option["main_option"], _option["main_class"], loop.index) }}
     {%- endfor -%}
 {%- endmacro %}

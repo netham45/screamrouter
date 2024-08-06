@@ -1,3 +1,7 @@
 {% macro button(callback, label, class="", data="{}", alt="") %}
                     <BUTTON ID="{{callback}}" ONCLICK="{{callback}}()" CLASS="{{class}}" DATA-DATA="{{data}}" ALT="{{alt}}" TITLE="{{alt}}">{{label}}</BUTTON>
 {%- endmacro %}
+
+{% macro disabled_button(callback, label, class="", data="{}", alt="") %}
+                    <BUTTON ID="{{callback}}" ONCLICK="{{callback}}()" CLASS="{{class}}" DATA-DATA="{{data}}" ALT="{{alt}}" TITLE="{{alt}}" disabled>{{label}}</BUTTON>
+{%- endmacro %}

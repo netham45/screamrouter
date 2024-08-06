@@ -1,0 +1,110 @@
+{%- import "imports/selects.html.jinja" as selects %}
+{%- import "imports/buttons.html.jinja" as buttons -%}
+{% macro edit_body(sources, sinks, routes, type, name)%}
+        <DIV ID="randomcontainer1" CLASS="section">
+            <DIV CLASS="blur">
+                <DIV CLASS="section-name">
+                    Sources
+                </DIV>
+                <DIV CLASS="section-buttons select-container">
+                    {{- buttons.disabled_button("add_source_button", "➕", "section-button", {}, "Add Source")}}
+                    {{- buttons.disabled_button("add_source_group_button", "➕➕", "section-button", {}, "Add Source Group")}}
+                    {{- buttons.disabled_button("sort_sources_by_name", "Sort By Name", "section-button", {}, "Sort Sources by Name")}}
+                    {{- buttons.disabled_button("reverse_sources", "Reverse Order", "section-button", {}, "Reverse Source Order")}}
+                    <DIV ID="select-sources" CLASS="main-select" SIZE="{{sources | length}}">
+                        {%- set options = namespace(options=[]) %}
+                        {%- for source in sources -%}
+                        {{- source.type }}
+                        {%- set enabled = namespace (enabled = false) -%}
+                        {%- if type != "SourceDescription" -%}
+                            {%- for route in routes if route.sink == name -%}
+                                {%- if route.source == source.name and route.enabled -%}
+                                    {%- set enabled.enabled = true -%}
+                                {%- endif -%}
+                            {%- endfor -%}
+                        {%- else -%}
+                            {%- set enabled.enabled = true -%}
+                        {%- endif -%}
+                        
+                        {%- set enable_disable_str = "Enable" if enabled.enabled else "Disable" %}
+                        {%- set _option = {"value": source.name,
+                        "label": source.name,
+                        "sublabel": ("Source Group: " ~ source.group_members | join(", ")) if source.group_members else "Source: " ~ source.ip,
+                        "class": "option option-editor-%s" % enable_disable_str,
+                        "alt": ("Source Group " if source.is_group else "Source ") + source.name + ((" Group Members: " + source.group_members | join(", ")) if (source.is_group) else ""),
+                        "shortalt": ("Source Group " if source.is_group else "Source ") + source.name,
+                        "data": source,
+                        "main_option": type == "SourceDescription" and name == source.name,
+                        "main_class": type == "SourceDescription"
+                        } %}
+                        {%- set options.options = options.options + [_option] %}
+                        {%- endfor %}
+                        {{- selects.make_editor_options(options.options, sources) }}
+                    </DIV>
+                </DIV>
+            </DIV>
+        </DIV>
+        <DIV ID="randomcontainer2" CLASS="section">
+            <DIV ID="select-routes" CLASS="main-select" STYLE="display: none;" SIZE="{{routes | length}}">
+                {%- set options = namespace(options=[]) %}
+                {%- for route in routes %}
+                {{- route.type }}
+                {%- set enabled_class_str = "enabled" if route.enabled else "disabled" %}
+                {%- set _option = {"value": route.name,
+                "label": route.name,
+                "sublabel": ("Source %s to Sink %s" % (route.source, route.sink)) | safe,
+                "class": "option option-%s" % enabled_class_str,
+                "alt": "Route " + route.name + ", Source Name: %s, Sink Name: %s" % (route.source, route.sink),
+                "shortalt": "Route " + route.name,
+                "data": route} %}
+                {%- set options.options = options.options + [_option] %}
+                {%- endfor %}
+                {{- selects.make_multiple_options(options.options, routes) }}
+           </DIV>
+        </DIV>
+        <DIV ID="randomcontainer3" CLASS="section">
+            <DIV CLASS="blur">
+                <DIV CLASS="section-name">
+                    Sinks
+                </DIV>
+                <DIV CLASS="section-buttons select-container">
+                    {{- buttons.disabled_button("add_sink_button", "➕", "section-button", {}, "Add Sink")}}
+                    {{- buttons.disabled_button("add_sink_group_button", "➕➕", "section-button", {}, "Add Sink Group")}}
+                    {{- buttons.disabled_button("sort_sinks_by_name", "Sort By Name", "section-button", {}, "Sort Sinks by Name")}}
+                    {{- buttons.disabled_button("reverse_sinks", "Reverse Order", "section-button", {}, "Reverse Sink Order")}}<BR />
+                    <DIV ID="select-sinks" CLASS="main-select" SIZE="{{sinks | length}}">
+                        {%- set options = namespace(options=[]) %}
+                        {%- for sink in sinks %}
+                        {{- sink.type }}
+                        {%- set enabled = namespace (enabled = false) -%}
+                        {%- if type != "SinkDescription" -%}
+                            {%- for route in routes if route.source == name -%}
+                                {%- if route.sink == sink.name and route.enabled -%}
+                                    {%- set enabled.enabled = true -%}
+                                {%- endif -%}
+                            {%- endfor -%}
+                        {%- else -%}
+                            {%- set enabled.enabled = true -%}
+                        {%- endif -%}
+                        
+                        {%- set enable_disable_str = "Enable" if enabled.enabled else "Disable" %}
+                        {%- set _option = {"value": sink.name,
+                        "label": sink.name,
+                        "sublabel": ("Sink Group: " ~ sink.group_members | join(", ")) if sink.group_members else "Sink: %s:%s" % (sink.ip, sink.port),
+                        "class": "option option-editor-%s" % enable_disable_str,
+                        "alt": enable_disable_str ~ ("Sink Group " if sink.is_group else "Sink ") + sink.name + ((" Group Members: " + sink.group_members | join(", ")) if (sink.is_group) else ""),
+                        "shortalt": enable_disable_str ~ ("Sink Group " if sink.is_group else "Sink ") + sink.name,
+                        "data": sink,
+                        "main_option": type == "SinkDescription" and name == sink.name,
+                        "main_class": type == "SinkDescription"
+                        } %}
+                        {%- set options.options = options.options + [_option] %}
+                        {%- endfor %}
+                        {{- selects.make_editor_options(options.options, sinks) }}
+                    </DIV>
+                </DIV>
+            </DIV>
+        </DIV>
+{%- endmacro %}
+
+{{ edit_body(sources, sinks, routes, request_info['data'].__class__.__name__, request_info['data']['name'] ) }}

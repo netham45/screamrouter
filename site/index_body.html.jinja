@@ -7,9 +7,9 @@
                     Sources
                 </DIV>
                 <DIV CLASS="section-buttons select-container">
-                    {{- buttons.button("add_source_button", "➕", "section-button", {}, "Add Source")}}
-                    {{- buttons.button("add_source_group_button", "➕➕", "section-button", {}, "Add Source Group")}}
-                    {{- buttons.button("sort_sources_by_name", "Sort by Name", "section-button", {}, "Sort Sources by Name")}}
+                    {{- buttons.button("add_source_button", "Add Source", "section-button", {}, "Add Source")}}
+                    {{- buttons.button("add_source_group_button", "Add Group", "section-button", {}, "Add Source Group")}}
+                    {{- buttons.button("sort_sources_by_name", "Sort By Name", "section-button", {}, "Sort Sources by Name")}}
                     {{- buttons.button("reverse_sources", "Reverse Order", "section-button", {}, "Reverse Source Order")}}
                     <DIV ID="select-sources" CLASS="main-select" SIZE="{{sources | length}}">
                         {%- set options = namespace(options=[]) %}
@@ -36,14 +36,24 @@
                     Routes
                 </DIV>
                 <DIV CLASS="section-buttons select-container">
-                    {{- buttons.button("add_route_button", "➕", "section-button", {}, "Add Route")}}
-                    {{- buttons.button("sort_routes_by_source", "Sort by Source", "section-button", {}, "Sort Routes by Source")}}
-                    {{- buttons.button("sort_routes_by_sink", "Sort by Sink", "section-button", {}, "Sort Routes by Sink")}}
-                    {{- buttons.button("sort_routes_by_name", "Sort by Name", "section-button", {}, "Sort Routes by Name")}}
-                    {{- buttons.button("reverse_routes", "Reverse Order", "section-button", {}, "Reverse Route Order")}}
+                    {{- buttons.button("add_route_button", "Add Route", "section-button", {}, "Add Route")}}
+                    <SPAN CLASS="mobile-route-buttons">
+                        {{- buttons.button("sort_routes_by_source", "Sort By Source", "section-button", {}, "Sort Routes by Source")}}
+                        {{- buttons.button("sort_routes_by_sink", "Sort By Sink", "section-button", {}, "Sort Routes by Sink")}}
+                        {{- buttons.button("sort_routes_by_name", "Sort By Name", "section-button", {}, "Sort Routes by Name")}}
+                        {{- buttons.button("reverse_routes", "Reverse Order", "section-button", {}, "Reverse Route Order")}}
+                    </SPAN>
+                    <SPAN CLASS="desktop-route-buttons">
+                        {{- buttons.disabled_button("enable_route", "Enable Route", "section-button", {}, "Enable Route")}}
+                        {{- buttons.disabled_button("disable_route", "Disable Route", "section-button", {}, "Disable Route")}}
+                        {{- buttons.disabled_button("edit_route", "Configure", "section-button", {}, "Configure")}}
+                        {{- buttons.disabled_button("route_equalizer", "Equalizer", "section-button", {}, "Equalizer")}} <br/>
+                        <INPUT TABINDEX="0" TYPE="range" ID="route_volume" ONCHANGE="route_volume_change()" ALT="Route Volume" TITLE="Route Volume" VALUE="50" DISABLED>
+                    </SPAN>
+
                     <span><!-- Empty span so there's an even number of elements before start --></span>
                     <BR />
-                    <DIV ID="select-routes" CLASS="main-select" SIZE="{{routes | length}}">
+                    <DIV ID="select-routes" CLASS="main-select" SIZE="{{routes | length}}" STYLE="display:none">
                         {%- set options = namespace(options=[]) %}
                         {%- for route in routes %}
                         {{- route.type }}
@@ -69,9 +79,9 @@
                     Sinks
                 </DIV>
                 <DIV CLASS="section-buttons select-container">
-                    {{- buttons.button("add_sink_button", "➕", "section-button", {}, "Add Sink")}}
-                    {{- buttons.button("add_sink_group_button", "➕➕", "section-button", {}, "Add Sink Group")}}
-                    {{- buttons.button("sort_sinks_by_name", "Sort by Name", "section-button", {}, "Sort Sinks by Name")}}
+                    {{- buttons.button("add_sink_button", "Add Sink", "section-button", {}, "Add Sink")}}
+                    {{- buttons.button("add_sink_group_button", "Add Group", "section-button", {}, "Add Sink Group")}}
+                    {{- buttons.button("sort_sinks_by_name", "Sort By Name", "section-button", {}, "Sort Sinks by Name")}}
                     {{- buttons.button("reverse_sinks", "Reverse Order", "section-button", {}, "Reverse Sink Order")}}<BR />
                     <DIV ID="select-sinks" CLASS="main-select" SIZE="{{sinks | length}}">
                         {%- set options = namespace(options=[]) %}

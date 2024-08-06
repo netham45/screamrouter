@@ -499,7 +499,7 @@ void scale_buffer()
 void resample() 
 { // Resamples the daata in scaled_buffer from input_samplerate to output_samplerate and stores it in resampled_buffer
     if (input_samplerate != output_samplerate) {
-        log("Resampling");
+
         if (sampler == NULL)
             initialize_sampler();
         int datalen = scale_buffer_pos / input_channels;

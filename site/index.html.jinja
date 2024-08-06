@@ -24,10 +24,18 @@
     <SCRIPT TYPE="text/javascript" SRC="site/js/main.js"></SCRIPT>
     <SCRIPT TYPE="text/javascript" SRC="site/js/sort.js"></SCRIPT>
     <SCRIPT TYPE="text/javascript" SRC="site/js/visualizer.js"></SCRIPT>
+    <SCRIPT TYPE="text/javascript" SRC="site/js/route_selector.js"></SCRIPT>
+    <SCRIPT TYPE="text/javascript" SRC="site/js/lines.js"></SCRIPT>
+    <SCRIPT TYPE="text/javascript" SRC="site/js/background.js"></SCRIPT>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,100;0,300;0,400;0,700;0,900;1,100;1,300;1,400;1,700;1,900&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=Orbitron:wght@400..900&family=Roboto+Condensed:ital,wght@0,100..900;1,100..900&family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&display=swap" rel="stylesheet">
 </HEAD>
 
 <BODY onmousemove="onOptionDragMove(event)" onmouseup="onOptionDragEnd(event)"
       ontouchmove="onOptionDragTouchMove(event)" ontouchend="onOptionDragEnd(event)">
+    <canvas id="backgroundCanvas"></canvas>
     <DIV ID="enable_disable">
         <DIV ID="randomcontainer4" CLASS="title">
             <DIV CLASS="blur">

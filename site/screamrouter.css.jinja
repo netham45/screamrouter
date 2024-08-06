@@ -1,3 +1,8 @@
+
+DIV#select-routes { 
+    display: none;
+}
+
 DIV#dialog {
     padding-top: 20px;
     padding-bottom: 20px;
@@ -7,11 +12,11 @@ DIV#dialog {
     height: auto;
     top: 12.5%;
     margin-left: -16.5%;
-    background-image: linear-gradient(rgba(150,230,221,.7),rgba(120,180,220,.7));
+    background-image: linear-gradient(rgba(150,230,181,.7),rgba(120,180,180,.7));
     border-radius: 8px;
     display: none;
     backdrop-filter: blur(5px);
-    font-family: "Courier";
+    font-family: "Trebuchet MS";
     font-weight: 1000;
     text-shadow: 0 0 20px #fff, 0 0 30px #AA7777, 0 0 40px #AA7777;
     text-align: center;
@@ -22,11 +27,11 @@ DIV#dialog {
 }
 
 DIV.title {
-    font-family: "Courier";
-    font-weight: 1000;
-    font-size: 48pt;
-    text-shadow: 0 0 20px #224422, 0 0 30px #224422, 0 0 40px #224422, 0 0 50px #224422;
-    color: rgb(150,230,221);
+    font-family: Orbitron, sans-serif;
+    font-weight: bold;
+    font-size: 48px;
+    text-shadow: 0 0 20px #224411, 0 0 30px #224411, 0 0 40px #224411, 0 0 50px #224411;
+    color: #7FFF00;
     text-align: center;
     padding-top: 10px;
     padding-bottom: 10px;
@@ -55,14 +60,14 @@ DIV.section {
 }
 
 DIV.section-name {
-    font-family: "Courier";
-    font-weight: 1000;
-    font-size: 24pt;
-    color: rgb(150,230,221);
+    font-family: Lato, sans-serif;
+    font-weight: bold;
+    font-size: 28px;
+    color: #32CD32;
 
-    text-shadow: 0 0 10px #000, 0 0 15px #99F;
+    text-shadow: 0 0 10px #224411, 0 0 30px #224411;
     text-align: center;
-    background-image: linear-gradient( rgba(80,160,120,.4), rgba(20,40,30,.1));
+    background-image: linear-gradient( rgba(80,160,120,.6), rgba(20,70,30,.1));
 }
 
 DIV.section INPUT[TYPE="range"] {
@@ -72,7 +77,21 @@ DIV.section INPUT[TYPE="range"] {
 }
 
 DIV.section-buttons BUTTON {
-    font-size: 12pt;
+    font-size: 14pt;
+    background-color: #6CB050;
+    color: #FFFFFF;
+    font-family: "Open Sans", sans-serif;
+    border-radius: 8px;
+    border: none;
+    padding: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+    margin: 2px;
+}
+
+DIV.section-buttons BUTTON[disabled] {
+    background-color: #2c3F10;
+    color: #BBBBBB;
 }
 
 DIV.section-buttons {
@@ -93,7 +112,7 @@ DIV.main-select {
     text-align: center;
     width: 100%;
     background: none;
-    background-image: linear-gradient( rgba(80,160,120,.9), rgba(72,144,108,.7));
+    background-image: linear-gradient( rgba(120,240,160,.4), rgba(100,220,140,.2));
     font-size: 1.5vw;
     color: #FFFFFF;
     border: none;
@@ -106,11 +125,13 @@ DIV.main-select > SPAN.option:nth-child(even) {
     background-image: linear-gradient(rgba(0,0,0,.2), rgba(0,0,0,.2));
 }
 
-DIV#select-sinks > SPAN.option:nth-child(odd) {
-    background-image: linear-gradient(rgba(0,0,0,.05), rgba(0,0,0,.05));
+DIV.main-select > SPAN.option:nth-child(odd) {
+    background-image: linear-gradient(rgba(0,0,0,.1), rgba(0,0,0,.1));
 }
 
 SPAN.option{
+    font-family: "Lato", sans-serif;
+    font-size: 1.75vw;
     padding-left: 2%;
     width: 95%;
     display: inline-block;
@@ -118,9 +139,9 @@ SPAN.option{
 
     border: 0px 0px 2px 0px;
     padding-top: 8px;
-    padding-bottom: 5px;
+    padding-bottom: 12px;
     border-radius: 10px;
-    color: #000;
+    color: #ffd;
     margin-top: .5px;
     margin-bottom: .5px;
 }
@@ -137,11 +158,28 @@ option:active, option:focus, option:hover, option:checked:after {
     outline: none;
 }
 
+CANVAS#backgroundCanvas {
+    display: block;
+    filter: blur(14px);
+    position: absolute;
+    top: 0px;
+    left: 0px;
+    z-index: -999;
+}
 
 HTML, BODY {
+    margin: 0;
+    padding: 0;
+    width: 100%;
     height: 100%;
-    background-color: #000100;
-    font-family: "Arial";
+    overflow: hidden;
+    background-color: #000;
+    background-attachment: fixed;
+    background-position: center;
+    background-size: 50% 50%;
+    height: 100%;
+    background-color: #020202;
+    font-family: sans-serif;
     user-select: none; /* Standard */
     overflow: auto;
     text-align: center;
@@ -262,15 +300,9 @@ DIV#shadow {
     display: none;
 }
 
-span.button-icon {
+span.button-icon, span.icon {
     font-size: 1.5vw;
     text-shadow: 0 0 2px #777, 0 0 12px #444;
-}
-
-BUTTON#add_sink_group_button, BUTTON#add_source_group_button {
-    letter-spacing: -6px;
-    text-align: left;
-    padding-right: 11px;
 }
 
 #update_source_button, #update_sink_button, #update_route_button, 
@@ -278,6 +310,10 @@ BUTTON#add_sink_group_button, BUTTON#add_source_group_button {
 #enable_disable_source_button, #enable_disable_route_button, #enable_disable_sink_button,
 #listen_to_sink_button
 {
+    display: none;
+}
+
+BUTTON#disable_route {
     display: none;
 }
 
@@ -293,12 +329,12 @@ SELECT.main-select option::before {
     font-size: 14pt;
 }
 
-SELECT.main-select OPTION.option-enabled::before {
-    content: "🎚️⚙️🔊";
+SPAN.option-editor-Enable {
+
 }
 
-SELECT.main-select OPTION.option-disabled::before {
-    content: "🎚️⚙️🔇";
+SPAN.option-editor-Disable {
+    background-color: #742;
 }
 
 SELECT.main-select OPTION[DATA-TYPE="SinkDescription"].option-enabled::before {
@@ -348,7 +384,7 @@ SPAN.route-label {
     pointer-events: none;
     display: inline-block;
     padding-bottom: 15px;
-    color: #333;
+    color: #ded;
     font-weight: bold;
     font-style: italic;
 }
@@ -358,6 +394,10 @@ DIV#enable_disable {
     position:  relative;
     min-height: 100%;
 
+}
+
+SPAN.mobile-route-buttons {
+    display: none;
 }
 
 @media only screen and (max-width: 825px) {
@@ -399,14 +439,30 @@ DIV#enable_disable {
         max-width: 100%;
     }
     DIV.title {
-        font-family: "Courier";
+        font-family: "Trebuchet MS";
         font-weight: 1000;
         font-size: 7.8vw;
     }
     span.button-icon {
         font-size: 8vw;
     }
+    SPAN.mobile-route-buttons {
+        display: inline;
+    }
+    SPAN.desktop-route-buttons {
+        display: none;
+    }
+    DIV#select-routes { 
+       display: block !important;
+    }
 
+    SPAN#route-buttons {
+        display: none;
+    }
+
+    svg#routeLines { 
+        display: none;
+    }
   }
 
 @media (pointer: coarse)  {
@@ -428,6 +484,7 @@ DIV#enable_disable {
     }
     SPAN.option-drag {
         font-size: 18pt;
+        float: right;
     }
 }
 
@@ -441,4 +498,38 @@ SPAN.option-selected DIV.option-buttons {
 
 SPAN.option-drag {
     float: right;
+    vertical-align: middle;
+    color: #000;
+    text-shadow: none;
+}
+
+SPAN.option-selected > DIV {
+    color: #000;
+}
+
+SPAN.option DIV, SPAN.option SPAN {
+    font-style: normal;
+}
+
+SPAN.option[data-is_group="True"]  {
+    font-style: italic;
+}
+
+SPAN.icon-enabledisable {
+    vertical-align: center;
+    display: inline-block;
+    pointer-events: auto;
+    float: right;
+}
+
+.glowline {
+    pointer-events: auto;
+}
+
+.glowline:hover {
+    stroke: #FF0;
+}
+
+button.button-option-disable {
+    background-color: #666 !important;
 }

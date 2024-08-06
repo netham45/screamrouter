@@ -64,6 +64,10 @@ class APIWebsite():
                           tags=["Site Resources"])(self.edit_route)
         self.main_api.get(f"{SITE_PREFIX}/edit_route/{{route_name}}/equalizer",
                           tags=["Site Resources"])(self.edit_route_equalizer)
+        self.main_api.get(f"{SITE_PREFIX}/edit_sink_routes/{{sink_name}}",
+                          tags=["Site Resources"])(self.edit_sink_routes)
+        self.main_api.get(f"{SITE_PREFIX}/edit_source_routes/{{source_name}}",
+                          tags=["Site Resources"])(self.edit_source_routes)
         self.main_api.mount("/site/noVNC", StaticFiles(directory="./site/noVNC"), name="noVNC")
         self.main_api.mount("/site/js", StaticFiles(directory="./site/js"), name="Site Javascript")
         self._templates = Jinja2Templates(directory="./site/")
@@ -275,4 +279,28 @@ class APIWebsite():
                                          equalizer_holder_type="route")
         return self.return_template(request,
                                     "dialog_views/equalizer.html.jinja",
+                                    {"request_info": request_info})
+
+    def edit_sink_routes(self, request: Request, sink_name: SinkNameType):
+        """Return a body to edit sink routes"""
+        existing_sink: SinkDescription = self.screamrouter_configuration.get_sink_by_name(
+                                                                                        sink_name)
+        request_info: AddEditSinkInfo
+        request_info = AddEditSinkInfo(add_new=False,
+                                       data=existing_sink)
+
+        return self.return_template(request,
+                                    "edit_body.html.jinja",
+                                    {"request_info": request_info})
+
+    def edit_source_routes(self, request: Request, source_name: SourceNameType):
+        """Return a body to edit source routes"""
+        existing_source: SourceDescription = self.screamrouter_configuration.get_source_by_name(
+                                                                                    source_name)
+        request_info: AddEditSourceInfo
+        request_info = AddEditSourceInfo(add_new=False,
+                                           data=existing_source)
+
+        return self.return_template(request,
+                                    "edit_body.html.jinja",
                                     {"request_info": request_info})
