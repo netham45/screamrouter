@@ -2,48 +2,99 @@
 
 ![Screenshot of ScreamRouter](/images/ScreamRouter.png)
 
-[New Readme](Readme/readme.md)
+### What is ScreamRouter
 
-### What is it
-ScreamRouter is a Python-based audio router for Scream sources and sinks. It allows you to enter an IP address for all of your Scream audio sources and IP address, port, bit depth, sample rate, and channel configuration for all of your sinks. It has a web interface for managing the configuration and listening to sinks.
+ScreamRouter is a versatile audio routing and management system with a Python frontend/configuration layer and a C++ backend, designed for network audio streaming. It supports Scream and RTP audio sources, along with Scream receivers and web-based MP3 streamers as receivers. The system offers a robust set of features for configuring and controlling audio streams across a network:
+
+1. Source Management: Users can add and configure audio sources by specifying their IP addresses.
+
+2. Sink Configuration: Sinks (audio outputs) can be customized with detailed parameters including IP address, port, bit depth, sample rate, and channel configuration.
+
+3. Routing: ScreamRouter allows flexible routing between sources and sinks, enabling complex audio setups.
+
+4. Web Interface: A user-friendly web interface facilitates easy configuration management and provides the ability to listen to sinks directly through the browser.
+
+5. Advanced Audio Processing: The system includes a custom mixer, equalizer, and channel layout processor for optimal audio quality and minimal latency.
+
+6. Grouping and Volume Control: Sources and sinks can be grouped for simultaneous control, with volume adjustable at every level (source, route, sink, and group).
+
+7. Integration Capabilities: ScreamRouter offers integration with Home Assistant and supports various streaming services through Docker containers.
+
+8. Extensibility: A flexible plugin system allows for easy addition of new audio sources.
+
+This tool is intended for creating whole-house audio setups, managing multiple audio streams, and providing granular control over network audio routing and processing.
 
 ### What is Scream
-[Scream is a virtual audio driver for Windows](https://github.com/duncanthrax/scream) created by Tom Kistner. It operates by sending any received PCM data from Windows's sound engine over the network unprocessed. This allows very low latency. Each packet from Scream is 1152 bytes worth of PCM from Windows's audio engine with a 5 byte header that describes the format of the stream.
 
-The simplicity of Scream allows it to be very easy to work with while retaining low latency.
+[Scream](https://github.com/duncanthrax/scream) is a virtual audio driver for Windows developed by Tom Kistner. It offers the following key features:
 
-### Features
-* Configure Sources based off of IP address, Configure Routes between Sources and Sinks, Configure Sinks with Bit Depth, Sample Rate, Channel Layout, Sink IP, and Port
-* Group together Sources and Sinks to control and play to multiple at a time
-* Control the volume for each Source, Route, Sink, and Group the stream passes through
-* Exposes an MP3 stream of all sinks so they can be listened to in a browser
-* Can play a URL out of a sink or sink group
-* Has a Home Assistant Custom Component for managing Sinks and playing media back through Sinks (See: https://github.com/netham45/screamrouter_ha_component )
-* Automatically saves to YAML on setting change
-* Uses a custom mixer/equalizer/channel layout up/downmixer so latency can be minimized
-* Can adjust equalization for any sink, route, source, or group
-* Contains a plugin system to easily allow additional sources to be added
-* Milkdrop Visualizations thanks to the browser-based [Butterchurn](https://github.com/jberg/butterchurn) project
-* There are playback sinks available for common OSes such as [Windows](https://github.com/duncanthrax/scream/tree/master/Receivers/dotnet-windows/ScreamReader), [Linux](https://github.com/duncanthrax/scream/tree/master/Receivers/unix), and [Android](https://github.com/martinellimarco/scream-android/tree/90d1364ee36dd12ec9d7d2798926150b370030f3). I've written one for [ESP32 A1S Audiokit Dev boards](https://github.com/netham45/esp32-audiokit-screamreader/), and [one for esp32/esp32s that does toslink and usb uac 1.0 output](https://github.com/netham45/esp32-scream-receiver/) and I've written a multi-platform receiver in [Python](https://github.com/netham45/pyscreamreader).
-* Embedded noVNC for controlling remote computers playing music
-* Can accept streams from PulseAudio
-* Docker containers to add support for [Amazon Music](https://github.com/netham45/screamrouter-amazon-music-docker), [Firefox](https://github.com/netham45/screamrouter-firefox-docker), [Spotify](https://github.com/netham45/screamrouter-spotify-docker)
-* Linux tool for sending PCM data from the command line [ScreamSender](https://github.com/netham45/screamsender/)
-* Ability to send media control commands to containers from API and web interface
+1. Network Transmission: Sends PCM data from Windows' sound engine over the network without processing.
+2. Low Latency: Achieves minimal delay due to its streamlined approach.
+3. Simple Protocol: Each packet consists of 1152 bytes of PCM data and a 5-byte header describing the stream format.
+4. Ease of Use: The simplicity of Scream's design makes it both user-friendly and efficient.
 
-![Screenshot of ScreamRouter noVNC](/images/noVNC.png)
+Scream's straightforward architecture allows for easy integration while maintaining high performance in audio streaming applications.
+
+### Key Features
+
+#### Audio Routing and Configuration
+* Configure Sources by IP address
+* Set up Routes between Sources and Sinks
+* Customize Sinks with Bit Depth, Sample Rate, Channel Layout, IP, and Port
+* Group Sources and Sinks for simultaneous control and playback
+* Volume control at every level: Source, Route, Sink, and Group
+
+#### Audio Processing and Playback
+* Custom mixer/equalizer/channel layout processor for minimal latency
+* Adjustable equalization for any sink, route, source, or group
+* MP3 stream exposure for browser-based listening of all sinks
+* URL playback capability for sinks or sink groups
+* Milkdrop Visualizations via [Butterchurn](https://github.com/jberg/butterchurn) project
+
+#### Integration and Compatibility
+* Home Assistant Custom Component for managing Sinks and media playback
+* PulseAudio stream acceptance
+* Embedded noVNC for remote computer control
+* Docker containers for [Amazon Music](https://github.com/netham45/screamrouter-amazon-music-docker), [Firefox](https://github.com/netham45/screamrouter-firefox-docker), and [Spotify](https://github.com/netham45/screamrouter-spotify-docker)
+
+#### System Management
+* Automatic YAML saving on setting changes
+* Flexible plugin system for easy addition of new sources
+* API and web interface for media control commands to containers
+
+#### Additional Tools and Receivers
+* [ScreamSender](https://github.com/netham45/screamsender/): Linux tool for sending PCM data from the command line
+* Playback sinks available for [Windows](https://github.com/duncanthrax/scream/tree/master/Receivers/dotnet-windows/ScreamReader), [Linux](https://github.com/duncanthrax/scream/tree/master/Receivers/unix), and [Android](https://github.com/martinellimarco/scream-android/tree/90d1364ee36dd12ec9d7d2798926150b370030f3)
+* Custom receivers:
+  - [ESP32 A1S Audiokit Dev boards](https://github.com/netham45/esp32-audiokit-screamreader/)
+  - [ESP32/ESP32S with TOSLINK and USB UAC 1.0 output](https://github.com/netham45/esp32-scream-receiver/)
+  - [Multi-platform Python receiver](https://github.com/netham45/pyscreamreader)
 
 ### Use Cases
-* Mixing one or many Scream Sources to one or many Scream Receivers for a whole-house audio setup
-* Changing the volume of groups of sinks at once while having each sink also individually leveled
-* Use a web browser as a sink via the 'Listen to Sink' feature
-* Use any streaming MP3 player as a sink via the exposed API
-* Programatically enable/disable sinks, or adjust the volume through the FastAPI API, or through Home Assistant
-* Play back sound effects and Text to Speech to arbitrary Sinks from Home Assistant automations
-* Line up speakers with differing timings by delaying one
-* Adjusting EQ for a cheap speaker so it sounds better
 
-![Screenshot of HA for ScreamRouter](/images/HAMediaPlayer.png)
+ScreamRouter offers a versatile solution for various audio management scenarios, including:
+
+1. Comprehensive Whole-House Audio Systems:
+   - Integrate multiple Scream Sources and Receivers for seamless audio distribution throughout your home.
+
+2. Advanced Volume Management:
+   - Implement granular volume control at both group and individual sink levels, ensuring optimal audio balance across your setup.
+
+3. Web-Based Audio Access:
+   - Utilize the 'Listen to Sink' feature to enable browser-based audio playback, enhancing accessibility and flexibility.
+
+4. Universal Sink Compatibility:
+   - Leverage the exposed API to incorporate any streaming MP3 player as a sink, expanding your audio output options.
+
+5. Programmatic Audio Control:
+   - Employ the FastAPI interface or Home Assistant integration for automated management of sink activation, deactivation, and volume adjustments.
+
+6. Home Automation Integration:
+   - Seamlessly incorporate sound effects and Text-to-Speech functionality into Home Assistant automations for enhanced smart home experiences.
+
+7. Sound Quality Enhancement:
+   - Utilize built-in equalization tools to optimize audio output, particularly beneficial for improving the performance of budget-friendly speakers.
+
 ## Documentation
 
 For comprehensive information on various aspects of ScreamRouter, please refer to the following guides:
@@ -61,17 +112,20 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 * [User Interface Guide](Readme/ui.md): Documentation on using the ScreamRouter web interface
 * [VNC Integration](Readme/vnc.md): Guide to using the embedded noVNC for remote computer control
 
-## Prerequisites
+## Relevant Repos
+### Docker Containers
+* [Amazon Music Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-amazon-music-docker)
+* [Firefox Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-firefox-docker)
+* [Spotify Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-spotify-docker)
 
-- Scream (configured for UDP unicast on port 16401)
-- Python requirements (see requirements.txt)
-- Linux environment
-- SSL certificate (path configurable in src/constants/constants.py)
+### Receivers
+* [ESP32/ESP32s spdif/USB UAC 1.0 audio receiver](https://github.com/netham45/esp32-scream-receiver)
+* [ESP32 A1S Audiokit Receiver](https://github.com/netham45/esp32-audiokit-screamreader)
+* [Python Scream Receiver](https://github.com/netham45/pyscreamreader)
 
-## Quick Start
+### Senders
+* [Tool for appending Scream headers to PCM streams on Linux](https://github.com/netham45/screamsender) [Documentation](/Readme/screamsender.md)
 
-1. Install Docker
-2. Build the ScreamRouter Docker Container
-3. Run the ScreamRouter Docker Container
-4. Access the web interface on port 443
-5. Add Sources, Sinks, and Routes as needed
+## Installation Guide
+
+See [The ScreamRouter Docker install guide](https://github.com/netham45/screamrouter/blob/main/Readme/docker-screamrouter.md)

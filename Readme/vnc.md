@@ -8,6 +8,8 @@ This project implements VNC (Virtual Network Computing) functionality to allow r
 - A WebSocket proxy is started on-demand to bridge the VNC connection
 - The VNC viewer runs in the browser using noVNC
 
+![Screenshot of ScreamRouter noVNC](/images/noVNC.png)
+
 ## Key Components
 
 1. `APIWebsite` class in `api_website.py`:
@@ -38,9 +40,5 @@ VNC connection details are stored in the Source Configuration:
 
 - `vnc_ip`: IP address of the VNC server
 - `vnc_port`: Port of the VNC server
-
-## Security Considerations
-
-- VNC connections use TLS encryption via the WebSocket proxy
 
 This VNC implementation allows convenient in-browser remote access to source devices, integrating smoothly with the rest of the application's interface.

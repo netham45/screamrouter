@@ -5,33 +5,47 @@ function drawLines() {
     const svg = document.getElementById('routeLines') || createSVG();
     const paths = svg.querySelectorAll('path');
     paths.forEach(path => path.remove());
+    let enabled_lines = [];
     for (sourceidx in sources) {
         const source = sources[sourceidx];
         for (sinkidx in sinks) {
             const sink = sinks[sinkidx];
             const route = getRouteBySinkSource(sink.dataset['name'], source.dataset['name']);
             let enabled = false;
+            let drawTheLine = false;
             if (route != null && route.dataset['enabled'].toLowerCase() === "true") {
                 enabled = true;
+                drawTheLine = true;
             }
-            if (route == null)
+            if (route == null) {
                 enabled = false;
-            if (sink.dataset['routeedit'] === "enabled" || source.dataset['routeedit'] === "enabled")
+                drawTheLine = false;
+            }
+            if (sink.dataset['routeedit'] === "enabled" || source.dataset['routeedit'] === "enabled") {
                 enabled = true;
-            if (sink.dataset['routeedit'] === "disabled" || source.dataset['routeedit'] === "disabled")
+                drawTheLine = true;
+            }
+            if (sink.dataset['routeedit'] === "disabled" || source.dataset['routeedit'] === "disabled") {
                 enabled = false;
+                drawTheLine = true;
+            }
             if (selected_sink && selected_sink.dataset['name'] != sink.dataset['name'])
                 enabled = false;
             if (selected_source && selected_source.dataset['name'] != source.dataset['name'])
                 enabled = false;
                 
-            if (sink != null && source != null && enabled)
-                drawLine(sink, source, "#6C0", "#F84");
+            if (sink != null && source != null && drawTheLine)
+                if (!enabled)
+                    drawLine(sink, source, "#AC9", "#F84", "#32C", false);
+                else
+                    enabled_lines.push([sink, source]);
         }
     }
+    for (idx in enabled_lines)
+        drawLine(enabled_lines[idx][0], enabled_lines[idx][1], "#AC9", "#F84", "#32C", true);
 }
 
-function drawLine(sink, source, color, color2) {
+function drawLine(sink, source, normalColor, highlightColor, disabledColor, enabled) {
     const svg = document.getElementById('routeLines') || createSVG();
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     
@@ -58,7 +72,7 @@ function drawLine(sink, source, color, color2) {
     
     path.setAttribute('d', pathData);
     path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', color);
+    path.setAttribute('stroke', enabled?normalColor:disabledColor);
     path.setAttribute('stroke-width', '2');
     path.setAttribute('stroke-linecap', 'round');
     path.setAttribute('class', 'glowline');
@@ -95,8 +109,8 @@ function drawLine(sink, source, color, color2) {
     
     // Add hover effect to change stroke color and bring the line to the front
     const changeColor = () => {
-        path.setAttribute('stroke', color2);
-        glow.setAttribute('stroke', color2);
+        path.setAttribute('stroke', highlightColor);
+        glow.setAttribute('stroke', highlightColor);
         
         // Move the hovered path and glow to the end of the SVG, bringing them to the front
         const svg = document.getElementById('routeLines');
@@ -105,13 +119,18 @@ function drawLine(sink, source, color, color2) {
     };
     
     const resetColor = () => {
-        path.setAttribute('stroke', color);
+        path.setAttribute('stroke', enabled?normalColor:disabledColor);
         glow.setAttribute('stroke', 'rgba(255, 255, 255, 0.5)');
         
         // Move the path and glow back to their original position
         const svg = document.getElementById('routeLines');
-        svg.insertBefore(glow, svg.firstChild);
-        svg.insertBefore(path, glow.nextSibling);
+        if (!enabled) {
+            svg.insertBefore(glow, svg.firstChild);
+            svg.insertBefore(path, glow.nextSibling);
+        } else {
+            svg.appendChild(glow);
+            svg.appendChild(path);
+        }
     };
 
     const mouseDown = () => {
@@ -129,7 +148,7 @@ function drawLine(sink, source, color, color2) {
         highlight_active_source();
         drawLines();
     };
-    
+
     path.addEventListener('mouseover', changeColor);
     path.addEventListener('mouseout', resetColor);
     glow.addEventListener('mouseover', changeColor);

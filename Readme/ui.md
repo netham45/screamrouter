@@ -37,13 +37,20 @@ Sinks represent audio outputs. To manage sinks:
 
 ## Creating and Managing Routes
 
-Routes define connections between sources and sinks. To create a route:
+Routes define connections between sources and sinks. To create a route either:
 1. Select a source from the Sources panel.
 2. Select a sink from the Sinks panel.
 3. Use the Routes panel to configure:
    - Volume adjustment
    - Equalizer settings
    - Delay adjustment
+   - Enabling/disabling routes -- Routes will automatically be created when enabled if they don't already exist.
+
+Or, use the "Edit Routes" option available:
+1. Select a source or sink.
+2. Select "Edit Routes".
+3. Choose to Enable or Disable the sources or sinks you want connected to your choice
+4. Save the configuration
 
 ## Using the Equalizer
 
@@ -53,6 +60,14 @@ The Equalizer feature allows you to adjust audio settings at various levels:
 3. For groups of sources or sinks
 
 Equalizer settings stack, allowing for fine-tuned audio control.
+
+## Routing View
+
+On desktop the routing view will be lines connecting sources to sinks representing each active connection. They can be hovered over to show the connection or clicked on to activate the source and sink on either side of the route.
+
+Routes that are not associated with currently selected sinks/sources will be displayed as black lines, routes associated with selected sources/sinks will be displayed as green.
+
+On mobile the routing view will be a list instead of connecting lines.
 
 ## Advanced Features
 

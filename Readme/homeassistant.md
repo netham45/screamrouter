@@ -62,12 +62,8 @@ If you encounter issues:
 2. Verify that the component is correctly installed in your `custom_components` directory.
 3. Review the Home Assistant logs for any error messages related to ScreamRouter.
 
-## Support
-
-For issues specific to the Home Assistant component, please open an issue in the ScreamRouter GitHub repository. For general ScreamRouter questions, refer to the main ScreamRouter documentation.
-
 ## Screenshots
 
-![Screenshot of HA for ScreamRouter](/images/home_assistant.png)
+![Screenshot of HA for ScreamRouter](/images/HAMediaPlayer.png)
 
 This screenshot shows the ScreamRouter integration in action within Home Assistant, demonstrating the various control options available for audio sources, routes, and sinks.
