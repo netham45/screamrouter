@@ -4,38 +4,20 @@
 
 ### What is ScreamRouter
 
-ScreamRouter is a versatile audio routing and management system with a Python frontend/configuration layer and a C++ backend, designed for network audio streaming. It supports Scream and RTP audio sources, along with Scream receivers and web-based MP3 streamers as receivers. The system offers a robust set of features for configuring and controlling audio streams across a network:
-
-1. Source Management: Users can add and configure audio sources by specifying their IP addresses.
-
-2. Sink Configuration: Sinks (audio outputs) can be customized with detailed parameters including IP address, port, bit depth, sample rate, and channel configuration.
-
-3. Routing: ScreamRouter allows flexible routing between sources and sinks, enabling complex audio setups.
-
-4. Web Interface: A user-friendly web interface facilitates easy configuration management and provides the ability to listen to sinks directly through the browser.
-
-5. Advanced Audio Processing: The system includes a custom mixer, equalizer, and channel layout processor for optimal audio quality and minimal latency.
-
-6. Grouping and Volume Control: Sources and sinks can be grouped for simultaneous control, with volume adjustable at every level (source, route, sink, and group).
-
-7. Integration Capabilities: ScreamRouter offers integration with Home Assistant and supports various streaming services through Docker containers.
-
-8. Extensibility: A flexible plugin system allows for easy addition of new audio sources.
-
-This tool is intended for creating whole-house audio setups, managing multiple audio streams, and providing granular control over network audio routing and processing.
+ScreamRouter is a versatile audio routing and management system with a Python frontend/configuration layer and a C++ backend, designed for network audio streaming. It supports Scream and RTP audio sources, along with Scream receivers and web-based MP3 streamers as receivers. The system offers a robust set of features for configuring and controlling audio streams across a network.
 
 ### What is Scream
 
 [Scream](https://github.com/duncanthrax/scream) is a virtual audio driver for Windows developed by Tom Kistner. It offers the following key features:
 
-1. Network Transmission: Sends PCM data from Windows' sound engine over the network without processing.
-2. Low Latency: Achieves minimal delay due to its streamlined approach.
-3. Simple Protocol: Each packet consists of 1152 bytes of PCM data and a 5-byte header describing the stream format.
-4. Ease of Use: The simplicity of Scream's design makes it both user-friendly and efficient.
+* Network Transmission: Sends PCM data from Windows' sound engine over the network without processing.
+* Low Latency: Achieves minimal delay due to its streamlined approach.
+* Simple Protocol: Each packet consists of 1152 bytes of PCM data and a 5-byte header describing the stream format.
+* Ease of Use: The simplicity of Scream's design makes it both user-friendly and efficient.
 
 Scream's straightforward architecture allows for easy integration while maintaining high performance in audio streaming applications.
 
-### Key Features
+### Key Features of ScreamRouter
 
 #### Audio Routing and Configuration
 * Configure Sources by IP address
@@ -74,43 +56,65 @@ Scream's straightforward architecture allows for easy integration while maintain
 
 ScreamRouter offers a versatile solution for various audio management scenarios, including:
 
-1. Comprehensive Whole-House Audio Systems:
+* Comprehensive Whole-House Audio Systems:
    - Integrate multiple Scream Sources and Receivers for seamless audio distribution throughout your home.
 
-2. Advanced Volume Management:
+* Advanced Volume Management:
    - Implement granular volume control at both group and individual sink levels, ensuring optimal audio balance across your setup.
 
-3. Web-Based Audio Access:
+* Web-Based Audio Access:
    - Utilize the 'Listen to Sink' feature to enable browser-based audio playback, enhancing accessibility and flexibility.
 
-4. Universal Sink Compatibility:
+* Universal Sink Compatibility:
    - Leverage the exposed API to incorporate any streaming MP3 player as a sink, expanding your audio output options.
 
-5. Programmatic Audio Control:
+* Programmatic Audio Control:
    - Employ the FastAPI interface or Home Assistant integration for automated management of sink activation, deactivation, and volume adjustments.
 
-6. Home Automation Integration:
+* Home Automation Integration:
    - Seamlessly incorporate sound effects and Text-to-Speech functionality into Home Assistant automations for enhanced smart home experiences.
 
-7. Sound Quality Enhancement:
+* Sound Quality Enhancement:
    - Utilize built-in equalization tools to optimize audio output, particularly beneficial for improving the performance of budget-friendly speakers.
 
 ## Documentation
 
 For comprehensive information on various aspects of ScreamRouter, please refer to the following guides:
 
-* [API Documentation](Readme/api.md): Details on the ScreamRouter API endpoints and usage
-* [Source Command Receiver](Readme/command_receiver.md): Information about the command receiver module for remote control
-* [Configuration Guide](Readme/configuration.md): Instructions for configuring ScreamRouter and its components
-* [Docker ScreamRouter Install Guide](Readme/docker-screamrouter.md): Guide to running ScreamRouter in a Docker container
-* [Docker Sources](Readme/docker-sources.md): Information on Docker containers for various streaming services
-* [Home Assistant Integration](Readme/homeassistant.md): Instructions for integrating ScreamRouter with Home Assistant
-* [Plugins System](Readme/plugins.md): Documentation on the flexible plugin system for adding new sources
-* [Audio Processor](Readme/processor.md): Details on the custom mixer/equalizer/channel layout processor
-* [RTP Source](Readme/rtp-source.md): Guide to using RTP from PulseAudio as an audio source
-* [Scream Source](Readme/scream-source.md): Information on configuring and using Scream as an audio source
-* [User Interface Guide](Readme/ui.md): Documentation on using the ScreamRouter web interface
-* [VNC Integration](Readme/vnc.md): Guide to using the embedded noVNC for remote computer control
+* [API Documentation](Readme/api.md)
+  - Details on the ScreamRouter API endpoints and usage
+
+* [Source Command Receiver](Readme/command_receiver.md)
+  - Information about the command receiver module for remote control
+
+* [Configuration Guide](Readme/configuration.md)
+  - Instructions for configuring ScreamRouter and its components
+* [Docker ScreamRouter Install Guide](Readme/docker-screamrouter.md)
+  - Guide to running ScreamRouter in a Docker container
+
+* [Docker Sources](Readme/docker-sources.md)
+  - Information on Docker containers for various streaming services
+
+* [Home Assistant Integration](Readme/homeassistant.md)
+  - Instructions for integrating ScreamRouter with Home Assistant
+
+* [Plugins System](Readme/plugins.md)
+  - Documentation on the flexible plugin system for adding new sources
+
+* [Audio Processor](Readme/processor.md)
+  - Details on the custom mixer/equalizer/channel layout processor
+
+* [RTP Source](Readme/rtp-source.md)
+  - Guide to using RTP from PulseAudio as an audio source
+
+* [Scream Source](Readme/scream-source.md)
+  - Information on configuring and using Scream as an audio source
+
+* [User Interface Guide](Readme/ui.md)
+  - Documentation on using the ScreamRouter web interface
+
+* [VNC Integration](Readme/vnc.md)
+  - Guide to using the embedded noVNC for remote computer control
 
 ## Relevant Repos
 ### Docker Containers
