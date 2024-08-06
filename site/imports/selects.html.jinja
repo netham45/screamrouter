@@ -23,20 +23,19 @@
         </span>
         <span class="icon-enabledisable">
             {%- if not main_option and not main_class -%}
-                {{- button('🎚️', shortalt ~ ' Route Equalizer', shortalt ~ ' Route Equalizer', shortalt ~ ' Route Equalizer', 'editorEqualizerOnclick(event)') -}}
-                {{- button('⚙️', shortalt ~ ' Route Settings', shortalt ~ ' Route Settings', shortalt ~ ' Route Settings', 'editorConfigOnclick(event)') -}}
-                {{- button('✅', "Enable " ~ shortalt, "Enable " ~ shortalt, "Enable " ~ shortalt, 'editorEnableOnclick(event)') -}}
-                {{- button('❌', "Disable " ~ shortalt, "Disable " ~ shortalt, "Disable " ~ shortalt, 'editorDisableOnclick(event)') -}}
+                <!--{{- button('Route Equalizer', shortalt ~ ' Route Equalizer', shortalt ~ ' Route Equalizer', shortalt ~ ' Route Equalizer', 'editorEqualizerOnclick(event)') -}}
+                {{- button('Route Settings', shortalt ~ ' Route Settings', shortalt ~ ' Route Settings', shortalt ~ ' Route Settings', 'editorConfigOnclick(event)') -}}!-->
+                {{- button('Enable Route', "Enable Route To " ~ shortalt, "Enable Route To " ~ shortalt, "Enable Route To " ~ shortalt, 'editorEnableOnclick(event)', "enable-button") -}}
+                {{- button('Disable Route', "Disable Route To " ~ shortalt, "Disable Route To " ~ shortalt, "Disable Route To " ~ shortalt, 'editorDisableOnclick(event)', "disable-button") -}}
             {%- endif -%}
-            {{- icon('🔊' if data["enabled"] else '🔇', shortalt ~ "Enable_Disable", shortalt ~ " Enabled" if data["enabled"] else shortalt ~ " Disabled", shortalt ~ " Enabled" if data["enabled"] else shortalt ~ " Disabled") }}
         </span>
         <div id="{{data.name}}_options" class="option-buttons">
             {%- if (sublabel) -%}
                 <SPAN CLASS="route-label">{{sublabel}}</SPAN><BR />
             {%- endif -%}
                 {%- if main_option -%}
-                    {{- button('💾', "Save Route Selection for " ~ shortalt, "Save Route Selection for " ~ shortalt, "Save Route Selection for " ~ shortalt, 'editorSaveOnclick(event)') -}}
-                    {{- button('❌', "Disable " ~ shortalt, "Cancel Route Selection for " ~ shortalt, "Cancel Route Selection for " ~ shortalt, 'editorCancelOnclick(event)') -}}
+                    {{- button('Save', "Save Route Selection for " ~ shortalt, "Save Route Selection for " ~ shortalt, "Save Route Selection for " ~ shortalt, 'editorSaveOnclick(event)') -}}
+                    {{- button('Cancel', "Disable " ~ shortalt, "Cancel Route Selection for " ~ shortalt, "Cancel Route Selection for " ~ shortalt, 'editorCancelOnclick(event)') -}}
                 {%- endif -%}
                 <BR/>
                 <BR/>
@@ -65,6 +64,9 @@
             {{- button('Equalizer', shortalt ~ ' Equalizer', shortalt ~ ' Equalizer', shortalt ~ ' Equalizer', 'equalizer_icon_onclick(event)') -}}
             {{- button('Settings', shortalt ~ ' Settings', shortalt ~ ' Settings', shortalt ~ ' Settings', 'update_icon_onclick(event)') -}}
             {{- button('Delete', 'Remove ' ~ shortalt, 'Remove ' ~ shortalt, 'Remove ' ~ shortalt, 'remove_icon_onclick(event)') -}}
+            {%- if data.__class__.__name__ == "SinkDescription" or data.__class__.__name__ == "SourceDescription" -%}
+            {{- button('Edit Routes', 'Edit Routes for ' ~ shortalt, 'Edit Routes for ' ~ shortalt, 'Edit routes for ' ~ shortalt, 'editSinkSources(event)') -}}
+            {%- endif -%}
             {%- if (data.__class__.__name__ == "SinkDescription" and not data.is_group) -%}
                 {{- button('Listen', 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'listen_icon_onclick(event)') -}}
                 {{- button('Visualize', 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'visualizer_icon_onclick(event)') -}}

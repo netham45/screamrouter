@@ -92,5 +92,4 @@ function restart_callback_2(response_text) {
         selected_element_query.focus();
     dialogCancel();
     dismissShadow();
-    drawLines();
 }

@@ -115,6 +115,9 @@ function drawLine(sink, source, color, color2) {
     };
 
     const mouseDown = () => {
+        if (source.className.indexOf("option-editor") > -1 || 
+            sink.className.indexOf("option-editor") > -1)
+            return;
         if (selected_sink == sink && selected_source == source) {
             selected_sink = "";
             selected_source = "";

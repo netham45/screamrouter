@@ -12,18 +12,20 @@ DIV#dialog {
     height: auto;
     top: 12.5%;
     margin-left: -16.5%;
-    background-image: linear-gradient(rgba(150,230,181,.7),rgba(120,180,180,.7));
+    background: none;
+    background-image: linear-gradient( rgba(40,120,60,.7), rgba(20,80,40,.5));
     border-radius: 8px;
     display: none;
     backdrop-filter: blur(5px);
     font-family: "Trebuchet MS";
     font-weight: 1000;
-    text-shadow: 0 0 20px #fff, 0 0 30px #AA7777, 0 0 40px #AA7777;
+    text-shadow: 0 0 20px #fff, 0 0 30px #000, 0 0 40px #000;
     text-align: center;
     margin-left: auto;
     margin-right: auto;
     left: 0;
     right: 0;
+    color: #FFF;
 }
 
 DIV.title {
@@ -77,6 +79,7 @@ DIV.section INPUT[TYPE="range"] {
 }
 
 DIV.section-buttons BUTTON {
+    vertical-align: middle;
     font-size: 14pt;
     background-color: #6CB050;
     color: #FFFFFF;
@@ -260,7 +263,17 @@ DIV#dialog SELECT {
 }
 
 DIV#dialog BUTTON {
-    width: 99%;
+    vertical-align: middle;
+    font-size: 14pt;
+    background-color: #6CB050;
+    color: #FFFFFF;
+    font-family: "Open Sans", sans-serif;
+    border-radius: 8px;
+    border: none;
+    padding: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+    margin: 2px;
     display: inline;
 }
 
@@ -331,10 +344,6 @@ SELECT.main-select option::before {
 
 SPAN.option-editor-Enable {
 
-}
-
-SPAN.option-editor-Disable {
-    background-color: #742;
 }
 
 SELECT.main-select OPTION[DATA-TYPE="SinkDescription"].option-enabled::before {
@@ -412,12 +421,12 @@ SPAN.mobile-route-buttons {
     }
 
     DIV.select-container {
-        font-size: inherit;
+        font-size: 24pt;
         position: relative;
     }
 
     DIV.main-select {
-        font-size: inherit;
+        font-size: 24pt;
         position: relative;
     }
 
@@ -462,6 +471,9 @@ SPAN.mobile-route-buttons {
 
     svg#routeLines { 
         display: none;
+    }
+    SPAN.option{
+        font-size: inherit;
     }
   }
 
@@ -516,8 +528,9 @@ SPAN.option[data-is_group="True"]  {
 }
 
 SPAN.icon-enabledisable {
-    vertical-align: center;
-    display: inline-block;
+    height: 100%;
+    vertical-align: middle;
+    display: block;
     pointer-events: auto;
     float: right;
 }
@@ -530,6 +543,14 @@ SPAN.icon-enabledisable {
     stroke: #FF0;
 }
 
-button.button-option-disable {
+button.button-option-disable, SPAN.option-editor-Disable BUTTON.enable-button {
     background-color: #666 !important;
+}
+
+SPAN.option-editor-Disable BUTTON.disable-button {
+    display: none;
+}
+
+SPAN.option-editor-Enable BUTTON.enable-button {
+    display: none;
 }

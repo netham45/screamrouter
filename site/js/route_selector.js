@@ -74,7 +74,7 @@ function updateRoute(name, sink=null, source=null, volume=null, equalizer=null, 
 }
 
 function editSinkSources(e) {
-    let tgt = e.target.parentNode.parentNode.parentNode;
+    let tgt = e.target.parentNode.parentNode;
     const type = tgt.dataset["type"].replace("Description","").toLowerCase();
     if (type == "source")
         highlightSinksBasedOffSource(tgt);
@@ -110,7 +110,7 @@ function saveSourceRoutes(source) {
         const sink = sinks[sinkidx];
         const enabled = sink.className.indexOf("Enable") > -1;
         let route = getRouteBySinkSource(sink.dataset['name'], source.dataset['name']);
-        if (route == null) {
+        if (route == null && enabled) {
             createRoute(source.dataset['name'] + " To " + sink.dataset['name'], sink.dataset['name'], source.dataset['name']);
         } else {
             updateRoute(route.dataset['name'], null, null, null, null, null, enabled);
@@ -178,14 +178,16 @@ function updateRouteButtons() {
     const editRoute = document.getElementById("edit_route");
     const routeEqualizer = document.getElementById("route_equalizer");
     const routeVolume = document.getElementById("route_volume");
-    enableRoute.disabled = true;
-    disableRoute.disabled = true;
-    editRoute.disabled = true;
-    routeEqualizer.disabled = true;
-    route_volume.disabled = true;
-    route_volume.value = 50;
-    enableRoute.style.display = "inline";
-    disableRoute.style.display = "none";
+    if (enableRoute != null) {
+        enableRoute.disabled = true;
+        disableRoute.disabled = true;
+        editRoute.disabled = true;
+        routeEqualizer.disabled = true;
+        route_volume.disabled = true;
+        route_volume.value = 50;
+        enableRoute.style.display = "inline";
+        disableRoute.style.display = "none";
+    }
     if (selected_sink && selected_source) {
         const route = getRouteBySinkSource(selected_sink.dataset['name'], selected_source.dataset['name']);
         if (isRouteEnabled(selected_sink.dataset['name'], selected_source.dataset['name'])) {
