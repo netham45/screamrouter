@@ -19,7 +19,10 @@ function start_audio(sink_ip) {
     const audiotag = document.getElementById("audio");
     audiotag.pause();
     audiotag.src = `/stream/${sink_ip}/`;
+    audiotag.muted = false;
     audiotag.play();
+    if (audiotag.prevvolume != null)
+        audiotag.volume = audiotag.prevvolume;
     audiotag.style.display = "inline";
     audio_playing = true;
 }
@@ -41,7 +44,8 @@ function start_dummy_audio() {
     const audiotag = document.getElementById("audio");
     audiotag.pause();
     audiotag.src = '/site/js/tone.wav';
-    audiotag.volume = 0.00001;
+    audiotag.prevvolume = audiotag.volume;
+    audiotag.volume = 0;
     audiotag.loop = true;
     audiotag.play();
     audiotag.style.display = "none";
