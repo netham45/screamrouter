@@ -8,7 +8,7 @@ This project implements VNC (Virtual Network Computing) functionality to allow r
 - A WebSocket proxy is started on-demand to bridge the VNC connection
 - The VNC viewer runs in the browser using noVNC
 
-![Screenshot of ScreamRouter noVNC](/images/noVNC.png)
+![Screenshot of ScreamRouter noVNC](/images/vnc.png)
 
 ## Key Components
 
