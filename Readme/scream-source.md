@@ -58,7 +58,6 @@ The Scream protocol is very simple, which allows for minimal overhead and very l
 
 - Audio data is sent as raw PCM samples in UDP packets
 - A small 5-byte header is prepended to each packet with audio format information.
-- Default multicast address is 239.255.77.77, port 4010
 - Packet payload is 1152 bytes of audio data
 
 The 5-byte header contains:
