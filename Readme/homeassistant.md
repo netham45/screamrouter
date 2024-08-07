@@ -65,5 +65,3 @@ If you encounter issues:
 ## Screenshots
 
 ![Screenshot of HA for ScreamRouter](/images/HAMediaPlayer.png)
-
-This screenshot shows the ScreamRouter integration in action within Home Assistant, demonstrating the various control options available for audio sources, routes, and sinks.
