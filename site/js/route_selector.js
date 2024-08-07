@@ -1,3 +1,5 @@
+let editorActive = false;
+let editorType = "";
 function getRouteByName(name) {
     const routes = Array.from(document.querySelectorAll('span[data-type="RouteDescription"]'));
     for (routeidx in routes)
@@ -74,11 +76,13 @@ function updateRoute(name, sink=null, source=null, volume=null, equalizer=null, 
 }
 
 function editSinkSources(e) {
+    editorActive = true;
     let tgt = e.target.parentNode.parentNode;
     const type = tgt.dataset["type"].replace("Description","").toLowerCase();
-    if (type == "source")
+    editorType = type;
+    if (type === "source")
         highlightSinksBasedOffSource(tgt);
-    if (type == "sink")
+    if (type === "sink")
         highlightSourcesBasedOffSink(tgt);
 }
 
@@ -141,10 +145,12 @@ function editorSaveOnclick(e) {
     if (target.dataset['type'] == 'SinkDescription') {
         saveSinkRoutes(target);
     }
+    editorActive = false;
     setTimeout(()=>{call_api("/body", "get", {}, restart_callback_2);}, 1000);
 }
 
 function editorCancelOnclick(e) {
+    editorActive = false;
     call_api("/body", "get", {}, restart_callback_2);
 }
 

@@ -14,25 +14,33 @@ function drawLines() {
             let enabled = false;
             let drawTheLine = false;
             if (route != null && route.dataset['enabled'].toLowerCase() === "true") {
-                enabled = true;
                 drawTheLine = true;
             }
             if (route == null) {
                 enabled = false;
                 drawTheLine = false;
             }
-            if (sink.dataset['routeedit'] === "enabled" || source.dataset['routeedit'] === "enabled") {
+            if ((editorType == "source" && sink.dataset['routeedit'] === "enabled" &&
+                 source.dataset['name'] == selected_source.dataset['name']) ||
+                (editorType == "sink" && source.dataset['routeedit'] === "enabled" &&
+                 sink.dataset['name'] == selected_sink.dataset['name'])) {
                 enabled = true;
                 drawTheLine = true;
             }
-            if (sink.dataset['routeedit'] === "disabled" || source.dataset['routeedit'] === "disabled") {
+            if ((editorType == "source" && sink.dataset['routeedit'] === "disabled") ||
+                (editorType == "sink" && source.dataset['routeedit'] === "disabled")) {
                 enabled = false;
-                drawTheLine = true;
+                drawTheLine = false;
             }
+            if (selected_sink && selected_sink.dataset['name'] == sink.dataset['name'])
+                enabled = true;
+            if (selected_source && selected_source.dataset['name'] == source.dataset['name'])
+                enabled = true;
             if (selected_sink && selected_sink.dataset['name'] != sink.dataset['name'])
                 enabled = false;
             if (selected_source && selected_source.dataset['name'] != source.dataset['name'])
                 enabled = false;
+
                 
             if (sink != null && source != null && drawTheLine)
                 if (!enabled)
