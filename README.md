@@ -8,14 +8,7 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 
 ### What is Scream
 
-[Scream](https://github.com/duncanthrax/scream) is a virtual audio driver for Windows developed by Tom Kistner. It offers the following key features:
-
-* Network Transmission: Sends PCM data from Windows' sound engine over the network without processing.
-* Low Latency: Achieves minimal delay due to its streamlined approach.
-* Simple Protocol: Each packet consists of 1152 bytes of PCM data and a 5-byte header describing the stream format.
-* Ease of Use: The simplicity of Scream's design makes it both user-friendly and efficient.
-
-Scream's straightforward architecture allows for easy integration while maintaining high performance in audio streaming applications.
+[Scream](https://github.com/duncanthrax/scream) is a virtual audio driver for Windows developed by Tom Kistner. It sends PCM data out over UDP in a low-latency fashion.
 
 ### Key Features of ScreamRouter
 
