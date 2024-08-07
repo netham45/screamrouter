@@ -1,6 +1,6 @@
 # ScreamRouter User Guide
 
-ScreamRouter is a powerful tool for routing audio around your house, allowing you to manage multiple audio sources and sinks with customizable routing and mixing capabilities.
+ScreamRouter is a tool for routing audio around your house, allowing you to manage multiple audio sources and sinks with customizable routing and mixing capabilities.
 
 ## Table of Contents
 1. [Interface Overview](#interface-overview)
