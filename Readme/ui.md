@@ -12,7 +12,7 @@ ScreamRouter is a powerful tool for routing audio around your house, allowing yo
 
 ## Interface Overview
 
-#![Screenshot of ScreamRouter](/images/ScreamRouter.png)
+![Screenshot of ScreamRouter](/images/ScreamRouter.png)
 
 The ScreamRouter interface consists of three main sections:
 - Sources (left panel)
@@ -119,8 +119,3 @@ See [the VNC documentation](/Readme/vnc.md) for more information.
 When VNC is enabled for a source media keys will appear under the card, and the global media hotkeys will send control commands to the source.
 
 See [the Command Receiver documentation](/Readme/command_receiver.md) for more information.
-
-
----
-
-For more detailed information on configuration and advanced usage, please refer to the configuration.md file in the documentation.
