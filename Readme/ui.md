@@ -12,6 +12,8 @@ ScreamRouter is a powerful tool for routing audio around your house, allowing yo
 
 ## Interface Overview
 
+#![Screenshot of ScreamRouter](/images/ScreamRouter.png)
+
 The ScreamRouter interface consists of three main sections:
 - Sources (left panel)
 - Routes (center panel)
@@ -21,6 +23,8 @@ Each section allows you to add, edit, and manage its respective components.
 
 ## Managing Sources
 
+![Screenshot of ScreamRouter Add/Edit Source Interface](/images/AddSource.png)
+
 Sources represent audio inputs to the system. To manage sources:
 1. Use the "Add Source" button in the Sources panel.
 2. Fill in the required information (Name, IP address, etc.).
@@ -29,13 +33,19 @@ Sources represent audio inputs to the system. To manage sources:
 
 ## Managing Sinks
 
+![Screenshot of ScreamRouter Add/Edit Sink Interface](/images/AddSink.png)
+
 Sinks represent audio outputs. To manage sinks:
 1. Use the "Add Sink" button in the Sinks panel.
 2. Provide necessary details (Name, IP address, port, etc.).
 3. Configure audio format settings if required.
 4. Use the "Enable/Disable" toggle to activate or deactivate a sink.
 
+
+
 ## Creating and Managing Routes
+
+![Screenshot of ScreamRouter Route Editor Interface](/images/RouteEditor.png)
 
 Routes define connections between sources and sinks. To create a route either:
 1. Select a source from the Sources panel.
@@ -54,14 +64,18 @@ Or, use the "Edit Routes" option available:
 
 ## Using the Equalizer
 
-The Equalizer feature allows you to adjust audio settings at various levels:
+![Screenshot of ScreamRouter Equalizer Interface](/images/Equalizer.png)
+
+The Equalizer feature allows you to adjust gain for 18 bands at various points:
 1. For individual sources or sinks
 2. For routes
 3. For groups of sources or sinks
 
-Equalizer settings stack, allowing for fine-tuned audio control.
+Equalizer settings stack across each source/route/sink/group the audio passes through, allowing for fine-tuned audio control.
 
 ## Routing View
+
+![Screenshot of ScreamRouter Route View](/images/RouteView.png)
 
 On desktop the routing view will be lines connecting sources to sinks representing each active connection. They can be hovered over to show the connection or clicked on to activate the source and sink on either side of the route.
 
@@ -72,21 +86,40 @@ On mobile the routing view will be a list instead of connecting lines.
 ## Advanced Features
 
 ### Groups
+
+![Screenshot of ScreamRouter Group Card](/images/Groups.png)
+
 You can create groups of sources or sinks for easier management:
 1. Use the "Add Group" option in the respective panel.
 2. Select the individual components to include in the group.
 3. Apply settings to the entire group at once.
 
-### Links
-The central panel provides a visual representation of your audio routing setup, helping you understand and manage complex configurations.
-
 ### Listen 
-
 There is the ability to listen to the output going to any sink. A sink can be pointed to a bogus IP to be exclusively used through it's MP3 stream. Currently only stereo sinks are supported.
 
 ### Visualizer
 
-The MP3 stream can be feed into Butterchurn/Milkdrop to have visual effects generated off of the music.
+![Screenshot of ScreamRouter with Butterchurn running in background](/images/Visualizer.png)
+
+The MP3 stream can be feed into Butterchurn/Milkdrop to have visual effects generated off of the music. To fullscreen the visualizer click on the background. To cycle through visualizations press 'H'.
+
+### VNC
+
+![Screenshot of ScreamRouter VNC Client](/images/VNC.png)
+
+There is a built-in noVNC viewer that can be used to control sources from the ScreamRouter interface. To open the VNC client configure VNC for a source and click on the 'VNC' button that appears.
+
+See [the VNC documentation](/Readme/vnc.md) for more information.
+
+
+### Media Keys
+
+![Screenshot of ScreamRouter Media Keys](/images/MediaKeys.png)
+
+When VNC is enabled for a source media keys will appear under the card, and the global media hotkeys will send control commands to the source.
+
+See [the Command Receiver documentation](/Readme/command_receiver.md) for more information.
+
 
 ---
 
