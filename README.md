@@ -4,7 +4,7 @@
 
 ### What is ScreamRouter
 
-ScreamRouter is a versatile audio routing and management system with a Python frontend/configuration layer and a C++ backend, designed for network audio streaming. It supports Scream and RTP audio sources, along with Scream receivers and web-based MP3 streamers. The system offers a robust set of features for configuring and controlling audio streams across a network.
+ScreamRouter is a versatile audio routing and management system with a Python frontend/configuration layer and a C++ backend, designed for network audio streaming. It supports Scream and RTP audio sources, along with Scream receivers and web-based MP3 streamers. 
 
 ### What is Scream
 
