@@ -186,4 +186,5 @@ function option_onclick(e) {
         selected_route = selected_route === node ? "" : node;
         highlight_active_routes();
     }
+    start_dummy_audio();
 }

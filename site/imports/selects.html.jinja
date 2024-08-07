@@ -73,7 +73,7 @@
             {%- endif -%}
             {%- if (data.vnc_ip and data.vnc_port) -%}
                 {{- button('VNC', 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'vnc_icon_onclick(event)') -}}
-                {{- button_icon('⏮️', 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'previous_track_icon_onclik(event)') -}}
+                {{- button_icon('⏮️', 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'previous_track_icon_onclick(event)') -}}
                 {{- button_icon('⏯️', 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'playpause_icon_onclick(event)') -}}
                 {{- button_icon('⏭️', 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'next_track_icon_onclick(event)') -}}
             {%- endif -%}
