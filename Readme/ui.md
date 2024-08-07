@@ -8,7 +8,11 @@ ScreamRouter is a tool for routing audio around your house, allowing you to mana
 3. [Managing Sinks](#managing-sinks)
 4. [Creating and Managing Routes](#creating-and-managing-routes)
 5. [Using the Equalizer](#using-the-equalizer)
-6. [Advanced Features](#advanced-features)
+6. [Groups](#groups)
+7. [Listening to Sinks](#listen)
+8. [Visualizer](#visualizer)
+9. [VNC](#vnc)
+10. [Media Keys](#media-keys)
 
 ## Interface Overview
 
@@ -105,7 +109,7 @@ The MP3 stream can be feed into Butterchurn/Milkdrop to have visual effects gene
 
 ### VNC
 
-![Screenshot of ScreamRouter VNC Client](/images/VNC.png)
+![Screenshot of ScreamRouter VNC Client](/images/vnc.png)
 
 There is a built-in noVNC viewer that can be used to control sources from the ScreamRouter interface. To open the VNC client configure VNC for a source and click on the 'VNC' button that appears.
 
@@ -118,4 +122,4 @@ See [the VNC documentation](/Readme/vnc.md) for more information.
 
 When VNC is enabled for a source media keys will appear under the card, and the global media hotkeys will send control commands to the source.
 
-See [the Command Receiver documentation](/Readme/command_receiver.md) for more information.
+See [the Command Receiver documentation](/Readme/command_receiver.md) for more information on how media key commands work.
