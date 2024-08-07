@@ -6,9 +6,9 @@ ScreamRouter is a tool for routing audio around your house, allowing you to mana
 1. [Interface Overview](#interface-overview)
 2. [Managing Sources](#managing-sources)
 3. [Managing Sinks](#managing-sinks)
+6. [Managing Groups](#groups)
 4. [Creating and Managing Routes](#creating-and-managing-routes)
 5. [Using the Equalizer](#using-the-equalizer)
-6. [Groups](#groups)
 7. [Listening to Sinks](#listen)
 8. [Visualizer](#visualizer)
 9. [VNC](#vnc)
@@ -45,6 +45,14 @@ Sinks represent audio outputs. To manage sinks:
 3. Configure audio format settings if required.
 4. Use the "Enable/Disable" toggle to activate or deactivate a sink.
 
+### Groups
+
+![Screenshot of ScreamRouter Group Card](/images/Groups.png)
+
+You can create groups of sources or sinks for easier management:
+1. Use the "Add Group" option in the respective panel.
+2. Select the individual components to include in the group.
+3. Apply settings to the entire group at once.
 
 
 ## Creating and Managing Routes
@@ -86,17 +94,6 @@ On desktop the routing view will be lines connecting sources to sinks representi
 Routes that are not associated with currently selected sinks/sources will be displayed as black lines, routes associated with selected sources/sinks will be displayed as green.
 
 On mobile the routing view will be a list instead of connecting lines.
-
-## Advanced Features
-
-### Groups
-
-![Screenshot of ScreamRouter Group Card](/images/Groups.png)
-
-You can create groups of sources or sinks for easier management:
-1. Use the "Add Group" option in the respective panel.
-2. Select the individual components to include in the group.
-3. Apply settings to the entire group at once.
 
 ### Listen 
 There is the ability to listen to the output going to any sink. A sink can be pointed to a bogus IP to be exclusively used through it's MP3 stream. Currently only stereo sinks are supported.
