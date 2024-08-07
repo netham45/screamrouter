@@ -117,6 +117,10 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
   - Guide to using the embedded noVNC for remote computer control
 
 ## Relevant Repos
+
+### Scream
+* [Scream Windows Driver](https://github.com/duncanthrax/scream/)
+
 ### Docker Containers
 * [Amazon Music Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-amazon-music-docker)
 * [Firefox Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-firefox-docker)
@@ -126,9 +130,12 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 * [ESP32/ESP32s spdif/USB UAC 1.0 audio receiver](https://github.com/netham45/esp32-scream-receiver)
 * [ESP32 A1S Audiokit Receiver](https://github.com/netham45/esp32-audiokit-screamreader)
 * [Python Scream Receiver](https://github.com/netham45/pyscreamreader)
+* [Windows C# Receiver](https://github.com/duncanthrax/scream/tree/master/Receivers/dotnet-windows/ScreamReader)
+* [Unix Receiver](https://github.com/duncanthrax/scream/tree/master/Receivers/unix)
+* [Android Receiver](https://github.com/martinellimarco/scream-android/)
 
 ### Senders
-* [Tool for appending Scream headers to PCM streams on Linux](https://github.com/netham45/screamsender) [Documentation](/Readme/screamsender.md)
+* [Tool for prepending Scream headers to PCM streams on Linux](https://github.com/netham45/screamsender)
 
 ## Installation Guide
 
