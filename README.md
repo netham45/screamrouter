@@ -111,9 +111,6 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 
 ## Relevant Repos
 
-### Scream
-* [Scream Windows Driver](https://github.com/duncanthrax/scream/)
-
 ### Docker Containers
 * [Amazon Music Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-amazon-music-docker)
 * [Firefox Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-firefox-docker)
@@ -128,8 +125,9 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 * [Android Receiver](https://github.com/martinellimarco/scream-android/)
 
 ### Senders
-* [Tool for prepending Scream headers to PCM streams on Linux](https://github.com/netham45/screamsender)
+* [Scream Windows Driver](https://github.com/duncanthrax/scream/)
 * [Usermode Scream Sender for Windows](https://github.com/netham45/windows-scream-sender)
+* [Tool for prepending Scream headers to PCM streams on Linux](https://github.com/netham45/screamsender)
 
 ## Installation Guide
 
