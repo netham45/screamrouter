@@ -7,32 +7,32 @@
 {%- set data = request_info['data'] %}
 {%- set dataset = sources if holder_type == "source" else sinks %}
 
-<H3>{{ 'Add Group' if request_info['add_new'] else 'Edit Group' }}</H3> <!-- Display either 'Add Group' or 'Edit Group' depending on the value of add_new in request_info. -->
+<h3>{{ 'Add Group' if request_info['add_new'] else 'Edit Group' }}</h3> <!-- Display either 'Add Group' or 'Edit Group' depending on the value of add_new in request_info. -->
 
-<DIV ID="dialog_add_edit_group"> <!-- Create a div to contain the form elements for adding/editing a group. -->
-    <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}"> <!-- Set the HTTP method based on add_new value. -->
-    <INPUT TYPE="hidden" ID="dialog_url" VALUE="/{{holder_type}}s/{{holder_name}}"> <!-- Define the URL for the POST or PUT request. -->
-    <INPUT TYPE="hidden" ID="is_group" VALUE="true"> <!-- Set is_group to true since this form is for adding/editing a group. -->
+<div id="dialog_add_edit_group"> <!-- Create a div to contain the form elements for adding/editing a group. -->
+    <input type="hidden" id="dialog_action" value="{{'post' if request_info['add_new'] else 'put'}}"> <!-- Set the HTTP method based on add_new value. -->
+    <input type="hidden" id="dialog_url" value="/{{holder_type}}s/{{holder_name}}"> <!-- Define the URL for the POST or PUT request. -->
+    <input type="hidden" id="is_group" value="true"> <!-- Set is_group to true since this form is for adding/editing a group. -->
 
     {# Create an input field for Group Name and set its value based on the holder_name variable #}
-    <LABEL FOR="name">Group Name</LABEL>
-    <INPUT TYPE="text" ID="name" VALUE="{{holder_name}}">
-    <BR />
+    <label for="name">Group Name</label>
+    <input type="text" id="name" value="{{holder_name}}">
+    <br />
 
     {# Create a select box for Group Members with multiple selection enabled. Only show entries other than the one corresponding to holder_name #}
-    <LABEL FOR="group_members">Group Members</LABEL>
-    <SELECT ID="group_members" SIZE="{{(dataset | length) - 1}}" MULTIPLE>
+    <label for="group_members">Group Members</label>
+    <select id="group_members" size="{{(dataset | length) - 1}}" multiple>
         {%- for entry in dataset %}
             {%- if entry.name != holder_name %}
-                <OPTION VALUE="{{entry.name}}"{{" SELECTED" if entry.name in data['group_members']}}>{{entry.name}}</OPTION>
+                <option value="{{entry.name}}"{{" selected" if entry.name in data['group_members']}}>{{entry.name}}</option>
             {%- endif %}
         {%- endfor %}
-    </SELECT>
+    </select>
     
     {# Include the text_number input field from imports/inputs for Delay in ms, setting the min to 0 and max to 5000 #}
-    {{ inputs.text_number("Delay", "delay", 0, 5000, True, "Delay (ms)", data['delay']) }}<BR /><BR />
+    {{ inputs.text_number("Delay", "delay", 0, 5000, True, "Delay (ms)", data['delay']) }}<br /><br />
 
     {# Include two buttons from imports/buttons: dialog_submit_close for submitting and closing the form and dialogCancel for canceling #}
     {{ buttons.button("dialogSubmitClose", 'Add Group' if request_info['add_new'] else 'Edit Group', "dialog-button", {}, "Submit") }}
     {{ buttons.button("dialogCancel", 'Close', "dialog-button", {}, "Cancel") }}
-</DIV>
+</div>

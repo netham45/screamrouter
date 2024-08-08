@@ -1,76 +1,56 @@
 {%- import "imports/selects.html.jinja" as selects %}
 {%- import "imports/buttons.html.jinja" as buttons -%}
 <!DOCTYPE html>
-<HTML>
-
-<HEAD>
-    <META NAME="viewport" CONTENT="width=device-width, initial-scale=1" />
-    <TITLE>ScreamRouter</TITLE>
-    <LINK REL="stylesheet" TYPE="text/css" HREF="{{url_for('site_css')}}">
-
-    <script type="text/javascript" src="https://unpkg.com/lodash"></script>
-    <script type="text/javascript" src="https://unpkg.com/butterchurn"></script>
-    <script type="text/javascript" src="https://unpkg.com/butterchurn-presets"></script>
-    <script type="text/javascript" src="https://unpkg.com/butterchurn-presets/lib/butterchurnPresetsExtra.min.js"></script>
-
-    <link rel="stylesheet" href="https://unpkg.com/normalize.css/normalize.css" />
-    <SCRIPT TYPE="text/javascript" SRC="site/js/api.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/audio.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/controls.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/dialog.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/drag.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/highlighting.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/iframe.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/main.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/sort.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/visualizer.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/route_selector.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/lines.js"></SCRIPT>
-    <SCRIPT TYPE="text/javascript" SRC="site/js/background.js"></SCRIPT>
-
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScreamRouter</title>
+    <link rel="stylesheet" href="{{url_for('site_css')}}">
+    <link rel="stylesheet" href="https://unpkg.com/normalize.css/normalize.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,100;0,300;0,400;0,700;0,900;1,100;1,300;1,400;1,700;1,900&family=Open+Sans:ital,wght@0,300..800;1,300..800&family=Orbitron:wght@400..900&family=Roboto+Condensed:ital,wght@0,100..900;1,100..900&family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&display=swap" rel="stylesheet">
-
-    <link rel="manifest" href="/site/js/manifest.json" />
-</HEAD>
-
-<BODY onmousemove="onOptionDragMove(event)" onmouseup="onOptionDragEnd(event)"
+    <link rel="manifest" href="/site/js/manifest.json">
+    <script src="https://unpkg.com/lodash"></script>
+    <script src="https://unpkg.com/butterchurn"></script>
+    <script src="https://unpkg.com/butterchurn-presets"></script>
+    <script src="https://unpkg.com/butterchurn-presets/lib/butterchurnPresetsExtra.min.js"></script>
+    <script type="module" src="site/js/main.js"></script>
+</head>
+<body onmousemove="onOptionDragMove(event)" onmouseup="onOptionDragEnd(event)"
       ontouchmove="onOptionDragTouchMove(event)" ontouchend="onOptionDragEnd(event)">
     <canvas id="backgroundCanvas"></canvas>
-    <DIV ID="enable_disable">
-        <DIV ID="randomcontainer4" CLASS="title">
-            <DIV CLASS="blur">
+    <div id="enable_disable">
+        <div id="randomcontainer4" class="title">
+            <div class="blur">
                 ScreamRouter
-                <AUDIO ID="audio" PRELOAD="metadata" CONTROLS STYLE="display: none;"></audio>
-                <AUDIO ID="audio_visualizer" PRELOAD="metadata" CONTROLS STYLE="display: none;"></audio>
-            </DIV>
-        </DIV>
-        <DIV ID="reload">
+                <audio id="audio" preload="metadata" controls style="display: none;"></audio>
+                <audio id="audio_visualizer" preload="metadata" controls style="display: none;"></audio>
+            </div>
+        </div>
+        <div id="reload">
             {%- import "index_body.html.jinja" as index_body %}
             {{ index_body.main_body(sources, sinks, routes) }}
-        </DIV>
-        <DIV ID="randomcontainer5">
-            <div id="mainWrapper" CLASS="section">
-                <DIV CLASS="blur">
+        </div>
+        <div id="randomcontainer5">
+            <div id="mainWrapper" class="section">
+                <div class="blur">
                     <div id="presetControls">
-                        <div>Preset: <select id="presetSelect" ONCHANGE="presetSelect_change(e)"></select></div>
-                        <div>Cycle:
-                            <input type="checkbox" id="presetCycle" ONCHANGE="presetCycle_change(e)" checked></input>
-                            <input type="number" id="presetCycleLength" step="1" value="15" min="1" ONCHANGE="presetCycleLength_change(e)"></input>
+                        <div>Preset: <select id="presetSelect" onchange="presetSelectChange(event)"></select></div>
+                        <div>
+                            Cycle:
+                            <input type="checkbox" id="presetCycle" onchange="presetCycleChange(event)" checked>
+                            <input type="number" id="presetCycleLength" step="1" value="15" min="1" onchange="presetCycleLengthChange(event)">
                         </div>
-                        <div>Random: <input type="checkbox" id="presetRandom" ONCHANGE="presetRandom_change(e)" checked></input></div>
+                        <div>Random: <input type="checkbox" id="presetRandom" onchange="presetRandom_change(event)" checked></div>
                     </div>
-                    <canvas id='canvas' width="3840" height="2160" ONCLICK="canvas_click()" tabindex="0" ONKEYDOWN="canvas_onkeydown(event)" >
-                    </canvas>
+                    <canvas id="canvas" width="3840" height="2160" onclick="canvasClick()" tabindex="0" onkeydown="canvasOnKeyDown(event)"></canvas>
                 </div>
-            </DIV>
-        </DIV>
-    </DIV>
-    <DIV ID="shadow" ONCLICK="dialogCancel()">
-    </DIV>
-    <DIV ID="dialog">
-    </DIV>
-</BODY>
-
-</HTML>
+            </div>
+        </div>
+    </div>
+    <div id="shadow" onclick="dialogCancel()"></div>
+    <div id="dialog"></div>
+</body>
+</html>

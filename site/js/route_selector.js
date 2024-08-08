@@ -1,18 +1,14 @@
-let editorActive = false;
-let editorType = "";
+import {callApi as callApi} from "./api.js"
+import {drawLines as drawLines} from "./lines.js"
+import { selectedRoute, selectedSink, selectedSource, editorActive, editorType, setSelectedSource, setSelectedSink, setSelectedRoute, setEditorActive, setEditorType } from "./global.js";
+import { getRouteBySinkSource, exposeFunction } from "./utils.js"
+import {nullCallback, restartCallback, editSourceCallback, editSinkCallback, restartCallback2} from "./main.js"
+
 function getRouteByName(name) {
     const routes = Array.from(document.querySelectorAll('span[data-type="RouteDescription"]'));
-    for (routeidx in routes)
-        if (routes[routeidx].dataset['name'] == name)
-            return routes[routeidx];
-    return null;
-}
-
-function getRouteBySinkSource(sink, source) {
-    const routes = Array.from(document.querySelectorAll('span[data-type="RouteDescription"]'));
-    for (routeidx in routes)
-        if (routes[routeidx].dataset['sink'] == sink && routes[routeidx].dataset['source'] == source)
-            return routes[routeidx];
+    for (let routeIdx in routes)
+        if (routes[routeIdx].dataset['name'] == name)
+            return routes[routeIdx];
     return null;
 }
 
@@ -48,7 +44,7 @@ function createRoute(name, sink, source, volume=null, equalizer=null, delay=null
                  "enabled": enabled}
     let url = "routes";
     let method = "post";
-    call_api(url, method, route, restart_callback);
+    callApi(url, method, route, restartCallback);
 }
 
 function updateRoute(name, sink=null, source=null, volume=null, equalizer=null, delay=null, enabled=null) {
@@ -57,9 +53,9 @@ function updateRoute(name, sink=null, source=null, volume=null, equalizer=null, 
         if (source == null) source = routeElement.dataset['source'];
         if (volume == null) volume = routeElement.dataset['volume'];
         if (equalizer == null) { 
-            let equalizer_json = "{" + routeElement.dataset['equalizer'].replace(/b(\d+)=(\d+\.?\d*)/g, '"b$1": $2,') + "}";
-            equalizer_json = equalizer_json.replace(",}", "}");
-            equalizer = JSON.parse(equalizer_json);
+            let equalizerJson = "{" + routeElement.dataset['equalizer'].replace(/b(\d+)=(\d+\.?\d*)/g, '"b$1": $2,') + "}";
+            equalizerJson = equalizerJson.replace(",}", "}");
+            equalizer = JSON.parse(equalizerJson);
         }
         if (delay ==  null) delay = routeElement.dataset['delay'];
         if (enabled ==  null) enabled = routeElement.dataset['enabled'].toLowerCase() == "true";
@@ -72,14 +68,14 @@ function updateRoute(name, sink=null, source=null, volume=null, equalizer=null, 
                      "enabled": enabled}
         let url ="routes/" + name;
         let method = "put";
-        call_api(url, method, route, restart_callback);
+        callApi(url, method, route, restartCallback);
 }
 
 function editSinkSources(e) {
-    editorActive = true;
+    setEditorActive(true);
     let tgt = e.target.parentNode.parentNode;
     const type = tgt.dataset["type"].replace("Description","").toLowerCase();
-    editorType = type;
+    setEditorType(type);
     if (type === "source")
         highlightSinksBasedOffSource(tgt);
     if (type === "sink")
@@ -87,11 +83,48 @@ function editSinkSources(e) {
 }
 
 function highlightSinksBasedOffSource(source) {
-    call_api("site/edit_source_routes/" + source.dataset['name'], "get", {}, edit_sink_callback);
+    callApi("site/edit_source_routes/" + source.dataset['name'], "get", {}, editSinkCallback);
 }
 
 function highlightSourcesBasedOffSink(sink) {
-    call_api("site/edit_sink_routes/" + sink.dataset['name'], "get", {}, edit_source_callback);
+    callApi("site/edit_sink_routes/" + sink.dataset['name'], "get", {}, editSourceCallback);
+}
+
+function saveSourceRoutes(source) {
+    const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
+    for (let sinkIdx in sinks) {
+        const sink = sinks[sinkIdx];
+        const enabled = sink.className.indexOf("Enable") > -1;
+        let route = getRouteBySinkSource(sink.dataset['name'], source.dataset['name']);
+        if (route == null && enabled) {
+            createRoute(source.dataset['name'] + " To " + sink.dataset['name'], sink.dataset['name'], source.dataset['name']);
+        } else {
+            updateRoute(route.dataset['name'], null, null, null, null, null, enabled);
+        }
+    }
+}
+
+function saveSinkRoutes(sink) {
+    const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
+    for (let sourceIdx in sources) {
+        const source = sources[sourceIdx];
+        const enabled = source.className.indexOf("Enable") > -1;
+        let route = getRouteBySinkSource(sink.dataset['name'], source.dataset['name']);
+        if (route == null) {
+            if (enabled)
+                createRoute(source.dataset['name'] + " To " + sink.dataset['name'], sink.dataset['name'], source.dataset['name'], null, null, null, enabled);
+        } else {
+            updateRoute(route.dataset['name'], null, null, null, null, null, enabled);
+        }
+    }
+}
+
+function isRouteEnabled(sinkName, sourceName) {
+    const route = getRouteBySinkSource(sinkName, sourceName);
+    if (route != null && route.dataset["enabled"].toLowerCase() == "true")
+        return true;
+    else 
+        return false;
 }
 
 function editorEnableOnclick(e) {
@@ -108,34 +141,6 @@ function editorDisableOnclick(e) {
     drawLines();
 }
 
-function saveSourceRoutes(source) {
-    const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
-    for (sinkidx in sinks) {
-        const sink = sinks[sinkidx];
-        const enabled = sink.className.indexOf("Enable") > -1;
-        let route = getRouteBySinkSource(sink.dataset['name'], source.dataset['name']);
-        if (route == null && enabled) {
-            createRoute(source.dataset['name'] + " To " + sink.dataset['name'], sink.dataset['name'], source.dataset['name']);
-        } else {
-            updateRoute(route.dataset['name'], null, null, null, null, null, enabled);
-        }
-    }
-}
-
-function saveSinkRoutes(sink) {
-    const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
-    for (sourceidx in sources) {
-        const source = sources[sourceidx];
-        const enabled = source.className.indexOf("Enable") > -1;
-        let route = getRouteBySinkSource(sink.dataset['name'], source.dataset['name']);
-        if (route == null) {
-            if (enabled)
-                createRoute(source.dataset['name'] + " To " + sink.dataset['name'], sink.dataset['name'], source.dataset['name'], null, null, null, enabled);
-        } else {
-            updateRoute(route.dataset['name'], null, null, null, null, null, enabled);
-        }
-    }
-}
 
 function editorSaveOnclick(e) {
     let target = e.target.parentNode.parentNode;
@@ -145,58 +150,50 @@ function editorSaveOnclick(e) {
     if (target.dataset['type'] == 'SinkDescription') {
         saveSinkRoutes(target);
     }
-    editorActive = false;
-    setTimeout(()=>{call_api("/body", "get", {}, restart_callback_2);}, 1000);
+    setEditorActive(false);
+    setTimeout(()=>{callApi("/body", "get", {}, restartCallback2);}, 1000);
 }
 
 function editorCancelOnclick(e) {
-    editorActive = false;
-    call_api("/body", "get", {}, restart_callback_2);
+    setEditorActive(false);
+    callApi("/body", "get", {}, restartCallback2);
 }
 
 function getSinkByName(name) {
     const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
-    for (sinkidx in sinks)
-        if (sinks[sinkidx].dataset['name'] == name)
-            return sinks[sinkidx];
+    for (let sinkIdx in sinks)
+        if (sinks[sinkIdx].dataset['name'] == name)
+            return sinks[sinkIdx];
     return null;
 }
 
 function getSourceByName(name) {
     const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
-    for (sourceidx in sources)
-        if (sources[sourceidx].dataset['name'] == name)
-            return sources[sourceidx];
+    for (let sourceIdx in sources)
+        if (sources[sourceIdx].dataset['name'] == name)
+            return sources[sourceIdx];
     return null;
 }
 
-function isRouteEnabled(sinkName, sourceName) {
-    const route = getRouteBySinkSource(sinkName, sourceName);
-    if (route != null && route.dataset["enabled"].toLowerCase() == "true")
-        return true;
-    else 
-        return false;
-}
-
 function updateRouteButtons() {
-    const enableRoute = document.getElementById("enable_route");
-    const disableRoute = document.getElementById("disable_route");
-    const editRoute = document.getElementById("edit_route");
-    const routeEqualizer = document.getElementById("route_equalizer");
-    const routeVolume = document.getElementById("route_volume");
+    const enableRoute = document.getElementById("button_enableRoute");
+    const disableRoute = document.getElementById("button_disableRoute");
+    const editRoute = document.getElementById("button_editRoute");
+    const routeEqualizer = document.getElementById("button_routeEqualizer");
+    const routeVolume = document.getElementById("routeVolume");
     if (enableRoute != null) {
         enableRoute.disabled = true;
         disableRoute.disabled = true;
         editRoute.disabled = true;
         routeEqualizer.disabled = true;
-        route_volume.disabled = true;
-        route_volume.value = 50;
+        routeVolume.disabled = true;
+        routeVolume.value = 50;
         enableRoute.style.display = "inline";
         disableRoute.style.display = "none";
     }
-    if (selected_sink && selected_source) {
-        const route = getRouteBySinkSource(selected_sink.dataset['name'], selected_source.dataset['name']);
-        if (isRouteEnabled(selected_sink.dataset['name'], selected_source.dataset['name'])) {
+    if (selectedSink && selectedSource) {
+        const route = getRouteBySinkSource(selectedSink.dataset['name'], selectedSource.dataset['name']);
+        if (isRouteEnabled(selectedSink.dataset['name'], selectedSource.dataset['name'])) {
             enableRoute.disabled = true;
             disableRoute.disabled = false;
             enableRoute.style.display = "none";
@@ -207,38 +204,54 @@ function updateRouteButtons() {
         }
         editRoute.disabled = false;
         routeEqualizer.disabled = false;
-        route_volume.disabled = false;
-        route_volume.value = route.dataset['volume'] * 100;
+        routeVolume.disabled = false;
+        routeVolume.value = route.dataset['volume'] * 100;
     }
 }
 
-function enable_route(e) {
-    const route = getRouteBySinkSource(selected_sink.dataset['name'], selected_source.dataset['name']);
+function enableRoute(e) {
+    const route = getRouteBySinkSource(selectedSink.dataset['name'], selectedSource.dataset['name']);
     if (route != null)
         updateRoute(route.dataset['name'], null, null, null, null, null, true);
     else
-        createRoute(selected_sink.dataset['name'] + " To " + selected_source.dataset['name'], selected_sink.dataset['name'], selected_source.dataset['name']);
+        createRoute(selectedSink.dataset['name'] + " To " + selectedSource.dataset['name'], selectedSink.dataset['name'], selectedSource.dataset['name']);
 }
 
-function disable_route(e) {
-    const route = getRouteBySinkSource(selected_sink.dataset['name'], selected_source.dataset['name']);
+function disableRoute(e) {
+    const route = getRouteBySinkSource(selectedSink.dataset['name'], selectedSource.dataset['name']);
     if (route != null)
         updateRoute(route.dataset['name'], null, null, null, null, null, false);
 }
 
-function edit_route(e) {
-    const route = getRouteBySinkSource(selected_sink.dataset['name'], selected_source.dataset['name']);
+function editRoute(e) {
+    const route = getRouteBySinkSource(selectedSink.dataset['name'], selectedSource.dataset['name']);
     dialogUpdateRoute(route.dataset['name']);
 }
 
-function route_equalizer(e) {
-    const route = getRouteBySinkSource(selected_sink.dataset['name'], selected_source.dataset['name']);
+function routeEqualizer(e) {
+    const route = getRouteBySinkSource(selectedSink.dataset['name'], selectedSource.dataset['name']);
     dialogUpdateRouteEqualizer(route.dataset['name']);
 }
 
-function route_volume_change() {
-    const route = getRouteBySinkSource(selected_sink.dataset['name'], selected_source.dataset['name']);
-    const routeVolume = document.getElementById("route_volume");
-    const volume_level = routeVolume.value / 100;
-    call_api(`/routes/${route.dataset["name"]}/volume/${volume_level}`, "get");
+function routeVolumeChange() {
+    const route = getRouteBySinkSource(selectedSink.dataset['name'], selectedSource.dataset['name']);
+    const routeVolume = document.getElementById("routeVolume");
+    const volumeLevel = routeVolume.value / 100;
+    callApi(`/routes/${route.dataset["name"]}/volume/${volumeLevel}`, "get");
+}
+
+export function onload() {
+    exposeFunction(editorEnableOnclick, "editorEnableOnclick");
+    exposeFunction(editorDisableOnclick, "editorDisableOnclick");
+    exposeFunction(editorSaveOnclick, "editorSaveOnclick");
+    exposeFunction(editorCancelOnclick, "editorCancelOnclick");
+    exposeFunction(getSinkByName, "getSinkByName");
+    exposeFunction(getSourceByName, "getSourceByName");
+    exposeFunction(updateRouteButtons, "updateRouteButtons");
+    exposeFunction(enableRoute, "enableRoute");
+    exposeFunction(disableRoute, "disableRoute");
+    exposeFunction(editRoute, "editRoute");
+    exposeFunction(routeEqualizer, "routeEqualizer");
+    exposeFunction(routeVolumeChange, "routeVolumeChange");
+    exposeFunction(editSinkSources, "editSinkSources");
 }

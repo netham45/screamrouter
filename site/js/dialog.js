@@ -1,16 +1,20 @@
-function showDialogCallback(response_text) {
+import {callApi as callApi} from "./api.js"
+import { getRouteBySinkSource, exposeFunction } from "./utils.js"
+import {nullCallback, restartCallback, editSourceCallback, editSinkCallback, restartCallback2} from "./main.js"
+
+function showDialogCallback(responseText) {
     showShadow();
     document.getElementById("dialog").style.display = "block";
-    document.getElementById("dialog").innerHTML = response_text;
+    document.getElementById("dialog").innerHTML = responseText;
     document.getElementById("dialog").scrollIntoView();
 }
 
-async function callDialog(url, source_name = "") {
-    let full_url = "site/" + url;
-    if (source_name) {
-        full_url += "/" + source_name;
+async function callDialog(url, sourceName = "") {
+    let fullUrl = "site/" + url;
+    if (sourceName) {
+        fullUrl += "/" + sourceName;
     }
-    call_api(full_url, "GET", "", showDialogCallback);
+    callApi(fullUrl, "GET", "", showDialogCallback);
     if (url === "vnc") {
         await new Promise(r => setTimeout(r, 500));
         if (matchMedia('(pointer:coarse)').matches)
@@ -18,61 +22,61 @@ async function callDialog(url, source_name = "") {
     }
 }
 
-function dialogAddSource() {
+export function dialogAddSource() {
     callDialog("add_source");
 }
 
-function dialogAddSourceGroup() {
+export function dialogAddSourceGroup() {
     callDialog("add_source_group");
 }
 
-function dialogVNC(source_name) {
-    callDialog("vnc", source_name);
+export function dialogVnc(sourceName) {
+    callDialog("vnc", sourceName);
 }
 
-function dialogUpdateSource(source_name) {
-    callDialog("edit_source", source_name);
+export function dialogUpdateSource(sourceName) {
+    callDialog("edit_source", sourceName);
 }
 
-function dialogUpdateSourceEqualizer(source_name) {
-    callDialog("edit_source", source_name + "/equalizer");
+export function dialogUpdateSourceEqualizer(sourceName) {
+    callDialog("edit_source", sourceName + "/equalizer");
 }
 
-function dialogAddSink() {
+export function dialogAddSink() {
     callDialog("add_sink");
 }
 
-function dialogAddSinkGroup() {
+export function dialogAddSinkGroup() {
     callDialog("add_sink_group");
 }
 
-function dialogUpdateSink(sink_name) {
-    callDialog("edit_sink", sink_name);
+export function dialogUpdateSink(sinkName) {
+    callDialog("edit_sink", sinkName);
 }
 
-function dialogUpdateSinkEqualizer(sink_name) {
-    callDialog("edit_sink", sink_name + "/equalizer");
+export function dialogUpdateSinkEqualizer(sinkName) {
+    callDialog("edit_sink", sinkName + "/equalizer");
 }
 
-function dialogAddRoute() {
+export function dialogAddRoute() {
     callDialog("add_route");
 }
 
-function dialogUpdateRoute(route_name) {
-    callDialog("edit_route", route_name);
+export function dialogUpdateRoute(routeName) {
+    callDialog("edit_route", routeName);
 }
 
-function dialogUpdateRouteEqualizer(route_name) {
-    callDialog("edit_route", route_name + "/equalizer");
+export function dialogUpdateRouteEqualizer(routeName) {
+    callDialog("edit_route", routeName + "/equalizer");
 }
 
-function dialogCancel() {
+export function dialogCancel() {
     document.getElementById("dialog").style.display = "none";
     document.getElementById("dialog").innerHTML = "";
     dismissShadow();
 }
 
-function dialogEqualizerDefault() {
+export function dialogEqualizerDefault() {
     document.querySelectorAll("DIV#dialog INPUT[TYPE='range']").forEach(input => input.value = 100);
 }
 
@@ -83,6 +87,7 @@ function dialogSubmit(close) {
     const equalizer = {};
 
     document.querySelectorAll("DIV#dialog INPUT, DIV#dialog SELECT").forEach(entry => {
+        console.log("Checking entry " + entry.id);
         if (entry.id == undefined) return;
         if (entry.type == "checkbox") {
             result[entry.id] = entry.checked;
@@ -92,7 +97,7 @@ function dialogSubmit(close) {
             url = entry.value;
         } else if (entry.id == "dialog_action") {
             action = entry.value;
-        } else if (entry.id.startsWith("eq_b")) {
+        } else if (entry.id.startsWith("eqB")) {
             equalizer[entry.name] = parseFloat(entry.value / 100);
         } else {
             const value = entry.value;
@@ -111,7 +116,7 @@ function dialogSubmit(close) {
         result["equalizer"] = equalizer;
     }
     console.log("Calling API");
-    call_api(url, action, result, close ? restart_callback : undefined);
+    callApi(url, action, result, close ? restartCallback : undefined);
 }
 
 function dialogSubmitClose() {
@@ -122,12 +127,20 @@ function dialogSubmitNoClose() {
     dialogSubmit(false);
 }
 
-function showShadow() {
+export function showShadow() {
     document.getElementById("shadow").style.display = "block";
     document.getElementById("enable_disable").inert = true;
 }
 
-function dismissShadow() {
+export function dismissShadow() {
     document.getElementById("shadow").style.display = "none";
     document.getElementById("enable_disable").inert = false;
+}
+
+export function onload() {
+
+    exposeFunction(dialogSubmitClose, "dialogSubmitClose");
+    exposeFunction(dialogSubmitNoClose, "dialogSubmitNoClose");
+    exposeFunction(dialogSubmit, "dialogSubmit");
+    exposeFunction(dialogCancel, "dialogCancel");
 }

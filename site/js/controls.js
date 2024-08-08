@@ -1,84 +1,99 @@
-function add_source_button() {
+import {callApi as callApi} from "./api.js"
+import {nullCallback, restartCallback, editSourceCallback, editSinkCallback, restartCallback2} from "./main.js"
+import { getRouteBySinkSource, exposeFunction } from "./utils.js"
+import { visualPlaying, startVisualizer, stopVisualizer } from "./visualizer.js"
+import { 
+    dialogAddSource, 
+    dialogAddSourceGroup, 
+    dialogAddSink, 
+    dialogAddSinkGroup, 
+    dialogAddRoute, 
+    dialogVnc, 
+    dialogUpdateSourceEqualizer, 
+    dialogUpdateSinkEqualizer, 
+    dialogUpdateRouteEqualizer, 
+    dialogUpdateSource, 
+    dialogUpdateSink, 
+    dialogUpdateRoute 
+} from "./dialog.js"
+
+function addSourceButton() {
     dialogAddSource();
 }
 
-function add_source_group_button() {
+function addSourceGroupButton() {
     dialogAddSourceGroup();
 }
 
-function add_sink_button() {
+function addSinkButton() {
     dialogAddSink();
 }
 
-function add_sink_group_button() {
+function addSinkGroupButton() {
     dialogAddSinkGroup();
 }
 
-function add_route_button() {
+function addRouteButton() {
     dialogAddRoute();
 }
 
-let selected_sink = "";
-let selected_source = "";
-let selected_route = "";
-
-function volume_slider_change(e) {
-    const volume_element = e.target;
-    const option_element = e.target.parentNode.parentNode;
-    const type = option_element.dataset["type"].replace("Description","").toLowerCase();
-    const volume_level = volume_element.value / 100;
-    call_api(`/${type}s/${option_element.dataset["name"]}/volume/${volume_level}`, "get");
+function volumeSliderChange(e) {
+    const volumeElement = e.target;
+    const optionElement = e.target.parentNode.parentNode;
+    const type = optionElement.dataset["type"].replace("Description","").toLowerCase();
+    const volumeLevel = volumeElement.value / 100;
+    callApi(`/${type}s/${optionElement.dataset["name"]}/volume/${volumeLevel}`, "get");
 }
 
-function visualizer_icon_onclick(e) {
+function visualizerIconOnclick(e) {
     const option = e.target.parentNode.parentNode;
-    if (visual_playing) {
-        stop_visualizer();
+    if (visualPlaying) {
+        stopVisualizer();
     } else {
-        if (option.dataset["is_group"] !== "True") {
-            start_visualizer(option.dataset["ip"]);
+        if (option.dataset["isGroup"] !== "True") {
+            startVisualizer(option.dataset["ip"]);
         } else {
             alert("Can't listen to group, must listen to sink endpoint");
         }
     }
 }
 
-function enable_disable_button(event) {
+function enableDisableButton(event) {
     let option = event.target.parentNode.parentNode;
     const type = option.dataset["type"].replace("Description","").toLowerCase();
-    call_api("/" + type + "s/" + option.dataset["name"] + (option.dataset["enabled"] == "True"? "/disable" : "/enable"), 'get', {}, restart_callback);
+    callApi("/" + type + "s/" + option.dataset["name"] + (option.dataset["enabled"] == "True"? "/disable" : "/enable"), 'get', {}, restartCallback);
 }
 
-function enable_disable_source_button() {
-    const selected_sources = get_selected_sources();
-    if (selected_sources.length !== 1) {
+function enableDisableSourceButton() {
+    const selectedSources = getSelectedSources();
+    if (selectedSources.length !== 1) {
         alert("Exactly one source must be selected to edit");
         return;
     }
-    const enable_disable = selected_sources[0].classList.contains("enabled") ? "/disable" : "/enable";
-    call_api(`/sources/${selected_sources[0].dataset["name"]}${enable_disable}`, "get", 0, restart_callback);
+    const enableDisable = selectedSources[0].classList.contains("enabled") ? "/disable" : "/enable";
+    callApi(`/sources/${selectedSources[0].dataset["name"]}${enableDisable}`, "get", 0, restartCallback);
 }
 
-function vnc_icon_onclick(e) {
-    dialogVNC(e.target.parentNode.parentNode.dataset["name"]);
+function vncIconOnclick(e) {
+    dialogVnc(e.target.parentNode.parentNode.dataset["name"]);
 }
 
-function playpause_icon_onclick(e) {
-    call_api(`/sources/${e.target.parentNode.parentNode.dataset["name"]}/play`, "get", 0, null_callback);
+function playPauseIconOnclick(e) {
+    callApi(`/sources/${e.target.parentNode.parentNode.dataset["name"]}/play`, "get", 0, nullCallback);
 }
 
-function next_track_icon_onclick(e) {
-    call_api(`/sources/${e.target.parentNode.parentNode.dataset["name"]}/nexttrack`, "get", 0, null_callback);
+function nextTrackIconOnclick(e) {
+    callApi(`/sources/${e.target.parentNode.parentNode.dataset["name"]}/nexttrack`, "get", 0, nullCallback);
 }
 
-function previous_track_icon_onclick(e) {
-    call_api(`/sources/${e.target.parentNode.parentNode.dataset["name"]}/prevtrack`, "get", 0, null_callback);
+function previousTrackIconOnclick(e) {
+    callApi(`/sources/${e.target.parentNode.parentNode.dataset["name"]}/prevtrack`, "get", 0, nullCallback);
 }
 
-function equalizer_icon_onclick(e) {
-    const parent_node = e.target.parentNode.parentNode;
-    const type = parent_node.dataset["type"];
-    const name = parent_node.dataset["name"];
+function equalizerIconOnclick(e) {
+    const parentNode = e.target.parentNode.parentNode;
+    const type = parentNode.dataset["type"];
+    const name = parentNode.dataset["name"];
     if (type === "SourceDescription") {
         dialogUpdateSourceEqualizer(name);
     } else if (type === "SinkDescription") {
@@ -88,10 +103,10 @@ function equalizer_icon_onclick(e) {
     }
 }
 
-function update_icon_onclick(e) {
-    const parent_node = e.target.parentNode.parentNode;
-    const type = parent_node.dataset["type"];
-    const name = parent_node.dataset["name"];
+function updateIconOnclick(e) {
+    const parentNode = e.target.parentNode.parentNode;
+    const type = parentNode.dataset["type"];
+    const name = parentNode.dataset["name"];
     if (type === "SourceDescription") {
         dialogUpdateSource(name);
     } else if (type === "SinkDescription") {
@@ -101,23 +116,24 @@ function update_icon_onclick(e) {
     }
 }
 
-function volume_icon_onclick(e) {
-    const parent_node = e.target.parentNode.parentNode;
-    const type = parent_node.dataset["type"];
+function volumeIconOnclick(e) {
+    const parentNode = e.target.parentNode.parentNode;
+    const type = parentNode.dataset["type"];
     let endpoint = "";
-    let enabledisable = "";
+    let enableDisable = "";
     if (type === "SourceDescription" || type === "SinkDescription") {
         endpoint = type === "SourceDescription" ? "/sources/" : "/sinks/";
-        enabledisable = parent_node.dataset["enabled"] === "True" ? "/disable" : "/enable";
+        enableDisable = parentNode.dataset["enabled"] === "True" ? "/disable" : "/enable";
     } else if (type === "RouteDescription") {
         endpoint = "/routes/";
-        enabledisable = parent_node.dataset["enabled"] === "True" ? "/disable" : "/enable";
+        enableDisable = parentNode.dataset["enabled"] === "True" ? "/disable" : "/enable";
     }
-    call_api(`${endpoint}${parent_node.dataset["name"]}${enabledisable}`, "get", 0, restart_callback);
+    callApi(`${endpoint}${parentNode.dataset["name"]}${enableDisable}`, "get", 0, restartCallback);
 }
-function remove_icon_onclick(e) {
-    const parent_node = e.target.parentNode.parentNode;
-    const type = parent_node.dataset["type"];
+
+function removeIconOnclick(e) {
+    const parentNode = e.target.parentNode.parentNode;
+    const type = parentNode.dataset["type"];
     let endpoint = "";
     let confirmType = "";
     if (type === "SourceDescription") {
@@ -130,19 +146,41 @@ function remove_icon_onclick(e) {
         endpoint = "/routes/";
         confirmType = "route";
     }
-    const do_it = confirm(`Are you sure you want to remove the ${confirmType} '${parent_node.dataset["name"]}'?`);
-    if (do_it) {
-        call_api(`${endpoint}${parent_node.dataset["name"]}`, "delete", 0, restart_callback);
+    const doIt = confirm(`Are you sure you want to remove the ${confirmType} '${parentNode.dataset["name"]}'?`);
+    if (doIt) {
+        callApi(`${endpoint}${parentNode.dataset["name"]}`, "delete", 0, restartCallback);
     }
 }
 
-function listen_icon_onclick(e) {
-    listen_to_sink_button(e.target.parentNode.parentNode);
+function listenIconOnclick(e) {
+    listenToSinkButton(e.target.parentNode.parentNode);
 }
 
-function keypress_handler(event) {
+function keypressHandler(event) {
     if (event.key === "Enter" || event.key === "Space") {
         if (event.target.onclick)
             event.target.onclick(event);
     }
+}
+
+export function onload() {
+    exposeFunction(addSourceButton, "addSourceButton");
+    exposeFunction(addSourceGroupButton, "addSourceGroupButton");
+    exposeFunction(addSinkButton, "addSinkButton");
+    exposeFunction(addSinkGroupButton, "addSinkGroupButton");
+    exposeFunction(addRouteButton, "addRouteButton");
+    exposeFunction(volumeSliderChange, "volumeSliderChange");
+    exposeFunction(visualizerIconOnclick, "visualizerIconOnclick");
+    exposeFunction(enableDisableButton, "enableDisableButton");
+    exposeFunction(enableDisableSourceButton, "enableDisableSourceButton");
+    exposeFunction(vncIconOnclick, "vncIconOnclick");
+    exposeFunction(playPauseIconOnclick, "playPauseIconOnclick");
+    exposeFunction(nextTrackIconOnclick, "nextTrackIconOnclick");
+    exposeFunction(previousTrackIconOnclick, "previousTrackIconOnclick");
+    exposeFunction(equalizerIconOnclick, "equalizerIconOnclick");
+    exposeFunction(updateIconOnclick, "updateIconOnclick");
+    exposeFunction(volumeIconOnclick, "volumeIconOnclick");
+    exposeFunction(removeIconOnclick, "removeIconOnclick");
+    exposeFunction(listenIconOnclick, "listenIconOnclick");
+    exposeFunction(keypressHandler, "keypressHandler");
 }

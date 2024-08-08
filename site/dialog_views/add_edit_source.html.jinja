@@ -2,15 +2,15 @@
 {%- import "imports/selects.html.jinja" as selects %}
 {%- import "imports/buttons.html.jinja" as buttons %}
 {% set data=request_info['data'] %}
-<H3>{{ 'Add Source' if request_info['add_new'] else 'Edit Source' }}</H3>
-<DIV ID="dialog_add_edit_source">
-    <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
-    <INPUT TYPE="hidden" ID="dialog_url" VALUE="{{url_for('add_source')}}/{{data['name'] if not request_info['add_new']}}">
-    {{- inputs.text("Source Name", "name", true, "Source Name", data['name']) }}<BR />
-    {{- inputs.text("Source IP", "ip", true, "Source IP", data['ip']) }}<BR />
-    {{- inputs.text("VNC IP", "vnc_ip", true, "VNC IP", data['vnc_ip']) }}<BR />
-    {{- inputs.text("VNC Port", "vnc_port", true, "VNC Port", data['vnc_port']) }}<BR />
-    {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
+<h3>{{ 'Add Source' if request_info['add_new'] else 'Edit Source' }}</h3>
+<div id="dialog_add_edit_source">
+    <input type="hidden" id="dialog_action" value="{{'post' if request_info['add_new'] else 'put'}}">
+    <input type="hidden" id="dialog_url" value="{{url_for('add_source')}}/{{data['name'] if not request_info['add_new']}}">
+    {{- inputs.text("Source Name", "name", true, "Source Name", data['name']) }}<br />
+    {{- inputs.text("Source IP", "ip", true, "Source IP", data['ip']) }}<br />
+    {{- inputs.text("VNC IP", "vnc_ip", true, "VNC IP", data['vnc_ip']) }}<br />
+    {{- inputs.text("VNC Port", "vnc_port", true, "VNC Port", data['vnc_port']) }}<br />
+    {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<br /><br />
     {{- buttons.button("dialogSubmitClose", 'Add source' if request_info['add_new'] else 'Edit Source' , "dialog-button", {}, "Submit")}}
     {{- buttons.button("dialogCancel", 'Close' , "dialog-button", {}, "Cancel")}}
-</DIV>
+</div>

@@ -1,25 +1,27 @@
-iframe_interval = false;
-function iframe_onload() {
-    if (iframe_interval != false)
-        clearInterval(iframe_interval);
-    iframe_interval = setInterval(iframe_resize, 1000);
-    iframe_resize();
-    setTimeout(iframe_resize, 200);
-    setTimeout(iframe_resize, 400);
-    setTimeout(iframe_resize, 600);
-    setTimeout(iframe_resize, 800);
-    setTimeout(iframe_resize, 800);
+import {callApi} from "./api.js"
+import { getRouteBySinkSource, exposeFunction } from "./utils.js"
+
+let iframeInterval = false;
+
+function iframeOnload() {
+    if (iframeInterval != false)
+        clearInterval(iframeInterval);
+    iframeInterval = setInterval(iframeResize, 1000);
+    iframeResize();
+    setTimeout(iframeResize, 200);
+    setTimeout(iframeResize, 400);
+    setTimeout(iframeResize, 600);
+    setTimeout(iframeResize, 800);
+    setTimeout(iframeResize, 800);
 }
 
-function iframe_resize() {
+function iframeResize() {
     var iframe = document.querySelectorAll("DIV#dialog IFRAME")[0];
     var canvas = iframe.contentWindow.document.getElementsByTagName("canvas")[0];
     if (canvas.width > 0 && canvas.height > 0) {
         iframe.style.width = (canvas.width) + "px";
         iframe.style.height = (canvas.height) + "px";
-    }
-    else
-    {
+    } else {
         iframe.style.width = "400px";
         iframe.style.height = "600px";
     }
@@ -28,11 +30,15 @@ function iframe_resize() {
     document.getElementById("vnc-iframe").contentDocument.getElementById("noVNC_disconnect_button").onclick = function() {dialogCancel();}
 }
 
-function vnc_fullscreen_click() { 
+function vncFullscreenClick() { 
     document.getElementById("vnc-iframe").contentDocument.getElementById("noVNC_fullscreen_button").click();
 }
 
-addEventListener("fullscreenchange", (event) => {
-      if (!document.fullscreenElement && document.getElementsByClassName("vnc-on-click").length > 0 && matchMedia('(pointer:coarse)').matches)
-        dialogCancel();
-});
+export function onload() {
+    exposeFunction(iframeOnload, "iframeOnload");
+    exposeFunction(vncFullscreenClick, "vncFullscreenClick");
+    addEventListener("fullscreenchange", (event) => {
+        if (!document.fullscreenElement && document.getElementsByClassName("vnc-on-click").length > 0 && matchMedia('(pointer:coarse)').matches)
+          dialogCancel();
+    });
+}

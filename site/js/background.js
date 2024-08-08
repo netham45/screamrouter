@@ -1,13 +1,15 @@
+import { selectedRoute, selectedSink, selectedSource, editorActive, editorType, setSelectedSource, setSelectedSink, setSelectedRoute, setEditorActive, setEditorType } from "./global.js";
 let backgroundCanvas, backgroundCtx, width, height;
 const rectangles = [];
-function backgroundOnload() {
+
+export function onload() {
     backgroundCanvas = document.getElementById('backgroundCanvas');
     backgroundCtx = backgroundCanvas.getContext('2d', { alpha: false });
-    resizeCanvas();
+    onresize();
     animate();
 }
 
-function resizeCanvas() {
+export function onresize() {
     width = window.innerWidth;
     height = window.innerHeight;
     backgroundCanvas.width = width;
@@ -109,6 +111,3 @@ function animate() {
     drawRectangles();
     requestAnimationFrame(animate);
 }
-
-window.addEventListener('resize', resizeCanvas);
-window.addEventListener('load', backgroundOnload);

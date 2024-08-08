@@ -1,95 +1,132 @@
-function null_callback(response_text) {
+import {highlightActiveSink, highlightActiveSource, highlightActiveRoutes, onload as highlightingOnload} from "./highlighting.js";
+import { selectedRoute, selectedSink, selectedSource, editorActive, editorType, setSelectedSource, setSelectedSink, setSelectedRoute, setEditorActive, setEditorType } from "./global.js";
+import {onload as audioOnload} from "./audio.js";
+import {onload as sortOnload} from "./sort.js";
+import {onload as iframeOnload} from "./iframe.js";
+import {onload as dragOnload} from "./drag.js";
+import {onload as dialogOnload, dismissShadow, showShadow} from "./dialog.js";
+import {onload as controlsOnload} from "./controls.js";
+import {onload as routeSelectorOnload} from "./route_selector.js";
+import {onload as visualizerOnload} from "./visualizer.js";
+import {onload as backgroundOnload, onresize as backgroundOnresize} from "./background.js";
+import {drawLines} from "./lines.js";
+import {callApi as callApi} from "./api.js"
+
+export function nullCallback(responseText) {
 }
 
-function restart_callback(response_text) {
-    call_api("/body", "get", {}, restart_callback_2)
+export function restartCallback(responseText) {
+    callApi("/body", "get", {}, restartCallback2)
 }
 
-function edit_source_callback(response_text) {
-    var selected_sink_name = "";
-    if (selected_sink)
-        selected_sink_name = selected_sink.dataset['name'];
-    var selected_source_name = "";
-    if (selected_source)
-        selected_source_name = selected_source.dataset['name'];
-    var reload_div = document.getElementById("reload");
-    reload_div.innerHTML = "";
-    reload_div.innerHTML = response_text;
-    var selected_sink_query = document.querySelectorAll("DIV#select-sinks SPAN[DATA-NAME='" + selected_sink_name + "']");
-        if (selected_sink_query.length > 0)
-            selected_sink = selected_sink_query[0];
+export function editSourceCallback(responseText) {
+    let selectedSinkName = "";
+    if (selectedSink)
+        selectedSinkName = selectedSink.dataset['name'];
+    let selectedSourceName = "";
+    if (selectedSource)
+        selectedSourceName = selectedSource.dataset['name'];
+    let reloadDiv = document.getElementById("reload");
+    reloadDiv.innerHTML = "";
+    reloadDiv.innerHTML = responseText;
+    let selectedSinkQuery = document.querySelectorAll("DIV#select-sinks SPAN[DATA-NAME='" + selectedSinkName + "']");
+        if (selectedSinkQuery.length > 0)
+            setSelectedSink(selectedSinkQuery[0]);
         else
-            selected_sink = "";
-    if (selected_sink) highlight_active_sink();
-    selected_source_query = document.querySelectorAll("DIV#select-sources SPAN[DATA-NAME='" + selected_source_name + "']");
-    if (selected_source_query.length  >  0)
-        selected_source  = selected_source_query[0];
+        setSelectedSink("");
+    if (selectedSink) highlightActiveSink();
+    selectedSourceQuery = document.querySelectorAll("DIV#select-sources SPAN[DATA-NAME='" + selectedSourceName + "']");
+    if (selectedSourceQuery.length  >  0)
+        setSelectedSource(selectedSourceQuery[0]);
     else
-        selected_source  = "";
-    if (selected_source) highlight_active_source(false);
+        setSelectedSource("");
+    if (selectedSource) highlightActiveSource(false);
     drawLines();
 }
 
-function edit_sink_callback(response_text) {
-    var selected_sink_name = "";
-    if (selected_sink)
-        selected_sink_name = selected_sink.dataset['name'];
-    var selected_source_name = "";
-    if (selected_source)
-        selected_source_name = selected_source.dataset['name'];
-    var reload_div = document.getElementById("reload");
-    reload_div.innerHTML = "";
-    reload_div.innerHTML = response_text;
-    var selected_sink_query = document.querySelectorAll("DIV#select-sinks SPAN[DATA-NAME='" + selected_sink_name + "']");
-    if (selected_sink_query.length > 0)
-        selected_sink = selected_sink_query[0];
+export function editSinkCallback(responseText) {
+    let selectedSinkName = "";
+    if (selectedSink)
+        selectedSinkName = selectedSink.dataset['name'];
+    let selectedSourceName = "";
+    if (selectedSource)
+        selectedSourceName = selectedSource.dataset['name'];
+    let reloadDiv = document.getElementById("reload");
+    reloadDiv.innerHTML = "";
+    reloadDiv.innerHTML = responseText;
+    let selectedSinkQuery = document.querySelectorAll("DIV#select-sinks SPAN[DATA-NAME='" + selectedSinkName + "']");
+    if (selectedSinkQuery.length > 0)
+        setSelectedSink(selectedSinkQuery[0]);
     else
-        selected_sink = "";
-    if (selected_sink) highlight_active_sink(false);
-    selected_source_query = document.querySelectorAll("DIV#select-sources SPAN[DATA-NAME='" + selected_source_name + "']");
-    if (selected_source_query.length  >  0)
-        selected_source  = selected_source_query[0];
+        setSelectedSink("");
+    if (selectedSink) highlightActiveSink(false);
+    selectedSourceQuery = document.querySelectorAll("DIV#select-sources SPAN[DATA-NAME='" + selectedSourceName + "']");
+    if (selectedSourceQuery.length  >  0)
+        setSelectedSource(selectedSourceQuery[0]);
     else
-        selected_source  = "";
-    if (selected_source) highlight_active_source();
+        setSelectedSource("");
+    if (selectedSource) highlightActiveSource();
     drawLines();
 }
 
-function restart_callback_2(response_text) {
-    var selected_sink_name = "";
-    if (selected_sink)
-        selected_sink_name = selected_sink.dataset['name'];
-    var selected_source_name = "";
-    if (selected_source)
-        selected_source_name = selected_source.dataset['name'];
-    var selected_route_name = "";
-    if (selected_route)
-        selected_route_name = selected_route.dataset['name'];
-    var selected_element_id = document.activeElement.id;
-    var reload_div = document.getElementById("reload");
-    reload_div.innerHTML = "";
-    reload_div.innerHTML = response_text;
-    var selected_sink_query = document.querySelectorAll("DIV#select-sinks SPAN[DATA-NAME='" + selected_sink_name + "']");
-    if (selected_sink_query.length > 0)
-        selected_sink = selected_sink_query[0];
+export function restartCallback2(responseText) {
+    let selectedSinkName = "";
+    if (selectedSink)
+        selectedSinkName = selectedSink.dataset['name'];
+    let selectedSourceName = "";
+    if (selectedSource)
+        selectedSourceName = selectedSource.dataset['name'];
+    let selectedRouteName = "";
+    if (selectedRoute)
+        selectedRouteName = selectedRoute.dataset['name'];
+    let selectedElementId = document.activeElement.id;
+    let reloadDiv = document.getElementById("reload");
+    reloadDiv.innerHTML = "";
+    reloadDiv.innerHTML = responseText;
+    let selectedSinkQuery = document.querySelectorAll("DIV#select-sinks SPAN[DATA-NAME='" + selectedSinkName + "']");
+    if (selectedSinkQuery.length > 0)
+        setSelectedSink(selectedSinkQuery[0]);
     else
-        selected_sink = "";
-    selected_source_query = document.querySelectorAll("DIV#select-sources SPAN[DATA-NAME='" + selected_source_name + "']");
-    if (selected_source_query.length  >  0)
-        selected_source  = selected_source_query[0];
+        setSelectedSink("");
+    let selectedSourceQuery = document.querySelectorAll("DIV#select-sources SPAN[DATA-NAME='" + selectedSourceName + "']");
+    if (selectedSourceQuery.length  >  0)
+        setSelectedSource(selectedSourceQuery[0]);
     else
-        selected_source  = "";
-    selected_route_query = document.querySelectorAll("DIV#select-routes SPAN[DATA-NAME='"  + selected_route_name  + "']");
-    if (selected_route_query.length > 0)
-        selected_route = selected_route_query[0];
+        setSelectedSource("");
+    let selectedRouteQuery = document.querySelectorAll("DIV#select-routes SPAN[DATA-NAME='"  + selectedRouteName  + "']");
+    if (selectedRouteQuery.length > 0)
+        setSelectedRoute(selectedRouteQuery[0]);
     else
-        selected_route = "";
-    if (selected_sink) highlight_active_sink();
-    if (selected_source) highlight_active_source();
-    highlight_active_routes();
-    var selected_element_query = document.getElementById(selected_element_id);
-    if (selected_element_query)
-        selected_element_query.focus();
+        setSelectedRoute("");
+    if (selectedSink) highlightActiveSink();
+    if (selectedSource) highlightActiveSource();
+    highlightActiveRoutes();
+    let selectedElementQuery = document.getElementById(selectedElementId);
+    if (selectedElementQuery)
+        selectedElementQuery.focus();
     dialogCancel();
     dismissShadow();
+    drawLines();
 }
+
+function onload() {
+    dragOnload();
+    audioOnload();
+    sortOnload();
+    dialogOnload();
+    backgroundOnload();
+    drawLines();
+    routeSelectorOnload();
+    highlightingOnload();
+    controlsOnload();
+    iframeOnload();
+    visualizerOnload();
+}
+
+function onresize() {
+    drawLines();
+    backgroundOnresize();
+}
+
+window.addEventListener('load', onload);
+window.addEventListener('resize', onresize);

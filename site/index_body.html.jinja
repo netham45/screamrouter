@@ -1,17 +1,17 @@
 {%- import "imports/selects.html.jinja" as selects %}
 {%- import "imports/buttons.html.jinja" as buttons -%}
 {% macro main_body(sources, sinks, routes)%}
-        <DIV ID="randomcontainer1" CLASS="section">
-            <DIV CLASS="blur">
-                <DIV CLASS="section-name">
+        <div id="randomcontainer1" class="section">
+            <div class="blur">
+                <div class="section-name">
                     Sources
-                </DIV>
-                <DIV CLASS="section-buttons select-container">
-                    {{- buttons.button("add_source_button", "Add Source", "section-button", {}, "Add Source")}}
-                    {{- buttons.button("add_source_group_button", "Add Group", "section-button", {}, "Add Source Group")}}
-                    {{- buttons.button("sort_sources_by_name", "Sort By Name", "section-button", {}, "Sort Sources by Name")}}
-                    {{- buttons.button("reverse_sources", "Reverse Order", "section-button", {}, "Reverse Source Order")}}
-                    <DIV ID="select-sources" CLASS="main-select" SIZE="{{sources | length}}">
+                </div>
+                <div class="section-buttons select-container">
+                    {{- buttons.button("addSourceButton", "Add Source", "section-button", {}, "Add Source")}}
+                    {{- buttons.button("addSourceGroupButton", "Add Group", "section-button", {}, "Add Source Group")}}
+                    {{- buttons.button("sortSourcesByName", "Sort By Name", "section-button", {}, "Sort Sources by Name")}}
+                    {{- buttons.button("reverseSources", "Reverse Order", "section-button", {}, "Reverse Source Order")}}
+                    <div id="select-sources" class="main-select" size="{{sources | length}}">
                         {%- set options = namespace(options=[]) %}
                         {%- for source in sources %}
                         {{- source.type }}
@@ -26,34 +26,34 @@
                         {%- set options.options = options.options + [_option] %}
                         {%- endfor %}
                         {{- selects.make_multiple_options(options.options, sources) }}
-                    </DIV>
-                </DIV>
-            </DIV>
-        </DIV>
-        <DIV ID="randomcontainer2" CLASS="section">
-            <DIV CLASS="blur">
-                <DIV CLASS="section-name">
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="randomcontainer2" class="section">
+            <div class="blur">
+                <div class="section-name">
                     Routes
-                </DIV>
-                <DIV CLASS="section-buttons select-container">
-                    {{- buttons.button("add_route_button", "Add Route", "section-button", {}, "Add Route")}}
-                    <SPAN CLASS="mobile-route-buttons">
-                        {{- buttons.button("sort_routes_by_source", "Sort By Source", "section-button", {}, "Sort Routes by Source")}}
-                        {{- buttons.button("sort_routes_by_sink", "Sort By Sink", "section-button", {}, "Sort Routes by Sink")}}
-                        {{- buttons.button("sort_routes_by_name", "Sort By Name", "section-button", {}, "Sort Routes by Name")}}
-                        {{- buttons.button("reverse_routes", "Reverse Order", "section-button", {}, "Reverse Route Order")}}
-                    </SPAN>
-                    <SPAN CLASS="desktop-route-buttons">
-                        {{- buttons.disabled_button("enable_route", "Enable Route", "section-button", {}, "Enable Route")}}
-                        {{- buttons.disabled_button("disable_route", "Disable Route", "section-button", {}, "Disable Route")}}
-                        {{- buttons.disabled_button("edit_route", "Configure", "section-button", {}, "Configure")}}
-                        {{- buttons.disabled_button("route_equalizer", "Equalizer", "section-button", {}, "Equalizer")}} <br/>
-                        <INPUT TABINDEX="0" TYPE="range" ID="route_volume" ONCHANGE="route_volume_change()" ALT="Route Volume" TITLE="Route Volume" VALUE="50" DISABLED>
-                    </SPAN>
+                </div>
+                <div class="section-buttons select-container">
+                    {{- buttons.button("addRouteButton", "Add Route", "section-button", {}, "Add Route")}}
+                    <span class="mobile-route-buttons">
+                        {{- buttons.button("sortRoutesBySource", "Sort By Source", "section-button", {}, "Sort Routes by Source")}}
+                        {{- buttons.button("sortRoutesBySink", "Sort By Sink", "section-button", {}, "Sort Routes by Sink")}}
+                        {{- buttons.button("sortRoutesByName", "Sort By Name", "section-button", {}, "Sort Routes by Name")}}
+                        {{- buttons.button("reverseRoutes", "Reverse Order", "section-button", {}, "Reverse Route Order")}}
+                    </span>
+                    <span class="desktop-route-buttons">
+                        {{- buttons.disabled_button("enableRoute", "Enable Route", "section-button", {}, "Enable Route")}}
+                        {{- buttons.disabled_button("disableRoute", "Disable Route", "section-button", {}, "Disable Route")}}
+                        {{- buttons.disabled_button("editRoute", "Configure", "section-button", {}, "Configure")}}
+                        {{- buttons.disabled_button("routeEqualizer", "Equalizer", "section-button", {}, "Equalizer")}} <br/>
+                        <input tabindex="0" type="range" id="routeVolume" onchange="routeVolumeChange()" alt="Route Volume" title="Route Volume" value="50" disabled>
+                    </span>
 
                     <span><!-- Empty span so there's an even number of elements before start --></span>
-                    <BR />
-                    <DIV ID="select-routes" CLASS="main-select" SIZE="{{routes | length}}" STYLE="display:none">
+                    <br />
+                    <div id="select-routes" class="main-select" size="{{routes | length}}" style="display:none">
                         {%- set options = namespace(options=[]) %}
                         {%- for route in routes %}
                         {{- route.type }}
@@ -69,21 +69,21 @@
                         {%- endfor %}
                         {{- selects.make_multiple_options(options.options, routes) }}
                         
-                    </DIV>
-                </DIV>
-            </DIV>
-        </DIV>
-        <DIV ID="randomcontainer3" CLASS="section">
-            <DIV CLASS="blur">
-                <DIV CLASS="section-name">
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="randomcontainer3" class="section">
+            <div class="blur">
+                <div class="section-name">
                     Sinks
-                </DIV>
-                <DIV CLASS="section-buttons select-container">
-                    {{- buttons.button("add_sink_button", "Add Sink", "section-button", {}, "Add Sink")}}
-                    {{- buttons.button("add_sink_group_button", "Add Group", "section-button", {}, "Add Sink Group")}}
-                    {{- buttons.button("sort_sinks_by_name", "Sort By Name", "section-button", {}, "Sort Sinks by Name")}}
-                    {{- buttons.button("reverse_sinks", "Reverse Order", "section-button", {}, "Reverse Sink Order")}}<BR />
-                    <DIV ID="select-sinks" CLASS="main-select" SIZE="{{sinks | length}}">
+                </div>
+                <div class="section-buttons select-container">
+                    {{- buttons.button("addSinkButton", "Add Sink", "section-button", {}, "Add Sink")}}
+                    {{- buttons.button("addSinkGroupButton", "Add Group", "section-button", {}, "Add Sink Group")}}
+                    {{- buttons.button("sortSinksByName", "Sort By Name", "section-button", {}, "Sort Sinks by Name")}}
+                    {{- buttons.button("reverseSinks", "Reverse Order", "section-button", {}, "Reverse Sink Order")}}<br />
+                    <div id="select-sinks" class="main-select" size="{{sinks | length}}">
                         {%- set options = namespace(options=[]) %}
                         {%- for sink in sinks %}
                         {%- set enabled_class_str = "enabled" if sink.enabled else "disabled" %}
@@ -97,10 +97,10 @@
                         {%- set options.options = options.options + [_option] %}
                         {%- endfor %}
                         {{- selects.make_multiple_options(options.options, sinks) }}
-                    </DIV>
-                </DIV>
-            </DIV>
-        </DIV>
+                    </div>
+                </div>
+            </div>
+        </div>
 {%- endmacro %}
 
 {{ main_body(sources, sinks, routes) }}

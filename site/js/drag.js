@@ -1,3 +1,8 @@
+import {callApi as callApi} from "./api.js"
+import {drawLines as drawLines} from "./lines.js"
+import { getRouteBySinkSource, exposeFunction } from "./utils.js"
+import {nullCallback, restartCallback, editSourceCallback, editSinkCallback, restartCallback2} from "./main.js"
+
 let optionContainer;
 let options;
 let selectedOption = null;
@@ -23,16 +28,6 @@ function setupOptionDrag(event, touchEvent = false) {
     mouseOffsetY = rect.top - (touchEvent ? event.changedTouches[0].screenY : event.screenY);
 }
 
-function onOptionDragStart(event) {
-    event.preventDefault();
-    setupOptionDrag(event);
-}
-
-function onOptionDragTouchStart(event) {
-    event.preventDefault();
-    setupOptionDrag(event, true);
-}
-
 function moveSelectedOption(event, touchEvent = false) {
     if (!selectedOption) return;
     event.preventDefault();
@@ -47,6 +42,16 @@ function moveSelectedOption(event, touchEvent = false) {
             ? closestOption.before(selectedOption)
             : closestOption.after(selectedOption);
     }
+}
+
+function onOptionDragStart(event) {
+    event.preventDefault();
+    setupOptionDrag(event);
+}
+
+function onOptionDragTouchStart(event) {
+    event.preventDefault();
+    setupOptionDrag(event, true);
 }
 
 function onOptionDragMove(event) {
@@ -64,7 +69,7 @@ function onOptionDragEnd(event) {
     const index = options.findIndex(option => option === selectedOption);
     const name = selectedOption.dataset['name'];
     const type = selectedOption.dataset["type"].replace("Description", "").toLowerCase();
-    call_api(`${type}s/${name}/reorder/${index}`);
+    callApi(`${type}s/${name}/reorder/${index}`);
     selectedOption = null;
     mouseOffsetY = 0;
     drawLines();
@@ -88,5 +93,14 @@ function onOptionDragKeyDown(event) {
 
     const type = options[newIndex].dataset["type"].replace("Description", "").toLowerCase();
     const name = selectedOptionKeyboard.dataset["name"];
-    call_api(`${type}s/${name}/reorder/${newIndex}`, "get", {}, restart_callback);
+    callApi(`${type}s/${name}/reorder/${newIndex}`, "get", {}, restartCallback);
+}
+
+export function onload() {
+    exposeFunction(onOptionDragStart, "onOptionDragStart");
+    exposeFunction(onOptionDragTouchStart, "onOptionDragTouchStart");
+    exposeFunction(onOptionDragMove, "onOptionDragMove");
+    exposeFunction(onOptionDragTouchMove, "onOptionDragTouchMove");
+    exposeFunction(onOptionDragEnd, "onOptionDragEnd");
+    exposeFunction(onOptionDragKeyDown, "onOptionDragKeyDown");
 }

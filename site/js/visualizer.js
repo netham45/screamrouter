@@ -1,93 +1,91 @@
-let already_connected = false;
-let visual_already_connected = false;
-let canvas_mode = 1;
+import { exposeFunction } from "./utils.js";
 
-function start_visualizer(sink_ip) {
-    const visualtag = document.getElementById("audio_visualizer");
-    visualtag.pause();
-    visualtag.src = `/stream/${sink_ip}/`;
-    visualtag.play();
-    visual_playing = true;
+// Variable declarations
+export let visualPlaying = false;
+let visualAlreadyConnected = false;
+let canvasMode = 1;
+let visualizer = null;
+let audioContext = null;
+let delayedAudible = null;
+let presets = {};
+let presetKeys = [];
+let presetIndexHist = [];
+let presetIndex = 0;
+let presetCycleLength = 15000;
+let presetRandom = true;
+let canvas = document.getElementById('canvas');
 
-    if (!visual_already_connected) {
+export function startVisualizer(sinkIp) {
+    const visualTag = document.getElementById("audio_visualizer");
+    visualTag.pause();
+    visualTag.src = `/stream/${sinkIp}/`;
+    visualTag.play();
+    visualPlaying = true;
+
+    if (!visualAlreadyConnected) {
         initPlayer();
-        const source = audioContext.createMediaElementSource(visualtag);
-        visual_already_connected = true;
+        const source = audioContext.createMediaElementSource(visualTag);
+        visualAlreadyConnected = true;
         source.disconnect(audioContext);
         startRenderer();
         connectToAudioAnalyzer(source);
     }
 
     document.getElementById("mainWrapper").style.display = "inherit";
-    canvas_mode = 1;
-    canvas_click();
+    canvasMode = 1;
+    canvasClick();
 }
 
-function stop_visualizer() {
-    const visualtag = document.getElementById("audio_visualizer");
-    visualtag.pause();
+export function stopVisualizer() {
+    const visualTag = document.getElementById("audio_visualizer");
+    visualTag.pause();
     document.getElementById("mainWrapper").style.display = "none";
-    visual_playing = false;
+    visualPlaying = false;
 }
 
-function canvas_click() {
-    const canvas_holder = document.getElementById("mainWrapper");
+function canvasClick() {
+    const canvasHolder = document.getElementById("mainWrapper");
     const canvas = document.getElementById("canvas");
 
-    switch (canvas_mode) {
+    switch (canvasMode) {
         case 0:
-            canvas_holder.style.width = "100%";
-            canvas_holder.style.height = "100%";
+            canvasHolder.style.width = "100%";
+            canvasHolder.style.height = "100%";
             canvas.style.width = "100%";
             canvas.style.height = "100%";
             canvas.style.top = 0;
             canvas.style.left = 0;
-            canvas_holder.style.position = "absolute";
+            canvasHolder.style.position = "absolute";
             canvas.style.position = "absolute";
             document.getElementsByTagName("body")[0].requestFullscreen();
-            canvas_holder.style.zIndex = 50;
+            canvasHolder.style.zIndex = 50;
             break;
         case 1:
-            canvas_holder.style.width = "100%";
-            canvas_holder.style.height = "100%";
+            canvasHolder.style.width = "100%";
+            canvasHolder.style.height = "100%";
             canvas.style.width = "100%";
             canvas.style.height = "100%";
             canvas.style.top = 0;
             canvas.style.left = 0;
-            canvas_holder.style.position = "absolute";
+            canvasHolder.style.position = "absolute";
             canvas.style.position = "absolute";
-            canvas_holder.style.zIndex = -50;
+            canvasHolder.style.zIndex = -50;
             if (document.fullscreen) document.exitFullscreen();
             break;
         case 2:
             canvas.style.position = "relative";
-            canvas_holder.style.position = "relative";
+            canvasHolder.style.position = "relative";
             canvas.top = 300;
             canvas.style.width = "720px";
             canvas.style.height = "480px";
-            canvas_holder.style.width = "";
-            canvas_holder.style.height = "";
-            canvas_holder.style.zIndex = 0;
+            canvasHolder.style.width = "";
+            canvasHolder.style.height = "";
+            canvasHolder.style.zIndex = 0;
             break;
-    }
-
-    canvas_mode = (canvas_mode + 1) % 2;
 }
 
-let visualizer = null;
-let rendering = false;
-let audioContext = null;
-let sourceNode = null;
-let delayedAudible = null;
-let cycleInterval = null;
-let presets = {};
-let presetKeys = [];
-let presetIndexHist = [];
-let presetIndex = 0;
-let presetCycle = true;
-let presetCycleLength = 15000;
-let presetRandom = true;
-let canvas = document.getElementById('canvas');
+    canvasMode = (canvasMode + 1) % 2;
+}
 
 function connectToAudioAnalyzer(sourceNode) {
     if (delayedAudible) delayedAudible.disconnect();
@@ -104,7 +102,6 @@ function startRenderer() {
 
 function nextPreset(blendTime = 5.7) {
     presetIndexHist.push(presetIndex);
-
     presetIndex = presetRandom
         ? Math.floor(Math.random() * presetKeys.length)
         : (presetIndex + 1) % presetKeys.length;
@@ -120,14 +117,7 @@ function prevPreset(blendTime = 5.7) {
     document.getElementById('presetSelect').children[presetIndex].value;
 }
 
-function restartCycleInterval() {
-    if (cycleInterval) clearInterval(cycleInterval);
-    if (presetCycle) {
-        cycleInterval = setInterval(() => nextPreset(2.7), presetCycleLength);
-    }
-}
-
-function canvas_onkeydown(e) {
+export function canvasOnKeyDown(e) {
     switch (e.keyCode) {
         case 32:
         case 39:
@@ -141,29 +131,9 @@ function canvas_onkeydown(e) {
             nextPreset(0);
             break;
         case 70:
-            canvas_click();
+            canvasClick();
             break;
     }
-}
-
-function preSelect_change(e) {
-    presetIndexHist.push(presetIndex);
-    presetIndex = parseInt(e.target.value);
-    visualizer.loadPreset(presets[presetKeys[presetIndex]], 5.7);
-}
-
-function presetCycle_change(e) {
-    presetCycle = e.target.checked;
-    restartCycleInterval();
-}
-
-function presetCycleLength_change(e) {
-    presetCycleLength = parseInt(e.target.value * 1000);
-    restartCycleInterval();
-}
-
-function presetRandom_change(e) {
-    presetRandom = e.target.checked;
 }
 
 function initPlayer() {
@@ -202,4 +172,9 @@ function initPlayer() {
 
     nextPreset(0);
     cycleInterval = setInterval(() => nextPreset(2.7), presetCycleLength);
+}
+
+export function onload() {
+    exposeFunction(canvasClick, "canvasClick");
+    exposeFunction(canvasOnKeyDown, "canvasOnKeyDown");
 }

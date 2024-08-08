@@ -1,35 +1,40 @@
-function get_associated_sinks() {
+import {drawLines as drawLines} from "./lines.js"
+import { selectedRoute, selectedSink, selectedSource, editorActive, editorType, setSelectedSource, setSelectedSink, setSelectedRoute, setEditorActive, setEditorType } from "./global.js";
+import {startDummyAudio} from "./audio.js";
+import { getRouteBySinkSource, exposeFunction } from "./utils.js"
+
+function getAssociatedSinks() {
     const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
     const associatedSinks = sinks.filter(sink =>
-        selected_sink.dataset["group_members"].includes(sink.dataset['name']) ||
-        sink.dataset["group_members"].includes(selected_sink.dataset['name'])
+        selectedSink.dataset["group_members"].includes(sink.dataset['name']) ||
+        sink.dataset["group_members"].includes(selectedSink.dataset['name'])
     );
-    return [...associatedSinks.map(sink => sink.dataset['name']), selected_sink?.dataset['name']].filter(Boolean);
+    return [...associatedSinks.map(sink => sink.dataset['name']), selectedSink?.dataset['name']].filter(Boolean);
 }
 
-function get_parent_sinks() {
+function getParentSinks() {
     const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
     const parentSinks = sinks.filter(sink =>
-        sink.dataset["group_members"].includes(selected_sink.dataset['name'])
+        sink.dataset["group_members"].includes(selectedSink.dataset['name'])
     );
-    return [...parentSinks.map(sink => sink.dataset['name']), selected_sink?.dataset['name']].filter(Boolean);
+    return [...parentSinks.map(sink => sink.dataset['name']), selectedSink?.dataset['name']].filter(Boolean);
 }
 
-function get_associated_sources() {
+function getAssociatedSources() {
     const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
     const associatedSources = sources.filter(source =>
-        selected_source.dataset["group_members"].includes(source.dataset['name']) ||
-        source.dataset["group_members"].includes(selected_source.dataset['name'])
+        selectedSource.dataset["group_members"].includes(source.dataset['name']) ||
+        source.dataset["group_members"].includes(selectedSource.dataset['name'])
     );
-    return [...associatedSources.map(source => source.dataset['name']), selected_source?.dataset['name']].filter(Boolean);
+    return [...associatedSources.map(source => source.dataset['name']), selectedSource?.dataset['name']].filter(Boolean);
 }
 
-function get_parent_sources() {
+function getParentSources() {
     const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
     const parentSources = sources.filter(source =>
-        source.dataset["group_members"].includes(selected_source.dataset['name'])
+        source.dataset["group_members"].includes(selectedSource.dataset['name'])
     );
-    return [...parentSources.map(source => source.dataset['name']), selected_source?.dataset['name']].filter(Boolean);
+    return [...parentSources.map(source => source.dataset['name']), selectedSource?.dataset['name']].filter(Boolean);
 }
 
 const COLORS = {
@@ -60,17 +65,17 @@ const COLORS = {
     }
 };
 
-function highlight_active_routes() {
+export function highlightActiveRoutes() {
     const routes = Array.from(document.querySelectorAll('span[data-type="RouteDescription"]'));
-    const associatedSinks = selected_sink ? get_associated_sinks() : [];
-    const parentSinks = selected_sink ? get_parent_sinks() : [];
-    const associatedSources = selected_source ? get_associated_sources() : [];
-    const parentSources = selected_source ? get_parent_sources() : [];
+    const associatedSinks = selectedSink ? getAssociatedSinks() : [];
+    const parentSinks = selectedSink ? getParentSinks() : [];
+    const associatedSources = selectedSource ? getAssociatedSources() : [];
+    const parentSources = selectedSource ? getParentSources() : [];
 
     routes.forEach(route => {
-        const isSinkHighlighted = selected_sink && (route.dataset["sink"] === selected_sink.dataset["name"] || parentSinks.includes(route.dataset["sink"]));
-        const isSourceHighlighted = selected_source && (route.dataset["source"] === selected_source.dataset["name"] || parentSources.includes(route.dataset["source"]));
-        const isSelected = route === selected_route;
+        const isSinkHighlighted = selectedSink && (route.dataset["sink"] === selectedSink.dataset["name"] || parentSinks.includes(route.dataset["sink"]));
+        const isSourceHighlighted = selectedSource && (route.dataset["source"] === selectedSource.dataset["name"] || parentSources.includes(route.dataset["source"]));
+        const isSelected = route === selectedRoute;
 
         route.classList.toggle("option-selected", isSelected);
 
@@ -118,16 +123,16 @@ function highlight_active_routes() {
     drawLines();
 }
 
-function highlight_active_sink(color=true) {
+export function highlightActiveSink(color=true) {
     const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
 
     sinks.forEach(sink => {
-        if (selected_sink) {
-            if (sink === selected_sink) {
+        if (selectedSink) {
+            if (sink === selectedSink) {
                 sink.classList.add("option-selected");
                 if (color)
                     sink.style.backgroundColor = `rgba(${COLORS.sink.r}, ${COLORS.sink.g}, ${COLORS.sink.b}, 0.6)`;
-            } else if (selected_sink.dataset["group_members"].includes(sink.dataset['name']) || sink.dataset["group_members"].includes(selected_sink.dataset['name'])) {
+            } else if (selectedSink.dataset["group_members"].includes(sink.dataset['name']) || sink.dataset["group_members"].includes(selectedSink.dataset['name'])) {
                 sink.classList.remove("option-selected");
                 if (color)
                     sink.style.backgroundColor = `rgba(${COLORS.sink.faded.r}, ${COLORS.sink.faded.g}, ${COLORS.sink.faded.b}, 0.6)`;
@@ -142,19 +147,19 @@ function highlight_active_sink(color=true) {
         }
     });
     updateRouteButtons();
-    highlight_active_routes();
+    highlightActiveRoutes();
 }
 
-function highlight_active_source(color=true) {
+export function highlightActiveSource(color=true) {
     const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
 
     sources.forEach(source => {
-        if (selected_source) {
-            if (source === selected_source) {
+        if (selectedSource) {
+            if (source === selectedSource) {
                 source.classList.add("option-selected");
                 if (color)
                     source.style.backgroundColor = `rgba(${COLORS.source.r}, ${COLORS.source.g}, ${COLORS.source.b}, 0.6)`;
-            } else if (selected_source.dataset["group_members"].includes(source.dataset['name']) || source.dataset["group_members"].includes(selected_source.dataset['name'])) {
+            } else if (selectedSource.dataset["group_members"].includes(source.dataset['name']) || source.dataset["group_members"].includes(selectedSource.dataset['name'])) {
                 source.classList.remove("option-selected");
                 if (color)
                     source.style.backgroundColor = `rgba(${COLORS.source.faded.r}, ${COLORS.source.faded.g}, ${COLORS.source.faded.b}, 0.6)`;
@@ -170,21 +175,25 @@ function highlight_active_source(color=true) {
         }
     });
     updateRouteButtons();
-    highlight_active_routes();
+    highlightActiveRoutes();
 }
 
-function option_onclick(e) {
+function optionOnclick(e) {
     const node = e.target;
 
     if (node.dataset["type"] === "SourceDescription") {
-        selected_source = selected_source === node ? "" : node;
-        highlight_active_source();
+        setSelectedSource(selectedSource === node ? "" : node);
+        highlightActiveSource();
     } else if (node.dataset["type"] === "SinkDescription") {
-        selected_sink = selected_sink === node ? "" : node;
-        highlight_active_sink();
+        setSelectedSink(selectedSink === node ? "" : node);
+        highlightActiveSink();
     } else if (node.dataset["type"] === "RouteDescription") {
-        selected_route = selected_route === node ? "" : node;
-        highlight_active_routes();
+        setSelectedRoute(selectedRoute === node ? "" : node);
+        highlightActiveRoutes();
     }
-    start_dummy_audio();
+    startDummyAudio();
+}
+
+export function onload() {
+    exposeFunction(optionOnclick, "optionOnclick");
 }

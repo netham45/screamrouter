@@ -2,31 +2,31 @@
 {%- import "imports/selects.html.jinja" as selects %}
 {%- import "imports/buttons.html.jinja" as buttons %}
 {% set data=request_info['data'] %}
-<H3>{{ 'Add Route' if request_info['add_new'] else 'Edit Route' }}</H3>
-<DIV ID="dialog_add_edit_route">
-    <INPUT TYPE="hidden" ID="dialog_action" VALUE="{{'post' if request_info['add_new'] else 'put'}}">
-    <INPUT TYPE="hidden" ID="dialog_url" VALUE="{{url_for('add_route')}}/{{data['name'] if not request_info['add_new']}}">
-    {{- inputs.text("Route Name", "name", true, "Route Name", data['name']) }}<BR />
-    <SPAN>
-        <LABEL FOR="source">Source Name</LABEL>
-        <SELECT NAME="source" ID="source">
+<h3>{{ 'Add Route' if request_info['add_new'] else 'Edit Route' }}</h3>
+<div id="dialog_add_edit_route">
+    <input type="hidden" id="dialog_action" value="{{'post' if request_info['add_new'] else 'put'}}">
+    <input type="hidden" id="dialog_url" value="{{url_for('add_route')}}/{{data['name'] if not request_info['add_new']}}">
+    {{- inputs.text("Route Name", "name", true, "Route Name", data['name']) }}<br />
+    <span>
+        <label for="source">Source Name</label>
+        <select name="source" id="source">
             {%- set options = namespace(options=[]) %}
             {%- for source in sources %}
-                <OPTION VALUE="{{source.name}}" CLASS="option option-dialog"{{" SELECTED" if source.name == data['source']}}>{{source.name}}</OPTION>
+                <option value="{{source.name}}" class="option option-dialog"{{" selected" if source.name == data['source']}}>{{source.name}}</option>
             {%- endfor %}
-        </SELECT>
-    </SPAN><BR />
-    <SPAN>
-        <LABEL FOR="sink">Sink Name</LABEL>
-        <SELECT NAME="sink" ID="sink">
+        </select>
+    </span><br />
+    <span>
+        <label for="sink">Sink Name</label>
+        <select name="sink" id="sink">
             {%- set options = namespace(options=[]) %}
             {%- for sink in sinks %}
                 {%- set options.options = options.options + [_option] %}
-                <OPTION VALUE="{{sink.name}}" CLASS="option option-dialog"{{" SELECTED" if sink.name == data['sink']}}>{{sink.name}}</OPTION>
+                <option value="{{sink.name}}" class="option option-dialog"{{" selected" if sink.name == data['sink']}}>{{sink.name}}</option>
             {%- endfor %}
-        </SELECT>
-    </SPAN><BR />
-    {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<BR /><BR />
+        </select>
+    </span><br />
+    {{- inputs.text_number("Delay in ms", "delay", 0, 5000, True, "Delay", data['delay']) }}<br /><br />
     {{- buttons.button("dialogSubmitClose", 'Add Route' if request_info['add_new'] else 'Edit Route' , "dialog-button", {}, "Submit")}}
     {{- buttons.button("dialogCancel", 'Close' , "dialog-button", {}, "Cancel")}}
-</DIV>
+</div>

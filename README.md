@@ -129,6 +129,7 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 
 ### Senders
 * [Tool for prepending Scream headers to PCM streams on Linux](https://github.com/netham45/screamsender)
+* [Usermode Scream Sender for Windows](https://github.com/netham45/windows-scream-sender)
 
 ## Installation Guide
 

@@ -1,12 +1,12 @@
 {%- import "imports/buttons.html.jinja" as buttons %}
 
 {% macro equalizer_band(freq, band_id) -%}
-<SPAN CLASS="equalizer">{{ freq }} Hz<BR /><INPUT ALT="{{ freq }} Hertz Band" TITLE="{{ freq }} Hz Band" TYPE="range" TABINDEX="0" CLASS="eq_slider" ID="eq_{{ band_id }}" ORIENT="vertical" NAME="{{ band_id }}" MAX="200" MIN="0" VALUE={{request_info["data"][band_id] * 100}} /></SPAN>
+<span class="equalizer">{{ freq }} Hz<br /><input alt="{{ freq }} Hertz Band" title="{{ freq }} Hz Band" type="range" tabindex="0" class="eq_slider" id="eq_{{ band_id }}" orient="vertical" name="{{ band_id }}" max="200" min="0" value={{request_info["data"][band_id] * 100}} /></span>
 {%- endmacro %}
 
-<INPUT TYPE="hidden" ID="dialog_action" VALUE="put">
-<INPUT TYPE="hidden" ID="dialog_url" VALUE="/{{request_info['equalizer_holder_type']}}s/{{request_info['equalizer_holder_name']}}">
-<INPUT TYPE="hidden" ID="name" VALUE="{{request_info['equalizer_holder_name']}}">
+<input type="hidden" id="dialog_action" value="put">
+<input type="hidden" id="dialog_url" value="/{{request_info['equalizer_holder_type']}}s/{{request_info['equalizer_holder_name']}}">
+<input type="hidden" id="name" value="{{request_info['equalizer_holder_name']}}">
 
 {{ equalizer_band(65, 'b1') }}
 {{ equalizer_band(92, 'b2') }}

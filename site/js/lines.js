@@ -1,15 +1,21 @@
-function drawLines() {
+import { selectedRoute, selectedSink, selectedSource, editorActive, editorType, setSelectedSource, setSelectedSink, setSelectedRoute, setEditorActive, setEditorType } from "./global.js";
+import { highlightActiveSink, highlightActiveSource, highlightActiveRoutes } from "./highlighting.js";
+import { getRouteBySinkSource, exposeFunction } from "./utils.js"
+
+export function drawLines() {
     const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
     const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
     const routes = Array.from(document.querySelectorAll('span[data-type="RouteDescription"]'));
-    const svg = document.getElementById('routeLines') || createSVG();
+    const svg = document.getElementById('routeLines') || createSvg();
     const paths = svg.querySelectorAll('path');
     paths.forEach(path => path.remove());
-    let enabled_lines = [];
-    for (sourceidx in sources) {
-        const source = sources[sourceidx];
-        for (sinkidx in sinks) {
-            const sink = sinks[sinkidx];
+    let enabledLines = [];
+    let sourceIdx = 0;
+    for (sourceIdx in sources) {
+        const source = sources[sourceIdx];
+        let sinkIdx = 0;
+        for (sinkIdx in sinks) {
+            const sink = sinks[sinkIdx];
             const route = getRouteBySinkSource(sink.dataset['name'], source.dataset['name']);
             let enabled = false;
             let drawTheLine = false;
@@ -21,24 +27,24 @@ function drawLines() {
                 drawTheLine = false;
             }
             if ((editorType == "source" && sink.dataset['routeedit'] === "enabled" &&
-                 source.dataset['name'] == selected_source.dataset['name']) ||
+                 source.dataset['name'] == selectedSource.dataset['name']) ||
                 (editorType == "sink" && source.dataset['routeedit'] === "enabled" &&
-                 sink.dataset['name'] == selected_sink.dataset['name'])) {
+                 sink.dataset['name'] == selectedSink.dataset['name'])) {
                 enabled = true;
                 drawTheLine = true;
             }
-            if ((editorType == "source" && sink.dataset['routeedit'] === "disabled") ||
-                (editorType == "sink" && source.dataset['routeedit'] === "disabled")) {
+            if ((editorType == "source" && sink.dataset['routeedit'] === "disabled" && source == selectedSource) ||
+                (editorType == "sink" && source.dataset['routeedit'] === "disabled" && sink == selectedSink)) {
                 enabled = false;
                 drawTheLine = false;
             }
-            if (selected_sink && selected_sink.dataset['name'] == sink.dataset['name'])
+            if (selectedSink && selectedSink.dataset['name'] == sink.dataset['name'])
                 enabled = true;
-            if (selected_source && selected_source.dataset['name'] == source.dataset['name'])
+            if (selectedSource && selectedSource.dataset['name'] == source.dataset['name'])
                 enabled = true;
-            if (selected_sink && selected_sink.dataset['name'] != sink.dataset['name'])
+            if (selectedSink && selectedSink.dataset['name'] != sink.dataset['name'])
                 enabled = false;
-            if (selected_source && selected_source.dataset['name'] != source.dataset['name'])
+            if (selectedSource && selectedSource.dataset['name'] != source.dataset['name'])
                 enabled = false;
 
                 
@@ -46,15 +52,16 @@ function drawLines() {
                 if (!enabled)
                     drawLine(sink, source, "#AC9", "#F84", "#32C", false);
                 else
-                    enabled_lines.push([sink, source]);
+                    enabledLines.push([sink, source]);
         }
     }
-    for (idx in enabled_lines)
-        drawLine(enabled_lines[idx][0], enabled_lines[idx][1], "#AC9", "#F84", "#32C", true);
+    let idx = 0;
+    for (idx in enabledLines)
+        drawLine(enabledLines[idx][0], enabledLines[idx][1], "#AC9", "#F84", "#32C", true);
 }
 
 function drawLine(sink, source, normalColor, highlightColor, disabledColor, enabled) {
-    const svg = document.getElementById('routeLines') || createSVG();
+    const svg = document.getElementById('routeLines') || createSvg();
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     
     const sourceRect = source.getBoundingClientRect();
@@ -145,15 +152,15 @@ function drawLine(sink, source, normalColor, highlightColor, disabledColor, enab
         if (source.className.indexOf("option-editor") > -1 || 
             sink.className.indexOf("option-editor") > -1)
             return;
-        if (selected_sink == sink && selected_source == source) {
-            selected_sink = "";
-            selected_source = "";
+        if (selectedSink == sink && selectedSource == source) {
+            setSelectedSink("");
+            setSelectedSource("");
         } else {
-            selected_sink = sink;
-            selected_source = source;
+            setSelectedSink(sink);
+            setSelectedSource(source);
         }
-        highlight_active_sink();
-        highlight_active_source();
+        highlightActiveSink();
+        highlightActiveSource();
         drawLines();
     };
 
@@ -168,7 +175,7 @@ function drawLine(sink, source, normalColor, highlightColor, disabledColor, enab
     svg.appendChild(path);
 }
 
-function createSVG() {
+function createSvg() {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.id = 'routeLines';
     svg.style.position = 'absolute';
@@ -179,7 +186,3 @@ function createSVG() {
     document.getElementById("reload").appendChild(svg);
     return svg;
 }
-
-// Call drawLines on page load and resize
-window.addEventListener('load', drawLines);
-window.addEventListener('resize', drawLines);

@@ -1,20 +1,24 @@
-let new_order_list = [];
-let new_order_type = "";
-let new_order_pos = 0;
+import {callApi as callApi} from "./api.js"
+import { getRouteBySinkSource, exposeFunction } from "./utils.js"
+import {nullCallback, restartCallback, editSourceCallback, editSinkCallback, restartCallback2} from "./main.js"
 
-function set_order_callback() {
-    new_order_pos++;
-    if (new_order_pos == new_order_list.length)
-        restart_callback();
+let newOrderList = [];
+let newOrderType = "";
+let newOrderPos = 0;
+
+function setOrderCallback() {
+    newOrderPos++;
+    if (newOrderPos == newOrderList.length)
+        restartCallback();
     else
-        call_api(new_order_type + "s/" + new_order_list[new_order_pos].dataset['name'] + "/reorder/" + new_order_pos, "get", {}, set_order_callback);
+        callApi(newOrderType + "s/" + newOrderList[newOrderPos].dataset['name'] + "/reorder/" + newOrderPos, "get", {}, setOrderCallback);
 }
 
-function set_order(new_order, type) {
-    new_order_pos = 0;
-    new_order_list = new_order;
-    new_order_type = type;
-    call_api(new_order_type + "s/" + new_order_list[new_order_pos].dataset['name'] + "/reorder/" + new_order_pos, "get", {}, set_order_callback);
+function setOrder(newOrder, type) {
+    newOrderPos = 0;
+    newOrderList = newOrder;
+    newOrderType = type;
+    callApi(newOrderType + "s/" + newOrderList[newOrderPos].dataset['name'] + "/reorder/" + newOrderPos, "get", {}, setOrderCallback);
 }
 
 function sortByData(property) {
@@ -23,42 +27,53 @@ function sortByData(property) {
     }   
 }
 
-function sort_routes_by_source() {
+function sortRoutesBySource() {
     const routes = Array.from(document.querySelectorAll('span[data-type="RouteDescription"]'));
-    set_order(routes.sort(sortByData("source")), "route");
+    setOrder(routes.sort(sortByData("source")), "route");
 }
 
-function sort_routes_by_sink() {
+function sortRoutesBySink() {
     const routes = Array.from(document.querySelectorAll('span[data-type="RouteDescription"]'));
-    set_order(routes.sort(sortByData("sink")), "route");
+    setOrder(routes.sort(sortByData("sink")), "route");
 }
 
-function sort_routes_by_name() {
+function sortRoutesByName() {
     const routes = Array.from(document.querySelectorAll('span[data-type="RouteDescription"]'));
-    set_order(routes.sort(sortByData("name")), "route");
+    setOrder(routes.sort(sortByData("name")), "route");
 }
 
-function reverse_routes() {
+function reverseRoutes() {
     const routes = Array.from(document.querySelectorAll('span[data-type="RouteDescription"]'));
-    set_order(routes.reverse(), "route");
+    setOrder(routes.reverse(), "route");
 }
 
-function sort_sinks_by_name() {
+function sortSinksByName() {
     const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
-    set_order(sinks.sort(sortByData("name")), "sink");
+    setOrder(sinks.sort(sortByData("name")), "sink");
 }
 
-function reverse_sinks() {
+function reverseSinks() {
     const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
-    set_order(sinks.reverse(), "sink");
+    setOrder(sinks.reverse(), "sink");
 }
 
-function sort_sources_by_name() {
+function sortSourcesByName() {
     const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
-    set_order(sources.sort(sortByData("name")), "source");
+    setOrder(sources.sort(sortByData("name")), "source");
 }
 
-function reverse_sources() {
+function reverseSources() {
     const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
-    set_order(sources.reverse(), "source");
+    setOrder(sources.reverse(), "source");
+}
+
+export function onload() {
+    exposeFunction(sortRoutesBySource, "sortRoutesBySource");
+    exposeFunction(sortRoutesBySink, "sortRoutesBySink");
+    exposeFunction(sortRoutesByName, "sortRoutesByName");
+    exposeFunction(reverseRoutes, "reverseRoutes");
+    exposeFunction(sortSinksByName, "sortSinksByName");
+    exposeFunction(reverseSinks, "reverseSinks");
+    exposeFunction(sortSourcesByName, "sortSourcesByName");
+    exposeFunction(reverseSources, "reverseSources");
 }
