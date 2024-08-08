@@ -23,6 +23,7 @@ from src.api.api_webstream import APIWebStream
 from src.audio.audio_controller import AudioController
 from src.audio.rtp_recevier import RTPReceiver
 from src.audio.scream_receiver import ScreamReceiver
+from src.audio.multicast_scream_receiver import MulticastScreamReceiver
 from src.audio.tcp_manager import TCPManager
 from src.configuration.configuration_solver import ConfigurationSolver
 from src.plugin_manager.plugin_manager import PluginManager
@@ -63,6 +64,8 @@ class ConfigurationManager(threading.Thread):
         """Rather the thread is running or not"""
         self.scream_recevier: ScreamReceiver = ScreamReceiver([])
         """Holds the thread that receives UDP packets from Scream"""
+        self.multicast_scream_recevier: MulticastScreamReceiver = MulticastScreamReceiver([])
+        """Holds the thread that receives UDP packets from Multicast Scream Streams"""
         self.rtp_receiver: RTPReceiver = RTPReceiver([])
         """Holds the thread that receives UDP packets from an RTP source"""
         self.tcp_manager: TCPManager = TCPManager([])
@@ -337,6 +340,7 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("[Configuration Manager] Webstream stopped")
         _logger.debug("[Configuration Manager] Stopping receiver")
         self.scream_recevier.stop()
+        self.multicast_scream_recevier.stop()
         self.rtp_receiver.stop()
         self.tcp_manager.stop()
         _logger.debug("[Configuration Manager] Receiver stopped")
@@ -668,6 +672,7 @@ class ConfigurationManager(threading.Thread):
 
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
             self.scream_recevier.stop()
+            self.multicast_scream_recevier.stop()
             self.rtp_receiver.stop()
 
         _logger.debug("[Configuration Manager] Removing and re-adding changed sinks")
@@ -721,6 +726,7 @@ class ConfigurationManager(threading.Thread):
                 source_write_fds.extend([source.writer_write for
                                          source in audio_controller.sources.values()])
             self.scream_recevier = ScreamReceiver(source_write_fds)
+            self.multicast_scream_recevier = MulticastScreamReceiver(source_write_fds)
             self.rtp_receiver = RTPReceiver(source_write_fds)
             _logger.debug("[Configuration Manager] Saving configuration")
             self.__save_config()
