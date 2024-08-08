@@ -24,7 +24,7 @@ Or
 
 ### Configuring Unicast IPv4 IP and Port for Scream Audio Driver
 
-The Scream Audio Driver needs to be pointing at ScreamRouter over unicast to port 16401 to work.
+It is recommended to use Unicast to send to ScreamReceiver instead of Multicast.
 
 To set a specific Unicast IPv4 IP address and port for the Scream Audio Driver:
 
