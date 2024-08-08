@@ -19,13 +19,7 @@ export function restartCallback(responseText) {
     callApi("/body", "get", {}, restartCallback2)
 }
 
-export function editSourceCallback(responseText) {
-    let selectedSinkName = "";
-    if (selectedSink)
-        selectedSinkName = selectedSink.dataset['name'];
-    let selectedSourceName = "";
-    if (selectedSource)
-        selectedSourceName = selectedSource.dataset['name'];
+function updateSelectionAndHighlight(responseText, selectedSinkName = "", selectedSourceName = "") {
     let reloadDiv = document.getElementById("reload");
     reloadDiv.innerHTML = "";
     reloadDiv.innerHTML = responseText;
@@ -34,39 +28,28 @@ export function editSourceCallback(responseText) {
             setSelectedSink(selectedSinkQuery[0]);
         else
         setSelectedSink("");
-    if (selectedSink) highlightActiveSink();
-    selectedSourceQuery = document.querySelectorAll("DIV#select-sources SPAN[DATA-NAME='" + selectedSourceName + "']");
+    let selectedSourceQuery = document.querySelectorAll("DIV#select-sources SPAN[DATA-NAME='" + selectedSourceName + "']");
     if (selectedSourceQuery.length  >  0)
         setSelectedSource(selectedSourceQuery[0]);
     else
         setSelectedSource("");
-    if (selectedSource) highlightActiveSource(false);
+
+    highlightActiveSink();
+    highlightActiveSource();
+
     drawLines();
 }
 
+export function editSourceCallback(responseText) {
+    let selectedSinkName = selectedSink ? selectedSink.dataset['name'] : "";
+    updateSelectionAndHighlight(responseText, selectedSinkName, "");
+    if (selectedSource) highlightActiveSource(false);
+}
+
 export function editSinkCallback(responseText) {
-    let selectedSinkName = "";
-    if (selectedSink)
-        selectedSinkName = selectedSink.dataset['name'];
-    let selectedSourceName = "";
-    if (selectedSource)
-        selectedSourceName = selectedSource.dataset['name'];
-    let reloadDiv = document.getElementById("reload");
-    reloadDiv.innerHTML = "";
-    reloadDiv.innerHTML = responseText;
-    let selectedSinkQuery = document.querySelectorAll("DIV#select-sinks SPAN[DATA-NAME='" + selectedSinkName + "']");
-    if (selectedSinkQuery.length > 0)
-        setSelectedSink(selectedSinkQuery[0]);
-    else
-        setSelectedSink("");
+    let selectedSourceName = selectedSource ? selectedSource.dataset['name'] : "";
+    updateSelectionAndHighlight(responseText, "", selectedSourceName);
     if (selectedSink) highlightActiveSink(false);
-    selectedSourceQuery = document.querySelectorAll("DIV#select-sources SPAN[DATA-NAME='" + selectedSourceName + "']");
-    if (selectedSourceQuery.length  >  0)
-        setSelectedSource(selectedSourceQuery[0]);
-    else
-        setSelectedSource("");
-    if (selectedSource) highlightActiveSource();
-    drawLines();
 }
 
 export function restartCallback2(responseText) {

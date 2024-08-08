@@ -205,7 +205,8 @@ function updateRouteButtons() {
         editRoute.disabled = false;
         routeEqualizer.disabled = false;
         routeVolume.disabled = false;
-        routeVolume.value = route.dataset['volume'] * 100;
+        if (route != null)
+            routeVolume.value = route.dataset['volume'] * 100;
     }
 }
 

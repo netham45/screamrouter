@@ -6,10 +6,6 @@
 
 ScreamRouter is a versatile audio routing and management system with a Python frontend/configuration layer and a C++ backend, designed for network audio streaming. It supports Scream and RTP audio sources, along with Scream receivers and web-based MP3 streamers. 
 
-### What is Scream
-
-[Scream](https://github.com/duncanthrax/scream) is a virtual audio driver for Windows developed by Tom Kistner. It sends PCM data out over UDP in a low-latency fashion.
-
 ### Key Features of ScreamRouter
 
 #### Audio Routing and Configuration
@@ -27,8 +23,8 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 * Milkdrop Visualizations via [Butterchurn](https://github.com/jberg/butterchurn) project
 
 #### Integration and Compatibility
-* Home Assistant Custom Component for managing Sinks and media playback
-* PulseAudio stream acceptance
+* Home Assistant Custom Component for managing configuration and media playback
+* Compatible with PulseAudio RTP streams
 * Embedded noVNC for remote computer control
 * Docker containers for [Amazon Music](https://github.com/netham45/screamrouter-amazon-music-docker), [Firefox](https://github.com/netham45/screamrouter-firefox-docker), and [Spotify](https://github.com/netham45/screamrouter-spotify-docker)
 
@@ -36,14 +32,6 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 * Automatic YAML saving on setting changes
 * Flexible plugin system for easy addition of new sources
 * API and web interface for media control commands to containers
-
-#### Additional Tools and Receivers
-* [ScreamSender](https://github.com/netham45/screamsender/): Linux tool for sending PCM data from the command line
-* Playback sinks available for [Windows](https://github.com/duncanthrax/scream/tree/master/Receivers/dotnet-windows/ScreamReader), [Linux](https://github.com/duncanthrax/scream/tree/master/Receivers/unix), and [Android](https://github.com/martinellimarco/scream-android/tree/90d1364ee36dd12ec9d7d2798926150b370030f3)
-* Custom receivers:
-  - [ESP32 A1S Audiokit Dev boards](https://github.com/netham45/esp32-audiokit-screamreader/)
-  - [ESP32/ESP32S with TOSLINK and USB UAC 1.0 output](https://github.com/netham45/esp32-scream-receiver/)
-  - [Multi-platform Python receiver](https://github.com/netham45/pyscreamreader)
 
 ### Use Cases
 
@@ -77,16 +65,11 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 * [API Documentation](Readme/api.md)
   - Details on the ScreamRouter API endpoints and usage
 
-* [Source Command Receiver](Readme/command_receiver.md)
-  - Information about the command receiver module for remote control
-
 * [Configuration Guide](Readme/configuration.md)
   - Instructions for configuring ScreamRouter and its components
+
 * [Docker ScreamRouter Install Guide](Readme/docker-screamrouter.md)
   - Guide to running ScreamRouter in a Docker container
-
-* [Docker Sources](Readme/docker-sources.md)
-  - Information on Docker containers for various streaming services
 
 * [Home Assistant Integration](Readme/homeassistant.md)
   - Instructions for integrating ScreamRouter with Home Assistant
@@ -97,11 +80,20 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 * [Audio Processor](Readme/processor.md)
   - Details on the custom mixer/equalizer/channel layout processor
 
-* [RTP Source](Readme/rtp-source.md)
+* [Windows Receivers](Readme/windows-scream-receiver.md)
+  - Information on configuring a Windows audio receiver
+
+* [RTP/Linux Source](Readme/rtp-source.md)
   - Guide to using RTP from PulseAudio as an audio source
 
-* [Scream Source](Readme/scream-source.md)
-  - Information on configuring and using Scream as an audio source
+* [Windows Source](Readme/scream-source.md)
+  - Information on configuring a Windows audio source
+
+* [Docker Sources](Readme/docker-sources.md)
+  - Information on Docker containers for various streaming services
+
+* [Source Command Receiver](Readme/command_receiver.md)
+  - Information about the command receiver module for remote control
 
 * [User Interface Guide](Readme/ui.md)
   - Documentation on using the ScreamRouter web interface
@@ -109,8 +101,11 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 * [VNC Integration](Readme/vnc.md)
   - Guide to using the embedded noVNC for remote computer control
 
-## Relevant Repos
+## Installation Guide
 
+See [The ScreamRouter Docker install guide](https://github.com/netham45/screamrouter/blob/main/Readme/docker-screamrouter.md)
+
+## Additional Tools and Receivers
 ### Docker Containers
 * [Amazon Music Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-amazon-music-docker)
 * [Firefox Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-firefox-docker)
@@ -120,15 +115,11 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 * [ESP32/ESP32s spdif/USB UAC 1.0 audio receiver](https://github.com/netham45/esp32-scream-receiver)
 * [ESP32 A1S Audiokit Receiver](https://github.com/netham45/esp32-audiokit-screamreader)
 * [Python Scream Receiver](https://github.com/netham45/pyscreamreader)
-* [Windows C# Receiver](https://github.com/duncanthrax/scream/tree/master/Receivers/dotnet-windows/ScreamReader)
-* [Unix Receiver](https://github.com/duncanthrax/scream/tree/master/Receivers/unix)
+* [Windows Scream Receiver](https://github.com/netham45/windows-scream-receiver/)
+* [*nix Receiver](https://github.com/duncanthrax/scream/tree/master/Receivers/unix)
 * [Android Receiver](https://github.com/martinellimarco/scream-android/)
 
 ### Senders
-* [Scream Windows Driver](https://github.com/duncanthrax/scream/)
-* [Usermode Scream Sender for Windows](https://github.com/netham45/windows-scream-sender)
+* [Scream Sender for Windows](https://github.com/netham45/windows-scream-sender)
+* [Original Scream Windows Driver](https://github.com/duncanthrax/scream/)
 * [Tool for prepending Scream headers to PCM streams on Linux](https://github.com/netham45/screamsender)
-
-## Installation Guide
-
-See [The ScreamRouter Docker install guide](https://github.com/netham45/screamrouter/blob/main/Readme/docker-screamrouter.md)

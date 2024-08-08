@@ -9,7 +9,7 @@ There is a basic Docker container to build and run ScreamRouter available.
 
 ## Building the Docker Image
 
-The scripts to build the Docker image are in [the docker/ directory](/docker/)
+The Docker Container scripts are located in the [screamrouter-docker](https://github.com/netham45/screamrouter-docker/) repository.
 
 To build the ScreamRouter Docker image, run:
 
@@ -22,5 +22,3 @@ To run the ScreamRouter Docker image, run:
 ```bash
 ./run.sh
 ```
-
-See [ScreamRouter's Configuration](/src/constants/constants.py) for information on some environment variables that can be controlled.

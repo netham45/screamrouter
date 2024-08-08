@@ -4,7 +4,6 @@ import multiprocessing
 import multiprocessing.managers
 import queue
 import threading
-from os import close
 from subprocess import TimeoutExpired
 from typing import List, Optional
 
@@ -85,14 +84,14 @@ class APIWebStream(threading.Thread):
         app.get("/stream/{sink_ip}/", tags=["Stream"])(self.http_mp3_stream)
         logger.info("[WebStream] MP3 Web Stream Available")
         self.queue: multiprocessing.Queue = multiprocessing.Queue()
-        self.manager: multiprocessing.Manager = multiprocessing.Manager()
+        self.manager = multiprocessing.Manager()
         self.active_ips = self.manager.list()
         self.update_ip = self.manager.Event()
         self.running: bool = True
         """Ends all websocket and MP3 streams when set to False"""
         self.start()
 
-    def check_ip_is_active(self, sink_ip: IPAddressType) -> None:
+    def check_ip_is_active(self, sink_ip: IPAddressType) -> bool:
         """Checks if a sink IP is active, returns True or False"""
         return sink_ip in self.active_ips
 

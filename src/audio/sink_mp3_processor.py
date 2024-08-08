@@ -138,7 +138,7 @@ class SinkMP3Processor(multiprocessing.Process):
 
     def stop(self) -> None:
         """Stop"""
-        self.running.value = c_bool(False)
+        self.running.value = False
         if constants.KILL_AT_CLOSE:
             self.kill()
         if constants.WAIT_FOR_CLOSES:

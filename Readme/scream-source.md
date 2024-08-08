@@ -1,13 +1,23 @@
 # Scream Audio Streaming
 
-Scream is a virtual audio driver and protocol for streaming audio over a network with very low latency.
+Scream is a virtual audio driver and protocol for streaming audio over a network with very low latency. There are two options foer streaming from Windows, the original Scream Virtual Audio Driver or a user-mode transmitter that runs under your user. The user-mode transmitter is recommended due to ease of installation.
 
-## Installation on Windows 10 (version 1607 and newer)
+## Using the desktop tool
 
-### Prerequisites
+* You can download the desktop tool for sending Scream streams [here](https://github.com/netham45/windows-scream-sender)
+
+To install run install_tool.bat and allow it to elevate to administrator and create a service under your user. Administrator access is required to allow the tool to set itself as real-mode priority.
+
+You will be prompted for an IP to send to, a port to send to, and if you want to use Multicast. You can enter your ScreamRouter IP and Port and not use Multicast, or you can enter IP 239.255.77.77 and port 4010 with multicast enabled to send to multicast Scream receivers.
+
+## Using the Driver
+
+### Driver Installation on Windows 10 (version 1607 and newer)
+
+#### Prerequisites
 - To install the Scream driver the system clock must be set before July 7, 2023, which is the certificate's expiration date.
 
-### Configuring the OS
+#### Configuring the OS
 Either
 
 1) Disable Secure Boot in BIOS
@@ -43,37 +53,3 @@ To set a specific Unicast IPv4 IP address and port for the Scream Audio Driver:
 
 7. Close the Registry Editor and reboot your system for the changes to take effect.
 
-## Background
-
-Scream consists of two main components:
-
-1. A virtual audio driver for Windows that captures audio output 
-2. A receiver program that plays the streamed audio on the receiving device. ScreamRouter acts as an intermediary between the driver and receiver to allow mixing, equalization, delays, source copying, etc...
-
-The Scream driver captures raw PCM audio data from Windows and sends it over the network as UDP packets. The receiver listens for these packets and plays them back through the local audio device.
-
-## Scream Protocol
-
-The Scream protocol is very simple, which allows for minimal overhead and very low latency:
-
-- Audio data is sent as raw PCM samples in UDP packets
-- A small 5-byte header is prepended to each packet with audio format information.
-- Packet payload is 1152 bytes of audio data
-
-The 5-byte header contains:
-
-1. Sampling rate (byte 1)
-2. Sample size in bits (byte 2)  
-3. Number of channels (byte 3)
-4. Channel mask (bytes 4-5) (WAVEFORMATEX)
-
-## Scream Receiver
-
-The Scream receiver program performs the following key functions:
-
-- Listens on the configured UDP port for incoming Scream audio packets
-- Parses the 5-byte header to determine audio format
-- Buffers incoming audio data to handle network jitter
-- Outputs the raw PCM data to the local audio device for playback
-
-The receivers are designed to be very lightweight and have minimal processing overhead to maintain the low latency of the Scream system.

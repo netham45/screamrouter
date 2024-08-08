@@ -670,11 +670,6 @@ class ConfigurationManager(threading.Thread):
                      [sink.name for sink in removed_sinks])
         original_audio_controllers: List[AudioController] = copy(self.audio_controllers)
 
-        if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            self.scream_recevier.stop()
-            self.multicast_scream_recevier.stop()
-            self.rtp_receiver.stop()
-
         _logger.debug("[Configuration Manager] Removing and re-adding changed sinks")
 
         # Controllers to be reloaded
@@ -719,22 +714,34 @@ class ConfigurationManager(threading.Thread):
             _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
             self.audio_controllers.append(audio_controller)
 
-        # Check if there was a change before reloading or saving
+        source_write_fds: List[int] = []
+        for audio_controller in self.audio_controllers:
+            source_write_fds.extend([source.writer_write for
+                                    source in audio_controller.sources.values()])
+            
+        old_scream_recevier: ScreamReceiver = self.scream_recevier
+        old_multicast_scream_recevier: MulticastScreamReceiver = self.multicast_scream_recevier
+        old_rtp_receiver: RTPReceiver = self.rtp_receiver
+
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            source_write_fds: List[int] = []
-            for audio_controller in self.audio_controllers:
-                source_write_fds.extend([source.writer_write for
-                                         source in audio_controller.sources.values()])
             self.scream_recevier = ScreamReceiver(source_write_fds)
             self.multicast_scream_recevier = MulticastScreamReceiver(source_write_fds)
             self.rtp_receiver = RTPReceiver(source_write_fds)
-            _logger.debug("[Configuration Manager] Saving configuration")
-            self.__save_config()
-            _logger.debug("[Configuration Manager] Notifying plugin manager")
             controller_write_fds: List[int] = []
             for audio_controller in self.audio_controllers:
                 controller_write_fds.append(audio_controller.controller_write_fd)
             self.tcp_manager.replace_mixers(self.audio_controllers)
+
+        if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
+            old_scream_recevier.stop()
+            old_multicast_scream_recevier.stop()
+            old_rtp_receiver.stop()
+
+        # Check if there was a change before reloading or saving
+        if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
+            _logger.debug("[Configuration Manager] Saving configuration")
+            self.__save_config()
+            _logger.debug("[Configuration Manager] Notifying plugin manager")
             self.plugin_manager.load_registered_plugins(source_write_fds)
             _logger.debug("[Configuration Manager] Reload done")
 
