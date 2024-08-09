@@ -16,30 +16,39 @@ export function onresize() {
     backgroundCanvas.height = height;
     initRectangles();
 }
-
 function initRectangles() {
     rectangles.length = 0;
     const gridSize = 30;
-    const cols = Math.ceil(width / gridSize);
-    const rows = Math.ceil(height / gridSize);
+    const cols = Math.ceil(width / gridSize) + 6; // Add extra columns
+    const rows = Math.ceil(height / gridSize) + 6; // Add extra rows
+    const buffer = 100; // 100-pixel buffer, matching drawRectangles
 
-    for (let i = 0; i < cols; i++) {
-        for (let j = 0; j < rows; j++) {
+    for (let i = -3; i < cols - 3; i++) {
+        for (let j = -3; j < rows - 3; j++) {
             if (Math.random() < 0.5) {
                 const baseSize = gridSize * (0.8 + Math.random() * 0.4);
-                rectangles.push({
-                    x: i * gridSize + (Math.random() - 0.5) * gridSize * 0.3,
-                    y: j * gridSize + (Math.random() - 0.5) * gridSize * 0.3,
+                const rect = {
                     width: baseSize * (0.8 + Math.random() * 0.4),
                     height: baseSize * (0.8 + Math.random() * 0.4),
                     rotation: (Math.random() - 0.5) * Math.PI * 0.25,
                     corners: generateCorners(),
                     pulse: Math.random() * Math.PI * 2,
-                    pulseSpeed: 0.01 + Math.random() * 0.01,
+                    pulseSpeed: 0.01 + Math.random() * 0.03,
                     brightness: 0.1 + Math.random() * 0.25 + (1.7 * (Math.random() > .98)),
-                    velocityX: (Math.random() - 0.5) * 0.2,
-                    velocityY: (Math.random() - 0.5) * 0.2
-                });
+                    velocityX: (Math.random() - 0.5) * 0.5,
+                    velocityY: (Math.random() - 0.5) * 0.5
+                };
+
+                rect.x = i * gridSize + (Math.random() - 0.5) * gridSize * 0.3;
+                rect.y = j * gridSize + (Math.random() - 0.5) * gridSize * 0.3;
+
+                // Adjust initial position to include buffer zone
+                if (rect.x < -buffer) rect.x += width + 2 * buffer;
+                else if (rect.x > width + buffer) rect.x -= width + 2 * buffer;
+                if (rect.y < -buffer) rect.y += height + 2 * buffer;
+                else if (rect.y > height + buffer) rect.y -= height + 2 * buffer;
+
+                rectangles.push(rect);
             }
         }
     }
@@ -64,25 +73,45 @@ function generateCorners() {
 
     return corners;
 }
+let lastTime = performance.now();
 
 function drawRectangles() {
+    const currentTime = performance.now();
+    const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+    lastTime = currentTime;
+
     backgroundCtx.clearRect(0, 0, width, height);
 
     for (let i = 0; i < rectangles.length; i++) {
         const rect = rectangles[i];
-        rect.pulse += rect.pulseSpeed;
+        rect.pulse += rect.pulseSpeed * deltaTime * 60; // Adjust pulse speed for time
         const scale = 1 + Math.sin(rect.pulse) * 0.1;
         const currentWidth = rect.width * scale;
         const currentHeight = rect.height * scale;
 
-        rect.x += rect.velocityX;
-        rect.y += rect.velocityY;
+        // Update position based on velocity and time
+        rect.x += rect.velocityX * deltaTime * 60;
+        rect.y += rect.velocityY * deltaTime * 60;
 
-        if (rect.x < -currentWidth) rect.x = width;
-        else if (rect.x > width) rect.x = -currentWidth;
-        if (rect.y < -currentHeight) rect.y = height;
-        else if (rect.y > height) rect.y = -currentHeight;
+        const buffer = 100; // 100-pixel buffer zone around the canvas
 
+        // Check if rectangle has moved off the left edge of the screen (including buffer)
+        if (rect.x < -currentWidth - buffer) {
+            rect.x = width + buffer; // Move it to the right edge (plus buffer)
+        }
+        // Check if rectangle has moved off the right edge of the screen (including buffer)
+        else if (rect.x > width + buffer) {
+            rect.x = -currentWidth - buffer; // Move it to the left edge (minus width and buffer)
+        }
+
+        // Check if rectangle has moved off the top edge of the screen (including buffer)
+        if (rect.y < -currentHeight - buffer) {
+            rect.y = height + buffer; // Move it to the bottom edge (plus buffer)
+        }
+        // Check if rectangle has moved off the bottom edge of the screen (including buffer)
+        else if (rect.y > height + buffer) {
+            rect.y = -currentHeight - buffer; // Move it to the top edge (minus height and buffer)
+        }
         backgroundCtx.save();
         backgroundCtx.translate(rect.x, rect.y);
         backgroundCtx.rotate(rect.rotation);
