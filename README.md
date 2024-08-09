@@ -123,3 +123,9 @@ See [The ScreamRouter Docker install guide](https://github.com/netham45/screamro
 * [Scream Sender for Windows](https://github.com/netham45/windows-scream-sender)
 * [Original Scream Windows Driver](https://github.com/duncanthrax/scream/)
 * [Tool for prepending Scream headers to PCM streams on Linux](https://github.com/netham45/screamsender)
+
+## Accessibility
+
+ScreamRouter is aiming to be accessible to those with visual impairments. To this effect the UI has been designed with tooltips and alt tags on every element and can be used from a keyboard.
+
+If you encounter any issues affecting accessibility please file an issue on Github.

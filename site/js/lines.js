@@ -91,6 +91,7 @@ function drawLine(sink, source, normalColor, highlightColor, disabledColor, enab
     path.setAttribute('stroke-width', '2');
     path.setAttribute('stroke-linecap', 'round');
     path.setAttribute('class', 'glowline');
+    path.setAttribute("tabIndex", "0");
     
     // Add a subtle glow effect
     const glow = path.cloneNode(true);

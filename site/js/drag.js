@@ -41,6 +41,7 @@ function moveSelectedOption(event, touchEvent = false) {
         screenY + mouseOffsetY < closestOptionTop
             ? closestOption.before(selectedOption)
             : closestOption.after(selectedOption);
+        drawLines();
     }
 }
 
