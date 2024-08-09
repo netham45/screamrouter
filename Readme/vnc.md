@@ -4,8 +4,8 @@ This project implements VNC (Virtual Network Computing) functionality to allow r
 
 ## Overview
 
-- VNC connections are initiated from the web interface for configured source devices
-- A WebSocket proxy is started on-demand to bridge the VNC connection
+- VNC connections are started when the interface is loaded in the UI for a for configured source
+- A WebSocket proxy is started on-demand to bridge the VNC connection, the connection comes from the ScreamRouter server
 - The VNC viewer runs in the browser using noVNC
 
 ![Screenshot of ScreamRouter noVNC](/images/vnc.png)
