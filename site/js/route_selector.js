@@ -215,7 +215,7 @@ function enableRoute(e) {
     if (route != null)
         updateRoute(route.dataset['name'], null, null, null, null, null, true);
     else
-        createRoute(selectedSink.dataset['name'] + " To " + selectedSource.dataset['name'], selectedSink.dataset['name'], selectedSource.dataset['name']);
+        createRoute(selectedSource.dataset['name'] + " To " + selectedSink.dataset['name'], selectedSink.dataset['name'], selectedSource.dataset['name']);
 }
 
 function disableRoute(e) {
