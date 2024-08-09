@@ -60,7 +60,7 @@ export function onload() {
     navigator.mediaSession.setActionHandler('play', () => {
         console.log("play");
         if (selectedSource) {
-            let playPause = selectedSource.querySelectorAll("SPAN[id^='Play/Pause']");
+            let playPause = selectedSource.querySelectorAll("BUTTON[id^='Play/Pause']");
             if (playPause)
                 playPause[0].onclick({target: playPause[0]});
         }
@@ -69,7 +69,7 @@ export function onload() {
     navigator.mediaSession.setActionHandler('pause', () => {
         console.log("pause");
         if (selectedSource) {
-            let playPause = selectedSource.querySelectorAll("SPAN[id^='Play/Pause']");
+            let playPause = selectedSource.querySelectorAll("BUTTON[id^='Play/Pause']");
             if (playPause)
                 playPause[0].onclick({target: playPause[0]});
             }
@@ -77,7 +77,7 @@ export function onload() {
     navigator.mediaSession.setActionHandler('seekbackward', () => {
         console.log("prevtrack");
         if (selectedSource) {
-            let prevTrack = selectedSource.querySelectorAll("SPAN[id^='Previous Track']");
+            let prevTrack = selectedSource.querySelectorAll("BUTTON[id^='Previous Track']");
             if (prevTrack)
                 prevTrack[0].onclick({target: prevTrack[0]});
         }
@@ -86,7 +86,7 @@ export function onload() {
     navigator.mediaSession.setActionHandler('seekforward', () => {
         console.log("nexttrack");
         if (selectedSource) {
-            let nextTrack = selectedSource.querySelectorAll("SPAN[id^='Next Track']");
+            let nextTrack = selectedSource.querySelectorAll("BUTTON[id^='Next Track']");
             if (nextTrack)
                 nextTrack[0].onclick({target: nextTrack[0]});
         }
@@ -95,7 +95,7 @@ export function onload() {
     navigator.mediaSession.setActionHandler('previoustrack', () => {
         console.log("prevtrack");
         if (selectedSource) {
-            let prevTrack = selectedSource.querySelectorAll("SPAN[id^='Previous Track']");
+            let prevTrack = selectedSource.querySelectorAll("BUTTON[id^='Previous Track']");
             if (prevTrack)
                 prevTrack[0].onclick({target: prevTrack[0]});
         }
@@ -104,7 +104,7 @@ export function onload() {
     navigator.mediaSession.setActionHandler('nexttrack', () => {
         console.log("nexttrack");
         if (selectedSource) {
-            let nextTrack = selectedSource.querySelectorAll("SPAN[id^='Next Track']");
+            let nextTrack = selectedSource.querySelectorAll("BUTTON[id^='Next Track']");
             if (nextTrack)
                 nextTrack[0].onclick({target: nextTrack[0]});
         }
