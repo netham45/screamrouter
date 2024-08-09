@@ -1,4 +1,13 @@
 
+SVG#routeLines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
 DIV#select-routes { 
     display: none;
 }
@@ -164,10 +173,11 @@ option:active, option:focus, option:hover, option:checked:after {
 CANVAS#backgroundCanvas {
     display: block;
     filter: blur(14px);
-    position: absolute;
+    position: fixed;
     top: 0px;
     left: 0px;
     z-index: -999;
+
 }
 
 HTML, BODY {
@@ -175,12 +185,10 @@ HTML, BODY {
     padding: 0;
     width: 100%;
     height: 100%;
-    overflow: hidden;
     background-color: #000;
     background-attachment: fixed;
     background-position: center;
     background-size: 50% 50%;
-    height: 100%;
     background-color: #020202;
     font-family: sans-serif;
     user-select: none; /* Standard */
@@ -398,10 +406,17 @@ SPAN.route-label {
     font-style: italic;
 }
 
+DIV#reload {
+    overflow: visible;
+}
+
+
 DIV#enable_disable {
     z-index: -100;
     position:  relative;
     min-height: 100%;
+    overflow: visible;
+    height: auto;
 
 }
 

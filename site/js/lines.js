@@ -67,10 +67,12 @@ function drawLine(sink, source, normalColor, highlightColor, disabledColor, enab
     const sourceRect = source.getBoundingClientRect();
     const sinkRect = sink.getBoundingClientRect();
     
+    const pageYOffset = document.body.scrollTop;
+
     const sourceX = sourceRect.right;
-    const sourceY = sourceRect.top + sourceRect.height / 2;
+    const sourceY = sourceRect.top + sourceRect.height / 2 + pageYOffset;
     const sinkX = sinkRect.left;
-    const sinkY = sinkRect.top + sinkRect.height / 2;
+    const sinkY = sinkRect.top + sinkRect.height / 2 + pageYOffset;
     
     // Calculate control points for the curve
     const midX = (sourceX + sinkX) / 2;
@@ -80,11 +82,11 @@ function drawLine(sink, source, normalColor, highlightColor, disabledColor, enab
     const controlPoint2Y = sinkY;
     
     // Create the path data for a cubic Bezier curve
+    // Subtract scrollTop from Y coordinates to account for scrolling
     const pathData = `M ${sourceX} ${sourceY} ` +
                      `C ${controlPoint1X} ${controlPoint1Y}, ` +
                      `${controlPoint2X} ${controlPoint2Y}, ` +
                      `${sinkX} ${sinkY}`;
-    
     path.setAttribute('d', pathData);
     path.setAttribute('fill', 'none');
     path.setAttribute('stroke', enabled?normalColor:disabledColor);

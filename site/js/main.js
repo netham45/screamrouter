@@ -16,7 +16,7 @@ export function nullCallback(responseText) {
 }
 
 export function restartCallback(responseText) {
-    callApi("/body", "get", {}, restartCallback2)
+    callApi("/body", "get", {}, restartCallback2);
 }
 
 function updateSelectionAndHighlight(responseText, selectedSinkName = "", selectedSourceName = "") {
@@ -64,8 +64,11 @@ export function restartCallback2(responseText) {
         selectedRouteName = selectedRoute.dataset['name'];
     let selectedElementId = document.activeElement.id;
     let reloadDiv = document.getElementById("reload");
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
     reloadDiv.innerHTML = "";
     reloadDiv.innerHTML = responseText;
+    window.scrollTo(scrollX, scrollY);
     let selectedSinkQuery = document.querySelectorAll("DIV#select-sinks SPAN[DATA-NAME='" + selectedSinkName + "']");
     if (selectedSinkQuery.length > 0)
         setSelectedSink(selectedSinkQuery[0]);
@@ -92,6 +95,25 @@ export function restartCallback2(responseText) {
     drawLines();
 }
 
+function startRefreshing() {
+    let lastTouchTime = Date.now();
+    function updateTouch() {
+        lastTouchTime = Date.now();
+    }
+    document.addEventListener('touchstart', updateTouch);
+    document.addEventListener('mousemove', updateTouch);
+    document.addEventListener('keydown', updateTouch);
+
+    setInterval(
+        function() {
+            if (window['stop_reload'])
+                return;
+            const idleTime = Date.now() - lastTouchTime;
+            if (idleTime < 15 * 60 * 1000)
+                callApi("/body", "get", {}, restartCallback2);
+        }, 5000);
+}
+
 function onload() {
     dragOnload();
     audioOnload();
@@ -104,6 +126,7 @@ function onload() {
     iframeOnload();
     visualizerOnload();
     drawLines();
+    startRefreshing();
 }
 
 function onresize() {
