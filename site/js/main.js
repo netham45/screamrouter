@@ -108,8 +108,10 @@ function startRefreshing() {
         function() {
             if (window['stop_reload'])
                 return;
+            if (document.getElementById("dialog").style.display != "none")
+                return;
             const idleTime = Date.now() - lastTouchTime;
-            if (idleTime < 15 * 60 * 1000)
+            if (idleTime < 15 * 60 * 1000 && idleTime > 30 * 1000)
                 callApi("/body", "get", {}, restartCallback2);
         }, 5000);
 }

@@ -73,11 +73,13 @@ function generateCorners() {
 
     return corners;
 }
+
 let lastTime = performance.now();
 
 function drawRectangles() {
     const currentTime = performance.now();
-    const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+    let deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+    if (deltaTime > 1) deltaTime = 0; // Any longer than a second is the animation being paused
     lastTime = currentTime;
 
     backgroundCtx.clearRect(0, 0, width, height);
@@ -96,21 +98,21 @@ function drawRectangles() {
         const buffer = 100; // 100-pixel buffer zone around the canvas
 
         // Check if rectangle has moved off the left edge of the screen (including buffer)
-        if (rect.x < -currentWidth - buffer) {
+        if (rect.x < -buffer) {
             rect.x = width + buffer; // Move it to the right edge (plus buffer)
         }
         // Check if rectangle has moved off the right edge of the screen (including buffer)
         else if (rect.x > width + buffer) {
-            rect.x = -currentWidth - buffer; // Move it to the left edge (minus width and buffer)
+            rect.x = -buffer; // Move it to the left edge (minus width and buffer)
         }
 
         // Check if rectangle has moved off the top edge of the screen (including buffer)
-        if (rect.y < -currentHeight - buffer) {
+        if (rect.y < -buffer) {
             rect.y = height + buffer; // Move it to the bottom edge (plus buffer)
         }
         // Check if rectangle has moved off the bottom edge of the screen (including buffer)
         else if (rect.y > height + buffer) {
-            rect.y = -currentHeight - buffer; // Move it to the top edge (minus height and buffer)
+            rect.y = -buffer; // Move it to the top edge (minus height and buffer)
         }
         backgroundCtx.save();
         backgroundCtx.translate(rect.x, rect.y);
