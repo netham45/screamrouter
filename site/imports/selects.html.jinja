@@ -76,10 +76,10 @@ d="true"
                 {{- button('Visualize', 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'visualizerIconOnclick(event)') -}}
             {%- endif -%}
             {%- if (data.vnc_ip and data.vnc_port) -%}
-                {{- button('VNC', 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'vncIconOnclick(event)') -}}
-                {{- buttonIcon('⏮️', 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'previousTrackIconOnclick(event)') -}}
-                {{- buttonIcon('⏯️', 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'playPauseIconOnclick(event)') -}}
-                {{- buttonIcon('⏭️', 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'nextTrackIconOnclick(event)') -}}
+                {{- button('VNC', 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'vncIconOnclick(event)') -}} <br/>
+                {{- button('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-skip-back"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>' | safe, 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'Previous Track ' ~ shortalt, 'previousTrackIconOnclick(event)') -}}
+                {{- button('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="17.5" y1="5" x2="17.5" y2="19"></line><line x1="22.5" y1="5" x2="22.5" y2="19"></line><polygon points="2.45 4 13.095 12 2.45 20 2.45 4"></polygon></svg>' | safe, 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'Play/Pause ' ~ shortalt, 'playPauseIconOnclick(event)') -}}
+                {{- button('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-skip-forward"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>' | safe, 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'nextTrackIconOnclick(event)') -}}
             {%- endif -%}
             <br />
             <input tabindex="0" type="range" id="{{shortalt}}_volume" onchange="volumeSliderChange(event)" alt="{{shortalt}} Volume" title="{{shortalt}} Volume" value="{{data['volume'] * 100}}">
