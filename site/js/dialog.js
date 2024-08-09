@@ -138,7 +138,6 @@ export function dismissShadow() {
 }
 
 export function onload() {
-
     exposeFunction(dialogSubmitClose, "dialogSubmitClose");
     exposeFunction(dialogSubmitNoClose, "dialogSubmitNoClose");
     exposeFunction(dialogSubmit, "dialogSubmit");

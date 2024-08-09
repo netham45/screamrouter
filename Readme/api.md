@@ -290,11 +290,10 @@ The API includes several endpoints for serving site resources and HTML dialogs f
 
 An object containing 18 float values (b1 to b18) representing gain for different frequency bands. Each value ranges from 0.0 (full attenuation) to 2.0 (200% volume).
 
-## Limitations
+## Ranges
 
 - Volume levels are limited to the range 0.0 to 1.0.
 - Delays are limited to the range 0 to 5000 milliseconds.
 - Bit depths are limited to 16, 24, or 32 bits.
 - Sample rates are limited to specific values (44100, 48000, 88200, 96000, or 192000 Hz).
 - The number of audio channels is limited to 1-8.
-- Equalizer bands are fixed and cannot be customized beyond the 18 predefined bands.
