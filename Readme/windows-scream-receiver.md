@@ -1,8 +1,6 @@
 # Windows Scream Receiver
 
-There is a Windows Scream Recevier available. It will attempt to play back the exact stream that is received with no conversion, any conversion will need to be done by ScreamRouter itself.
-
-* Note: If a source has more channels than the destination it will not downsample and will fail.
+There is a Windows Scream Recevier available. It will run the audio through Windows's built-in audio system for any conversions required.
 
 ## Download
 
