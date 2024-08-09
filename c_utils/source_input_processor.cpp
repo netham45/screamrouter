@@ -150,7 +150,7 @@ int config_argc = sizeof(int_args) / sizeof(int *); // Number of command line ar
 
 void log(const string& message)
 {
-    cerr << "[Source Input Processor]" << message << endl;
+    cerr << "[Source Input Processor " << getpid() << "] " << message << endl;
 }
 
 // Function to process fixed command line arguments like IP address and output port
@@ -469,6 +469,7 @@ void receive_data_thread()
                 strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)
             if (bytes == -1)
                 ::exit(-1);
+        check_update_header();
         // Store the new packet in the delay buffer with its arrival time
         auto target_time = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay);
         std::vector<uint8_t> new_packet(CHUNK_SIZE);
@@ -633,7 +634,6 @@ int main(int argc, char *argv[])
     while (running)
     {
         receive_data();
-        check_update_header();
         scale_buffer();
         volume_buffer();
         resample();

@@ -188,9 +188,9 @@ function updateRouteButtons() {
         routeEqualizer.disabled = true;
         routeVolume.disabled = true;
         routeVolume.value = 50;
-        enableRoute.style.display = "inline";
-        disableRoute.style.display = "none";
     }
+    enableRoute.style.display = "inline";
+    disableRoute.style.display = "none";
     if (selectedSink && selectedSource) {
         const route = getRouteBySinkSource(selectedSink.dataset['name'], selectedSource.dataset['name']);
         if (isRouteEnabled(selectedSink.dataset['name'], selectedSource.dataset['name'])) {
