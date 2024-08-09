@@ -555,7 +555,7 @@ void split_buffer_to_channels()
         int pos = i / input_channels;
         channel_buffers[channel][pos] = resampled_buffer[i];
     }
-    channel_buffer_pos = scale_buffer_pos / input_channels;
+    channel_buffer_pos = resample_buffer_pos / input_channels;
 }
 
 void mix_speakers()
