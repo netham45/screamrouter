@@ -34,7 +34,8 @@ class SinkMP3Processor(multiprocessing.Process):
         self.running = multiprocessing.Value(c_bool, True)
         """Multiprocessing-passed flag to determine if the thread is running"""
         self.processing = multiprocessing.Value(c_bool, False)
-        """Multiprocessing-passed flag to determine if the thread is reading from fd because an mp3 client is active"""
+        """Multiprocessing-passed flag to determine if the thread is reading from
+           fd because an mp3 client is active"""
         self.ffmpeg_output_fd = ffmpeg_output_fd
         """FD for ffmpeg output to be read from"""
         self.update_active()
@@ -126,7 +127,7 @@ class SinkMP3Processor(multiprocessing.Process):
                 available_frame_count = available_frame_count + 1
                 if (available_frame_count == target_frames_per_packet or
                                         len(available_data) >= target_bytes_per_packet):
-                # Send the buffered data when target frames per packet or target bytes per packet hit
+                # Send the buffered data when target frames per packet or target bytes per packet
                     self.__webstream_queue.put(WebStreamFrames(sink_ip=self._sink_ip,
                                                             data=available_data))
                     available_frame_count = 0

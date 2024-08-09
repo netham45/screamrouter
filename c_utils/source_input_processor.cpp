@@ -13,6 +13,11 @@
 #include "biquad/biquad.h"
 #include <emmintrin.h>
 #include <immintrin.h>
+#include <deque>
+#include <chrono>
+#include <thread>
+#include <atomic>
+
 using namespace std;
 
 // Configuration variables
@@ -68,6 +73,8 @@ int output_chlayout1 = 0;
 int output_chlayout2 = 0;
 
 int delay = 0;
+std::deque<std::pair<std::chrono::steady_clock::time_point, std::vector<uint8_t>>> delay_buffer;
+std::atomic<bool> receive_thread_running(true);
 
 uint8_t input_header[5] = {0};
 
@@ -454,13 +461,28 @@ void check_update_header()
     }
 }
 
+void receive_data_thread()
+{
+    while (receive_thread_running)
+    {
+        while (int bytes = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE) != TAG_SIZE + PACKET_SIZE ||
+                strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)
+            if (bytes == -1)
+                ::exit(-1);
+        // Store the new packet in the delay buffer with its arrival time
+        auto target_time = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay);
+        std::vector<uint8_t> new_packet(CHUNK_SIZE);
+        memcpy(new_packet.data(), packet_in_buffer + TAG_SIZE + HEADER_SIZE, CHUNK_SIZE);
+        delay_buffer.emplace_back(target_time, std::move(new_packet));
+    }
+}
+
 void receive_data()
-{ // Receive data from input fd and write it to receive_buffer, check the header
-    while (int bytes = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE) != TAG_SIZE + PACKET_SIZE ||
-           strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)
-        if (bytes == -1)
-            ::exit(-1);
-    memcpy(receive_buffer, packet_in_buffer + HEADER_SIZE + TAG_SIZE, CHUNK_SIZE);
+{
+    while (delay_buffer.empty() || delay_buffer.front().first > std::chrono::steady_clock::now())
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    memcpy(receive_buffer, delay_buffer.front().second.data(), CHUNK_SIZE);
+    delay_buffer.pop_front();
 }
 
 void scale_buffer()
@@ -605,7 +627,12 @@ int main(int argc, char *argv[])
     process_args(argc, argv);
     log("Starting source input processor " + input_ip);
     setup_biquad();
-    while (running) {
+
+    // Start the receive data thread
+    std::thread receive_thread(receive_data_thread);
+
+    while (running)
+    {
         receive_data();
         check_update_header();
         scale_buffer();
@@ -618,5 +645,10 @@ int main(int argc, char *argv[])
         while (process_buffer_pos >= CHUNK_SIZE / sizeof(int32_t))
             write_output_buffer();
     }
+
+    // Signal the receive thread to stop and wait for it to finish
+    receive_thread_running = false;
+    receive_thread.join();
+
     return 0;
 }

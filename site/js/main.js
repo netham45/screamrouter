@@ -98,12 +98,12 @@ function onload() {
     sortOnload();
     dialogOnload();
     backgroundOnload();
-    drawLines();
     routeSelectorOnload();
     highlightingOnload();
     controlsOnload();
     iframeOnload();
     visualizerOnload();
+    drawLines();
 }
 
 function onresize() {

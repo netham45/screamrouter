@@ -33,7 +33,7 @@ class TCPManager(threading.Thread):
             except OSError:
                 logger.warning("Binding to port %s failed, retrying in .5 seconds", 4010)
                 time.sleep(.5)
-        self.known_connections: List[Tuple[IPAddressType, socket.socket]] = []
+        self.known_connections: List[Tuple[IPAddressType, int]] = []
         self.wants_reload: bool = False
         """Set to true when TCP manager wants a config reload"""
         self.sock.listen(12321312)

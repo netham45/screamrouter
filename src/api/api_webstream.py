@@ -127,7 +127,7 @@ class APIWebStream(threading.Thread):
         self.active_ips.append(sink_ip)
         self.update_ip.set()
         return StreamingResponse(listener.get_queue(), media_type="audio/mpeg")
-    
+
     async def websocket_mp3_stream(self, websocket: WebSocket, sink_ip: IPAddressType):
         """FastAPI handler"""
         listener: WebsocketListener = WebsocketListener(sink_ip, websocket)

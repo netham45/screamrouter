@@ -249,7 +249,7 @@ class ConfigurationManager(threading.Thread):
         source.equalizer = equalizer
         self.__reload_configuration()
         return True
-    
+
     def update_source_position(self, source_name: SourceNameType, new_index: int):
         """Set the position of a source in the list of sources"""
         source = self.get_source_by_name(source_name)
@@ -291,13 +291,12 @@ class ConfigurationManager(threading.Thread):
         sink.equalizer = equalizer
         self.__reload_configuration()
         return True
-    
+
     def update_sink_position(self, sink_name: SinkNameType, new_index: int):
         """Set the position of a sink in the list of sinks"""
         sink = self.get_sink_by_name(sink_name)
         self.sink_descriptions.remove(sink)
         self.sink_descriptions.insert(new_index, sink)
-    
 
     def update_sink_volume(self, sink_name: SinkNameType, volume: VolumeType) -> bool:
         """Set the volume for a sink or sink group"""
@@ -319,7 +318,7 @@ class ConfigurationManager(threading.Thread):
         route.equalizer = equalizer
         self.__reload_configuration()
         return True
-    
+
     def update_route_position(self, route_name: RouteNameType, new_index: int):
         """Set the position of a route in the list of routes"""
         route = self.get_route_by_name(route_name)
@@ -718,7 +717,7 @@ class ConfigurationManager(threading.Thread):
         for audio_controller in self.audio_controllers:
             source_write_fds.extend([source.writer_write for
                                     source in audio_controller.sources.values()])
-            
+
         old_scream_recevier: ScreamReceiver = self.scream_recevier
         old_multicast_scream_recevier: MulticastScreamReceiver = self.multicast_scream_recevier
         old_rtp_receiver: RTPReceiver = self.rtp_receiver
