@@ -6,21 +6,25 @@ let iframeInterval = false;
 function iframeOnload() {
     if (iframeInterval != false)
         clearInterval(iframeInterval);
-    iframeInterval = setInterval(iframeResize, 1000);
-    iframeResize();
-    setTimeout(iframeResize, 200);
-    setTimeout(iframeResize, 400);
-    setTimeout(iframeResize, 600);
-    setTimeout(iframeResize, 800);
-    setTimeout(iframeResize, 800);
+    iframeInterval = setInterval(iframeOnresize, 1000);
+    iframeOnresize();
+    setTimeout(iframeOnresize, 200);
+    setTimeout(iframeOnresize, 400);
+    setTimeout(iframeOnresize, 600);
+    setTimeout(iframeOnresize, 800);
+    setTimeout(iframeOnresize, 800);
 }
 
-function iframeResize() {
+export function iframeOnresize() {
     var iframe = document.querySelectorAll("DIV#dialog IFRAME")[0];
     var canvas = iframe.contentWindow.document.getElementsByTagName("canvas")[0];
+    var maxWidth = window.innerWidth * 0.75;
+    var maxHeight = window.innerHeight * 0.75;
+    var width = canvas.width < maxWidth ? canvas.width : maxWidth;
+    var height = canvas.height < maxHeight? canvas.height : maxHeight;
     if (canvas.width > 0 && canvas.height > 0) {
-        iframe.style.width = (canvas.width) + "px";
-        iframe.style.height = (canvas.height) + "px";
+        iframe.style.width = width + "px";
+        iframe.style.height = height + "px";
     } else {
         iframe.style.width = "400px";
         iframe.style.height = "600px";

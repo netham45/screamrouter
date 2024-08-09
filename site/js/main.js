@@ -2,7 +2,7 @@ import {highlightActiveSink, highlightActiveSource, highlightActiveRoutes, onloa
 import { selectedRoute, selectedSink, selectedSource, editorActive, editorType, setSelectedSource, setSelectedSink, setSelectedRoute, setEditorActive, setEditorType } from "./global.js";
 import {onload as audioOnload} from "./audio.js";
 import {onload as sortOnload} from "./sort.js";
-import {onload as iframeOnload} from "./iframe.js";
+import {onload as iframeOnload, iframeOnresize} from "./iframe.js";
 import {onload as dragOnload} from "./drag.js";
 import {onload as dialogOnload, dismissShadow, showShadow} from "./dialog.js";
 import {onload as controlsOnload} from "./controls.js";
@@ -134,6 +134,7 @@ function onload() {
 function onresize() {
     drawLines();
     backgroundOnresize();
+    iframeOnresize();
 }
 
 window.addEventListener('load', onload);
