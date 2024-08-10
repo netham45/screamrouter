@@ -2,7 +2,7 @@
 
 This Home Assistant component allows you to control a ScreamRouter instance directly from your Home Assistant setup. ScreamRouter is an audio routing system that enables flexible management of audio sources, routes, and sinks.
 
-[https://github.com/netham45/screamrouter_ha_component](Go to the component's repo here)
+[Go to the component's repo here](https://github.com/netham45/screamrouter_ha_component)
 
 ## Features
 
