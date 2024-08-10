@@ -1,27 +1,36 @@
 import { selectedSource, selectedRoute, selectedSink } from "./global.js";
 
+let initial_load = true;
 
 export function onload() {
+
     if ('launchQueue' in window) {
         window.launchQueue.setConsumer(launchParams => {
+            const navigationEntries = performance.getEntriesByType('navigation');
+            if (initial_load && navigationEntries.length > 0 && navigationEntries[0].type === 'reload') {
+                initial_load = false;
+                return true;
+            }
+        
             switch (launchParams.targetURL.split("#")[1]) {
                 case "enabledisablesink":
                     if (selectedSink) {
-                        let enabledisable = selectedSink.querySelectorAll("BUTTON.button-option-enable");
+                        let enabledisable = selectedSink.querySelectorAll("BUTTON.button-option-enable, BUTTON.button-option-disable");
                         if (enabledisable)
                             enabledisable[0].onclick({target: enabledisable[0]});
                     }
                     break;
                 case "enabledisableroute":
-                    if (selectedRoute) {
-                        let enabledisable = selectedRoute.querySelectorAll("BUTTON.button-option-enable");
-                        if (enabledisable)
-                            enabledisable[0].onclick({target: enabledisable[0]});
-                    }
+                    let enabledisable = document.querySelectorAll("button#button_enableRoute:not([disabled]), button#button_disableRoute:not([disabled])");
+                    if (enabledisable.length == 0)
+                        break;
+                    console.log(enabledisable);
+                    if (enabledisable)
+                        enabledisable[0].onclick({target: enabledisable[0]});
                     break;
                 case "enabledisablesource":
                     if (selectedSource) {
-                        let enabledisable = selectedSource.querySelectorAll("BUTTON.button-option-enable");
+                        let enabledisable = selectedSource.querySelectorAll("BUTTON.button-option-enable, BUTTON.button-option-disable");
                         if (enabledisable)
                             enabledisable[0].onclick({target: enabledisable[0]});
                     }
