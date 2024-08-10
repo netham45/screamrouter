@@ -38,26 +38,7 @@ Ensure you have root or sudo access to your Debian system.
    pip3 install -r ~/screamrouter/requirements.txt
    ```
 
-4. Build libsamplerate:
-
-   Navigate to the libsamplerate directory and build it using cmake:
-
-   ```
-   cd ~/screamrouter/c_utils/libsamplerate
-   cmake .
-   make
-   ```
-
-5. Create symbolic links:
-
-   Create necessary symbolic links for the libmp3lame:
-
-   ```
-   ln -s /usr/lib/x86_64-linux-gnu/libmp3lame.so.0 /usr/lib64/libmp3lame.so
-
-   ```
-
-6. Build C utilities:
+4. Build C utilities:
 
    Navigate to the c_utils directory and run the build script:
 
@@ -66,11 +47,11 @@ Ensure you have root or sudo access to your Debian system.
    ./build.sh
    ```
 
-7. Run ScreamRouter:
+5. Run ScreamRouter:
 
    Finally, navigate to the ScreamRouter directory and run the main script:
 
    ```
-   cd /screamrouter
+   cd ~/screamrouter
    ./screamrouter.py
    ```
