@@ -92,7 +92,7 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 * [ESP32S3 USB Audio Card and Toslink Senders](Readme/esp32-scream-sender.md)
   - Information on using an ESP32S3 as a USB sound card to stream to Scream, or an ESP32 as a TOSLINK bridge for Scream
 
-# [Raspberry Pi Zero W / Raspberry Pi Zero 2 USB Gadget Sound Card Sender](Readme/raspberry-pi-zero-screamsender.md)
+* [Raspberry Pi Zero W / Raspberry Pi Zero 2 USB Gadget Sound Card Sender](Readme/raspberry-pi-zero-screamsender.md)
   - Information on configuring a Raspberry Pi Zero W / Raspberry Pi Zero 2 as a USB Gadget Sound Card that forwards to ScreamRouter
 
 * [Source Command Receiver](Readme/command_receiver.md)
