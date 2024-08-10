@@ -10,7 +10,7 @@ ScreamRouter can run as a Progressive Web App (PWA). This feature enhances the u
 
 To use the ScreamRouter Chrome App, you can install it from Chrome's menu. ![Chrome menu install Windows](/images/ChromeAppInstall.png)
 
-It is also available for Chrome on Android. ![Chrome menu install Android](/images/ChromeAndroidInstall.png)
+It is also available for Chrome on Android. ![Chrome menu install Android](/images/ChromeAndroidInstall.jpg)
 
 ## App Shortcuts
 
