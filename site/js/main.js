@@ -9,6 +9,7 @@ import {onload as controlsOnload} from "./controls.js";
 import {onload as routeSelectorOnload} from "./route_selector.js";
 import {onload as visualizerOnload} from "./visualizer.js";
 import {onload as backgroundOnload, onresize as backgroundOnresize} from "./background.js";
+import {onload as shortcutsOnload} from "./chrome_app_shortcut_handler.js";
 import {drawLines} from "./lines.js";
 import {callApi as callApi} from "./api.js"
 
@@ -127,6 +128,7 @@ function onload() {
     controlsOnload();
     iframeOnload();
     visualizerOnload();
+    shortcutsOnload();
     drawLines();
     startRefreshing();
 }

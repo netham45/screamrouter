@@ -15,5 +15,52 @@
     ],
     "theme_color": "#65BC45",
     "background_color": "#459C35",
-    "display": "standalone"
+    "display": "standalone",
+    "shortcuts": [
+      {
+        "name": "Play/Pause Source",
+        "short_name": "PlayPause",
+        "description": "View historical events for today",
+        "url": "#playpause",
+        "icons": [{ "src": "/today-icon.png", "sizes": "192x192" }]
+      },
+      {
+        "name": "Next Track",
+        "short_name": "NextTrack",
+        "description": "Next Track for selected source",
+        "url": "#nextrack",
+        "icons": [{ "src": "/search-icon.png", "sizes": "192x192" }]
+      },
+      {
+        "name": "Previous Track",
+        "short_name": "PrevTrack",
+        "description": "Previous Track for selected source",
+        "url": "#prevtrack",
+        "icons": [{ "src": "/timeline-icon.png", "sizes": "192x192" }]
+      },
+      {
+        "name": "Enable/Disable Selected Source",
+        "short_name": "EnableDisableSource",
+        "description": "Enable/Disable Selected Source",
+        "url": "#enabledisablesource",
+        "icons": [{ "src": "/timeline-icon.png", "sizes": "192x192" }]
+      },
+      {
+        "name": "Enable/Disable Selected Route",
+        "short_name": "EnableDisableRoute",
+        "description": "Enable/Disable Selected Route",
+        "url": "#enabledisableroute",
+        "icons": [{ "src": "/timeline-icon.png", "sizes": "192x192" }]
+      },
+      {
+        "name": "Enable/Disable Selected Sink",
+        "short_name": "EnableDisableSink",
+        "description": "Enable/Disable Selected Sink",
+        "url": "#enabledisablesink",
+        "icons": [{ "src": "/timeline-icon.png", "sizes": "192x192" }]
+      }
+    ],
+    "launch_handler": {
+      "client_mode": ["focus-existing", "auto"]
+    }
   }

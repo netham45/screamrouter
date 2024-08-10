@@ -68,6 +68,9 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 * [Configuration Guide](Readme/configuration.md)
   - Instructions for configuring ScreamRouter and its components
 
+* [Chrome App](Readme/chrome-app-manifest.md)
+  - Guide to installing it as an app using Chrome
+
 * [Docker ScreamRouter Install Guide](Readme/docker-screamrouter.md)
   - Guide to running ScreamRouter in a Docker container
 
