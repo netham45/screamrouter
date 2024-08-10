@@ -60,8 +60,6 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 
 ## Documentation
 
-For comprehensive information on various aspects of ScreamRouter, please refer to the following guides:
-
 ### ScreamRouter Information
 
 #### Install/Configuration
