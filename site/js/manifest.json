@@ -28,7 +28,7 @@
         "name": "Next Track",
         "short_name": "NextTrack",
         "description": "Next Track for selected source",
-        "url": "#nextrack",
+        "url": "#nexttrack",
         "icons": [{ "src": "/search-icon.png", "sizes": "192x192" }]
       },
       {
