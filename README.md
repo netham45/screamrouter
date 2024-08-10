@@ -103,7 +103,11 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 
 ## Installation Guide
 
-See [The ScreamRouter Docker install guide](https://github.com/netham45/screamrouter/blob/main/Readme/docker-screamrouter.md)
+### Docker Install (Recommended)
+See [The ScreamRouter Docker install guide](/Readme/docker-screamrouter.md)
+
+### Debian install
+See [The ScreamRouter Debian Install Guide](/Readme/debian-screamrouter.md)
 
 ## Additional Tools and Receivers
 ### Docker Containers
