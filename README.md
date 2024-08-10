@@ -143,7 +143,7 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 * [Original Scream Windows Driver](https://github.com/duncanthrax/scream/)
 * [Tool for prepending Scream headers to PCM streams on Linux](https://github.com/netham45/screamsender)
 * [ESP32S3 USB UAC1.0 Audio Card that transmits Scream](https://github.com/netham45/esp32s-usb-scream-sender)
-* [ESP32 Toslink to Scream Adapter](https://github.com/netham45/esp32s-toslink-sender)
+* [ESP32 Toslink to Scream Adapter](https://github.com/netham45/esp32-toslink-sender)
 
 ## Accessibility
 
