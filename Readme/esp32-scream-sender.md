@@ -1,4 +1,5 @@
-# ESP32S3 USB Scream Sender
+# ESP32 Scream Senders
+## ESP32S3 USB Scream Sender
 
 ## Overview
 
@@ -36,6 +37,48 @@ To build and flash the project onto your ESP32S3, follow these steps:
 5. Connect your ESP32S3 to your computer via USB.
 6. Open a terminal in the project directory within the ESP IDF framework.
 7. Run the following command, replacing `<esp32s3 com port>` with the appropriate COM port for your device:
+
+```
+idf-py -p <esp32s3 com port> flash monitor
+```
+
+## ESP32 Toslink Scream Sender
+
+## Overview
+
+The ESP32 Toslink Scream Sender is a tool that configures an ESP32 microcontroller to receive audio through a Toslink (optical) input and forward it to ScreamRouter. This implementation allows you to capture audio from devices with optical audio output and integrate it into your ScreamRouter setup.
+## Key Features
+
+- Receives audio through Toslink (optical) input
+- Compatible with devices that have optical audio output
+- Forwards audio to ScreamRouter
+- Utilizes the ESP32's I2S interface for digital audio reception
+## Hardware Requirements
+
+- ESP32 microcontroller
+- Toslink (optical) receiver module
+- Appropriate power supply for the ESP32 and Toslink module
+## Software Dependencies
+
+- ESP-IDF (Espressif IoT Development Framework) Tested with 5.4 prerelease
+
+## Repository
+
+The source code and additional resources can be found in the following GitHub repository:
+
+[ESP32 Toslink Scream Sender Repository](https://github.com/example/esp32-toslink-sender)
+
+## Building and Flashing
+
+To build and flash the project onto your ESP32, follow these steps:
+
+1. Clone the repository to your local machine.
+2. Navigate to the project directory.
+3. Copy `main/secrets_example.h` to `main/secrets.h`.
+4. Open `main/secrets.h` and fill out the required information, including your Wi-Fi credentials and ScreamRouter IP address.
+5. Connect your ESP32 to your computer via USB.
+6. Open a terminal in the project directory within the ESP IDF framework.
+7. Run the following command, replacing `<esp32 com port>` with the appropriate COM port for your device:
 
 ```
 idf-py -p <esp32s3 com port> flash monitor

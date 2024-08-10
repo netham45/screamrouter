@@ -89,8 +89,8 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 * [Docker Sources](Readme/docker-sources.md)
   - Information on Docker containers for various streaming services
 
-* [ESP32S3 USB Audio Card Sender](Readme/esp32-scream-sender.md)
-  - Information on using an ESP32S3 as a USB sound card to stream to Scream
+* [ESP32S3 USB Audio Card and Toslink Senders](Readme/esp32-scream-sender.md)
+  - Information on using an ESP32S3 as a USB sound card to stream to Scream, or an ESP32 as a TOSLINK bridge for Scream
 
 * [Source Command Receiver](Readme/command_receiver.md)
   - Information about the command receiver module for remote control
@@ -143,6 +143,7 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 * [Original Scream Windows Driver](https://github.com/duncanthrax/scream/)
 * [Tool for prepending Scream headers to PCM streams on Linux](https://github.com/netham45/screamsender)
 * [ESP32S3 USB UAC1.0 Audio Card that transmits Scream](https://github.com/netham45/esp32s-usb-scream-sender)
+* [ESP32 Toslink to Scream Adapter](https://github.com/netham45/esp32s-toslink-sender)
 
 ## Accessibility
 
