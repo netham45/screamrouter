@@ -44,6 +44,8 @@ idf-py -p <esp32s3 com port> flash monitor
 
 ## ESP32 Toslink Scream Sender
 
+## Note: This is not tested yet.
+
 ## Overview
 
 The ESP32 Toslink Scream Sender is a tool that configures an ESP32 microcontroller to receive audio through a Toslink (optical) input and forward it to ScreamRouter. This implementation allows you to capture audio from devices with optical audio output and integrate it into your ScreamRouter setup.
