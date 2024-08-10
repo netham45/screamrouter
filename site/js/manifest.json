@@ -18,21 +18,21 @@
     "display": "standalone",
     "shortcuts": [
       {
-        "name": "Play/Pause Source",
+        "name": "Source Play/Pause",
         "short_name": "PlayPause",
         "description": "View historical events for today",
         "url": "#playpause",
         "icons": [{ "src": "/today-icon.png", "sizes": "192x192" }]
       },
       {
-        "name": "Next Track",
+        "name": "Source Next Track",
         "short_name": "NextTrack",
         "description": "Next Track for selected source",
         "url": "#nexttrack",
         "icons": [{ "src": "/search-icon.png", "sizes": "192x192" }]
       },
       {
-        "name": "Previous Track",
+        "name": "Source Previous Track",
         "short_name": "PrevTrack",
         "description": "Previous Track for selected source",
         "url": "#prevtrack",
