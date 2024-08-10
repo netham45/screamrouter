@@ -30,8 +30,6 @@ using namespace std;
 #define TAG_SIZE 45
 #define NORMALIZE_EQ_GAIN 1
 
-bool running = true; // Flag to control loop execution
-
 uint8_t packet_in_buffer[PACKET_SIZE + TAG_SIZE];
 uint8_t receive_buffer[CHUNK_SIZE];
 int32_t scaled_buffer[CHUNK_SIZE * 8];
@@ -164,7 +162,7 @@ void process_args(int argc, char *argv[])
 {
     if (argc <= config_argc) {
         log("Too few args");
-        ::exit(-1);
+        threads_running = false;
     }
     // cppcheck-suppress ctuArrayIndex
     input_ip = string(argv[1]);
@@ -474,7 +472,7 @@ void receive_data_thread()
         while (int bytes = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE) != TAG_SIZE + PACKET_SIZE ||
                 strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)
             if (bytes == -1)
-                ::exit(-1);
+                threads_running = false;
         check_update_header();
         // Store the new packet in the delay buffer with its arrival time
         auto target_time = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay);
@@ -689,7 +687,7 @@ int main(int argc, char *argv[])
     // Start the receive control data thread
     std::thread data_thread(data_input_thread);
 
-    while (running)
+    while (threads_running)
     {
         receive_data();
         scale_buffer();
@@ -703,8 +701,6 @@ int main(int argc, char *argv[])
             write_output_buffer();
     }
 
-    // Signal the receive thread to stop and wait for it to finish
-    threads_running = false;
     receive_thread.join();
     data_thread.join();
 

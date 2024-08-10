@@ -1,4 +1,4 @@
-import {highlightActiveSink, highlightActiveSource, highlightActiveRoutes} from "./highlighting.js";
+import { highlightActiveSink, highlightActiveSource, highlightActiveRoutes } from "./highlighting.js";
 
 export let selectedSink = "";
 export let selectedSource = "";
@@ -80,7 +80,7 @@ export function onload() {
     if (selectedRouteName) {
         let result = document.querySelector(`[SPAN.optiondata-name="${selectedRouteName}"]`);
         console.log(result);
-        if (result) { 
+        if (result) {
             selectedRoute = result;
             console.log("Found set route");
         }
