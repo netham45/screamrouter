@@ -708,6 +708,8 @@ class ConfigurationManager(threading.Thread):
                         audio_controller.update_volume(source.name, source.volume)
                         audio_controller.update_equalizer(source.name, source.equalizer)
 
+        self.__save_config()
+
     def __process_and_apply_configuration(self) -> None:
         """Process the configuration, get which sinks have changed and need reloaded,
            then reload them."""
