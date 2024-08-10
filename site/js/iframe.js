@@ -17,7 +17,12 @@ function iframeOnload() {
 
 export function iframeOnresize() {
     var iframe = document.querySelectorAll("DIV#dialog IFRAME")[0];
-    var canvas = iframe.contentWindow.document.getElementsByTagName("canvas")[0];
+    if (iframe == null || iframe.contentWindow == null) 
+        return;
+    var canvaslist = iframe.contentWindow.document.getElementsByTagName("canvas");
+    if (canvaslist.length == 0)
+        return;
+    var canvas = canvaslist[0];
     var maxWidth = window.innerWidth * 0.75;
     var maxHeight = window.innerHeight * 0.75;
     var width = canvas.width < maxWidth ? canvas.width : maxWidth;

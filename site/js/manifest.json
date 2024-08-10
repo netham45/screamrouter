@@ -20,7 +20,7 @@
       {
         "name": "Source Play/Pause",
         "short_name": "PlayPause",
-        "description": "View historical events for today",
+        "description": "Play or Pause the selected source",
         "url": "#playpause",
         "icons": [{ "src": "/today-icon.png", "sizes": "192x192" }]
       },
@@ -61,6 +61,6 @@
       }
     ],
     "launch_handler": {
-      "client_mode": ["focus-existing", "auto"]
+      "client_mode": ["focus-existing"]
     }
   }
