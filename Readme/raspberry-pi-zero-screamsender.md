@@ -68,7 +68,7 @@ echo 16 > functions/uac1.usb0/c_ssize  # 16-bit samples
 ls /sys/class/udc > UDC
 
 sleep 2
-nohup arecord -D hw:CARD=UAC1Gadget,DEV=0 -f dat 2>/var/log/arecord | screamsender -i $IP_ADDRESS -p $PORT -s 48000 -b 16 &> /var/log/arecord &
+nohup bash -c "while x=x; do arecord -D hw:CARD=UAC1Gadget,DEV=0 -f dat 2>/var/log/arecord | screamsender -i $IP_ADDRESS -p $PORT -s 48000 -b 16 &> /var/log/arecord;done" &
 ```
 
 Make the script executable:
@@ -111,4 +111,4 @@ After rebooting, the Raspberry Pi should be configured as a USB audio device and
 
 ## Note
 
-Ensure to replace the IP address and port in the `usb_gadget_audio.sh` script with the appropriate values for your network setup.
+Ensure to replace the IP address and port in the `usb_gadget_audio.sh` script with the appropriate values for your setup.
