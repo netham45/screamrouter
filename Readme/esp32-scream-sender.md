@@ -68,7 +68,7 @@ The ESP32 Toslink Scream Sender is a tool that configures an ESP32 microcontroll
 
 The source code and additional resources can be found in the following GitHub repository:
 
-[ESP32 Toslink Scream Sender Repository](https://github.com/example/esp32-toslink-sender)
+[ESP32 Toslink Scream Sender Repository](https://github.com/netham45/esp32-toslink-sender)
 
 ## Building and Flashing
 
