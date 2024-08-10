@@ -81,7 +81,7 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 ### Senders
 
 * [RTP/Linux Source](Readme/rtp-source.md)
-  - Guide to using RTP from PulseAudio as an audio source
+  - Guide to using RTP from PulseAudio and Pipewire as an audio source
 
 * [Windows Source](Readme/scream-source.md)
   - Information on configuring a Windows audio source
