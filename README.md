@@ -121,10 +121,6 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 * [Home Assistant Integration](Readme/homeassistant.md)
   - Instructions for integrating ScreamRouter with Home Assistant
 
-## Installation Guide
-
-
-
 ## Additional Tools and Receivers
 ### Docker Containers
 * [Amazon Music Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-amazon-music-docker)
