@@ -62,29 +62,25 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 
 For comprehensive information on various aspects of ScreamRouter, please refer to the following guides:
 
-* [API Documentation](Readme/api.md)
-  - Details on the ScreamRouter API endpoints and usage
+### ScreamRouter Information
+
+#### Install/Configuration
 
 * [Configuration Guide](Readme/configuration.md)
   - Instructions for configuring ScreamRouter and its components
 
-* [Chrome App](Readme/chrome-app-manifest.md)
-  - Guide to installing it as an app using Chrome
-
 * [Docker ScreamRouter Install Guide](Readme/docker-screamrouter.md)
   - Guide to running ScreamRouter in a Docker container
 
-* [Home Assistant Integration](Readme/homeassistant.md)
-  - Instructions for integrating ScreamRouter with Home Assistant
+* [Debian ScreamRouter Install Guide](/Readme/debian-screamrouter.md)
+  - Guide to running ScreamRouter on Debian
 
-* [Plugins System](Readme/plugins.md)
-  - Documentation on the flexible plugin system for adding new sources
+#### General Information
 
 * [Audio Processor](Readme/processor.md)
   - Details on the custom mixer/equalizer/channel layout processor
 
-* [Windows Receivers](Readme/windows-scream-receiver.md)
-  - Information on configuring a Windows audio receiver
+### Senders
 
 * [RTP/Linux Source](Readme/rtp-source.md)
   - Guide to using RTP from PulseAudio as an audio source
@@ -98,19 +94,38 @@ For comprehensive information on various aspects of ScreamRouter, please refer t
 * [Source Command Receiver](Readme/command_receiver.md)
   - Information about the command receiver module for remote control
 
+### Receivers
+
+* [Windows Receivers](Readme/windows-scream-receiver.md)
+  - Information on configuring a Windows audio receiver
+
+### UI
+
 * [User Interface Guide](Readme/ui.md)
   - Documentation on using the ScreamRouter web interface
+
+* [Chrome App](Readme/chrome-app-manifest.md)
+  - Guide to installing it as an app using Chrome
 
 * [VNC Integration](Readme/vnc.md)
   - Guide to using the embedded noVNC for remote computer control
 
+### API
+
+* [API Documentation](Readme/api.md)
+  - Details on the ScreamRouter API endpoints and usage
+
+* [Plugins System](Readme/plugins.md)
+  - Documentation on the flexible plugin system for adding new sources
+
+### Home Assistant
+
+* [Home Assistant Integration](Readme/homeassistant.md)
+  - Instructions for integrating ScreamRouter with Home Assistant
+
 ## Installation Guide
 
-### Docker Install (Recommended)
-See [The ScreamRouter Docker install guide](/Readme/docker-screamrouter.md)
 
-### Debian install
-See [The ScreamRouter Debian Install Guide](/Readme/debian-screamrouter.md)
 
 ## Additional Tools and Receivers
 ### Docker Containers
