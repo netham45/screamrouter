@@ -64,9 +64,6 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 
 #### Install/Configuration
 
-* [Configuration Guide](Readme/configuration.md)
-  - Instructions for configuring ScreamRouter and its components
-
 * [Docker ScreamRouter Install Guide](Readme/docker-screamrouter.md)
   - Guide to running ScreamRouter in a Docker container
 
@@ -77,6 +74,9 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 
 * [Audio Processor](Readme/processor.md)
   - Details on the custom mixer/equalizer/channel layout processor
+
+* [Configuration](Readme/configuration.md)
+  - Description of ScreamRouter's routing configuration
 
 ### Senders
 
