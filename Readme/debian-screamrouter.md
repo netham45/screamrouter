@@ -47,7 +47,17 @@ Ensure you have root or sudo access to your Debian system.
    ./build.sh
    ```
 
-5. Run ScreamRouter:
+5. Generate a certifcate for HTTPS:
+
+   Or provide your own in the cert/ folder
+
+   ```
+   openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
+     -subj "/C=US/ST=State/L=City/O=Organization/CN=example.com" \
+     -keyout ~/screamrouter/cert/privkey.pem -out ~/screamrouter/cert/cert.pem
+   ```
+
+6. Run ScreamRouter:
 
    Finally, navigate to the ScreamRouter directory and run the main script:
 
