@@ -17,6 +17,7 @@
 #include <chrono>
 #include <thread>
 #include <atomic>
+#include <sstream>
 
 using namespace std;
 
@@ -63,7 +64,10 @@ string input_ip = "";
 int fd_in = 0;
 int fd_out = 0;
 
+int data_fd_in = 0;
+
 float eq[18] = {1};
+float new_eq[18] = {1};
 
 float volume = 1;
 
@@ -74,7 +78,7 @@ int output_chlayout2 = 0;
 
 int delay = 0;
 std::deque<std::pair<std::chrono::steady_clock::time_point, std::vector<uint8_t>>> delay_buffer;
-std::atomic<bool> receive_thread_running(true);
+std::atomic<bool> threads_running(true);
 
 uint8_t input_header[5] = {0};
 
@@ -91,6 +95,7 @@ int *int_args[] = {
     NULL, // IP to receive from
     &fd_in,
     &fd_out,
+    &data_fd_in,
     &output_channels,
     &output_samplerate,
     &output_chlayout1,
@@ -120,6 +125,7 @@ int *int_args[] = {
 // Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
 float *float_args[] = {
     NULL, // IP to receive from
+    NULL,
     NULL,
     NULL,
     NULL,
@@ -463,7 +469,7 @@ void check_update_header()
 
 void receive_data_thread()
 {
-    while (receive_thread_running)
+    while (threads_running)
     {
         while (int bytes = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE) != TAG_SIZE + PACKET_SIZE ||
                 strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)
@@ -622,14 +628,66 @@ void write_output_buffer()
     process_buffer_pos -= CHUNK_SIZE / sizeof(int32_t);
 }
 
+void data_input_thread()
+{
+    char line[256];
+
+    while (threads_running)
+    {
+        if (read(data_fd_in, line, sizeof(line)) > 0)
+        {
+            std::string input;
+            input = std::string(line);
+            std::istringstream iss(input);
+            std::string command;
+
+            while (std::getline(iss, command))
+            {
+                std::istringstream command_stream(command);
+                std::string variable;
+                float value;
+
+                if (command_stream >> variable >> value)
+                {
+                    if (variable[0] == 'b' && variable.length() > 1 && std::isdigit(variable[1]))
+                    {
+                        int index = std::stoi(variable.substr(1)) - 1;
+                        if (index >= 0 && index < 18)
+                        {
+                            new_eq[index] = value;
+                        }
+                    }
+                    else if (variable == "v")
+                    {
+                        volume = value;
+                    }
+                }
+                else if (command == "a")
+                {
+                    memcpy(eq, new_eq, sizeof(eq));
+                    setup_biquad();
+                }
+            }
+        }
+        else
+        {
+            // If no data is available, sleep for a short time to avoid busy-waiting
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+}
+
 int main(int argc, char *argv[])
 {
     process_args(argc, argv);
     log("Starting source input processor " + input_ip);
     setup_biquad();
 
-    // Start the receive data thread
+    // Start the receive PCM data thread
     std::thread receive_thread(receive_data_thread);
+
+    // Start the receive control data thread
+    std::thread data_thread(data_input_thread);
 
     while (running)
     {
@@ -646,8 +704,9 @@ int main(int argc, char *argv[])
     }
 
     // Signal the receive thread to stop and wait for it to finish
-    receive_thread_running = false;
+    threads_running = false;
     receive_thread.join();
+    data_thread.join();
 
     return 0;
 }

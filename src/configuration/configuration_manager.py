@@ -60,6 +60,8 @@ class ConfigurationManager(threading.Thread):
         """Semaphore so only one thread can reload the config or save to YAML at a time"""
         self.reload_condition: threading.Condition = threading.Condition()
         """Condition to indicate the Configuration Manager needs to reload"""
+        self.volume_eq_reload_condition: threading.Condition = threading.Condition()
+        """Condition to indicate the Configuration Manager needs to apply volume and eq"""
         self.running: bool = True
         """Rather the thread is running or not"""
         self.scream_recevier: ScreamReceiver = ScreamReceiver([])
@@ -104,12 +106,19 @@ class ConfigurationManager(threading.Thread):
     def update_sink(self, new_sink: SinkDescription, old_sink_name: SinkNameType) -> bool:
         """Updates fields on the sink indicated by old_sink_name to what is specified in new_sink
            Undefined fields are ignored"""
+        is_eq_only: bool = True
+        is_eq_found: bool = False
         changed_sink: SinkDescription = self.get_sink_by_name(old_sink_name)
         if new_sink.name != old_sink_name:
             for sink in self.sink_descriptions:
                 if sink.name == new_sink.name:
                     raise ValueError(f"Name {new_sink.name} already used")
         for field in new_sink.model_fields_set:
+            _logger.debug("Field %s", field)
+            if field == "equalizer":
+                is_eq_found = True
+            elif field != "name":
+                is_eq_only = False
             setattr(changed_sink, field, getattr(new_sink, field))
         for sink in self.sink_descriptions:
             for index, group_member in enumerate(sink.group_members):
@@ -119,7 +128,10 @@ class ConfigurationManager(threading.Thread):
             if route.sink == old_sink_name:
                 route.sink = changed_sink.name
 
-        self.__reload_configuration()
+        if is_eq_found and is_eq_only:
+            self.__reload_volume_eq_configuration()
+        else:
+            self.__reload_configuration()
         return True
 
     def delete_sink(self, sink_name: SinkNameType) -> bool:
@@ -158,12 +170,19 @@ class ConfigurationManager(threading.Thread):
     def update_source(self, new_source: SourceDescription, old_source_name: SourceNameType) -> bool:
         """Updates fields on source 'old_source_name' to what's specified in new_source
            Undefined fields are not changed"""
+        is_eq_only: bool = True
+        is_eq_found: bool = False
         changed_source: SourceDescription = self.get_source_by_name(old_source_name)
         if new_source.name != old_source_name:
             for source in self.source_descriptions:
                 if source.name == new_source.name:
                     raise ValueError(f"Name {new_source.name} already used")
         for field in new_source.model_fields_set:
+            if field == "equalizer":
+                is_eq_found = True
+            elif field != "name":
+                is_eq_only = False
+        
             setattr(changed_source, field, getattr(new_source, field))
         for source in self.source_descriptions:
             for index, group_member in enumerate(source.group_members):
@@ -173,7 +192,10 @@ class ConfigurationManager(threading.Thread):
             if route.source == old_source_name:
                 route.source = changed_source.name
 
-        self.__reload_configuration()
+        if is_eq_found and is_eq_only:
+            self.__reload_volume_eq_configuration()
+        else:
+            self.__reload_configuration()
         return True
 
     def delete_source(self, source_name: SourceNameType) -> bool:
@@ -212,14 +234,23 @@ class ConfigurationManager(threading.Thread):
     def update_route(self, new_route: RouteDescription, old_route_name: RouteNameType) -> bool:
         """Updates fields on the route indicated by old_route_name to what is specified in new_route
            Undefined fields are ignored"""
+        is_eq_only: bool = True
+        is_eq_found: bool = False
         changed_route: RouteDescription = self.get_route_by_name(old_route_name)
         if new_route.name != old_route_name:
             for route in self.route_descriptions:
                 if route.name == new_route.name:
                     raise ValueError(f"Name {new_route.name} already used")
         for field in new_route.model_fields_set:
+            if field == "equalizer":
+                is_eq_found = True
+            elif field != "name":
+                is_eq_only = False
             setattr(changed_route, field, getattr(new_route, field))
-        self.__reload_configuration()
+        if is_eq_found and is_eq_only:
+            self.__reload_volume_eq_configuration()
+        else:
+            self.__reload_configuration()
         return True
 
     def delete_route(self, route_name: RouteNameType) -> bool:
@@ -247,7 +278,7 @@ class ConfigurationManager(threading.Thread):
         """Set the equalizer for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.equalizer = equalizer
-        self.__reload_configuration()
+        self.__reload_volume_eq_configuration()
         return True
 
     def update_source_position(self, source_name: SourceNameType, new_index: int):
@@ -260,7 +291,7 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.volume = volume
-        self.__reload_configuration()
+        self.__reload_volume_eq_configuration()
         return True
 
     def source_next_track(self, source_name: SourceNameType) -> bool:
@@ -289,7 +320,8 @@ class ConfigurationManager(threading.Thread):
         """Set the equalizer for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.equalizer = equalizer
-        self.__reload_configuration()
+        _logger.debug("Updating EQ for %s", sink_name)
+        self.__reload_volume_eq_configuration()
         return True
 
     def update_sink_position(self, sink_name: SinkNameType, new_index: int):
@@ -302,7 +334,7 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.volume = volume
-        self.__reload_configuration()
+        self.__reload_volume_eq_configuration()
         return True
 
     def update_sink_delay(self, sink_name: SinkNameType, delay: DelayType) -> bool:
@@ -316,7 +348,7 @@ class ConfigurationManager(threading.Thread):
         """Set the equalizer for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.equalizer = equalizer
-        self.__reload_configuration()
+        self.__reload_volume_eq_configuration()
         return True
 
     def update_route_position(self, route_name: RouteNameType, new_index: int):
@@ -329,7 +361,7 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.volume = volume
-        self.__reload_configuration()
+        self.__reload_volume_eq_configuration()
         return True
 
     def stop(self) -> bool:
@@ -562,7 +594,6 @@ class ConfigurationManager(threading.Thread):
                         if sink not in changed_sinks:
                             changed_sinks.append(sink)
 
-
         return added_sinks, removed_sinks, changed_sinks
 
     def __process_configuration(self) -> Tuple[List[SinkDescription],
@@ -650,6 +681,32 @@ class ConfigurationManager(threading.Thread):
         self.reload_condition.release()
         self.reload_config = True
         _logger.debug("[Configuration Manager] Marking config for reload")
+
+    def __reload_volume_eq_configuration(self) -> None:
+        """Notifies the configuration manager to reload the volume/eq"""
+        if not self.volume_eq_reload_condition.acquire(timeout=1):
+            raise TimeoutError("Failed to get volume/eq configuration reload condition")
+        try:
+            self.volume_eq_reload_condition.notify()
+        except RuntimeError:
+            pass
+        self.volume_eq_reload_condition.release()
+        _logger.debug("[Configuration Manager] Marking volume/eq for reload")
+
+    def __process_and_apply_volume(self) -> None:
+        """Process the volume/eq configuration, apply them to all audiocontrollers"""
+        new_configuration: ConfigurationSolver = ConfigurationSolver(
+                                                        self.source_descriptions,
+                                                        self.sink_descriptions,
+                                                        self.route_descriptions)
+        new_map: dict[SinkDescription,List[SourceDescription]]
+        new_map = new_configuration.real_sinks_to_real_sources
+        for sink, sources in new_map.items():
+            for audio_controller in self.audio_controllers:
+                if audio_controller.sink_info.name == sink.name:
+                    for source in sources:
+                        audio_controller.update_volume(source.name, source.volume)
+                        audio_controller.update_equalizer(source.name, source.equalizer)
 
     def __process_and_apply_configuration(self) -> None:
         """Process the configuration, get which sinks have changed and need reloaded,
@@ -782,7 +839,7 @@ class ConfigurationManager(threading.Thread):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
         try:
-            sock.connect((ip, 5900))
+            sock.connect((str(ip), 5900))
             _logger.debug("[Configuration Manager] Adding source %s, VNC available", ip)
             self.add_source(SourceDescription(name=hostname, ip=ip, vnc_ip=ip, vnc_port=5900))
             sock.close()
@@ -792,15 +849,23 @@ class ConfigurationManager(threading.Thread):
 
     def check_receiver_sources(self):
         """This checks the IPs receivers have seen and adds any as sources if they don't exist"""
-        #known_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
-        #for ip in self.scream_recevier.known_ips:
-        #    if not ip in known_ips:
-        #        _logger.info("[Configuration Manager] Adding new source from Scream port %s", ip)
-        #        self.auto_add_source(ip)
-        #for ip in self.rtp_receiver.known_ips:
-        #    if not ip in known_ips:
-        #        _logger.info("[Configuration Manager] Adding new source from RTP port %s", ip)
-        #        self.auto_add_source(ip)
+        self.scream_recevier.check_known_ips()
+        self.multicast_scream_recevier.check_known_ips()
+        self.rtp_receiver.check_known_ips()
+        known_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
+        for ip in self.scream_recevier.known_ips:
+            if not str(ip) in known_ips:
+                _logger.info("[Configuration Manager] Adding new source from Scream port %s", ip)
+                self.auto_add_source(ip)
+        for ip in self.multicast_scream_recevier.known_ips:
+            if not str(ip) in known_ips:
+                _logger.info(
+                    "[Configuration Manager] Adding new source from Multicast Scream port %s", ip)
+                self.auto_add_source(ip)
+        for ip in self.rtp_receiver.known_ips:
+            if not str(ip) in known_ips:
+                _logger.info("[Configuration Manager] Adding new source from RTP port %s", ip)
+                self.auto_add_source(ip)
 
     def run(self):
         """Monitors for the reload condition to be set and reloads the config when it is set"""
@@ -825,4 +890,8 @@ class ConfigurationManager(threading.Thread):
                     self.reload_config = False
                     _logger.info("[Configuration Manager] Reloading the configuration")
                     self.__process_and_apply_configuration()
+            if not self.volume_eq_reload_condition.acquire(timeout=1):
+                raise TimeoutError("Failed to get configuration reload condition")
+            if self.volume_eq_reload_condition.wait(timeout=.3):
+                self.__process_and_apply_volume()
             self.check_receiver_sources()

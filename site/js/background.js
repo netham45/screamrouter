@@ -16,6 +16,7 @@ export function onresize() {
     backgroundCanvas.height = height;
     initRectangles();
 }
+
 function initRectangles() {
     rectangles.length = 0;
     const gridSize = 30;
@@ -79,7 +80,7 @@ let lastTime = performance.now();
 function drawRectangles() {
     const currentTime = performance.now();
     let deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
-    if (deltaTime > 1) deltaTime = 0; // Any longer than a second is the animation being paused
+    if (deltaTime > .25) deltaTime = 0; // Any longer than a quarter second is the animation being paused, stop updating to avoid a jumping/skipping effect
     lastTime = currentTime;
 
     backgroundCtx.clearRect(0, 0, width, height);

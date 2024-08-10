@@ -3,13 +3,14 @@ import os
 import threading
 from typing import Dict, List, Optional
 
+from src.screamrouter_types.annotations import SourceNameType, VolumeType
 from src.api.api_webstream import APIWebStream
 from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.audio.sink_mp3_processor import SinkMP3Processor
 from src.audio.sink_output_mixer import SinkOutputMixer
 from src.audio.source_input_processor import SourceInputProcessor
 from src.screamrouter_logger.screamrouter_logger import get_logger
-from src.screamrouter_types.configuration import (SinkDescription,
+from src.screamrouter_types.configuration import (Equalizer, SinkDescription,
                                                   SourceDescription)
 
 logger = get_logger(__name__)
@@ -111,6 +112,18 @@ class AudioController():
         self.pcm_thread.tcp_client_fd = tcp_fd
         self.pcm_thread.update_active_sources()
         self.request_restart = True
+
+    def update_equalizer(self, source_name: SourceNameType, equalizer: Equalizer):
+        """Update the equalizer for a source"""
+        for source in self.sources.values():
+            if source.source_info.name == source_name:
+                source.update_equalizer(equalizer)
+
+    def update_volume(self, source_name: SourceNameType, volume: VolumeType):
+        """Update the volume for a source"""
+        for source in self.sources.values():
+            if source.source_info.name == source_name:
+                source.update_volume(volume)
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""

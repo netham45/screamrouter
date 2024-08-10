@@ -10,6 +10,8 @@
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <lame/lame.h>
+#include <algorithm>
+#include <string>
 using namespace std;
 
 // Configuration variables
@@ -24,11 +26,17 @@ uint8_t buffer[TAG_LENGTH + PACKET_SIZE] = {0}; // Vector of pointers to receive
 
 vector<int> output_fds; // Vector of file descriptors for audio input streams
 
-int listen_fd = 0;
+int listen_fd = 0; // fd for audio input
+
+int data_fd = 0; // fd for writing IPs to
+
+vector<string> known_ips = {};
 
 // Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
 int* config_argv[] = {NULL, // Process File Name
-                      &listen_fd};
+                      &listen_fd,
+                      &data_fd};
+
 int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
 
 struct sockaddr_in receive_addr;
@@ -69,6 +77,11 @@ bool receive() {
 void send() {
     memset(buffer, 0, TAG_LENGTH);
     strcpy(reinterpret_cast<char*>(buffer), inet_ntoa(receive_addr.sin_addr));
+    string ip_address = string(reinterpret_cast<char*>(buffer));
+    if (find(known_ips.begin(), known_ips.end(), ip_address) == known_ips.end()) {
+        known_ips.push_back(ip_address);
+        write(data_fd, (ip_address + "\n").c_str(), ip_address.length());
+    }
     for (int fd_idx=0;fd_idx<output_fds.size();fd_idx++)
         write(output_fds[fd_idx], buffer, PACKET_SIZE + TAG_LENGTH);
 }

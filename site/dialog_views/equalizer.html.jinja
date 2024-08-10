@@ -1,7 +1,7 @@
 {%- import "imports/buttons.html.jinja" as buttons %}
 
 {% macro equalizer_band(freq, band_id) -%}
-<span class="equalizer">{{ freq }} Hz<br /><input alt="{{ freq }} Hertz Band" title="{{ freq }} Hz Band" type="range" tabindex="0" class="eq_slider" id="eq_{{ band_id }}" orient="vertical" name="{{ band_id }}" max="200" min="0" value={{request_info["data"][band_id] * 100}} /></span>
+<span class="equalizer">{{ freq }} Hz<br /><input alt="{{ freq }} Hertz Band" title="{{ freq }} Hz Band" type="range" tabindex="0" class="eq_slider" id="eq{{ band_id }}" orient="vertical" name="{{ band_id }}" max="200" min="0" value={{request_info["data"][band_id] * 100}} /></span>
 {%- endmacro %}
 
 <input type="hidden" id="dialog_action" value="put">

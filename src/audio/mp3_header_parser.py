@@ -70,9 +70,12 @@ class MP3Header:
         if len(header_data) < 4:
             raise InvalidHeaderException("Invalid MP3 Header (Too short)")
 
-        bytes_data = [numpy.unpackbits(numpy.array([header_data[i]], dtype=numpy.uint8), bitorder='little') for i in range(4)]
+        bytes_data = [numpy.unpackbits(numpy.array([header_data[i]],
+                                                   dtype=numpy.uint8),
+                                                   bitorder='little') for i in range(4)]
 
-        if not all(bytes_data[0][i] == 1 for i in range(7)) or not all(bytes_data[1][i] == 1 for i in range(5, 7)):
+        if (not all(bytes_data[0][i] == 1 for i in range(7)) or
+            not all(bytes_data[1][i] == 1 for i in range(5, 7))):
             raise InvalidHeaderException("Invalid MP3 Header (Invalid marker)")
         try:
             self.mpeg_version = int(numpy.packbits(bytes_data[1][3:5], bitorder='little')[0])
@@ -87,10 +90,15 @@ class MP3Header:
             self.copyright = bytes_data[3][3] == 1
             self.original = bytes_data[3][2] == 1
             self.emphasis = numpy.packbits(bytes_data[3][0:2], bitorder='little')[0]
-            self.samplerate = int(self.__mp3_process_samplerate(self.mpeg_version, self.samplerate_index))
-            self.bitrate = self.__mp3_parse_bitrate(self.bitrate_index, 1 if self.mpeg_version == 3 else 2, (3 - self.layer_description) + 1)
+            self.samplerate = int(self.__mp3_process_samplerate(self.mpeg_version,
+                                                                self.samplerate_index))
+            self.bitrate = self.__mp3_parse_bitrate(self.bitrate_index, 1 if
+                                                    self.mpeg_version == 3 else
+                                                    2, (3 - self.layer_description) + 1)
             self.slotsize = 4 if (3 - self.layer_description == 1) else 1
-            self.samplecount = self.__mp3_parse_frames(1 if self.mpeg_version == 3 else 2, (3 - self.layer_description) + 1)
-            self.framelength = int((self.bitrate * 1000 / 8 * self.samplecount / self.samplerate + (self.padding * self.slotsize)) - 4)
+            self.samplecount = self.__mp3_parse_frames(1 if self.mpeg_version == 3 else
+                                                       2, (3 - self.layer_description) + 1)
+            self.framelength = int((self.bitrate * 1000 / 8 * self.samplecount / self.samplerate +
+                                   (self.padding * self.slotsize)) - 4)
         except Exception as exc:
             raise InvalidHeaderException("Invalid MP3 Header (Failed to parse)") from exc

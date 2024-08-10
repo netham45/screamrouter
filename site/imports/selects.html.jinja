@@ -2,6 +2,11 @@
 <button id="{{id}}" tabindex="0" alt="{{alt}}" title="{{title}}" onclick="{{onclick}}" class="{{class}}">{{icon}}</button>
 {%- endmacro %}
 
+{% macro disabled_button(icon, id, alt, title, onclick, class="") -%}
+<button DISABLED id="{{id}}" tabindex="0" alt="{{alt}}" title="{{title}}" onclick="{{onclick}}" class="{{class}}">{{icon}}</button>
+{%- endmacro %}
+
+
 {% macro buttonIcon(icon, id, alt, title, onclick) -%}
 <span id="{{id}}" tabindex="0" alt="{{alt}}" title="{{title}}" class="button-icon" onclick="{{onclick}}">{{icon}}</span>
 {%- endmacro %}
@@ -72,8 +77,13 @@ d="true"
             {{- button('Edit Routes', 'Edit Routes for ' ~ shortalt, 'Edit Routes for ' ~ shortalt, 'Edit routes for ' ~ shortalt, 'editSinkSources(event)') -}}
             {%- endif -%}
             {%- if (data.__class__.__name__ == "SinkDescription" and not data.is_group) -%}
-                {{- button('Listen', 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'listenIconOnclick(event)') -}}
-                {{- button('Visualize', 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'visualizerIconOnclick(event)') -}}
+                {%- if (data["channels"] == 2) -%}
+                    {{- button('Listen', 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'Listen to ' ~ shortalt, 'listenIconOnclick(event)') -}}
+                    {{- button('Visualize', 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'Visualize ' ~ shortalt, 'visualizerIconOnclick(event)') -}}
+                {%- else -%}
+                    {{- disabled_button('Listen', 'Set Channels to 2 to Listen to ' ~ shortalt, 'Set Channels to 2 to Listen to ' ~ shortalt, 'Set Channels to 2 to Listen to ' ~ shortalt, 'listenIconOnclick(event)') -}}
+                    {{- disabled_button('Visualize', 'Set Channels to 2 to Visualize ' ~ shortalt, 'Set Channels to 2 to Visualize ' ~ shortalt, 'Set Channels to 2 to Visualize ' ~ shortalt, 'visualizerIconOnclick(event)') -}}
+                {%- endif -%}
             {%- endif -%}
             {%- if (data.vnc_ip and data.vnc_port) -%}
                 {{- button('VNC', 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'VNC ' ~ shortalt, 'vncIconOnclick(event)') -}} <br/>

@@ -11,6 +11,7 @@ let presets = {};
 let presetKeys = [];
 let presetIndexHist = [];
 let presetIndex = 0;
+let cycleInterval = 0;
 let presetCycleLength = 15000;
 let presetRandom = true;
 let canvas = document.getElementById('canvas');

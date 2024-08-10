@@ -97,7 +97,7 @@ function dialogSubmit(close) {
             url = entry.value;
         } else if (entry.id == "dialog_action") {
             action = entry.value;
-        } else if (entry.id.startsWith("eqB")) {
+        } else if (entry.id.startsWith("eqb")) {
             equalizer[entry.name] = parseFloat(entry.value / 100);
         } else {
             const value = entry.value;
@@ -138,8 +138,21 @@ export function dismissShadow() {
 }
 
 export function onload() {
+    exposeFunction(dialogAddSource, "dialogAddSource");
+    exposeFunction(dialogAddSourceGroup, "dialogAddSourceGroup");
+    exposeFunction(dialogVnc, "dialogVnc");
+    exposeFunction(dialogUpdateSource, "dialogUpdateSource");
+    exposeFunction(dialogUpdateSourceEqualizer, "dialogUpdateSourceEqualizer");
+    exposeFunction(dialogAddSink, "dialogAddSink");
+    exposeFunction(dialogAddSinkGroup, "dialogAddSinkGroup");
+    exposeFunction(dialogUpdateSink, "dialogUpdateSink");
+    exposeFunction(dialogUpdateSinkEqualizer, "dialogUpdateSinkEqualizer");
+    exposeFunction(dialogAddRoute, "dialogAddRoute");
+    exposeFunction(dialogUpdateRoute, "dialogUpdateRoute");
+    exposeFunction(dialogUpdateRouteEqualizer, "dialogUpdateRouteEqualizer");
+    exposeFunction(dialogCancel, "dialogCancel");
+    exposeFunction(dialogEqualizerDefault, "dialogEqualizerDefault");
     exposeFunction(dialogSubmitClose, "dialogSubmitClose");
     exposeFunction(dialogSubmitNoClose, "dialogSubmitNoClose");
     exposeFunction(dialogSubmit, "dialogSubmit");
-    exposeFunction(dialogCancel, "dialogCancel");
 }
