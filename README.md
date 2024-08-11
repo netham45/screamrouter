@@ -177,3 +177,10 @@ Utilize built-in equalization tools to optimize audio output, particularly benef
 ScreamRouter is aiming to be accessible to those with visual impairments. To this effect the UI has been designed with tooltips and alt tags on every element and can be used from a keyboard.
 
 If you encounter any issues affecting accessibility please file an issue on Github.
+
+
+## Example Devices
+
+### ESP32S3 Portable Receiver
+
+![Portable ESP32S3 Scream Receiver](/images/esp32s3_receiver.jpg)
