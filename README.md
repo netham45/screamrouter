@@ -74,7 +74,7 @@ Employ the FastAPI interface or Home Assistant integration for automated managem
 
 ### Home Assistant Integration
 
-Seamlessly incorporate sound effects and Text-to-Speech functionality into Home Assistant automations for enhanced smart home experiences.
+Incorporate sound effects and Text-to-Speech functionality into Home Assistant automations and play them from any speaker in your house for an enhanced smart home experience.
 
 ### Sound Quality Enhancement
 
