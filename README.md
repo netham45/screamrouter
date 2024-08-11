@@ -35,28 +35,33 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 
 ### Use Cases
 
-ScreamRouter offers a versatile solution for various audio management scenarios, including:
+#### Comprehensive Whole-House Audio Systems
 
-* Comprehensive Whole-House Audio Systems:
-   - Integrate multiple Scream Sources and Receivers for seamless audio distribution throughout your home.
+Integrate multiple Scream Sources and Receivers for seamless audio distribution throughout your home.
 
-* Advanced Volume Management:
-   - Implement granular volume control at both group and individual sink levels, ensuring optimal audio balance across your setup.
+#### Advanced Volume Management
 
-* Web-Based Audio Access:
-   - Utilize the 'Listen to Sink' feature to enable browser-based audio playback, enhancing accessibility and flexibility.
+Implement granular volume control at both group and individual sink levels, ensuring optimal audio balance across your setup.
 
-* Universal Sink Compatibility:
-   - Leverage the exposed API to incorporate any streaming MP3 player as a sink, expanding your audio output options.
+#### Web-Based Audio Access
 
-* Programmatic Audio Control:
-   - Employ the FastAPI interface or Home Assistant integration for automated management of sink activation, deactivation, and volume adjustments.
+Utilize the 'Listen to Sink' feature to enable browser-based audio playback, enhancing accessibility and flexibility.
 
-* Home Automation Integration:
-   - Seamlessly incorporate sound effects and Text-to-Speech functionality into Home Assistant automations for enhanced smart home experiences.
+#### Universal Sink Compatibility
 
-* Sound Quality Enhancement:
-   - Utilize built-in equalization tools to optimize audio output, particularly beneficial for improving the performance of budget-friendly speakers.
+PCM receivers are available for most popular platforms, and for ones that can't receive PCM they can use the MP3 stream.
+
+#### Programmatic Audio Control
+
+Employ the FastAPI interface or Home Assistant integration for automated management of sink activation, deactivation, and volume adjustments.
+
+#### Home Assistant Integration
+
+Seamlessly incorporate sound effects and Text-to-Speech functionality into Home Assistant automations for enhanced smart home experiences.
+
+#### Sound Quality Enhancement
+
+Utilize built-in equalization tools to optimize audio output, particularly beneficial for improving the performance of budget-friendly speakers.
 
 ## Documentation
 
