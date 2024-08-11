@@ -53,7 +53,7 @@ context.modules = [
           destination.ip = "<ScreamRouter_IP>"
           destination.port = <ScreamRouter_Port>
           sender.mtu = 1164
-          sender.payloadType = 97
+          sender.payloadType = 127
       }
   }
 ]

@@ -85,6 +85,22 @@ void setup_header() { // Sets up the Scream header
     log("Set up Header, Rate: " + to_string(output_samplerate) + ", Bit-Depth" + to_string(output_bitdepth) + ", Channels" + to_string(output_channels));
 }
 
+bool parseHeader() {
+    // Parse RTP header (first 12 bytes of buffer)
+    /*uint8_t version = (buffer[DATA_RECEIVE_POS] >> 6) & 0x03;
+    bool padding = (buffer[DATA_RECEIVE_POS] >> 5) & 0x01;
+    bool extension = (buffer[DATA_RECEIVE_POS] >> 4) & 0x01;
+    uint8_t csrcCount = buffer[DATA_RECEIVE_POS] & 0x0F;
+    bool marker = (buffer[DATA_RECEIVE_POS + 1] >> 7) & 0x01;*/
+    uint8_t payloadType = buffer[DATA_RECEIVE_POS + 1] & 0x7F;
+    /*uint16_t sequenceNumber = (buffer[DATA_RECEIVE_POS + 2] << 8) | buffer[DATA_RECEIVE_POS + 3];
+    uint32_t timestamp = (buffer[DATA_RECEIVE_POS + 4] << 24) | (buffer[DATA_RECEIVE_POS + 5] << 16) |
+                         (buffer[DATA_RECEIVE_POS + 6] << 8) | buffer[DATA_RECEIVE_POS + 7];
+    uint32_t ssrc = (buffer[DATA_RECEIVE_POS + 8] << 24) | (buffer[DATA_RECEIVE_POS + 9] << 16) |
+                    (buffer[DATA_RECEIVE_POS + 10] << 8) | buffer[DATA_RECEIVE_POS + 11];*/
+    return payloadType == 127; // Return true if parsing was successful
+}
+
 bool receive() {
     int bytes = recvfrom(listen_fd, buffer + DATA_RECEIVE_POS, RTP_HEADER_SIZE+CHUNK_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
     if (bytes == -1) 
@@ -119,7 +135,8 @@ int main(int argc, char* argv[]) {
 
     while (running)
         if (receive())
-            send();
+            if (parseHeader())
+                send();
         else
             sleep(.2);
     return 0;
