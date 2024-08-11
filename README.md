@@ -93,8 +93,15 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 * [Raspberry Pi Zero W / Raspberry Pi Zero 2 USB Gadget Sound Card Sender](Readme/raspberry-pi-zero-screamsender.md)
   - Information on configuring a Raspberry Pi Zero W / Raspberry Pi Zero 2 as a USB Gadget Sound Card that forwards to ScreamRouter
 
-* [Source Command Receiver](Readme/command_receiver.md)
-  - Information about the command receiver module for remote control
+#### Docker Containers
+* [Amazon Music Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-amazon-music-docker)
+  - Repo for running Amazon Music as a Docker container that outputs over RTP to ScreamRouter
+
+* [Firefox Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-firefox-docker)
+  - Repo for running Firefox as a Docker container that outputs over RTP to ScreamRouter
+
+* [Spotify Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-spotify-docker)
+  - Repo for running Sporify in a Docker container that outputs over RTP to ScreamRouter
 
 ### Receivers
 
@@ -135,20 +142,13 @@ ScreamRouter offers a versatile solution for various audio management scenarios,
 * [Plugins System](Readme/plugins.md)
   - Documentation on the flexible plugin system for adding new sources
 
+* [Source Command Receiver](Readme/command_receiver.md)
+  - Information about the command receiver module for remote control
+
 ### Home Assistant
 
 * [Home Assistant Integration](Readme/homeassistant.md)
   - Instructions for integrating ScreamRouter with Home Assistant
-
-### Docker Containers
-* [Amazon Music Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-amazon-music-docker)
-  - Repo for running Amazon Music as a Docker container that outputs over RTP to ScreamRouter
-
-* [Firefox Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-firefox-docker)
-  - Repo for running Firefox as a Docker container that outputs over RTP to ScreamRouter
-
-* [Spotify Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-spotify-docker)
-  - Repo for running Sporify in a Docker container that outputs over RTP to ScreamRouter
 
 ## Accessibility
 
