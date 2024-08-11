@@ -5,6 +5,8 @@
 
 The ESP32S3 USB Scream Sender is a tool to configure an ESP32S3 microcontroller as a USB Audio Class 1.0 (UAC 1.0) compliant sound card. This implementation allows you to forward audio from various devices that support USB sound cards (such as PCs, PlayStation 5, Nintendo Switch, and smartphones) to ScreamRouter.
 
+![Portable ESP32S3 Scream Receiver](/images/esp32s3_receiver.jpg)
+
 ## Key Features
 
 - Implements USB Audio Class 1.0 protocol
