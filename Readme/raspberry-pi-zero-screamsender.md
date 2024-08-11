@@ -33,6 +33,9 @@ Create a new file `/usr/bin/usb_gadget_audio.sh` with the following content:
 
 IP_ADDRESS=192.168.3.114
 PORT=16401
+SAMPLE_RATE=48000
+BIT_DEPTH=16
+CHANNELS=2 # screamsender only supports two currently
 
 cd /sys/kernel/config/usb_gadget/
 mkdir -p audio_gadget
@@ -57,18 +60,18 @@ mkdir -p functions/uac1.usb0
 ln -s functions/uac1.usb0 configs/c.1/
 
 # Set audio function parameters
-echo 48000 > functions/uac1.usb0/p_sampling_freq
-echo 48000 > functions/uac1.usb0/c_sampling_freq
-echo 2 > functions/uac1.usb0/p_chmask  # Stereo
-echo 2 > functions/uac1.usb0/c_chmask  # Stereo
-echo 16 > functions/uac1.usb0/p_ssize  # 16-bit samples
-echo 16 > functions/uac1.usb0/c_ssize  # 16-bit samples
+echo $SAMPLE_RATE > functions/uac1.usb0/p_sampling_freq
+echo $SAMPLE_RATE > functions/uac1.usb0/c_sampling_freq
+echo $CHANNELS > functions/uac1.usb0/p_chmask  # Stereo
+echo $CHANNELS > functions/uac1.usb0/c_chmask  # Stereo
+echo $BIT_DEPTH > functions/uac1.usb0/p_ssize  # 16-bit samples
+echo $BIT_DEPTH > functions/uac1.usb0/c_ssize  # 16-bit samples
 
 # Enable gadget
 ls /sys/class/udc > UDC
 
 sleep 2
-nohup bash -c "while x=x; do arecord -D hw:CARD=UAC1Gadget,DEV=0 -f dat 2>/var/log/arecord | screamsender -i $IP_ADDRESS -p $PORT -s 48000 -b 16 &> /var/log/arecord;done" &
+nohup bash -c "while x=x; do arecord -D hw:CARD=UAC1Gadget,DEV=0 -f dat 2>/var/log/arecord | screamsender -i $IP_ADDRESS -p $PORT -s $SAMPLE_RATE -b $BIT_DEPTH &> /var/log/arecord;done" &
 ```
 
 Make the script executable:
