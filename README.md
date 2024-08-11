@@ -31,7 +31,7 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 * Flexible plugin system for easy addition of new sources
 * API and web interface for media control commands to containers
 
-#### Numerous Sources
+#### Sources
 * RTP/Linux Source
 * Windows Source
 * ESP32S3 USB Audio Card and Toslink Senders
@@ -39,8 +39,9 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 * Amazon Music Docker Container
 * Firefox Docker Container
 * Spotify Docker Container
+* Plugin system, including the ability to play arbitrary URLs out
 
-#### Numerous Receivers to play back to
+#### Receivers
 * Windows Receivers
 * Raspberry Pi/Linux Receiver
 * ESP32/ESP32s3 spdif/USB UAC 1.0 audio receiver
