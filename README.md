@@ -24,42 +24,58 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 
 #### Integration and Compatibility
 * Home Assistant Custom Component for managing configuration and media playback
-* Compatible with PulseAudio RTP streams
 * Embedded noVNC for remote computer control
-* Docker containers for [Amazon Music](https://github.com/netham45/screamrouter-amazon-music-docker), [Firefox](https://github.com/netham45/screamrouter-firefox-docker), and [Spotify](https://github.com/netham45/screamrouter-spotify-docker)
 
 #### System Management
 * Automatic YAML saving on setting changes
 * Flexible plugin system for easy addition of new sources
 * API and web interface for media control commands to containers
 
-### Use Cases
+#### Numerous Sources
+* RTP/Linux Source
+* Windows Source
+* ESP32S3 USB Audio Card and Toslink Senders
+* Raspberry Pi Zero W / Raspberry Pi Zero 2 USB Gadget Sound Card Sender
+* Amazon Music Docker Container
+* Firefox Docker Container
+* Spotify Docker Container
 
-#### Comprehensive Whole-House Audio Systems
+#### Numerous Receivers to play back to
+* Windows Receivers
+* Raspberry Pi/Linux Receiver
+* ESP32/ESP32s3 spdif/USB UAC 1.0 audio receiver
+* ESP32 A1S Audiokit Receiver
+* Android Receiver
+* Python Scream Receiver
+
+
+## Use Cases
+
+### Comprehensive Whole-House Audio Systems
 
 Integrate multiple Scream Sources and Receivers for seamless audio distribution throughout your home.
 
-#### Advanced Volume Management
+### Advanced Volume Management
 
 Implement granular volume control at both group and individual sink levels, ensuring optimal audio balance across your setup.
 
-#### Web-Based Audio Access
+### Web-Based Audio Access
 
 Utilize the 'Listen to Sink' feature to enable browser-based audio playback, enhancing accessibility and flexibility.
 
-#### Universal Sink Compatibility
+### Universal Sink Compatibility
 
 PCM receivers are available for most popular platforms, and for ones that can't receive PCM they can use the MP3 stream.
 
-#### Programmatic Audio Control
+### Programmatic Audio Control
 
 Employ the FastAPI interface or Home Assistant integration for automated management of sink activation, deactivation, and volume adjustments.
 
-#### Home Assistant Integration
+### Home Assistant Integration
 
 Seamlessly incorporate sound effects and Text-to-Speech functionality into Home Assistant automations for enhanced smart home experiences.
 
-#### Sound Quality Enhancement
+### Sound Quality Enhancement
 
 Utilize built-in equalization tools to optimize audio output, particularly beneficial for improving the performance of budget-friendly speakers.
 
