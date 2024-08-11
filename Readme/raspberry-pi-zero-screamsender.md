@@ -62,10 +62,10 @@ ln -s functions/uac1.usb0 configs/c.1/
 # Set audio function parameters
 echo $SAMPLE_RATE > functions/uac1.usb0/p_sampling_freq
 echo $SAMPLE_RATE > functions/uac1.usb0/c_sampling_freq
-echo $CHANNELS > functions/uac1.usb0/p_chmask  # Stereo
-echo $CHANNELS > functions/uac1.usb0/c_chmask  # Stereo
-echo $BIT_DEPTH > functions/uac1.usb0/p_ssize  # 16-bit samples
-echo $BIT_DEPTH > functions/uac1.usb0/c_ssize  # 16-bit samples
+echo $CHANNELS > functions/uac1.usb0/p_chmask
+echo $CHANNELS > functions/uac1.usb0/c_chmask
+echo $BIT_DEPTH > functions/uac1.usb0/p_ssize
+echo $BIT_DEPTH > functions/uac1.usb0/c_ssize
 
 # Enable gadget
 ls /sys/class/udc > UDC
