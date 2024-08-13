@@ -48,6 +48,14 @@ class APIConfiguration():
             tags=["Source Configuration"])(self._configuration_controller.disable_source)
         self._app.get("/sources/{source_name}/enable",
             tags=["Source Configuration"])(self._configuration_controller.enable_source)
+        self._app.get("/sources_self/volume/{volume}",
+            tags=["Source Configuration"])(self._configuration_controller.update_self_source_volume)
+        self._app.get("/sources_self/play",
+            tags=["Source Configuration"])(self._configuration_controller.source_self_play)
+        self._app.get("/sources_self/nexttrack",
+            tags=["Source Configuration"])(self._configuration_controller.source_self_next_track)
+        self._app.get("/sources_self/prevtrack",
+            tags=["Source Configuration"])(self._configuration_controller.source_self_previous_track)
         self._app.get("/sources/{source_name}/volume/{volume}",
             tags=["Source Configuration"])(self._configuration_controller.update_source_volume)
         self._app.post("/sources/{source_name}/equalizer",
@@ -57,7 +65,7 @@ class APIConfiguration():
         self._app.get("/sources/{source_name}/nexttrack",
             tags=["Source Configuration"])(self._configuration_controller.source_next_track)
         self._app.get("/sources/{source_name}/prevtrack",
-            tags=["Source Configuration"])(self._configuration_controller.source_previous_track)
+            tags=["Source Configuration"])(self._configuration_controller.source_self_previous_track)
         self._app.get("/sources/{source_name}/reorder/{new_index}",
             tags=["Source Configuration"])(self._configuration_controller.update_source_position)
         self._app.get("/routes",

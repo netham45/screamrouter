@@ -1,5 +1,6 @@
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
+from ipaddress import IPv4Address
 import os
 import socket
 import sys
@@ -15,10 +16,13 @@ import dns.rdtypes.ANY
 import dns.rdtypes.ANY.PTR
 import dns.resolver
 import dns.rrset
+import fastapi
 import yaml
 
 import src.constants.constants as constants
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
+from fastapi import Request
+from src.screamrouter_types.annotations import IPAddressType
 from src.api.api_webstream import APIWebStream
 from src.audio.audio_controller import AudioController
 from src.audio.rtp_recevier import RTPReceiver
@@ -300,6 +304,43 @@ class ConfigurationManager(threading.Thread):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.sendto("n".encode("ascii"), (str(source.vnc_ip), 9999))
         return True
+
+    async def source_self_previous_track(self, request: Request) -> bool:
+        """Send a Previous Track command to the source that made the request"""
+        client_ip = await self.__get_client_ip(request)
+        source = self.__get_source_by_ip(client_ip)
+        return self.source_previous_track(source.name)
+
+    async def update_self_source_volume(self, request: fastapi.Request, volume: VolumeType) -> bool:
+        """Set the volume for the source that made the request"""
+        client_ip = await self.__get_client_ip(request)
+        source = self.__get_source_by_ip(client_ip)
+        return self.update_source_volume(source.name, volume)
+
+    async def source_self_play(self, request: fastapi.Request) -> bool:
+        """Send a Play/Pause command to the source that made the request"""
+        client_ip = await self.__get_client_ip(request)
+        source = self.__get_source_by_ip(client_ip)
+        return self.source_play(source.name)
+
+    async def source_self_next_track(self, request: fastapi.Request) -> bool:
+        """Send a Next Track command to the source that made the request"""
+        client_ip = await self.__get_client_ip(request)
+        source = self.__get_source_by_ip(client_ip)
+        return self.source_next_track(source.name)
+
+    async def __get_client_ip(self, request: fastapi.Request) -> IPv4Address:
+        """Get the IP address of the client making the request"""
+        client_host = request.client.host
+        return IPv4Address(client_host)
+
+    def __get_source_by_ip(self, ip: IPv4Address) -> SourceDescription:
+        """Get the source description by IP address"""
+        for source in self.source_descriptions:
+            if str(source.ip) == str(ip):
+                return source
+        raise ValueError(f"No source found with IP {ip}")
+
 
     def source_previous_track(self, source_name: SourceNameType) -> bool:
         """Send a Previous Track command to the source"""

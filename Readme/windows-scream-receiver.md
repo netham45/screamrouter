@@ -4,7 +4,7 @@ There is a Windows Scream Recevier available. It will run the audio through Wind
 
 ## Download
 
-Download the latest release from the [Windows Scream Receiver](http://github.com/netham45/win-scream-receiver) repository
+Download the latest release from the [Windows Scream Receiver](http://github.com/netham45/windows-scream-receiver) repository
 
 ## Installation
 
