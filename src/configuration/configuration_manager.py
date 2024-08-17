@@ -143,6 +143,7 @@ class ConfigurationManager(threading.Thread):
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         self.__verify_sink_unused(sink)
         self.sink_descriptions.remove(sink)
+        self.delete_route_by_sink(sink)
         self.__reload_configuration()
         return True
 
@@ -207,6 +208,7 @@ class ConfigurationManager(threading.Thread):
         source: SourceDescription = self.get_source_by_name(source_name)
         self.__verify_source_unused(source)
         self.source_descriptions.remove(source)
+        self.delete_route_by_source(source)
         self.__reload_configuration()
         return True
 
@@ -340,7 +342,6 @@ class ConfigurationManager(threading.Thread):
             if str(source.ip) == str(ip):
                 return source
         raise ValueError(f"No source found with IP {ip}")
-
 
     def source_previous_track(self, source_name: SourceNameType) -> bool:
         """Send a Previous Track command to the source"""
@@ -515,7 +516,7 @@ class ConfigurationManager(threading.Thread):
         routes: List[RouteDescription] = []
         routes = self.active_configuration.get_routes_by_source(source)
         for route in routes:
-            if route.source == source.name:
+            if route.source == source.name and route.enabled:
                 raise InUseError(f"Source: {source.name} is in use by Route {route.name}")
 
     def __verify_sink_unused(self, sink: SinkDescription) -> None:
@@ -529,8 +530,30 @@ class ConfigurationManager(threading.Thread):
         routes: List[RouteDescription] = []
         routes = self.active_configuration.get_routes_by_sink(sink)
         for route in routes:
-            if route.sink == sink.name:
+            if route.sink == sink.name and route.enabled:
                 raise InUseError(f"Sink: {sink.name} is in use by Route {route.name}")
+            
+    def delete_route_by_source(self, source: SourceDescription) -> None:
+        """Deletes all routes associated with a given Source"""
+        self.__verify_source_unused(source)
+        routes_to_remove: List[RouteDescription] = []
+        for route in self.route_descriptions:
+            if route.source == source.name:
+                routes_to_remove.append(route)
+
+        for route in routes_to_remove:
+            self.route_descriptions.remove(route)
+
+    def delete_route_by_sink(self, sink: SinkDescription) -> None:
+        """Deletes all routes associated with a given Sink"""
+        self.__verify_sink_unused(sink)
+        routes_to_remove: List[RouteDescription] = []
+        for route in self.route_descriptions:
+            if route.sink == sink.name:
+                routes_to_remove.append(route)
+
+        for route in routes_to_remove:
+            self.route_descriptions.remove(route)
 
 # Configuration load/save functions
 

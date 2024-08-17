@@ -28,6 +28,10 @@
             {%- endif %}
         {%- endfor %}
     </select>
+    {%- if data.__class__.__name__ == "SourceDescription" -%}
+        {{- inputs.text("VNC IP", "vnc_ip", true, "VNC IP", data['vnc_ip']) }}<br />
+        {{- inputs.text("VNC Port", "vnc_port", true, "VNC Port", data['vnc_port']) }}<br />
+    {%- endif -%}
     
     {# Include the text_number input field from imports/inputs for Delay in ms, setting the min to 0 and max to 5000 #}
     {{ inputs.text_number("Delay", "delay", 0, 5000, True, "Delay (ms)", data['delay']) }}<br /><br />

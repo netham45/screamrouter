@@ -35,8 +35,8 @@ function updateSelectionAndHighlight(responseText, selectedSinkName = "", select
     else
         setSelectedSource("");
 
-    highlightActiveSink();
-    highlightActiveSource();
+    if (selectedSink) highlightActiveSink();
+    if (selectedSource) highlightActiveSource();
 
     drawLines();
 }

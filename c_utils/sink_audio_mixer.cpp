@@ -175,7 +175,7 @@ inline bool check_fd_active(int fd, bool is_active) {
         if (!is_active)
             receive_timeout.tv_usec = 100; // 100uS, just check if it's got data
         else    
-            receive_timeout.tv_usec = 30000; // 70ms, wait for a chunk.
+            receive_timeout.tv_usec = 70000; // 70ms, wait for a chunk.
         FD_ZERO(&read_fds);
         FD_SET(fd, &read_fds);
         bool prev_state = is_active;
