@@ -45,6 +45,40 @@ function volumeSliderChange(e) {
     callApi(`/${type}s/${optionElement.dataset["name"]}/volume/${volumeLevel}`, "get");
 }
 
+function timeshiftLiveOnclick(e) {
+    const optionElement = e.target.parentNode.parentNode;
+    const type = optionElement.dataset["type"].replace("Description","").toLowerCase();
+    const timeshift = 0;
+    optionElement.dataset['timeshift'] = timeshift.toString();
+    let label = e.target.parentNode.querySelector('[FOR$="timeshift"]');
+    label.innerHTML = "Timeshift: -" + timeshift + " seconds";
+    callApi(`/${type}s/${optionElement.dataset["name"]}/timeshift/${timeshift}`, "get");
+}
+
+function timeshiftFastForwardOnclick(e) {
+    const optionElement = e.target.parentNode.parentNode;
+    const type = optionElement.dataset["type"].replace("Description","").toLowerCase();
+    console.log(optionElement);
+    let timeshift = parseFloat(optionElement.dataset['timeshift']) - 5;
+    if (timeshift < 0)
+        timeshift = 0;
+    optionElement.dataset['timeshift'] = timeshift.toString();
+    console.log('label[FOR="' + e.target.id + '"]');
+    let label = e.target.parentNode.querySelector('[FOR$="timeshift"]');
+    label.innerHTML = "Timeshift: -" + timeshift + " seconds";
+    callApi(`/${type}s/${optionElement.dataset["name"]}/timeshift/${timeshift}`, "get");
+}
+
+function timeshiftRewindOnclick(e) {
+    const optionElement = e.target.parentNode.parentNode;
+    const type = optionElement.dataset["type"].replace("Description","").toLowerCase();
+    const timeshift = parseFloat(optionElement.dataset['timeshift']) + 5;
+    optionElement.dataset['timeshift'] = timeshift.toString();
+    let label = e.target.parentNode.querySelector('[FOR$="timeshift"]');
+    label.innerHTML = "Timeshift: -" + timeshift + " seconds";
+    callApi(`/${type}s/${optionElement.dataset["name"]}/timeshift/${timeshift}`, "get");
+}
+
 function visualizerIconOnclick(e) {
     const option = e.target.parentNode.parentNode;
     if (visualPlaying) {
@@ -170,6 +204,9 @@ export function onload() {
     exposeFunction(addSinkGroupButton, "addSinkGroupButton");
     exposeFunction(addRouteButton, "addRouteButton");
     exposeFunction(volumeSliderChange, "volumeSliderChange");
+    exposeFunction(timeshiftLiveOnclick, "timeshiftLiveOnclick");
+    exposeFunction(timeshiftRewindOnclick, "timeshiftRewindOnclick");
+    exposeFunction(timeshiftFastForwardOnclick, "timeshiftFastForwardOnclick");
     exposeFunction(visualizerIconOnclick, "visualizerIconOnclick");
     exposeFunction(enableDisableButton, "enableDisableButton");
     exposeFunction(enableDisableSourceButton, "enableDisableSourceButton");

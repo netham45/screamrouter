@@ -3,7 +3,7 @@ import os
 import threading
 from typing import Dict, List, Optional
 
-from src.screamrouter_types.annotations import SourceNameType, VolumeType
+from src.screamrouter_types.annotations import DelayType, SourceNameType, TimeshiftType, VolumeType
 from src.api.api_webstream import APIWebStream
 from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.audio.sink_mp3_processor import SinkMP3Processor
@@ -124,6 +124,18 @@ class AudioController():
         for source in self.sources.values():
             if source.source_info.name == source_name:
                 source.update_volume(volume)
+
+    def update_delay(self, source_name: SourceNameType, delay: DelayType):
+        """Update the delay for a source"""
+        for source in self.sources.values():
+            if source.source_info.name == source_name:
+                source.update_delay(delay)
+
+    def update_timeshift(self, source_name: SourceNameType, timeshift: TimeshiftType):
+        """Update the Timeshift for a source"""
+        for source in self.sources.values():
+            if source.source_info.name == source_name:
+                source.update_timeshift(timeshift)
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""

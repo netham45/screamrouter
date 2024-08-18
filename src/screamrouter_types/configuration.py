@@ -127,6 +127,8 @@ class SinkDescription(BaseModel):
                                      b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
                                      b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
     """Audio Equalizer"""
+    timeshift: annotations.TimeshiftType = 0
+    """Timeshift backwards in seconds"""
     time_sync: bool = False
     """Rather the sink is timesynced (Normal Scream receivers are not compatible)"""
     time_sync_delay: int = 0
@@ -188,6 +190,8 @@ class SourceDescription(BaseModel):
                                      b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
                                      b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
     """Audio Equalizer"""
+    timeshift: annotations.TimeshiftType = 0
+    """Timeshift backwards in seconds"""
     vnc_ip: Union[annotations.IPAddressType, Literal[""]] = ""
     """IP Address for VNC connections"""
     vnc_port: Union[annotations.PortType, Literal[""]] = ""
@@ -246,6 +250,8 @@ class RouteDescription(BaseModel):
                                      b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
                                      b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
     """Audio Equalizer"""
+    timeshift: annotations.TimeshiftType = 0
+    """Timeshift backwards in seconds"""
 
     def __eq__(self, other):
         """Compares the name if a string.

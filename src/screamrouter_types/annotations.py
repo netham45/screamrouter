@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 
 from fastapi import Path
 from pydantic import AnyUrl, IPvAnyAddress
+from src.constants import constants
 
 VolumeType = Annotated[
     float,
@@ -25,6 +26,18 @@ DelayType = Annotated[
     )
 ]
 """Delay, 0-5000ms"""
+
+TimeshiftType = Annotated[
+    float,
+    Path(
+        description="Timeshift type, timeshift backwards in seconds.",
+        json_schema_extra={"example": "180.32"},
+        le=constants.TIMESHIFT_DURATION,
+        ge=0
+    )
+]
+"""Time shift, 0-constants.TIMESHIFT_DURATION seconds"""
+
 
 PlaybackURLType = Annotated[
     AnyUrl,

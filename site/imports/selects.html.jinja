@@ -92,7 +92,12 @@ d="true"
                 {{- button('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" class="feather feather-skip-forward"><polygon points="5 5 15 13 5 21 5 5"></polygon><line x1="19" y1="6" x2="19" y2="20"></line></svg>' | safe, 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'Next Track ' ~ shortalt, 'nextTrackIconOnclick(event)') -}}
             {%- endif -%}
             <br />
-            <input tabindex="0" type="range" id="{{shortalt}}_volume" onchange="volumeSliderChange(event)" alt="{{shortalt}} Volume" title="{{shortalt}} Volume" value="{{data['volume'] * 100}}">
+            <LABEL FOR="{{shortalt}}_volume">Volume</LABEL><br/>
+            <input tabindex="0" type="range" id="{{shortalt}}_volume" onchange="volumeSliderChange(event)" alt="{{shortalt}} Volume" title="{{shortalt}} Volume" value="{{data['volume'] * 100}}"> <br />
+            <LABEL FOR="{{shortalt}}_timeshift">Timeshift: -{{data['timeshift']}} seconds</LABEL><br/>
+                {{- button('5s <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" class="feather feather-skip-back"><polygon points="19 21 9 13 19 5 19 21"></polygon><line x1="5" y1="20" x2="5" y2="6"></line></svg>' | safe, 'Timeshift Rewind 5 seconds ' ~ shortalt, 'Timeshift Rewind 5 seconds ' ~ shortalt, 'Timeshift Rewind 5 seconds ' ~ shortalt, 'timeshiftRewindOnclick(event)') -}}
+                {{- button('Live', 'Timeshift Live ' ~ shortalt, 'Timeshift Live ' ~ shortalt, 'Timeshift Live ' ~ shortalt, 'timeshiftLiveOnclick(event)') -}}
+                {{- button('5s <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" class="feather feather-skip-forward"><polygon points="5 5 15 13 5 21 5 5"></polygon><line x1="19" y1="6" x2="19" y2="20"></line></svg>' | safe, 'Timeshift Fast Forward 5 seconds ' ~ shortalt, 'Timeshift Fast Forward 5 seconds ' ~ shortalt, 'Timeshift Fast Forward 5 seconds ' ~ shortalt, 'timeshiftFastForwardOnclick(event)') -}}
         </div>
     </span>
 {%- endmacro %}

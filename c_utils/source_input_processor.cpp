@@ -18,6 +18,7 @@
 #include <thread>
 #include <atomic>
 #include <sstream>
+#include <climits>
 
 using namespace std;
 
@@ -74,8 +75,15 @@ int output_samplerate = 0;
 int output_chlayout1 = 0;
 int output_chlayout2 = 0;
 
-int delay = 0;
-std::deque<std::pair<std::chrono::steady_clock::time_point, std::vector<uint8_t>>> delay_buffer;
+int delay = 0; // Delay in ms
+int timeshift_buffer_dur = 0; //Buffer of audio to keep in seconds
+std::chrono::steady_clock::time_point timeshift_last_change; // Last change for timeshift buffer
+unsigned long timeshift_buffer_pos = 0; // Current position in the timeshift buffer
+float timeshift_backshift = 0;
+
+const auto TIMESHIFT_NOREMOVE_TIME = std::chrono::minutes(5);
+
+std::deque<std::pair<std::chrono::steady_clock::time_point, std::vector<uint8_t>>> timeshift_buffer;
 std::atomic<bool> threads_running(true);
 
 uint8_t input_header[5] = {0};
@@ -118,6 +126,7 @@ int *int_args[] = {
     NULL, // ...
     NULL, // eq 18
     &delay,
+    &timeshift_buffer_dur,
 };
 
 // Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
@@ -149,7 +158,10 @@ float *float_args[] = {
     &eq[15],
     &eq[16],
     &eq[17],
-    NULL};
+    NULL,
+    NULL,
+};
+
 int config_argc = sizeof(int_args) / sizeof(int *); // Number of command line arguments to process
 
 void log(const string& message)
@@ -475,19 +487,52 @@ void receive_data_thread()
                 threads_running = false;
         check_update_header();
         // Store the new packet in the delay buffer with its arrival time
-        auto target_time = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay);
+        auto received_time = std::chrono::steady_clock::now();
         std::vector<uint8_t> new_packet(CHUNK_SIZE);
         memcpy(new_packet.data(), packet_in_buffer + TAG_SIZE + HEADER_SIZE, CHUNK_SIZE);
-        delay_buffer.emplace_back(target_time, std::move(new_packet));
+        timeshift_buffer.emplace_back(received_time, std::move(new_packet));
     }
 }
 
-void receive_data()
-{
-    while (delay_buffer.empty() || delay_buffer.front().first > std::chrono::steady_clock::now())
+void receive_data() {
+    while (timeshift_buffer.empty() || timeshift_buffer.size() <= timeshift_buffer_pos || timeshift_buffer.at(timeshift_buffer_pos).first + std::chrono::milliseconds(delay) + std::chrono::milliseconds((int)(timeshift_backshift*1000)) > std::chrono::steady_clock::now()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    memcpy(receive_buffer, delay_buffer.front().second.data(), CHUNK_SIZE);
-    delay_buffer.pop_front();
+    }
+    try {
+        memcpy(receive_buffer, timeshift_buffer.at(timeshift_buffer_pos++).second.data(), CHUNK_SIZE);
+        if (timeshift_buffer.front().first + std::chrono::milliseconds(delay) + std::chrono::milliseconds((int)(timeshift_backshift*1000)) + std::chrono::seconds(timeshift_buffer_dur) < std::chrono::steady_clock::now()) {
+            if (timeshift_last_change + TIMESHIFT_NOREMOVE_TIME < std::chrono::steady_clock::now()) {
+                timeshift_buffer.pop_front();
+                timeshift_buffer_pos--;
+            }
+        }
+    }
+    catch (std::out_of_range e) {
+        log("Out of range " + ::to_string(timeshift_buffer_pos) + " > " + ::to_string(timeshift_buffer.size()));
+    }
+}
+
+void change_timeshift() {
+    auto desired_time = std::chrono::steady_clock::now() - std::chrono::milliseconds((int)(timeshift_backshift*1000)) - std::chrono::milliseconds(delay);
+    unsigned long closest_buffer_pos = 0;
+    unsigned long closest_buffer_delta = ULONG_MAX;
+    bool found = false;
+    for (unsigned long i=0;i<timeshift_buffer.size();i++) {
+        std::chrono::steady_clock::duration cur_delta = desired_time - timeshift_buffer.at(i).first;
+        unsigned long cur_delta_num = std::chrono::duration_cast<std::chrono::milliseconds>(cur_delta).count();
+        if (cur_delta_num < closest_buffer_delta) {
+            closest_buffer_delta = cur_delta_num;
+            closest_buffer_pos = i;
+            found = true;
+        }
+    }
+    if (!found)
+        closest_buffer_pos = timeshift_buffer.size() - 1;
+    timeshift_buffer_pos = closest_buffer_pos;
+    timeshift_backshift = std::chrono::duration_cast<std::chrono::duration<float>>(
+        std::chrono::steady_clock::now() - timeshift_buffer.at(closest_buffer_pos).first + std::chrono::milliseconds(delay)
+    ).count();
+    log("New timeshift index " + ::to_string(timeshift_buffer_pos));
 }
 
 void scale_buffer()
@@ -659,6 +704,16 @@ void data_input_thread()
                     {
                         volume = value;
                     }
+                    else if (variable == "t")
+                    {
+                        timeshift_backshift = value;
+                        change_timeshift();
+                    }
+                    else if (variable == "d")
+                    {
+                        delay = (int)value;
+                        change_timeshift();
+                    }
                 }
                 else if (command == "a")
                 {
@@ -677,6 +732,7 @@ void data_input_thread()
 
 int main(int argc, char *argv[])
 {
+    timeshift_last_change = std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration::min());
     process_args(argc, argv);
     log("Starting source input processor " + input_ip);
     setup_biquad();

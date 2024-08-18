@@ -3,7 +3,7 @@ from copy import copy
 from typing import List, Optional
 
 from src.screamrouter_types.annotations import (DelayType, RouteNameType,
-                                                SinkNameType, SourceNameType,
+                                                SinkNameType, SourceNameType, TimeshiftType,
                                                 VolumeType)
 from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
                                                   SinkDescription,
@@ -54,6 +54,7 @@ class ConfigurationSolver():
                     real_source_copy: SourceDescription = copy(real_source)
                     real_source_copy.volume = real_source.volume * real_sink.volume
                     real_source_copy.equalizer = real_source.equalizer * real_sink.equalizer
+                    real_source_copy.timeshift = real_source.timeshift + real_sink.timeshift
                     real_source_copy.delay = real_source.delay + real_sink.delay
                     # Check if there's already a sink entry in the dict, if so just append sources
                     sink_to_append_to: List[SinkDescription]
@@ -89,6 +90,7 @@ class ConfigurationSolver():
                                                                                   True,
                                                                                   route.volume,
                                                                                   route.equalizer,
+                                                                                  route.timeshift,
                                                                                   route.delay)
         return routes_to_real_sources
 
@@ -106,6 +108,7 @@ class ConfigurationSolver():
                                    active_only: bool,
                                    volume_adjustment: Optional[VolumeType] = None,
                                    equalizer_adjustment: Optional[Equalizer] = None,
+                                   timeshift_adjustment: Optional[TimeshiftType] = None,
                                    delay_adjustment: Optional[DelayType] = None,
                                    return_groups: bool = False
                                    ) -> List[SinkDescription]:
@@ -123,11 +126,14 @@ class ConfigurationSolver():
         # 0 is no change for delay_adjustment
         if delay_adjustment is None:
             delay_adjustment = 0
+        if timeshift_adjustment is None:
+            timeshift_adjustment = 0
 
         # Figure out the adjustments
         adjusted_volume: VolumeType  = volume_adjustment * sink.volume
         adjusted_equalizer: Equalizer = equalizer_adjustment * sink.equalizer
         adjusted_delay: DelayType = delay_adjustment + sink.delay
+        adjusted_timeshift: TimeshiftType = timeshift_adjustment + sink.timeshift
 
         # active_only means only return enabled groups/sinks
         if active_only and not sink.enabled:
@@ -140,6 +146,7 @@ class ConfigurationSolver():
             sink_copy.volume = adjusted_volume
             sink_copy.equalizer = adjusted_equalizer
             sink_copy.delay = adjusted_delay
+            sink_copy.timeshift = adjusted_timeshift
             return [sink_copy]
 
         # Sink is a group, get all group members
@@ -157,6 +164,7 @@ class ConfigurationSolver():
                                                                               active_only,
                                                                               adjusted_volume,
                                                                               adjusted_equalizer,
+                                                                              adjusted_timeshift,
                                                                               adjusted_delay,
                                                                               return_groups))
         # return_groups controls if the group SinkDescriptions are left in or if they're removed
@@ -168,6 +176,7 @@ class ConfigurationSolver():
                                    active_only: bool,
                                    volume_adjustment: Optional[VolumeType] = None,
                                    equalizer_adjustment: Optional[Equalizer] = None,
+                                   timeshift_adjustment: Optional[TimeshiftType] = None,
                                    delay_adjustment: Optional[DelayType] = None,
                                    return_groups: bool = False
                                    ) -> List[SourceDescription]:
@@ -186,10 +195,14 @@ class ConfigurationSolver():
         if delay_adjustment is None:
             delay_adjustment = 0
 
+        if timeshift_adjustment is None:
+            timeshift_adjustment = 0
+
         # Figure out the adjustments
         adjusted_volume: VolumeType  = volume_adjustment * source.volume
         adjusted_equalizer: Equalizer = equalizer_adjustment * source.equalizer
         adjusted_delay: DelayType = delay_adjustment + source.delay
+        adjusted_timeshift: TimeshiftType = timeshift_adjustment + source.timeshift
 
         # active_only means only return enabled groups/sources
         if active_only and not source.enabled:
@@ -202,6 +215,7 @@ class ConfigurationSolver():
             source_copy.volume = adjusted_volume
             source_copy.equalizer = adjusted_equalizer
             source_copy.delay = adjusted_delay
+            source_copy.timeshift = adjusted_timeshift
             return [source_copy]
 
         # Source is a group, get all group members
@@ -219,6 +233,7 @@ class ConfigurationSolver():
                                                                               active_only,
                                                                               adjusted_volume,
                                                                               adjusted_equalizer,
+                                                                              adjusted_timeshift,
                                                                               adjusted_delay,
                                                                               return_groups))
         # return_groups controls if the group SourceDescriptions are left in or if they're removed

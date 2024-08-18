@@ -22,7 +22,7 @@ import yaml
 import src.constants.constants as constants
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
 from fastapi import Request
-from src.screamrouter_types.annotations import IPAddressType
+from src.screamrouter_types.annotations import IPAddressType, TimeshiftType
 from src.api.api_webstream import APIWebStream
 from src.audio.audio_controller import AudioController
 from src.audio.rtp_recevier import RTPReceiver
@@ -133,7 +133,7 @@ class ConfigurationManager(threading.Thread):
                 route.sink = changed_sink.name
 
         if is_eq_found and is_eq_only:
-            self.__reload_volume_eq_configuration()
+            self.__reload_volume_eq_timeshift_delay_configuration()
         else:
             self.__reload_configuration()
         return True
@@ -198,7 +198,7 @@ class ConfigurationManager(threading.Thread):
                 route.source = changed_source.name
 
         if is_eq_found and is_eq_only:
-            self.__reload_volume_eq_configuration()
+            self.__reload_volume_eq_timeshift_delay_configuration()
         else:
             self.__reload_configuration()
         return True
@@ -254,7 +254,7 @@ class ConfigurationManager(threading.Thread):
                 is_eq_only = False
             setattr(changed_route, field, getattr(new_route, field))
         if is_eq_found and is_eq_only:
-            self.__reload_volume_eq_configuration()
+            self.__reload_volume_eq_timeshift_delay_configuration()
         else:
             self.__reload_configuration()
         return True
@@ -284,7 +284,7 @@ class ConfigurationManager(threading.Thread):
         """Set the equalizer for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.equalizer = equalizer
-        self.__reload_volume_eq_configuration()
+        self.__reload_volume_eq_timeshift_delay_configuration()
         return True
 
     def update_source_position(self, source_name: SourceNameType, new_index: int):
@@ -297,7 +297,22 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.volume = volume
-        self.__reload_volume_eq_configuration()
+        self.__reload_volume_eq_timeshift_delay_configuration()
+        return True
+
+    def update_source_timeshift(self, source_name: SourceNameType,
+                                timeshift: TimeshiftType) -> bool:
+        """Set the timeshift for a source or source group"""
+        source: SourceDescription = self.get_source_by_name(source_name)
+        source.timeshift = timeshift
+        self.__reload_volume_eq_timeshift_delay_configuration()
+        return True
+
+    def update_source_delay(self, source_name: SourceNameType, delay: DelayType) -> bool:
+        """Set the delay for a source or source group"""
+        source: SourceDescription = self.get_source_by_name(source_name)
+        source.delay = delay
+        self.__reload_volume_eq_timeshift_delay_configuration()
         return True
 
     def source_next_track(self, source_name: SourceNameType) -> bool:
@@ -363,7 +378,7 @@ class ConfigurationManager(threading.Thread):
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.equalizer = equalizer
         _logger.debug("Updating EQ for %s", sink_name)
-        self.__reload_volume_eq_configuration()
+        self.__reload_volume_eq_timeshift_delay_configuration()
         return True
 
     def update_sink_position(self, sink_name: SinkNameType, new_index: int):
@@ -376,21 +391,29 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.volume = volume
-        self.__reload_volume_eq_configuration()
+        self.__reload_volume_eq_timeshift_delay_configuration()
+        return True
+
+    def update_sink_timeshift(self, sink_name: SinkNameType,
+                                timeshift: TimeshiftType) -> bool:
+        """Set the timeshift for a sink or sink group"""
+        sink: SinkDescription = self.get_sink_by_name(sink_name)
+        sink.timeshift = timeshift
+        self.__reload_volume_eq_timeshift_delay_configuration()
         return True
 
     def update_sink_delay(self, sink_name: SinkNameType, delay: DelayType) -> bool:
-        """Set the delay for a sink"""
+        """Set the delay for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.delay = delay
-        self.__reload_configuration()
+        self.__reload_volume_eq_timeshift_delay_configuration()
         return True
 
     def update_route_equalizer(self, route_name: RouteNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.equalizer = equalizer
-        self.__reload_volume_eq_configuration()
+        self.__reload_volume_eq_timeshift_delay_configuration()
         return True
 
     def update_route_position(self, route_name: RouteNameType, new_index: int):
@@ -403,7 +426,22 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.volume = volume
-        self.__reload_volume_eq_configuration()
+        self.__reload_volume_eq_timeshift_delay_configuration()
+        return True
+
+    def update_route_timeshift(self, route_name: RouteNameType,
+                                timeshift: TimeshiftType) -> bool:
+        """Set the timeshift for a route"""
+        route: RouteDescription = self.get_route_by_name(route_name)
+        route.timeshift = timeshift
+        self.__reload_volume_eq_timeshift_delay_configuration()
+        return True
+
+    def update_route_delay(self, route_name: RouteNameType, delay: DelayType) -> bool:
+        """Set the delay for a route"""
+        route: RouteDescription = self.get_route_by_name(route_name)
+        route.delay = delay
+        self.__reload_volume_eq_timeshift_delay_configuration()
         return True
 
     def stop(self) -> bool:
@@ -565,11 +603,41 @@ class ConfigurationManager(threading.Thread):
                 self.sink_descriptions = savedata["sinks"]
                 self.source_descriptions = savedata["sources"]
                 self.route_descriptions = savedata["routes"]
+
+
+                for sink in self.sink_descriptions:
+                    for unset_field in [field for field in sink.model_fields if
+                                        field not in sink.model_fields_set]:
+                        _logger.warning(
+                    "[Configuration Manager] Setting unset attribte %s on sink %s to default %s",
+                    unset_field, sink.name, SinkDescription.model_fields[unset_field].default)
+                        setattr(sink, unset_field,
+                                SinkDescription.model_fields[unset_field].default)
+
+                for route in self.route_descriptions:
+                    for unset_field in [field for field in route.model_fields if
+                                         field not in route.model_fields_set]:
+                        _logger.warning(
+                    "[Configuration Manager] Setting unset attribte %s on route %s to default %s",
+                    unset_field, route.name, RouteDescription.model_fields[unset_field].default)
+                        setattr(route, unset_field,
+                                RouteDescription.model_fields[unset_field].default)
+
+                for source in self.source_descriptions:
+                    for unset_field in [field for field in source.model_fields if
+                                        field not in source.model_fields_set]:
+                        _logger.warning(
+                    "[Configuration Manager] Setting unset attribte %s on source %s to default %s",
+                    unset_field, source.name, SourceDescription.model_fields[unset_field].default)
+                        setattr(source, unset_field,
+                                SourceDescription.model_fields[unset_field].default)
+
         except FileNotFoundError:
             _logger.warning("[Configuration Manager] Configuration not found., making new config")
         except KeyError as exc:
             _logger.error("[Configuration Manager] Configuration key %s missing, exiting.", exc)
-            sys.exit(-1)
+            raise exc
+            #sys.exit(-1)
 
     def __multiprocess_save(self):
         """Saves the config to config.yaml"""
@@ -746,7 +814,7 @@ class ConfigurationManager(threading.Thread):
         self.reload_config = True
         _logger.debug("[Configuration Manager] Marking config for reload")
 
-    def __reload_volume_eq_configuration(self) -> None:
+    def __reload_volume_eq_timeshift_delay_configuration(self) -> None:
         """Notifies the configuration manager to reload the volume/eq"""
         if not self.volume_eq_reload_condition.acquire(timeout=1):
             raise TimeoutError("Failed to get volume/eq configuration reload condition")
@@ -757,8 +825,8 @@ class ConfigurationManager(threading.Thread):
         self.volume_eq_reload_condition.release()
         _logger.debug("[Configuration Manager] Marking volume/eq for reload")
 
-    def __process_and_apply_volume(self) -> None:
-        """Process the volume/eq configuration, apply them to all audiocontrollers"""
+    def __process_and_apply_volume_eq_delay_timeshift(self) -> None:
+        """Process the volume/eq/delay/timeshift configuration, apply them to all audiocontrollers"""
         new_configuration: ConfigurationSolver = ConfigurationSolver(
                                                         self.source_descriptions,
                                                         self.sink_descriptions,
@@ -771,6 +839,8 @@ class ConfigurationManager(threading.Thread):
                     for source in sources:
                         audio_controller.update_volume(source.name, source.volume)
                         audio_controller.update_equalizer(source.name, source.equalizer)
+                        audio_controller.update_delay(source.name, source.delay)
+                        audio_controller.update_timeshift(source.name, source.timeshift)
 
         self.__save_config()
 
@@ -959,5 +1029,5 @@ class ConfigurationManager(threading.Thread):
             if not self.volume_eq_reload_condition.acquire(timeout=1):
                 raise TimeoutError("Failed to get configuration reload condition")
             if self.volume_eq_reload_condition.wait(timeout=.3):
-                self.__process_and_apply_volume()
+                self.__process_and_apply_volume_eq_delay_timeshift()
             self.check_receiver_sources()

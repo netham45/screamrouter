@@ -5,8 +5,9 @@ from typing import List, Optional
 
 from src.audio.scream_header_parser import ScreamHeader
 from src.screamrouter_logger.screamrouter_logger import get_logger
-from src.screamrouter_types.annotations import IPAddressType, VolumeType
+from src.screamrouter_types.annotations import DelayType, IPAddressType, TimeshiftType, VolumeType
 from src.screamrouter_types.configuration import Equalizer, SourceDescription
+from src.constants import constants
 from src.utils.utils import close_pipe
 
 logger = get_logger(__name__)
@@ -63,8 +64,8 @@ class SourceInputProcessor():
         command: List[str] = []
         command.extend([#"/usr/bin/valgrind", "--tool=callgrind",
                         "c_utils/bin/source_input_processor",
-                        str(self.source_info.tag if "tag" in
-                            self.source_info.model_fields_set else self.source_info.ip),
+                        str(self.source_info.tag if self.source_info.tag is not None
+                            else self.source_info.ip),
                         str(self.writer_read),
                         str(self.source_input_fd),
                         str(self.data_output_fd),
@@ -91,7 +92,8 @@ class SourceInputProcessor():
                         str(self.source_info.equalizer.b16),
                         str(self.source_info.equalizer.b17),
                         str(self.source_info.equalizer.b18),
-                        str(self.source_info.delay)
+                        str(self.source_info.delay),
+                        str(constants.TIMESHIFT_DURATION)
                         ])
         return command
 
@@ -125,12 +127,21 @@ class SourceInputProcessor():
         """Updates the volume for this source"""
         self.send_command("v", volume)
 
+    def update_delay(self, delay: DelayType):
+        """Updates the volume for this source"""
+        self.send_command("d", delay)
+
+    def update_timeshift(self, timeshift: TimeshiftType):
+        """Updates the volume for this source"""
+        self.send_command("t", timeshift)
+
     def send_command(self, command, value=None) -> None:
         """Sends a command to the source_input_processor"""
         message: str = command
         if value is not None:
             message += " " + str(value)
         message += "\n"
+        logger.debug("Sending command %s value %s", command, value)
         os.write(self.data_input_fd, message.encode())
 
     def start(self) -> None:

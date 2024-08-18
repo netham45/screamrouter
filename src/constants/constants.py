@@ -33,6 +33,8 @@ CERTIFICATE: str = os.getenv("CERTIFICATE", "/root/screamrouter/cert/cert.pem")
 """SSL Cert"""
 CERTIFICATE_KEY: str = os.getenv("CERTIFICATE_KEY", "/root/screamrouter/cert/privkey.pem")
 """SSL Cert Key"""
+TIMESHIFT_DURATION: int = int(os.getenv("TIMESHIFT_DURATION", "300"))
+"""Timeshift duration in seconds."""
 
 # ##########
 # Internal Options
