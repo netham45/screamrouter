@@ -19,6 +19,7 @@
 #include <atomic>
 #include <sstream>
 #include <climits>
+#include <mutex>
 
 using namespace std;
 
@@ -80,6 +81,8 @@ int timeshift_buffer_dur = 0; //Buffer of audio to keep in seconds
 std::chrono::steady_clock::time_point timeshift_last_change; // Last change for timeshift buffer
 unsigned long timeshift_buffer_pos = 0; // Current position in the timeshift buffer
 float timeshift_backshift = 0;
+std::mutex timeshift_mutex;
+
 
 
 const auto TIMESHIFT_NOREMOVE_TIME = std::chrono::minutes(5);
@@ -491,8 +494,9 @@ void receive_data_thread()
         auto received_time = std::chrono::steady_clock::now();
         std::vector<uint8_t> new_packet(CHUNK_SIZE);
         memcpy(new_packet.data(), packet_in_buffer + TAG_SIZE + HEADER_SIZE, CHUNK_SIZE);
-    
+        timeshift_mutex.lock();
         timeshift_buffer.emplace_back(received_time, std::move(new_packet));
+        timeshift_mutex.unlock();
     }
 }
 
@@ -503,8 +507,10 @@ void receive_data() {
     memcpy(receive_buffer, timeshift_buffer.at(timeshift_buffer_pos++).second.data(), CHUNK_SIZE);
     if (timeshift_buffer.front().first + std::chrono::milliseconds(delay) + std::chrono::milliseconds((int)(timeshift_backshift*1000)) + std::chrono::seconds(timeshift_buffer_dur) < std::chrono::steady_clock::now()) {
         if (timeshift_last_change + TIMESHIFT_NOREMOVE_TIME < std::chrono::steady_clock::now()) {
+            timeshift_mutex.lock();
             timeshift_buffer.pop_front();
             timeshift_buffer_pos--;
+            timeshift_mutex.unlock();
         }
     }
 }
@@ -515,6 +521,7 @@ void change_timeshift() {
         timeshift_backshift = 0;
     }
     else {
+        timeshift_mutex.lock();
         auto desired_time = std::chrono::steady_clock::now() - std::chrono::milliseconds((int)(timeshift_backshift*1000)) - std::chrono::milliseconds(delay);
         long closest_buffer_delta = LONG_MAX;
 
@@ -529,6 +536,7 @@ void change_timeshift() {
         timeshift_backshift = std::chrono::duration_cast<std::chrono::duration<float>>(
             std::chrono::steady_clock::now() - timeshift_buffer.at(timeshift_buffer_pos).first + std::chrono::milliseconds(delay)
         ).count();
+        timeshift_mutex.unlock();
     }
 }
 

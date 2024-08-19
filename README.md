@@ -21,6 +21,7 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 * MP3 stream exposure for browser-based listening of all sinks
 * URL playback capability for sinks or sink groups
 * Milkdrop Visualizations via [Butterchurn](https://github.com/jberg/butterchurn) project
+* Keeps a rolling buffer of streams that can be used for time shifting/rewinding streams
 
 #### Integration and Compatibility
 * Home Assistant Custom Component for managing configuration and media playback
@@ -79,6 +80,9 @@ Incorporate sound effects and Text-to-Speech functionality into Home Assistant a
 ### Sound Quality Enhancement
 
 Utilize built-in equalization tools to optimize audio output, particularly beneficial for improving the performance of budget-friendly speakers.
+
+### Time-Shifting and Audio Buffering
+ Maintains a rolling buffer of the most recent 5 minutes of audio for each stream allowing rewinding to and replaying audio within the buffered timeframe
 
 ## Documentation
 
