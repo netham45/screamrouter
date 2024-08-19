@@ -11,6 +11,7 @@ ScreamRouter is a tool for routing audio around your house, allowing you to mana
 5. [Using the Equalizer](#using-the-equalizer)
 7. [Listening to Sinks](#listen)
 8. [Visualizer](#visualizer)
+9. [Timeshifting](#timeshifting)
 9. [VNC](#vnc)
 10. [Media Keys](#media-keys)
 
@@ -103,6 +104,10 @@ There is the ability to listen to the output going to any sink. A sink can be po
 ![Screenshot of ScreamRouter with Butterchurn running in background](/images/Visualizer.png)
 
 The MP3 stream can be feed into Butterchurn/Milkdrop to have visual effects generated off of the music. To fullscreen the visualizer click on the background. To cycle through visualizations press 'H'.
+
+### Timeshifting
+
+ScreamRouter will buffer the last five minutes of audio and allows it to be scrubbed through. The timeshift controls are available on any source/route/sink/group and affect all audio that passes through that path.
 
 ### VNC
 
