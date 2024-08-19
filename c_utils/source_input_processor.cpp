@@ -81,6 +81,7 @@ std::chrono::steady_clock::time_point timeshift_last_change; // Last change for 
 unsigned long timeshift_buffer_pos = 0; // Current position in the timeshift buffer
 float timeshift_backshift = 0;
 
+
 const auto TIMESHIFT_NOREMOVE_TIME = std::chrono::minutes(5);
 
 std::deque<std::pair<std::chrono::steady_clock::time_point, std::vector<uint8_t>>> timeshift_buffer;
@@ -490,6 +491,7 @@ void receive_data_thread()
         auto received_time = std::chrono::steady_clock::now();
         std::vector<uint8_t> new_packet(CHUNK_SIZE);
         memcpy(new_packet.data(), packet_in_buffer + TAG_SIZE + HEADER_SIZE, CHUNK_SIZE);
+    
         timeshift_buffer.emplace_back(received_time, std::move(new_packet));
     }
 }
@@ -498,41 +500,36 @@ void receive_data() {
     while (timeshift_buffer.empty() || timeshift_buffer.size() <= timeshift_buffer_pos || timeshift_buffer.at(timeshift_buffer_pos).first + std::chrono::milliseconds(delay) + std::chrono::milliseconds((int)(timeshift_backshift*1000)) > std::chrono::steady_clock::now()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    try {
-        memcpy(receive_buffer, timeshift_buffer.at(timeshift_buffer_pos++).second.data(), CHUNK_SIZE);
-        if (timeshift_buffer.front().first + std::chrono::milliseconds(delay) + std::chrono::milliseconds((int)(timeshift_backshift*1000)) + std::chrono::seconds(timeshift_buffer_dur) < std::chrono::steady_clock::now()) {
-            if (timeshift_last_change + TIMESHIFT_NOREMOVE_TIME < std::chrono::steady_clock::now()) {
-                timeshift_buffer.pop_front();
-                timeshift_buffer_pos--;
-            }
+    memcpy(receive_buffer, timeshift_buffer.at(timeshift_buffer_pos++).second.data(), CHUNK_SIZE);
+    if (timeshift_buffer.front().first + std::chrono::milliseconds(delay) + std::chrono::milliseconds((int)(timeshift_backshift*1000)) + std::chrono::seconds(timeshift_buffer_dur) < std::chrono::steady_clock::now()) {
+        if (timeshift_last_change + TIMESHIFT_NOREMOVE_TIME < std::chrono::steady_clock::now()) {
+            timeshift_buffer.pop_front();
+            timeshift_buffer_pos--;
         }
-    }
-    catch (std::out_of_range e) {
-        log("Out of range " + ::to_string(timeshift_buffer_pos) + " > " + ::to_string(timeshift_buffer.size()));
     }
 }
 
 void change_timeshift() {
-    auto desired_time = std::chrono::steady_clock::now() - std::chrono::milliseconds((int)(timeshift_backshift*1000)) - std::chrono::milliseconds(delay);
-    unsigned long closest_buffer_pos = 0;
-    unsigned long closest_buffer_delta = ULONG_MAX;
-    bool found = false;
-    for (unsigned long i=0;i<timeshift_buffer.size();i++) {
-        std::chrono::steady_clock::duration cur_delta = desired_time - timeshift_buffer.at(i).first;
-        unsigned long cur_delta_num = std::chrono::duration_cast<std::chrono::milliseconds>(cur_delta).count();
-        if (cur_delta_num < closest_buffer_delta) {
-            closest_buffer_delta = cur_delta_num;
-            closest_buffer_pos = i;
-            found = true;
-        }
+    if (timeshift_buffer.size() == 0) {
+        timeshift_buffer_pos = 0;
+        timeshift_backshift = 0;
     }
-    if (!found)
-        closest_buffer_pos = timeshift_buffer.size() - 1;
-    timeshift_buffer_pos = closest_buffer_pos;
-    timeshift_backshift = std::chrono::duration_cast<std::chrono::duration<float>>(
-        std::chrono::steady_clock::now() - timeshift_buffer.at(closest_buffer_pos).first + std::chrono::milliseconds(delay)
-    ).count();
-    log("New timeshift index " + ::to_string(timeshift_buffer_pos));
+    else {
+        auto desired_time = std::chrono::steady_clock::now() - std::chrono::milliseconds((int)(timeshift_backshift*1000)) - std::chrono::milliseconds(delay);
+        long closest_buffer_delta = LONG_MAX;
+
+        for (long i=0;i<timeshift_buffer.size();i++) {
+            std::chrono::steady_clock::duration cur_delta = timeshift_buffer.at(i).first - desired_time;
+            long cur_delta_num = abs(std::chrono::duration_cast<std::chrono::milliseconds>(cur_delta).count());
+            if (cur_delta_num < closest_buffer_delta) {
+                closest_buffer_delta = cur_delta_num;
+                timeshift_buffer_pos = i;
+            }
+        }
+        timeshift_backshift = std::chrono::duration_cast<std::chrono::duration<float>>(
+            std::chrono::steady_clock::now() - timeshift_buffer.at(timeshift_buffer_pos).first + std::chrono::milliseconds(delay)
+        ).count();
+    }
 }
 
 void scale_buffer()
