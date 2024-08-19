@@ -2,6 +2,7 @@ import { selectedRoute, selectedSink, selectedSource, editorActive, editorType, 
 import { getRouteBySinkSource, exposeFunction } from "./utils.js"
 
 let audioPlaying = false;
+let bufferReady = false;
 let dummyAudioRunning = false;
 
 function listenToSinkButton(option) {
@@ -18,8 +19,10 @@ function listenToSinkButton(option) {
 
 function startAudio(sinkIp) {
     const audioTag = document.getElementById("audio");
+    const random = Math.floor(Math.random() * 10000);
     audioTag.pause();
-    audioTag.src = `/stream/${sinkIp}/`;
+
+    audioTag.src = `/stream/${sinkIp}/?random=${random}`;
     audioTag.muted = false;
     audioTag.play();
     if (audioTag.prevVolume != null)
