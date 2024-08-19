@@ -18,7 +18,7 @@ Media control buttons will be visible and accessible in the ScreamRouter user in
 
 ### Bash script
 
-```Bash
+```bash
 #!/bin/bash
 
 netcat_command="nc -l -u -p 9999"
@@ -46,6 +46,8 @@ done
 ```
 
 ### Powershell Script
+
+* [See repo with installer to run on login](https://github.com/netham45/win-scream-hotkey-receiver)
 
 ```Powershell
 $ShowWindowAsync = Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);' -name Win32ShowWindowAsync -namespace Win32Functions -PassThru
