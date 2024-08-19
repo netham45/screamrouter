@@ -107,7 +107,7 @@ The MP3 stream can be feed into Butterchurn/Milkdrop to have visual effects gene
 
 ### Timeshifting
 
-ScreamRouter will buffer the last five minutes of audio and allows it to be scrubbed through. The timeshift controls are available on any source/route/sink/group and affect all audio that passes through that path.
+ScreamRouter will buffer the last five minutes of audio and allows it to be seeked through. The timeshift controls are available on any source/route/sink/group and affect all audio that passes through that path.
 
 ### VNC
 
