@@ -3,6 +3,7 @@ import mimetypes
 import multiprocessing
 from typing import List, Optional
 
+from fastapi.responses import FileResponse
 import websockify
 import websockify.websocketproxy
 from fastapi import FastAPI, Request
@@ -70,6 +71,8 @@ class APIWebsite():
                           tags=["Site Resources"])(self.edit_source_routes)
         self.main_api.mount("/site/noVNC", StaticFiles(directory="./site/noVNC"), name="noVNC")
         self.main_api.mount("/site/js", StaticFiles(directory="./site/js"), name="Site Javascript")
+        self.main_api.get("/favicon.ico", tags=["Site Resources"])(self.favicon)
+
         self._templates = Jinja2Templates(directory="./site/")
         mimetypes.add_type('application/javascript', '.js')
         mimetypes.add_type('text/css', '.css')
@@ -79,6 +82,9 @@ class APIWebsite():
         self.vnc_port: int = 5900
         """Holds the current vnc port, gets incremented by one per connection"""
 
+    async def favicon(self):
+        """Favicon handler"""
+        return FileResponse("./site/favicon.ico")
 
     def return_template(self, request: Request,
                               template_name: str,

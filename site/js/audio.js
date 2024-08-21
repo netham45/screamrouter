@@ -61,7 +61,6 @@ export function onload() {
     exposeFunction(startDummyAudio, "startDummyAudio");
     exposeFunction(listenToSinkButton, "listenToSinkButton");
     navigator.mediaSession.setActionHandler('play', () => {
-        console.log("play");
         if (selectedSource) {
             let playPause = selectedSource.querySelectorAll("BUTTON[id^='Play/Pause']");
             if (playPause)
@@ -70,7 +69,6 @@ export function onload() {
     });
 
     navigator.mediaSession.setActionHandler('pause', () => {
-        console.log("pause");
         if (selectedSource) {
             let playPause = selectedSource.querySelectorAll("BUTTON[id^='Play/Pause']");
             if (playPause)
@@ -78,7 +76,6 @@ export function onload() {
             }
     });
     navigator.mediaSession.setActionHandler('seekbackward', () => {
-        console.log("prevtrack");
         if (selectedSource) {
             let prevTrack = selectedSource.querySelectorAll("BUTTON[id^='Previous Track']");
             if (prevTrack)
@@ -87,7 +84,6 @@ export function onload() {
     });
 
     navigator.mediaSession.setActionHandler('seekforward', () => {
-        console.log("nexttrack");
         if (selectedSource) {
             let nextTrack = selectedSource.querySelectorAll("BUTTON[id^='Next Track']");
             if (nextTrack)
@@ -96,7 +92,6 @@ export function onload() {
     });
 
     navigator.mediaSession.setActionHandler('previoustrack', () => {
-        console.log("prevtrack");
         if (selectedSource) {
             let prevTrack = selectedSource.querySelectorAll("BUTTON[id^='Previous Track']");
             if (prevTrack)
@@ -105,7 +100,6 @@ export function onload() {
     });
 
     navigator.mediaSession.setActionHandler('nexttrack', () => {
-        console.log("nexttrack");
         if (selectedSource) {
             let nextTrack = selectedSource.querySelectorAll("BUTTON[id^='Next Track']");
             if (nextTrack)

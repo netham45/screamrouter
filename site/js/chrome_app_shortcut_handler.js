@@ -24,7 +24,6 @@ export function onload() {
                     let enabledisable = document.querySelectorAll("button#button_enableRoute:not([disabled]), button#button_disableRoute:not([disabled])");
                     if (enabledisable.length == 0)
                         break;
-                    console.log(enabledisable);
                     if (enabledisable)
                         enabledisable[0].onclick({target: enabledisable[0]});
                     break;
