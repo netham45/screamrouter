@@ -3,13 +3,14 @@ import os
 import threading
 from typing import Dict, List, Optional
 
-from src.screamrouter_types.annotations import DelayType, SourceNameType, TimeshiftType, VolumeType
 from src.api.api_webstream import APIWebStream
 from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.audio.sink_mp3_processor import SinkMP3Processor
 from src.audio.sink_output_mixer import SinkOutputMixer
 from src.audio.source_input_processor import SourceInputProcessor
 from src.screamrouter_logger.screamrouter_logger import get_logger
+from src.screamrouter_types.annotations import (DelayType, SourceNameType,
+                                                TimeshiftType, VolumeType)
 from src.screamrouter_types.configuration import (Equalizer, SinkDescription,
                                                   SourceDescription)
 

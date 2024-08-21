@@ -4,10 +4,11 @@ import subprocess
 from typing import List, Optional
 
 from src.audio.scream_header_parser import ScreamHeader
-from src.screamrouter_logger.screamrouter_logger import get_logger
-from src.screamrouter_types.annotations import DelayType, IPAddressType, TimeshiftType, VolumeType
-from src.screamrouter_types.configuration import Equalizer, SourceDescription
 from src.constants import constants
+from src.screamrouter_logger.screamrouter_logger import get_logger
+from src.screamrouter_types.annotations import (DelayType, IPAddressType,
+                                                TimeshiftType, VolumeType)
+from src.screamrouter_types.configuration import Equalizer, SourceDescription
 from src.utils.utils import close_pipe
 
 logger = get_logger(__name__)

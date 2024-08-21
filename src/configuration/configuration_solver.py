@@ -3,8 +3,8 @@ from copy import copy
 from typing import List, Optional
 
 from src.screamrouter_types.annotations import (DelayType, RouteNameType,
-                                                SinkNameType, SourceNameType, TimeshiftType,
-                                                VolumeType)
+                                                SinkNameType, SourceNameType,
+                                                TimeshiftType, VolumeType)
 from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
                                                   SinkDescription,
                                                   SourceDescription)

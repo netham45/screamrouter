@@ -1,17 +1,17 @@
 """Receiver, handles a port for listening for sources to send UDP packets to
    Puts received data in sink queues"""
 import os
+import select
 import socket
 import struct
-import select
 import subprocess
 from typing import List, Optional
 
 from pydantic import IPvAnyAddress
 
-from src.screamrouter_types.annotations import IPAddressType
 import src.constants.constants as constants
 from src.screamrouter_logger.screamrouter_logger import get_logger
+from src.screamrouter_types.annotations import IPAddressType
 
 logger = get_logger(__name__)
 

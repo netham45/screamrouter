@@ -3,10 +3,10 @@ import mimetypes
 import multiprocessing
 from typing import List, Optional
 
-from fastapi.responses import FileResponse
 import websockify
 import websockify.websocketproxy
 from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.templating import _TemplateResponse
@@ -82,7 +82,7 @@ class APIWebsite():
         self.vnc_port: int = 5900
         """Holds the current vnc port, gets incremented by one per connection"""
 
-    async def favicon(self):
+    def favicon(self):
         """Favicon handler"""
         return FileResponse("./site/favicon.ico")
 
