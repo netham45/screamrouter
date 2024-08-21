@@ -4,6 +4,8 @@ import {startDummyAudio} from "./audio.js";
 import { getRouteBySinkSource, exposeFunction } from "./utils.js"
 
 function getAssociatedSinks() {
+    if (!selectedSink.dataset["group_members"])
+        return [];
     const sinks = Array.from(document.querySelectorAll('span[data-type="SinkDescription"]'));
     const associatedSinks = sinks.filter(sink =>
         selectedSink.dataset["group_members"].includes(sink.dataset['name']) ||
@@ -21,6 +23,8 @@ function getParentSinks() {
 }
 
 function getAssociatedSources() {
+    if (!selectedSource.dataset["group_members"])
+        return [];
     const sources = Array.from(document.querySelectorAll('span[data-type="SourceDescription"]'));
     const associatedSources = sources.filter(source =>
         selectedSource.dataset["group_members"].includes(source.dataset['name']) ||
@@ -128,11 +132,11 @@ export function highlightActiveSink(color=true) {
 
     sinks.forEach(sink => {
         if (selectedSink) {
-            if (sink === selectedSink) {
+            if (sink.dataset['name'] === selectedSink.dataset['name']) {
                 sink.classList.add("option-selected");
                 if (color)
                     sink.style.backgroundColor = `rgba(${COLORS.sink.r}, ${COLORS.sink.g}, ${COLORS.sink.b}, 0.6)`;
-            } else if (selectedSink.dataset["group_members"].includes(sink.dataset['name']) || sink.dataset["group_members"].includes(selectedSink.dataset['name'])) {
+            } else if (selectedSink.dataset["group_members"] && (selectedSink.dataset["group_members"].includes(sink.dataset['name']) || sink.dataset["group_members"].includes(selectedSink.dataset['name']))) {
                 sink.classList.remove("option-selected");
                 if (color)
                     sink.style.backgroundColor = `rgba(${COLORS.sink.faded.r}, ${COLORS.sink.faded.g}, ${COLORS.sink.faded.b}, 0.6)`;
@@ -155,7 +159,7 @@ export function highlightActiveSource(color=true) {
 
     sources.forEach(source => {
         if (selectedSource) {
-            if (source === selectedSource) {
+            if (source.dataset['name'] === selectedSource.dataset['name']) {
                 source.classList.add("option-selected");
                 if (color)
                     source.style.backgroundColor = `rgba(${COLORS.source.r}, ${COLORS.source.g}, ${COLORS.source.b}, 0.6)`;
@@ -196,4 +200,5 @@ function optionOnclick(e) {
 
 export function onload() {
     exposeFunction(optionOnclick, "optionOnclick");
+    exposeFunction(highlightActiveSink, "highlightActiveSink");
 }

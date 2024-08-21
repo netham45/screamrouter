@@ -96,7 +96,8 @@ Routes that are not associated with currently selected sinks/sources will be dis
 
 On mobile the routing view will be a list instead of connecting lines.
 
-### Listen 
+### Listen
+
 There is the ability to listen to the output going to any sink. A sink can be pointed to a bogus IP to be exclusively used through it's MP3 stream. Currently only stereo sinks are supported.
 
 ### Visualizer

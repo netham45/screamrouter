@@ -98,10 +98,10 @@ function onOptionDragKeyDown(event) {
 }
 
 export function onload() {
-    exposeFunction(onOptionDragStart, "onOptionDragStart");
+    exposeFunction(onOptionDragStart, "onOptionDragStart", true);
     exposeFunction(onOptionDragTouchStart, "onOptionDragTouchStart");
-    exposeFunction(onOptionDragMove, "onOptionDragMove");
-    exposeFunction(onOptionDragTouchMove, "onOptionDragTouchMove");
-    exposeFunction(onOptionDragEnd, "onOptionDragEnd");
+    exposeFunction(onOptionDragMove, "onOptionDragMove", true);
+    exposeFunction(onOptionDragTouchMove, "onOptionDragTouchMove", true);
+    exposeFunction(onOptionDragEnd, "onOptionDragEnd", true);
     exposeFunction(onOptionDragKeyDown, "onOptionDragKeyDown");
 }

@@ -7,7 +7,6 @@ export let editorActive = false;
 export let editorType = "";
 
 function setCookie(name, value, days = 7) {
-    console.log("Setting Cookie " + name + " = " + value);
     const expires = new Date(Date.now() + days * 864e5).toUTCString();
     document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/`;
 }
@@ -59,30 +58,24 @@ export function onload() {
     const selectedSinkName = getCookie('selectedSink');
     if (selectedSinkName) {
         let result = document.querySelector(`SPAN.option[data-name="${selectedSinkName}"]`);
-        console.log(result);
         if (result) {
             selectedSink = result;
-            console.log("Found set sink");
         }
     }
 
     const selectedSourceName = getCookie('selectedSource');
     if (selectedSourceName) {
         let result = document.querySelector(`SPAN.option[data-name="${selectedSourceName}"]`);
-        console.log(result);
         if (result) {
             selectedSource = result;
-            console.log("Found set source");
         }
     }
 
     const selectedRouteName = getCookie('selectedRoute');
     if (selectedRouteName) {
         let result = document.querySelector(`[SPAN.optiondata-name="${selectedRouteName}"]`);
-        console.log(result);
         if (result) {
             selectedRoute = result;
-            console.log("Found set route");
         }
     }
 }

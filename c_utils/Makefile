@@ -1,6 +1,6 @@
 #!/usr/bin/make
 CC = g++
-CFLAGS = -Ofast -fopenmp -std=c++11 -mavx -march=native -mavx -msse4.1
+CFLAGS = -Ofast -fopenmp -std=c++14 -mavx -march=native -mavx -msse4.1 
 LIBS = -lm
 
 # Find libmp3lame
@@ -23,7 +23,7 @@ libsamplerate:
 bin/sink_audio_mixer: sink_audio_mixer.cpp
 	$(CC) $< -o $@ $(LIBS) $(LIBMP3LAME_PATH) $(CFLAGS)
 
-bin/source_input_processor: source_input_processor.cpp biquad/biquad.cpp
+bin/source_input_processor: source_input_processor.cpp biquad/biquad.cpp audio_processor.cpp
 	$(CC) $^ -o $@ $(LIBS) libsamplerate/src/libsamplerate.a $(CFLAGS)
 
 bin/rtp_receiver: rtp_receiver.cpp

@@ -7,9 +7,8 @@ export function getRouteBySinkSource(sink, source) {
     return null;
 }
 
-export function exposeFunction(func, name) {
-    console.log("Exposing function " + name);
-    if (window[name] == null)
+export function exposeFunction(func, name, override=false) {
+    if (window[name] == null || override)
         window[name] = func;
     else
         console.error("Attempted to expose a function with an already exposed name " + name);

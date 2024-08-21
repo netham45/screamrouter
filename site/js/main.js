@@ -108,17 +108,13 @@ function startRefreshing() {
     setInterval(
         function() {
             if (window['stop_reload'] != null) {
-                console.log("return1");
                 return;
             }
             if (document.getElementById("dialog").style.display == "block") {
-                console.log("return2");
                 return;
             }
             const idleTime = Date.now() - lastTouchTime;
             if (!(idleTime < 15 * 60 * 1000 && idleTime > 3 * 1000)) {
-                console.log("return3");
-                console.log(idleTime);
                 return;
             }
             callApi("/body", "get", {}, restartCallback2);
@@ -142,7 +138,7 @@ function onload() {
     highlightActiveSource();
     highlightActiveRoutes();
     drawLines();
-    startRefreshing();
+    //startRefreshing();
 }
 
 function onresize() {
