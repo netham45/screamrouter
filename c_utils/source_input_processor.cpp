@@ -48,6 +48,7 @@ uint8_t input_header[5] = {0};
 int input_channels = 0, input_samplerate = 0, input_bitdepth = 0, input_chlayout1 = 0, input_chlayout2 = 0;
 
 unique_ptr<AudioProcessor> audioProcessor;
+std::mutex audioProcessor_mutex;
 
 int *int_args[] = {
     NULL, &fd_in, &fd_out, &data_fd_in, &output_channels, &output_samplerate, &output_chlayout1, &output_chlayout2,
@@ -93,8 +94,9 @@ void check_update_header() {
         log("Sample Rate: " + to_string(input_samplerate) + " -> " + to_string(output_samplerate));
         log("Bit Depth: " + to_string(input_bitdepth) + " -> 32");
         log("Channels: " + to_string(input_channels) + " -> " + to_string(output_channels));
-        
+        audioProcessor_mutex.lock();
         audioProcessor = make_unique<AudioProcessor>(input_channels, output_channels, input_bitdepth, input_samplerate, output_samplerate);
+        audioProcessor_mutex.unlock();
     }
 }
 
@@ -194,7 +196,9 @@ void data_input_thread() {
                         }
                     } else if (variable == "v") {
                         volume = value;
+                        audioProcessor_mutex.lock();
                         audioProcessor->setVolume(volume);
+                        audioProcessor_mutex.unlock();
                     } else if (variable == "t") {
                         timeshift_backshift = value;
                         change_timeshift();
@@ -203,7 +207,9 @@ void data_input_thread() {
                         change_timeshift();
                     }
                 } else if (command == "a") {
+                    audioProcessor_mutex.lock();
                     audioProcessor->setEqualizer(new_eq);
+                    audioProcessor_mutex.unlock();
                 }
             }
         } else {
@@ -231,7 +237,9 @@ int main(int argc, char *argv[]) {
     while (threads_running) {
         receive_data();
         if (audioProcessor) {
+            audioProcessor_mutex.lock();
             int processed_samples = audioProcessor->processAudio(receive_buffer, processed_buffer + process_buffer_pos);
+            audioProcessor_mutex.unlock();
             process_buffer_pos += processed_samples;
 
             while (process_buffer_pos >= CHUNK_SIZE / sizeof(int32_t))
