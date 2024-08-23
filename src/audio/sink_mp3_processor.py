@@ -119,7 +119,6 @@ class SinkMP3Processor(multiprocessing.Process):
                     mp3_header_parsed, mp3_header_raw = self.__read_header()
                 except InvalidHeaderException as exc:
                     logger.debug("[Sink:%s] Failed processing MP3 header: %s",  self._sink_ip, exc)
-                    logger.debug("[Sink:%s] This is probably because ffmpeg quit", self._sink_ip)
                     continue
                 available_data.extend(mp3_header_raw)
                 mp3_frame = self._read_bytes(mp3_header_parsed.framelength, .1)

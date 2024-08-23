@@ -16,7 +16,7 @@
 #include <immintrin.h>
 #include "audio_processor.h"
 
-AudioProcessor *lame_processor = NULL;
+AudioProcessor *lameProcessor = NULL;
 using namespace std;
 
 // Configuration variables
@@ -161,7 +161,11 @@ inline void write_lame() {
             lame_active = true;
             log("MP3 Stream Active");
         }
-        mp3_buffer_pos = lame_encode_buffer_interleaved_int(lame, mixing_buffer, CHUNK_SIZE/sizeof(uint32_t)/2, mp3_buffer, CHUNK_SIZE * 8);
+        int32_t processed_buffer[CHUNK_SIZE / sizeof(uint32_t)];
+        int processed_samples = lameProcessor->processAudio(reinterpret_cast<const uint8_t*>(mixing_buffer), processed_buffer);
+
+        mp3_buffer_pos = lame_encode_buffer_interleaved_int(lame, processed_buffer, processed_samples / 2, mp3_buffer, CHUNK_SIZE * 8);
+        
         if (mp3_buffer_pos > 0)
             write(mp3_write_fd, mp3_buffer, mp3_buffer_pos);
     }
@@ -172,7 +176,6 @@ inline void write_lame() {
         }
     }
 }
-
 inline bool check_fd_active(int fd, bool is_active) {
     receive_timeout.tv_sec = 0;
         if (!is_active)
@@ -274,15 +277,14 @@ inline void rotate_buffer() { // Shifts the last CHUNK_SIZE bytes in output_buff
 
 int main(int argc, char* argv[]) {
     process_args(argv, argc);
-    lame_processor = new AudioProcessor(output_channels, 2, 32, 1, 1);
+    lameProcessor = new AudioProcessor(output_channels, 2, 32, output_samplerate, output_samplerate);
     log("Starting Ouput Mixer, sending UDP to " + output_ip +  ":" + to_string(output_port) + ", TCP Enabled: " + (tcp_output_fd > 0?"Yes":"No"));
     process_fd_args(argv, argc);
     log("Input FDs: ");
     for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
         log(to_string(output_fds[fd_idx]));
     setup_header();
-    if (output_channels == 2)
-        setup_lame();
+    setup_lame();
     setup_udp();
     setup_buffers();
 
@@ -292,8 +294,7 @@ int main(int argc, char* argv[]) {
             continue;
         }
         mix_buffers();
-        if (output_channels == 2)
-            write_lame();
+        write_lame();
         downscale_buffer();
         if (output_buffer_pos < CHUNK_SIZE)
           continue;
