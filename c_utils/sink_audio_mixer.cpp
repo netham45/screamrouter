@@ -14,6 +14,9 @@
 #include <emmintrin.h>
 #endif
 #include <immintrin.h>
+#include "audio_processor.h"
+
+AudioProcessor *lame_processor = NULL;
 using namespace std;
 
 // Configuration variables
@@ -271,7 +274,7 @@ inline void rotate_buffer() { // Shifts the last CHUNK_SIZE bytes in output_buff
 
 int main(int argc, char* argv[]) {
     process_args(argv, argc);
-
+    lame_processor = new AudioProcessor(output_channels, 2, 32, 1, 1);
     log("Starting Ouput Mixer, sending UDP to " + output_ip +  ":" + to_string(output_port) + ", TCP Enabled: " + (tcp_output_fd > 0?"Yes":"No"));
     process_fd_args(argv, argc);
     log("Input FDs: ");

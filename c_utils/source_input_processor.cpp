@@ -94,7 +94,7 @@ void check_update_header() {
         log("Bit Depth: " + to_string(input_bitdepth) + " -> 32");
         log("Channels: " + to_string(input_channels) + " -> " + to_string(output_channels));
         
-        audioProcessor = make_unique<AudioProcessor>(input_channels, output_channels, input_samplerate, output_samplerate);
+        audioProcessor = make_unique<AudioProcessor>(input_channels, output_channels, input_bitdepth, input_samplerate, output_samplerate);
     }
 }
 

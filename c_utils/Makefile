@@ -20,8 +20,8 @@ makebin:
 libsamplerate:
 	cd libsamplerate && cmake . && $(MAKE)
 
-bin/sink_audio_mixer: sink_audio_mixer.cpp
-	$(CC) $< -o $@ $(LIBS) $(LIBMP3LAME_PATH) $(CFLAGS)
+bin/sink_audio_mixer: sink_audio_mixer.cpp biquad/biquad.cpp audio_processor.cpp
+	$(CC) $^ -o $@ $(LIBS) libsamplerate/src/libsamplerate.a $(LIBMP3LAME_PATH) $(CFLAGS)
 
 bin/source_input_processor: source_input_processor.cpp biquad/biquad.cpp audio_processor.cpp
 	$(CC) $^ -o $@ $(LIBS) libsamplerate/src/libsamplerate.a $(CFLAGS)

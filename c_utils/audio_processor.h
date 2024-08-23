@@ -13,7 +13,7 @@ class Biquad;
 
 class AudioProcessor {
 public:
-    AudioProcessor(int inputChannels, int outputChannels, int inputSampleRate, int outputSampleRate);
+    AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, int inputSampleRate, int outputSampleRate);
     ~AudioProcessor();
 
     int processAudio(const uint8_t* inputBuffer, int32_t* outputBuffer);
