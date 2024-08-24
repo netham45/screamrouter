@@ -206,26 +206,26 @@ void data_input_thread() {
 
                 if (command_stream >> variable >> value) {
                     if (variable[0] == 'b' && variable.length() > 1 && std::isdigit(variable[1])) {
-                        /*int index = std::stoi(variable.substr(1)) - 1;
+                        int index = std::stoi(variable.substr(1)) - 1;
                         if (index >= 0 && index < EQ_BANDS) {
                             new_eq[index] = value;
-                        }*/
+                        }
                     } else if (variable == "v") {
                         volume = value;
-                        //audioProcessor_mutex.lock();
+                        audioProcessor_mutex.lock();
                         audioProcessor->setVolume(volume);
-                      //  audioProcessor_mutex.unlock();
+                        audioProcessor_mutex.unlock();
                     } else if (variable == "t") {
-                        //timeshift_backshift = value;
-                        //change_timeshift();
+                        timeshift_backshift = value;
+                        change_timeshift();
                     } else if (variable == "d") {
-                      //  delay = (int)value;
-                        //change_timeshift();
+                        delay = (int)value;
+                        change_timeshift();
                     }
                 } else if (command == "a") {
-                    //audioProcessor_mutex.lock();
-                    //audioProcessor->setEqualizer(new_eq);
-                    //audioProcessor_mutex.unlock();
+                    audioProcessor_mutex.lock();
+                    audioProcessor->setEqualizer(new_eq);
+                    audioProcessor_mutex.unlock();
                 }
             }
         } else {
