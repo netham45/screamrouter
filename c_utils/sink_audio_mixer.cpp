@@ -277,7 +277,7 @@ inline void rotate_buffer() { // Shifts the last CHUNK_SIZE bytes in output_buff
 
 int main(int argc, char* argv[]) {
     process_args(argv, argc);
-    lameProcessor = new AudioProcessor(output_channels, 2, 32, output_samplerate, output_samplerate);
+    lameProcessor = new AudioProcessor(output_channels, 2, 32, output_samplerate, output_samplerate, 1);
     log("Starting Ouput Mixer, sending UDP to " + output_ip +  ":" + to_string(output_port) + ", TCP Enabled: " + (tcp_output_fd > 0?"Yes":"No"));
     process_fd_args(argv, argc);
     log("Input FDs: ");

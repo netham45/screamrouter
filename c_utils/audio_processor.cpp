@@ -9,9 +9,9 @@
 
 #define CHUNK_SIZE 1152
 
-AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, int inputSampleRate, int outputSampleRate)
+AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, int inputSampleRate, int outputSampleRate, float volume)
     : inputChannels(inputChannels), outputChannels(outputChannels), inputBitDepth(inputBitDepth),
-      inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate), volume(1.0f) {
+      inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate), volume(volume) {
     
     std::fill(eq, eq + EQ_BANDS, 1.0f);
     updateSpeakerMix();

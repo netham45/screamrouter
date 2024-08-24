@@ -648,6 +648,7 @@ class ConfigurationManager(threading.Thread):
 
     def __save_config(self) -> None:
         """Saves the config"""
+        _logger.info("[Configuration Manager] Saving config")
         if not self.configuration_semaphore.acquire(timeout=1):
             raise TimeoutError("Failed to get configuration semaphore")
         proc = Process(target=self.__multiprocess_save)

@@ -1,4 +1,3 @@
-"""One audio controller per sink, handles taking in packets and distributing them to sources"""
 import os
 import threading
 from typing import Dict, List, Optional
@@ -100,7 +99,7 @@ class AudioController():
                                                            self.mp3_ffmpeg_output_read,
                                                            self.webstream.queue,
                                                            self.webstream)
-        """Holds the thread to generaet MP3 output from a PCM reader"""
+        """Holds the thread to generate MP3 output from a PCM reader"""
         self.pcm_thread = SinkOutputMixer(self.sink_info,
                                           self.stream_info,
                                           tcp_fd,
@@ -109,7 +108,7 @@ class AudioController():
 
     def restart_mixer(self, tcp_fd: int):
         """(Re)starts the mixer"""
-        logger.info("[Audio Controller] Requesting config reloaed")
+        logger.info("[Audio Controller] Requesting config reloaded")
         self.pcm_thread.tcp_client_fd = tcp_fd
         self.pcm_thread.update_active_sources()
         self.request_restart = True
@@ -154,5 +153,5 @@ class AudioController():
         logger.debug("[Sink:%s] Stopping Audio Controller", self.sink_info.ip)
 
     def wants_reload(self) -> bool:
-        """Returns true of any of the sources want a restart"""
+        """Returns true if any of the sources want a restart"""
         return self.request_restart

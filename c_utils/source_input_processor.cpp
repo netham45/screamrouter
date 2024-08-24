@@ -34,6 +34,7 @@ string input_ip = "";
 int fd_in = 0, fd_out = 0, data_fd_in = 0;
 int output_channels = 0, output_samplerate = 0, output_chlayout1 = 0, output_chlayout2 = 0;
 int delay = 0, timeshift_buffer_dur = 0;
+float volume = 1;
 std::chrono::steady_clock::time_point timeshift_last_change;
 unsigned long timeshift_buffer_pos = 0;
 float timeshift_backshift = 0;
@@ -58,7 +59,7 @@ int *int_args[] = {
 
 float *float_args[] = {
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    &volume, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     NULL, NULL,
 };
 
@@ -82,20 +83,36 @@ void process_args(int argc, char *argv[]) {
             *(float_args[argi]) = atof(argv[argi + 1]);
 }
 
+// This function checks if the incoming packet header has changed and updates the input parameters accordingly.
 void check_update_header() {
+    // Compare the current header with the new one received in the packet buffer.
     if (memcmp(input_header, packet_in_buffer + TAG_SIZE, HEADER_SIZE) != 0) {
         log("Got new header");
+        // Update the input header with the new data.
         memcpy(input_header, packet_in_buffer + TAG_SIZE, HEADER_SIZE);
+        
+        // Extract sample rate from the header and convert it to integer format.
         input_samplerate = (input_header[0] & 0x7F) * ((input_header[0] & 0x80) ? 44100 : 48000);
+        
+        // Extract bit depth from the header and convert it to integer format.
         input_bitdepth = input_header[1];
+        
+        // Extract number of channels from the header and convert it to integer format.
         input_channels = input_header[2];
+        
+        // Extract channel layout from the header and convert it to integer format.
         input_chlayout1 = input_header[3];
         input_chlayout2 = input_header[4];
+        
         log("Sample Rate: " + to_string(input_samplerate) + " -> " + to_string(output_samplerate));
         log("Bit Depth: " + to_string(input_bitdepth) + " -> 32");
         log("Channels: " + to_string(input_channels) + " -> " + to_string(output_channels));
+        
+        // Lock the audio processor mutex before updating the audio processor settings.
         audioProcessor_mutex.lock();
-        audioProcessor = make_unique<AudioProcessor>(input_channels, output_channels, input_bitdepth, input_samplerate, output_samplerate);
+        // Create a new AudioProcessor instance with updated parameters.
+        audioProcessor = make_unique<AudioProcessor>(input_channels, output_channels, input_bitdepth, input_samplerate, output_samplerate, volume);
+        // Unlock the audio processor mutex after updating the settings.
         audioProcessor_mutex.unlock();
     }
 }
@@ -175,7 +192,6 @@ void change_timeshift() {
 void data_input_thread() {
     char line[256];
     float new_eq[EQ_BANDS] = {1};
-    float volume = 1;
 
     while (threads_running) {
         if (read(data_fd_in, line, sizeof(line)) > 0) {
@@ -190,26 +206,26 @@ void data_input_thread() {
 
                 if (command_stream >> variable >> value) {
                     if (variable[0] == 'b' && variable.length() > 1 && std::isdigit(variable[1])) {
-                        int index = std::stoi(variable.substr(1)) - 1;
+                        /*int index = std::stoi(variable.substr(1)) - 1;
                         if (index >= 0 && index < EQ_BANDS) {
                             new_eq[index] = value;
-                        }
+                        }*/
                     } else if (variable == "v") {
                         volume = value;
-                        audioProcessor_mutex.lock();
+                        //audioProcessor_mutex.lock();
                         audioProcessor->setVolume(volume);
-                        audioProcessor_mutex.unlock();
+                      //  audioProcessor_mutex.unlock();
                     } else if (variable == "t") {
-                        timeshift_backshift = value;
-                        change_timeshift();
+                        //timeshift_backshift = value;
+                        //change_timeshift();
                     } else if (variable == "d") {
-                        delay = (int)value;
-                        change_timeshift();
+                      //  delay = (int)value;
+                        //change_timeshift();
                     }
                 } else if (command == "a") {
-                    audioProcessor_mutex.lock();
-                    audioProcessor->setEqualizer(new_eq);
-                    audioProcessor_mutex.unlock();
+                    //audioProcessor_mutex.lock();
+                    //audioProcessor->setEqualizer(new_eq);
+                    //audioProcessor_mutex.unlock();
                 }
             }
         } else {
@@ -252,3 +268,4 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
+
