@@ -48,7 +48,7 @@ std::atomic<bool> threads_running(true);
 uint8_t input_header[5] = {0};
 int input_channels = 0, input_samplerate = 0, input_bitdepth = 0, input_chlayout1 = 0, input_chlayout2 = 0;
 
-unique_ptr<AudioProcessor> audioProcessor;
+unique_ptr<AudioProcessor> audioProcessor = NULL;
 std::mutex audioProcessor_mutex;
 
 int *int_args[] = {
@@ -211,6 +211,8 @@ void data_input_thread() {
                             new_eq[index] = value;
                         }
                     } else if (variable == "v") {
+                        if (!audioProcessor)
+                            continue;
                         volume = value;
                         audioProcessor_mutex.lock();
                         audioProcessor->setVolume(volume);
@@ -223,6 +225,8 @@ void data_input_thread() {
                         change_timeshift();
                     }
                 } else if (command == "a") {
+                    if (!audioProcessor)
+                        continue;
                     audioProcessor_mutex.lock();
                     audioProcessor->setEqualizer(new_eq);
                     audioProcessor_mutex.unlock();

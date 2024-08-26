@@ -839,9 +839,9 @@ class ConfigurationManager(threading.Thread):
                 if audio_controller.sink_info.name == sink.name:
                     for source in sources:
                         audio_controller.update_volume(source.name, source.volume)
-                        audio_controller.update_equalizer(source.name, source.equalizer)
-                        audio_controller.update_delay(source.name, source.delay)
-                        audio_controller.update_timeshift(source.name, source.timeshift)
+#                        audio_controller.update_equalizer(source.name, source.equalizer)
+ #                       audio_controller.update_delay(source.name, source.delay)
+  #                      audio_controller.update_timeshift(source.name, source.timeshift)
 
         self.__save_config()
 
