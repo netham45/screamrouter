@@ -101,8 +101,6 @@ class SourceInputProcessor():
 
     def update_equalizer(self, equalizer: Equalizer) -> None:
         """Updates the equalizer for this source"""
-        if equalizer == self.source_info.equalizer:
-            return
         self.source_info.equalizer = equalizer
         self.send_command("b1", equalizer.b1)
         self.send_command("b2", equalizer.b2)

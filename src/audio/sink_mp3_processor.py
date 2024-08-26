@@ -1,5 +1,4 @@
-"""Threads to handle the PCM and MP3 output from ffmpeg
-   Currently defunct"""
+"""Thread to handle the MP3 output from ffmpeg"""
 import multiprocessing
 import multiprocessing.process
 import os

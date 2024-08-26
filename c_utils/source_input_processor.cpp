@@ -51,6 +51,8 @@ int input_channels = 0, input_samplerate = 0, input_bitdepth = 0, input_chlayout
 unique_ptr<AudioProcessor> audioProcessor = NULL;
 std::mutex audioProcessor_mutex;
 
+float new_eq[EQ_BANDS] = {1};
+
 int *int_args[] = {
     NULL, &fd_in, &fd_out, &data_fd_in, &output_channels, &output_samplerate, &output_chlayout1, &output_chlayout2,
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
@@ -59,7 +61,9 @@ int *int_args[] = {
 
 float *float_args[] = {
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-    &volume, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    &volume,
+    &new_eq[0], &new_eq[1], &new_eq[2], &new_eq[3], &new_eq[4], &new_eq[5], &new_eq[6], &new_eq[7], &new_eq[8], &new_eq[9],
+    &new_eq[10],&new_eq[11],&new_eq[12],&new_eq[13],&new_eq[14],&new_eq[15],&new_eq[16],&new_eq[17],
     NULL, NULL,
 };
 
@@ -112,6 +116,7 @@ void check_update_header() {
         audioProcessor_mutex.lock();
         // Create a new AudioProcessor instance with updated parameters.
         audioProcessor = make_unique<AudioProcessor>(input_channels, output_channels, input_bitdepth, input_samplerate, output_samplerate, volume);
+        audioProcessor->setEqualizer(new_eq);
         // Unlock the audio processor mutex after updating the settings.
         audioProcessor_mutex.unlock();
     }
@@ -191,7 +196,6 @@ void change_timeshift() {
 
 void data_input_thread() {
     char line[256];
-    float new_eq[EQ_BANDS] = {1};
 
     while (threads_running) {
         if (read(data_fd_in, line, sizeof(line)) > 0) {
