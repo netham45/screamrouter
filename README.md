@@ -162,8 +162,8 @@ Utilize built-in equalization tools to optimize audio output, particularly benef
 
 ### API
 
-* [API Documentation](Readme/api.md)
-  - Details on the ScreamRouter API endpoints and usage
+* [Swagger Documentation](https://netham45.org/wp-content/uploads/screamrouter-docs/)
+  - Swagger Docs for ScreamRouter API
 
 * [Plugins System](Readme/plugins.md)
   - Documentation on the flexible plugin system for adding new sources

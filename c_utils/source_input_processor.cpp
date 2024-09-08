@@ -45,7 +45,7 @@ const auto TIMESHIFT_NOREMOVE_TIME = std::chrono::minutes(5);
 std::deque<std::pair<std::chrono::steady_clock::time_point, std::vector<uint8_t>>> timeshift_buffer;
 std::atomic<bool> threads_running(true);
 
-uint8_t input_header[5] = {0};
+uint8_t input_header[HEADER_SIZE] = {0};
 int input_channels = 0, input_samplerate = 0, input_bitdepth = 0, input_chlayout1 = 0, input_chlayout2 = 0;
 
 unique_ptr<AudioProcessor> audioProcessor = NULL;

@@ -4,3 +4,6 @@
 [submodule "c_utils/libsamplerate"]
 	path = c_utils/libsamplerate
 	url = https://github.com/libsndfile/libsamplerate.git
+[submodule "c_utils/dcaenc"]
+	path = c_utils/dcaenc
+	url = https://github.com/darealshinji/dcaenc.git
