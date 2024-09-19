@@ -1,6 +1,8 @@
 """Holds the Source Info and a thread for handling it's queue"""
 import os
 import subprocess
+import threading
+import time
 from typing import List, Optional
 
 from src.audio.scream_header_parser import ScreamHeader
@@ -49,6 +51,25 @@ class SourceInputProcessor():
         """Processor process"""
         self.start()
 
+        self.running: bool = True
+        """Whether or not the source is currently running"""
+        self.logging_thread = threading.Thread(target=self.__log_output)
+        """Thread to log output from process"""
+        self.logging_thread.start()
+
+    def __log_output(self):
+        try:
+            while self.running:
+                if self.__processor is not None:
+                    data = self.__processor.stdout.readline().decode('utf-8').strip()
+                    if not data:
+                        break
+                    logger.info("[Source: %s] %s", self.tag, data)
+                else:
+                    time.sleep(1)
+        except OSError as e:
+            logger.error("Error in logging thread for source %s: %s", self.tag, e)
+
     def stop(self) -> None:
         """Fully stops and closes the source, closes fifo handles"""
         logger.info("[Sink:%s][Source:%s] Stopping", self.__sink_ip, self.tag)
@@ -59,6 +80,8 @@ class SourceInputProcessor():
         close_pipe(self.writer_write)
         close_pipe(self.source_output_fd)
         close_pipe(self.source_input_fd)
+        self.running = False
+        self.logging_thread.join()
 
     def __build_command(self) -> List[str]:
         """Builds Command to run"""
@@ -151,4 +174,6 @@ class SourceInputProcessor():
                                             start_new_session=True,
                                             pass_fds=pass_fds,
                                             stdin=subprocess.PIPE,
+                                            stdout=subprocess.PIPE,
+                                            stderr=subprocess.STDOUT,
                                             )

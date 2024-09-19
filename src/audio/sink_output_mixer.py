@@ -1,6 +1,8 @@
 """Manages the C++ program that mixes audio streams"""
 import subprocess
 from copy import copy
+import threading
+import time
 from typing import List, Optional
 
 from src.audio.scream_header_parser import ScreamHeader
@@ -31,6 +33,26 @@ class SinkOutputMixer():
         self.__mixer: Optional[subprocess.Popen] = None
         """Mixer process"""
         self.update_active_sources()
+        
+        self.running: bool = True
+        """Whether or not the source is currently running"""
+        self.logging_thread = threading.Thread(target=self.__log_output)
+        """Thread to log output from process"""
+        self.logging_thread.start()
+
+    def __log_output(self):
+        try:
+            while self.running:
+                if self.__mixer is not None:
+                    data = self.__mixer.stdout.readline().decode('utf-8').strip()
+                    if not data:
+                        break
+                    logger.info("[Sink: %s] %s", self.sink_info.ip, data)
+                else:
+                    time.sleep(1)
+        except OSError as e:
+            logger.error("Error in logging thread for source %s: %s", self.sink_info.ip, e)
+
 
     def start(self):
         """Starts the sink mixer"""
@@ -47,6 +69,8 @@ class SinkOutputMixer():
                                         start_new_session=True,
                                         pass_fds=pass_fds,
                                         stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT,
                                         )
 
     def stop(self):

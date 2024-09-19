@@ -5,6 +5,8 @@ import select
 import socket
 import struct
 import subprocess
+import threading
+import time
 from typing import List, Optional
 
 from pydantic import IPvAnyAddress
@@ -29,6 +31,9 @@ class MulticastScreamReceiver():
         """Passed to the listener for it to send data back to Python"""
         self.data_output_fd, self.data_input_fd = os.pipe()
         self.known_ips: list[IPAddressType] = []
+        self.running: bool = True
+        """Whether or not the source is currently running"""
+        self.logging_thread = threading.Thread(target=self.__log_output)
         if len(controller_write_fd_list) == 0:  # Will be zero if this is just a placeholder.
             return
         self.sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -51,6 +56,21 @@ class MulticastScreamReceiver():
         self.socket_fd = self.sock.fileno()
         self.start()
 
+        self.logging_thread.start()
+
+    def __log_output(self):
+        try:
+            while self.running:
+                if self.__scream_listener is not None:
+                    data = self.__scream_listener.stdout.readline().decode('utf-8').strip()
+                    if not data:
+                        break
+                    logger.info("[RTP Receiver] %s", data)
+                else:
+                    time.sleep(1)
+        except OSError as e:
+            logger.error("Error in logging thread for Multicast Scream Receiver %s", e)
+
     def __build_command(self) -> List[str]:
         """Builds Command to run"""
         command: List[str] = []
@@ -71,6 +91,8 @@ class MulticastScreamReceiver():
                                         start_new_session=True,
                                         pass_fds=pass_fds,
                                         stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT,
                                         )
 
     def check_known_ips(self):
@@ -116,3 +138,6 @@ class MulticastScreamReceiver():
             self.__scream_listener.wait()
         os.close(self.data_input_fd)
         os.close(self.data_output_fd)
+        self.running = False
+        if self.logging_thread is not None and self.logging_thread.is_alive():
+            self.logging_thread.join()
