@@ -1,22 +1,34 @@
-## Media Controls
+# ScreamRouter Media Controls
 
-ScreamRouter provides remote media control functionality, allowing users to send commands to audio sources for a seamless listening experience.
+## Overview
 
-### Supported Commands
-These commands are transmitted as UDP packets to the audio sources:
+ScreamRouter, a versatile audio routing and management system, provides remote media control functionality. This feature allows users to send commands to audio sources for a seamless listening experience, enhancing the overall usability of the system.
+
+## Supported Commands
+
+ScreamRouter supports the following media control commands:
+
 - Next Track: 'n'
 - Previous Track: 'p'
 - Play/Pause: 'P'
 
-### Technical Details
-- Port: Commands are sent to port 9999 on the configured VNC server
-- Protocol: UDP
-- Packet Content: Single character representing the command
+These commands are transmitted as UDP packets to the audio sources.
 
-### User Interface Integration
-Media control buttons will be visible and accessible in the ScreamRouter user interface, provided that a VNC host is configured. This allows users to control their media playback directly from the ScreamRouter interface, enhancing the overall user experience. If a source with VNC is selected in the UI the system's global media controls will control that source's media playback.
+## Technical Details
 
-### Bash script
+- **Port**: Commands are sent to port 9999 on the configured VNC server
+- **Protocol**: UDP
+- **Packet Content**: Single character representing the command
+
+## User Interface Integration
+
+Media control buttons are visible and accessible in the ScreamRouter user interface, provided that a VNC host is configured. This allows users to control their media playback directly from the ScreamRouter interface.
+
+If a source with VNC is selected in the UI, the system's global media controls will control that source's media playback. This feature is also integrated with the Chrome App shortcuts, providing quick access to media controls when ScreamRouter is installed as a Progressive Web App (PWA).
+
+## Implementation Scripts
+
+### Bash Script (for Linux systems)
 
 ```bash
 #!/bin/bash
@@ -45,11 +57,11 @@ do
 done
 ```
 
-### Powershell Script
+### PowerShell Script (for Windows systems)
 
-* [See repo with installer to run on login](https://github.com/netham45/win-scream-hotkey-receiver)
+For a complete solution with an installer to run on login, see the [win-scream-hotkey-receiver repository](https://github.com/netham45/win-scream-hotkey-receiver).
 
-```Powershell
+```powershell
 $ShowWindowAsync = Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);' -name Win32ShowWindowAsync -namespace Win32Functions -PassThru
 $KeybdEvent = Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);' -name Win32KeybdEvent -namespace Win32Functions -PassThru
 

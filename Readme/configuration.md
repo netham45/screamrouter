@@ -17,7 +17,7 @@ Key properties:
 - Name
 - IP address (for individual sources)
 - Volume
-- Equalizer settings
+- Equalizer settings (18-band)
 - Delay
 
 ## Sinks 
@@ -31,9 +31,10 @@ Key properties:
 - Name
 - IP address and port (for individual sinks)
 - Volume
-- Equalizer settings
+- Equalizer settings (18-band)
 - Delay
 - Audio format settings (bit depth, sample rate, channels)
+  - Supported sample rates: 44100, 48000, 88200, 96000, and 192000 Hz
 
 ## Routes
 
@@ -42,7 +43,7 @@ Routes define connections between sources and sinks. A route specifies:
 - A source (individual or group)
 - A sink (individual or group)
 - Volume adjustment
-- Equalizer adjustment
+- Equalizer adjustment (18-band)
 - Delay adjustment
 
 ## Interaction
@@ -60,3 +61,7 @@ This allows for flexible configuration:
 - Adjustments can be applied at the route, group, or individual level
 
 The ConfigurationManager class uses this solved configuration to set up and manage the actual audio controllers and routing.
+
+## Configuration File
+
+ScreamRouter uses a YAML-based configuration file to store all settings. The system automatically saves changes to this file whenever configuration updates are made, ensuring that your setup is always up-to-date and persistent across restarts.

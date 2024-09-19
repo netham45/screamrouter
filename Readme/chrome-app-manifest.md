@@ -2,13 +2,17 @@
 
 ## Overview
 
-![ScreamRouter Chrome App](/images/ChromeAppView.png)
+ScreamRouter, a versatile audio routing and management system, can run as a Progressive Web App (PWA). This feature enhances the user experience by allowing quick access to key functions through app shortcuts, and allowing the application to run as its own app on Android or in its own window on PC.
 
-ScreamRouter can run as a Progressive Web App (PWA). This feature enhances the user experience by allowing quick access to key functions through app shortcuts, and allowing the application to run as it's own app on Android or in it's own window on PC.
+![ScreamRouter Chrome App](../images/ChromeAppView.png)
+
+For more information about ScreamRouter and its features, please refer to the [main README](../README.md).
 
 ## Usage
 
-To use the ScreamRouter Chrome App, you can install it from Chrome's menu. ![Chrome menu install Windows](/images/ChromeAppInstall.png)
+To use the ScreamRouter Chrome App, you can install it from Chrome's menu. 
+
+![Chrome menu install Windows](../images/ChromeAppInstall.png)
 
 It is also available for Chrome on Android.
 
@@ -16,7 +20,7 @@ It is also available for Chrome on Android.
 
 ## App Shortcuts
 
-![Chrome shortcuts](/images/ChromeShortcuts.png)
+![Chrome shortcuts](../images/ChromeShortcuts.png)
 
 * Shortcuts are only available on Desktop
 

@@ -1,11 +1,12 @@
-# Setting up ScreamSender on Raspberry Pi
+# Setting up ScreamSender on Raspberry Pi Zero
 
-This guide provides instructions for setting up ScreamSender on a Raspberry Pi to forward USB audio to ScreamRouter.
+This guide provides instructions for setting up ScreamSender on a Raspberry Pi Zero to forward USB audio to ScreamRouter. This setup allows you to use a Raspberry Pi Zero as a USB audio device that can send audio to ScreamRouter over the network.
 
 ## Prerequisites
 
 - Raspberry Pi Zero 2 W or Raspberry Pi Zero W
 - Raspberry Pi OS Lite (32-bit) installed and configured
+- Access to the Raspberry Pi via SSH or terminal
 
 ## Setup Instructions
 
@@ -112,6 +113,24 @@ sudo reboot
 
 After rebooting, the Raspberry Pi should be configured as a USB audio device and start forwarding audio using ScreamSender.
 
+## Integration with ScreamRouter
+
+To use this ScreamSender with ScreamRouter:
+
+1. In ScreamRouter, add a new source with the IP address of your Raspberry Pi Zero.
+2. Set the port to match the PORT value in the `usb_gadget_audio.sh` script (default is 16401).
+3. Configure the audio format settings (bit depth, sample rate, channels) to match the values in the script.
+
+ScreamRouter will then be able to receive audio from your Raspberry Pi Zero USB audio device.
+
+## Troubleshooting
+
+- If the USB audio device is not recognized, check the USB gadget configuration in `/boot/config.txt` and `/etc/modules`.
+- If audio is not being sent to ScreamRouter, verify the IP address and port in the `usb_gadget_audio.sh` script.
+- Ensure that your network allows UDP traffic on the specified port between the Raspberry Pi Zero and ScreamRouter.
+
 ## Note
 
-Ensure to replace the IP address and port in the `usb_gadget_audio.sh` script with the appropriate values for your setup.
+Ensure to replace the IP_ADDRESS and PORT variables in the `usb_gadget_audio.sh` script with the appropriate values for your ScreamRouter setup.
+
+For more information about ScreamRouter and its features, please refer to the [main README](../README.md) and other documentation files in the Readme directory.

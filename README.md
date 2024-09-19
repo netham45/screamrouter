@@ -4,7 +4,7 @@
 
 ### What is ScreamRouter
 
-ScreamRouter is a versatile audio routing and management system with a Python frontend/configuration layer and a C++ backend, designed for network audio streaming. It supports Scream and RTP audio sources, along with Scream receivers and web-based MP3 streamers. 
+ScreamRouter is a versatile audio routing and management system with a Python frontend/configuration layer and C++ backend, designed for network audio streaming. It supports Scream and RTP audio sources, along with Scream receivers and web-based MP3 streamers. 
 
 ### Key Features of ScreamRouter
 
@@ -16,7 +16,7 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 * Volume control at every level: Source, Route, Sink, and Group
 
 #### Audio Processing and Playback
-* Custom mixer/equalizer/channel layout processor for minimal latency
+* Custom mixer/equalizer/channel layout processor for minimal latency, implemented in both Python and C++
 * Adjustable equalization for any sink, route, source, or group
 * MP3 stream exposure for browser-based listening of all sinks
 * URL playback capability for sinks or sink groups
@@ -29,8 +29,10 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 
 #### System Management
 * Automatic YAML saving on setting changes
-* Flexible plugin system for easy addition of new sources
+* Flexible plugin system for easy addition of new sources and functionalities
 * API and web interface for media control commands to containers
+* Advanced configuration management and solving system
+* Comprehensive logging system
 
 #### Sources
 * RTP/Linux Source
@@ -49,7 +51,6 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 * ESP32 A1S Audiokit Receiver
 * Android Receiver
 * Python Scream Receiver
-
 
 ## Use Cases
 
@@ -100,7 +101,7 @@ Utilize built-in equalization tools to optimize audio output, particularly benef
   - Details on the custom mixer/equalizer/channel layout processor
 
 * [Configuration](Readme/configuration.md)
-  - Description of ScreamRouter's routing configuration
+  - Description of ScreamRouter's routing configuration and configuration management system
 
 ### Senders
 
@@ -165,8 +166,11 @@ Utilize built-in equalization tools to optimize audio output, particularly benef
 * [Swagger Documentation](https://netham45.org/wp-content/uploads/screamrouter-docs/)
   - Swagger Docs for ScreamRouter API
 
+* [API Structure](Readme/api.md)
+  - Overview of the API structure and available endpoints
+
 * [Plugins System](Readme/plugins.md)
-  - Documentation on the flexible plugin system for adding new sources
+  - Documentation on the flexible plugin system for adding new sources and functionalities
 
 * [Source Command Receiver](Readme/command_receiver.md)
   - Information about the command receiver module for remote control
@@ -182,9 +186,65 @@ ScreamRouter is aiming to be accessible to those with visual impairments. To thi
 
 If you encounter any issues affecting accessibility please file an issue on Github.
 
-
 ## Example Devices
 
 ### ESP32S3 Portable Receiver
 
 ![Portable ESP32S3 Scream Receiver](/images/esp32s3_receiver.jpg)
+
+## Technical Details
+
+### Audio Processing Capabilities
+
+ScreamRouter supports various audio formats and processing capabilities:
+
+- Input formats: Scream, RTP
+- Output formats: PCM, MP3
+- Sample rates: Configurable, typically 44.1kHz, 48kHz
+- Bit depths: 16-bit, 24-bit, 32-bit LPCM
+- Channel layouts: Stereo, 5.1 surround, 7.1 surround (configurable)
+- Equalization: 18-band equalizer for each sink, route, source, or group
+
+### Backend Implementation
+
+ScreamRouter uses a hybrid backend approach:
+
+- Python: Used for high-level logic, configuration management, and some audio processing tasks
+- C/C++: Implemented for performance-critical audio processing tasks, ensuring low latency
+
+### Configuration Management
+
+The configuration management system includes:
+
+- YAML-based configuration files
+- Automatic saving of configuration changes
+- Configuration solver for resolving complex routing scenarios
+
+### Logging System
+
+ScreamRouter includes a comprehensive logging system for debugging and monitoring:
+
+- Configurable log levels
+- Separate logs for different components (audio processing, network, plugins, etc.)
+- Rotation of log files to manage disk usage
+
+### Network Communication
+
+- TCP manager for handling network communications
+- Support for multicast and unicast audio streaming
+
+### Plugin System
+
+The flexible plugin system allows for easy extension of ScreamRouter's capabilities:
+
+- Support for adding new audio sources
+- Custom audio processing plugins
+- Integration with external services and devices
+
+Current plugins include:
+- play_url: Allows playing audio from arbitrary URLs
+- play_url_multiple: Enables playing multiple URLs simultaneously
+
+Developers can create new plugins to extend functionality further.
+
+For more detailed technical information, please refer to the source code and individual documentation files in the project repository.

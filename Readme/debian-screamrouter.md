@@ -1,15 +1,19 @@
-# Debian ScreamRouter Installation Guid
+# Debian ScreamRouter Installation Guide
 
-This guide provides step-by-step instructions for installing ScreamRouter on a Debian-based system.
+This guide provides step-by-step instructions for installing ScreamRouter on a Debian-based system. ScreamRouter is a versatile audio routing and management system designed for network audio streaming.
 
-* Docker is recommended.
+## System Requirements
+
+- Debian-based Linux distribution
+- Root or sudo access to your system
+
+Note: While this guide is for a direct installation, Docker is recommended for easier setup and management.
 
 ## Prerequisites
 
 Ensure you have root or sudo access to your Debian system.
 
 ## Installation Steps
-
 
 1. Update the package sources and install required dependencies:
 
@@ -47,7 +51,7 @@ Ensure you have root or sudo access to your Debian system.
    ./build.sh
    ```
 
-5. Generate a certifcate for HTTPS:
+5. Generate a certificate for HTTPS:
 
    Or provide your own in the cert/ folder
 
@@ -65,3 +69,9 @@ Ensure you have root or sudo access to your Debian system.
    cd ~/screamrouter
    ./screamrouter.py
    ```
+
+## Accessing ScreamRouter
+
+After installation, you can access the ScreamRouter web interface by opening a web browser and navigating to `https://localhost` (or replace `localhost` with your server's IP address if accessing from another device). Make sure to accept the self-signed certificate warning if you generated your own certificate.
+
+For more information on using ScreamRouter and its features, please refer to the [main README](../README.md) and other documentation files in the Readme directory.

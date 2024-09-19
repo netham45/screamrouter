@@ -1,12 +1,14 @@
-# ScreamRouter Home Assistant Component
+# ScreamRouter Home Assistant Integration
 
-This Home Assistant component allows you to control a ScreamRouter instance directly from your Home Assistant setup. ScreamRouter is an audio routing system that enables flexible management of audio sources, routes, and sinks.
+## Introduction
 
-[Go to the component's repo here](https://github.com/netham45/screamrouter_ha_component)
+The ScreamRouter Home Assistant integration allows you to control your ScreamRouter instance directly from your Home Assistant setup. This integration brings the power and flexibility of ScreamRouter's audio routing system into your smart home environment, enabling seamless control of audio sources, routes, and sinks through Home Assistant's interface and automation capabilities.
+
+[Go to the component's repository here](https://github.com/netham45/screamrouter_ha_component)
 
 ## Features
 
-The component provides different control options depending on the type of ScreamRouter entry:
+The integration provides different control options depending on the type of ScreamRouter entry:
 
 ### Sources
 
@@ -35,7 +37,7 @@ The component provides different control options depending on the type of Scream
 
 ## Configuration
 
-The component should be configurable through the Home Assistant UI. You'll need to provide:
+The integration is configurable through the Home Assistant UI. You'll need to provide:
 
 - The IP address or hostname of your ScreamRouter instance
 
@@ -56,6 +58,7 @@ You can use ScreamRouter entities in your automations, scripts, and scenes. For 
 - Create a "Movie Night" scene that sets up your audio routing and adjusts volumes
 - Use voice commands to control your audio setup through ScreamRouter
 
+
 ## Troubleshooting
 
 If you encounter issues:
@@ -67,3 +70,5 @@ If you encounter issues:
 ## Screenshots
 
 ![Screenshot of HA for ScreamRouter](/images/HAMediaPlayer.png)
+
+For more information about ScreamRouter and its features, please refer to the [main README](../README.md) and other documentation files in the Readme directory.

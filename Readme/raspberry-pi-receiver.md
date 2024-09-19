@@ -1,6 +1,6 @@
 # Setting up Scream Unix Receiver on Raspberry Pi
 
-This guide will walk you through the process of setting up the Scream Unix receiver on a Raspberry Pi and other Linux systems and configuring it to run on boot.
+This guide explains how to set up a Scream Unix receiver on a Raspberry Pi or other Linux systems. This receiver can be used as an audio output destination for ScreamRouter, allowing you to play audio from ScreamRouter on your Raspberry Pi.
 
 ## Prerequisites
 
@@ -89,29 +89,55 @@ This guide will walk you through the process of setting up the Scream Unix recei
 
 ## Enabling Linger for Your User
 
-To ensure that the user service starts on boot, even if the user is not logged in, you need to enable linger for your user:
+To ensure that the user service starts on boot, even if the user is not logged in, enable linger for your user:
 
 ```
 sudo loginctl enable-linger $USER
 ```
 
-## Verifying the Setup
+## Audio Output Configuration
 
-1. Check the status of the Scream service:
+By default, the Scream receiver uses PulseAudio for audio output. You can change the audio output method by modifying the `-o` option in the ExecStart line of the scream.service file. Available options include:
 
-   ```
-   systemctl --user status scream.service
-   ```
+- `pulse`: PulseAudio (default)
+- `alsa`: ALSA
+- `jack`: JACK Audio Connection Kit
 
-2. If everything is set up correctly, you should see that the service is active and running.
+For example, to use ALSA instead of PulseAudio, change the ExecStart line to:
+
+```
+ExecStart=/usr/bin/scream -v -u -o alsa -t 60 -l 100
+```
+
+Remember to reload the systemd user daemon and restart the service after making changes.
+
+## Network Configuration
+
+Ensure that your network allows UDP traffic on port 4010 (default for Scream) between ScreamRouter and your Raspberry Pi. You may need to configure your router or firewall to allow this traffic.
+
+## Integration with ScreamRouter
+
+To use this Scream receiver with ScreamRouter:
+
+1. In ScreamRouter, add a new sink with the IP address of your Raspberry Pi.
+2. Set the port to 4010 (default for Scream).
+3. Configure the audio format settings (bit depth, sample rate, channels) to match your receiver's capabilities.
+
+ScreamRouter will then be able to route audio to your Raspberry Pi using this Scream receiver.
 
 ## Troubleshooting
 
-- If you encounter any issues, check the system logs:
+- Check the service status:
+  ```
+  systemctl --user status scream.service
+  ```
 
+- View logs:
   ```
   journalctl --user -u scream.service
   ```
 
 - Ensure that your Raspberry Pi's audio output is properly configured.
 - Verify that your network settings allow the Scream traffic to reach your Raspberry Pi.
+
+For more information about ScreamRouter and its features, please refer to the [main README](../README.md) and other documentation files in the Readme directory.
