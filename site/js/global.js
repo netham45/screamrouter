@@ -73,7 +73,7 @@ export function onload() {
 
     const selectedRouteName = getCookie('selectedRoute');
     if (selectedRouteName) {
-        let result = document.querySelector(`[SPAN.optiondata-name="${selectedRouteName}"]`);
+        let result = document.querySelector(`SPAN.option[data-name="${selectedRouteName}"]`);
         if (result) {
             selectedRoute = result;
         }
