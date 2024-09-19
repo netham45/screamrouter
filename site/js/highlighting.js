@@ -87,6 +87,10 @@ export function highlightActiveRoutes() {
         let [r1, g1, b1] = [0, 0, 0];
         let [r2, g2, b2] = [0, 0, 0];
         route.style.display = "none";
+        if (isSinkHighlighted && isSourceHighlighted)
+            routeDoubleHighlighted = true;
+        else if (isSinkHighlighted || isSourceHighlighted)
+            routeHighlighted = true;
         if (isSinkHighlighted) {
             if (isSourceHighlighted) {
                 [r1, g1, b1] = [COLORS.source.r, COLORS.source.g, COLORS.source.b];
@@ -118,13 +122,10 @@ export function highlightActiveRoutes() {
             route.style.backgroundColor = "";
             route.style.background = "";
         } else if (!(r2 || g2 || b2)) {
-            routeHighlighted = true;
             route.style.display = "block";
             route.style.background = "";
             route.style.backgroundColor = `rgba(${r1}, ${g1}, ${b1}, 0.6)`;
         } else {
-            routeDoubleHighlighted = true;
-            routeHighlighted = true;
             route.style.backgroundColor = "";
             route.style.display = "block";
             route.style.background = `linear-gradient(90deg, rgba(${r1}, ${g1}, ${b1}, 0.6), rgba(${r2}, ${g2}, ${b2}, 0.6))`;
