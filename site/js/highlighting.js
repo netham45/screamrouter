@@ -75,7 +75,8 @@ export function highlightActiveRoutes() {
     const parentSinks = selectedSink ? getParentSinks() : [];
     const associatedSources = selectedSource ? getAssociatedSources() : [];
     const parentSources = selectedSource ? getParentSources() : [];
-
+    let routeHighlighted = false;
+    let routeDoubleHighlighted = false;
     routes.forEach(route => {
         const isSinkHighlighted = selectedSink && (route.dataset["sink"] === selectedSink.dataset["name"] || parentSinks.includes(route.dataset["sink"]));
         const isSourceHighlighted = selectedSource && (route.dataset["source"] === selectedSource.dataset["name"] || parentSources.includes(route.dataset["source"]));
@@ -85,7 +86,7 @@ export function highlightActiveRoutes() {
 
         let [r1, g1, b1] = [0, 0, 0];
         let [r2, g2, b2] = [0, 0, 0];
-
+        route.style.display = "none";
         if (isSinkHighlighted) {
             if (isSourceHighlighted) {
                 [r1, g1, b1] = [COLORS.source.r, COLORS.source.g, COLORS.source.b];
@@ -117,13 +118,56 @@ export function highlightActiveRoutes() {
             route.style.backgroundColor = "";
             route.style.background = "";
         } else if (!(r2 || g2 || b2)) {
+            routeHighlighted = true;
+            route.style.display = "block";
             route.style.background = "";
             route.style.backgroundColor = `rgba(${r1}, ${g1}, ${b1}, 0.6)`;
         } else {
+            routeDoubleHighlighted = true;
+            routeHighlighted = true;
             route.style.backgroundColor = "";
+            route.style.display = "block";
             route.style.background = `linear-gradient(90deg, rgba(${r1}, ${g1}, ${b1}, 0.6), rgba(${r2}, ${g2}, ${b2}, 0.6))`;
         }
     });
+    if (!routeHighlighted) {
+        routes.forEach(route => {
+            route.style.display = "block";
+        });
+    }
+    if (routeDoubleHighlighted) {
+        routes.forEach(route => {
+            const isSinkHighlighted = selectedSink && (route.dataset["sink"] === selectedSink.dataset["name"] || parentSinks.includes(route.dataset["sink"]));
+            const isSourceHighlighted = selectedSource && (route.dataset["source"] === selectedSource.dataset["name"] || parentSources.includes(route.dataset["source"]));
+            const isSelected = route === selectedRoute;
+
+            route.classList.toggle("option-selected", isSelected);
+
+            let [r1, g1, b1] = [0, 0, 0];
+            let [r2, g2, b2] = [0, 0, 0];
+            route.style.display = "none";
+            if (isSinkHighlighted) {
+                if (isSourceHighlighted) {
+                    [r1, g1, b1] = [COLORS.source.r, COLORS.source.g, COLORS.source.b];
+                    [r2, g2, b2] = [COLORS.sink.r, COLORS.sink.g, COLORS.sink.b];
+                    if (isSelected) {
+                        g1 += 48;
+                        g2 += 48;
+                    }
+                }
+            }
+
+            if (isSelected && !(r1 || g1 || b1)) {
+                [r1, g1, b1] = [COLORS.route.r, COLORS.route.g, COLORS.route.b];
+            }
+
+            if ((r1 || g1 || b1) && (r2 || g2 || b2)) {
+                route.style.backgroundColor = "";
+                route.style.display = "block";
+                route.style.background = `linear-gradient(90deg, rgba(${r1}, ${g1}, ${b1}, 0.6), rgba(${r2}, ${g2}, ${b2}, 0.6))`;
+            }
+        });
+    }
     drawLines();
 }
 
