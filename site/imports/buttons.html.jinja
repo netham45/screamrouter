@@ -1,7 +1,0 @@
-{% macro button(callback, label, class="", data="{}", alt="") %}
-                    <button id="button_{{callback}}" onclick="{{callback}}()" class="{{class}}" data-data="{{data}}" alt="{{alt}}" title="{{alt}}">{{label}}</button>
-{%- endmacro %}
-
-{% macro disabled_button(callback, label, class="", data="{}", alt="") %}
-                    <button id="button_{{callback}}" onclick="{{callback}}()" class="{{class}}" data-data="{{data}}" alt="{{alt}}" title="{{alt}}" disabled>{{label}}</button>
-{%- endmacro %}

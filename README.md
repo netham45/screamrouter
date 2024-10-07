@@ -5,10 +5,6 @@
 ## Table of Contents
 1. [What is ScreamRouter](#what-is-screamrouter)
 2. [Key Features](#key-features)
-   - [Audio Routing and Configuration](#audio-routing-and-configuration)
-   - [Audio Processing and Playback](#audio-processing-and-playback)
-   - [Integration and Compatibility](#integration-and-compatibility)
-   - [System Management](#system-management)
 3. [Sources](#sources)
 4. [Receivers](#receivers)
 5. [Use Cases](#use-cases)

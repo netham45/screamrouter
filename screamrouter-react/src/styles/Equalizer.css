@@ -1,0 +1,147 @@
+:root {
+  --primary-color: #3498db;
+  --secondary-color: #2c3e50;
+  --background-color: #ecf0f1;
+  --text-color: #34495e;
+  --slider-height: 200px;
+  --slider-width: 50px;
+}
+
+.equalizer-container {
+  background-color: var(--background-color);
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.equalizer-title {
+  color: var(--text-color);
+  font-size: 1.5rem;
+  margin-bottom: 20px;
+  text-align: center;
+}
+
+.equalizer-sliders {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.equalizer-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: var(--slider-width);
+}
+
+.vertical-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--slider-height);
+  height: 4px;
+  background: var(--secondary-color);
+  outline: none;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  margin: calc(var(--slider-height) / 2 - var(--slider-width) / 2) 0;
+}
+
+.vertical-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--primary-color);
+  cursor: pointer;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.vertical-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--primary-color);
+  cursor: pointer;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.vertical-slider::-webkit-slider-thumb:hover,
+.vertical-slider::-moz-range-thumb:hover {
+  transform: scale(1.2);
+}
+
+.slider-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.equalizer-band label {
+  font-size: 0.8rem;
+  color: var(--text-color);
+  margin-bottom: 2px;
+}
+
+.slider-value {
+  font-size: 0.8rem;
+  color: var(--primary-color);
+}
+
+.equalizer-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.apply-button,
+.cancel-button {
+  padding: 8px 16px;
+  font-size: 1rem;
+  cursor: pointer;
+  border: none;
+  border-radius: 5px;
+  transition: all 0.2s ease;
+}
+
+.apply-button {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.cancel-button {
+  background-color: var(--secondary-color);
+  color: white;
+}
+
+.apply-button:hover,
+.cancel-button:hover {
+  opacity: 0.9;
+  transform: translateY(-2px);
+}
+
+@media (max-width: 768px) {
+  .equalizer-sliders {
+    justify-content: flex-start;
+    overflow-x: auto;
+    padding-bottom: 20px;
+  }
+
+  .equalizer-band {
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --slider-height: 150px;
+    --slider-width: 40px;
+  }
+}

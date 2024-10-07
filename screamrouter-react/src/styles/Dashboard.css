@@ -1,0 +1,187 @@
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  position: relative;
+}
+
+.dashboard-content {
+  display: flex;
+  justify-content: space-between;
+  height: 100%;
+}
+
+.sources-column,
+.sinks-column {
+  width: 45%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.dashboard-item {
+  margin: 5px 0;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  width: 100%;
+  text-align: center;
+  text-decoration: none;
+  color: inherit;
+  background-color: #e6ffe6;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.connections {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.route-line {
+  pointer-events: all;
+  cursor: pointer;
+  transition: stroke-width 0.2s ease, stroke 0.2s ease;
+}
+
+.route-line:hover {
+  stroke-width: 4;
+  stroke: #4CAF50;
+}
+
+.error-message {
+  color: red;
+  margin-bottom: 10px;
+}
+
+.favorite-sections {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.favorite-section, .active-source-section {
+  width: 100%;
+  margin-bottom: 20px;
+}
+
+.favorite-section h3, .active-source-section h3 {
+  margin-bottom: 10px;
+}
+
+.favorite-section table, .active-source-section table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.favorite-section th,
+.favorite-section td,
+.active-source-section th,
+.active-source-section td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+}
+
+.favorite-section th, .active-source-section th {
+  background-color: #f2f2f2;
+}
+
+.favorite-section tr:nth-child(even), .active-source-section tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+.favorite-section tr:hover, .active-source-section tr:hover {
+  background-color: #f5f5f5;
+}
+
+.favorite-section a, .active-source-section a {
+  text-decoration: none;
+  color: #0066cc;
+}
+
+.favorite-section a:hover, .active-source-section a:hover {
+  text-decoration: underline;
+}
+
+.favorite-section button, .active-source-section button {
+  margin: 0 2px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.favorite-section button:hover, .active-source-section button:hover {
+  opacity: 0.8;
+}
+
+.favorite-section button.enabled,
+.active-source-section button.enabled {
+  background-color: #4CAF50;
+  color: white;
+}
+
+.favorite-section button.disabled,
+.active-source-section button.disabled {
+  background-color: #f44336;
+  color: white;
+}
+
+.favorite-section button.active,
+.active-source-section button.active {
+  background-color: #2196F3;
+  color: white;
+}
+
+.favorite-section input[type="range"],
+.active-source-section input[type="range"] {
+  width: 80px;
+  margin: 0 5px;
+  vertical-align: middle;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background-color: white;
+  padding: 20px;
+  border-radius: 5px;
+  max-width: 80%;
+  max-height: 80%;
+  overflow-y: auto;
+  position: relative;
+}
+
+.close-modal {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 24px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  color: #333;
+}
+
+.close-modal:hover {
+  color: #f44336;
+}

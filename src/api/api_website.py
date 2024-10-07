@@ -1,12 +1,15 @@
 """Holds the API endpoints to serve files for html/javascript/css"""
 import mimetypes
 import multiprocessing
-from typing import List, Optional
+from typing import List, Optional, Union
+import os
 
 import websockify
 import websockify.websocketproxy
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.templating import _TemplateResponse
@@ -35,42 +38,9 @@ class APIWebsite():
         """Main FastAPI instance"""
         self.screamrouter_configuration:ConfigurationManager = screamrouter_configuration
         """ScreamRouter Configuration Manager"""
-        self.main_api.get("/", tags=["Site"])(self.site_index)
-        self.main_api.get("/body", tags=["Site"])(self.site_index_body)
-        self.main_api.get(f"{SITE_PREFIX}/screamrouter.js",
-                          tags=["Site Resources"],)(self.site_javascript)
-        self.main_api.get(f"{SITE_PREFIX}/screamrouter.css",
-                          tags=["Site Resources"])(self.site_css)
-        self.main_api.get(f"{SITE_PREFIX}/add_sink",
-                          tags=["Site Resources"])(self.add_sink)
-        self.main_api.get(f"{SITE_PREFIX}/add_sink_group",
-                          tags=["Site Resources"])(self.add_sink_group)
-        self.main_api.get(f"{SITE_PREFIX}/edit_sink/{{sink_name}}",
-                          tags=["Site Resources"])(self.edit_sink)
-        self.main_api.get(f"{SITE_PREFIX}/edit_sink/{{sink_name}}/equalizer",
-                          tags=["Site Resources"])(self.edit_sink_equalizer)
-        self.main_api.get(f"{SITE_PREFIX}/add_source",
-                          tags=["Site Resources"])(self.add_source)
-        self.main_api.get(f"{SITE_PREFIX}/add_source_group",
-                          tags=["Site Resources"])(self.add_source_group)
         self.main_api.get(f"{SITE_PREFIX}/vnc/{{source_name}}",
                           tags=["Site Resources"])(self.vnc)
-        self.main_api.get(f"{SITE_PREFIX}/edit_source/{{source_name}}",
-                          tags=["Site Resources"])(self.edit_source)
-        self.main_api.get(f"{SITE_PREFIX}/edit_source/{{source_name}}/equalizer",
-                          tags=["Site Resources"])(self.edit_source_equalizer)
-        self.main_api.get(f"{SITE_PREFIX}/add_route",
-                          tags=["Site Resources"])(self.add_route)
-        self.main_api.get(f"{SITE_PREFIX}/edit_route/{{route_name}}",
-                          tags=["Site Resources"])(self.edit_route)
-        self.main_api.get(f"{SITE_PREFIX}/edit_route/{{route_name}}/equalizer",
-                          tags=["Site Resources"])(self.edit_route_equalizer)
-        self.main_api.get(f"{SITE_PREFIX}/edit_sink_routes/{{sink_name}}",
-                          tags=["Site Resources"])(self.edit_sink_routes)
-        self.main_api.get(f"{SITE_PREFIX}/edit_source_routes/{{source_name}}",
-                          tags=["Site Resources"])(self.edit_source_routes)
         self.main_api.mount("/site/noVNC", StaticFiles(directory="./site/noVNC"), name="noVNC")
-        self.main_api.mount("/site/js", StaticFiles(directory="./site/js"), name="Site Javascript")
         self.main_api.get("/favicon.ico", tags=["Site Resources"])(self.favicon)
 
         self._templates = Jinja2Templates(directory="./site/")
@@ -81,6 +51,55 @@ class APIWebsite():
         """Holds a list of websockify processes to kill"""
         self.vnc_port: int = 5900
         """Holds the current vnc port, gets incremented by one per connection"""
+        self.main_api.get("/site", name="site")(self.serve_index)
+        self.main_api.get("/", name="site")(self.redirect_index)
+        self.main_api.get("/site/{path}", name="site")(self.serve_static_or_index)
+
+    async def serve_static_or_index(self, request: Request, path: str) -> FileResponse:
+        """
+        Serve static files or index.html based on the requested path. This is for React compatibility.
+
+        Args:
+            request (Request): The incoming request object.
+            path (str): The requested path.
+
+        Returns:
+            Union[FileResponse, HTTPException]: The file response or a 404 error.
+        """
+        file_path: str = os.path.join("./site", path)
+
+        if os.path.isfile(file_path):
+            # If the requested path is a file, serve it directly
+            return FileResponse(file_path)
+        elif os.path.isdir(file_path) and os.path.isfile(os.path.join(file_path, "index.html")):
+            # If the path is a directory and contains an index.html, serve that
+            return FileResponse(os.path.join(file_path, "index.html"))
+        else:
+            # If the file doesn't exist, try to serve index.html from the root
+            index_path: str = "./site/index.html"
+            if os.path.isfile(index_path):
+                return FileResponse(index_path)
+            else:
+                # If root index.html doesn't exist, raise a 404 error
+                raise HTTPException(status_code=404, detail="File not found")
+
+    async def serve_index(self) -> FileResponse:
+        """
+        Serve the main index.html file.
+
+        Returns:
+            FileResponse: The index.html file response.
+        """
+        return FileResponse("./site/index.html")
+
+    async def redirect_index(self) -> RedirectResponse:
+        """
+        Redirect to the /site/ URL.
+
+        Returns:
+            RedirectResponse: A redirect response to /site/.
+        """
+        return RedirectResponse(url="/site/")
 
     def favicon(self):
         """Favicon handler"""
