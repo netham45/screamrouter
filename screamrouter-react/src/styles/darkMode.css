@@ -92,7 +92,7 @@ body.dark-mode {
 .dark-mode input[type="text"],
 .dark-mode input[type="number"],
 .dark-mode select {
-  background-color: #34495e;
+  background-color: #2c3e50;
   color: #f0f0f0;
   border: 1px solid #4a4a4a;
 }
@@ -226,7 +226,7 @@ body.dark-mode {
 /* Improve contrast for active elements */
 .dark-mode .btn.active,
 .dark-mode button.active {
-  background-color: #2ecc71;
+  background-color: #008CBA;
   color: #2c3e50;
 }
 
@@ -242,4 +242,8 @@ body.dark-mode {
 
 .dark-mode a:hover {
   color: #2ecc71;
+}
+
+.dark-mode .modal-content {
+    background-color: #34495e;   
 }

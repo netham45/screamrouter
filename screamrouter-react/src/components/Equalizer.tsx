@@ -178,7 +178,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     const canvas = canvasRef.current;
     if (canvas) {
       const ctx = canvas.getContext('2d');
-      if (ctx) {
+      if (ctx) { 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         // Set canvas background to dark
@@ -295,12 +295,12 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
                 className="vertical-slider"
               />
               <div className="slider-info">
-                <label htmlFor={band}>{frequencies[index].toFixed(0)} Hz</label>
-                <span className="slider-value">{value.toFixed(1)}</span>
+                <label htmlFor={band}>{frequencies[index].toFixed(0)}</label>
               </div>
             </div>
           ))}
         </div>
+        <div className="hz-label">Hz</div>
       </div>
       <div className="equalizer-buttons">
         <button className="apply-button" onClick={updateEqualizer}>Apply</button>
