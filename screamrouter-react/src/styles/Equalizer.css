@@ -1,34 +1,59 @@
 :root {
-  --primary-color: #3498db;
-  --secondary-color: #2c3e50;
-  --background-color: #ecf0f1;
-  --text-color: #34495e;
+  --primary-color: #2ecc71;
+  --secondary-color: #27ae60;
+  --background-color: #f0f8f1;
+  --text-color: #2c3e50;
   --slider-height: 200px;
-  --slider-width: 50px;
+  --slider-width: 30px;
 }
 
 .equalizer-container {
   background-color: var(--background-color);
-  border-radius: 10px;
-  padding: 20px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  max-width: 900px;
+  border-radius: 15px;
+  padding: 30px;
+  box-shadow: 0 8px 16px rgba(46, 204, 113, 0.1);
+  max-width: 1000px;
   margin: 0 auto;
+  position: relative;
+  overflow: hidden;
 }
+
 
 .equalizer-title {
   color: var(--text-color);
-  font-size: 1.5rem;
-  margin-bottom: 20px;
+  font-size: 2rem;
+  margin-bottom: 30px;
   text-align: center;
+  position: relative;
+  z-index: 1;
+}
+
+.music-note {
+  color: var(--primary-color);
+  font-size: 1.5rem;
+  margin: 0 10px;
+}
+
+.equalizer-graph {
+  margin-bottom: 20px;
+  background-color: #1e1e1e;
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.equalizer-graph canvas {
+  width: 100%;
+  height: auto;
 }
 
 .equalizer-sliders {
   display: flex;
-  justify-content: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 20px;
+  justify-content: space-between;
+  gap: 5px;
+  margin-bottom: 30px;
+  position: relative;
+  z-index: 1;
 }
 
 .equalizer-band {
@@ -39,41 +64,60 @@
 }
 
 .vertical-slider {
+  margin-top: 40px;
+  margin-bottom: 40px;
   -webkit-appearance: none;
   appearance: none;
-  width: var(--slider-height);
+  min-width: 100px;
   height: 4px;
   background: var(--secondary-color);
   outline: none;
   transform: rotate(-90deg);
   transform-origin: 50% 50%;
   margin: calc(var(--slider-height) / 2 - var(--slider-width) / 2) 0;
+  position: relative;
+  margin-top: 50px !important;
+  margin-bottom: 50px !important;
+}
+
+.vertical-slider::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  left: 0;
+  right: 0;
+  bottom: -8px;
+  background: linear-gradient(to right, rgba(46, 204, 113, 0.1), rgba(46, 204, 113, 0.3));
+  border-radius: 10px;
 }
 
 .vertical-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   background: var(--primary-color);
   cursor: pointer;
   border-radius: 50%;
-  transition: all 0.2s ease;
+  box-shadow: 0 0 10px rgba(46, 204, 113, 0.5);
+  transition: all 0.3s ease;
 }
 
 .vertical-slider::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   background: var(--primary-color);
   cursor: pointer;
   border-radius: 50%;
-  transition: all 0.2s ease;
+  box-shadow: 0 0 10px rgba(46, 204, 113, 0.5);
+  transition: all 0.3s ease;
   border: none;
 }
 
 .vertical-slider::-webkit-slider-thumb:hover,
 .vertical-slider::-moz-range-thumb:hover {
   transform: scale(1.2);
+  box-shadow: 0 0 15px rgba(46, 204, 113, 0.7);
 }
 
 .slider-info {
@@ -86,29 +130,35 @@
 .equalizer-band label {
   font-size: 0.8rem;
   color: var(--text-color);
-  margin-bottom: 2px;
+  margin-bottom: 5px;
+  transform: rotate(-45deg);
 }
 
 .slider-value {
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   color: var(--primary-color);
+  font-weight: bold;
 }
 
 .equalizer-buttons {
   display: flex;
   justify-content: center;
-  gap: 10px;
-  margin-top: 20px;
+  gap: 20px;
+  margin-top: 30px;
+  position: relative;
+  z-index: 1;
 }
 
-.apply-button,
-.cancel-button {
-  padding: 8px 16px;
+.equalizer-buttons button {
+  padding: 12px 24px;
   font-size: 1rem;
   cursor: pointer;
   border: none;
-  border-radius: 5px;
-  transition: all 0.2s ease;
+  border-radius: 25px;
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: bold;
 }
 
 .apply-button {
@@ -116,32 +166,83 @@
   color: white;
 }
 
-.cancel-button {
+.default-button {
   background-color: var(--secondary-color);
   color: white;
 }
 
-.apply-button:hover,
-.cancel-button:hover {
+.close-button {
+  background-color: var(--text-color);
+  color: white;
+}
+
+.equalizer-buttons button:hover {
   opacity: 0.9;
-  transform: translateY(-2px);
+  transform: translateY(-3px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.equalizer-buttons button:active {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 @media (max-width: 768px) {
   .equalizer-sliders {
-    justify-content: flex-start;
-    overflow-x: auto;
-    padding-bottom: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
   }
 
   .equalizer-band {
-    flex-shrink: 0;
+    margin-bottom: 20px;
+  }
+
+  .equalizer-buttons {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .equalizer-buttons button {
+    width: 100%;
+    max-width: 200px;
+    margin-bottom: 10px;
   }
 }
 
 @media (max-width: 480px) {
   :root {
     --slider-height: 150px;
-    --slider-width: 40px;
+    --slider-width: 25px;
   }
+
+  .equalizer-title {
+    font-size: 1.5rem;
+  }
+
+  .music-note {
+    font-size: 1.2rem;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.equalizer-band:hover .vertical-slider::-webkit-slider-thumb,
+.equalizer-band:hover .vertical-slider::-moz-range-thumb {
+  animation: pulse 1s infinite;
+}
+
+.hz-label {
+    width: 100%;
+    text-align: center;
+    margin-top: -25px;
 }

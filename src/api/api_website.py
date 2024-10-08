@@ -4,6 +4,7 @@ import multiprocessing
 from typing import List, Optional, Union
 import os
 
+import httpx
 import websockify
 import websockify.websocketproxy
 from fastapi.staticfiles import StaticFiles
@@ -28,8 +29,9 @@ from src.screamrouter_types.website import (AddEditRouteInfo, AddEditSinkInfo,
 
 logger = get_logger(__name__)
 
-SITE_PREFIX="/site"
-TEMPLATE_DIRECTORY_PREFIX="."
+NPM_REACT_DEBUG_SITE: bool = False
+SITE_PREFIX: str = "/site"
+TEMPLATE_DIRECTORY_PREFIX: str = "."
 
 class APIWebsite():
     """Holds the API endpoints to serve files for html/javascript/css"""
@@ -51,9 +53,61 @@ class APIWebsite():
         """Holds a list of websockify processes to kill"""
         self.vnc_port: int = 5900
         """Holds the current vnc port, gets incremented by one per connection"""
-        self.main_api.get("/site", name="site")(self.serve_index)
+        if NPM_REACT_DEBUG_SITE:
+            self.main_api.get("/site/{path:path}", name="site2")(self.proxy_npm_devsite)
+        else:
+            self.main_api.get("/site", name="site")(self.serve_index)
+            self.main_api.get("/site/{path}", name="site")(self.serve_static_or_index)
         self.main_api.get("/", name="site")(self.redirect_index)
-        self.main_api.get("/site/{path}", name="site")(self.serve_static_or_index)
+
+    async def proxy_npm_devsite(self, request: Request, path: str):
+        async with httpx.AsyncClient(base_url="http://localhost:8080") as client:
+            # Construct the new URL
+            url = f"/site/{path}"
+            
+            # Forward the request headers
+            headers = dict(request.headers)
+            headers.pop("host", None)
+            
+            # Remove the 'Accept-Encoding' header to prevent compression
+            headers.pop("accept-encoding", None)
+            
+            # Forward the request
+            method = request.method
+            content = await request.body()
+            
+            response = await client.request(
+                method,
+                url,
+                headers=headers,
+                content=content,
+                params=request.query_params,
+            )
+        
+            # Determine the correct content type
+            content_type = response.headers.get("content-type")
+            if not content_type:
+                if path.endswith('.js'):
+                    content_type = 'application/javascript'
+                elif path.endswith('.css'):
+                    content_type = 'text/css'
+                else:
+                    content_type = mimetypes.guess_type(path)[0] or 'application/octet-stream'
+
+            # Update the response headers with the correct content type
+            response_headers = dict(response.headers)
+            response_headers['content-type'] = content_type
+
+            # Remove any content-encoding header to ensure uncompressed response
+            response_headers.pop('content-encoding', None)
+
+            # Return the proxied response
+            return StreamingResponse(
+                response.iter_bytes(),
+                status_code=response.status_code,
+                headers=response_headers
+            )
+
 
     async def serve_static_or_index(self, request: Request, path: str) -> FileResponse:
         """

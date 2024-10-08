@@ -1,5 +1,11 @@
-{%- import "imports/buttons.html.jinja" as buttons %}
-<div>
-    <div id="vnc-on-clck" class="vnc-on-click" onclick="vncFullscreenClick();"></div>
-    <iframe onload="iframeOnload();" width="100%" height="100%" id="vnc-iframe" src="/site/noVNC/vnc.html?autoconnect=true&resize=scale&port={{port}}"></iframe><br /><br />
-</div>
+<html>
+    <head>
+        <title>VNC Viewer</title>
+    </head>
+    <body style="margin: 0px; padding: 0px; border: 0px;">
+        <div>
+            <div id="vnc-on-clck" class="vnc-on-click" onclick="vncFullscreenClick();"></div>
+            <iframe width="100%" height="100%" id="vnc-iframe" src="/site/noVNC/vnc.html?autoconnect=true&resize=scale&port={{port}}"></iframe>
+        </div>
+    <body>
+</html>

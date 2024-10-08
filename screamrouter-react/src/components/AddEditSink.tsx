@@ -1,13 +1,26 @@
 import React, { useState } from 'react';
 import ApiService, { Sink } from '../api/api';
 
+/**
+ * Props for the AddEditSink component
+ * @interface AddEditSinkProps
+ * @property {Sink} [sink] - The sink to edit (undefined for adding a new sink)
+ * @property {() => void} onClose - Function to call when closing the form
+ * @property {() => void} onSubmit - Function to call after successful submission
+ */
 interface AddEditSinkProps {
   sink?: Sink;
   onClose: () => void;
   onSubmit: () => void;
 }
 
+/**
+ * AddEditSink component for adding or editing a sink
+ * @param {AddEditSinkProps} props - The component props
+ * @returns {React.FC} A functional component for adding or editing sinks
+ */
 const AddEditSink: React.FC<AddEditSinkProps> = ({ sink, onClose, onSubmit }) => {
+  // State declarations
   const [name, setName] = useState(sink?.name || '');
   const [ip, setIp] = useState(sink?.ip || '');
   const [port, setPort] = useState(sink?.port?.toString() || '4010');
@@ -18,7 +31,12 @@ const AddEditSink: React.FC<AddEditSinkProps> = ({ sink, onClose, onSubmit }) =>
   const [delay, setDelay] = useState(sink?.delay?.toString() || '0');
   const [timeSync, setTimeSync] = useState(sink?.time_sync || false);
   const [timeSyncDelay, setTimeSyncDelay] = useState(sink?.time_sync_delay?.toString() || '0');
+  const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Handles form submission
+   * @param {React.FormEvent} e - The form event
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const sinkData: Partial<Sink> = {
@@ -44,24 +62,43 @@ const AddEditSink: React.FC<AddEditSinkProps> = ({ sink, onClose, onSubmit }) =>
       onClose();
     } catch (error) {
       console.error('Error submitting sink:', error);
+      setError('Failed to submit sink. Please try again.');
     }
   };
 
   return (
     <div className="add-edit-sink">
       <h3>{sink ? 'Edit Sink' : 'Add Sink'}</h3>
+      {error && <div className="error-message">{error}</div>}
       <form onSubmit={handleSubmit}>
         <label>
           Sink Name:
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} required />
+          <input 
+            type="text" 
+            value={name} 
+            onChange={(e) => setName(e.target.value)} 
+            required 
+          />
         </label>
         <label>
           Sink IP:
-          <input type="text" value={ip} onChange={(e) => setIp(e.target.value)} required />
+          <input 
+            type="text" 
+            value={ip} 
+            onChange={(e) => setIp(e.target.value)} 
+            required 
+          />
         </label>
         <label>
           Sink Port:
-          <input type="number" value={port} onChange={(e) => setPort(e.target.value)} min="1" max="65535" required />
+          <input 
+            type="number" 
+            value={port} 
+            onChange={(e) => setPort(e.target.value)} 
+            min="1" 
+            max="65535" 
+            required 
+          />
         </label>
         <label>
           Bit Depth:
@@ -83,7 +120,14 @@ const AddEditSink: React.FC<AddEditSinkProps> = ({ sink, onClose, onSubmit }) =>
         </label>
         <label>
           Channels:
-          <input type="number" value={channels} onChange={(e) => setChannels(e.target.value)} min="1" max="8" required />
+          <input 
+            type="number" 
+            value={channels} 
+            onChange={(e) => setChannels(e.target.value)} 
+            min="1" 
+            max="8" 
+            required 
+          />
         </label>
         <label>
           Channel Layout:
@@ -98,15 +142,31 @@ const AddEditSink: React.FC<AddEditSinkProps> = ({ sink, onClose, onSubmit }) =>
         </label>
         <label>
           Delay (ms):
-          <input type="number" value={delay} onChange={(e) => setDelay(e.target.value)} min="0" max="5000" />
+          <input 
+            type="number" 
+            value={delay} 
+            onChange={(e) => setDelay(e.target.value)} 
+            min="0" 
+            max="5000" 
+          />
         </label>
         <label>
           Time Sync:
-          <input type="checkbox" checked={timeSync} onChange={(e) => setTimeSync(e.target.checked)} />
+          <input 
+            type="checkbox" 
+            checked={timeSync} 
+            onChange={(e) => setTimeSync(e.target.checked)} 
+          />
         </label>
         <label>
           Time Sync Delay (ms):
-          <input type="number" value={timeSyncDelay} onChange={(e) => setTimeSyncDelay(e.target.value)} min="0" max="5000" />
+          <input 
+            type="number" 
+            value={timeSyncDelay} 
+            onChange={(e) => setTimeSyncDelay(e.target.value)} 
+            min="0" 
+            max="5000" 
+          />
         </label>
         <div className="form-buttons">
           <button type="submit">{sink ? 'Update Sink' : 'Add Sink'}</button>

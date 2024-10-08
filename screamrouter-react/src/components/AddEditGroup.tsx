@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import ApiService, { Source, Sink } from '../api/api';
 
+/**
+ * Props for the AddEditGroup component
+ * @interface AddEditGroupProps
+ * @property {'source' | 'sink'} type - The type of group (source or sink)
+ * @property {Source | Sink} [group] - The group to edit (undefined for adding a new group)
+ * @property {() => void} onClose - Function to call when closing the form
+ * @property {() => void} onSubmit - Function to call after successful submission
+ */
 interface AddEditGroupProps {
   type: 'source' | 'sink';
   group?: Source | Sink;
@@ -8,13 +16,22 @@ interface AddEditGroupProps {
   onSubmit: () => void;
 }
 
+/**
+ * AddEditGroup component for adding or editing a group of sources or sinks
+ * @param {AddEditGroupProps} props - The component props
+ * @returns {React.FC} A functional component for adding or editing groups
+ */
 const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSubmit }) => {
+  // State declarations
   const [name, setName] = useState(group ? group.name : '');
   const [members, setMembers] = useState<string[]>(group ? group.group_members || [] : []);
   const [delay, setDelay] = useState(group ? group.delay : 0);
   const [availableMembers, setAvailableMembers] = useState<(Source | Sink)[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Fetches available members (sources or sinks) from the API
+   */
   useEffect(() => {
     const fetchAvailableMembers = async () => {
       try {
@@ -28,12 +45,17 @@ const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSub
         setAvailableMembers(filteredMembers);
       } catch (error) {
         console.error(`Error fetching ${type}s:`, error);
+        setError(`Failed to fetch ${type}s. Please try again.`);
       }
     };
 
     fetchAvailableMembers();
   }, [type]);
 
+  /**
+   * Handles form submission
+   * @param {React.FormEvent} e - The form event
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -82,6 +104,10 @@ const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSub
     }
   };
 
+  /**
+   * Toggles a member in the group
+   * @param {string} memberName - The name of the member to toggle
+   */
   const toggleMember = (memberName: string) => {
     setMembers(prevMembers =>
       prevMembers.includes(memberName)

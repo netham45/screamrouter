@@ -1,24 +1,44 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { AppProvider, useAppContext } from './context/AppContext';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
 import Sources from './components/Sources';
 import Sinks from './components/Sinks';
 import RoutesComponent from './components/Routes';
+import AudioVisualizer from './components/AudioVisualizer';
 import './App.css';
+import './styles/darkMode.css';
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
+  const { listeningToSink, visualizingSink, onListenToSink, onVisualizeSink } = useAppContext();
+
   return (
     <Router basename="/site">
-      <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Dashboard />} />
+      <Layout>
+        <Routes>
+          <Route index element={
+            <Dashboard />
+          } />
           <Route path="sources" element={<Sources />} />
           <Route path="sinks" element={<Sinks />} />
           <Route path="routes" element={<RoutesComponent />} />
-        </Route>
-      </Routes>
+        </Routes>
+      </Layout>
+      <AudioVisualizer 
+        listeningToSink={listeningToSink?.name || null}
+        visualizingSink={visualizingSink?.name || null}
+        sinkIp={visualizingSink?.ip || listeningToSink?.ip || null}
+      />
     </Router>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <AppProvider>
+      <AppContent />
+    </AppProvider>
   );
 };
 

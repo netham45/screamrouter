@@ -1,20 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import ApiService, { Sink, Route } from '../api/api';
 import Equalizer from './Equalizer';
 import AddEditSink from './AddEditSink';
 import AddEditGroup from './AddEditGroup';
-
-declare global {
-  interface Window {
-    startVisualizer: (sinkIp: string) => void;
-    stopVisualizer: () => void;
-    canvasClick: () => void;
-    canvasOnKeyDown: (e: KeyboardEvent) => void;
-  }
-}
+import SinkList from './SinkList';
+import { useAppContext } from '../context/AppContext';
 
 const Sinks: React.FC = () => {
+  const { listeningToSink, visualizingSink, onListenToSink, onVisualizeSink } = useAppContext();
   const [sinks, setSinks] = useState<Sink[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -22,45 +16,16 @@ const Sinks: React.FC = () => {
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [showEqualizerModal, setShowEqualizerModal] = useState(false);
   const [selectedSink, setSelectedSink] = useState<Sink | undefined>(undefined);
-  const [listeningToSink, setListeningToSink] = useState<string | null>(null);
-  const [visualizingSink, setVisualizingSink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starredSinks, setStarredSinks] = useState<string[]>([]);
-  const sinkRefs = useRef<{[key: string]: HTMLTableRowElement}>({});
   const [expandedRoutes, setExpandedRoutes] = useState<string[]>([]);
-  const location = useLocation();
+  const [sortedSinks, setSortedSinks] = useState<Sink[]>([]);
+
+  const sinkRefs = useRef<{[key: string]: HTMLTableRowElement}>({});
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const visualizerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    fetchSinks();
-    fetchRoutes();
-    const starred = JSON.parse(localStorage.getItem('starredSinks') || '[]');
-    setStarredSinks(starred);
-
-    const canvas = document.getElementById('canvas');
-    if (canvas) {
-      canvas.addEventListener('click', window.canvasClick);
-      canvas.addEventListener('keydown', window.canvasOnKeyDown);
-    }
-
-    return () => {
-      if (canvas) {
-        canvas.removeEventListener('click', window.canvasClick);
-        canvas.removeEventListener('keydown', window.canvasOnKeyDown);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    const hash = location.hash;
-    if (hash) {
-      const sinkName = decodeURIComponent(hash.replace('#sink-', ''));
-      jumpToAnchor(sinkName);
-    }
-  }, [location.hash, sinks]);
+  const location = useLocation();
 
   const fetchSinks = async () => {
     try {
@@ -82,15 +47,26 @@ const Sinks: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    fetchSinks();
+    fetchRoutes();
+    const starred = JSON.parse(localStorage.getItem('starredSinks') || '[]');
+    setStarredSinks(starred);
+  }, []);
+
+  useEffect(() => {
+    const hash = location.hash;
+    if (hash) {
+      const sinkName = decodeURIComponent(hash.replace('#sink-', ''));
+      jumpToAnchor(sinkName);
+    }
+  }, [location.hash, sinks]);
+
   const toggleSink = async (name: string) => {
     try {
       const sinkToUpdate = sinks.find(sink => sink.name === name);
       if (sinkToUpdate) {
-        if (sinkToUpdate.enabled) {
-          await ApiService.disableSink(name);
-        } else {
-          await ApiService.enableSink(name);
-        }
+        await ApiService[sinkToUpdate.enabled ? 'disableSink' : 'enableSink'](name);
         await fetchSinks();
         jumpToAnchor(name);
       }
@@ -122,41 +98,6 @@ const Sinks: React.FC = () => {
     }
   };
 
-  const listenToSink = (sink: Sink) => {
-    if (listeningToSink === sink.name) {
-      setListeningToSink(null);
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-      }
-    } else {
-      setListeningToSink(sink.name);
-      if (audioRef.current) {
-        audioRef.current.src = ApiService.getSinkStreamUrl(sink.ip);
-        audioRef.current.play();
-      }
-    }
-  };
-
-  const visualizeSink = (sink: Sink) => {
-    if (visualizingSink === sink.name) {
-      setVisualizingSink(null);
-      if (window.stopVisualizer) {
-        window.stopVisualizer();
-      }
-    } else {
-      setVisualizingSink(sink.name);
-      if (window.startVisualizer) {
-        window.startVisualizer(sink.ip);
-        setTimeout(() => {
-          if (visualizerRef.current) {
-            visualizerRef.current.scrollIntoView({ behavior: 'smooth' });
-          }
-        }, 100);
-      }
-    }
-  };
-
   const toggleStar = (name: string) => {
     const newStarredSinks = starredSinks.includes(name)
       ? starredSinks.filter(sink => sink !== name)
@@ -170,15 +111,11 @@ const Sinks: React.FC = () => {
     return [...sinksToSort].sort((a, b) => {
       const aStarred = starredSinks.includes(a.name);
       const bStarred = starredSinks.includes(b.name);
-      if (aStarred && !bStarred) return -1;
-      if (!aStarred && bStarred) return 1;
-      if (a.enabled && !b.enabled) return -1;
-      if (!a.enabled && b.enabled) return 1;
+      if (aStarred !== bStarred) return aStarred ? -1 : 1;
+      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
       return 0;
     });
   }, [starredSinks]);
-
-  const [sortedSinks, setSortedSinks] = useState<Sink[]>([]);
 
   useEffect(() => {
     setSortedSinks(sortSinks(sinks));
@@ -220,40 +157,6 @@ const Sinks: React.FC = () => {
     e.currentTarget.parentElement!.classList.remove('drag-over');
   };
 
-  const getSinkStatus = (sink: Sink) => {
-    if (starredSinks.includes(sink.name)) {
-      return sink.enabled ? 'starredEnabled' : 'starredDisabled';
-    }
-    return sink.enabled ? 'enabled' : 'disabled';
-  };
-
-  const findClosestSameStatusSink = (sinks: Sink[], targetIndex: number, status: string) => {
-    let aboveIndex = -1;
-    let belowIndex = -1;
-
-    // Search above
-    for (let i = targetIndex - 1; i >= 0; i--) {
-      if (getSinkStatus(sinks[i]) === status) {
-        aboveIndex = i;
-        break;
-      }
-    }
-
-    // Search below
-    for (let i = targetIndex; i < sinks.length; i++) {
-      if (getSinkStatus(sinks[i]) === status) {
-        belowIndex = i;
-        break;
-      }
-    }
-
-    if (aboveIndex === -1 && belowIndex === -1) return -1;
-    if (aboveIndex === -1) return belowIndex;
-    if (belowIndex === -1) return aboveIndex;
-
-    return targetIndex - aboveIndex <= belowIndex - targetIndex ? aboveIndex : belowIndex;
-  };
-
   const onDrop = async (e: React.DragEvent<HTMLTableRowElement>, targetIndex: number) => {
     e.preventDefault();
     const draggedIndex = dragItem.current;
@@ -263,31 +166,16 @@ const Sinks: React.FC = () => {
     }
 
     const newSinks = [...sinks];
-    const draggedSink = newSinks[draggedIndex];
-    const draggedStatus = getSinkStatus(draggedSink);
-
-    const closestSameStatusIndex = findClosestSameStatusSink(newSinks, targetIndex, draggedStatus);
-
-    let finalIndex: number;
-
-    if (closestSameStatusIndex === -1) {
-      finalIndex = targetIndex;
-    } else if (closestSameStatusIndex < draggedIndex) {
-      finalIndex = closestSameStatusIndex + 1;
-    } else {
-      finalIndex = closestSameStatusIndex;
-    }
-
-    newSinks.splice(draggedIndex, 1);
-    newSinks.splice(finalIndex, 0, draggedSink);
+    const [reorderedItem] = newSinks.splice(draggedIndex, 1);
+    newSinks.splice(targetIndex, 0, reorderedItem);
 
     setSinks(newSinks);
     setSortedSinks(sortSinks(newSinks));
 
     try {
-      await ApiService.reorderSink(draggedSink.name, finalIndex);
+      await ApiService.reorderSink(reorderedItem.name, targetIndex);
       await fetchSinks();
-      jumpToAnchor(draggedSink.name);
+      jumpToAnchor(reorderedItem.name);
     } catch (error) {
       console.error('Error reordering sink:', error);
       setError('Failed to reorder sink. Please try again.');
@@ -311,73 +199,6 @@ const Sinks: React.FC = () => {
     );
   };
 
-  const renderRoutes = (sinkName: string) => {
-    const activeRoutes = getActiveRoutes(sinkName);
-    const disabledRoutes = getDisabledRoutes(sinkName);
-    const isExpanded = expandedRoutes.includes(sinkName);
-
-    const renderRouteList = (routes: Route[], isEnabled: boolean) => {
-      if (routes.length === 0) return null;
-
-      const displayedRoutes = isExpanded ? routes : routes.slice(0, 3);
-      const hasMore = routes.length > 3;
-
-      return (
-        <div className={`route-list ${isEnabled ? 'enabled' : 'disabled'}`}>
-          <span className="route-list-label">{isEnabled ? 'Enabled routes:' : 'Disabled routes:'}</span>
-          {displayedRoutes.map((route, index) => (
-            <React.Fragment key={route.name}>
-              <Link
-                to={`/routes#route-${encodeURIComponent(route.name)}`}
-                className="route-link"
-              >
-                {route.name}
-              </Link>
-              {index < displayedRoutes.length - 1 && ', '}
-            </React.Fragment>
-          ))}
-          {hasMore && !isExpanded && (
-            <button onClick={() => toggleExpandRoutes(sinkName)} className="expand-routes">
-              ...
-            </button>
-          )}
-        </div>
-      );
-    };
-
-    return (
-      <div className="sink-routes">
-        {renderRouteList(activeRoutes, true)}
-        {renderRouteList(disabledRoutes, false)}
-        {isExpanded && (
-          <button onClick={() => toggleExpandRoutes(sinkName)} className="collapse-routes">
-            Show less
-          </button>
-        )}
-      </div>
-    );
-  };
-
-  const renderGroupMembers = (sink: Sink) => {
-    if (!sink.is_group || !sink.group_members || sink.group_members.length === 0) {
-      return null;
-    }
-
-    return (
-      <div className="group-members">
-        <span>Group members: </span>
-        {sink.group_members.map((member, index) => (
-          <React.Fragment key={member}>
-            <Link to={`#sink-${encodeURIComponent(member)}`} onClick={(e) => { e.preventDefault(); jumpToAnchor(member); }}>
-              {member}
-            </Link>
-            {index < sink.group_members.length - 1 && ', '}
-          </React.Fragment>
-        ))}
-      </div>
-    );
-  };
-
   return (
     <div className="sinks">
       <h2>Sinks</h2>
@@ -386,108 +207,29 @@ const Sinks: React.FC = () => {
         <button onClick={() => setShowAddModal(true)}>Add Sink</button>
         <button onClick={() => setShowGroupModal(true)}>Add Group</button>
       </div>
-      <table className="sinks-table">
-        <thead>
-          <tr>
-            <th>Reorder</th>
-            <th>Favorite</th>
-            <th>Name</th>
-            <th>IP Address</th>
-            <th>Port</th>
-            <th>Status</th>
-            <th>Volume</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sortedSinks.map((sink, index) => (
-            <tr
-              key={sink.name}
-              ref={(el) => {
-                if (el) sinkRefs.current[sink.name] = el;
-              }}
-              onDragEnter={(e) => onDragEnter(e, index)}
-              onDragLeave={onDragLeave}
-              onDragOver={onDragOver}
-              onDrop={(e) => onDrop(e, index)}
-              className="draggable-row"
-              id={`sink-${encodeURIComponent(sink.name)}`}
-            >
-              <td>
-                <span
-                  className="drag-handle"
-                  draggable
-                  onDragStart={(e) => onDragStart(e, index)}
-                  onDragEnd={onDragEnd}
-                >
-                  ☰
-                </span>
-              </td>
-              <td>
-                <button onClick={() => toggleStar(sink.name)}>
-                  {starredSinks.includes(sink.name) ? '★' : '☆'}
-                </button>
-              </td>
-              <td>
-                <Link 
-                  to={`#sink-${encodeURIComponent(sink.name)}`} 
-                  onClick={(e) => { e.preventDefault(); jumpToAnchor(sink.name); }}
-                  className="sink-name"
-                >
-                  {sink.name} {sink.is_group && '(Group)'}
-                </Link>
-                {renderGroupMembers(sink)}
-                {renderRoutes(sink.name)}
-              </td>
-              <td>{sink.ip}</td>
-              <td>{sink.port}</td>
-              <td>
-                <button 
-                  onClick={() => toggleSink(sink.name)}
-                  className={sink.enabled ? 'enabled' : 'disabled'}
-                >
-                  {sink.enabled ? 'Enabled' : 'Disabled'}
-                </button>
-              </td>
-              <td>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={sink.volume}
-                  onChange={(e) => updateVolume(sink.name, parseFloat(e.target.value))}
-                />
-                <span>{(sink.volume * 100).toFixed(0)}%</span>
-              </td>
-              <td>
-                <button onClick={() => {
-                  setSelectedSink(sink);
-                  if (sink.is_group) {
-                    setShowGroupModal(true);
-                  } else {
-                    setShowEditModal(true);
-                  }
-                }}>Edit</button>
-                <button onClick={() => { setSelectedSink(sink); setShowEqualizerModal(true); }}>Equalizer</button>
-                <button 
-                  onClick={() => listenToSink(sink)}
-                  className={listeningToSink === sink.name ? 'listening' : ''}
-                >
-                  {listeningToSink === sink.name ? 'Stop Listening' : 'Listen'}
-                </button>
-                <button 
-                  onClick={() => visualizeSink(sink)}
-                  className={visualizingSink === sink.name ? 'visualizing' : ''}
-                >
-                  {visualizingSink === sink.name ? 'Stop Visualizer' : 'Visualize'}
-                </button>
-                <button onClick={() => deleteSink(sink.name)} className="delete-button">Delete</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <SinkList
+        sinks={sortedSinks}
+        routes={routes}
+        starredSinks={starredSinks}
+        onToggleSink={toggleSink}
+        onDeleteSink={deleteSink}
+        onUpdateVolume={updateVolume}
+        onToggleStar={toggleStar}
+        onEditSink={(sink) => { setSelectedSink(sink); setShowEditModal(true); }}
+        onShowEqualizer={(sink) => { setSelectedSink(sink); setShowEqualizerModal(true); }}
+        sinkRefs={sinkRefs}
+        onDragStart={onDragStart}
+        onDragEnter={onDragEnter}
+        onDragLeave={onDragLeave}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        onDragEnd={onDragEnd}
+        jumpToAnchor={jumpToAnchor}
+        getActiveRoutes={getActiveRoutes}
+        getDisabledRoutes={getDisabledRoutes}
+        expandedRoutes={expandedRoutes}
+        toggleExpandRoutes={toggleExpandRoutes}
+      />
 
       {showAddModal && (
         <div className="modal-overlay">
@@ -536,27 +278,11 @@ const Sinks: React.FC = () => {
               item={selectedSink}
               type="sinks"
               onClose={() => setShowEqualizerModal(false)}
+              onDataChange={fetchSinks}
             />
           </div>
         </div>
       )}
-
-      <audio ref={audioRef} style={{ display: 'none' }} />
-      
-      <div ref={visualizerRef} className="visualizer-container">
-        <div id="mainWrapper" style={{ display: visualizingSink ? 'block' : 'none', width: '30%' }}>
-          <div id="presetControls">
-            <div>Preset: <select id="presetSelect"></select></div>
-            <div>
-              Cycle:
-              <input type="checkbox" id="presetCycle" defaultChecked />
-              <input type="number" id="presetCycleLength" step="1" defaultValue="15" min="1" />
-            </div>
-            <div>Random: <input type="checkbox" id="presetRandom" defaultChecked /></div>
-          </div>
-          <canvas id="canvas" width="3840" height="2160"></canvas>
-        </div>
-      </div>
     </div>
   );
 };

@@ -1,14 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import ApiService, { Source, Route } from '../api/api';
+import { useLocation } from 'react-router-dom';
+import { Source, Route } from '../api/api';
 import Equalizer from './Equalizer';
 import AddEditSource from './AddEditSource';
 import AddEditGroup from './AddEditGroup';
 import VNC from './VNC';
+import SourceList from './SourceList';
+import { useAppContext } from '../context/AppContext';
+import ApiService from '../api/api';
 
 const Sources: React.FC = () => {
-  const [sources, setSources] = useState<Source[]>([]);
-  const [routes, setRoutes] = useState<Route[]>([]);
+  const {
+    sources,
+    routes,
+    activeSource,
+    toggleEnabled,
+    updateVolume,
+    controlSource,
+    onToggleActiveSource,
+    fetchSources,
+    fetchRoutes
+  } = useAppContext();
+
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showGroupModal, setShowGroupModal] = useState(false);
@@ -17,31 +30,21 @@ const Sources: React.FC = () => {
   const [selectedSource, setSelectedSource] = useState<Source | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [starredSources, setStarredSources] = useState<string[]>([]);
-  const [activeSource, setActiveSource] = useState<string | null>(null);
-  const sourceRefs = useRef<{[key: string]: HTMLTableRowElement}>({});
   const [expandedRoutes, setExpandedRoutes] = useState<string[]>([]);
-  const location = useLocation();
+  const [sortedSources, setSortedSources] = useState<Source[]>([]);
+
+  const sourceRefs = useRef<{[key: string]: HTMLTableRowElement}>({});
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
 
-  const jumpToAnchor = useCallback((name: string) => {
-    const element = sourceRefs.current[name];
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      element.classList.remove('flash');
-      void element.offsetWidth; // Trigger reflow
-      element.classList.add('flash');
-    }
-  }, []);
+  const location = useLocation();
 
   useEffect(() => {
     fetchSources();
     fetchRoutes();
     const starred = JSON.parse(localStorage.getItem('starredSources') || '[]');
     setStarredSources(starred);
-    const active = localStorage.getItem('activeSource');
-    setActiveSource(active);
-  }, []);
+  }, [fetchSources, fetchRoutes]);
 
   useEffect(() => {
     const hash = location.hash;
@@ -49,65 +52,17 @@ const Sources: React.FC = () => {
       const sourceName = decodeURIComponent(hash.replace('#source-', ''));
       jumpToAnchor(sourceName);
     }
-  }, [location.hash, sources, jumpToAnchor]);
-
-  const fetchSources = async () => {
-    try {
-      const response = await ApiService.getSources();
-      setSources(response.data);
-      setError(null);
-    } catch (error) {
-      console.error('Error fetching sources:', error);
-      setError('Failed to fetch sources. Please try again later.');
-    }
-  };
-
-  const fetchRoutes = async () => {
-    try {
-      const response = await ApiService.getRoutes();
-      setRoutes(response.data);
-    } catch (error) {
-      console.error('Error fetching routes:', error);
-    }
-  };
-
-  const toggleSource = async (name: string) => {
-    try {
-      const sourceToUpdate = sources.find(source => source.name === name);
-      if (sourceToUpdate) {
-        if (sourceToUpdate.enabled) {
-          await ApiService.disableSource(name);
-        } else {
-          await ApiService.enableSource(name);
-        }
-        await fetchSources();
-        jumpToAnchor(name);
-      }
-    } catch (error) {
-      console.error('Error updating source:', error);
-      setError('Failed to update source. Please try again.');
-    }
-  };
+  }, [location.hash, sources]);
 
   const deleteSource = async (name: string) => {
     if (window.confirm(`Are you sure you want to delete the source "${name}"?`)) {
       try {
         await ApiService.deleteSource(name);
-        await fetchSources();
+        fetchSources();
       } catch (error) {
         console.error('Error deleting source:', error);
         setError('Failed to delete source. Please try again.');
       }
-    }
-  };
-
-  const updateVolume = async (name: string, volume: number) => {
-    try {
-      await ApiService.updateSourceVolume(name, volume);
-      await fetchSources();
-    } catch (error) {
-      console.error('Error updating source volume:', error);
-      setError('Failed to update volume. Please try again.');
     }
   };
 
@@ -120,39 +75,29 @@ const Sources: React.FC = () => {
     jumpToAnchor(name);
   };
 
-  const toggleActive = (name: string) => {
-    const newActiveSource = activeSource === name ? null : name;
-    setActiveSource(newActiveSource);
-    localStorage.setItem('activeSource', newActiveSource || '');
-  };
-
-  const controlSource = async (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => {
-    try {
-      await fetch(`https://screamrouter.netham45.org/sources/${sourceName}/${action}`, { method: 'GET' });
-      // Optionally update the UI or refetch data if needed
-    } catch (error) {
-      console.error(`Error controlling source: ${error}`);
-      setError(`Failed to control source. Please try again.`);
-    }
-  };
-
   const sortSources = useCallback((sourcesToSort: Source[]) => {
     return [...sourcesToSort].sort((a, b) => {
       const aStarred = starredSources.includes(a.name);
       const bStarred = starredSources.includes(b.name);
-      if (aStarred && !bStarred) return -1;
-      if (!aStarred && bStarred) return 1;
-      if (a.enabled && !b.enabled) return -1;
-      if (!a.enabled && b.enabled) return 1;
+      if (aStarred !== bStarred) return aStarred ? -1 : 1;
+      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
       return 0;
     });
   }, [starredSources]);
 
-  const [sortedSources, setSortedSources] = useState<Source[]>([]);
-
   useEffect(() => {
     setSortedSources(sortSources(sources));
   }, [sources, starredSources, sortSources]);
+
+  const jumpToAnchor = useCallback((name: string) => {
+    const element = sourceRefs.current[name];
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element.classList.remove('flash');
+      void element.offsetWidth; // Trigger reflow
+      element.classList.add('flash');
+    }
+  }, []);
 
   const onDragStart = (e: React.DragEvent<HTMLSpanElement>, index: number) => {
     dragItem.current = index;
@@ -180,40 +125,6 @@ const Sources: React.FC = () => {
     e.currentTarget.parentElement!.classList.remove('drag-over');
   };
 
-  const getSourceStatus = (source: Source) => {
-    if (starredSources.includes(source.name)) {
-      return source.enabled ? 'starredEnabled' : 'starredDisabled';
-    }
-    return source.enabled ? 'enabled' : 'disabled';
-  };
-
-  const findClosestSameStatusSource = (sources: Source[], targetIndex: number, status: string) => {
-    let aboveIndex = -1;
-    let belowIndex = -1;
-
-    // Search above
-    for (let i = targetIndex - 1; i >= 0; i--) {
-      if (getSourceStatus(sources[i]) === status) {
-        aboveIndex = i;
-        break;
-      }
-    }
-
-    // Search below
-    for (let i = targetIndex; i < sources.length; i++) {
-      if (getSourceStatus(sources[i]) === status) {
-        belowIndex = i;
-        break;
-      }
-    }
-
-    if (aboveIndex === -1 && belowIndex === -1) return -1;
-    if (aboveIndex === -1) return belowIndex;
-    if (belowIndex === -1) return aboveIndex;
-
-    return targetIndex - aboveIndex <= belowIndex - targetIndex ? aboveIndex : belowIndex;
-  };
-
   const onDrop = async (e: React.DragEvent<HTMLTableRowElement>, targetIndex: number) => {
     e.preventDefault();
     const draggedIndex = dragItem.current;
@@ -223,31 +134,15 @@ const Sources: React.FC = () => {
     }
 
     const newSources = [...sources];
-    const draggedSource = newSources[draggedIndex];
-    const draggedStatus = getSourceStatus(draggedSource);
+    const [reorderedItem] = newSources.splice(draggedIndex, 1);
+    newSources.splice(targetIndex, 0, reorderedItem);
 
-    const closestSameStatusIndex = findClosestSameStatusSource(newSources, targetIndex, draggedStatus);
-
-    let finalIndex: number;
-
-    if (closestSameStatusIndex === -1) {
-      finalIndex = targetIndex;
-    } else if (closestSameStatusIndex < draggedIndex) {
-      finalIndex = closestSameStatusIndex + 1;
-    } else {
-      finalIndex = closestSameStatusIndex;
-    }
-
-    newSources.splice(draggedIndex, 1);
-    newSources.splice(finalIndex, 0, draggedSource);
-
-    setSources(newSources);
     setSortedSources(sortSources(newSources));
 
     try {
-      await ApiService.reorderSource(draggedSource.name, finalIndex);
-      await fetchSources();
-      jumpToAnchor(draggedSource.name);
+      await ApiService.reorderSource(reorderedItem.name, targetIndex);
+      fetchSources();
+      jumpToAnchor(reorderedItem.name);
     } catch (error) {
       console.error('Error reordering source:', error);
       setError('Failed to reorder source. Please try again.');
@@ -271,72 +166,27 @@ const Sources: React.FC = () => {
     );
   };
 
-  const renderRoutes = (sourceName: string) => {
-    const activeRoutes = getActiveRoutes(sourceName);
-    const disabledRoutes = getDisabledRoutes(sourceName);
-    const isExpanded = expandedRoutes.includes(sourceName);
-
-    const renderRouteList = (routes: Route[], isEnabled: boolean) => {
-      if (routes.length === 0) return null;
-
-      const displayedRoutes = isExpanded ? routes : routes.slice(0, 3);
-      const hasMore = routes.length > 3;
-
-      return (
-        <div className={`route-list ${isEnabled ? 'enabled' : 'disabled'}`}>
-          <span className="route-list-label">{isEnabled ? 'Enabled routes:' : 'Disabled routes:'}</span>
-          {displayedRoutes.map((route, index) => (
-            <React.Fragment key={route.name}>
-              <Link
-                to={`/routes#route-${encodeURIComponent(route.name)}`}
-                className="route-link"
-              >
-                {route.name}
-              </Link>
-              {index < displayedRoutes.length - 1 && ', '}
-            </React.Fragment>
-          ))}
-          {hasMore && !isExpanded && (
-            <button onClick={() => toggleExpandRoutes(sourceName)} className="expand-routes">
-              ...
-            </button>
-          )}
-        </div>
+  const onToggleSource = useCallback((name: string) => {
+    const sourceToToggle = sources.find(s => s.name === name);
+    if (sourceToToggle) {
+      const newEnabledState = !sourceToToggle.enabled;
+      
+      // Update local state immediately
+      setSortedSources(prevSources => 
+        prevSources.map(s => 
+          s.name === name ? { ...s, enabled: newEnabledState } : s
+        )
       );
-    };
 
-    return (
-      <div className="source-routes">
-        {renderRouteList(activeRoutes, true)}
-        {renderRouteList(disabledRoutes, false)}
-        {isExpanded && (
-          <button onClick={() => toggleExpandRoutes(sourceName)} className="collapse-routes">
-            Show less
-          </button>
-        )}
-      </div>
-    );
-  };
+      // Call the API to update the backend
+      toggleEnabled('sources', name, !newEnabledState);
 
-  const renderGroupMembers = (source: Source) => {
-    if (!source.is_group || !source.group_members || source.group_members.length === 0) {
-      return null;
+      // If we're disabling the active source, update active source state
+      if (activeSource === name && !newEnabledState) {
+        onToggleActiveSource(name);
+      }
     }
-
-    return (
-      <div className="group-members">
-        <span>Group members: </span>
-        {source.group_members.map((member, index) => (
-          <React.Fragment key={member}>
-            <Link to={`#source-${encodeURIComponent(member)}`} onClick={(e) => { e.preventDefault(); jumpToAnchor(member); }}>
-              {member}
-            </Link>
-            {index < source.group_members.length - 1 && ', '}
-          </React.Fragment>
-        ))}
-      </div>
-    );
-  };
+  }, [sources, toggleEnabled, activeSource, onToggleActiveSource]);
 
   return (
     <div className="sources">
@@ -346,111 +196,33 @@ const Sources: React.FC = () => {
         <button onClick={() => setShowAddModal(true)}>Add Source</button>
         <button onClick={() => setShowGroupModal(true)}>Add Group</button>
       </div>
-      <table className="sources-table">
-        <thead>
-          <tr>
-            <th>Reorder</th>
-            <th>Favorite</th>
-            <th>Active</th>
-            <th>Name</th>
-            <th>IP Address</th>
-            <th>Status</th>
-            <th>Volume</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sortedSources.map((source, index) => (
-            <tr
-              key={source.name}
-              ref={(el) => {
-                if (el) sourceRefs.current[source.name] = el;
-              }}
-              onDragEnter={(e) => onDragEnter(e, index)}
-              onDragLeave={onDragLeave}
-              onDragOver={onDragOver}
-              onDrop={(e) => onDrop(e, index)}
-              className="draggable-row"
-              id={`source-${encodeURIComponent(source.name)}`}
-            >
-              <td>
-                <span
-                  className="drag-handle"
-                  draggable
-                  onDragStart={(e) => onDragStart(e, index)}
-                  onDragEnd={onDragEnd}
-                >
-                  ☰
-                </span>
-              </td>
-              <td>
-                <button onClick={() => toggleStar(source.name)}>
-                  {starredSources.includes(source.name) ? '★' : '☆'}
-                </button>
-              </td>
-              <td>
-                <button 
-                  onClick={() => toggleActive(source.name)}
-                  className={activeSource === source.name ? 'active' : ''}
-                >
-                  {activeSource === source.name ? '⬤' : '◯'}
-                </button>
-              </td>
-              <td>
-                <Link 
-                  to={`#source-${encodeURIComponent(source.name)}`} 
-                  onClick={(e) => { e.preventDefault(); jumpToAnchor(source.name); }}
-                  className="source-name"
-                >
-                  {source.name} {source.is_group && '(Group)'}
-                </Link>
-                {renderGroupMembers(source)}
-                {renderRoutes(source.name)}
-              </td>
-              <td>{source.ip}</td>
-              <td>
-                <button 
-                  onClick={() => toggleSource(source.name)}
-                  className={source.enabled ? 'enabled' : 'disabled'}
-                >
-                  {source.enabled ? 'Enabled' : 'Disabled'}
-                </button>
-              </td>
-              <td>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={source.volume}
-                  onChange={(e) => updateVolume(source.name, parseFloat(e.target.value))}
-                />
-                <span>{(source.volume * 100).toFixed(0)}%</span>
-              </td>
-              <td>
-                <button onClick={() => {
-                  setSelectedSource(source);
-                  if (source.is_group) {
-                    setShowGroupModal(true);
-                  } else {
-                    setShowEditModal(true);
-                  }
-                }}>Edit</button>
-                <button onClick={() => { setSelectedSource(source); setShowEqualizerModal(true); }}>Equalizer</button>
-                {source.vnc_ip && source.vnc_port && (
-                  <>
-                    <button onClick={() => { setSelectedSource(source); setShowVNCModal(true); }}>VNC</button>
-                    <button onClick={() => controlSource(source.name, 'prevtrack')}>⏮</button>
-                    <button onClick={() => controlSource(source.name, 'play')}>⏯</button>
-                    <button onClick={() => controlSource(source.name, 'nexttrack')}>⏭</button>
-                  </>
-                )}
-                <button onClick={() => deleteSource(source.name)} className="delete-button">Delete</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <SourceList
+        sources={sortedSources}
+        routes={routes}
+        starredSources={starredSources}
+        activeSource={activeSource}
+        onToggleSource={onToggleSource}
+        onDeleteSource={deleteSource}
+        onUpdateVolume={(name, volume) => updateVolume('sources', name, volume)}
+        onToggleStar={toggleStar}
+        onToggleActiveSource={onToggleActiveSource}
+        onEditSource={(source) => { setSelectedSource(source); setShowEditModal(true); }}
+        onShowEqualizer={(source) => { setSelectedSource(source); setShowEqualizerModal(true); }}
+        onShowVNC={(source) => { setSelectedSource(source); setShowVNCModal(true); }}
+        onControlSource={controlSource}
+        sourceRefs={sourceRefs}
+        onDragStart={onDragStart}
+        onDragEnter={onDragEnter}
+        onDragLeave={onDragLeave}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        onDragEnd={onDragEnd}
+        jumpToAnchor={jumpToAnchor}
+        getActiveRoutes={getActiveRoutes}
+        getDisabledRoutes={getDisabledRoutes}
+        expandedRoutes={expandedRoutes}
+        toggleExpandRoutes={toggleExpandRoutes}
+      />
 
       {showAddModal && (
         <div className="modal-overlay">
@@ -499,6 +271,7 @@ const Sources: React.FC = () => {
               item={selectedSource}
               type="sources"
               onClose={() => setShowEqualizerModal(false)}
+              onDataChange={fetchSources}
             />
           </div>
         </div>
@@ -514,7 +287,6 @@ const Sources: React.FC = () => {
           </div>
         </div>
       )}
-
     </div>
   );
 };

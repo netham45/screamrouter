@@ -7,8 +7,14 @@ module.exports = {
   entry: './src/index.tsx',
   output: {
     path: path.resolve(__dirname, '../site'),
-    filename: 'bundle.js',
+    filename: '[name].[contenthash].js',
+    chunkFilename: '[name].[contenthash].js',
     publicPath: '/site/',
+  },
+  optimization: {
+    splitChunks: {
+      chunks: 'all',
+    },
   },
   resolve: {
     extensions: ['.ts', '.tsx', '.js', '.jsx'],
@@ -68,4 +74,13 @@ module.exports = {
       'process.env': JSON.stringify(process.env)
     }),
   ],
+  devServer: {
+    static: {
+      directory: path.join(__dirname, '../site'),
+    },
+    compress: true,
+    port: 8080,
+    historyApiFallback: true,
+    hot: true,
+  },
 };
