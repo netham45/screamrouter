@@ -4,15 +4,22 @@ This guide provides an overview of the ScreamRouter user interface, explaining h
 
 ## Interface Overview
 
-![Screenshot of ScreamRouter](/images/ScreamRouter.png)
+![Screenshot of ScreamRouter Dashboard](/images/Dashboard Full.png)
 
 The ScreamRouter interface is designed to be user-friendly and intuitive. It consists of several main sections:
-- Dashboard: Your central control panel
+- Dashboard: Your central control panel for an overview of your audio setup
 - Sources: Manage your audio inputs
 - Sinks: Manage your audio outputs
 - Routes: Control how audio flows from sources to sinks
 - Active Source: Quick access to the currently selected source
 - Favorites: Your most-used audio components for easy access
+
+## Dashboard
+
+The Dashboard is your home screen in ScreamRouter. It provides:
+- A quick overview of your active sources, sinks, and routes
+- Easy access to your most frequently used controls
+- The audio visualizer for real-time audio representation
 
 ## Managing Audio Components
 
@@ -100,6 +107,14 @@ Easy-to-use audio controls are available for sources and routes:
 
 ## Additional Features
 
+### Active Source
+
+The Active Source section provides quick access to controls for the currently selected audio source. Here you can adjust volume, apply equalizer settings, and use playback controls without navigating away from your current view.
+
+### Favorites
+
+The Favorites feature allows you to bookmark your most-used sources, sinks, or routes for quick access. To add an item to your favorites, look for the star icon next to the item and click it. Your favorites will appear in a dedicated section for easy access.
+
 ### Connection View
 
 See how your audio is routed:
@@ -126,9 +141,13 @@ When VNC is enabled for a source:
 - Media control buttons appear under the source card.
 - Your device's media keys can control the source.
 
+### Now Playing
+
+The Now Playing feature shows information about the currently playing audio on a source or sink. This includes details like the track name, artist, and playback progress when available.
+
 ### Dark Mode
 
-![Dark Mode](/images/Dark Mode.png)
+![Dark Mode](/images/DarkMode.png)
 
 Prefer a darker interface? Enable dark mode:
 
