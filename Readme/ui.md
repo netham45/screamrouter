@@ -6,20 +6,21 @@ This guide provides an overview of the ScreamRouter user interface, explaining h
 
 ![Screenshot of ScreamRouter Dashboard](/images/Dashboard%20Full.png)
 
-The ScreamRouter interface is designed to be user-friendly and intuitive. It consists of several main sections:
-- Dashboard: Your central control panel for an overview of your audio setup
-- Sources: Manage your audio inputs
-- Sinks: Manage your audio outputs
-- Routes: Control how audio flows from sources to sinks
-- Active Source: Quick access to the currently selected source
-- Favorites: Your most-used audio components for easy access
+The ScreamRouter interface is designed to be user-friendly and intuitive. As you can see in the dashboard image above, it consists of several main sections:
+- Sources (left panel): Manage your audio inputs
+- Routes (center panel): Control how audio flows from sources to sinks
+- Sinks (right panel): Manage your audio outputs
+- Active Source (top): Quick access to the currently selected source
+- Visualizer (bottom): Real-time visual representation of your audio
+- Search bar (top): Quickly find sources, sinks, or routes
 
 ## Dashboard
 
 The Dashboard is your home screen in ScreamRouter. It provides:
-- A quick overview of your active sources, sinks, and routes
+- A comprehensive view of your active sources, sinks, and routes
 - Easy access to your most frequently used controls
 - The audio visualizer for real-time audio representation
+- A search function to quickly find what you need
 
 ## Managing Audio Components
 
@@ -27,7 +28,7 @@ The Dashboard is your home screen in ScreamRouter. It provides:
 
 Sources are where your audio comes from. To manage sources:
 
-1. Click on the "Sources" section in the main menu.
+1. Look at the left panel of the dashboard.
 2. To add a new source, click the "Add Source" button.
 
 ![Add Source Interface](/images/AddSource.png)
@@ -40,7 +41,7 @@ Sources are where your audio comes from. To manage sources:
 
 Sinks are where your audio goes. To manage sinks:
 
-1. Click on the "Sinks" section in the main menu.
+1. Look at the right panel of the dashboard.
 2. To add a new sink, click the "Add Sink" button.
 
 ![Add Sink Interface](/images/AddSink.png)
@@ -49,23 +50,11 @@ Sinks are where your audio goes. To manage sinks:
 4. Configure audio format settings if required.
 5. Use the "Enable/Disable" toggle to turn the sink on or off.
 
-### Groups
-
-Groups allow you to manage multiple sources or sinks together. To create a group:
-
-1. In either the Sources or Sinks section, click the "Create Group" button.
-2. Select the individual components you want to include in the group.
-3. Give your group a name and save it.
-
-![Group Management](/images/Groups.png)
-
-Now you can control all items in the group at once!
-
 ### Routes
 
 Routes determine how audio flows from sources to sinks. To create or edit a route:
 
-1. Go to the "Routes" section in the main menu.
+1. Look at the center panel of the dashboard.
 2. Click "Add Route" to create a new route.
 
 ![Add Route Interface](/images/AddRoute.png)
@@ -74,13 +63,25 @@ Routes determine how audio flows from sources to sinks. To create or edit a rout
 4. Adjust volume, equalizer, and delay settings as needed.
 5. Enable or disable the route using the toggle switch.
 
+### Groups
+
+Groups allow you to manage multiple sources or sinks together. To create a group:
+
+1. In either the Sources or Sinks panel, click the "Create Group" button.
+2. Select the individual components you want to include in the group.
+3. Give your group a name and save it.
+
+![Group Management](/images/Groups.png)
+
+Now you can control all items in the group at once!
+
 ## Audio Enhancement Features
 
 ### Equalizer
 
 The equalizer allows you to fine-tune your audio:
 
-1. Find the equalizer controls on source, sink, or route pages.
+1. Find the equalizer controls on source, sink, or route cards.
 2. Adjust the sliders to boost or cut different frequency ranges.
 3. Create custom sound profiles for different types of audio.
 
@@ -90,7 +91,7 @@ The equalizer allows you to fine-tune your audio:
 
 Enjoy a visual representation of your audio:
 
-1. Look for the visualizer on the main dashboard or audio control pages.
+1. Look for the visualizer at the bottom of the dashboard.
 2. Click on the visualizer to enter fullscreen mode.
 3. Press 'H' to cycle through different visualization styles.
 
@@ -109,17 +110,17 @@ Easy-to-use audio controls are available for sources and routes:
 
 ### Active Source
 
-The Active Source section provides quick access to controls for the currently selected audio source. Here you can adjust volume, apply equalizer settings, and use playback controls without navigating away from your current view.
+The Active Source section at the top of the dashboard provides quick access to controls for the currently selected audio source. Here you can adjust volume, apply equalizer settings, and use playback controls without navigating away from your current view.
 
-### Favorites
+### Search Functionality
 
-The Favorites feature allows you to bookmark your most-used sources, sinks, or routes for quick access. To add an item to your favorites, look for the star icon next to the item and click it. Your favorites will appear in a dedicated section for easy access.
+Use the search bar at the top of the dashboard to quickly find sources, sinks, or routes by name. This is especially useful when you have many audio components configured.
 
 ### Connection View
 
 See how your audio is routed:
 
-- On desktop: Lines connect sources to sinks, showing active connections.
+- On desktop: Lines connect sources to sinks in the dashboard, showing active connections.
 - On mobile: A list view displays connections.
 - Hover over lines to see connection details.
 - Click on lines to quickly activate that source and sink.
@@ -147,7 +148,7 @@ The Now Playing feature shows information about the currently playing audio on a
 
 ### Dark Mode
 
-![Dark Mode](/images/DarkMode.png)
+![Dark Mode](/images/Dark%20Mode.png)
 
 Prefer a darker interface? Enable dark mode:
 
@@ -157,7 +158,7 @@ Prefer a darker interface? Enable dark mode:
 ## Layout and Responsive Design
 
 ScreamRouter adapts to your device:
-- On desktop: See all sections at once for easy management.
+- On desktop: See all sections at once for easy management, as shown in the dashboard image.
 - On mobile: Collapsible sections keep things tidy on smaller screens.
 
 ## Troubleshooting
