@@ -26,6 +26,7 @@ The Dashboard is your home screen in ScreamRouter. It provides:
 ## Managing Audio Components
 
 ### Sources
+![Sources Interface](/images/Sources.png)
 
 Sources are where your audio comes from. To manage sources:
 
@@ -39,6 +40,7 @@ Sources are where your audio comes from. To manage sources:
 5. Use the "Enable/Disable" toggle to turn the source on or off.
 
 ### Sinks
+![Sinks Interface](/images/Sinks.png)
 
 Sinks are where your audio goes. To manage sinks:
 
@@ -52,6 +54,8 @@ Sinks are where your audio goes. To manage sinks:
 5. Use the "Enable/Disable" toggle to turn the sink on or off.
 
 ### Routes
+
+![Routes Interface](/images/Routes.png)
 
 Routes determine how audio flows from sources to sinks. To create or edit a route:
 
