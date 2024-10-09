@@ -100,8 +100,6 @@ Enjoy a visual representation of your audio:
 2. Click on the visualizer to enter fullscreen mode.
 3. Press 'H' to cycle through different visualization styles.
 
-![Audio Visualizer](/images/Visualizer.png)
-
 ### Audio Controls
 
 Easy-to-use audio controls are available for sources and routes:
