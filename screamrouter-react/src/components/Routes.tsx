@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useLocation, Link } from 'react-router-dom';
+import { useLocation, Link, useNavigate } from 'react-router-dom';
 import ApiService, { Route } from '../api/api';
 import Equalizer from './Equalizer';
 import AddEditRoute from './AddEditRoute';
 import RouteList from './RouteList';
+import { SortConfig, getSortedItems, getNextSortDirection } from '../utils/commonUtils';
 
 const Routes: React.FC = () => {
   const [routes, setRoutes] = useState<Route[]>([]);
@@ -14,12 +15,14 @@ const Routes: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [starredRoutes, setStarredRoutes] = useState<string[]>([]);
   const [sortedRoutes, setSortedRoutes] = useState<Route[]>([]);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'name', direction: 'asc' });
 
   const routeRefs = useRef<{[key: string]: HTMLTableRowElement}>({});
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
 
   const location = useLocation();
+  const navigate = useNavigate();
 
   const fetchRoutes = async () => {
     try {
@@ -36,7 +39,30 @@ const Routes: React.FC = () => {
     fetchRoutes();
     const starred = JSON.parse(localStorage.getItem('starredRoutes') || '[]');
     setStarredRoutes(starred);
-  }, []);
+
+    // Parse query parameters
+    const params = new URLSearchParams(location.search);
+    const sortKey = params.get('sort');
+    const sortDirection = params.get('direction') as 'asc' | 'desc' | null;
+
+    if (sortKey && sortDirection) {
+      setSortConfig({ key: sortKey, direction: sortDirection });
+    } else {
+      // Load saved sort configuration if no sort is specified in the URL
+      const savedSort = JSON.parse(localStorage.getItem('defaultRouteSort') || '{"key": "name", "direction": "asc"}');
+      setSortConfig(savedSort);
+      navigate(`?sort=${savedSort.key}&direction=${savedSort.direction}`, { replace: true });
+    }
+
+    // Check if we're coming from a sink or source link
+    const fromSink = params.get('fromSink');
+    const fromSource = params.get('fromSource');
+    if (fromSink) {
+      setSortConfig({ key: 'sink', direction: 'asc' });
+    } else if (fromSource) {
+      setSortConfig({ key: 'source', direction: 'asc' });
+    }
+  }, [location.search, navigate]);
 
   useEffect(() => {
     const hash = location.hash;
@@ -45,6 +71,10 @@ const Routes: React.FC = () => {
       jumpToAnchor(routeName);
     }
   }, [location.hash, routes]);
+
+  useEffect(() => {
+    setSortedRoutes(getSortedItems(routes, sortConfig, starredRoutes));
+  }, [routes, starredRoutes, sortConfig]);
 
   const toggleRoute = async (name: string) => {
     try {
@@ -90,20 +120,6 @@ const Routes: React.FC = () => {
     localStorage.setItem('starredRoutes', JSON.stringify(newStarredRoutes));
     jumpToAnchor(name);
   };
-
-  const sortRoutes = useCallback((routesToSort: Route[]) => {
-    return [...routesToSort].sort((a, b) => {
-      const aStarred = starredRoutes.includes(a.name);
-      const bStarred = starredRoutes.includes(b.name);
-      if (aStarred !== bStarred) return aStarred ? -1 : 1;
-      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-      return 0;
-    });
-  }, [starredRoutes]);
-
-  useEffect(() => {
-    setSortedRoutes(sortRoutes(routes));
-  }, [routes, starredRoutes, sortRoutes]);
 
   const jumpToAnchor = useCallback((name: string) => {
     const element = routeRefs.current[name];
@@ -154,7 +170,7 @@ const Routes: React.FC = () => {
     newRoutes.splice(targetIndex, 0, reorderedItem);
 
     setRoutes(newRoutes);
-    setSortedRoutes(sortRoutes(newRoutes));
+    setSortedRoutes(getSortedItems(newRoutes, sortConfig, starredRoutes));
 
     try {
       await ApiService.reorderRoute(reorderedItem.name, targetIndex);
@@ -175,12 +191,36 @@ const Routes: React.FC = () => {
     </Link>
   );
 
+  const handleSort = (key: string) => {
+    const nextDirection = getNextSortDirection(sortConfig, key);
+    setSortConfig({ key, direction: nextDirection });
+    navigate(`?sort=${key}&direction=${nextDirection}`);
+  };
+
+  const saveDefaultSort = () => {
+    localStorage.setItem('defaultRouteSort', JSON.stringify(sortConfig));
+  };
+
+  const returnToDefaultSort = () => {
+    const defaultSort = JSON.parse(localStorage.getItem('defaultRouteSort') || '{"key": "name", "direction": "asc"}');
+    setSortConfig(defaultSort);
+    navigate(`?sort=${defaultSort.key}&direction=${defaultSort.direction}`);
+  };
+
+  const showStockSort = () => {
+    setSortConfig({ key: 'stock', direction: 'asc' });
+    navigate('?sort=stock&direction=asc');
+  };
+
   return (
     <div className="routes">
       <h2>Routes</h2>
       {error && <div className="error-message">{error}</div>}
       <div className="actions">
         <button onClick={() => setShowAddModal(true)}>Add Route</button>
+        <button onClick={saveDefaultSort}>Save Current Sort</button>
+        <button onClick={returnToDefaultSort}>Return to Saved Sort</button>
+        <button onClick={showStockSort}>Return to Default Sort</button>
       </div>
       <RouteList
         routes={sortedRoutes}
@@ -200,6 +240,8 @@ const Routes: React.FC = () => {
         onDragEnd={onDragEnd}
         jumpToAnchor={jumpToAnchor}
         renderLinkWithAnchor={renderLinkWithAnchor}
+        sortConfig={sortConfig}
+        onSort={handleSort}
       />
       
       {showAddModal && (

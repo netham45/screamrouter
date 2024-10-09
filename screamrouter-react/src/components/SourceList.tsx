@@ -1,10 +1,8 @@
 import React from 'react';
 import { Source, Route } from '../api/api';
 import SourceItem from './SourceItem';
+import { SortConfig } from '../utils/commonUtils';
 
-/**
- * Props for the SourceList component
- */
 interface SourceListProps {
   sources: Source[];
   routes: Route[];
@@ -31,13 +29,10 @@ interface SourceListProps {
   getDisabledRoutes: (sourceName: string) => Route[];
   expandedRoutes: string[];
   toggleExpandRoutes: (name: string) => void;
+  sortConfig: SortConfig;
+  onSort: (key: string) => void;
 }
 
-/**
- * SourceList component displays a list of sources and handles their interactions
- * @param {SourceListProps} props - The props for the SourceList component
- * @returns {React.FC} A functional component representing the list of sources
- */
 const SourceList: React.FC<SourceListProps> = ({
   sources,
   routes,
@@ -63,19 +58,28 @@ const SourceList: React.FC<SourceListProps> = ({
   getActiveRoutes,
   getDisabledRoutes,
   expandedRoutes,
-  toggleExpandRoutes
+  toggleExpandRoutes,
+  sortConfig,
+  onSort
 }) => {
+  const renderSortIcon = (key: string) => {
+    if (sortConfig.key === key) {
+      return sortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+    }
+    return null;
+  };
+
   return (
     <table className="sources-table">
       <thead>
         <tr>
           <th>Reorder</th>
-          <th>Favorite</th>
-          <th>Active</th>
-          <th>Name</th>
-          <th>IP Address</th>
-          <th>Status</th>
-          <th>Volume</th>
+          <th onClick={() => onSort('favorite')}>Favorite{renderSortIcon('favorite')}</th>
+          <th onClick={() => onSort('active')}>Active{renderSortIcon('active')}</th>
+          <th onClick={() => onSort('name')}>Name{renderSortIcon('name')}</th>
+          <th onClick={() => onSort('ip')}>IP Address{renderSortIcon('ip')}</th>
+          <th onClick={() => onSort('enabled')}>Status{renderSortIcon('enabled')}</th>
+          <th onClick={() => onSort('volume')}>Volume{renderSortIcon('volume')}</th>
           <th>Actions</th>
         </tr>
       </thead>

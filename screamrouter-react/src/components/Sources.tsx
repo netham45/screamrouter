@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Source, Route } from '../api/api';
 import Equalizer from './Equalizer';
 import AddEditSource from './AddEditSource';
@@ -8,6 +8,7 @@ import VNC from './VNC';
 import SourceList from './SourceList';
 import { useAppContext } from '../context/AppContext';
 import ApiService from '../api/api';
+import { SortConfig, getSortedItems, getNextSortDirection, getStockSortedItems } from '../utils/commonUtils';
 
 const Sources: React.FC = () => {
   const {
@@ -32,19 +33,35 @@ const Sources: React.FC = () => {
   const [starredSources, setStarredSources] = useState<string[]>([]);
   const [expandedRoutes, setExpandedRoutes] = useState<string[]>([]);
   const [sortedSources, setSortedSources] = useState<Source[]>([]);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'name', direction: 'asc' });
 
   const sourceRefs = useRef<{[key: string]: HTMLTableRowElement}>({});
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
 
   const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchSources();
     fetchRoutes();
     const starred = JSON.parse(localStorage.getItem('starredSources') || '[]');
     setStarredSources(starred);
-  }, [fetchSources, fetchRoutes]);
+
+    // Parse query parameters
+    const params = new URLSearchParams(location.search);
+    const sortKey = params.get('sort');
+    const sortDirection = params.get('direction') as 'asc' | 'desc' | null;
+
+    if (sortKey && sortDirection) {
+      setSortConfig({ key: sortKey, direction: sortDirection });
+    } else {
+      // Load saved sort configuration if no sort is specified in the URL
+      const savedSort = JSON.parse(localStorage.getItem('defaultSourceSort') || '{"key": "name", "direction": "asc"}');
+      setSortConfig(savedSort);
+      navigate(`?sort=${savedSort.key}&direction=${savedSort.direction}`, { replace: true });
+    }
+  }, [fetchSources, fetchRoutes, location.search, navigate]);
 
   useEffect(() => {
     const hash = location.hash;
@@ -53,6 +70,10 @@ const Sources: React.FC = () => {
       jumpToAnchor(sourceName);
     }
   }, [location.hash, sources]);
+
+  useEffect(() => {
+    setSortedSources(getSortedItems(sources, sortConfig, starredSources));
+  }, [sources, starredSources, sortConfig]);
 
   const deleteSource = async (name: string) => {
     if (window.confirm(`Are you sure you want to delete the source "${name}"?`)) {
@@ -74,20 +95,6 @@ const Sources: React.FC = () => {
     localStorage.setItem('starredSources', JSON.stringify(newStarredSources));
     jumpToAnchor(name);
   };
-
-  const sortSources = useCallback((sourcesToSort: Source[]) => {
-    return [...sourcesToSort].sort((a, b) => {
-      const aStarred = starredSources.includes(a.name);
-      const bStarred = starredSources.includes(b.name);
-      if (aStarred !== bStarred) return aStarred ? -1 : 1;
-      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-      return 0;
-    });
-  }, [starredSources]);
-
-  useEffect(() => {
-    setSortedSources(sortSources(sources));
-  }, [sources, starredSources, sortSources]);
 
   const jumpToAnchor = useCallback((name: string) => {
     const element = sourceRefs.current[name];
@@ -137,7 +144,7 @@ const Sources: React.FC = () => {
     const [reorderedItem] = newSources.splice(draggedIndex, 1);
     newSources.splice(targetIndex, 0, reorderedItem);
 
-    setSortedSources(sortSources(newSources));
+    setSortedSources(getSortedItems(newSources, sortConfig, starredSources));
 
     try {
       await ApiService.reorderSource(reorderedItem.name, targetIndex);
@@ -188,6 +195,28 @@ const Sources: React.FC = () => {
     }
   }, [sources, toggleEnabled, activeSource, onToggleActiveSource]);
 
+  const handleSort = (key: string) => {
+    const nextDirection = getNextSortDirection(sortConfig, key);
+    setSortConfig({ key, direction: nextDirection });
+    navigate(`?sort=${key}&direction=${nextDirection}`);
+  };
+
+  const saveDefaultSort = () => {
+    localStorage.setItem('defaultSourceSort', JSON.stringify(sortConfig));
+  };
+
+  const returnToDefaultSort = () => {
+    const defaultSort = JSON.parse(localStorage.getItem('defaultSourceSort') || '{"key": "name", "direction": "asc"}');
+    setSortConfig(defaultSort);
+    navigate(`?sort=${defaultSort.key}&direction=${defaultSort.direction}`);
+  };
+
+  const showStockSort = () => {
+    setSortConfig({ key: 'stock', direction: 'asc' });
+    setSortedSources(getStockSortedItems(sources, starredSources));
+    navigate('?sort=stock&direction=asc');
+  };
+
   return (
     <div className="sources">
       <h2>Sources</h2>
@@ -195,6 +224,9 @@ const Sources: React.FC = () => {
       <div className="actions">
         <button onClick={() => setShowAddModal(true)}>Add Source</button>
         <button onClick={() => setShowGroupModal(true)}>Add Group</button>
+        <button onClick={saveDefaultSort}>Save Current Sort</button>
+        <button onClick={returnToDefaultSort}>Return to Saved Sort</button>
+        <button onClick={showStockSort}>Return to Default Sort</button>
       </div>
       <SourceList
         sources={sortedSources}
@@ -222,6 +254,8 @@ const Sources: React.FC = () => {
         getDisabledRoutes={getDisabledRoutes}
         expandedRoutes={expandedRoutes}
         toggleExpandRoutes={toggleExpandRoutes}
+        sortConfig={sortConfig}
+        onSort={handleSort}
       />
 
       {showAddModal && (

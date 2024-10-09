@@ -1,7 +1,6 @@
 import React from 'react';
 import { Sink, Route } from '../api/api';
-import { ActionButton, VolumeSlider } from '../utils/commonUtils';
-import { renderLinkWithAnchor } from '../utils/commonUtils';
+import { ActionButton, VolumeSlider, renderLinkWithAnchor } from '../utils/commonUtils';
 
 interface SinksSectionProps {
   title: React.ReactNode;
@@ -92,7 +91,7 @@ const SinksSection: React.FC<SinksSectionProps> = ({
     return routes.map((route, index) => (
       <React.Fragment key={route.name}>
         {index > 0 && ', '}
-        {renderLinkWithAnchor('/sources', route.source, 'fa-music')}
+        {renderLinkWithAnchor('/routes', route.name, 'fa-route', 'sink')}
       </React.Fragment>
     ));
   };

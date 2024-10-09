@@ -2,6 +2,7 @@ import React from 'react';
 import { Sink, Route } from '../api/api';
 import SinkItem from './SinkItem';
 import { useAppContext } from '../context/AppContext';
+import { SortConfig } from '../utils/commonUtils';
 
 interface SinkListProps {
   sinks: Sink[];
@@ -25,6 +26,12 @@ interface SinkListProps {
   getDisabledRoutes: (sinkName: string) => Route[];
   expandedRoutes: string[];
   toggleExpandRoutes: (name: string) => void;
+  sortConfig: SortConfig;
+  onSort: (key: string) => void;
+  listeningToSink: Sink | null;
+  visualizingSink: Sink | null;
+  onListenToSink: (sink: Sink | null) => void;
+  onVisualizeSink: (sink: Sink | null) => void;
 }
 
 const SinkList: React.FC<SinkListProps> = ({
@@ -48,9 +55,20 @@ const SinkList: React.FC<SinkListProps> = ({
   getActiveRoutes,
   getDisabledRoutes,
   expandedRoutes,
-  toggleExpandRoutes
+  toggleExpandRoutes,
+  sortConfig,
+  onSort,
+  listeningToSink,
+  visualizingSink,
+  onListenToSink,
+  onVisualizeSink
 }) => {
-  const { listeningToSink, visualizingSink, onListenToSink, onVisualizeSink } = useAppContext();
+  const renderSortIcon = (key: string) => {
+    if (sortConfig.key === key) {
+      return sortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+    }
+    return null;
+  };
 
   // Wrap onListenToSink to return a Promise
   const handleListenToSink = async (sink: Sink | null) => {
@@ -62,12 +80,12 @@ const SinkList: React.FC<SinkListProps> = ({
       <thead>
         <tr>
           <th>Reorder</th>
-          <th>Favorite</th>
-          <th>Name</th>
-          <th>IP Address</th>
-          <th>Port</th>
-          <th>Status</th>
-          <th>Volume</th>
+          <th onClick={() => onSort('favorite')}>Favorite{renderSortIcon('favorite')}</th>
+          <th onClick={() => onSort('name')}>Name{renderSortIcon('name')}</th>
+          <th onClick={() => onSort('ip')}>IP Address{renderSortIcon('ip')}</th>
+          <th onClick={() => onSort('port')}>Port{renderSortIcon('port')}</th>
+          <th onClick={() => onSort('enabled')}>Status{renderSortIcon('enabled')}</th>
+          <th onClick={() => onSort('volume')}>Volume{renderSortIcon('volume')}</th>
           <th>Actions</th>
         </tr>
       </thead>

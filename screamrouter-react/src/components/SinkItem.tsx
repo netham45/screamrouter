@@ -68,7 +68,7 @@ const SinkItem: React.FC<SinkItemProps> = ({
         <span className="route-list-label">{isEnabled ? 'Enabled routes:' : 'Disabled routes:'}</span>
         {displayedRoutes.map((route, index) => (
           <React.Fragment key={route.name}>
-            {renderLinkWithAnchor('/routes', route.name, 'fa-route')}
+            {renderLinkWithAnchor('/routes', route.name, 'fa-route', 'sink')}
             {index < displayedRoutes.length - 1 && ', '}
           </React.Fragment>
         ))}

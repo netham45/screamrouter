@@ -2,9 +2,6 @@ import React from 'react';
 import { Source, Route } from '../api/api';
 import { renderLinkWithAnchor, ActionButton, VolumeSlider } from '../utils/commonUtils';
 
-/**
- * Props for the SourceItem component
- */
 interface SourceItemProps {
   source: Source;
   index: number;
@@ -33,11 +30,6 @@ interface SourceItemProps {
   toggleExpandRoutes: (name: string) => void;
 }
 
-/**
- * SourceItem component represents a single source in the SourceList
- * @param {SourceItemProps} props - The props for the SourceItem component
- * @returns {React.FC} A functional component representing a single source
- */
 const SourceItem: React.FC<SourceItemProps> = ({
   source,
   index,
@@ -65,12 +57,6 @@ const SourceItem: React.FC<SourceItemProps> = ({
   isExpanded,
   toggleExpandRoutes
 }) => {
-  /**
-   * Renders the list of routes for the source
-   * @param {Route[]} routes - The list of routes to render
-   * @param {boolean} isEnabled - Whether the routes are enabled or disabled
-   * @returns {JSX.Element | null} The rendered route list
-   */
   const renderRouteList = (routes: Route[], isEnabled: boolean) => {
     if (routes.length === 0) return null;
 
@@ -82,7 +68,7 @@ const SourceItem: React.FC<SourceItemProps> = ({
         <span className="route-list-label">{isEnabled ? 'Enabled routes:' : 'Disabled routes:'}</span>
         {displayedRoutes.map((route, index) => (
           <React.Fragment key={route.name}>
-            {renderLinkWithAnchor('/routes', route.name, 'fa-route')}
+            {renderLinkWithAnchor('/routes', route.name, 'fa-route', 'source')}
             {index < displayedRoutes.length - 1 && ', '}
           </React.Fragment>
         ))}

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import ApiService, { Sink, Route } from '../api/api';
 import Equalizer from './Equalizer';
 import AddEditSink from './AddEditSink';
 import AddEditGroup from './AddEditGroup';
 import SinkList from './SinkList';
 import { useAppContext } from '../context/AppContext';
+import { SortConfig, getSortedItems, getNextSortDirection, getStockSortedItems } from '../utils/commonUtils';
 
 const Sinks: React.FC = () => {
   const { listeningToSink, visualizingSink, onListenToSink, onVisualizeSink } = useAppContext();
@@ -20,12 +21,14 @@ const Sinks: React.FC = () => {
   const [starredSinks, setStarredSinks] = useState<string[]>([]);
   const [expandedRoutes, setExpandedRoutes] = useState<string[]>([]);
   const [sortedSinks, setSortedSinks] = useState<Sink[]>([]);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'name', direction: 'asc' });
 
   const sinkRefs = useRef<{[key: string]: HTMLTableRowElement}>({});
   const dragItem = useRef<number | null>(null);
   const dragOverItem = useRef<number | null>(null);
 
   const location = useLocation();
+  const navigate = useNavigate();
 
   const fetchSinks = async () => {
     try {
@@ -52,7 +55,21 @@ const Sinks: React.FC = () => {
     fetchRoutes();
     const starred = JSON.parse(localStorage.getItem('starredSinks') || '[]');
     setStarredSinks(starred);
-  }, []);
+
+    // Parse query parameters
+    const params = new URLSearchParams(location.search);
+    const sortKey = params.get('sort');
+    const sortDirection = params.get('direction') as 'asc' | 'desc' | null;
+
+    if (sortKey && sortDirection) {
+      setSortConfig({ key: sortKey, direction: sortDirection });
+    } else {
+      // Load saved sort configuration if no sort is specified in the URL
+      const savedSort = JSON.parse(localStorage.getItem('defaultSinkSort') || '{"key": "name", "direction": "asc"}');
+      setSortConfig(savedSort);
+      navigate(`?sort=${savedSort.key}&direction=${savedSort.direction}`, { replace: true });
+    }
+  }, [location.search, navigate]);
 
   useEffect(() => {
     const hash = location.hash;
@@ -61,6 +78,10 @@ const Sinks: React.FC = () => {
       jumpToAnchor(sinkName);
     }
   }, [location.hash, sinks]);
+
+  useEffect(() => {
+    setSortedSinks(getSortedItems(sinks, sortConfig, starredSinks));
+  }, [sinks, starredSinks, sortConfig]);
 
   const toggleSink = async (name: string) => {
     try {
@@ -106,20 +127,6 @@ const Sinks: React.FC = () => {
     localStorage.setItem('starredSinks', JSON.stringify(newStarredSinks));
     jumpToAnchor(name);
   };
-
-  const sortSinks = useCallback((sinksToSort: Sink[]) => {
-    return [...sinksToSort].sort((a, b) => {
-      const aStarred = starredSinks.includes(a.name);
-      const bStarred = starredSinks.includes(b.name);
-      if (aStarred !== bStarred) return aStarred ? -1 : 1;
-      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-      return 0;
-    });
-  }, [starredSinks]);
-
-  useEffect(() => {
-    setSortedSinks(sortSinks(sinks));
-  }, [sinks, starredSinks, sortSinks]);
 
   const jumpToAnchor = useCallback((name: string) => {
     const element = sinkRefs.current[name];
@@ -170,7 +177,7 @@ const Sinks: React.FC = () => {
     newSinks.splice(targetIndex, 0, reorderedItem);
 
     setSinks(newSinks);
-    setSortedSinks(sortSinks(newSinks));
+    setSortedSinks(getSortedItems(newSinks, sortConfig, starredSinks));
 
     try {
       await ApiService.reorderSink(reorderedItem.name, targetIndex);
@@ -199,6 +206,28 @@ const Sinks: React.FC = () => {
     );
   };
 
+  const handleSort = (key: string) => {
+    const nextDirection = getNextSortDirection(sortConfig, key);
+    setSortConfig({ key, direction: nextDirection });
+    navigate(`?sort=${key}&direction=${nextDirection}`);
+  };
+
+  const saveDefaultSort = () => {
+    localStorage.setItem('defaultSinkSort', JSON.stringify(sortConfig));
+  };
+
+  const returnToDefaultSort = () => {
+    const defaultSort = JSON.parse(localStorage.getItem('defaultSinkSort') || '{"key": "name", "direction": "asc"}');
+    setSortConfig(defaultSort);
+    navigate(`?sort=${defaultSort.key}&direction=${defaultSort.direction}`);
+  };
+
+  const showStockSort = () => {
+    setSortConfig({ key: 'stock', direction: 'asc' });
+    setSortedSinks(getStockSortedItems(sinks, starredSinks));
+    navigate('?sort=stock&direction=asc');
+  };
+
   return (
     <div className="sinks">
       <h2>Sinks</h2>
@@ -206,6 +235,9 @@ const Sinks: React.FC = () => {
       <div className="actions">
         <button onClick={() => setShowAddModal(true)}>Add Sink</button>
         <button onClick={() => setShowGroupModal(true)}>Add Group</button>
+        <button onClick={saveDefaultSort}>Save Current Sort</button>
+        <button onClick={returnToDefaultSort}>Return to Saved Sort</button>
+        <button onClick={showStockSort}>Return to Default Sort</button>
       </div>
       <SinkList
         sinks={sortedSinks}
@@ -229,6 +261,12 @@ const Sinks: React.FC = () => {
         getDisabledRoutes={getDisabledRoutes}
         expandedRoutes={expandedRoutes}
         toggleExpandRoutes={toggleExpandRoutes}
+        sortConfig={sortConfig}
+        onSort={handleSort}
+        listeningToSink={listeningToSink}
+        visualizingSink={visualizingSink}
+        onListenToSink={onListenToSink}
+        onVisualizeSink={onVisualizeSink}
       />
 
       {showAddModal && (

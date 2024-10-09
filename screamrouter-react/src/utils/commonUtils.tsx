@@ -1,11 +1,21 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { Route } from '../api/api';
 
-export const renderLinkWithAnchor = (to: string, name: string, icon: string) => (
-  <Link to={`${to}#${to.replace(/^\//,'').replace(/s$/,'')}-${encodeURIComponent(name)}`}>
-    <i className={`fas ${icon}`}></i> {name}
-  </Link>
-);
+export interface SortConfig {
+  key: string;
+  direction: 'asc' | 'desc';
+}
+
+export const renderLinkWithAnchor = (to: string, name: string, icon: string, fromType?: 'sink' | 'source') => {
+  const queryParam = fromType ? `?sort=${fromType}&direction=asc` : '';
+  const anchor = `#${to.replace(/^\//,'').replace(/s$/,'')}-${encodeURIComponent(name)}`;
+  return (
+    <Link to={`${to}${queryParam}${anchor}`}>
+      <i className={`fas ${icon}`}></i> {name}
+    </Link>
+  );
+};
 
 export const ActionButton: React.FC<{
   onClick: () => void;
@@ -30,3 +40,61 @@ export const VolumeSlider: React.FC<{
     onChange={(e) => onChange(parseFloat(e.target.value))}
   />
 );
+
+export const getSortedItems = <T extends Record<string, any>>(
+  items: T[],
+  sortConfig: SortConfig,
+  starredItems: string[]
+): T[] => {
+  const sortedItems = [...items].sort((a, b) => {
+    if (sortConfig.key === 'favorite') {
+      const aStarred = starredItems.includes(a.name);
+      const bStarred = starredItems.includes(b.name);
+      if (aStarred !== bStarred) {
+        return sortConfig.direction === 'asc' ? (aStarred ? -1 : 1) : (aStarred ? 1 : -1);
+      }
+    }
+
+    if (sortConfig.key === 'enabled') {
+      if (a.enabled !== b.enabled) {
+        return sortConfig.direction === 'asc' ? (a.enabled ? -1 : 1) : (a.enabled ? 1 : -1);
+      }
+    }
+
+    if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1;
+    if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  if (sortConfig.key === 'stock') {
+    return sortedItems.sort((a, b) => {
+      const aStarred = starredItems.includes(a.name);
+      const bStarred = starredItems.includes(b.name);
+      if (aStarred !== bStarred) return aStarred ? -1 : 1;
+      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+      return 0;
+    });
+  }
+
+  return sortedItems;
+};
+
+export const getNextSortDirection = (sortConfig: SortConfig, clickedKey: string): 'asc' | 'desc' => {
+  if (sortConfig.key === clickedKey) {
+    return sortConfig.direction === 'asc' ? 'desc' : 'asc';
+  }
+  return 'asc';
+};
+
+export const getStockSortedItems = <T extends Record<string, any>>(
+  items: T[],
+  starredItems: string[]
+): T[] => {
+  return [...items].sort((a, b) => {
+    const aStarred = starredItems.includes(a.name);
+    const bStarred = starredItems.includes(b.name);
+    if (aStarred !== bStarred) return aStarred ? -1 : 1;
+    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+};

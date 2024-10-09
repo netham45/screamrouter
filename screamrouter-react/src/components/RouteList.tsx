@@ -1,10 +1,8 @@
 import React from 'react';
 import { Route } from '../api/api';
 import RouteItem from './RouteItem';
+import { SortConfig } from '../utils/commonUtils';
 
-/**
- * Props for the RouteList component
- */
 interface RouteListProps {
   routes: Route[];
   starredRoutes: string[];
@@ -23,13 +21,10 @@ interface RouteListProps {
   onDragEnd: (e: React.DragEvent<HTMLSpanElement>) => void;
   jumpToAnchor: (name: string) => void;
   renderLinkWithAnchor: (to: string, name: string, icon: string) => React.ReactNode;
+  sortConfig: SortConfig;
+  onSort: (key: string) => void;
 }
 
-/**
- * RouteList component displays a list of routes and handles their interactions
- * @param {RouteListProps} props - The props for the RouteList component
- * @returns {React.FC} A functional component representing the list of routes
- */
 const RouteList: React.FC<RouteListProps> = ({
   routes,
   starredRoutes,
@@ -47,19 +42,28 @@ const RouteList: React.FC<RouteListProps> = ({
   onDrop,
   onDragEnd,
   jumpToAnchor,
-  renderLinkWithAnchor
+  renderLinkWithAnchor,
+  sortConfig,
+  onSort
 }) => {
+  const renderSortIcon = (key: string) => {
+    if (sortConfig.key === key) {
+      return sortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+    }
+    return null;
+  };
+
   return (
     <table className="routes-table">
       <thead>
         <tr>
           <th>Reorder</th>
-          <th>Favorite</th>
-          <th>Name</th>
-          <th>Source</th>
-          <th>Sink</th>
-          <th>Status</th>
-          <th>Volume</th>
+          <th onClick={() => onSort('favorite')}>Favorite{renderSortIcon('favorite')}</th>
+          <th onClick={() => onSort('name')}>Name{renderSortIcon('name')}</th>
+          <th onClick={() => onSort('source')}>Source{renderSortIcon('source')}</th>
+          <th onClick={() => onSort('sink')}>Sink{renderSortIcon('sink')}</th>
+          <th onClick={() => onSort('enabled')}>Status{renderSortIcon('enabled')}</th>
+          <th onClick={() => onSort('volume')}>Volume{renderSortIcon('volume')}</th>
           <th>Actions</th>
         </tr>
       </thead>

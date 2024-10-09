@@ -1,7 +1,6 @@
 import React from 'react';
 import { Source, Route } from '../api/api';
-import { ActionButton, VolumeSlider } from '../utils/commonUtils';
-import { renderLinkWithAnchor } from '../utils/commonUtils';
+import { ActionButton, VolumeSlider, renderLinkWithAnchor } from '../utils/commonUtils';
 
 interface SourcesSectionProps {
   title: React.ReactNode;
@@ -58,7 +57,6 @@ const SourcesSection: React.FC<SourcesSectionProps> = ({
           setSelectedItem(item);
           setSelectedItemType('sources');
           setShowEqualizerModal(true);
-          // Pass onDataChange to parent component
           onDataChange();
         }}>
           Equalizer
@@ -90,7 +88,7 @@ const SourcesSection: React.FC<SourcesSectionProps> = ({
     return routes.map((route, index) => (
       <React.Fragment key={route.name}>
         {index > 0 && ', '}
-        {renderLinkWithAnchor('/sinks', route.sink, 'fa-volume-up')}
+        {renderLinkWithAnchor('/routes', route.name, 'fa-route', 'source')}
       </React.Fragment>
     ));
   };

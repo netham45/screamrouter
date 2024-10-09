@@ -1,7 +1,6 @@
 import React from 'react';
 import { Route, Source, Sink } from '../api/api';
-import { ActionButton, VolumeSlider } from '../utils/commonUtils';
-import { renderLinkWithAnchor } from '../utils/commonUtils';
+import { ActionButton, VolumeSlider, renderLinkWithAnchor } from '../utils/commonUtils';
 
 interface RoutesSectionProps {
   title: React.ReactNode;
@@ -88,8 +87,8 @@ const RoutesSection: React.FC<RoutesSectionProps> = ({
               <td>
                 {renderLinkWithAnchor('/routes', route.name, 'fa-route')}
                 <div className="subtext">
-                  <div>Source: {renderLinkWithAnchor('/sources', route.source, 'fa-music')}</div>
-                  <div>Sink: {renderLinkWithAnchor('/sinks', route.sink, 'fa-volume-up')}</div>
+                  <div>Source: {renderLinkWithAnchor('/sources', route.source, 'fa-music', 'source')}</div>
+                  <div>Sink: {renderLinkWithAnchor('/sinks', route.sink, 'fa-volume-up', 'sink')}</div>
                 </div>
               </td>
               <td>{renderControls(route)}</td>

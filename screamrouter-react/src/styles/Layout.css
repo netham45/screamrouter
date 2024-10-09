@@ -102,8 +102,11 @@ footer {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+.status-section .collapsible-section {
+    flex: 1;
+}
+
 .collapsible-section {
-  flex: 1;
   margin: 0 0.5rem;
   background-color: white;
   border-radius: 8px;
@@ -149,13 +152,12 @@ footer {
 
 .section-content {
   padding: 1rem;
-  max-height: 0;
   overflow: hidden;
   transition: max-height 0.3s ease-out, padding 0.3s ease-out;
 }
 
 .collapsible-section.expanded .section-content {
-  max-height: 500px; /* Adjust this value based on your content */
+  max-height: 50000px; /* Adjust this value based on your content */
   padding: 1rem;
 }
 

@@ -15,18 +15,19 @@ interface CollapsibleSectionProps {
   isExpanded: boolean;
   onToggle: () => void;
   children: React.ReactNode;
+  id?: string;
 }
 
 type ColorMode = 'light' | 'dark' | 'system';
 
-const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({ title, subtitle, isExpanded, onToggle, children }) => {
+export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({ title, subtitle, isExpanded, onToggle, children, id }) => {
   return (
     <div className={`collapsible-section ${isExpanded ? 'expanded' : 'collapsed'}`}>
-      <div className="section-header" onClick={onToggle}>
+      <div className="section-header" onClick={onToggle} id={id}>
         <h3>{title}{subtitle && <span className="section-subtitle"> {subtitle}</span>}</h3>
         <div className="expand-toggle">▶</div>
       </div>
-      {isExpanded && <div className="section-content">{children}</div>}
+      <div className="section-content">{children}</div>
     </div>
   );
 };
