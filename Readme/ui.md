@@ -13,6 +13,7 @@ The ScreamRouter interface is designed to be user-friendly and intuitive. As you
 - Active Source (top): Quick access to the currently selected source
 - Visualizer (bottom): Real-time visual representation of your audio
 - Search bar (top): Quickly find sources, sinks, or routes
+- Favorites: Quick access to your most-used components (not shown in the image)
 
 ## Dashboard
 
@@ -155,20 +156,45 @@ Prefer a darker interface? Enable dark mode:
 1. Look for the dark mode toggle in the app's settings or menu.
 2. Click to switch between light and dark themes.
 
+### Favorites
+
+The Favorites feature allows you to bookmark your most-used sources, sinks, or routes for quick access. To add an item to your favorites:
+
+1. Look for the star icon next to the item you want to favorite.
+2. Click the star to add it to your favorites.
+3. Access your favorites from the dedicated Favorites section for easy management.
+
 ## Layout and Responsive Design
 
 ScreamRouter adapts to your device:
 - On desktop: See all sections at once for easy management, as shown in the dashboard image.
 - On mobile: Collapsible sections keep things tidy on smaller screens.
 
+## Keyboard Shortcuts
+
+ScreamRouter supports various keyboard shortcuts to enhance your productivity:
+
+- Space: Play/Pause the active source
+- Left/Right Arrow: Previous/Next track (if supported by the source)
+- Up/Down Arrow: Adjust volume
+- M: Mute/Unmute
+- H: Cycle through visualizer styles (when visualizer is in focus)
+
+For a complete list of keyboard shortcuts, refer to the settings menu in the application.
+
 ## Troubleshooting
 
 If you run into issues:
 
-1. Try refreshing your browser.
-2. Clear your browser cache and reload.
-3. Check your internet connection.
-4. Make sure all your audio devices are properly connected and powered on.
-5. If problems persist, check our troubleshooting guide or contact support.
+1. Try refreshing your browser or reloading the ScreamRouter application.
+2. Clear your browser cache and cookies, then reload the page.
+3. Check your internet connection and ensure ScreamRouter server is running.
+4. Verify that all your audio devices are properly connected and powered on.
+5. Check the status indicators on sources and sinks to ensure they're online and configured correctly.
+6. If you're having issues with a specific route, try disabling and re-enabling it.
+7. For VNC-related issues, ensure your VNC server is running and accessible.
+8. If audio quality is poor, check your network conditions and adjust buffer settings if necessary.
+9. Consult the error logs in the application settings for more detailed information about any issues.
+10. If problems persist, check our troubleshooting guide in the main documentation or contact support.
 
 For more information about ScreamRouter and its features, please refer to the [main README](../README.md) and other documentation files in the Readme directory.
