@@ -4,7 +4,7 @@ This guide provides an overview of the ScreamRouter user interface, explaining h
 
 ## Interface Overview
 
-![Screenshot of ScreamRouter Dashboard](/images/Dashboard Full.png)
+![Screenshot of ScreamRouter Dashboard](/images/Dashboard%20Full.png)
 
 The ScreamRouter interface is designed to be user-friendly and intuitive. It consists of several main sections:
 - Dashboard: Your central control panel for an overview of your audio setup
