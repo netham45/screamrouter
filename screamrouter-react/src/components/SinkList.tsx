@@ -89,10 +89,10 @@ const SinkList: React.FC<SinkListProps> = ({
             <th>Reorder</th>
             <th onClick={() => onSort('favorite')}>Favorite{renderSortIcon('favorite')}</th>
             <th onClick={() => onSort('name')}>Name{renderSortIcon('name')}</th>
+            <th onClick={() => onSort('ip')}>IP Address{renderSortIcon('ip')}</th>
             <th onClick={() => onSort('enabled')}>Status{renderSortIcon('enabled')}</th>
             <th onClick={() => onSort('volume')}>Volume{renderSortIcon('volume')}</th>
             <th onClick={() => onSort('timeshift')}>Timeshift{renderSortIcon('timeshift')}</th>
-            <th>Routes</th>
             <th>Actions</th>
           </tr>
         </thead>
