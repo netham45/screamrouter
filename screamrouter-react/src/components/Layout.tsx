@@ -2,212 +2,32 @@ import React, { useState, useEffect } from 'react';
 import { Link, Outlet } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
 import '../styles/Layout.css';
-import { ActionButton, VolumeSlider, renderLinkWithAnchor } from '../utils/commonUtils';
-import { Sink, Source, Route } from '../api/api';
+import ActiveSource from './ActiveSource';
+import NowPlaying from './NowPlaying';
+import VNC from './VNC';
+import Equalizer from './Equalizer';
+
+type ColorMode = 'light' | 'dark' | 'system';
 
 interface LayoutProps {
   children: React.ReactNode;
 }
 
-interface CollapsibleSectionProps {
-  title: string;
-  subtitle?: string;
-  isExpanded: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-  id?: string;
-}
-
-type ColorMode = 'light' | 'dark' | 'system';
-
-export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({ title, subtitle, isExpanded, onToggle, children, id }) => {
-  return (
-    <div className={`collapsible-section ${isExpanded ? 'expanded' : 'collapsed'}`}>
-      <div className="section-header" onClick={onToggle} id={id}>
-        <h3>{title}{subtitle && <span className="section-subtitle"> {subtitle}</span>}</h3>
-        <div className="expand-toggle">▶</div>
-      </div>
-      <div className="section-content">{children}</div>
-    </div>
-  );
-};
-
-const ActiveSourceSection: React.FC<{ isExpanded: boolean; onToggle: () => void }> = ({ isExpanded, onToggle }) => {
-    const {
-        activeSource,
-        sources,
-        routes,
-        toggleEnabled,
-        updateVolume,
-        controlSource,
-        setSelectedItem,
-        setShowVNCModal,
-        setShowEqualizerModal,
-        setSelectedItemType,
-        getRoutesForSource,
-      } = useAppContext();
-    
-      const source = sources.find(s => s.name === activeSource);
-    
-      const renderControls = (item: Source) => {
-        return (
-          <>
-            <ActionButton onClick={() => toggleEnabled('sources', item.name, item.enabled)}
-              className={item.enabled ? 'enabled' : 'disabled'}
-            >
-              {item.enabled ? 'Disable' : 'Enable'}
-            </ActionButton>
-            <VolumeSlider
-              value={item.volume}
-              onChange={(value) => updateVolume('sources', item.name, value)}
-            />
-            <ActionButton onClick={() => {
-              setSelectedItem(item);
-              setSelectedItemType('sources');
-              setShowEqualizerModal(true);
-            }}>
-              Equalizer
-            </ActionButton>
-            {'vnc_ip' in item && 'vnc_port' in item && (
-              <>
-                <ActionButton onClick={() => {
-                  setSelectedItem(item);
-                  setShowVNCModal(true);
-                }}>
-                  VNC
-                </ActionButton>
-                <ActionButton onClick={() => controlSource(item.name, 'prevtrack')}>⏮</ActionButton>
-                <ActionButton onClick={() => controlSource(item.name, 'play')}>⏯</ActionButton>
-                <ActionButton onClick={() => controlSource(item.name, 'nexttrack')}>⏭</ActionButton>
-              </>
-            )}
-          </>
-        );
-      };
-    
-      const renderRouteLinks = (routes: Route[]) => {
-        if (routes.length === 0) return 'None';
-        return routes.map((route, index) => (
-          <React.Fragment key={route.name}>
-            {index > 0 && ', '}
-            {renderLinkWithAnchor('/sinks', route.sink, 'fa-volume-up')}
-          </React.Fragment>
-        ));
-      };
-    
-      return (
-        <CollapsibleSection
-          title="Active Source"
-          subtitle={source ? source.name : 'None'}
-          isExpanded={isExpanded}
-          onToggle={onToggle}
-        >
-          {source ? (
-            <>
-              <div>
-                {renderLinkWithAnchor('/sources', source.name, 'fa-music')}
-                <div className="subtext">
-                  <div>Routes to: {renderRouteLinks(getRoutesForSource(source.name))}</div>
-                </div>
-              </div>
-              <div>{renderControls(source)}</div>
-            </>
-          ) : (
-            <p>No Active Source</p>
-          )}
-        </CollapsibleSection>
-      );
-};
-
-const NowPlayingSection: React.FC<{ isExpanded: boolean; onToggle: () => void }> = ({ isExpanded, onToggle }) => {
-    const {
-        listeningToSink,
-        sinks,
-        routes,
-        toggleEnabled,
-        updateVolume,
-        setSelectedItem,
-        setShowEqualizerModal,
-        setSelectedItemType,
-        getRoutesForSink,
-        onListenToSink,
-        onVisualizeSink,
-        visualizingSink,
-      } = useAppContext();
-    
-      const sink = listeningToSink ? sinks.find(s => s.name === listeningToSink.name) : null;
-    
-      const renderControls = (item: Sink) => {
-        return (
-          <>
-            <ActionButton onClick={() => toggleEnabled('sinks', item.name, item.enabled)}
-              className={item.enabled ? 'enabled' : 'disabled'}
-            >
-              {item.enabled ? 'Disable' : 'Enable'}
-            </ActionButton>
-            <VolumeSlider
-              value={item.volume}
-              onChange={(value) => updateVolume('sinks', item.name, value)}
-            />
-            <ActionButton onClick={() => {
-              setSelectedItem(item);
-              setSelectedItemType('sinks');
-              setShowEqualizerModal(true);
-            }}>
-              Equalizer
-            </ActionButton>
-            <ActionButton
-              onClick={() => onListenToSink(null)}
-              className="listening"
-            >
-              Stop Listening
-            </ActionButton>
-            <ActionButton
-              onClick={() => onVisualizeSink(visualizingSink?.name === item.name ? null : item)}
-              className={visualizingSink?.name === item.name ? 'visualizing' : ''}
-            >
-              {visualizingSink?.name === item.name ? 'Stop Visualizer' : 'Visualize'}
-            </ActionButton>
-          </>
-        );
-      };
-    
-      const renderRouteLinks = (routes: Route[]) => {
-        if (routes.length === 0) return 'None';
-        return routes.map((route, index) => (
-          <React.Fragment key={route.name}>
-            {index > 0 && ', '}
-            {renderLinkWithAnchor('/sources', route.source, 'fa-music')}
-          </React.Fragment>
-        ));
-      };
-    
-      return (
-        <CollapsibleSection
-          title="Now Playing"
-          subtitle={sink ? sink.name : 'Not Playing'}
-          isExpanded={isExpanded}
-          onToggle={onToggle}
-        >
-          {sink ? (
-            <>
-              <div>
-                {renderLinkWithAnchor('/sinks', sink.name, 'fa-volume-up')}
-                <div className="subtext">
-                  <div>Routes from: {renderRouteLinks(getRoutesForSink(sink.name))}</div>
-                </div>
-              </div>
-              <div>{renderControls(sink)}</div>
-            </>
-          ) : (
-            <div className="not-playing"><p>Not listening to a sink</p></div>
-          )}
-        </CollapsibleSection>
-      );
-};
-
 const Layout: React.FC<LayoutProps> = ({children}) => {
-  const { activeSource, listeningToSink } = useAppContext();
+  const { 
+    activeSource, 
+    listeningToSink, 
+    showVNCModal, 
+    selectedVNCSource, 
+    closeVNCModal,
+    showEqualizerModal,
+    selectedEqualizerItem,
+    selectedEqualizerType,
+    closeEqualizerModal,
+    fetchSources,
+    fetchSinks,
+    fetchRoutes
+  } = useAppContext();
   const [isExpanded, setIsExpanded] = useState(false);
   const [colorMode, setColorMode] = useState<ColorMode>(() => {
     const savedMode = localStorage.getItem('colorMode');
@@ -249,17 +69,6 @@ const Layout: React.FC<LayoutProps> = ({children}) => {
     return () => mediaQuery.removeListener(handleChange);
   }, [colorMode]);
 
-  const getColorModeButtonText = () => {
-    switch (colorMode) {
-      case 'light':
-        return 'Dark Mode';
-      case 'dark':
-        return 'System Default';
-      case 'system':
-        return 'Light Mode';
-    }
-  };
-
   const getCurrentColorModeText = () => {
     switch (colorMode) {
       case 'light':
@@ -272,6 +81,12 @@ const Layout: React.FC<LayoutProps> = ({children}) => {
   };
 
   const isDarkMode = colorMode === 'dark' || (colorMode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+  const handleDataChange = async () => {
+    await fetchSources();
+    await fetchSinks();
+    await fetchRoutes();
+  };
 
   return (
     <div className={`layout ${isDarkMode ? 'dark-mode' : ''}`}>
@@ -295,17 +110,38 @@ const Layout: React.FC<LayoutProps> = ({children}) => {
       </header>
       {(activeSource || listeningToSink) && (
         <div className="status-section">
-          <ActiveSourceSection isExpanded={isExpanded} onToggle={toggleExpanded} />
-          <NowPlayingSection isExpanded={isExpanded} onToggle={toggleExpanded} />
+          <ActiveSource isExpanded={isExpanded} onToggle={toggleExpanded} />
+          <NowPlaying isExpanded={isExpanded} onToggle={toggleExpanded} />
         </div>
       )}
       <main className="layout-main">
-        <Outlet />
         {children}
+        <Outlet />
       </main>
       <footer className="layout-footer">
         <p>&copy; {new Date().getFullYear()} Netham45</p>
       </footer>
+      {showVNCModal && selectedVNCSource && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <button className="close-modal" onClick={closeVNCModal}>×</button>
+            <VNC source={selectedVNCSource} />
+          </div>
+        </div>
+      )}
+      {showEqualizerModal && selectedEqualizerItem && selectedEqualizerType && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <button className="close-modal" onClick={closeEqualizerModal}>×</button>
+            <Equalizer
+              item={selectedEqualizerItem}
+              type={selectedEqualizerType}
+              onClose={closeEqualizerModal}
+              onDataChange={handleDataChange}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

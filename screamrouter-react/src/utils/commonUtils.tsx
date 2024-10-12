@@ -1,5 +1,5 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { Route } from '../api/api';
 
 export interface SortConfig {
@@ -15,6 +15,24 @@ export const renderLinkWithAnchor = (to: string, name: string, icon: string, fro
       <i className={`fas ${icon}`}></i> {name}
     </Link>
   );
+};
+
+export const useAnchorFlash = () => {
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location.hash) {
+      const id = location.hash.slice(1);
+      const element = document.getElementById(id);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth' });
+        element.classList.add('flash');
+        setTimeout(() => {
+          element.classList.remove('flash');
+        }, 2000);
+      }
+    }
+  }, [location]);
 };
 
 export const ActionButton: React.FC<{

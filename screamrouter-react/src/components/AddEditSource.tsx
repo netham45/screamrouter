@@ -1,45 +1,32 @@
 import React, { useState } from 'react';
 import ApiService, { Source } from '../api/api';
+import ActionButton from './controls/ActionButton';
+import VolumeSlider from './controls/VolumeSlider';
+import TimeshiftSlider from './controls/TimeshiftSlider';
 
-/**
- * Props for the AddEditSource component
- * @interface AddEditSourceProps
- * @property {Source} [source] - The source to edit (undefined for adding a new source)
- * @property {() => void} onClose - Function to call when closing the form
- * @property {() => void} onSubmit - Function to call after successful submission
- */
 interface AddEditSourceProps {
   source?: Source;
   onClose: () => void;
-  onSubmit: () => void;
+  onSave: () => void;
 }
 
-/**
- * AddEditSource component for adding or editing a source
- * @param {AddEditSourceProps} props - The component props
- * @returns {React.FC} A functional component for adding or editing sources
- */
-const AddEditSource: React.FC<AddEditSourceProps> = ({ source, onClose, onSubmit }) => {
-  // State declarations
+const AddEditSource: React.FC<AddEditSourceProps> = ({ source, onClose, onSave }) => {
   const [name, setName] = useState(source?.name || '');
   const [ip, setIp] = useState(source?.ip || '');
   const [vncIp, setVncIp] = useState(source?.vnc_ip || '');
   const [vncPort, setVncPort] = useState(source?.vnc_port?.toString() || '');
-  const [delay, setDelay] = useState(source?.delay?.toString() || '0');
+  const [volume, setVolume] = useState(source?.volume || 1);
+  const [delay, setDelay] = useState(source?.delay || 0);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Handles form submission
-   * @param {React.FormEvent} e - The form event
-   */
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     const sourceData: Partial<Source> = {
       name,
       ip,
       vnc_ip: vncIp,
       vnc_port: vncPort ? parseInt(vncPort) : undefined,
-      delay: parseInt(delay),
+      volume,
+      delay,
     };
 
     try {
@@ -48,7 +35,7 @@ const AddEditSource: React.FC<AddEditSourceProps> = ({ source, onClose, onSubmit
       } else {
         await ApiService.addSource(sourceData as Source);
       }
-      onSubmit();
+      onSave();
       onClose();
     } catch (error) {
       console.error('Error submitting source:', error);
@@ -57,59 +44,57 @@ const AddEditSource: React.FC<AddEditSourceProps> = ({ source, onClose, onSubmit
   };
 
   return (
-    <div className="add-edit-source">
-      <h3>{source ? 'Edit Source' : 'Add Source'}</h3>
-      {error && <div className="error-message">{error}</div>}
-      <form onSubmit={handleSubmit}>
-        <label>
-          Source Name:
-          <input 
-            type="text" 
-            value={name} 
-            onChange={(e) => setName(e.target.value)} 
-            required 
-          />
-        </label>
-        <label>
-          Source IP:
-          <input 
-            type="text" 
-            value={ip} 
-            onChange={(e) => setIp(e.target.value)} 
-            required 
-          />
-        </label>
-        <label>
-          VNC IP:
-          <input 
-            type="text" 
-            value={vncIp} 
-            onChange={(e) => setVncIp(e.target.value)} 
-          />
-        </label>
-        <label>
-          VNC Port:
-          <input 
-            type="number" 
-            value={vncPort} 
-            onChange={(e) => setVncPort(e.target.value)} 
-          />
-        </label>
-        <label>
-          Delay (ms):
-          <input 
-            type="number" 
-            value={delay} 
-            onChange={(e) => setDelay(e.target.value)} 
-            min="0" 
-            max="5000" 
-          />
-        </label>
-        <div className="form-buttons">
-          <button type="submit">{source ? 'Update Source' : 'Add Source'}</button>
-          <button type="button" onClick={onClose}>Cancel</button>
+    <div className="modal-backdrop">
+      <div className="modal-content">
+        <div className="add-edit-source">
+          <h3>{source ? 'Edit Source' : 'Add Source'}</h3>
+          {error && <div className="error-message">{error}</div>}
+          <div className="source-form">
+            <label>
+              Source Name:
+              <input 
+                type="text" 
+                value={name} 
+                onChange={(e) => setName(e.target.value)} 
+                required 
+              />
+            </label>
+            <label>
+              Source IP:
+              <input 
+                type="text" 
+                value={ip} 
+                onChange={(e) => setIp(e.target.value)} 
+                required 
+              />
+            </label>
+            <label>
+              VNC IP:
+              <input 
+                type="text" 
+                value={vncIp} 
+                onChange={(e) => setVncIp(e.target.value)} 
+              />
+            </label>
+            <label>
+              VNC Port:
+              <input 
+                type="number" 
+                value={vncPort} 
+                onChange={(e) => setVncPort(e.target.value)} 
+              />
+            </label>
+            <VolumeSlider value={volume} onChange={setVolume} />
+            <TimeshiftSlider value={delay} onChange={setDelay} />
+            <div className="form-buttons">
+              <ActionButton onClick={handleSubmit}>
+                {source ? 'Update Source' : 'Add Source'}
+              </ActionButton>
+              <ActionButton onClick={onClose}>Cancel</ActionButton>
+            </div>
+          </div>
         </div>
-      </form>
+      </div>
     </div>
   );
 };

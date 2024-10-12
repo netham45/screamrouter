@@ -12,17 +12,34 @@ interface AppContextType {
   onToggleActiveSource: (sourceName: string) => void;
   onListenToSink: (sink: Sink | null) => void;
   onVisualizeSink: (sink: Sink | null) => void;
-  toggleEnabled: (type: 'sources' | 'sinks', name: string, currentStatus: boolean) => Promise<void>;
-  updateVolume: (type: 'sources' | 'sinks', name: string, volume: number) => Promise<void>;
+  toggleEnabled: (type: 'sources' | 'sinks' | 'routes', name: string, currentStatus: boolean) => Promise<void>;
+  updateVolume: (type: 'sources' | 'sinks' | 'routes', name: string, volume: number) => Promise<void>;
+  updateTimeshift: (type: 'sources' | 'sinks' | 'routes', name: string, timeshift: number) => Promise<void>;
   controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => Promise<void>;
   setSelectedItem: (item: any) => void;
   setShowVNCModal: (show: boolean) => void;
   setShowEqualizerModal: (show: boolean) => void;
-  setSelectedItemType: (type: 'sources' | 'sinks' | 'routes' | null) => void;
+  setSelectedItemType: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null) => void;
   getRoutesForSource: (sourceName: string) => Route[];
   getRoutesForSink: (sinkName: string) => Route[];
   fetchSources: () => Promise<void>;
+  fetchSinks: () => Promise<void>;
   fetchRoutes: () => Promise<void>;
+  setPrimarySource: (source: Source | null) => void;
+  showVNCModal: boolean;
+  selectedVNCSource: Source | null;
+  openVNCModal: (source: Source) => void;
+  closeVNCModal: () => void;
+  showEqualizerModal: boolean;
+  selectedEqualizerItem: any;
+  selectedEqualizerType: 'sources' | 'sinks' | 'routes' | null;
+  openEqualizerModal: (item: any, type: 'sources' | 'sinks' | 'routes') => void;
+  closeEqualizerModal: () => void;
+  showEditModal: boolean;
+  setShowEditModal: (show: boolean) => void;
+  editItem: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', item: Source | Sink | Route) => void;
+  selectedItem: any;
+  selectedItemType: 'sources' | 'sinks' | 'routes' | 'group-sink' | "group-source" | null;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -37,7 +54,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [showVNCModal, setShowVNCModal] = useState(false);
   const [showEqualizerModal, setShowEqualizerModal] = useState(false);
-  const [selectedItemType, setSelectedItemType] = useState<'sources' | 'sinks' | 'routes' | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [selectedItemType, setSelectedItemType] = useState<'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null>(null);
+  const [selectedVNCSource, setSelectedVNCSource] = useState<Source | null>(null);
+  const [selectedEqualizerItem, setSelectedEqualizerItem] = useState<any>(null);
+  const [selectedEqualizerType, setSelectedEqualizerType] = useState<'sources' | 'sinks' | 'routes' | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -48,7 +69,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     audioRef.current = document.getElementById('audio') as HTMLAudioElement;
 
-    // Fetch initial data
     fetchSources();
     fetchSinks();
     fetchRoutes();
@@ -58,11 +78,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const response = await ApiService.getSources();
       setSources(response.data);
-      // Check if the active source is still enabled
-      if (activeSource && !response.data.some(source => source.name === activeSource && source.enabled)) {
-        setActiveSource(null);
-        localStorage.removeItem('activeSource');
-      }
     } catch (error) {
       console.error('Error fetching sources:', error);
     }
@@ -117,36 +132,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const toggleEnabled = async (type: 'sources' | 'sinks', name: string, currentStatus: boolean) => {
+  const toggleEnabled = async (type: 'sources' | 'sinks' | 'routes', name: string, currentStatus: boolean) => {
     try {
       if (type === 'sources') {
         await ApiService.updateSource(name, { enabled: !currentStatus });
-        if (activeSource === name && currentStatus) {
-          // If we're disabling the active source, set it to null
-          setActiveSource(null);
-          localStorage.removeItem('activeSource');
-        }
         await fetchSources();
-      } else {
+      } else if (type === 'sinks') {
         await ApiService.updateSink(name, { enabled: !currentStatus });
         await fetchSinks();
+      } else if (type === 'routes') {
+        await ApiService.updateRoute(name, { enabled: !currentStatus });
+        await fetchRoutes();
       }
     } catch (error) {
       console.error(`Error toggling ${type} enabled status:`, error);
     }
   };
 
-  const updateVolume = async (type: 'sources' | 'sinks', name: string, volume: number) => {
+  const updateVolume = async (type: 'sources' | 'sinks' | 'routes', name: string, volume: number) => {
     try {
       if (type === 'sources') {
         await ApiService.updateSource(name, { volume });
         fetchSources();
-      } else {
+      } else if (type === 'sinks') {
         await ApiService.updateSink(name, { volume });
         fetchSinks();
+      } else {
+        await ApiService.updateRouteVolume(name, volume);
+        fetchRoutes();
       }
     } catch (error) {
       console.error(`Error updating ${type} volume:`, error);
+    }
+  };
+
+  const updateTimeshift = async (type: 'sources' | 'sinks' | 'routes', name: string, timeshift: number) => {
+    try {
+      if (type === 'sources') {
+        await ApiService.updateSourceTimeshift(name, timeshift);
+        fetchSources();
+      } else if (type === 'sinks') {
+        await ApiService.updateSinkTimeshift(name, timeshift);
+        fetchSinks();
+      } else {
+        await ApiService.updateRouteTimeshift(name, timeshift);
+        fetchRoutes();
+      }
+    } catch (error) {
+      console.error(`Error updating ${type} timeshift:`, error);
     }
   };
 
@@ -167,6 +200,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return routes.filter(route => route.sink === sinkName);
   };
 
+  const setPrimarySource = (source: Source | null) => {
+    setSources(prevSources => prevSources.map(s => ({
+      ...s,
+      is_primary: s.name === source?.name
+    })));
+  };
+
+  const openVNCModal = (source: Source) => {
+    setSelectedVNCSource(source);
+    setShowVNCModal(true);
+  };
+
+  const closeVNCModal = () => {
+    setSelectedVNCSource(null);
+    setShowVNCModal(false);
+  };
+
+  const openEqualizerModal = (item: any, type: 'sources' | 'sinks' | 'routes') => {
+    setSelectedEqualizerItem(item);
+    setSelectedEqualizerType(type);
+    setShowEqualizerModal(true);
+  };
+
+  const closeEqualizerModal = () => {
+    setSelectedEqualizerItem(null);
+    setSelectedEqualizerType(null);
+    setShowEqualizerModal(false);
+  };
+
+  const editItem = (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', item: Source | Sink | Route) => {
+    setSelectedItem(item);
+    setSelectedItemType(type);
+    setShowEditModal(true);
+  };
+
   return (
     <AppContext.Provider value={{
       activeSource,
@@ -180,6 +248,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       onVisualizeSink,
       toggleEnabled,
       updateVolume,
+      updateTimeshift,
       controlSource,
       setSelectedItem,
       setShowVNCModal,
@@ -188,7 +257,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       getRoutesForSource,
       getRoutesForSink,
       fetchSources,
-      fetchRoutes
+      fetchSinks,
+      fetchRoutes,
+      setPrimarySource,
+      showVNCModal,
+      selectedVNCSource,
+      openVNCModal,
+      closeVNCModal,
+      showEqualizerModal,
+      selectedEqualizerItem,
+      selectedEqualizerType,
+      openEqualizerModal,
+      closeEqualizerModal,
+      showEditModal,
+      setShowEditModal,
+      editItem,
+      selectedItem,
+      selectedItemType
     }}>
       {children}
     </AppContext.Provider>

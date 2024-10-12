@@ -17,6 +17,9 @@ export interface Source {
   vnc_ip?: string;
   vnc_port?: number;
   delay: number;
+  timeshift: number;
+  favorite?: boolean;
+  is_primary?: boolean;
 }
 
 /**
@@ -36,8 +39,10 @@ export interface Sink {
   channels: number;
   channel_layout: string;
   delay: number;
+  timeshift: number;
   time_sync: boolean;
   time_sync_delay: number;
+  favorite?: boolean;
 }
 
 /**
@@ -51,6 +56,8 @@ export interface Route {
   volume: number;
   equalizer: Equalizer;
   delay: number;
+  timeshift: number;
+  favorite?: boolean;
 }
 
 /**
@@ -103,6 +110,11 @@ const ApiService = {
   updateSourceDelay: (name: string, delay: number) => axios.get(`${BASE_URL}sources/${name}/delay/${delay}`),
   updateSinkDelay: (name: string, delay: number) => axios.get(`${BASE_URL}sinks/${name}/delay/${delay}`),
   updateRouteDelay: (name: string, delay: number) => axios.get(`${BASE_URL}routes/${name}/delay/${delay}`),
+
+  // Timeshift update requests
+  updateSourceTimeshift: (name: string, timeshift: number) => axios.get(`${BASE_URL}sources/${name}/timeshift/${timeshift}`),
+  updateSinkTimeshift: (name: string, timeshift: number) => axios.get(`${BASE_URL}sinks/${name}/timeshift/${timeshift}`),
+  updateRouteTimeshift: (name: string, timeshift: number) => axios.get(`${BASE_URL}routes/${name}/timeshift/${timeshift}`),
 
   // Equalizer update requests
   updateSourceEqualizer: (name: string, equalizer: Equalizer) => axios.post(`${BASE_URL}sources/${name}/equalizer`, equalizer),

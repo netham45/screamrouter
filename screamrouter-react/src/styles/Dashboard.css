@@ -53,7 +53,7 @@
   
   .dashboard-content {
     flex: 1;
-    padding: 2rem;
+    padding-top: 2rem;
     display: flex;
     flex-direction: column;
     gap: 2rem;
@@ -220,10 +220,10 @@
   
   @keyframes flash {
     0%, 100% { background-color: transparent; }
-    50% { background-color: #2ecc71; }
+    50% { background-color: rgba(46, 204, 113, 0.3); }
   }
   
-  .flash {
+  .collapsible-section.flash {
     animation: flash 1s;
   }
 
@@ -271,16 +271,6 @@
   max-height: 0;
   opacity: 0;
   padding: 0;
-}
-
-/* Flash animation */
-@keyframes flash {
-  0%, 100% { background-color: transparent; }
-  50% { background-color: #2ecc71; }
-}
-
-.flash {
-  animation: flash 1s;
 }
 
 @media (max-width: 1200px) {

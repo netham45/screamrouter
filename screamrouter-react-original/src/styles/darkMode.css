@@ -1,0 +1,249 @@
+/* Dark mode styles */
+body.dark-mode {
+  background-color: #1a1a1a;
+  color: #f0f0f0;
+}
+
+.dark-mode .layout {
+  background-color: #1a1a1a;
+}
+
+.dark-mode header {
+  background-color: #2c3e50;
+}
+
+.dark-mode nav ul li a:hover {
+  background-color: #34495e;
+  color: #2ecc71;
+}
+
+.dark-mode main::before {
+  opacity: 0.02;
+}
+
+.dark-mode footer {
+  background-color: #2c3e50;
+}
+
+/* Adjust colors for better contrast */
+.dark-mode .status-section {
+  background-color: #14293e;
+  border: 1px solid #2c3e50;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.dark-mode .collapsible-section {
+  background-color: #2c3e50;
+  border: 1px solid #34495e;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.dark-mode .section-header {
+  background-color: #34495e;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid #4a4a4a;
+  border-radius: 8px 8px 0 0;
+}
+
+.dark-mode .section-content {
+  background-color: #2c3e50;
+  padding: 1rem;
+}
+
+.dark-mode .section-header h3 {
+  color: #2ecc71;
+}
+
+.dark-mode .section-subtitle {
+  color: #bdc3c7;
+}
+
+.dark-mode .expand-toggle {
+  color: #3498db;
+}
+
+.dark-mode .active-source-section p,
+.dark-mode .now-playing-section p {
+  color: #ecf0f1;
+}
+
+.dark-mode button {
+  background-color: #3498db;
+  color: #f0f0f0;
+}
+
+.dark-mode button.disabled {
+    background-color: #9b5814;
+    color: #f0f0f0;
+}
+
+.dark-mode button.enabled {
+    background-color: #149b58;
+    color: #f0f0f0;
+}
+
+.dark-mode button:hover {
+  background-color: #2980b9;
+}
+
+.dark-mode input[type="text"],
+.dark-mode input[type="number"],
+.dark-mode select {
+  background-color: #2c3e50;
+  color: #f0f0f0;
+  border: 1px solid #4a4a4a;
+}
+
+.dark-mode table {
+  color: #f0f0f0;
+}
+
+.dark-mode th {
+  background-color: #2c3e50;
+  color: #f0f0f0;
+}
+
+.dark-mode td {
+  border-bottom: 1px solid #4a4a4a;
+}
+
+.dark-mode tr:hover {
+  background-color: #34495e;
+}
+
+.dark-mode .card {
+  background-color: #2c3e50;
+}
+
+.dark-mode h2,
+.dark-mode h3,
+.dark-mode h4 {
+  color: #2ecc71;
+}
+
+.dark-mode h2 {
+  border-bottom: 2px solid #2ecc71;
+}
+
+/* Dark mode toggle button */
+.dark-mode-toggle {
+  background-color: #3498db;
+  color: #f0f0f0;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+}
+
+.dark-mode-toggle:hover {
+  background-color: #2980b9;
+}
+
+.dark-mode .dark-mode-toggle {
+  background-color: #f0f0f0;
+  color: #333;
+}
+
+.dark-mode .dark-mode-toggle:hover {
+  background-color: #e0e0e0;
+}
+
+/* Active section on dashboard */
+.dark-mode .favorite-sources,
+.dark-mode .favorite-sinks,
+.dark-mode .favorite-routes,
+.dark-mode .active-sources,
+.dark-mode .active-sinks,
+.dark-mode .active-routes {
+  background-color: #2c3e50;
+  border: 1px solid #34495e;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.dark-mode .favorite-sources h3,
+.dark-mode .favorite-sinks h3,
+.dark-mode .favorite-routes h3,
+.dark-mode .active-sources h3,
+.dark-mode .active-sinks h3,
+.dark-mode .active-routes h3 {
+  color: #2ecc71;
+}
+
+/* Fix title bar styling */
+.dark-mode .layout-header h1 {
+  color: #2ecc71;
+}
+
+.dark-mode .layout-header nav ul li a {
+  color: #f0f0f0;
+}
+
+.dark-mode .layout-header nav ul li a:hover {
+  background-color: #34495e;
+  color: #2ecc71;
+}
+
+/* Additional styles for better visibility */
+.dark-mode .subtext {
+  color: #bdc3c7;
+}
+
+.dark-mode .control-bar button {
+  background-color: #3498db;
+  color: #f0f0f0;
+}
+
+.dark-mode .control-bar button:hover {
+  background-color: #2980b9;
+}
+
+.dark-mode .volume-slider {
+  background-color: #34495e;
+}
+
+.dark-mode .volume-slider::-webkit-slider-thumb {
+  background-color: #2ecc71;
+}
+
+.dark-mode .volume-slider::-moz-range-thumb {
+  background-color: #2ecc71;
+}
+
+/* Ensure text is visible on all backgrounds */
+.dark-mode .not-playing {
+  color: #bdc3c7;
+}
+
+/* Improve contrast for active elements */
+.dark-mode .btn.active,
+.dark-mode button.active {
+  background-color: #008CBA;
+  color: #2c3e50;
+}
+
+.dark-mode .btn.active:hover,
+.dark-mode button.active:hover {
+  background-color: #27ae60;
+}
+
+/* Adjust link colors for better visibility */
+.dark-mode a {
+  color: #b4d8fb;
+}
+
+.dark-mode a:hover {
+  color: #2ecc71;
+}
+
+.dark-mode .modal-content {
+    background-color: #34495e;   
+}

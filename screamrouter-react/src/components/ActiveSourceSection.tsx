@@ -2,11 +2,11 @@ import React from 'react';
 import { Source, Route } from '../api/api';
 import { renderLinkWithAnchor, ActionButton, VolumeSlider } from '../utils/commonUtils';
 
-interface ActiveSourceSectionProps {
-  activeSourceItem: Source | null;
+interface PrimarySourceSectionProps {
+  primarySourceItem: Source | null;
   toggleEnabled: (type: 'sources', name: string, enabled: boolean) => void;
   toggleStar: (type: 'sources', name: string) => void;
-  toggleActive: (name: string) => void;
+  togglePrimary: (name: string) => void;
   starredSources: string[];
   setSelectedItem: (item: Source) => void;
   setSelectedItemType: (type: 'sources') => void;
@@ -17,13 +17,14 @@ interface ActiveSourceSectionProps {
   updateVolume: (type: 'sources', name: string, volume: number) => void;
   getRoutesForSource: (sourceName: string) => Route[];
   jumpToAnchor: (name: string) => void;
+  onDataChange: () => void;
 }
 
-const ActiveSourceSection: React.FC<ActiveSourceSectionProps> = ({
-  activeSourceItem,
+const PrimarySourceSection: React.FC<PrimarySourceSectionProps> = ({
+  primarySourceItem,
   toggleEnabled,
   toggleStar,
-  toggleActive,
+  togglePrimary,
   starredSources,
   setSelectedItem,
   setSelectedItemType,
@@ -33,10 +34,11 @@ const ActiveSourceSection: React.FC<ActiveSourceSectionProps> = ({
   setShowEqualizerModal,
   updateVolume,
   getRoutesForSource,
-  jumpToAnchor
+  jumpToAnchor,
+  onDataChange
 }) => {
-  if (!activeSourceItem) {
-    return null; // or return a message like "No active source selected"
+  if (!primarySourceItem) {
+    return null;
   }
 
   const renderRouteLinks = (routes: Route[]) => {
@@ -50,11 +52,11 @@ const ActiveSourceSection: React.FC<ActiveSourceSectionProps> = ({
   };
 
   const renderGroupMembers = () => {
-    if (!activeSourceItem.is_group || !activeSourceItem.group_members) return null;
+    if (!primarySourceItem.is_group || !primarySourceItem.group_members) return null;
     return (
       <div className="group-members">
         <span>Group members: </span>
-        {activeSourceItem.group_members.map((member, index) => (
+        {primarySourceItem.group_members.map((member, index) => (
           <React.Fragment key={member}>
             {index > 0 && ', '}
             <a href={`#source-${encodeURIComponent(member)}`} onClick={(e) => { e.preventDefault(); jumpToAnchor(member); }}>
@@ -66,9 +68,52 @@ const ActiveSourceSection: React.FC<ActiveSourceSectionProps> = ({
     );
   };
 
+  const renderControls = () => {
+    console.log('Rendering controls for primary source:', primarySourceItem); // Debug log
+    return (
+      <>
+        <ActionButton onClick={() => toggleEnabled('sources', primarySourceItem.name, primarySourceItem.enabled)}
+          className={primarySourceItem.enabled ? 'enabled' : 'disabled'}
+        >
+          {primarySourceItem.enabled ? 'Disable' : 'Enable'}
+        </ActionButton>
+        <VolumeSlider
+          value={primarySourceItem.volume}
+          onChange={(value) => updateVolume('sources', primarySourceItem.name, value)}
+        />
+        <ActionButton onClick={() => {
+          console.log('Equalizer button clicked for primary source:', primarySourceItem.name); // Debug log
+          setSelectedItem(primarySourceItem);
+          setSelectedItemType('sources');
+          setShowEqualizerModal(true);
+          onDataChange();
+        }}>
+          Equalizer
+        </ActionButton>
+        {('vnc_ip' in primarySourceItem || 'vnc_port' in primarySourceItem) && (
+          <>
+            <ActionButton onClick={() => {
+              console.log('VNC button clicked for primary source:', primarySourceItem.name); // Debug log
+              setSelectedItem(primarySourceItem);
+              setShowVNCModal(true);
+            }}>
+              VNC
+            </ActionButton>
+            <ActionButton onClick={() => controlSource(primarySourceItem.name, 'prevtrack')}>⏮</ActionButton>
+            <ActionButton onClick={() => controlSource(primarySourceItem.name, 'play')}>⏯</ActionButton>
+            <ActionButton onClick={() => controlSource(primarySourceItem.name, 'nexttrack')}>⏭</ActionButton>
+          </>
+        )}
+        <ActionButton onClick={() => toggleStar('sources', primarySourceItem.name)}>
+          {starredSources?.includes(primarySourceItem.name) ? '★' : '☆'}
+        </ActionButton>
+      </>
+    );
+  };
+
   return (
-    <div className="active-source-section">
-      <h2><i className="fas fa-broadcast-tower"></i> Active Source</h2>
+    <div className="primary-source-section">
+      <h2><i className="fas fa-broadcast-tower"></i> Primary Source</h2>
       <table>
         <thead>
           <tr>
@@ -81,53 +126,19 @@ const ActiveSourceSection: React.FC<ActiveSourceSectionProps> = ({
         <tbody>
           <tr>
             <td>
-              {renderLinkWithAnchor('/sources', activeSourceItem.name, 'fa-music')}
+              {renderLinkWithAnchor('/sources', primarySourceItem.name, 'fa-music')}
             </td>
             <td>
               <div className="subtext">
-                <div>Routes to: {renderRouteLinks(getRoutesForSource(activeSourceItem.name))}</div>
+                <div>Routes to: {renderRouteLinks(getRoutesForSource(primarySourceItem.name))}</div>
                 {renderGroupMembers()}
               </div>
             </td>
             <td>
-              <ActionButton 
-                onClick={() => toggleEnabled('sources', activeSourceItem.name, activeSourceItem.enabled)}
-                className={activeSourceItem.enabled ? 'enabled' : 'disabled'}
-              >
-                {activeSourceItem.enabled ? 'Enabled' : 'Disabled'}
-              </ActionButton>
+              {primarySourceItem.enabled ? 'Enabled' : 'Disabled'}
             </td>
             <td>
-              {(activeSourceItem.vnc_ip || activeSourceItem.vnc_port) && (
-                <>
-                  <ActionButton onClick={() => {
-                    setSelectedItem(activeSourceItem);
-                    setShowVNCModal(true);
-                  }}>
-                    VNC
-                  </ActionButton>
-                  <ActionButton onClick={() => controlSource(activeSourceItem.name, 'prevtrack')}>
-                    ⏮
-                  </ActionButton>
-                  <ActionButton onClick={() => controlSource(activeSourceItem.name, 'play')}>
-                    ⏯
-                  </ActionButton>
-                  <ActionButton onClick={() => controlSource(activeSourceItem.name, 'nexttrack')}>
-                    ⏭
-                  </ActionButton>
-                </>
-              )}
-              <ActionButton onClick={() => {
-                setSelectedItem(activeSourceItem);
-                setSelectedItemType('sources');
-                setShowEqualizerModal(true);
-              }}>
-                Equalizer
-              </ActionButton>
-              <VolumeSlider
-                value={activeSourceItem.volume}
-                onChange={(value) => updateVolume('sources', activeSourceItem.name, value)}
-              />
+              {renderControls()}
             </td>
           </tr>
         </tbody>
@@ -136,4 +147,4 @@ const ActiveSourceSection: React.FC<ActiveSourceSectionProps> = ({
   );
 };
 
-export default ActiveSourceSection;
+export default PrimarySourceSection;

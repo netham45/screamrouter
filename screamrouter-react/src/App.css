@@ -323,3 +323,7 @@ tr:hover {
 .section-content {
   padding: 1rem;
 }
+
+iframe {
+  border: 0px;
+}

@@ -1,5 +1,4 @@
 import React, { useEffect, useRef } from 'react';
-import '../styles/AudioVisualizer.css';
 
 interface AudioVisualizerProps {
   listeningToSink: string | null;
@@ -12,7 +11,7 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ listeningToSink, visu
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (canvas) {
+    if (canvas && visualizingSink) {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
 
@@ -24,27 +23,25 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ listeningToSink, visu
         // Handle key down event
       };
 
-      window.addEventListener('resize', () => {
+      const handleResize = () => {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
-      });
+      };
 
+      window.addEventListener('resize', handleResize);
       canvas.addEventListener('click', window.canvasClick);
       document.addEventListener('keydown', window.canvasOnKeyDown);
 
       return () => {
-        window.removeEventListener('resize', () => {
-          canvas.width = window.innerWidth;
-          canvas.height = window.innerHeight;
-        });
+        window.removeEventListener('resize', handleResize);
         canvas.removeEventListener('click', window.canvasClick);
         document.removeEventListener('keydown', window.canvasOnKeyDown);
       };
     }
-  }, []);
+  }, [visualizingSink]);
 
   useEffect(() => {
-    if (sinkIp) {
+    if (sinkIp && visualizingSink) {
       window.startVisualizer(sinkIp);
     } else {
       window.stopVisualizer();
@@ -53,7 +50,11 @@ const AudioVisualizer: React.FC<AudioVisualizerProps> = ({ listeningToSink, visu
     return () => {
       window.stopVisualizer();
     };
-  }, [sinkIp]);
+  }, [sinkIp, visualizingSink]);
+
+  if (!visualizingSink) {
+    return null;
+  }
 
   return (
     <div className="audio-visualizer">

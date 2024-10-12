@@ -1,21 +1,21 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Source, Route } from '../api/api';
-import { renderLinkWithAnchor, ActionButton, VolumeSlider } from '../utils/commonUtils';
+import { Actions } from '../utils/actions';
+import { renderLinkWithAnchor } from '../utils/commonUtils';
+import StarButton from './controls/StarButton';
+import EnableButton from './controls/EnableButton';
+import ActionButton from './controls/ActionButton';
+import VolumeSlider from './controls/VolumeSlider';
+import TimeshiftSlider from './controls/TimeshiftSlider';
+import PlaybackControls from './controls/PlaybackControls';
+import ItemRoutes from './controls/ItemRoutes';
 
 interface SourceItemProps {
   source: Source;
   index: number;
   isStarred: boolean;
   isActive: boolean;
-  onToggleSource: (name: string) => void;
-  onDeleteSource: (name: string) => void;
-  onUpdateVolume: (volume: number) => void;
-  onToggleStar: (name: string) => void;
-  onToggleActiveSource: (name: string) => void;
-  onEditSource: (source: Source) => void;
-  onShowEqualizer: (source: Source) => void;
-  onShowVNC: (source: Source) => void;
-  onControlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => void;
+  actions: Actions;
   sourceRefs: React.MutableRefObject<{[key: string]: HTMLTableRowElement}>;
   onDragStart: (e: React.DragEvent<HTMLSpanElement>, index: number) => void;
   onDragEnter: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
@@ -23,11 +23,8 @@ interface SourceItemProps {
   onDragOver: (e: React.DragEvent<HTMLTableRowElement>) => void;
   onDrop: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
   onDragEnd: (e: React.DragEvent<HTMLSpanElement>) => void;
-  jumpToAnchor: (name: string) => void;
   activeRoutes: Route[];
   disabledRoutes: Route[];
-  isExpanded: boolean;
-  toggleExpandRoutes: (name: string) => void;
 }
 
 const SourceItem: React.FC<SourceItemProps> = ({
@@ -35,15 +32,7 @@ const SourceItem: React.FC<SourceItemProps> = ({
   index,
   isStarred,
   isActive,
-  onToggleSource,
-  onDeleteSource,
-  onUpdateVolume,
-  onToggleStar,
-  onToggleActiveSource,
-  onEditSource,
-  onShowEqualizer,
-  onShowVNC,
-  onControlSource,
+  actions,
   sourceRefs,
   onDragStart,
   onDragEnter,
@@ -51,34 +40,13 @@ const SourceItem: React.FC<SourceItemProps> = ({
   onDragOver,
   onDrop,
   onDragEnd,
-  jumpToAnchor,
   activeRoutes,
-  disabledRoutes,
-  isExpanded,
-  toggleExpandRoutes
+  disabledRoutes
 }) => {
-  const renderRouteList = (routes: Route[], isEnabled: boolean) => {
-    if (routes.length === 0) return null;
+  const [isExpanded, setIsExpanded] = useState(false);
 
-    const displayedRoutes = isExpanded ? routes : routes.slice(0, 3);
-    const hasMore = routes.length > 3;
-
-    return (
-      <div className={`route-list ${isEnabled ? 'enabled' : 'disabled'}`}>
-        <span className="route-list-label">{isEnabled ? 'Enabled routes:' : 'Disabled routes:'}</span>
-        {displayedRoutes.map((route, index) => (
-          <React.Fragment key={route.name}>
-            {renderLinkWithAnchor('/routes', route.name, 'fa-route', 'source')}
-            {index < displayedRoutes.length - 1 && ', '}
-          </React.Fragment>
-        ))}
-        {hasMore && !isExpanded && (
-          <ActionButton onClick={() => toggleExpandRoutes(source.name)} className="expand-routes">
-            ...
-          </ActionButton>
-        )}
-      </div>
-    );
+  const toggleExpandRoutes = () => {
+    setIsExpanded(!isExpanded);
   };
 
   return (
@@ -104,13 +72,14 @@ const SourceItem: React.FC<SourceItemProps> = ({
         </span>
       </td>
       <td>
-        <ActionButton onClick={() => onToggleStar(source.name)}>
-          {isStarred ? '★' : '☆'}
-        </ActionButton>
+        <StarButton
+          isStarred={isStarred}
+          onClick={() => actions.toggleStar('sources', source.name)}
+        />
       </td>
       <td>
         <ActionButton 
-          onClick={() => onToggleActiveSource(source.name)}
+          onClick={() => actions.toggleActiveSource(source.name)}
           className={isActive ? 'active' : ''}
         >
           {isActive ? '⬤' : '◯'}
@@ -129,44 +98,47 @@ const SourceItem: React.FC<SourceItemProps> = ({
             ))}
           </div>
         )}
-        <div className="source-routes">
-          {renderRouteList(activeRoutes, true)}
-          {renderRouteList(disabledRoutes, false)}
-          {isExpanded && (
-            <ActionButton onClick={() => toggleExpandRoutes(source.name)} className="collapse-routes">
-              Show less
-            </ActionButton>
-          )}
-        </div>
+        <ItemRoutes
+          activeRoutes={activeRoutes}
+          disabledRoutes={disabledRoutes}
+          isExpanded={isExpanded}
+          toggleExpandRoutes={toggleExpandRoutes}
+          itemName={source.name}
+        />
       </td>
       <td>{source.ip}</td>
       <td>
-        <ActionButton 
-          onClick={() => onToggleSource(source.name)}
-          className={source.enabled ? 'enabled' : 'disabled'}
-        >
-          {source.enabled ? 'Enabled' : 'Disabled'}
-        </ActionButton>
+        <EnableButton
+          isEnabled={source.enabled}
+          onClick={() => actions.toggleEnabled('sources', source.name)}
+        />
       </td>
       <td>
         <VolumeSlider
           value={source.volume}
-          onChange={(value) => onUpdateVolume(value)}
+          onChange={(value) => actions.updateVolume('sources', source.name, value)}
         />
-        <span>{(source.volume * 100).toFixed(0)}%</span>
       </td>
       <td>
-        <ActionButton onClick={() => onEditSource(source)}>Edit</ActionButton>
-        <ActionButton onClick={() => onShowEqualizer(source)}>Equalizer</ActionButton>
+        <TimeshiftSlider
+          value={source.timeshift || 0}
+          onChange={(value) => actions.updateTimeshift('sources', source.name, value)}
+        />
+      </td>
+      <td>
+        <ActionButton onClick={() => actions.editItem('sources', source)}>Edit</ActionButton>
+        <ActionButton onClick={() => actions.showEqualizer('sources', source)}>Equalizer</ActionButton>
         {source.vnc_ip && source.vnc_port && (
           <>
-            <ActionButton onClick={() => onShowVNC(source)}>VNC</ActionButton>
-            <ActionButton onClick={() => onControlSource(source.name, 'prevtrack')}>⏮</ActionButton>
-            <ActionButton onClick={() => onControlSource(source.name, 'play')}>⏯</ActionButton>
-            <ActionButton onClick={() => onControlSource(source.name, 'nexttrack')}>⏭</ActionButton>
+            <ActionButton onClick={() => actions.showVNC(source)}>VNC</ActionButton>
+            <PlaybackControls
+              onPrevTrack={() => actions.controlSource(source.name, 'prevtrack')}
+              onPlay={() => actions.controlSource(source.name, 'play')}
+              onNextTrack={() => actions.controlSource(source.name, 'nexttrack')}
+            />
           </>
         )}
-        <ActionButton onClick={() => onDeleteSource(source.name)} className="delete-button">Delete</ActionButton>
+        <ActionButton onClick={() => actions.deleteItem('sources', source.name)} className="delete-button">Delete</ActionButton>
       </td>
     </tr>
   );

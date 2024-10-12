@@ -1,37 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import ApiService, { Source, Sink } from '../api/api';
+import ActionButton from './controls/ActionButton';
+import VolumeSlider from './controls/VolumeSlider';
+import TimeshiftSlider from './controls/TimeshiftSlider';
 
-/**
- * Props for the AddEditGroup component
- * @interface AddEditGroupProps
- * @property {'source' | 'sink'} type - The type of group (source or sink)
- * @property {Source | Sink} [group] - The group to edit (undefined for adding a new group)
- * @property {() => void} onClose - Function to call when closing the form
- * @property {() => void} onSubmit - Function to call after successful submission
- */
 interface AddEditGroupProps {
   type: 'source' | 'sink';
   group?: Source | Sink;
   onClose: () => void;
-  onSubmit: () => void;
+  onSave: () => void;
 }
 
-/**
- * AddEditGroup component for adding or editing a group of sources or sinks
- * @param {AddEditGroupProps} props - The component props
- * @returns {React.FC} A functional component for adding or editing groups
- */
-const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSubmit }) => {
-  // State declarations
+const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSave }) => {
   const [name, setName] = useState(group ? group.name : '');
   const [members, setMembers] = useState<string[]>(group ? group.group_members || [] : []);
+  const [volume, setVolume] = useState(group ? group.volume : 1);
   const [delay, setDelay] = useState(group ? group.delay : 0);
+  const [vncIp, setVncIp] = useState(group && 'vnc_ip' in group ? group.vnc_ip : '');
+  const [vncPort, setVncPort] = useState(group && 'vnc_port' in group ? group.vnc_port : '');
   const [availableMembers, setAvailableMembers] = useState<(Source | Sink)[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Fetches available members (sources or sinks) from the API
-   */
   useEffect(() => {
     const fetchAvailableMembers = async () => {
       try {
@@ -52,38 +41,26 @@ const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSub
     fetchAvailableMembers();
   }, [type]);
 
-  /**
-   * Handles form submission
-   * @param {React.FormEvent} e - The form event
-   */
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
+  const handleSubmit = async () => {
+    const groupData: any = {
+      name,
+      group_members: members,
+      volume,
+      delay,
+      is_group: true,
+      enabled: true,
+      equalizer: {
+        b1: 0, b2: 0, b3: 0, b4: 0, b5: 0, b6: 0, b7: 0, b8: 0,
+        b9: 0, b10: 0, b11: 0, b12: 0, b13: 0, b14: 0, b15: 0, b16: 0, b17: 0, b18: 0
+      },
+    };
 
-    if (!name) {
-      setError('Name is required');
-      return;
-    }
-
-    if (members.length === 0) {
-      setError('At least one member is required');
-      return;
+    if (type === 'source') {
+      groupData.vnc_ip = vncIp;
+      groupData.vnc_port = vncPort;
     }
 
     try {
-      const groupData = {
-        name,
-        group_members: members,
-        delay,
-        is_group: true,
-        enabled: true,
-        volume: 1,
-        equalizer: {
-          b1: 0, b2: 0, b3: 0, b4: 0, b5: 0, b6: 0, b7: 0, b8: 0,
-          b9: 0, b10: 0, b11: 0, b12: 0, b13: 0, b14: 0, b15: 0, b16: 0, b17: 0, b18: 0
-        },
-      };
-
       if (group) {
         if (type === 'source') {
           await ApiService.updateSource(name, groupData);
@@ -97,17 +74,14 @@ const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSub
           await ApiService.addSink({ ...groupData, port: 0 } as Sink);
         }
       }
-      onSubmit();
+      onSave();
+      onClose();
     } catch (error) {
       console.error('Error saving group:', error);
       setError('Failed to save group. Please try again.');
     }
   };
 
-  /**
-   * Toggles a member in the group
-   * @param {string} memberName - The name of the member to toggle
-   */
   const toggleMember = (memberName: string) => {
     setMembers(prevMembers =>
       prevMembers.includes(memberName)
@@ -117,50 +91,66 @@ const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSub
   };
 
   return (
-    <div className="add-edit-group">
-      <h2>{group ? 'Edit' : 'Add'} {type.charAt(0).toUpperCase() + type.slice(1)} Group</h2>
-      {error && <div className="error-message">{error}</div>}
-      <form onSubmit={handleSubmit}>
-        <div>
-          <label htmlFor="name">Name:</label>
-          <input
-            type="text"
-            id="name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <label htmlFor="delay">Delay (ms):</label>
-          <input
-            type="number"
-            id="delay"
-            value={delay}
-            onChange={(e) => setDelay(parseInt(e.target.value))}
-            min="0"
-            required
-          />
-        </div>
-        <div>
-          <label>Members:</label>
-          {availableMembers.map((member) => (
-            <div key={member.name}>
+    <div className="modal-backdrop">
+      <div className="modal-content">
+        <div className="add-edit-group">
+          <h3>{group ? 'Edit' : 'Add'} {type.charAt(0).toUpperCase() + type.slice(1)} Group</h3>
+          {error && <div className="error-message">{error}</div>}
+          <div className="group-form">
+            <label>
+              Group Name:
               <input
-                type="checkbox"
-                id={member.name}
-                checked={members.includes(member.name)}
-                onChange={() => toggleMember(member.name)}
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
               />
-              <label htmlFor={member.name}>{member.name}</label>
+            </label>
+            <VolumeSlider value={volume} onChange={setVolume} />
+            <TimeshiftSlider value={delay} onChange={setDelay} />
+            {type === 'source' && (
+              <>
+                <label>
+                  VNC IP:
+                  <input
+                    type="text"
+                    value={vncIp}
+                    onChange={(e) => setVncIp(e.target.value)}
+                  />
+                </label>
+                <label>
+                  VNC Port:
+                  <input
+                    type="text"
+                    value={vncPort}
+                    onChange={(e) => setVncPort(e.target.value)}
+                  />
+                </label>
+              </>
+            )}
+            <div>
+              <label>Members:</label>
+              {availableMembers.map((member) => (
+                <div key={member.name}>
+                  <input
+                    type="checkbox"
+                    id={member.name}
+                    checked={members.includes(member.name)}
+                    onChange={() => toggleMember(member.name)}
+                  />
+                  <label htmlFor={member.name}>{member.name}</label>
+                </div>
+              ))}
             </div>
-          ))}
+            <div className="form-buttons">
+              <ActionButton onClick={handleSubmit}>
+                {group ? 'Update Group' : 'Add Group'}
+              </ActionButton>
+              <ActionButton onClick={onClose}>Cancel</ActionButton>
+            </div>
+          </div>
         </div>
-        <div className="form-actions">
-          <button type="submit">Save</button>
-          <button type="button" onClick={onClose}>Cancel</button>
-        </div>
-      </form>
+      </div>
     </div>
   );
 };

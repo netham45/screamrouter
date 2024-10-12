@@ -29,7 +29,7 @@ from src.screamrouter_types.website import (AddEditRouteInfo, AddEditSinkInfo,
 
 logger = get_logger(__name__)
 
-NPM_REACT_DEBUG_SITE: bool = True
+NPM_REACT_DEBUG_SITE: bool = False
 SITE_PREFIX: str = "/site"
 TEMPLATE_DIRECTORY_PREFIX: str = "."
 
@@ -56,8 +56,8 @@ class APIWebsite():
         if NPM_REACT_DEBUG_SITE:
             self.main_api.get("/site/{path:path}", name="site2")(self.proxy_npm_devsite)
         else:
-            self.main_api.get("/site", name="site")(self.serve_index)
             self.main_api.get("/site/{path}", name="site")(self.serve_static_or_index)
+            self.main_api.get("/site", name="site")(self.serve_index)
         self.main_api.get("/", name="site")(self.redirect_index)
 
     async def proxy_npm_devsite(self, request: Request, path: str):
@@ -121,6 +121,7 @@ class APIWebsite():
             Union[FileResponse, HTTPException]: The file response or a 404 error.
         """
         file_path: str = os.path.join("./site", path)
+        print(file_path)
 
         if os.path.isfile(file_path):
             # If the requested path is a file, serve it directly

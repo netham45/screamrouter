@@ -192,6 +192,22 @@ footer {
   margin: 0 0.5rem;
 }
 
+/* Audio Visualizer styles */
+.audio-visualizer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.audio-visualizer canvas {
+  width: 100%;
+  height: 100%;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
   header {
@@ -225,6 +241,48 @@ footer {
     margin-left: 0;
     margin-top: 0.25rem;
   }
+
+  main {
+    padding: 1rem;
+  }
+
+  .control-bar {
+    flex-wrap: wrap;
+  }
+
+  .control-bar button {
+    flex: 1 0 auto;
+    min-width: 80px;
+  }
+
+  .volume-slider {
+    flex: 1 0 100%;
+    margin: 0.5rem 0;
+  }
+
+  table {
+    font-size: 0.9rem;
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  th, td {
+    padding: 0.5rem;
+  }
+
+  input[type="text"],
+  input[type="number"],
+  select {
+    font-size: 16px; /* Prevents zoom on focus in iOS */
+    max-width: 100%;
+  }
+
+  button {
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    max-width: 100%;
+  }
 }
 
 iframe#vnc-iframe {
@@ -236,6 +294,12 @@ iframe#vnc-iframe {
   height: 600px;
   border-radius: 8px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+@media (max-width: 768px) {
+  iframe#vnc-iframe {
+    height: 400px;
+  }
 }
 
 /* Animations */
@@ -365,7 +429,6 @@ tr:hover {
   margin-top: 1rem;
 }
 
-
 span.lightdarkmode {
     position: absolute;
     top: 0px;
@@ -376,4 +439,18 @@ span.lightdarkmode {
 
 span.lightdarkmode button {
     width: 150px;
+}
+
+@media (max-width: 768px) {
+  span.lightdarkmode {
+    position: static;
+    display: block;
+    text-align: center;
+    padding: 15px 0;
+  }
+
+  span.lightdarkmode button {
+    width: 100%;
+    max-width: 200px;
+  }
 }

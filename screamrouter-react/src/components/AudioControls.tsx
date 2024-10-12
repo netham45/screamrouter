@@ -1,5 +1,4 @@
 import React, { useEffect, useRef } from 'react';
-import '../styles/AudioVisualizer.css';
 
 interface AudioControlsProps {
   listeningToSink: string | null;

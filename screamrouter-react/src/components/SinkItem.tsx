@@ -1,21 +1,19 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Sink, Route } from '../api/api';
-import { renderLinkWithAnchor, ActionButton, VolumeSlider } from '../utils/commonUtils';
+import { Actions } from '../utils/actions';
+import { renderLinkWithAnchor } from '../utils/commonUtils';
+import StarButton from './controls/StarButton';
+import EnableButton from './controls/EnableButton';
+import ActionButton from './controls/ActionButton';
+import VolumeSlider from './controls/VolumeSlider';
+import TimeshiftSlider from './controls/TimeshiftSlider';
+import ItemRoutes from './controls/ItemRoutes';
 
 interface SinkItemProps {
   sink: Sink;
   index: number;
   isStarred: boolean;
-  onToggleSink: (name: string) => void;
-  onDeleteSink: (name: string) => void;
-  onUpdateVolume: (name: string, volume: number) => void;
-  onToggleStar: (name: string) => void;
-  onEditSink: (sink: Sink) => void;
-  onShowEqualizer: (sink: Sink) => void;
-  onListenToSink: (sink: Sink | null) => Promise<void>;
-  onVisualizeSink: (sink: Sink | null) => void;
-  isListening: boolean;
-  isVisualizing: boolean;
+  actions: Actions;
   sinkRefs: React.MutableRefObject<{[key: string]: HTMLTableRowElement}>;
   onDragStart: (e: React.DragEvent<HTMLSpanElement>, index: number) => void;
   onDragEnter: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
@@ -23,27 +21,17 @@ interface SinkItemProps {
   onDragOver: (e: React.DragEvent<HTMLTableRowElement>) => void;
   onDrop: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
   onDragEnd: (e: React.DragEvent<HTMLSpanElement>) => void;
-  jumpToAnchor: (name: string) => void;
   activeRoutes: Route[];
   disabledRoutes: Route[];
-  isExpanded: boolean;
-  toggleExpandRoutes: (name: string) => void;
+  isListening: boolean;
+  isVisualizing: boolean;
 }
 
 const SinkItem: React.FC<SinkItemProps> = ({
   sink,
   index,
   isStarred,
-  onToggleSink,
-  onDeleteSink,
-  onUpdateVolume,
-  onToggleStar,
-  onEditSink,
-  onShowEqualizer,
-  onListenToSink,
-  onVisualizeSink,
-  isListening,
-  isVisualizing,
+  actions,
   sinkRefs,
   onDragStart,
   onDragEnter,
@@ -51,34 +39,15 @@ const SinkItem: React.FC<SinkItemProps> = ({
   onDragOver,
   onDrop,
   onDragEnd,
-  jumpToAnchor,
   activeRoutes,
   disabledRoutes,
-  isExpanded,
-  toggleExpandRoutes
+  isListening,
+  isVisualizing,
 }) => {
-  const renderRouteList = (routes: Route[], isEnabled: boolean) => {
-    if (routes.length === 0) return null;
+  const [isExpanded, setIsExpanded] = useState(false);
 
-    const displayedRoutes = isExpanded ? routes : routes.slice(0, 3);
-    const hasMore = routes.length > 3;
-
-    return (
-      <div className={`route-list ${isEnabled ? 'enabled' : 'disabled'}`}>
-        <span className="route-list-label">{isEnabled ? 'Enabled routes:' : 'Disabled routes:'}</span>
-        {displayedRoutes.map((route, index) => (
-          <React.Fragment key={route.name}>
-            {renderLinkWithAnchor('/routes', route.name, 'fa-route', 'sink')}
-            {index < displayedRoutes.length - 1 && ', '}
-          </React.Fragment>
-        ))}
-        {hasMore && !isExpanded && (
-          <ActionButton onClick={() => toggleExpandRoutes(sink.name)} className="expand-routes">
-            ...
-          </ActionButton>
-        )}
-      </div>
-    );
+  const toggleExpandRoutes = () => {
+    setIsExpanded(!isExpanded);
   };
 
   return (
@@ -104,66 +73,50 @@ const SinkItem: React.FC<SinkItemProps> = ({
         </span>
       </td>
       <td>
-        <ActionButton onClick={() => onToggleStar(sink.name)}>
-          {isStarred ? '★' : '☆'}
-        </ActionButton>
+        <StarButton
+          isStarred={isStarred}
+          onClick={() => actions.toggleStar('sinks', sink.name)}
+        />
       </td>
       <td>
         {renderLinkWithAnchor('/sinks', sink.name, 'fa-volume-up')}
-        {sink.is_group && sink.group_members && (
-          <div className="group-members">
-            <span>Group members: </span>
-            {sink.group_members.map((member, index) => (
-              <React.Fragment key={member}>
-                {renderLinkWithAnchor('/sinks', member, 'fa-volume-up')}
-                {index < sink.group_members.length - 1 && ', '}
-              </React.Fragment>
-            ))}
-          </div>
-        )}
-        <div className="sink-routes">
-          {renderRouteList(activeRoutes, true)}
-          {renderRouteList(disabledRoutes, false)}
-          {isExpanded && (
-            <ActionButton onClick={() => toggleExpandRoutes(sink.name)} className="collapse-routes">
-              Show less
-            </ActionButton>
-          )}
-        </div>
+        <ItemRoutes
+          activeRoutes={activeRoutes}
+          disabledRoutes={disabledRoutes}
+          isExpanded={isExpanded}
+          toggleExpandRoutes={toggleExpandRoutes}
+          itemName={sink.name}
+        />
       </td>
       <td>{sink.ip}</td>
-      <td>{sink.port}</td>
       <td>
-        <ActionButton 
-          onClick={() => onToggleSink(sink.name)}
-          className={sink.enabled ? 'enabled' : 'disabled'}
-        >
-          {sink.enabled ? 'Enabled' : 'Disabled'}
-        </ActionButton>
+        <EnableButton
+          isEnabled={sink.enabled}
+          onClick={() => actions.toggleEnabled('sinks', sink.name)}
+        />
       </td>
       <td>
         <VolumeSlider
           value={sink.volume}
-          onChange={(value) => onUpdateVolume(sink.name, value)}
+          onChange={(value) => actions.updateVolume('sinks', sink.name, value)}
         />
-        <span>{(sink.volume * 100).toFixed(0)}%</span>
       </td>
       <td>
-        <ActionButton onClick={() => onEditSink(sink)}>Edit</ActionButton>
-        <ActionButton onClick={() => onShowEqualizer(sink)}>Equalizer</ActionButton>
-        <ActionButton 
-          onClick={() => onListenToSink(isListening ? null : sink)}
-          className={isListening ? 'listening' : ''}
-        >
+        <TimeshiftSlider
+          value={sink.timeshift || 0}
+          onChange={(value) => actions.updateTimeshift('sinks', sink.name, value)}
+        />
+      </td>
+      <td>
+        <ActionButton onClick={() => actions.editItem('sinks', sink)}>Edit</ActionButton>
+        <ActionButton onClick={() => actions.showEqualizer('sinks', sink)}>Equalizer</ActionButton>
+        <ActionButton onClick={() => actions.listenToSink(isListening ? null : sink)}>
           {isListening ? 'Stop Listening' : 'Listen'}
         </ActionButton>
-        <ActionButton 
-          onClick={() => onVisualizeSink(isVisualizing ? null : sink)}
-          className={isVisualizing ? 'visualizing' : ''}
-        >
-          {isVisualizing ? 'Stop Visualizer' : 'Visualize'}
+        <ActionButton onClick={() => actions.visualizeSink(isVisualizing ? null : sink)}>
+          {isVisualizing ? 'Stop Visualizing' : 'Visualize'}
         </ActionButton>
-        <ActionButton onClick={() => onDeleteSink(sink.name)} className="delete-button">Delete</ActionButton>
+        <ActionButton onClick={() => actions.deleteItem('sinks', sink.name)} className="delete-button">Delete</ActionButton>
       </td>
     </tr>
   );

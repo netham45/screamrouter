@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="./favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="ScreamRouter" />
+    <link rel="apple-touch-icon" href="./logo192.png" />
+    <link rel="manifest" href="./manifest.json" />
+    <title>ScreamRouter</title>
+    <script src="https://unpkg.com/lodash"></script>
+    <script src="https://unpkg.com/butterchurn"></script>
+    <script src="https://unpkg.com/butterchurn-presets"></script>
+    <script src="https://unpkg.com/butterchurn-presets/lib/butterchurnPresetsExtra.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.0/lame.min.js"></script>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <div id="mainWrapper" style="display: none;">
+      <div id="presetControls">
+        <div>Preset: <select id="presetSelect"></select></div>
+        <div>
+          Cycle:
+          <input type="checkbox" id="presetCycle" checked />
+          <input type="number" id="presetCycleLength" step="1" value="15" min="1" />
+        </div>
+        <div>Random: <input type="checkbox" id="presetRandom" checked /></div>
+      </div>
+      <canvas id="canvas" width="3840" height="2160"></canvas>
+    </div>
+    <audio id="audio" preload="metadata" controls style="display: none;"></audio>
+    <audio id="audio_visualizer" preload="metadata" controls style="display: none;"></audio>
+    <script src="./visualizer.js"></script>
+  </body>
+</html>

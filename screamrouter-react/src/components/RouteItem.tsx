@@ -1,20 +1,18 @@
 import React from 'react';
 import { Route } from '../api/api';
-import { ActionButton, VolumeSlider } from '../utils/commonUtils';
+import { Actions } from '../utils/actions';
+import { renderLinkWithAnchor } from '../utils/commonUtils';
+import StarButton from './controls/StarButton';
+import EnableButton from './controls/EnableButton';
+import ActionButton from './controls/ActionButton';
+import VolumeSlider from './controls/VolumeSlider';
+import TimeshiftSlider from './controls/TimeshiftSlider';
 
-/**
- * Props for the RouteItem component
- */
 interface RouteItemProps {
   route: Route;
   index: number;
   isStarred: boolean;
-  onToggleRoute: (name: string) => void;
-  onDeleteRoute: (name: string) => void;
-  onUpdateVolume: (name: string, volume: number) => void;
-  onToggleStar: (name: string) => void;
-  onEditRoute: (route: Route) => void;
-  onShowEqualizer: (route: Route) => void;
+  actions: Actions;
   routeRefs: React.MutableRefObject<{[key: string]: HTMLTableRowElement}>;
   onDragStart: (e: React.DragEvent<HTMLSpanElement>, index: number) => void;
   onDragEnter: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
@@ -22,25 +20,13 @@ interface RouteItemProps {
   onDragOver: (e: React.DragEvent<HTMLTableRowElement>) => void;
   onDrop: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
   onDragEnd: (e: React.DragEvent<HTMLSpanElement>) => void;
-  jumpToAnchor: (name: string) => void;
-  renderLinkWithAnchor: (to: string, name: string, icon: string) => React.ReactNode;
 }
 
-/**
- * RouteItem component represents a single route in the RouteList
- * @param {RouteItemProps} props - The props for the RouteItem component
- * @returns {React.FC} A functional component representing a single route
- */
 const RouteItem: React.FC<RouteItemProps> = ({
   route,
   index,
   isStarred,
-  onToggleRoute,
-  onDeleteRoute,
-  onUpdateVolume,
-  onToggleStar,
-  onEditRoute,
-  onShowEqualizer,
+  actions,
   routeRefs,
   onDragStart,
   onDragEnter,
@@ -48,8 +34,6 @@ const RouteItem: React.FC<RouteItemProps> = ({
   onDragOver,
   onDrop,
   onDragEnd,
-  jumpToAnchor,
-  renderLinkWithAnchor
 }) => {
   return (
     <tr
@@ -74,38 +58,36 @@ const RouteItem: React.FC<RouteItemProps> = ({
         </span>
       </td>
       <td>
-        <ActionButton onClick={() => onToggleStar(route.name)}>
-          {isStarred ? '★' : '☆'}
-        </ActionButton>
+        <StarButton
+          isStarred={isStarred}
+          onClick={() => actions.toggleStar('routes', route.name)}
+        />
       </td>
+      <td>{renderLinkWithAnchor('/routes', route.name, 'fa-route')}</td>
+      <td>{renderLinkWithAnchor('/sources', route.source, 'fa-music')}</td>
+      <td>{renderLinkWithAnchor('/sinks', route.sink, 'fa-volume-up')}</td>
       <td>
-        {renderLinkWithAnchor('/routes', route.name, 'fa-route')}
-      </td>
-      <td>
-        {renderLinkWithAnchor('/sources', route.source, 'fa-music')}
-      </td>
-      <td>
-        {renderLinkWithAnchor('/sinks', route.sink, 'fa-volume-up')}
-      </td>
-      <td>
-        <ActionButton 
-          onClick={() => onToggleRoute(route.name)}
-          className={route.enabled ? 'enabled' : 'disabled'}
-        >
-          {route.enabled ? 'Enabled' : 'Disabled'}
-        </ActionButton>
+        <EnableButton
+          isEnabled={route.enabled}
+          onClick={() => actions.toggleEnabled('routes', route.name)}
+        />
       </td>
       <td>
         <VolumeSlider
           value={route.volume}
-          onChange={(value) => onUpdateVolume(route.name, value)}
+          onChange={(volume) => actions.updateVolume('routes', route.name, volume)}
         />
-        <span>{(route.volume * 100).toFixed(0)}%</span>
       </td>
       <td>
-        <ActionButton onClick={() => onEditRoute(route)}>Edit</ActionButton>
-        <ActionButton onClick={() => onShowEqualizer(route)}>Equalizer</ActionButton>
-        <ActionButton onClick={() => onDeleteRoute(route.name)} className="delete-button">Delete</ActionButton>
+        <TimeshiftSlider
+          value={route.timeshift || 0}
+          onChange={(timeshift) => actions.updateTimeshift('routes', route.name, timeshift)}
+        />
+      </td>
+      <td>
+        <ActionButton onClick={() => actions.editItem('routes', route)}>Edit</ActionButton>
+        <ActionButton onClick={() => actions.showEqualizer('routes', route)}>Equalizer</ActionButton>
+        <ActionButton onClick={() => actions.deleteItem('routes', route.name)} className="delete-button">Delete</ActionButton>
       </td>
     </tr>
   );

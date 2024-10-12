@@ -1,39 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import ApiService, { Route, Source, Sink } from '../api/api';
+import VolumeSlider from './controls/VolumeSlider';
+import TimeshiftSlider from './controls/TimeshiftSlider';
+import EnableButton from './controls/EnableButton';
+import ActionButton from './controls/ActionButton';
 
-/**
- * Props for the AddEditRoute component
- * @interface AddEditRouteProps
- * @property {Route} [route] - The route to edit (undefined for adding a new route)
- * @property {() => void} onClose - Function to call when closing the form
- * @property {() => void} onSubmit - Function to call after successful submission
- */
 interface AddEditRouteProps {
   route?: Route;
   onClose: () => void;
-  onSubmit: () => void;
+  onSave: () => void;
 }
 
-/**
- * AddEditRoute component for adding or editing a route
- * @param {AddEditRouteProps} props - The component props
- * @returns {React.FC} A functional component for adding or editing routes
- */
-const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSubmit }) => {
-  // State declarations
+const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSave }) => {
   const [name, setName] = useState(route?.name || '');
   const [source, setSource] = useState(route?.source || '');
   const [sink, setSink] = useState(route?.sink || '');
-  const [delay, setDelay] = useState(route?.delay?.toString() || '0');
+  const [volume, setVolume] = useState(route?.volume || 1);
+  const [timeshift, setTimeshift] = useState(route?.timeshift || 0);
+  const [enabled, setEnabled] = useState(route?.enabled ?? true);
   const [sources, setSources] = useState<Source[]>([]);
   const [sinks, setSinks] = useState<Sink[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Fetches sources and sinks data from the API
-   */
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchSourcesAndSinks = async () => {
       try {
         const [sourcesResponse, sinksResponse] = await Promise.all([
           ApiService.getSources(),
@@ -46,20 +36,18 @@ const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSubmit })
         setError('Failed to fetch sources and sinks. Please try again.');
       }
     };
-    fetchData();
+
+    fetchSourcesAndSinks();
   }, []);
 
-  /**
-   * Handles form submission
-   * @param {React.FormEvent} e - The form event
-   */
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     const routeData: Partial<Route> = {
       name,
       source,
       sink,
-      delay: parseInt(delay),
+      volume,
+      timeshift,
+      enabled,
     };
 
     try {
@@ -68,7 +56,7 @@ const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSubmit })
       } else {
         await ApiService.addRoute(routeData as Route);
       }
-      onSubmit();
+      onSave();
       onClose();
     } catch (error) {
       console.error('Error submitting route:', error);
@@ -77,60 +65,58 @@ const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSubmit })
   };
 
   return (
-    <div className="add-edit-route">
-      <h3>{route ? 'Edit Route' : 'Add Route'}</h3>
-      {error && <div className="error-message">{error}</div>}
-      <form onSubmit={handleSubmit}>
-        <label>
-          Route Name:
-          <input 
-            type="text" 
-            value={name} 
-            onChange={(e) => setName(e.target.value)} 
-            required 
-          />
-        </label>
-        <label>
-          Source:
-          <select 
-            value={source} 
-            onChange={(e) => setSource(e.target.value)} 
-            required
-          >
-            <option value="">Select a source</option>
-            {sources.map((src) => (
-              <option key={src.name} value={src.name}>{src.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Sink:
-          <select 
-            value={sink} 
-            onChange={(e) => setSink(e.target.value)} 
-            required
-          >
-            <option value="">Select a sink</option>
-            {sinks.map((snk) => (
-              <option key={snk.name} value={snk.name}>{snk.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Delay (ms):
-          <input 
-            type="number" 
-            value={delay} 
-            onChange={(e) => setDelay(e.target.value)} 
-            min="0" 
-            max="5000" 
-          />
-        </label>
-        <div className="form-buttons">
-          <button type="submit">{route ? 'Update Route' : 'Add Route'}</button>
-          <button type="button" onClick={onClose}>Cancel</button>
+    <div className="modal-backdrop">
+      <div className="modal-content">
+        <div className="add-edit-route">
+          <h3>{route ? 'Edit Route' : 'Add Route'}</h3>
+          {error && <div className="error-message">{error}</div>}
+          <div className="route-form">
+            <label>
+              Route Name:
+              <input 
+                type="text" 
+                value={name} 
+                onChange={(e) => setName(e.target.value)} 
+                required 
+              />
+            </label>
+            <label>
+              Source:
+              <select 
+                value={source} 
+                onChange={(e) => setSource(e.target.value)}
+                required
+              >
+                <option value="">Select a source</option>
+                {sources.map((src) => (
+                  <option key={src.name} value={src.name}>{src.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Sink:
+              <select 
+                value={sink} 
+                onChange={(e) => setSink(e.target.value)}
+                required
+              >
+                <option value="">Select a sink</option>
+                {sinks.map((snk) => (
+                  <option key={snk.name} value={snk.name}>{snk.name}</option>
+                ))}
+              </select>
+            </label>
+            <VolumeSlider value={volume} onChange={setVolume} />
+            <TimeshiftSlider value={timeshift} onChange={setTimeshift} />
+            <div className="form-buttons">
+              <ActionButton onClick={handleSubmit}>
+                {route ? 'Update Route' : 'Add Route'}
+              </ActionButton>
+              <ActionButton onClick={onClose}>Cancel</ActionButton>
+            </div>
+          </div>
         </div>
-      </form>
+      </div>
     </div>
   );
 };
