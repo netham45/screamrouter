@@ -99,7 +99,7 @@ class SinkDescription(BaseModel):
     """
     Holds either a sink IP and Port or a group of sink names
     """
-    name: annotations.SinkNameType
+    name: annotations.SinkNameType = ""
     """Sink Name, Endpoint and Group"""
     ip: Optional[annotations.IPAddressType] = None
     """Sink IP, Endpoint Only"""
@@ -234,7 +234,7 @@ class RouteDescription(BaseModel):
     """
     Holds a route mapping from source to sink
     """
-    name: annotations.RouteNameType
+    name: annotations.RouteNameType = ""
     """Route Name"""
     sink: annotations.SinkNameType = ""
     """Route Sink"""

@@ -121,7 +121,6 @@ class APIWebsite():
             Union[FileResponse, HTTPException]: The file response or a 404 error.
         """
         file_path: str = os.path.join("./site", path)
-        print(file_path)
 
         if os.path.isfile(file_path):
             # If the requested path is a file, serve it directly

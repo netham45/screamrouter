@@ -245,5 +245,9 @@ body.dark-mode {
 }
 
 .dark-mode .modal-content {
-    background-color: #34495e;   
+  background-color: #34495e;   
+}
+
+.dark-mode button.expand-routes, .dark-mode button.collapse-routes {
+  background-color: inherit !important;
 }

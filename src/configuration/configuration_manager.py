@@ -110,6 +110,7 @@ class ConfigurationManager(threading.Thread):
     def update_sink(self, new_sink: SinkDescription, old_sink_name: SinkNameType) -> bool:
         """Updates fields on the sink indicated by old_sink_name to what is specified in new_sink
            Undefined fields are ignored"""
+        print(f"Updating {old_sink_name}")
         is_eq_only: bool = True
         is_eq_found: bool = False
         changed_sink: SinkDescription = self.get_sink_by_name(old_sink_name)
@@ -118,12 +119,12 @@ class ConfigurationManager(threading.Thread):
                 if sink.name == new_sink.name:
                     raise ValueError(f"Name {new_sink.name} already used")
         for field in new_sink.model_fields_set:
-            _logger.debug("Field %s", field)
             if field == "equalizer":
                 is_eq_found = True
             elif field != "name":
                 is_eq_only = False
             setattr(changed_sink, field, getattr(new_sink, field))
+
         for sink in self.sink_descriptions:
             for index, group_member in enumerate(sink.group_members):
                 if group_member == old_sink_name:
@@ -348,6 +349,8 @@ class ConfigurationManager(threading.Thread):
 
     async def __get_client_ip(self, request: fastapi.Request) -> IPv4Address:
         """Get the IP address of the client making the request"""
+        if not request.client:
+            raise Exception("Web request for client IP with no client object set")
         client_host = request.client.host
         return IPv4Address(client_host)
 
