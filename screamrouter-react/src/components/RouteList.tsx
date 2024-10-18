@@ -95,8 +95,8 @@ const RouteList: React.FC<RouteListProps> = ({
               actions={actions}
               routeRefs={routeRefs}
               onDragStart={onDragStart}
-              onDragEnter={(e) => {}}
-              onDragLeave={(e) => {}}
+              onDragEnter={() => {}}
+              onDragLeave={() => {}}
               onDragOver={onDragOver}
               onDrop={onDrop}
               onDragEnd={() => setDraggedIndex(null)}

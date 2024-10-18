@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
 import ApiService, { Source, Sink, Route } from '../api/api';
 import VNC from './VNC';
 import Equalizer from './Equalizer';
@@ -15,9 +14,10 @@ import '../styles/Dashboard.css';
 import { CollapsibleSection } from './CollapsibleSection';
 import { createActions, Actions } from '../utils/actions';
 
+type SelectedItemType = Source | Sink | Route | null;
+
 const Dashboard: React.FC = () => {
-    const { listeningToSink, visualizingSink, onListenToSink, onVisualizeSink, setPrimarySource } = useAppContext();
-    const location = useLocation();
+    const { listeningToSink, visualizingSink, onListenToSink, onVisualizeSink } = useAppContext();
 
     const [sources, setSources] = useState<Source[]>([]);
     const [sinks, setSinks] = useState<Sink[]>([]);
@@ -29,7 +29,7 @@ const Dashboard: React.FC = () => {
     const [showVNCModal, setShowVNCModal] = useState(false);
     const [showEqualizerModal, setShowEqualizerModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
-    const [selectedItem, setSelectedItem] = useState<any>(null);
+    const [selectedItem, setSelectedItem] = useState<SelectedItemType>(null);
     const [selectedItemType, setSelectedItemType] = useState<'sources' | 'sinks' | 'routes' | null>(null);
     const [activeSource, setActiveSource] = useState<string | null>(null);
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: '', direction: 'asc' });
@@ -149,11 +149,11 @@ const Dashboard: React.FC = () => {
 
       switch (selectedItemType) {
         case 'sources':
-          return <AddEditSource source={selectedItem} onClose={onClose} onSave={fetchData} />;
+          return <AddEditSource source={selectedItem as Source} onClose={onClose} onSave={fetchData} />;
         case 'sinks':
-          return <AddEditSink sink={selectedItem} onClose={onClose} onSave={fetchData} />;
+          return <AddEditSink sink={selectedItem as Sink} onClose={onClose} onSave={fetchData} />;
         case 'routes':
-          return <AddEditRoute route={selectedItem} onClose={onClose} onSave={fetchData} />;
+          return <AddEditRoute route={selectedItem as Route} onClose={onClose} onSave={fetchData} />;
         default:
           return null;
       }
@@ -276,7 +276,7 @@ const Dashboard: React.FC = () => {
           <div className="modal-overlay">
             <div className="modal-content">
               <ActionButton className="close-modal" onClick={() => setShowVNCModal(false)}>×</ActionButton>
-              <VNC source={selectedItem} />
+              <VNC source={selectedItem as Source} />
             </div>
           </div>
         )}

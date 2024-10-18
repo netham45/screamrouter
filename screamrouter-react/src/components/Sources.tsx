@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Source, Route } from '../api/api';
 import SourceList from './SourceList';
 import { SortConfig, useAnchorFlash } from '../utils/commonUtils';
 import { useAppContext } from '../context/AppContext';
@@ -18,7 +17,7 @@ const Sources: React.FC = () => {
     fetchSources, 
     toggleEnabled, 
     updateVolume, 
-    updateTimeshift, 
+    updateTimeshift,
     controlSource,
     openVNCModal,
     openEqualizerModal,

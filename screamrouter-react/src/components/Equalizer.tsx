@@ -85,6 +85,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   }, []);
 
   const checkAndSetPreset = (eq: EqualizerType) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const matchingPreset = Object.entries(musicPresets).find(([_, presetEq]) => 
       Object.entries(presetEq).every(([band, value]) => Math.abs(eq[band as keyof EqualizerType] - value) < 0.01)
     );
@@ -154,6 +155,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
 
   const calculateMagnitudeResponse = (freq: number, sampleRate: number): number => {
     let totalGain = 1;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     sortedBands.forEach(([_, gain], index) => {
       const filter = new BiquadFilter();
       filter.setParams(frequencies[index], 1.41, 20 * Math.log10(Math.max(gain, 0.001)), sampleRate);
@@ -162,7 +164,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
       const phi = Math.pow(Math.sin(w/2), 2);
       const b0 = filter.b0, b1 = filter.b1, b2 = filter.b2, a0 = filter.a0, a1 = filter.a1, a2 = filter.a2;
 
-      let magnitude = Math.sqrt(
+      const magnitude = Math.sqrt(
         Math.pow(b0 + b1 + b2, 2) - 4*(b0*b1 + 4*b0*b2 + b1*b2)*phi + 16*b0*b2*phi*phi
       ) / Math.sqrt(
         Math.pow(a0 + a1 + a2, 2) - 4*(a0*a1 + 4*a0*a2 + a1*a2)*phi + 16*a0*a2*phi*phi

@@ -16,7 +16,6 @@ const NowPlaying: React.FC<NowPlayingProps> = ({ isExpanded, onToggle }) => {
   const {
     listeningToSink,
     sinks,
-    routes,
     toggleEnabled,
     updateVolume,
     updateTimeshift,

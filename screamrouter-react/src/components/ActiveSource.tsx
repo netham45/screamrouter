@@ -17,7 +17,6 @@ const ActiveSource: React.FC<ActiveSourceProps> = ({ isExpanded, onToggle }) => 
   const {
     activeSource,
     sources,
-    routes,
     toggleEnabled,
     updateVolume,
     updateTimeshift,

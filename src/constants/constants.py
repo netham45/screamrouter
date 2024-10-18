@@ -35,6 +35,8 @@ CERTIFICATE_KEY: str = os.getenv("CERTIFICATE_KEY", "/root/screamrouter/cert/pri
 """SSL Cert Key"""
 TIMESHIFT_DURATION: int = int(os.getenv("TIMESHIFT_DURATION", "300"))
 """Timeshift duration in seconds."""
+CONFIGURATION_RELOAD_TIMEOUT: int = int(os.getenv("CONFIGURATION_RELOAD_TIMEOUT", "3"))
+"""Configuration reload timeout in seconds."""
 
 # ##########
 # Internal Options

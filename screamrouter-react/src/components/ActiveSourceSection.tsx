@@ -6,11 +6,9 @@ interface PrimarySourceSectionProps {
   primarySourceItem: Source | null;
   toggleEnabled: (type: 'sources', name: string, enabled: boolean) => void;
   toggleStar: (type: 'sources', name: string) => void;
-  togglePrimary: (name: string) => void;
   starredSources: string[];
   setSelectedItem: (item: Source) => void;
   setSelectedItemType: (type: 'sources') => void;
-  setShowEditModal: (show: boolean) => void;
   setShowVNCModal: (show: boolean) => void;
   controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => void;
   setShowEqualizerModal: (show: boolean) => void;
@@ -24,11 +22,9 @@ const PrimarySourceSection: React.FC<PrimarySourceSectionProps> = ({
   primarySourceItem,
   toggleEnabled,
   toggleStar,
-  togglePrimary,
   starredSources,
   setSelectedItem,
   setSelectedItemType,
-  setShowEditModal,
   setShowVNCModal,
   controlSource,
   setShowEqualizerModal,

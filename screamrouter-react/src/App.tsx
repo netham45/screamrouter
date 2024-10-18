@@ -25,7 +25,6 @@ const AppContent: React.FC = () => {
     showEditModal,
     selectedItem,
     selectedItemType,
-    setShowVNCModal,
     setShowEqualizerModal,
     setShowEditModal,
     setSelectedItem,

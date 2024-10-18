@@ -3,6 +3,8 @@
 import os
 import socket
 import sys
+import traceback
+import concurrent.futures
 import threading
 from copy import copy, deepcopy
 from ipaddress import IPv4Address
@@ -941,6 +943,22 @@ class ConfigurationManager(threading.Thread):
             self.plugin_manager.load_registered_plugins(source_write_fds)
             _logger.debug("[Configuration Manager] Reload done")
 
+    def __process_and_apply_configuration_with_timeout(self):
+        """Apply the configuration with a timeout for logging and ensuring it doesn't hang"""
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(self.__process_and_apply_configuration)
+            try:
+                future.result(timeout=constants.CONFIGURATION_RELOAD_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                _logger.error(f"Configuration reload timed out after {constants.CONFIGURATION_RELOAD_TIMEOUT} seconds. Aborting reload.")
+                _logger.error("Stack trace:\n%s", ''.join(traceback.format_stack()))
+                return False
+            except Exception as e:
+                _logger.error("Error during configuration reload: %s", str(e))
+                _logger.error("Stack trace:\n%s", traceback.format_exc())
+                return False
+        return True
+
     def auto_add_source(self, ip: IPAddressType):
         """Checks if VNC is available and adds a source by IP with the correct options"""
         hostname: str = str(ip)
@@ -1029,7 +1047,9 @@ class ConfigurationManager(threading.Thread):
                 if self.reload_config:
                     self.reload_config = False
                     _logger.info("[Configuration Manager] Reloading the configuration")
-                    self.__process_and_apply_configuration()
+                    if not self.__process_and_apply_configuration_with_timeout():
+                        _logger.error("Configuration reload aborted due to errors or timeout.")
+                        continue  # Skip the rest of the loop iteration
             if not self.volume_eq_reload_condition.acquire(timeout=1):
                 raise TimeoutError("Failed to get configuration reload condition")
             if self.volume_eq_reload_condition.wait(timeout=.3):

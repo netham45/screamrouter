@@ -108,8 +108,8 @@ const SinkList: React.FC<SinkListProps> = ({
                 actions={actions}
                 sinkRefs={sinkRefs}
                 onDragStart={onDragStart}
-                onDragEnter={(e) => {}}
-                onDragLeave={(e) => {}}
+                onDragEnter={() => {}}
+                onDragLeave={() => {}}
                 onDragOver={onDragOver}
                 onDrop={onDrop}
                 onDragEnd={() => setDraggedIndex(null)}

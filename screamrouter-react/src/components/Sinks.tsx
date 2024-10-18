@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Sink, Route } from '../api/api';
 import SinkList from './SinkList';
 import { useAppContext } from '../context/AppContext';
 import { Actions } from '../utils/actions';

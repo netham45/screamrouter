@@ -112,5 +112,5 @@ class APIConfiguration():
         """Error handler so controller can throw exceptions that get returned to clients"""
         return JSONResponse(
             status_code = 500,
-            content = {"error": str(exception.args[1]), "traceback": traceback.format_exc()}
+            content = {"error": str(exception), "traceback": traceback.format_exc()}
         )

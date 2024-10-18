@@ -2,14 +2,16 @@ import React from 'react';
 import { Source, Sink, Route } from '../api/api';
 import { renderLinkWithAnchor } from '../utils/commonUtils';
 
+type FavoriteItem = Source | Sink | Route;
+
 interface FavoriteSectionProps {
   title: React.ReactNode;
-  items: any[];
+  items: FavoriteItem[];
   type: 'sources' | 'sinks' | 'routes';
   starredItems: string[];
   toggleEnabled: (type: 'sources' | 'sinks' | 'routes', name: string, enabled: boolean) => void;
   toggleStar: (type: 'sources' | 'sinks' | 'routes', name: string) => void;
-  setSelectedItem: (item: any) => void;
+  setSelectedItem: (item: FavoriteItem) => void;
   setSelectedItemType: (type: 'sources' | 'sinks' | 'routes') => void;
   setShowEditModal: (show: boolean) => void;
   toggleActive?: (name: string) => void;
@@ -17,7 +19,7 @@ interface FavoriteSectionProps {
   controlSource?: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => void;
   setShowVNCModal?: (show: boolean) => void;
   updateVolume: (type: 'sources' | 'sinks' | 'routes', name: string, volume: number) => void;
-  renderControls: (item: any, type: 'sources' | 'sinks' | 'routes') => React.ReactNode;
+  renderControls: (item: FavoriteItem, type: 'sources' | 'sinks' | 'routes') => React.ReactNode;
   getRoutesForSource: (sourceName: string) => Route[];
   getRoutesForSink: (sinkName: string) => Route[];
   getGroupMembers: (name: string, type: 'sources' | 'sinks') => string;
@@ -32,7 +34,6 @@ const FavoriteSection: React.FC<FavoriteSectionProps> = ({
   renderControls,
   getRoutesForSource,
   getRoutesForSink,
-  getGroupMembers,
   jumpToAnchor
 }) => {
   const filteredItems = items.filter(item => starredItems.includes(item.name));
@@ -65,7 +66,7 @@ const FavoriteSection: React.FC<FavoriteSectionProps> = ({
   };
 
   const renderGroupMembers = (item: Source | Sink) => {
-    if (!item.is_group || !item.group_members) return null;
+    if (!('is_group' in item) || !item.is_group || !item.group_members) return null;
     return (
       <div className="group-members">
         <span>Group members: </span>
@@ -100,13 +101,13 @@ const FavoriteSection: React.FC<FavoriteSectionProps> = ({
                   {type !== 'routes' && (
                     <>
                       <div>Routes {type === 'sources' ? 'to' : 'from'}: {renderRouteLinks(type === 'sources' ? getRoutesForSource(item.name) : getRoutesForSink(item.name), type === 'sources' ? 'to' : 'from')}</div>
-                      {renderGroupMembers(item)}
+                      {renderGroupMembers(item as Source | Sink)}
                     </>
                   )}
                   {type === 'routes' && (
                     <>
-                      <div>Source: {renderLinkWithAnchor('/sources', item.source, 'fa-music')}</div>
-                      <div>Sink: {renderLinkWithAnchor('/sinks', item.sink, 'fa-volume-up')}</div>
+                      <div>Source: {renderLinkWithAnchor('/sources', (item as Route).source, 'fa-music')}</div>
+                      <div>Sink: {renderLinkWithAnchor('/sinks', (item as Route).sink, 'fa-volume-up')}</div>
                     </>
                   )}
                 </div>

@@ -1,5 +1,4 @@
 // Variable declarations
-let visualPlaying = false;
 let visualAlreadyConnected = false;
 let isFullscreen = false;
 let visualizer = null;
@@ -9,8 +8,6 @@ let presets = {};
 let presetKeys = [];
 let presetIndexHist = [];
 let presetIndex = 0;
-let cycleInterval = 0;
-let presetCycleLength = 15000;
 let presetRandom = true;
 let canvas = null;
 
@@ -27,7 +24,6 @@ function startVisualizer(sinkIp) {
     visualTag.pause();
     visualTag.src = `/stream/${sinkIp}/`;
     visualTag.play();
-    visualPlaying = true;
 
     if (!visualAlreadyConnected) {
         initPlayer();
@@ -45,7 +41,6 @@ function stopVisualizer() {
     const visualTag = document.getElementById("audio_visualizer");
     visualTag.pause();
     document.getElementById("mainWrapper").style.display = "none";
-    visualPlaying = false;
 }
 
 function toggleFullscreen() {
@@ -134,12 +129,6 @@ function initPlayer() {
     audioContext = new AudioContext();
 
     presets = {};
-    if (window.butterchurnPresets) {
-        Object.assign(presets, butterchurnPresets.getPresets());
-    }
-    if (window.butterchurnPresetsExtra) {
-        Object.assign(presets, butterchurnPresetsExtra.getPresets());
-    }
     presets = _(presets)
         .toPairs()
         .sortBy(([k]) => k.toLowerCase())
@@ -165,7 +154,6 @@ function initPlayer() {
     });
 
     nextPreset(0);
-    cycleInterval = setInterval(() => nextPreset(2.7), presetCycleLength);
 }
 
 // Expose functions to the global scope

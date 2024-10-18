@@ -2,6 +2,8 @@
 #define AUDIO_PROCESSOR_H
 
 #include <cstdint>
+#include <cstring>
+#include "libsamplerate/include/samplerate.h"
 
 #define MAX_CHANNELS 8
 #define EQ_BANDS 18
@@ -31,32 +33,44 @@ private:
     uint8_t receive_buffer[CHUNK_SIZE];
     int32_t scaled_buffer[CHUNK_SIZE * 8];
     uint8_t *scaled_buffer_int8 = (uint8_t *)scaled_buffer;
-    int32_t resampled_buffer[CHUNK_SIZE * 16];
-    int32_t channel_buffers[MAX_CHANNELS][CHUNK_SIZE];
-    int32_t remixed_channel_buffers[MAX_CHANNELS][CHUNK_SIZE];
-    int32_t processed_buffer[CHUNK_SIZE * 8];
+    int32_t resampled_buffer[CHUNK_SIZE * 128];
+    int32_t channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 32];
+    int32_t remixed_channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 32];
+    int32_t merged_buffer[CHUNK_SIZE * 128];
+    int32_t processed_buffer[CHUNK_SIZE * 128]; 
 
-    int scale_buffer_pos;
-    int process_buffer_pos;
-    int resample_buffer_pos;
-    int channel_buffer_pos;
+    int scale_buffer_pos = 0;
+    int process_buffer_pos = 0;
+    int merged_buffer_pos = 0;
+    int resample_buffer_pos = 0;
+    int channel_buffer_pos = 0;
 
+    SRC_DATA sampler_config = {0};
     SRC_STATE* sampler;
-    float resampler_data_in[CHUNK_SIZE * MAX_CHANNELS];
-    float resampler_data_out[CHUNK_SIZE * MAX_CHANNELS * 8];
+    SRC_DATA downsampler_config = {0};
+    SRC_STATE* downsampler;
+    float resampler_data_in[CHUNK_SIZE * MAX_CHANNELS * 32];
+    float resampler_data_out[CHUNK_SIZE * MAX_CHANNELS * 64];
 
     Biquad* filters[MAX_CHANNELS][EQ_BANDS];
+    Biquad* dcFilters[MAX_CHANNELS];
 
     void updateSpeakerMix();
     void setupBiquad();
     void initializeSampler();
     void scaleBuffer();
     void volumeAdjust();
+    float softClip(float sample);
     void resample();
+    void downsample();
     void splitBufferToChannels();
     void mixSpeakers();
     void equalize();
     void mergeChannelsToBuffer();
+    void noiseShapingDither();
+    void setupDCFilter();
+    void removeDCOffset();
+    bool isProcessingRequired();
 };
 
 #endif // AUDIO_PROCESSOR_H

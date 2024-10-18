@@ -11,13 +11,28 @@ interface AddEditGroupProps {
   onSave: () => void;
 }
 
+interface GroupData {
+  name: string;
+  group_members: string[];
+  volume: number;
+  delay: number;
+  is_group: boolean;
+  enabled: boolean;
+  equalizer: {
+    b1: number; b2: number; b3: number; b4: number; b5: number; b6: number; b7: number; b8: number;
+    b9: number; b10: number; b11: number; b12: number; b13: number; b14: number; b15: number; b16: number; b17: number; b18: number;
+  };
+  vnc_ip?: string;
+  vnc_port?: number;
+}
+
 const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSave }) => {
   const [name, setName] = useState(group ? group.name : '');
   const [members, setMembers] = useState<string[]>(group ? group.group_members || [] : []);
   const [volume, setVolume] = useState(group ? group.volume : 1);
   const [delay, setDelay] = useState(group ? group.delay : 0);
   const [vncIp, setVncIp] = useState(group && 'vnc_ip' in group ? group.vnc_ip : '');
-  const [vncPort, setVncPort] = useState(group && 'vnc_port' in group ? group.vnc_port : '');
+  const [vncPort, setVncPort] = useState(group && 'vnc_port' in group ? group.vnc_port : 0);
   const [availableMembers, setAvailableMembers] = useState<(Source | Sink)[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,7 +57,7 @@ const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSav
   }, [type]);
 
   const handleSubmit = async () => {
-    const groupData: any = {
+    const groupData: GroupData = {
       name,
       group_members: members,
       volume,
@@ -63,13 +78,19 @@ const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSav
     try {
       if (group) {
         if (type === 'source') {
-          await ApiService.updateSource(name, groupData);
+          await ApiService.updateSource(name, {
+            ...groupData,
+            vnc_port: vncPort
+          } as Partial<Source>);
         } else {
-          await ApiService.updateSink(name, groupData);
+          await ApiService.updateSink(name, groupData as Partial<Sink>);
         }
       } else {
         if (type === 'source') {
-          await ApiService.addSource(groupData as Source);
+          await ApiService.addSource({
+            ...groupData,
+            vnc_port: vncPort
+          } as Source);
         } else {
           await ApiService.addSink({ ...groupData, port: 0 } as Sink);
         }
@@ -123,7 +144,7 @@ const AddEditGroup: React.FC<AddEditGroupProps> = ({ type, group, onClose, onSav
                   <input
                     type="text"
                     value={vncPort}
-                    onChange={(e) => setVncPort(e.target.value)}
+                    onChange={(e) => setVncPort(parseInt(e.target.value, 10))}
                   />
                 </label>
               </>

@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { Sink, Source, Route } from '../api/api';
 import ApiService from '../api/api';
 
+type ItemType = Source | Sink | Route;
+
 interface AppContextType {
   activeSource: string | null;
   listeningToSink: Sink | null;
@@ -16,7 +18,7 @@ interface AppContextType {
   updateVolume: (type: 'sources' | 'sinks' | 'routes', name: string, volume: number) => Promise<void>;
   updateTimeshift: (type: 'sources' | 'sinks' | 'routes', name: string, timeshift: number) => Promise<void>;
   controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => Promise<void>;
-  setSelectedItem: (item: any) => void;
+  setSelectedItem: (item: ItemType | null) => void;
   setShowVNCModal: (show: boolean) => void;
   setShowEqualizerModal: (show: boolean) => void;
   setSelectedItemType: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null) => void;
@@ -31,14 +33,14 @@ interface AppContextType {
   openVNCModal: (source: Source) => void;
   closeVNCModal: () => void;
   showEqualizerModal: boolean;
-  selectedEqualizerItem: any;
+  selectedEqualizerItem: ItemType | null;
   selectedEqualizerType: 'sources' | 'sinks' | 'routes' | null;
-  openEqualizerModal: (item: any, type: 'sources' | 'sinks' | 'routes') => void;
+  openEqualizerModal: (item: ItemType, type: 'sources' | 'sinks' | 'routes') => void;
   closeEqualizerModal: () => void;
   showEditModal: boolean;
   setShowEditModal: (show: boolean) => void;
-  editItem: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', item: Source | Sink | Route) => void;
-  selectedItem: any;
+  editItem: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', item: ItemType) => void;
+  selectedItem: ItemType | null;
   selectedItemType: 'sources' | 'sinks' | 'routes' | 'group-sink' | "group-source" | null;
 }
 
@@ -51,13 +53,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [sources, setSources] = useState<Source[]>([]);
   const [sinks, setSinks] = useState<Sink[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
-  const [selectedItem, setSelectedItem] = useState<any>(null);
+  const [selectedItem, setSelectedItem] = useState<ItemType | null>(null);
   const [showVNCModal, setShowVNCModal] = useState(false);
   const [showEqualizerModal, setShowEqualizerModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedItemType, setSelectedItemType] = useState<'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null>(null);
   const [selectedVNCSource, setSelectedVNCSource] = useState<Source | null>(null);
-  const [selectedEqualizerItem, setSelectedEqualizerItem] = useState<any>(null);
+  const [selectedEqualizerItem, setSelectedEqualizerItem] = useState<ItemType | null>(null);
   const [selectedEqualizerType, setSelectedEqualizerType] = useState<'sources' | 'sinks' | 'routes' | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -217,7 +219,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setShowVNCModal(false);
   };
 
-  const openEqualizerModal = (item: any, type: 'sources' | 'sinks' | 'routes') => {
+  const openEqualizerModal = (item: ItemType, type: 'sources' | 'sinks' | 'routes') => {
     setSelectedEqualizerItem(item);
     setSelectedEqualizerType(type);
     setShowEqualizerModal(true);
@@ -229,7 +231,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setShowEqualizerModal(false);
   };
 
-  const editItem = (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', item: Source | Sink | Route) => {
+  const editItem = (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', item: ItemType) => {
     setSelectedItem(item);
     setSelectedItemType(type);
     setShowEditModal(true);

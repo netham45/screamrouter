@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import ApiService, { Route, Source, Sink } from '../api/api';
 import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
-import EnableButton from './controls/EnableButton';
 import ActionButton from './controls/ActionButton';
 
 interface AddEditRouteProps {
@@ -17,7 +16,7 @@ const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSave }) =
   const [sink, setSink] = useState(route?.sink || '');
   const [volume, setVolume] = useState(route?.volume || 1);
   const [timeshift, setTimeshift] = useState(route?.timeshift || 0);
-  const [enabled, setEnabled] = useState(route?.enabled ?? true);
+  const [enabled] = useState(route?.enabled ?? true);
   const [sources, setSources] = useState<Source[]>([]);
   const [sinks, setSinks] = useState<Sink[]>([]);
   const [error, setError] = useState<string | null>(null);

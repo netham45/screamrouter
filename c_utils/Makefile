@@ -1,6 +1,7 @@
 #!/usr/bin/make
 CC = g++
-CFLAGS = -Ofast -fopenmp -std=c++14 -mavx -march=native -mavx -msse4.1 
+CFLAGS = -Ofast -fopenmp -std=c++14 -mavx -march=native -mavx -msse4.1 \
+         -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fPIE
 LIBS = -lm
 
 # Find libmp3lame
@@ -21,10 +22,10 @@ libsamplerate/src/libsamplerate.a:
 dcaenc/math_tables.c dcaenc/dcaenc.c:
 	cd dcaenc && (make || autoreconf -f -i -v && ./configure --enable-static && $(MAKE))
 
-bin/sink_audio_mixer: sink_audio_mixer.cpp biquad/biquad.cpp audio_processor.cpp dcaenc/dcaenc.c dcaenc/math_tables.c libsamplerate/src/libsamplerate.a
+bin/sink_audio_mixer: sink_audio_mixer.cpp biquad/biquad.cpp audio_processor.cpp speaker_mix.cpp dcaenc/dcaenc.c dcaenc/math_tables.c libsamplerate/src/libsamplerate.a
 	$(CC) $^ -o $@ $(LIBS) libsamplerate/src/libsamplerate.a dcaenc/.libs/libdcaenc.a $(LIBMP3LAME_PATH) $(CFLAGS)
 
-bin/source_input_processor: source_input_processor.cpp biquad/biquad.cpp audio_processor.cpp libsamplerate/src/libsamplerate.a
+bin/source_input_processor: source_input_processor.cpp biquad/biquad.cpp audio_processor.cpp speaker_mix.cpp libsamplerate/src/libsamplerate.a
 	$(CC) $^ -o $@ $(LIBS) libsamplerate/src/libsamplerate.a $(CFLAGS)
 
 bin/rtp_receiver: rtp_receiver.cpp

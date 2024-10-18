@@ -1,12 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 
 interface AudioControlsProps {
-  listeningToSink: string | null;
-  visualizingSink: string | null;
   sinkIp: string | null;
 }
 
-const AudioControls: React.FC<AudioControlsProps> = ({ listeningToSink, visualizingSink, sinkIp }) => {
+const AudioControls: React.FC<AudioControlsProps> = ({ sinkIp }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -19,7 +17,7 @@ const AudioControls: React.FC<AudioControlsProps> = ({ listeningToSink, visualiz
         // Handle canvas click
       };
 
-      window.canvasOnKeyDown = (event: KeyboardEvent) => {
+      window.canvasOnKeyDown = () => {
         // Handle key down event
       };
 
