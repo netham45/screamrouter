@@ -14,9 +14,9 @@ interface AppContextType {
   onToggleActiveSource: (sourceName: string) => void;
   onListenToSink: (sink: Sink | null) => void;
   onVisualizeSink: (sink: Sink | null) => void;
-  toggleEnabled: (type: 'sources' | 'sinks' | 'routes', name: string, currentStatus: boolean) => Promise<void>;
-  updateVolume: (type: 'sources' | 'sinks' | 'routes', name: string, volume: number) => Promise<void>;
-  updateTimeshift: (type: 'sources' | 'sinks' | 'routes', name: string, timeshift: number) => Promise<void>;
+  toggleEnabled: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string, currentStatus: boolean) => Promise<void>;
+  updateVolume: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string, volume: number) => Promise<void>;
+  updateTimeshift: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string, timeshift: number) => Promise<void>;
   controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => Promise<void>;
   setSelectedItem: (item: ItemType | null) => void;
   setShowVNCModal: (show: boolean) => void;
@@ -34,8 +34,8 @@ interface AppContextType {
   closeVNCModal: () => void;
   showEqualizerModal: boolean;
   selectedEqualizerItem: ItemType | null;
-  selectedEqualizerType: 'sources' | 'sinks' | 'routes' | null;
-  openEqualizerModal: (item: ItemType, type: 'sources' | 'sinks' | 'routes') => void;
+  selectedEqualizerType: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null;
+  openEqualizerModal: (item: ItemType, type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source') => void;
   closeEqualizerModal: () => void;
   showEditModal: boolean;
   setShowEditModal: (show: boolean) => void;
@@ -60,7 +60,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedItemType, setSelectedItemType] = useState<'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null>(null);
   const [selectedVNCSource, setSelectedVNCSource] = useState<Source | null>(null);
   const [selectedEqualizerItem, setSelectedEqualizerItem] = useState<ItemType | null>(null);
-  const [selectedEqualizerType, setSelectedEqualizerType] = useState<'sources' | 'sinks' | 'routes' | null>(null);
+  const [selectedEqualizerType, setSelectedEqualizerType] = useState<'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -134,7 +134,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const toggleEnabled = async (type: 'sources' | 'sinks' | 'routes', name: string, currentStatus: boolean) => {
+  const toggleEnabled = async (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string, currentStatus: boolean) => {
     try {
       if (type === 'sources') {
         await ApiService.updateSource(name, { enabled: !currentStatus });
@@ -151,7 +151,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const updateVolume = async (type: 'sources' | 'sinks' | 'routes', name: string, volume: number) => {
+  const updateVolume = async (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string, volume: number) => {
     try {
       if (type === 'sources') {
         await ApiService.updateSource(name, { volume });
@@ -168,7 +168,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const updateTimeshift = async (type: 'sources' | 'sinks' | 'routes', name: string, timeshift: number) => {
+  const updateTimeshift = async (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string, timeshift: number) => {
     try {
       if (type === 'sources') {
         await ApiService.updateSourceTimeshift(name, timeshift);
@@ -219,7 +219,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setShowVNCModal(false);
   };
 
-  const openEqualizerModal = (item: ItemType, type: 'sources' | 'sinks' | 'routes') => {
+  const openEqualizerModal = (item: ItemType, type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source') => {
     setSelectedEqualizerItem(item);
     setSelectedEqualizerType(type);
     setShowEqualizerModal(true);

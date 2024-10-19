@@ -40,7 +40,7 @@ const TimeshiftSlider: React.FC<TimeshiftSliderProps> = ({ value, onChange }) =>
 
   return (
     <div className="timeshift-control">
-      <label htmlFor="timeshift-slider">Timeshift:</label>
+      <label htmlFor="timeshift-slider"></label>
       <input
         id="timeshift-slider"
         type="range"

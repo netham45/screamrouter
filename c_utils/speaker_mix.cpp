@@ -231,11 +231,11 @@ void AudioProcessor::mixSpeakers() {
         for (int output_channel = 0; output_channel < outputChannels; output_channel++) {
             float mixed_sample = 0.0f;
             for (int input_channel = 0; input_channel < inputChannels; input_channel++) {
-                mixed_sample += static_cast<float>(channel_buffers[input_channel][pos]) / INT32_MAX 
+                mixed_sample += static_cast<float>(channel_buffers[input_channel][pos]) 
                                 * speaker_mix[input_channel][output_channel];
             }
             // Apply soft clipping
-            mixed_sample = softClip(mixed_sample);            
+            mixed_sample = softClip(mixed_sample / INT32_MAX);
             // Convert back to int32_t
             remixed_channel_buffers[output_channel][pos] = static_cast<int32_t>(mixed_sample * INT32_MAX);
         }

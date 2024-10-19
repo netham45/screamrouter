@@ -25,6 +25,8 @@ interface SinkItemProps {
   disabledRoutes: Route[];
   isListening: boolean;
   isVisualizing: boolean;
+  hideSpecificButtons?: boolean;
+  hideExtraColumns?: boolean;
 }
 
 const SinkItem: React.FC<SinkItemProps> = ({
@@ -43,6 +45,8 @@ const SinkItem: React.FC<SinkItemProps> = ({
   disabledRoutes,
   isListening,
   isVisualizing,
+  hideSpecificButtons = false,
+  hideExtraColumns = false,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -63,16 +67,6 @@ const SinkItem: React.FC<SinkItemProps> = ({
       id={`sink-${encodeURIComponent(sink.name)}`}
     >
       <td>
-        <span
-          className="drag-handle"
-          draggable
-          onDragStart={(e) => onDragStart(e, index)}
-          onDragEnd={onDragEnd}
-        >
-          ☰
-        </span>
-      </td>
-      <td>
         <StarButton
           isStarred={isStarred}
           onClick={() => actions.toggleStar('sinks', sink.name)}
@@ -88,7 +82,7 @@ const SinkItem: React.FC<SinkItemProps> = ({
           itemName={sink.name}
         />
       </td>
-      <td>{sink.ip}</td>
+      {!hideExtraColumns && <td>{sink.ip}</td>}
       <td>
         <EnableButton
           isEnabled={sink.enabled}
@@ -108,15 +102,19 @@ const SinkItem: React.FC<SinkItemProps> = ({
         />
       </td>
       <td>
-        <ActionButton onClick={() => actions.editItem('sinks', sink)}>Edit</ActionButton>
-        <ActionButton onClick={() => actions.showEqualizer('sinks', sink)}>Equalizer</ActionButton>
-        <ActionButton onClick={() => actions.listenToSink(isListening ? null : sink)}>
-          {isListening ? 'Stop Listening' : 'Listen'}
-        </ActionButton>
-        <ActionButton onClick={() => actions.visualizeSink(isVisualizing ? null : sink)}>
-          {isVisualizing ? 'Stop Visualizing' : 'Visualize'}
-        </ActionButton>
-        <ActionButton onClick={() => actions.deleteItem('sinks', sink.name)} className="delete-button">Delete</ActionButton>
+        <ActionButton onClick={() => actions.showEqualizer(true, 'sinks', sink)}>Equalizer</ActionButton>
+        {!hideSpecificButtons && (
+          <>
+            <ActionButton onClick={() => actions.editItem('sinks', sink)}>Edit</ActionButton>
+            <ActionButton onClick={() => actions.listenToSink(isListening ? null : sink)}>
+              {isListening ? 'Stop Listening' : 'Listen'}
+            </ActionButton>
+            <ActionButton onClick={() => actions.visualizeSink(isVisualizing ? null : sink)}>
+              {isVisualizing ? 'Stop Visualizing' : 'Visualize'}
+            </ActionButton>
+            <ActionButton onClick={() => actions.deleteItem('sinks', sink.name)} className="delete-button">Delete</ActionButton>
+          </>
+        )}
       </td>
     </tr>
   );

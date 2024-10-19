@@ -31,13 +31,13 @@ private:
     float speaker_mix[MAX_CHANNELS][MAX_CHANNELS];
 
     uint8_t receive_buffer[CHUNK_SIZE];
-    int32_t scaled_buffer[CHUNK_SIZE * 8];
+    int32_t scaled_buffer[CHUNK_SIZE * 32];
     uint8_t *scaled_buffer_int8 = (uint8_t *)scaled_buffer;
-    int32_t resampled_buffer[CHUNK_SIZE * 128];
+    int32_t resampled_buffer[CHUNK_SIZE * 32];
     int32_t channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 32];
     int32_t remixed_channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 32];
-    int32_t merged_buffer[CHUNK_SIZE * 128];
-    int32_t processed_buffer[CHUNK_SIZE * 128]; 
+    int32_t merged_buffer[CHUNK_SIZE * 32];
+    int32_t processed_buffer[CHUNK_SIZE * 32]; 
 
     int scale_buffer_pos = 0;
     int process_buffer_pos = 0;
@@ -45,12 +45,10 @@ private:
     int resample_buffer_pos = 0;
     int channel_buffer_pos = 0;
 
-    SRC_DATA sampler_config = {0};
     SRC_STATE* sampler;
-    SRC_DATA downsampler_config = {0};
     SRC_STATE* downsampler;
-    float resampler_data_in[CHUNK_SIZE * MAX_CHANNELS * 32];
-    float resampler_data_out[CHUNK_SIZE * MAX_CHANNELS * 64];
+    float resampler_data_in[CHUNK_SIZE * MAX_CHANNELS * 8];
+    float resampler_data_out[CHUNK_SIZE * MAX_CHANNELS * 8];
 
     Biquad* filters[MAX_CHANNELS][EQ_BANDS];
     Biquad* dcFilters[MAX_CHANNELS];
@@ -71,6 +69,7 @@ private:
     void setupDCFilter();
     void removeDCOffset();
     bool isProcessingRequired();
+    bool isProcessingRequiredCheck();
 };
 
 #endif // AUDIO_PROCESSOR_H

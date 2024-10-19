@@ -1,7 +1,8 @@
+import { Type } from 'typescript';
 import ApiService from '../api/api';
 import { Source, Sink, Route } from '../api/api';
 
-type ItemType = 'sources' | 'sinks' | 'routes';
+type ItemType = 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source';
 
 export interface Actions {
   toggleEnabled: (type: ItemType, name: string) => Promise<void>;
@@ -10,8 +11,8 @@ export interface Actions {
   updateTimeshift: (type: ItemType, name: string, timeshift: number) => Promise<void>;
   toggleStar: (type: ItemType, name: string) => void;
   editItem: (type: ItemType, item: Source | Sink | Route) => void;
-  showEqualizer: (type: ItemType, item: Source | Sink | Route) => void;
-  showVNC: (source: Source) => void;
+  showEqualizer: (show: boolean, type: ItemType, item: Source | Sink | Route, source: Source) => void;
+  showVNC: (show: boolean, source: Source) => void;
   controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => Promise<void>;
   toggleActiveSource: (name: string) => void;
   listenToSink: (sink: Sink | null) => void;
@@ -22,10 +23,10 @@ export const createActions = (
   fetchData: () => Promise<void>,
   setError: (error: string | null) => void,
   setStarredItems: (type: ItemType, setter: (prevItems: string[]) => string[]) => void,
-  setShowEqualizerModal: (show: boolean) => void,
+  setShowEqualizerModal: (show: boolean, type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', item: Source | Sink | Route) => void,
   setSelectedItem: (item: any) => void,
   setSelectedItemType: (type: ItemType | null) => void,
-  setShowVNCModal: (show: boolean) => void,
+  setShowVNCModal: (show: boolean, source: Source) => void,
   setActiveSource: (setter: (prevActiveSource: string | null) => string | null) => void,
   onListenToSink: (sink: Sink | null) => void,
   onVisualizeSink: (sink: Sink | null) => void,
@@ -99,14 +100,14 @@ export const createActions = (
     setSelectedItemType(type);
     setShowEditModal(true);
   },
-  showEqualizer: (type, item) => {
+  showEqualizer: (show, type, item) => {
     setSelectedItem(item);
     setSelectedItemType(type);
-    setShowEqualizerModal(true);
+    setShowEqualizerModal(show, type, item);
   },
-  showVNC: (source) => {
+  showVNC: (show, source) => {
     setSelectedItem(source);
-    setShowVNCModal(true);
+    setShowVNCModal(show, source);
   },
   controlSource: async (sourceName, action) => {
     try {

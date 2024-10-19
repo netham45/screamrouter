@@ -30,7 +30,7 @@ const Dashboard: React.FC = () => {
     const [showEqualizerModal, setShowEqualizerModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [selectedItem, setSelectedItem] = useState<SelectedItemType>(null);
-    const [selectedItemType, setSelectedItemType] = useState<'sources' | 'sinks' | 'routes' | null>(null);
+    const [selectedItemType, setSelectedItemType] = useState<'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null>(null);
     const [activeSource, setActiveSource] = useState<string | null>(null);
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: '', direction: 'asc' });
 
@@ -180,6 +180,7 @@ const Dashboard: React.FC = () => {
               actions={actions}
               sortConfig={sortConfig}
               onSort={onSort}
+              hideExtraColumns={true}
             />
           </CollapsibleSection>
 
@@ -199,6 +200,7 @@ const Dashboard: React.FC = () => {
               visualizingSink={visualizingSink}
               sortConfig={sortConfig}
               onSort={onSort}
+              hideExtraColumns={true}
             />
           </CollapsibleSection>
 
@@ -215,6 +217,7 @@ const Dashboard: React.FC = () => {
               actions={actions}
               sortConfig={sortConfig}
               onSort={onSort}
+              hideExtraColumns={true}
             />
           </CollapsibleSection>
 
@@ -233,6 +236,7 @@ const Dashboard: React.FC = () => {
               actions={actions}
               sortConfig={sortConfig}
               onSort={onSort}
+              hideExtraColumns={true}
             />
           </CollapsibleSection>
 
@@ -252,6 +256,7 @@ const Dashboard: React.FC = () => {
               visualizingSink={visualizingSink}
               sortConfig={sortConfig}
               onSort={onSort}
+              hideExtraColumns={true}
             />
           </CollapsibleSection>
 
@@ -268,6 +273,7 @@ const Dashboard: React.FC = () => {
               actions={actions}
               sortConfig={sortConfig}
               onSort={onSort}
+              hideExtraColumns={true}
             />
           </CollapsibleSection>
         </div>

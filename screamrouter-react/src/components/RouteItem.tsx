@@ -20,6 +20,8 @@ interface RouteItemProps {
   onDragOver: (e: React.DragEvent<HTMLTableRowElement>) => void;
   onDrop: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
   onDragEnd: (e: React.DragEvent<HTMLSpanElement>) => void;
+  hideSpecificButtons?: boolean;
+  hideExtraColumns?: boolean;
 }
 
 const RouteItem: React.FC<RouteItemProps> = ({
@@ -34,6 +36,8 @@ const RouteItem: React.FC<RouteItemProps> = ({
   onDragOver,
   onDrop,
   onDragEnd,
+  hideSpecificButtons = false,
+  hideExtraColumns = false,
 }) => {
   return (
     <tr
@@ -47,16 +51,6 @@ const RouteItem: React.FC<RouteItemProps> = ({
       className="draggable-row"
       id={`route-${encodeURIComponent(route.name)}`}
     >
-      <td>
-        <span
-          className="drag-handle"
-          draggable
-          onDragStart={(e) => onDragStart(e, index)}
-          onDragEnd={onDragEnd}
-        >
-          ☰
-        </span>
-      </td>
       <td>
         <StarButton
           isStarred={isStarred}
@@ -85,9 +79,13 @@ const RouteItem: React.FC<RouteItemProps> = ({
         />
       </td>
       <td>
-        <ActionButton onClick={() => actions.editItem('routes', route)}>Edit</ActionButton>
-        <ActionButton onClick={() => actions.showEqualizer('routes', route)}>Equalizer</ActionButton>
-        <ActionButton onClick={() => actions.deleteItem('routes', route.name)} className="delete-button">Delete</ActionButton>
+        <ActionButton onClick={() => actions.showEqualizer(true, 'routes', route)}>Equalizer</ActionButton>
+        {!hideSpecificButtons && (
+          <>
+            <ActionButton onClick={() => actions.editItem('routes', route)}>Edit</ActionButton>
+            <ActionButton onClick={() => actions.deleteItem('routes', route.name)} className="delete-button">Delete</ActionButton>
+          </>
+        )}
       </td>
     </tr>
   );

@@ -1,7 +1,6 @@
 #!/usr/bin/make
 CC = g++
-CFLAGS = -Ofast -fopenmp -std=c++14 -mavx -march=native -mavx -msse4.1 \
-         -D_FORTIFY_SOURCE=2 -fstack-protector-strong -fPIE
+CFLAGS = -Ofast -fopenmp -std=c++14 -mavx -march=native -mavx -msse4.1
 LIBS = -lm
 
 # Find libmp3lame

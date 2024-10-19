@@ -103,6 +103,7 @@ const Layout: React.FC<LayoutProps> = ({children}) => {
             <li><Link to="/sources">Sources</Link></li>
             <li><Link to="/sinks">Sinks</Link></li>
             <li><Link to="/routes">Routes</Link></li>
+            <li><Link to="/desktopmenu">Desktop Menu</Link></li>
             <li><a href="https://github.com/netham45/screamrouter/tree/master/Readme" target="_blank" rel="noopener noreferrer">Docs</a></li>
             <li><a href="https://github.com/netham45/screamrouter" target="_blank" rel="noopener noreferrer">GitHub</a></li>
           </ul>

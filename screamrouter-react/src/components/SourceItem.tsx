@@ -25,6 +25,8 @@ interface SourceItemProps {
   onDragEnd: (e: React.DragEvent<HTMLSpanElement>) => void;
   activeRoutes: Route[];
   disabledRoutes: Route[];
+  hideSpecificButtons?: boolean;
+  hideExtraColumns?: boolean;
 }
 
 const SourceItem: React.FC<SourceItemProps> = ({
@@ -41,7 +43,9 @@ const SourceItem: React.FC<SourceItemProps> = ({
   onDrop,
   onDragEnd,
   activeRoutes,
-  disabledRoutes
+  disabledRoutes,
+  hideSpecificButtons = false,
+  hideExtraColumns = false
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -62,22 +66,11 @@ const SourceItem: React.FC<SourceItemProps> = ({
       id={`source-${encodeURIComponent(source.name)}`}
     >
       <td>
-        <span
-          className="drag-handle"
-          draggable
-          onDragStart={(e) => onDragStart(e, index)}
-          onDragEnd={onDragEnd}
-        >
-          ☰
-        </span>
-      </td>
-      <td>
         <StarButton
           isStarred={isStarred}
           onClick={() => actions.toggleStar('sources', source.name)}
         />
-      </td>
-      <td>
+        <br />
         <ActionButton 
           onClick={() => actions.toggleActiveSource(source.name)}
           className={isActive ? 'active' : ''}
@@ -106,7 +99,7 @@ const SourceItem: React.FC<SourceItemProps> = ({
           itemName={source.name}
         />
       </td>
-      <td>{source.ip}</td>
+      {!hideExtraColumns && <td>{source.ip}</td>}
       <td>
         <EnableButton
           isEnabled={source.enabled}
@@ -126,19 +119,23 @@ const SourceItem: React.FC<SourceItemProps> = ({
         />
       </td>
       <td>
-        <ActionButton onClick={() => actions.editItem('sources', source)}>Edit</ActionButton>
-        <ActionButton onClick={() => actions.showEqualizer('sources', source)}>Equalizer</ActionButton>
+        <ActionButton onClick={() => actions.showEqualizer(true, 'sources', source)}>Equalizer</ActionButton>
         {source.vnc_ip && source.vnc_port && (
+          <ActionButton onClick={function(){console.log("Before");console.log(source);actions.showVNC(true, source)}}>VNC</ActionButton>
+        )}
+        {source.vnc_ip && source.vnc_port && (
+          <PlaybackControls
+            onPrevTrack={() => actions.controlSource(source.name, 'prevtrack')}
+            onPlay={() => actions.controlSource(source.name, 'play')}
+            onNextTrack={() => actions.controlSource(source.name, 'nexttrack')}
+          />
+        )}
+        {!hideSpecificButtons && (
           <>
-            <ActionButton onClick={() => actions.showVNC(source)}>VNC</ActionButton>
-            <PlaybackControls
-              onPrevTrack={() => actions.controlSource(source.name, 'prevtrack')}
-              onPlay={() => actions.controlSource(source.name, 'play')}
-              onNextTrack={() => actions.controlSource(source.name, 'nexttrack')}
-            />
+            <ActionButton onClick={() => actions.editItem('sources', source)}>Edit</ActionButton>
+            <ActionButton onClick={() => actions.deleteItem('sources', source.name)} className="delete-button">Delete</ActionButton>
           </>
         )}
-        <ActionButton onClick={() => actions.deleteItem('sources', source.name)} className="delete-button">Delete</ActionButton>
       </td>
     </tr>
   );

@@ -10,6 +10,8 @@ interface RouteListProps {
   actions: Actions;
   sortConfig: SortConfig;
   onSort: (key: string) => void;
+  hideSpecificButtons?: boolean;
+  hideExtraColumns?: boolean;
 }
 
 const RouteList: React.FC<RouteListProps> = ({
@@ -18,6 +20,8 @@ const RouteList: React.FC<RouteListProps> = ({
   actions,
   sortConfig,
   onSort,
+  hideSpecificButtons = false,
+  hideExtraColumns = false,
 }) => {
   const routeRefs = useRef<{[key: string]: HTMLTableRowElement}>({});
   const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
@@ -74,7 +78,6 @@ const RouteList: React.FC<RouteListProps> = ({
       <table className="routes-table">
         <thead>
           <tr>
-            <th>Reorder</th>
             <th onClick={() => onSort('favorite')}>Favorite{renderSortIcon('favorite')}</th>
             <th onClick={() => onSort('name')}>Name{renderSortIcon('name')}</th>
             <th onClick={() => onSort('source')}>Source{renderSortIcon('source')}</th>
@@ -100,6 +103,8 @@ const RouteList: React.FC<RouteListProps> = ({
               onDragOver={onDragOver}
               onDrop={onDrop}
               onDragEnd={() => setDraggedIndex(null)}
+              hideSpecificButtons={hideSpecificButtons}
+              hideExtraColumns={hideExtraColumns}
             />
           ))}
         </tbody>

@@ -63,7 +63,11 @@ class APIWebsite():
     async def proxy_npm_devsite(self, request: Request, path: str):
         async with httpx.AsyncClient(base_url="http://localhost:8080") as client:
             # Construct the new URL
-            url = f"/site/{path}"
+            if ".js" not in path and ".css" not in path:
+                url = f"/site/"
+            else:
+                url = f"/site/{path}"
+            logger.debug(f"Path: {url}")
             
             # Forward the request headers
             headers = dict(request.headers)

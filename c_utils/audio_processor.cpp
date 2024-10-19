@@ -47,9 +47,9 @@ int AudioProcessor::processAudio(const uint8_t* inputBuffer, int32_t* outputBuff
     mixSpeakers();
     removeDCOffset();
     equalize();
-    downsample();
     mergeChannelsToBuffer();
     downsample();
+    noiseShapingDither();
     int samples_per_chunk = CHUNK_SIZE / (inputBitDepth / 8);
     int processed_samples = samples_per_chunk * outputChannels / inputChannels;
     memcpy(outputBuffer, processed_buffer, processed_samples * sizeof(int32_t));
@@ -85,10 +85,11 @@ void AudioProcessor::setupBiquad() {
 }
 
 void AudioProcessor::initializeSampler() {
+    int error = 0;
     if (sampler) src_delete(sampler);
-    sampler = src_new(SRC_SINC_BEST_QUALITY, inputChannels, NULL);
+    sampler = src_new(SRC_LINEAR, inputChannels, &error);
     if (downsampler) src_delete(downsampler);
-    downsampler = src_new(SRC_SINC_BEST_QUALITY, inputChannels, NULL);
+    downsampler = src_new(SRC_LINEAR, outputChannels, &error);
 }
 
 void AudioProcessor::scaleBuffer() {
@@ -157,11 +158,12 @@ void AudioProcessor::resample() {
     if (isProcessingRequired()) {
         int datalen = scale_buffer_pos / inputChannels;
         src_int_to_float_array(scaled_buffer, resampler_data_in, datalen * inputChannels);
+        SRC_DATA sampler_config = {0};
         sampler_config.data_in = resampler_data_in;
         sampler_config.data_out = resampler_data_out;
-        sampler_config.src_ratio = (float)(outputSampleRate * OVERSAMPLING_FACTOR) / (float)inputSampleRate;
+        sampler_config.src_ratio = static_cast<double>(outputSampleRate * OVERSAMPLING_FACTOR) / inputSampleRate;
         sampler_config.input_frames = datalen;
-        sampler_config.output_frames = datalen * 32;
+        sampler_config.output_frames = sizeof(resampler_data_out) / sizeof(float) / inputChannels;
         src_process(sampler, &sampler_config);
         src_float_to_int_array(resampler_data_out, resampled_buffer, sampler_config.output_frames_gen * inputChannels);
         resample_buffer_pos = sampler_config.output_frames_gen * inputChannels;
@@ -175,11 +177,12 @@ void AudioProcessor::downsample() {
     if (isProcessingRequired()) {
         int datalen = merged_buffer_pos / outputChannels;
         src_int_to_float_array(merged_buffer, resampler_data_in, datalen * outputChannels);
+        SRC_DATA downsampler_config = {0};
         downsampler_config.data_in = resampler_data_in;
         downsampler_config.data_out = resampler_data_out;
         downsampler_config.src_ratio = (float)outputSampleRate / (float)(outputSampleRate * OVERSAMPLING_FACTOR);
         downsampler_config.input_frames = datalen;
-        downsampler_config.output_frames = datalen * 32;
+        downsampler_config.output_frames = sizeof(resampler_data_out) / sizeof(float) / outputChannels;
         src_process(downsampler, &downsampler_config);
         src_float_to_int_array(resampler_data_out, processed_buffer, downsampler_config.output_frames_gen * outputChannels);
         process_buffer_pos = downsampler_config.output_frames_gen * outputChannels;
@@ -248,7 +251,18 @@ void AudioProcessor::removeDCOffset() {
     }
 }
 
+bool isProcessingRequiredCache = false;
+bool isProcessingRequiredCacheSet = false;
+
 bool AudioProcessor::isProcessingRequired() {
+    if (!isProcessingRequiredCacheSet) {
+        isProcessingRequiredCache = isProcessingRequiredCheck();
+        isProcessingRequiredCacheSet = true;
+    }
+    return isProcessingRequiredCache;
+}
+
+bool AudioProcessor::isProcessingRequiredCheck() {
     // Check if any processing is needed
     if (inputSampleRate != outputSampleRate) return true;
     if (volume != 1.0f) return true;

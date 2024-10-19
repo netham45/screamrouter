@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useSearchParams, Outlet } from 'react-router-dom';
 import { AppProvider, useAppContext } from './context/AppContext';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
@@ -13,8 +13,50 @@ import AddEditSource from './components/AddEditSource';
 import AddEditSink from './components/AddEditSink';
 import AddEditRoute from './components/AddEditRoute';
 import AddEditGroup from './components/AddEditGroup';
+import DesktopMenu from './components/DesktopMenu';
 import './App.css';
 import './styles/darkMode.css';
+import { Source, Sink, Route as RouteType } from './api/api';
+
+const EqualizerRoute: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const { sources, sinks, routes } = useAppContext();
+
+  const type = searchParams.get('type') as 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source';
+  const name = searchParams.get('name');
+
+  let item: Source | Sink | RouteType | null = null;
+  if (type && name) {
+    if (type === 'sources' || type === 'group-source') item = sources.find(s => s.name === name) || null;
+    else if (type === 'sinks' || type === 'group-sink') item = sinks.find(s => s.name === name) || null;
+    else if (type === 'routes') item = routes.find(r => r.name === name) || null;
+  }
+
+  if (!item) return <div>Item not found</div>;
+
+  return (
+    <Equalizer
+      item={item}
+      type={type}
+      onClose={() => window.close()}
+      onDataChange={() => {/* Handle data change */}}
+    />
+  );
+};
+
+const VNCRoute: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const { sources } = useAppContext();
+
+  const ip = searchParams.get('ip');
+  const port = searchParams.get('port');
+
+  const source = sources.find(s => s.vnc_ip === ip && s.vnc_port === Number(port));
+
+  if (!source) return <div>Source not found</div>;
+
+  return <VNC source={source} />;
+};
 
 const AppContent: React.FC = () => {
   const { 
@@ -51,26 +93,29 @@ const AppContent: React.FC = () => {
 
   return (
     <Router basename="/site">
-      <Layout>
-        <Routes>
+      <Routes>
+        <Route path="/desktopmenu" element={<DesktopMenu />} />
+        <Route path="/" element={<Layout><Outlet /></Layout>}>
           <Route index element={<Dashboard />} />
           <Route path="sources" element={<Sources />} />
           <Route path="sinks" element={<Sinks />} />
           <Route path="routes" element={<RoutesComponent />} />
-        </Routes>
-      </Layout>
+        </Route>
+        <Route path="/equalizer" element={<EqualizerRoute />} />
+        <Route path="/vnc" element={<VNCRoute />} />
+      </Routes>
+      
       <AudioVisualizer 
-        listeningToSink={listeningToSink?.name || null}
         visualizingSink={visualizingSink?.name || null}
         sinkIp={visualizingSink?.ip || listeningToSink?.ip || null}
       />
-      {showVNCModal && selectedItem && (
-        <VNC source={selectedItem} />
+      {showVNCModal && selectedItem && 'vnc_ip' in selectedItem && (
+        <VNC source={selectedItem as Source} />
       )}
       {showEqualizerModal && selectedItem && selectedItemType && (
         <Equalizer
-          item={selectedItem}
-          type={selectedItemType as 'sources' | 'sinks' | 'routes'}
+          item={selectedItem as Source | Sink | RouteType}
+          type={selectedItemType as 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source'}
           onClose={() => {
             setShowEqualizerModal(false);
             setSelectedItem(null);
@@ -84,21 +129,21 @@ const AppContent: React.FC = () => {
       )}
       {showEditModal && selectedItemType === 'sources' && (
         <AddEditSource
-          source={selectedItem}
+          source={selectedItem as Source}
           onClose={handleEditClose}
           onSave={handleEditSave}
         />
       )}
       {showEditModal && selectedItemType === 'sinks' && (
         <AddEditSink
-          sink={selectedItem}
+          sink={selectedItem as Sink}
           onClose={handleEditClose}
           onSave={handleEditSave}
         />
       )}
       {showEditModal && selectedItemType === 'routes' && (
         <AddEditRoute
-          route={selectedItem}
+          route={selectedItem as RouteType}
           onClose={handleEditClose}
           onSave={handleEditSave}
         />
@@ -106,7 +151,7 @@ const AppContent: React.FC = () => {
       {showEditModal && selectedItemType === 'group-sink' && (
         <AddEditGroup
           type="sink"
-          group={selectedItem}
+          group={selectedItem as Sink}
           onClose={handleEditClose}
           onSave={handleEditSave}
         />
@@ -114,7 +159,7 @@ const AppContent: React.FC = () => {
       {showEditModal && selectedItemType === 'group-source' && (
         <AddEditGroup
           type="source"
-          group={selectedItem}
+          group={selectedItem as Source}
           onClose={handleEditClose}
           onSave={handleEditSave}
         />

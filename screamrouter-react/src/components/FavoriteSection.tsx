@@ -7,19 +7,19 @@ type FavoriteItem = Source | Sink | Route;
 interface FavoriteSectionProps {
   title: React.ReactNode;
   items: FavoriteItem[];
-  type: 'sources' | 'sinks' | 'routes';
+  type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source';
   starredItems: string[];
-  toggleEnabled: (type: 'sources' | 'sinks' | 'routes', name: string, enabled: boolean) => void;
-  toggleStar: (type: 'sources' | 'sinks' | 'routes', name: string) => void;
+  toggleEnabled: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string, enabled: boolean) => void;
+  toggleStar: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string) => void;
   setSelectedItem: (item: FavoriteItem) => void;
-  setSelectedItemType: (type: 'sources' | 'sinks' | 'routes') => void;
+  setSelectedItemType: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source') => void;
   setShowEditModal: (show: boolean) => void;
   toggleActive?: (name: string) => void;
   activeSource?: string | null;
   controlSource?: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => void;
   setShowVNCModal?: (show: boolean) => void;
-  updateVolume: (type: 'sources' | 'sinks' | 'routes', name: string, volume: number) => void;
-  renderControls: (item: FavoriteItem, type: 'sources' | 'sinks' | 'routes') => React.ReactNode;
+  updateVolume: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string, volume: number) => void;
+  renderControls: (item: FavoriteItem, type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source') => React.ReactNode;
   getRoutesForSource: (sourceName: string) => Route[];
   getRoutesForSink: (sinkName: string) => Route[];
   getGroupMembers: (name: string, type: 'sources' | 'sinks') => string;
@@ -38,7 +38,7 @@ const FavoriteSection: React.FC<FavoriteSectionProps> = ({
 }) => {
   const filteredItems = items.filter(item => starredItems.includes(item.name));
 
-  const getIconClass = (itemType: 'sources' | 'sinks' | 'routes') => {
+  const getIconClass = (itemType: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source') => {
     switch (itemType) {
       case 'sources':
         return 'fa-music';

@@ -7,7 +7,7 @@ interface EqualizerProps {
     name: string;
     equalizer: EqualizerType;
   };
-  type: 'sources' | 'sinks' | 'routes';
+  type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source';
   onClose: () => void;
   onDataChange: () => void;
 }
