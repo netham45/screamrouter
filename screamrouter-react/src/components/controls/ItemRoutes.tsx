@@ -8,6 +8,8 @@ interface ItemRoutesProps {
   isExpanded: boolean;
   toggleExpandRoutes: (name: string) => void;
   itemName: string;
+  isDesktopMenu?: boolean;
+  onNavigate?: (type: 'routes', name: string) => void;
 }
 
 const ItemRoutes: React.FC<ItemRoutesProps> = ({
@@ -15,9 +17,11 @@ const ItemRoutes: React.FC<ItemRoutesProps> = ({
   disabledRoutes,
   isExpanded,
   toggleExpandRoutes,
-  itemName
+  itemName,
+  isDesktopMenu = false,
+  onNavigate
 }) => {
-  console.log('ItemRoutes props:', { activeRoutes, disabledRoutes, isExpanded, itemName });
+  console.log('ItemRoutes props:', { activeRoutes, disabledRoutes, isExpanded, itemName, isDesktopMenu });
 
   const renderRouteList = (routes: Route[], isEnabled: boolean) => {
     console.log('renderRouteList called with:', { routes, isEnabled });
@@ -37,7 +41,16 @@ const ItemRoutes: React.FC<ItemRoutesProps> = ({
         <span className="route-list-label">{isEnabled ? 'Enabled routes:' : 'Disabled routes:'}</span>
         {displayedRoutes.map((route, index) => (
           <React.Fragment key={route.name}>
-            {renderLinkWithAnchor('/routes', route.name, 'fa-route')}
+            {isDesktopMenu ? (
+              <span
+                onClick={() => onNavigate && onNavigate('routes', route.name)}
+                style={{ cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                {route.name}
+              </span>
+            ) : (
+              renderLinkWithAnchor('/routes', route.name, 'fa-route')
+            )}
             {index < displayedRoutes.length - 1 && ', '}
           </React.Fragment>
         ))}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAppContext } from '../context/AppContext';
 import SourceList from './SourceList';
 import SinkList from './SinkList';
@@ -9,6 +9,7 @@ import { Source, Sink, Route } from '../api/api';
 
 enum MenuLevel {
   Main,
+  NowListening,
   Sources,
   Sinks,
   Routes,
@@ -24,14 +25,11 @@ const DesktopMenu: React.FC = () => {
     sources,
     sinks,
     routes,
-    activeSource,
+    activeSource: contextActiveSource,
     listeningToSink,
     visualizingSink,
     onListenToSink,
     onVisualizeSink,
-    fetchSources,
-    fetchSinks,
-    fetchRoutes,
     onToggleActiveSource,
   } = useAppContext();
 
@@ -48,6 +46,8 @@ const DesktopMenu: React.FC = () => {
     const savedMode = localStorage.getItem('colorMode');
     return (savedMode as ColorMode) || 'system';
   });
+  const [selectedItem, setSelectedItem] = useState<string | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const starredSourcesData = JSON.parse(localStorage.getItem('starredSources') || '[]');
@@ -61,6 +61,15 @@ const DesktopMenu: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('currentMenu', currentMenu.toString());
   }, [currentMenu]);
+
+  useEffect(() => {
+    if (selectedItem && contentRef.current) {
+      const element = document.getElementById(`${currentMenu.toString().toLowerCase()}-${selectedItem}`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [selectedItem, currentMenu]);
 
   const applyColorMode = (mode: ColorMode) => {
     if (mode === 'system') {
@@ -91,42 +100,57 @@ const DesktopMenu: React.FC = () => {
     window.open(url, '_blank', `width=${width},height=${height},left=${left},top=${top}`);
   };
 
-  const actions: Actions = useMemo(() => createActions(
-    async () => {
-      await Promise.all([fetchSources(), fetchSinks(), fetchRoutes()]);
-    },
-    setError,
-    (type, setter) => {
-      if (type === 'sources') setStarredSources(setter);
-      else if (type === 'sinks') setStarredSinks(setter);
-      else if (type === 'routes') setStarredRoutes(setter);
-    },
-    (show: boolean, type?: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', item?: Source | Sink | Route) => {
-      if (show && type && item) {
-        openInNewWindow(`/site/equalizer?type=${type}&name=${encodeURIComponent(item.name)}`);
-      }
-    },
-  () => {}, // Set selected item function (not used here)
-  () => {}, // Set selected item type function (not used here)
-    (show: boolean, source: Source) => {
-      if (show && source && source.vnc_ip && source.vnc_port) {
-        openInNewWindow(`/site/vnc?ip=${source.vnc_ip}&port=${source.vnc_port}`);
-      }
-    },
-    (setter) => {
-      if (typeof setter === 'function') {
-        const newActiveSource = setter(activeSource);
-        if (newActiveSource !== null) {
-          onToggleActiveSource(newActiveSource);
+  const navigateToItem = (menuLevel: MenuLevel, itemName: string) => {
+    setCurrentMenu(menuLevel);
+    setSelectedItem(itemName);
+  };
+
+  const desktopMenuActions: Actions = useMemo(() => {
+    const baseActions = createActions(
+      () => {}, // No need to fetch data as it's handled by AppContext
+      setError,
+      (type, setter) => {
+        if (type === 'sources') setStarredSources(setter);
+        else if (type === 'sinks') setStarredSinks(setter);
+        else if (type === 'routes') setStarredRoutes(setter);
+      },
+      (show: boolean, type?: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', item?: Source | Sink | Route) => {
+        if (show && type && item) {
+          openInNewWindow(`/site/equalizer?type=${type}&name=${encodeURIComponent(item.name)}`);
         }
-      } else if (typeof setter === 'string') {
-        onToggleActiveSource(setter);
+      },
+      () => {}, // Set selected item function (not used here)
+      () => {}, // Set selected item type function (not used here)
+      (show: boolean, source: Source) => {
+        if (show && source && source.vnc_ip && source.vnc_port) {
+          openInNewWindow(`/site/vnc?ip=${source.vnc_ip}&port=${source.vnc_port}`);
+        }
+      },
+      onToggleActiveSource,
+      onListenToSink,
+      onVisualizeSink,
+      () => {}, // Edit item function (not used here)
+      () => {} // Default navigate function (will be overridden)
+    );
+
+    // Override the navigate function for DesktopMenu
+    return {
+      ...baseActions,
+      navigate: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', itemName: string) => {
+        switch (type) {
+          case 'sources':
+            navigateToItem(MenuLevel.AllSources, itemName);
+            break;
+          case 'sinks':
+            navigateToItem(MenuLevel.AllSinks, itemName);
+            break;
+          case 'routes':
+            navigateToItem(MenuLevel.AllRoutes, itemName);
+            break;
+        }
       }
-    },
-  onListenToSink,
-  onVisualizeSink,
-  () => {} // Edit item function (not used here)
-  ), [fetchSources, fetchSinks, fetchRoutes, onListenToSink, onVisualizeSink, onToggleActiveSource, activeSource]);
+    };
+  }, [onListenToSink, onVisualizeSink, onToggleActiveSource]);
 
   const openFullInterface = () => {
     window.open('/', '_blank');
@@ -141,109 +165,103 @@ const DesktopMenu: React.FC = () => {
 
   const renderContent = () => {
     let content;
-    const primarySource = sources.find(source => source.name === activeSource);
+    const primarySource = sources.find(source => source.name === contextActiveSource);
+
+    const commonProps = {
+      actions: desktopMenuActions,
+      sortConfig,
+      onSort,
+      hideSpecificButtons: true,
+      hideExtraColumns: true,
+      selectedItem,
+      isDesktopMenu: true,
+    };
 
     switch (currentMenu) {
       case MenuLevel.Sources:
         content = (
           <SourceList
+            {...commonProps}
             sources={sources.filter(source => starredSources.includes(source.name))}
             routes={routes}
             starredSources={starredSources}
-            activeSource={activeSource}
-            actions={actions}
-            sortConfig={sortConfig}
-            onSort={onSort}
-            hideSpecificButtons={true}
-            hideExtraColumns={true}
+            activeSource={contextActiveSource}
           />
         );
         break;
       case MenuLevel.Sinks:
         content = (
           <SinkList
+            {...commonProps}
             sinks={sinks.filter(sink => starredSinks.includes(sink.name))}
             routes={routes}
             starredSinks={starredSinks}
-            actions={actions}
-            listeningToSink={listeningToSink}
-            visualizingSink={visualizingSink}
-            sortConfig={sortConfig}
-            onSort={onSort}
-            hideSpecificButtons={true}
-            hideExtraColumns={true}
+            listeningToSink={listeningToSink?.name}
+            visualizingSink={visualizingSink?.name}
           />
         );
         break;
       case MenuLevel.Routes:
         content = (
           <RouteList
+            {...commonProps}
             routes={routes.filter(route => starredRoutes.includes(route.name))}
             starredRoutes={starredRoutes}
-            actions={actions}
-            sortConfig={sortConfig}
-            onSort={onSort}
-            hideSpecificButtons={true}
-            hideExtraColumns={true}
           />
         );
         break;
       case MenuLevel.AllSources:
         content = (
           <SourceList
+            {...commonProps}
             sources={sources}
             routes={routes}
             starredSources={starredSources}
-            activeSource={activeSource}
-            actions={actions}
-            sortConfig={sortConfig}
-            onSort={onSort}
-            hideSpecificButtons={true}
-            hideExtraColumns={true}
+            activeSource={contextActiveSource}
           />
         );
         break;
       case MenuLevel.AllSinks:
         content = (
           <SinkList
+            {...commonProps}
             sinks={sinks}
             routes={routes}
             starredSinks={starredSinks}
-            actions={actions}
-            listeningToSink={listeningToSink}
-            visualizingSink={visualizingSink}
-            sortConfig={sortConfig}
-            onSort={onSort}
-            hideSpecificButtons={true}
-            hideExtraColumns={true}
+            listeningToSink={listeningToSink?.name}
+            visualizingSink={visualizingSink?.name}
           />
         );
         break;
       case MenuLevel.AllRoutes:
         content = (
           <RouteList
+            {...commonProps}
             routes={routes}
             starredRoutes={starredRoutes}
-            actions={actions}
-            sortConfig={sortConfig}
-            onSort={onSort}
-            hideSpecificButtons={true}
-            hideExtraColumns={true}
+          />
+        );
+        break;
+      case MenuLevel.NowListening:
+        content = (
+          <SinkList
+            {...commonProps}
+            sinks={listeningToSink ? [listeningToSink] : []}
+            routes={routes}
+            starredSinks={starredSinks}
+            listeningToSink={listeningToSink?.name}
+            visualizingSink={visualizingSink?.name}
           />
         );
         break;
       default:
         content = (
           <SourceList
+            {...commonProps}
             sources={primarySource ? [primarySource] : []}
             routes={routes}
             starredSources={starredSources}
-            activeSource={activeSource}
-            actions={actions}
-            sortConfig={sortConfig}
-            onSort={onSort}
-            hideSpecificButtons={true}
-            hideExtraColumns={true}
+            activeSource={contextActiveSource}
           />
         );
     }
@@ -264,22 +282,28 @@ const DesktopMenu: React.FC = () => {
           Primary Source
         </button>
         <button
+          className={`menu-button ${currentMenu === MenuLevel.NowListening ? 'active' : ''}`}
+          onClick={() => setCurrentMenu(MenuLevel.NowListening)}
+        >
+          Now Listening
+        </button>
+        <button
           className={`menu-button ${currentMenu === MenuLevel.Sources ? 'active' : ''}`}
           onClick={() => setCurrentMenu(MenuLevel.Sources)}
         >
-          Favorite Sources
+          ★ Sources
         </button>
         <button
           className={`menu-button ${currentMenu === MenuLevel.Sinks ? 'active' : ''}`}
           onClick={() => setCurrentMenu(MenuLevel.Sinks)}
         >
-          Favorite Sinks
+          ★ Sinks
         </button>
         <button
           className={`menu-button ${currentMenu === MenuLevel.Routes ? 'active' : ''}`}
           onClick={() => setCurrentMenu(MenuLevel.Routes)}
         >
-          Favorite Routes
+          ★ Routes
         </button>
         <button
           className={`menu-button ${currentMenu === MenuLevel.AllSources ? 'active' : ''}`}
@@ -299,9 +323,9 @@ const DesktopMenu: React.FC = () => {
         >
           All Routes
         </button>
-        <button className="menu-button" onClick={openFullInterface}>Open Full Interface</button>
+        <button className="menu-button" onClick={openFullInterface}>ScreamRouter</button>
       </div>
-      <div className="menu-content">
+      <div className="menu-content" ref={contentRef}>
         {renderContent()}
       </div>
     </div>
@@ -322,14 +346,14 @@ body {
   height: 600px;
   overflow: hidden;
   font-family: Arial, sans-serif;
-  border-radius: 8px;
+  border-radius: 12px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
   background-color: rgba(245, 245, 245, 0.5);
   color: #333;
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(30,30,30,.7);
+  border: 1px solid rgba(50,50,50,.7);
   backdrop-filter: blur(50px) !important;
 }
 
@@ -441,7 +465,7 @@ body {
 .desktop-menu.dark-mode {
   background-color: rgba(43, 43, 43, 0.5);
   color: #fff;
-  border: 1px solid rgba(200,200,200,.7);
+  border: 1px solid rgba(90,90,90,.7);
 }
 
 .desktop-menu.dark-mode .menu-header {
@@ -485,7 +509,6 @@ body {
 body {
   background-color: rgba(0,0,0,0) !important;
 }
-
 `;
 
 // Inject styles

@@ -3,13 +3,15 @@
 from copy import copy
 from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 import src.screamrouter_types.annotations as annotations
 
 
 class Equalizer(BaseModel):
     """Holds data for the equalizer for a sink""" 
+    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True, json_schema_serialization_defaults_required=True)
+
     b1: annotations.EqualizerBandType1 = float(1.0)
     """Set 65Hz band gain."""
     b2: annotations.EqualizerBandType2 = float(1.0)
@@ -99,6 +101,8 @@ class SinkDescription(BaseModel):
     """
     Holds either a sink IP and Port or a group of sink names
     """
+    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True, json_schema_serialization_defaults_required=True)
+
     name: annotations.SinkNameType = ""
     """Sink Name, Endpoint and Group"""
     ip: Optional[annotations.IPAddressType] = None
@@ -153,7 +157,7 @@ class SinkDescription(BaseModel):
                 if not getattr(self, field_name) == getattr(other, field_name):
                     return False
             return True
-        raise TypeError(f"Can't compare {type(self)} against {type(other)}")
+        return False
 
     def __hash__(self):
         """Returns a hash"""
@@ -170,6 +174,8 @@ class SourceDescription(BaseModel):
     """
     Holds either a source IP or a group of source names
     """
+    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True, json_schema_serialization_defaults_required=True)
+
     name: annotations.SourceNameType = ""
     """Source Name, Endpoint and Group"""
     ip: Optional[annotations.IPAddressType] = None
@@ -216,7 +222,7 @@ class SourceDescription(BaseModel):
                 if not getattr(self, field_name) == getattr(other, field_name):
                     return False
             return True
-        raise TypeError(f"Can't compare {type(self)} against {type(other)}")
+        return False
 
     def __hash__(self):
         """Returns a hash"""
@@ -234,6 +240,8 @@ class RouteDescription(BaseModel):
     """
     Holds a route mapping from source to sink
     """
+    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True, json_schema_serialization_defaults_required=True)
+
     name: annotations.RouteNameType = ""
     """Route Name"""
     sink: annotations.SinkNameType = ""
@@ -272,7 +280,7 @@ class RouteDescription(BaseModel):
                 if not getattr(self, field_name) == getattr(other, field_name):
                     return False
             return True
-        raise TypeError(f"Can't compare {type(self)} against {type(other)}")
+        return False
 
     def __hash__(self):
         """Returns a hash"""

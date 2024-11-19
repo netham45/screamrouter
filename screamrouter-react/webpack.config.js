@@ -79,8 +79,10 @@ module.exports = {
       directory: path.join(__dirname, '../site'),
     },
     compress: true,
-    port: 8080,
     historyApiFallback: true,
     hot: true,
+    client: {
+      webSocketURL: 'auto://0.0.0.0/ws',
+    }
   }
 };

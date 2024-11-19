@@ -1,4 +1,3 @@
-import { Type } from 'typescript';
 import ApiService from '../api/api';
 import { Source, Sink, Route } from '../api/api';
 
@@ -11,33 +10,35 @@ export interface Actions {
   updateTimeshift: (type: ItemType, name: string, timeshift: number) => Promise<void>;
   toggleStar: (type: ItemType, name: string) => void;
   editItem: (type: ItemType, item: Source | Sink | Route) => void;
-  showEqualizer: (show: boolean, type: ItemType, item: Source | Sink | Route, source: Source) => void;
+  showEqualizer: (show: boolean, type: ItemType, item: Source | Sink | Route) => void;
   showVNC: (show: boolean, source: Source) => void;
   controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => Promise<void>;
   toggleActiveSource: (name: string) => void;
   listenToSink: (sink: Sink | null) => void;
   visualizeSink: (sink: Sink | null) => void;
+  navigateToItem: (type: ItemType, name: string) => void;
 }
 
 export const createActions = (
   fetchData: () => Promise<void>,
   setError: (error: string | null) => void,
   setStarredItems: (type: ItemType, setter: (prevItems: string[]) => string[]) => void,
-  setShowEqualizerModal: (show: boolean, type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', item: Source | Sink | Route) => void,
-  setSelectedItem: (item: any) => void,
+  setShowEqualizerModal: (show: boolean, type: ItemType, item: Source | Sink | Route) => void,
+  setSelectedItem: (item: Source | Sink | Route | null) => void,
   setSelectedItemType: (type: ItemType | null) => void,
   setShowVNCModal: (show: boolean, source: Source) => void,
   setActiveSource: (setter: (prevActiveSource: string | null) => string | null) => void,
   onListenToSink: (sink: Sink | null) => void,
   onVisualizeSink: (sink: Sink | null) => void,
-  setShowEditModal: (show: boolean) => void
+  setShowEditModal: (show: boolean) => void,
+  onNavigateToItem: (type: ItemType, name: string) => void
 ): Actions => ({
   toggleEnabled: async (type, name) => {
     try {
       const item = type === 'sources' ? await ApiService.getSources()
                  : type === 'sinks' ? await ApiService.getSinks()
                  : await ApiService.getRoutes();
-      const targetItem = item.data.find((i: any) => i.name === name);
+      const targetItem = item.data.find((i: Source | Sink | Route) => i.name === name);
       if (!targetItem) throw new Error(`${type} not found`);
       
       const updateMethod = type === 'sources' ? ApiService.updateSource
@@ -123,4 +124,7 @@ export const createActions = (
   },
   listenToSink: onListenToSink,
   visualizeSink: onVisualizeSink,
+  navigateToItem: onNavigateToItem,
 });
+
+export default createActions;

@@ -250,30 +250,94 @@ void write_output_buffer() {
     process_buffer_pos -= CHUNK_SIZE / sizeof(int32_t);
 }
 
-int main(int argc, char *argv[]) {
-    timeshift_last_change = std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration::min());
-    process_args(argc, argv);
-    log("Starting source input processor " + input_ip);
+#include <exception>
+#include <stdexcept>
+#include <cxxabi.h>
+#include <execinfo.h>
 
-    std::thread receive_thread(receive_data_thread);
-    std::thread data_thread(data_input_thread);
+void print_stacktrace() {
+    const int MAX_STACK_FRAMES = 100;
+    void* stack_traces[MAX_STACK_FRAMES];
+    int trace_size = backtrace(stack_traces, MAX_STACK_FRAMES);
+    char** stack_strings = backtrace_symbols(stack_traces, trace_size);
 
-    while (threads_running) {
-        receive_data();
-        if (audioProcessor) {
-            audioProcessor_mutex.lock();
-            int processed_samples = audioProcessor->processAudio(receive_buffer, processed_buffer + process_buffer_pos);
-            audioProcessor_mutex.unlock();
-            process_buffer_pos += processed_samples;
-
-            while (process_buffer_pos >= CHUNK_SIZE / sizeof(int32_t))
-                write_output_buffer();
+    std::cerr << "Stack trace:" << std::endl;
+    for (int i = 0; i < trace_size; ++i) {
+        std::string stack_string(stack_strings[i]);
+        size_t pos = stack_string.find('(');
+        size_t pos2 = stack_string.find('+', pos);
+        if (pos != std::string::npos && pos2 != std::string::npos) {
+            std::string mangled_name = stack_string.substr(pos + 1, pos2 - pos - 1);
+            int status;
+            char* demangled_name = abi::__cxa_demangle(mangled_name.c_str(), nullptr, nullptr, &status);
+            if (status == 0) {
+                std::cerr << "  " << i << ": " << demangled_name << std::endl;
+                free(demangled_name);
+            } else {
+                std::cerr << "  " << i << ": " << stack_strings[i] << std::endl;
+            }
+        } else {
+            std::cerr << "  " << i << ": " << stack_strings[i] << std::endl;
         }
     }
-
-    receive_thread.join();
-    data_thread.join();
-
-    return 0;
+    free(stack_strings);
 }
+
+void monitor_buffer_levels() {
+        while (threads_running) {
+        
+        // Check process buffer
+        size_t process_buffer_size = process_buffer_pos * sizeof(int32_t);
+        
+        // Calculate percentages
+        double process_buffer_percentage = (double)process_buffer_size / (CHUNK_SIZE * 8) * 100;
+        
+        // Log if any buffer exceeds thresholds
+        if (process_buffer_percentage > 100) {
+            log("CRITICAL: Buffer overflow - Process: " + std::to_string(process_buffer_percentage) + "%");
+        }
+        
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+
+int main(int argc, char *argv[]) {
+    try {
+        timeshift_last_change = std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration::min());
+        process_args(argc, argv);
+        log("Starting source input processor " + input_ip);
+
+        std::thread receive_thread(receive_data_thread);
+        std::thread data_thread(data_input_thread);
+        std::thread monitor_thread(monitor_buffer_levels);
+
+        while (threads_running) {
+            receive_data();
+            if (audioProcessor) {
+                audioProcessor_mutex.lock();
+                int processed_samples = audioProcessor->processAudio(receive_buffer, processed_buffer + process_buffer_pos);
+                audioProcessor_mutex.unlock();
+                process_buffer_pos += processed_samples;
+
+                while (process_buffer_pos >= CHUNK_SIZE / sizeof(int32_t))
+                    write_output_buffer();
+            }
+        }
+
+        receive_thread.join();
+        data_thread.join();
+        monitor_thread.join();
+
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "Exception caught: " << e.what() << std::endl;
+        print_stacktrace();
+        return 1;
+    } catch (...) {
+        std::cerr << "Unknown exception caught" << std::endl;
+        print_stacktrace();
+        return 1;
+    }
+}
+
 

@@ -13,6 +13,8 @@ import src.constants.constants as constants
 from src.api.api_configuration import APIConfiguration
 from src.api.api_website import APIWebsite
 from src.api.api_webstream import APIWebStream
+from src.api.api_websocket_config import APIWebsocketConfig
+from src.api.api_websocket_debug import APIWebsocketDebug
 from src.configuration.configuration_manager import ConfigurationManager
 from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_logger.screamrouter_logger import get_logger
@@ -86,9 +88,13 @@ if constants.DEBUG_MULTIPROCESSING:
     logger = multiprocessing.log_to_stderr()
     logger.setLevel(multiprocessing.SUBDEBUG) # type: ignore
 webstream: APIWebStream = APIWebStream(app)
+websocket_config: APIWebsocketConfig = APIWebsocketConfig(app)
+websocket_debug: APIWebsocketDebug = APIWebsocketDebug(app)
 plugin_manager: PluginManager = PluginManager(app)
 plugin_manager.start_registered_plugins()
-screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream, plugin_manager)
+screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream,
+                                                                        plugin_manager,
+                                                                        websocket_config)
 api_controller = APIConfiguration(app, screamrouter_configuration)
 website: APIWebsite = APIWebsite(app, screamrouter_configuration)
 

@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <thread>
+#include <atomic>
 #include "libsamplerate/include/samplerate.h"
 
 #define MAX_CHANNELS 8
@@ -22,7 +24,7 @@ public:
     void setVolume(float newVolume);
     void setEqualizer(const float* newEq);
 
-private:
+protected:
     int inputChannels, outputChannels;
     int inputSampleRate, outputSampleRate;
     int inputBitDepth;
@@ -30,7 +32,7 @@ private:
     float eq[EQ_BANDS];
     float speaker_mix[MAX_CHANNELS][MAX_CHANNELS];
 
-    uint8_t receive_buffer[CHUNK_SIZE];
+    uint8_t receive_buffer[CHUNK_SIZE * 4];
     int32_t scaled_buffer[CHUNK_SIZE * 32];
     uint8_t *scaled_buffer_int8 = (uint8_t *)scaled_buffer;
     int32_t resampled_buffer[CHUNK_SIZE * 32];
@@ -70,6 +72,11 @@ private:
     void removeDCOffset();
     bool isProcessingRequired();
     bool isProcessingRequiredCheck();
+    void monitorBuffers();
+
+    // Buffer monitoring thread
+    std::thread monitor_thread;
+    std::atomic<bool> monitor_running;
 };
 
 #endif // AUDIO_PROCESSOR_H

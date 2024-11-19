@@ -59,10 +59,10 @@ const NowPlaying: React.FC<NowPlayingProps> = ({ isExpanded, onToggle }) => {
           Stop Listening
         </ActionButton>
         <ActionButton
-          onClick={() => onVisualizeSink(visualizingSink?.name === item.name ? null : item)}
+          onClick={() => onVisualizeSink(item)}
           className={visualizingSink?.name === item.name ? 'visualizing' : ''}
         >
-          {visualizingSink?.name === item.name ? 'Stop Visualizer' : 'Visualize'}
+          Visualize
         </ActionButton>
       </>
     );

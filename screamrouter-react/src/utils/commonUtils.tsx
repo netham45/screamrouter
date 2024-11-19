@@ -47,16 +47,59 @@ export const ActionButton: React.FC<{
 export const VolumeSlider: React.FC<{
   value: number;
   onChange: (value: number) => void;
-}> = ({ value, onChange }) => (
-  <input
-    type="range"
-    min="0"
-    max="1"
-    step="0.01"
-    value={value}
-    onChange={(e) => onChange(parseFloat(e.target.value))}
-  />
-);
+}> = ({ value, onChange }) => {
+  const [localValue, setLocalValue] = React.useState(value);
+
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLocalValue(parseFloat(e.target.value));
+  };
+
+  const handleFinalChange = () => {
+    onChange(localValue);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      handleFinalChange();
+    }
+  };
+
+  const handleWheel = async (event: React.WheelEvent<HTMLInputElement>) => {
+    event.preventDefault();
+    const step = 0.01; // Adjust the step size as needed
+    let newValue = localValue;
+
+    if (event.deltaY < 0) {
+      newValue += step;
+    } else {
+      newValue -= step;
+    }
+
+    newValue = Math.max(0, Math.min(1, newValue)); // Ensure the value is between 0 and 1
+
+    setLocalValue(newValue);
+    await onChange(newValue); // Call onChange asynchronously
+  };
+
+  return (
+    <input
+      type="range"
+      min="0"
+      max="1"
+      step="0.01"
+      value={localValue}
+      onChange={handleChange}
+      onMouseUp={handleFinalChange}
+      onKeyDown={handleKeyDown}
+      onBlur={handleFinalChange}
+      onWheel={handleWheel} // Add wheel event listener
+    />
+  );
+};
 
 export const getSortedItems = <T extends Record<string, any>>(
   items: T[],
@@ -89,7 +132,7 @@ export const getSortedItems = <T extends Record<string, any>>(
       const bStarred = starredItems.includes(b.name);
       if (aStarred !== bStarred) return aStarred ? -1 : 1;
       if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-      return 0;
+      return a.name.localeCompare(b.name);
     });
   }
 

@@ -17,16 +17,16 @@ interface SourceItemProps {
   isActive: boolean;
   actions: Actions;
   sourceRefs: React.MutableRefObject<{[key: string]: HTMLTableRowElement}>;
-  onDragStart: (e: React.DragEvent<HTMLSpanElement>, index: number) => void;
   onDragEnter: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
   onDragLeave: (e: React.DragEvent<HTMLTableRowElement>) => void;
   onDragOver: (e: React.DragEvent<HTMLTableRowElement>) => void;
   onDrop: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
-  onDragEnd: (e: React.DragEvent<HTMLSpanElement>) => void;
   activeRoutes: Route[];
   disabledRoutes: Route[];
   hideSpecificButtons?: boolean;
   hideExtraColumns?: boolean;
+  isDesktopMenu?: boolean;
+  isSelected?: boolean;
 }
 
 const SourceItem: React.FC<SourceItemProps> = ({
@@ -36,16 +36,16 @@ const SourceItem: React.FC<SourceItemProps> = ({
   isActive,
   actions,
   sourceRefs,
-  onDragStart,
   onDragEnter,
   onDragLeave,
   onDragOver,
   onDrop,
-  onDragEnd,
   activeRoutes,
   disabledRoutes,
   hideSpecificButtons = false,
-  hideExtraColumns = false
+  hideExtraColumns = false,
+  isDesktopMenu = false,
+  isSelected = false
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -62,7 +62,7 @@ const SourceItem: React.FC<SourceItemProps> = ({
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={(e) => onDrop(e, index)}
-      className="draggable-row"
+      className={`draggable-row ${isSelected ? 'selected' : ''}`}
       id={`source-${encodeURIComponent(source.name)}`}
     >
       <td>
@@ -79,13 +79,21 @@ const SourceItem: React.FC<SourceItemProps> = ({
         </ActionButton>
       </td>
       <td>
-        {renderLinkWithAnchor('/sources', source.name, 'fa-music')}
+        {isDesktopMenu ? (
+          <span>{source.name}</span>
+        ) : (
+          renderLinkWithAnchor('/sources', source.name, 'fa-music')
+        )}
         {source.is_group && source.group_members && (
           <div className="group-members">
             <span>Group members: </span>
             {source.group_members.map((member, index) => (
               <React.Fragment key={member}>
-                {renderLinkWithAnchor('/sources', member, 'fa-music')}
+                {isDesktopMenu ? (
+                  <span>{member}</span>
+                ) : (
+                  renderLinkWithAnchor('/sources', member, 'fa-music')
+                )}
                 {index < source.group_members.length - 1 && ', '}
               </React.Fragment>
             ))}
@@ -97,6 +105,8 @@ const SourceItem: React.FC<SourceItemProps> = ({
           isExpanded={isExpanded}
           toggleExpandRoutes={toggleExpandRoutes}
           itemName={source.name}
+          isDesktopMenu={isDesktopMenu}
+          onNavigate={isDesktopMenu ? actions.navigateToItem : undefined}
         />
       </td>
       {!hideExtraColumns && <td>{source.ip}</td>}
@@ -121,7 +131,7 @@ const SourceItem: React.FC<SourceItemProps> = ({
       <td>
         <ActionButton onClick={() => actions.showEqualizer(true, 'sources', source)}>Equalizer</ActionButton>
         {source.vnc_ip && source.vnc_port && (
-          <ActionButton onClick={function(){console.log("Before");console.log(source);actions.showVNC(true, source)}}>VNC</ActionButton>
+          <ActionButton onClick={() => actions.showVNC(true, source)}>VNC</ActionButton>
         )}
         {source.vnc_ip && source.vnc_port && (
           <PlaybackControls

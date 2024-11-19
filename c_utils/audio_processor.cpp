@@ -6,13 +6,16 @@
 #include <cmath>
 #include <vector>
 #include <random>
+#include <iostream>
+#include <chrono>
+#include <thread>
 
 #define CHUNK_SIZE 1152
 #define OVERSAMPLING_FACTOR 2
 
 AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, int inputSampleRate, int outputSampleRate, float volume)
     : inputChannels(inputChannels), outputChannels(outputChannels), inputBitDepth(inputBitDepth),
-      inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate), volume(volume) {
+      inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate), volume(volume), monitor_running(true) {
     
     std::fill(eq, eq + EQ_BANDS, 1.0f);
     updateSpeakerMix();
@@ -24,9 +27,18 @@ AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputB
     process_buffer_pos = 0;
     resample_buffer_pos = 0;
     channel_buffer_pos = 0;
+
+    // Start the monitoring thread
+    monitor_thread = std::thread(&AudioProcessor::monitorBuffers, this);
 }
 
 AudioProcessor::~AudioProcessor() {
+    // Stop the monitoring thread
+    monitor_running = false;
+    if (monitor_thread.joinable()) {
+        monitor_thread.join();
+    }
+
     if (sampler) {
         src_delete(sampler);
     }
@@ -35,6 +47,47 @@ AudioProcessor::~AudioProcessor() {
             delete filters[channel][i];
         }
         delete dcFilters[channel];
+    }
+}
+
+void AudioProcessor::monitorBuffers() {
+    while (monitor_running) {
+        // Calculate fill rates
+        float receive_fill = static_cast<float>(CHUNK_SIZE) / (CHUNK_SIZE * 4) * 100.0f;
+        float scaled_fill = static_cast<float>(scale_buffer_pos * sizeof(int32_t)) / (CHUNK_SIZE * 32) * 100.0f;
+        float resampled_fill = static_cast<float>(resample_buffer_pos * sizeof(int32_t)) / (CHUNK_SIZE * 32) * 100.0f;
+        float channel_fill = static_cast<float>(channel_buffer_pos * sizeof(int32_t)) / (CHUNK_SIZE * 32) * 100.0f;
+        float merged_fill = static_cast<float>(merged_buffer_pos * sizeof(int32_t)) / (CHUNK_SIZE * 32) * 100.0f;
+        float processed_fill = static_cast<float>(process_buffer_pos * sizeof(int32_t)) / (CHUNK_SIZE * 32) * 100.0f;
+
+        // Log if any buffer is above 50% full
+        if (receive_fill > 50.0f) {
+            std::cout << "receive_buffer fill rate: " << receive_fill << "% (current: " << CHUNK_SIZE 
+                      << " bytes, max: " << CHUNK_SIZE << " bytes)" << std::endl;
+        }
+        if (scaled_fill > 50.0f) {
+            std::cout << "scaled_buffer fill rate: " << scaled_fill << "% (current: " << scale_buffer_pos * sizeof(int32_t)
+                      << " bytes, max: " << CHUNK_SIZE * 32 << " bytes)" << std::endl;
+        }
+        if (resampled_fill > 50.0f) {
+            std::cout << "resampled_buffer fill rate: " << resampled_fill << "% (current: " << resample_buffer_pos * sizeof(int32_t)
+                      << " bytes, max: " << CHUNK_SIZE * 32 << " bytes)" << std::endl;
+        }
+        if (channel_fill > 50.0f) {
+            std::cout << "channel_buffers fill rate: " << channel_fill << "% (current: " << channel_buffer_pos * sizeof(int32_t)
+                      << " bytes, max: " << CHUNK_SIZE * 32 << " bytes)" << std::endl;
+        }
+        if (merged_fill > 50.0f) {
+            std::cout << "merged_buffer fill rate: " << merged_fill << "% (current: " << merged_buffer_pos * sizeof(int32_t)
+                      << " bytes, max: " << CHUNK_SIZE * 32 << " bytes)" << std::endl;
+        }
+        if (processed_fill > 50.0f) {
+            std::cout << "processed_buffer fill rate: " << processed_fill << "% (current: " << process_buffer_pos * sizeof(int32_t)
+                      << " bytes, max: " << CHUNK_SIZE * 32 << " bytes)" << std::endl;
+        }
+
+        // Sleep for 1 second
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 
@@ -246,7 +299,9 @@ void AudioProcessor::setupDCFilter() {
 void AudioProcessor::removeDCOffset() {
     for (int channel = 0; channel < outputChannels; ++channel) {
         for (int pos = 0; pos < channel_buffer_pos; ++pos) {
-            remixed_channel_buffers[channel][pos] = dcFilters[channel]->process(remixed_channel_buffers[channel][pos]);
+            float sample = static_cast<float>(remixed_channel_buffers[channel][pos]) / INT32_MAX;
+            sample = dcFilters[channel]->process(sample);
+            remixed_channel_buffers[channel][pos] = static_cast<int32_t>(sample * INT32_MAX);
         }
     }
 }

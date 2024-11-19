@@ -11,6 +11,14 @@ let presetIndex = 0;
 let presetRandom = true;
 let canvas = null;
 
+function resizeVisualizer() {
+    if (visualizer && canvas) {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        visualizer.setRendererSize(canvas.width, canvas.height);
+    }
+}
+
 function initVisualizer() {
     canvas = document.getElementById('canvas');
     if (canvas) {
@@ -21,26 +29,46 @@ function initVisualizer() {
 
 function startVisualizer(sinkIp) {
     const visualTag = document.getElementById("audio_visualizer");
+    
+    // First pause and clear any existing audio
     visualTag.pause();
-    visualTag.src = `/stream/${sinkIp}/`;
-    visualTag.play();
-
-    if (!visualAlreadyConnected) {
-        initPlayer();
-        const source = audioContext.createMediaElementSource(visualTag);
-        visualAlreadyConnected = true;
-        source.disconnect(audioContext);
-        startRenderer();
-        connectToAudioAnalyzer(source);
-    }
-
-    document.getElementById("mainWrapper").style.display = "inherit";
+    visualTag.removeAttribute('src');
+    
+    // Wait for the pause to complete
+    Promise.resolve().then(() => {
+        visualTag.src = sinkIp;
+        return visualTag.play().catch(error => {
+            if (error.name === 'AbortError') {
+                // Ignore abort errors as they're expected during cleanup
+                return;
+            }
+            throw error;
+        });
+    }).then(() => {
+        if (!visualAlreadyConnected) {
+            initPlayer();
+            const source = audioContext.createMediaElementSource(visualTag);
+            visualAlreadyConnected = true;
+            source.disconnect(audioContext);
+            startRenderer();
+            connectToAudioAnalyzer(source);
+            // Add resize listener after visualizer is initialized
+            window.addEventListener('resize', resizeVisualizer);
+            // Initial resize
+            resizeVisualizer();
+        }
+        document.getElementById("mainWrapper").style.display = "inherit";
+    }).catch(error => {
+        console.error("Error in startVisualizer:", error);
+    });
 }
 
 function stopVisualizer() {
     const visualTag = document.getElementById("audio_visualizer");
     visualTag.pause();
+    visualTag.removeAttribute('src');
     document.getElementById("mainWrapper").style.display = "none";
+    window.removeEventListener('resize', resizeVisualizer);
 }
 
 function toggleFullscreen() {
@@ -60,7 +88,7 @@ function toggleFullscreen() {
         presetControls.style.display = "none";
     } else {
         if (document.exitFullscreen && document.fullscreenElement) {
-                document.exitFullscreen();
+            document.exitFullscreen();
         }
         canvasHolder.style.position = "relative";
         canvasHolder.style.width = "100%";
@@ -129,6 +157,12 @@ function initPlayer() {
     audioContext = new AudioContext();
 
     presets = {};
+    if (window.butterchurnPresets) {
+        Object.assign(presets, butterchurnPresets.getPresets());
+    }
+    if (window.butterchurnPresetsExtra) {
+        Object.assign(presets, butterchurnPresetsExtra.getPresets());
+    }
     presets = _(presets)
         .toPairs()
         .sortBy(([k]) => k.toLowerCase())
@@ -146,9 +180,11 @@ function initPlayer() {
     }
 
     canvas = document.getElementById('canvas');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     visualizer = butterchurn.default.createVisualizer(audioContext, canvas, {
-        width: 3840,
-        height: 2160,
+        width: canvas.width,
+        height: canvas.height,
         pixelRatio: window.devicePixelRatio || 1,
         textureRatio: 1,
     });

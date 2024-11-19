@@ -296,6 +296,20 @@ iframe#vnc-iframe {
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
 
+iframe.vnc-iframe {
+  width: 100% !important;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.vnc-container {
+  overflow: hidden;
+}
+
+#noVNC_control_bar_anchor {
+  display: none;
+}
+
 @media (max-width: 768px) {
   iframe#vnc-iframe {
     height: 400px;

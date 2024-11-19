@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useState } from 'react';
 import { Route } from '../api/api';
 import RouteItem from './RouteItem';
 import { Actions } from '../utils/actions';
@@ -11,7 +11,8 @@ interface RouteListProps {
   sortConfig: SortConfig;
   onSort: (key: string) => void;
   hideSpecificButtons?: boolean;
-  hideExtraColumns?: boolean;
+  isDesktopMenu?: boolean;
+  selectedItem?: string | null;
 }
 
 const RouteList: React.FC<RouteListProps> = ({
@@ -21,10 +22,10 @@ const RouteList: React.FC<RouteListProps> = ({
   sortConfig,
   onSort,
   hideSpecificButtons = false,
-  hideExtraColumns = false,
+  isDesktopMenu = false,
+  selectedItem = null,
 }) => {
-  const routeRefs = useRef<{[key: string]: HTMLTableRowElement}>({});
-  const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
 
   const renderSortIcon = (key: string) => {
     if (sortConfig.key === key) {
@@ -33,9 +34,13 @@ const RouteList: React.FC<RouteListProps> = ({
     return null;
   };
 
-  const onDragStart = (e: React.DragEvent<HTMLSpanElement>, index: number) => {
-    setDraggedIndex(index);
-    e.dataTransfer.setData('text/plain', index.toString());
+  const onDragEnter = (e: React.DragEvent<HTMLTableRowElement>, index: number) => {
+    e.preventDefault();
+    console.log(`Dragged over index: ${index}`);
+  };
+
+  const onDragLeave = (e: React.DragEvent<HTMLTableRowElement>) => {
+    e.preventDefault();
   };
 
   const onDragOver = (e: React.DragEvent<HTMLTableRowElement>) => {
@@ -96,15 +101,13 @@ const RouteList: React.FC<RouteListProps> = ({
               index={index}
               isStarred={starredRoutes.includes(route.name)}
               actions={actions}
-              routeRefs={routeRefs}
-              onDragStart={onDragStart}
-              onDragEnter={() => {}}
-              onDragLeave={() => {}}
+              onDragEnter={onDragEnter}
+              onDragLeave={onDragLeave}
               onDragOver={onDragOver}
               onDrop={onDrop}
-              onDragEnd={() => setDraggedIndex(null)}
               hideSpecificButtons={hideSpecificButtons}
-              hideExtraColumns={hideExtraColumns}
+              isDesktopMenu={isDesktopMenu}
+              isSelected={selectedItem === route.name}
             />
           ))}
         </tbody>

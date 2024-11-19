@@ -13,15 +13,13 @@ interface RouteItemProps {
   index: number;
   isStarred: boolean;
   actions: Actions;
-  routeRefs: React.MutableRefObject<{[key: string]: HTMLTableRowElement}>;
-  onDragStart: (e: React.DragEvent<HTMLSpanElement>, index: number) => void;
   onDragEnter: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
   onDragLeave: (e: React.DragEvent<HTMLTableRowElement>) => void;
   onDragOver: (e: React.DragEvent<HTMLTableRowElement>) => void;
   onDrop: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
-  onDragEnd: (e: React.DragEvent<HTMLSpanElement>) => void;
   hideSpecificButtons?: boolean;
-  hideExtraColumns?: boolean;
+  isDesktopMenu?: boolean;
+  isSelected?: boolean;
 }
 
 const RouteItem: React.FC<RouteItemProps> = ({
@@ -29,26 +27,21 @@ const RouteItem: React.FC<RouteItemProps> = ({
   index,
   isStarred,
   actions,
-  routeRefs,
-  onDragStart,
   onDragEnter,
   onDragLeave,
   onDragOver,
   onDrop,
-  onDragEnd,
   hideSpecificButtons = false,
-  hideExtraColumns = false,
+  isDesktopMenu = false,
+  isSelected = false,
 }) => {
   return (
     <tr
-      ref={(el) => {
-        if (el) routeRefs.current[route.name] = el;
-      }}
       onDragEnter={(e) => onDragEnter(e, index)}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={(e) => onDrop(e, index)}
-      className="draggable-row"
+      className={`draggable-row ${isSelected ? 'selected' : ''}`}
       id={`route-${encodeURIComponent(route.name)}`}
     >
       <td>
@@ -57,9 +50,31 @@ const RouteItem: React.FC<RouteItemProps> = ({
           onClick={() => actions.toggleStar('routes', route.name)}
         />
       </td>
-      <td>{renderLinkWithAnchor('/routes', route.name, 'fa-route')}</td>
-      <td>{renderLinkWithAnchor('/sources', route.source, 'fa-music')}</td>
-      <td>{renderLinkWithAnchor('/sinks', route.sink, 'fa-volume-up')}</td>
+      <td>
+        {isDesktopMenu ? (
+          <span>{route.name}</span>
+        ) : (
+          renderLinkWithAnchor('/routes', route.name, 'fa-route')
+        )}
+      </td>
+      <td>
+        {isDesktopMenu ? (
+          <span onClick={() => actions.navigateToItem('sources', route.source)} style={{ cursor: 'pointer' }}>
+            {route.source}
+          </span>
+        ) : (
+          renderLinkWithAnchor('/sources', route.source, 'fa-music')
+        )}
+      </td>
+      <td>
+        {isDesktopMenu ? (
+          <span onClick={() => actions.navigateToItem('sinks', route.sink)} style={{ cursor: 'pointer' }}>
+            {route.sink}
+          </span>
+        ) : (
+          renderLinkWithAnchor('/sinks', route.sink, 'fa-volume-up')
+        )}
+      </td>
       <td>
         <EnableButton
           isEnabled={route.enabled}

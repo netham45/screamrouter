@@ -5,13 +5,21 @@ import ActionButton from './ActionButton';
 interface ExpandRoutesButtonProps {
   activeRoutes: Route[];
   disabledRoutes: Route[];
+  isDesktopMenu?: boolean;
+  onNavigate?: (type: 'routes', itemName: string) => void;
 }
 
-const ExpandRoutesButton: React.FC<ExpandRoutesButtonProps> = ({ activeRoutes, disabledRoutes }) => {
+const ExpandRoutesButton: React.FC<ExpandRoutesButtonProps> = ({ activeRoutes, disabledRoutes, isDesktopMenu, onNavigate }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const toggleExpand = () => {
     setIsExpanded(!isExpanded);
+  };
+
+  const handleRouteClick = (routeName: string) => {
+    if (isDesktopMenu && onNavigate) {
+      onNavigate('routes', routeName);
+    }
   };
 
   return (
@@ -24,13 +32,17 @@ const ExpandRoutesButton: React.FC<ExpandRoutesButtonProps> = ({ activeRoutes, d
           <h4>Active Routes:</h4>
           <ul>
             {activeRoutes.map(route => (
-              <li key={route.name}>{route.name}</li>
+              <li key={route.name} onClick={() => handleRouteClick(route.name)} style={isDesktopMenu ? { cursor: 'pointer' } : {}}>
+                {route.name}
+              </li>
             ))}
           </ul>
           <h4>Disabled Routes:</h4>
           <ul>
             {disabledRoutes.map(route => (
-              <li key={route.name}>{route.name}</li>
+              <li key={route.name} onClick={() => handleRouteClick(route.name)} style={isDesktopMenu ? { cursor: 'pointer' } : {}}>
+                {route.name}
+              </li>
             ))}
           </ul>
         </div>

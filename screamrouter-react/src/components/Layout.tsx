@@ -4,22 +4,14 @@ import { useAppContext } from '../context/AppContext';
 import '../styles/Layout.css';
 import ActiveSource from './ActiveSource';
 import NowPlaying from './NowPlaying';
-import VNC from './VNC';
 import Equalizer from './Equalizer';
 
 type ColorMode = 'light' | 'dark' | 'system';
 
-interface LayoutProps {
-  children: React.ReactNode;
-}
-
-const Layout: React.FC<LayoutProps> = ({children}) => {
+const Layout: React.FC = () => {
   const { 
     activeSource, 
-    listeningToSink, 
-    showVNCModal, 
-    selectedVNCSource, 
-    closeVNCModal,
+    listeningToSink,
     showEqualizerModal,
     selectedEqualizerItem,
     selectedEqualizerType,
@@ -116,20 +108,11 @@ const Layout: React.FC<LayoutProps> = ({children}) => {
         </div>
       )}
       <main className="layout-main">
-        {children}
         <Outlet />
       </main>
       <footer className="layout-footer">
         <p>&copy; {new Date().getFullYear()} Netham45</p>
       </footer>
-      {showVNCModal && selectedVNCSource && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <button className="close-modal" onClick={closeVNCModal}>×</button>
-            <VNC source={selectedVNCSource} />
-          </div>
-        </div>
-      )}
       {showEqualizerModal && selectedEqualizerItem && selectedEqualizerType && (
         <div className="modal-overlay">
           <div className="modal-content">

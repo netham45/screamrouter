@@ -3,9 +3,28 @@
   flex-direction: column;
   align-items: center;
   padding: 1rem;
-  max-width: 100%;
+  width: 100%;
+  height: 100%;
+  max-width: 80vw;
+  max-height: 80vh;
+  margin: 0 auto;
+  overflow: hidden;
   overflow-x: hidden;
 }
+  
+.vnc-iframe {
+  transform: scale(0.8);
+  transform-origin: top left;
+  width: 100vh !important;
+  height: 100vh !important;
+}
+
+.vnc-container::after {
+  content: "";
+  display: block;
+  padding-bottom: 56.25%; /* 16:9 aspect ratio */
+}
+
 
 .vnc-container h3 {
   margin-bottom: 1rem;

@@ -3,6 +3,7 @@
 import os
 import socket
 import sys
+import asyncio
 import traceback
 import concurrent.futures
 import threading
@@ -25,6 +26,7 @@ from fastapi import Request
 import src.constants.constants as constants
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
 from src.api.api_webstream import APIWebStream
+from src.api.api_websocket_config import APIWebsocketConfig
 from src.audio.audio_controller import AudioController
 from src.audio.multicast_scream_receiver import MulticastScreamReceiver
 from src.audio.rtp_recevier import RTPReceiver
@@ -45,7 +47,7 @@ _logger = screamrouter_logger.get_logger(__name__)
 
 class ConfigurationManager(threading.Thread):
     """Tracks configuration and loading the main receiver/sinks based off of it"""
-    def __init__(self, websocket: APIWebStream, plugin_manager: PluginManager):
+    def __init__(self, websocket: APIWebStream, plugin_manager: PluginManager, websocket_config: APIWebsocketConfig):
         """Initialize the controller"""
         super().__init__(name="Configuration Manager")
         self.sink_descriptions: List[SinkDescription] = []
@@ -81,6 +83,8 @@ class ConfigurationManager(threading.Thread):
         """Set to true to reload the config. Used so config
            changes during another config reload still trigger
            a reload"""
+        self.websocket_config = websocket_config
+        """Websocket Config Update Notifier"""
         self.plugin_manager: PluginManager = plugin_manager
         self.__load_config()
 
@@ -653,12 +657,16 @@ class ConfigurationManager(threading.Thread):
 
     def __save_config(self) -> None:
         """Saves the config"""
+
         _logger.info("[Configuration Manager] Saving config")
         if not self.configuration_semaphore.acquire(timeout=1):
             raise TimeoutError("Failed to get configuration semaphore")
         proc = Process(target=self.__multiprocess_save)
         proc.start()
         proc.join()
+        asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
+                                                                  self.sink_descriptions,
+                                                                  self.route_descriptions))
         self.configuration_semaphore.release()
 
 # Configuration processing functions

@@ -11,42 +11,32 @@ import ItemRoutes from './controls/ItemRoutes';
 
 interface SinkItemProps {
   sink: Sink;
-  index: number;
   isStarred: boolean;
   actions: Actions;
   sinkRefs: React.MutableRefObject<{[key: string]: HTMLTableRowElement}>;
-  onDragStart: (e: React.DragEvent<HTMLSpanElement>, index: number) => void;
-  onDragEnter: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
-  onDragLeave: (e: React.DragEvent<HTMLTableRowElement>) => void;
-  onDragOver: (e: React.DragEvent<HTMLTableRowElement>) => void;
-  onDrop: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
-  onDragEnd: (e: React.DragEvent<HTMLSpanElement>) => void;
   activeRoutes: Route[];
   disabledRoutes: Route[];
   isListening: boolean;
   isVisualizing: boolean;
   hideSpecificButtons?: boolean;
   hideExtraColumns?: boolean;
+  isDesktopMenu?: boolean;
+  isSelected?: boolean;
 }
 
 const SinkItem: React.FC<SinkItemProps> = ({
   sink,
-  index,
   isStarred,
   actions,
   sinkRefs,
-  onDragStart,
-  onDragEnter,
-  onDragLeave,
-  onDragOver,
-  onDrop,
-  onDragEnd,
   activeRoutes,
   disabledRoutes,
   isListening,
   isVisualizing,
   hideSpecificButtons = false,
   hideExtraColumns = false,
+  isDesktopMenu = false,
+  isSelected = false,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -59,11 +49,7 @@ const SinkItem: React.FC<SinkItemProps> = ({
       ref={(el) => {
         if (el) sinkRefs.current[sink.name] = el;
       }}
-      onDragEnter={(e) => onDragEnter(e, index)}
-      onDragLeave={onDragLeave}
-      onDragOver={onDragOver}
-      onDrop={(e) => onDrop(e, index)}
-      className="draggable-row"
+      className={`draggable-row ${isSelected ? 'selected' : ''}`}
       id={`sink-${encodeURIComponent(sink.name)}`}
     >
       <td>
@@ -73,13 +59,19 @@ const SinkItem: React.FC<SinkItemProps> = ({
         />
       </td>
       <td>
-        {renderLinkWithAnchor('/sinks', sink.name, 'fa-volume-up')}
+        {isDesktopMenu ? (
+          <span>{sink.name}</span>
+        ) : (
+          renderLinkWithAnchor('/sinks', sink.name, 'fa-volume-up')
+        )}
         <ItemRoutes
           activeRoutes={activeRoutes}
           disabledRoutes={disabledRoutes}
           isExpanded={isExpanded}
           toggleExpandRoutes={toggleExpandRoutes}
           itemName={sink.name}
+          isDesktopMenu={isDesktopMenu}
+          onNavigate={isDesktopMenu ? actions.navigateToItem : undefined}
         />
       </td>
       {!hideExtraColumns && <td>{sink.ip}</td>}
@@ -103,15 +95,15 @@ const SinkItem: React.FC<SinkItemProps> = ({
       </td>
       <td>
         <ActionButton onClick={() => actions.showEqualizer(true, 'sinks', sink)}>Equalizer</ActionButton>
+        <ActionButton onClick={() => actions.listenToSink(isListening ? null : sink)}>
+          {isListening ? 'Stop Listening' : 'Listen'}
+        </ActionButton>
+        <ActionButton onClick={() => actions.visualizeSink(sink)}>
+              Visualize
+            </ActionButton>
         {!hideSpecificButtons && (
           <>
             <ActionButton onClick={() => actions.editItem('sinks', sink)}>Edit</ActionButton>
-            <ActionButton onClick={() => actions.listenToSink(isListening ? null : sink)}>
-              {isListening ? 'Stop Listening' : 'Listen'}
-            </ActionButton>
-            <ActionButton onClick={() => actions.visualizeSink(isVisualizing ? null : sink)}>
-              {isVisualizing ? 'Stop Visualizing' : 'Visualize'}
-            </ActionButton>
             <ActionButton onClick={() => actions.deleteItem('sinks', sink.name)} className="delete-button">Delete</ActionButton>
           </>
         )}

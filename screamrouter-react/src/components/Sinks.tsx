@@ -6,6 +6,7 @@ import ActionButton from './controls/ActionButton';
 import { SortConfig, useAnchorFlash } from '../utils/commonUtils';
 import ConfirmationModal from './ConfirmationModal';
 import ApiService from '../api/api';
+import { Sink } from '../api/api';
 
 const Sinks: React.FC = () => {
   useAnchorFlash();
@@ -123,21 +124,22 @@ const Sinks: React.FC = () => {
       }
     },
     editItem: (type, item) => {
-      if (type === 'sinks' && 'ip' in item) {
-        setSelectedItem(item);
+      if (type === 'sinks' && typeof item === 'object' && 'ip' in item) {
+        setSelectedItem(item as Sink);
         setSelectedItemType('sinks');
         setShowEditModal(true);
       }
     },
     showEqualizer: (type, item) => {
-      if (type === 'sinks' && 'ip' in item) {
-        openEqualizerModal(item, type);
+      if (type === 'sinks' && typeof item === 'object' && 'ip' in item) {
+        openEqualizerModal(item as Sink, type);
       }
     },
     showVNC: () => {}, // Not applicable for sinks
     listenToSink: onListenToSink,
     visualizeSink: onVisualizeSink,
-    toggleActiveSource: () => {} // Not applicable for sinks
+    toggleActiveSource: () => {}, // Not applicable for sinks
+    navigateToItem: () => {} // Not applicable for Sinks component
   };
 
   if (isLoading) {
@@ -163,8 +165,8 @@ const Sinks: React.FC = () => {
           routes={routes}
           starredSinks={starredSinks}
           actions={actions}
-          listeningToSink={listeningToSink}
-          visualizingSink={visualizingSink}
+          listeningToSink={listeningToSink?.name}
+          visualizingSink={visualizingSink?.name}
           sortConfig={sortConfig}
           onSort={onSort}
         />

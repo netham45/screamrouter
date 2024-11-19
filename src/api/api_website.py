@@ -29,7 +29,7 @@ from src.screamrouter_types.website import (AddEditRouteInfo, AddEditSinkInfo,
 
 logger = get_logger(__name__)
 
-NPM_REACT_DEBUG_SITE: bool = False
+NPM_REACT_DEBUG_SITE: bool = True
 SITE_PREFIX: str = "/site"
 TEMPLATE_DIRECTORY_PREFIX: str = "."
 

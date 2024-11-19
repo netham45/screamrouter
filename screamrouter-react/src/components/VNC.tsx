@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ApiService, { Source } from '../api/api';
+import "../styles/Layout.css"
 
 /**
  * Props for the VNC component
@@ -52,14 +53,14 @@ const VNC: React.FC<VNCProps> = ({ source }) => {
     };
 
     // Set up interval for continuous resizing
-    const resizeInterval = setInterval(resizeIframes, 1000);
+    //const resizeInterval = setInterval(resizeIframes, 1000);
     
     // Initial resize and additional resize attempts
-    resizeIframes();
-    [200, 400, 600, 800].forEach(delay => setTimeout(resizeIframes, delay));
+    //resizeIframes();
+    //[200, 400, 600, 800].forEach(delay => setTimeout(resizeIframes, delay));
 
     // Clean up interval on component unmount
-    return () => clearInterval(resizeInterval);
+    //return () => clearInterval(resizeInterval);
   }, []);
 
   /**
@@ -72,10 +73,16 @@ const VNC: React.FC<VNCProps> = ({ source }) => {
   };
 
   const vncUrl = ApiService.getVncUrl(source.name);
+  useEffect(() => {
+    document.title = `ScreamRouter - ${source.name}`;
+  }, [source.name]);
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+  }, [source.name]);
 
   return (
     <div className="vnc-container">
-      <h3>{source.name}</h3>
       {error && <div className="error-message">{error}</div>}
       <iframe
         ref={outerIframeRef}

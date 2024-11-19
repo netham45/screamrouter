@@ -26,7 +26,7 @@ const ActiveSource: React.FC<ActiveSourceProps> = ({ isExpanded, onToggle }) => 
     openEqualizerModal
   } = useAppContext();
 
-  const source = sources.find(s => s.name === activeSource);
+  const source = Array.isArray(sources) ? sources.find(s => s.name === activeSource) : undefined;
 
   useEffect(() => {
     console.log('ActiveSource component re-rendered');

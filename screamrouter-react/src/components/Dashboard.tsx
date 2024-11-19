@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import ApiService, { Source, Sink, Route } from '../api/api';
-import VNC from './VNC';
+import { Source, Sink, Route } from '../api/api';
 import Equalizer from './Equalizer';
 import { ActionButton, SortConfig } from '../utils/commonUtils';
 import { useAppContext } from '../context/AppContext';
@@ -17,21 +16,28 @@ import { createActions, Actions } from '../utils/actions';
 type SelectedItemType = Source | Sink | Route | null;
 
 const Dashboard: React.FC = () => {
-    const { listeningToSink, visualizingSink, onListenToSink, onVisualizeSink } = useAppContext();
+    const { 
+      listeningToSink, 
+      visualizingSink, 
+      onListenToSink, 
+      onVisualizeSink,
+      sources,
+      sinks,
+      routes,
+      activeSource: contextActiveSource,
+      onToggleActiveSource,
+      openVNCModal,
+      navigateToItem
+    } = useAppContext();
 
-    const [sources, setSources] = useState<Source[]>([]);
-    const [sinks, setSinks] = useState<Sink[]>([]);
-    const [routes, setRoutes] = useState<Route[]>([]);
     const [starredSources, setStarredSources] = useState<string[]>([]);
     const [starredSinks, setStarredSinks] = useState<string[]>([]);
     const [starredRoutes, setStarredRoutes] = useState<string[]>([]);
     const [error, setError] = useState<string | null>(null);
-    const [showVNCModal, setShowVNCModal] = useState(false);
     const [showEqualizerModal, setShowEqualizerModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [selectedItem, setSelectedItem] = useState<SelectedItemType>(null);
     const [selectedItemType, setSelectedItemType] = useState<'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null>(null);
-    const [activeSource, setActiveSource] = useState<string | null>(null);
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: '', direction: 'asc' });
 
     const sectionRefs = {
@@ -55,26 +61,7 @@ const Dashboard: React.FC = () => {
       };
     });
 
-    const fetchData = async () => {
-      try {
-        const [sourcesResponse, sinksResponse, routesResponse] = await Promise.all([
-          ApiService.getSources(),
-          ApiService.getSinks(),
-          ApiService.getRoutes()
-        ]);
-        
-        setSources(sourcesResponse.data);
-        setSinks(sinksResponse.data);
-        setRoutes(routesResponse.data);
-        setError(null);
-      } catch (error) {
-        console.error('Error fetching data:', error);
-        setError('Failed to fetch data. Please try again later.');
-      }
-    };
-
     useEffect(() => {
-      fetchData();
       const starredSourcesData = JSON.parse(localStorage.getItem('starredSources') || '[]');
       const starredSinksData = JSON.parse(localStorage.getItem('starredSinks') || '[]');
       const starredRoutesData = JSON.parse(localStorage.getItem('starredRoutes') || '[]');
@@ -84,7 +71,7 @@ const Dashboard: React.FC = () => {
     }, []);
 
     const actions: Actions = useMemo(() => createActions(
-      fetchData,
+      async () => Promise.resolve(), // No need to fetch data as it's handled by AppContext
       setError,
       (type, setter) => {
         if (type === 'sources') setStarredSources(setter);
@@ -94,12 +81,13 @@ const Dashboard: React.FC = () => {
       setShowEqualizerModal,
       setSelectedItem,
       setSelectedItemType,
-      setShowVNCModal,
-      setActiveSource,
+      (_show, source) => openVNCModal(source), // Fixed: Pass source directly to openVNCModal
+      onToggleActiveSource,
       onListenToSink,
       onVisualizeSink,
-      setShowEditModal
-    ), [onListenToSink, onVisualizeSink]);
+      setShowEditModal,
+      navigateToItem
+    ), [onListenToSink, onVisualizeSink, onToggleActiveSource, openVNCModal, navigateToItem]);
 
     const toggleSection = (section: keyof typeof expandedSections) => {
       setExpandedSections((prev: typeof expandedSections) => {
@@ -149,11 +137,11 @@ const Dashboard: React.FC = () => {
 
       switch (selectedItemType) {
         case 'sources':
-          return <AddEditSource source={selectedItem as Source} onClose={onClose} onSave={fetchData} />;
+          return <AddEditSource source={selectedItem as Source} onClose={onClose} onSave={() => {}} />;
         case 'sinks':
-          return <AddEditSink sink={selectedItem as Sink} onClose={onClose} onSave={fetchData} />;
+          return <AddEditSink sink={selectedItem as Sink} onClose={onClose} onSave={() => {}} />;
         case 'routes':
-          return <AddEditRoute route={selectedItem as Route} onClose={onClose} onSave={fetchData} />;
+          return <AddEditRoute route={selectedItem as Route} onClose={onClose} onSave={() => {}} />;
         default:
           return null;
       }
@@ -176,7 +164,7 @@ const Dashboard: React.FC = () => {
               sources={sources.filter(source => starredSources.includes(source.name))}
               routes={routes}
               starredSources={starredSources}
-              activeSource={activeSource}
+              activeSource={contextActiveSource}
               actions={actions}
               sortConfig={sortConfig}
               onSort={onSort}
@@ -196,8 +184,8 @@ const Dashboard: React.FC = () => {
               routes={routes}
               starredSinks={starredSinks}
               actions={actions}
-              listeningToSink={listeningToSink}
-              visualizingSink={visualizingSink}
+              listeningToSink={listeningToSink?.name}
+              visualizingSink={visualizingSink?.name}
               sortConfig={sortConfig}
               onSort={onSort}
               hideExtraColumns={true}
@@ -217,7 +205,6 @@ const Dashboard: React.FC = () => {
               actions={actions}
               sortConfig={sortConfig}
               onSort={onSort}
-              hideExtraColumns={true}
             />
           </CollapsibleSection>
 
@@ -232,7 +219,7 @@ const Dashboard: React.FC = () => {
               sources={sources.filter(source => source.enabled)}
               routes={routes}
               starredSources={starredSources}
-              activeSource={activeSource}
+              activeSource={contextActiveSource}
               actions={actions}
               sortConfig={sortConfig}
               onSort={onSort}
@@ -252,8 +239,8 @@ const Dashboard: React.FC = () => {
               routes={routes}
               starredSinks={starredSinks}
               actions={actions}
-              listeningToSink={listeningToSink}
-              visualizingSink={visualizingSink}
+              listeningToSink={listeningToSink?.name}
+              visualizingSink={visualizingSink?.name}
               sortConfig={sortConfig}
               onSort={onSort}
               hideExtraColumns={true}
@@ -273,19 +260,9 @@ const Dashboard: React.FC = () => {
               actions={actions}
               sortConfig={sortConfig}
               onSort={onSort}
-              hideExtraColumns={true}
             />
           </CollapsibleSection>
         </div>
-
-        {showVNCModal && selectedItem && (
-          <div className="modal-overlay">
-            <div className="modal-content">
-              <ActionButton className="close-modal" onClick={() => setShowVNCModal(false)}>×</ActionButton>
-              <VNC source={selectedItem as Source} />
-            </div>
-          </div>
-        )}
 
         {showEqualizerModal && selectedItem && selectedItemType && (
           <div className="modal-overlay">
@@ -295,7 +272,7 @@ const Dashboard: React.FC = () => {
                 item={selectedItem}
                 type={selectedItemType}
                 onClose={() => setShowEqualizerModal(false)}
-                onDataChange={fetchData}
+                onDataChange={() => {}}
               />
             </div>
           </div>

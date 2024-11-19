@@ -6,8 +6,8 @@ import Dashboard from './components/Dashboard';
 import Sources from './components/Sources';
 import Sinks from './components/Sinks';
 import RoutesComponent from './components/Routes';
-import AudioVisualizer from './components/AudioVisualizer';
 import VNC from './components/VNC';
+import Visualizer from './components/Visualizer';
 import Equalizer from './components/Equalizer';
 import AddEditSource from './components/AddEditSource';
 import AddEditSink from './components/AddEditSink';
@@ -55,14 +55,20 @@ const VNCRoute: React.FC = () => {
 
   if (!source) return <div>Source not found</div>;
 
-  return <VNC source={source} />;
+  return <VNC source={source} onClose={() => window.close()} />;
+};
+
+const VisualizerRoute: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const ip = searchParams.get('ip');
+
+  if (!ip) return <div>IP not provided</div>;
+
+  return <Visualizer ip={ip} />;
 };
 
 const AppContent: React.FC = () => {
   const { 
-    listeningToSink, 
-    visualizingSink, 
-    showVNCModal, 
     showEqualizerModal,
     showEditModal,
     selectedItem,
@@ -103,15 +109,9 @@ const AppContent: React.FC = () => {
         </Route>
         <Route path="/equalizer" element={<EqualizerRoute />} />
         <Route path="/vnc" element={<VNCRoute />} />
+        <Route path="/visualizer" element={<VisualizerRoute />} />
       </Routes>
       
-      <AudioVisualizer 
-        visualizingSink={visualizingSink?.name || null}
-        sinkIp={visualizingSink?.ip || listeningToSink?.ip || null}
-      />
-      {showVNCModal && selectedItem && 'vnc_ip' in selectedItem && (
-        <VNC source={selectedItem as Source} />
-      )}
       {showEqualizerModal && selectedItem && selectedItemType && (
         <Equalizer
           item={selectedItem as Source | Sink | RouteType}
@@ -164,6 +164,7 @@ const AppContent: React.FC = () => {
           onSave={handleEditSave}
         />
       )}
+      <audio id="audio" />
     </Router>
   );
 };

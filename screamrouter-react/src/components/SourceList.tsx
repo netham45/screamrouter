@@ -14,6 +14,8 @@ interface SourceListProps {
   onSort: (key: string) => void;
   hideSpecificButtons?: boolean;
   hideExtraColumns?: boolean;
+  isDesktopMenu?: boolean;
+  selectedItem?: string | null;
 }
 
 const SourceList: React.FC<SourceListProps> = ({
@@ -26,6 +28,8 @@ const SourceList: React.FC<SourceListProps> = ({
   onSort,
   hideSpecificButtons = false,
   hideExtraColumns = false,
+  isDesktopMenu = false,
+  selectedItem = null,
 }) => {
   const sourceRefs = useRef<{[key: string]: HTMLTableRowElement}>({});
   const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
@@ -37,9 +41,13 @@ const SourceList: React.FC<SourceListProps> = ({
     return null;
   };
 
-  const onDragStart = (e: React.DragEvent<HTMLSpanElement>, index: number) => {
-    setDraggedIndex(index);
-    e.dataTransfer.setData('text/plain', index.toString());
+  const onDragEnter = (e: React.DragEvent<HTMLTableRowElement>, index: number) => {
+    e.preventDefault();
+    console.log(`Dragged over index: ${index}`);
+  };
+
+  const onDragLeave = (e: React.DragEvent<HTMLTableRowElement>) => {
+    e.preventDefault();
   };
 
   const onDragOver = (e: React.DragEvent<HTMLTableRowElement>) => {
@@ -114,16 +122,16 @@ const SourceList: React.FC<SourceListProps> = ({
                 isActive={activeSource === source.name}
                 actions={actions}
                 sourceRefs={sourceRefs}
-                onDragStart={onDragStart}
-                onDragEnter={() => {}}
-                onDragLeave={() => {}}
+                onDragEnter={onDragEnter}
+                onDragLeave={onDragLeave}
                 onDragOver={onDragOver}
                 onDrop={onDrop}
-                onDragEnd={() => setDraggedIndex(null)}
                 activeRoutes={activeRoutes}
                 disabledRoutes={disabledRoutes}
                 hideSpecificButtons={hideSpecificButtons}
                 hideExtraColumns={hideExtraColumns}
+                isDesktopMenu={isDesktopMenu}
+                isSelected={selectedItem === source.name}
               />
             );
           })}

@@ -284,7 +284,31 @@ inline void dts_encode() {
     }
 }
 
+#include <exception>
+#include <stdexcept>
+#include <cxxabi.h>
+#include <execinfo.h>
+
+void print_stacktrace(int skip = 1) {
+    void *callstack[128];
+    int frames = backtrace(callstack, 128);
+    char **strs = backtrace_symbols(callstack, frames);
+    
+    for (int i = skip; i < frames; ++i) {
+        int status;
+        char *demangled = abi::__cxa_demangle(strs[i], NULL, 0, &status);
+        if (status == 0) {
+            std::cerr << demangled << std::endl;
+            free(demangled);
+        } else {
+            std::cerr << strs[i] << std::endl;
+        }
+    }
+    free(strs);
+}
+
 int main(int argc, char* argv[]) {
+    try {
     process_args(argv, argc);
     if (use_dts == 1)
     {
@@ -301,7 +325,6 @@ int main(int argc, char* argv[]) {
                         DCAENC_CHANNELS_3FRONT_2REAR,
                         1509000, // DVD bitrate
                         DCAENC_FLAG_IEC_WRAP | DCAENC_FLAG_LFE | DCAENC_FLAG_28BIT | DCAENC_FLAG_PERFECT_QMF);
-
     }
     lameProcessor = new AudioProcessor(output_channels, 2, 32, output_samplerate, output_samplerate, 1);
     log("Starting Ouput Mixer, sending UDP to " + output_ip +  ":" + to_string(output_port) + ", TCP Enabled: " + (tcp_output_fd > 0?"Yes":"No"));
@@ -327,5 +350,14 @@ int main(int argc, char* argv[]) {
         send_buffer();
         rotate_buffer();
     }
+    } catch (const std::exception& e) {
+        std::cerr << "Caught exception: " << e.what() << std::endl;
+        std::cerr << "Stack trace:" << std::endl;
+        print_stacktrace();
+    } catch (...) {
+        std::cerr << "Caught unknown exception" << std::endl;
+        std::cerr << "Stack trace:" << std::endl;
+        print_stacktrace();
+}
     return 0;
 }
