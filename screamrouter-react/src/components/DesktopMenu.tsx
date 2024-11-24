@@ -6,6 +6,7 @@ import RouteList from './RouteList';
 import { createActions, Actions } from '../utils/actions';
 import { SortConfig } from '../utils/commonUtils';
 import { Source, Sink, Route } from '../api/api';
+import '../styles/DesktopMenu.css';
 
 enum MenuLevel {
   Main,
@@ -333,7 +334,6 @@ const DesktopMenu: React.FC = () => {
 };
 
 export default DesktopMenu;
-
 // Styles
 const styles = `
 body {
