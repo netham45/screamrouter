@@ -1,3 +1,9 @@
+/**
+ * React component for displaying and managing a list of sources.
+ * It includes functionalities such as sorting, adding, deleting, and toggling sources,
+ * as well as handling actions like enabling/disabling, updating volume/timeshift,
+ * controlling sources, and showing modals for equalizer and VNC.
+ */
 import React, { useState, useEffect } from 'react';
 import SourceList from './SourceList';
 import { SortConfig, useAnchorFlash } from '../utils/commonUtils';
@@ -7,9 +13,20 @@ import ActionButton from './controls/ActionButton';
 import ConfirmationModal from './ConfirmationModal';
 import ApiService from '../api/api';
 
+/**
+ * React functional component for rendering the Sources page.
+ *
+ * @returns {JSX.Element} The rendered JSX element.
+ */
 const Sources: React.FC = () => {
+  /**
+   * Custom hook to handle anchor flash effects.
+   */
   useAnchorFlash();
 
+  /**
+   * Destructured state and actions from the AppContext.
+   */
   const { 
     sources, 
     routes, 
@@ -27,13 +44,34 @@ const Sources: React.FC = () => {
     setShowEditModal
   } = useAppContext();
   
+  /**
+   * State variable to manage the current sort configuration.
+   */
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: '', direction: 'asc' });
+  /**
+   * State variable to indicate if sources are currently being loaded.
+   */
   const [isLoading, setIsLoading] = useState(false);
+  /**
+   * State variable to store any error messages related to source operations.
+   */
   const [error, setError] = useState<string | null>(null);
+  /**
+   * State variable to manage the list of starred sources.
+   */
   const [starredSources, setStarredSources] = useState<string[]>([]);
+  /**
+   * State variable to indicate if the delete confirmation modal is shown.
+   */
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  /**
+   * State variable to store the name of the source to be deleted.
+   */
   const [sourceToDelete, setSourceToDelete] = useState<string | null>(null);
 
+  /**
+   * Effect hook to load sources if they are not already loaded and to restore starred sources from local storage.
+   */
   useEffect(() => {
     if (sources.length === 0) {
       loadSources();
@@ -44,6 +82,9 @@ const Sources: React.FC = () => {
     }
   }, []);
 
+  /**
+   * Function to asynchronously fetch sources from the API.
+   */
   const loadSources = async () => {
     setIsLoading(true);
     setError(null);
@@ -57,6 +98,11 @@ const Sources: React.FC = () => {
     }
   };
 
+  /**
+   * Function to handle sorting of sources based on a given key.
+   *
+   * @param {string} key - The key to sort by (e.g., 'name', 'ip').
+   */
   const onSort = (key: string) => {
     setSortConfig(prevConfig => ({
       key,
@@ -64,6 +110,11 @@ const Sources: React.FC = () => {
     }));
   };
 
+  /**
+   * Function to toggle the star status of a source.
+   *
+   * @param {string} name - The name of the source.
+   */
   const onToggleStar = async (name: string) => {
     setStarredSources(prev => {
       const newStarred = prev.includes(name)
@@ -74,18 +125,27 @@ const Sources: React.FC = () => {
     });
   };
 
+  /**
+   * Function to handle adding a new source.
+   */
   const handleAddSource = () => {
     setSelectedItem(null);
     setSelectedItemType('sources');
     setShowEditModal(true);
   };
 
+  /**
+   * Function to handle adding a new group of sources.
+   */
   const handleAddGroup = () => {
     setSelectedItem(null);
     setSelectedItemType('group-source');
     setShowEditModal(true);
   };
 
+  /**
+   * Function to handle deleting the selected source.
+   */
   const handleDeleteSource = async () => {
     if (sourceToDelete) {
       try {
@@ -101,6 +161,9 @@ const Sources: React.FC = () => {
     setSourceToDelete(null);
   };
 
+  /**
+   * Actions object containing functions to manage sources.
+   */
   const actions: Actions = {
     toggleEnabled: async (type, name) => {
       if (type === 'sources') {
@@ -144,14 +207,23 @@ const Sources: React.FC = () => {
     toggleActiveSource: (name: string) => onToggleActiveSource(name)
   };
 
+  /**
+   * Render loading message if sources are being fetched.
+   */
   if (isLoading) {
     return <div>Loading sources...</div>;
   }
 
+  /**
+   * Render error message if there is an issue fetching sources.
+   */
   if (error) {
     return <div>Error: {error}</div>;
   }
 
+  /**
+   * Render the Sources page with action buttons and source list.
+   */
   return (
     <div className="sources-container">
       <h2>Sources</h2>

@@ -1,3 +1,6 @@
+/**
+ * Base styles for the body, setting font family, margin, padding, and background color.
+ */
 body {
   font-family: Arial, sans-serif;
   margin: 0;
@@ -5,42 +8,66 @@ body {
   background-color: #f0f0f0;
 }
 
+/**
+ * Layout container using flexbox to create a column layout with full viewport height.
+ */
 .layout {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
 }
 
+/**
+ * Header styling, including background color, text color, and padding.
+ */
 header {
   background-color: #333;
   color: white;
   padding: 1rem;
 }
 
+/**
+ * Header title styling, removing default margin.
+ */
 header h1 {
   margin: 0;
 }
 
+/**
+ * Navigation unordered list styling, removing default list style and padding.
+ */
 nav ul {
   list-style-type: none;
   padding: 0;
 }
 
+/**
+ * Navigation list item styling, displaying items inline with right margin.
+ */
 nav ul li {
   display: inline;
   margin-right: 1rem;
 }
 
+/**
+ * Navigation link styling, setting text color, removing underline, and ensuring it's a block element.
+ */
 nav ul li a {
   color: white;
   text-decoration: none;
 }
 
+/**
+ * Main content area styling, flexing to take up remaining space with padding.
+ */
 main {
   flex: 1;
   padding: 2rem;
 }
 
+/**
+ * Footer styling, including background color, text color, alignment, and padding.
+ */
 footer {
   background-color: #333;
   color: white;
@@ -48,12 +75,18 @@ footer {
   padding: 1rem;
 }
 
+/**
+ * Dashboard summary container using flexbox to space items between each other with bottom margin.
+ */
 .dashboard-summary {
   display: flex;
   justify-content: space-between;
   margin-bottom: 2rem;
 }
 
+/**
+ * Summary card styling, including background color, border radius, box shadow, padding, and margin.
+ */
 .summary-card {
   background-color: white;
   border-radius: 4px;
@@ -63,23 +96,35 @@ footer {
   margin: 0 1rem;
 }
 
+/**
+ * Table styling, setting width to full container, collapsing borders, and adding top margin.
+ */
 table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 1rem;
 }
 
+/**
+ * Table header and cell styling, including text alignment, padding, and bottom border.
+ */
 th, td {
   text-align: left;
   padding: 0.5rem;
   border-bottom: 1px solid #ddd;
 }
 
+/**
+ * Table header styling, setting background color and cursor to pointer for sorting functionality.
+ */
 th {
   background-color: #f2f2f2;
   cursor: pointer; /* Add this line to change the cursor to a pointer for table headers */
 }
 
+/**
+ * Generic button styling, including background color, border, text color, padding, alignment, decoration, display, font size, margin, cursor, and border radius.
+ */
 button {
   background-color: #4CAF50;
   border: none;
@@ -94,64 +139,106 @@ button {
   border-radius: 4px;
 }
 
+/**
+ * Edit button styling, changing background color to blue.
+ */
 button.edit-button {
   background-color: #008CBA;
 }
 
+/**
+ * Delete button styling, changing background color to red.
+ */
 button.delete-button {
   background-color: #f44336;
 }
 
+/**
+ * Enabled button styling, maintaining default green background color.
+ */
 button.enabled {
   background-color: #4CAF50;
 }
 
+/**
+ * Disabled button styling, changing background color to light gray.
+ */
 button.disabled {
   background-color: #ccc;
 }
 
+/**
+ * Add button styling, adding bottom margin for spacing.
+ */
 .add-button {
   margin-bottom: 1rem;
 }
 
+/**
+ * Keyframes for the flash animation, creating a yellow background that fades in and out.
+ */
 @keyframes flash {
   0%, 100% { background-color: transparent; }
   50% { background-color: rgba(255, 255, 0, 0.5); }
 }
 
+/**
+ * Flash class applying the flash animation for a duration of 1 second.
+ */
 .flash {
   animation: flash 1s;
 }
 
+/**
+ * Table cell link styling, inheriting text color and removing underline, with pointer cursor for interactivity.
+ */
 td a {
   color: inherit;
   text-decoration: none;
   cursor: pointer;
 }
 
+/**
+ * Hover state for table cell links, adding underline on hover.
+ */
 td a:hover {
   text-decoration: underline;
 }
 
+/**
+ * Route details, source routes, and sink routes styling, setting font size, color, and top margin.
+ */
 .route-details, .source-routes, .sink-routes {
   font-size: 0.8em;
   color: #666;
   margin-top: 0.25rem;
 }
 
+/**
+ * Route list styling, adding bottom margin for spacing.
+ */
 .route-list {
   margin-bottom: 0.25rem;
 }
 
+/**
+ * Disabled route list styling, changing text color to dark gray.
+ */
 .route-list.disabled {
   color: #999;
 }
 
+/**
+ * Route list label styling, setting font weight and right margin.
+ */
 .route-list-label {
   font-weight: bold;
   margin-right: 0.5rem;
 }
 
+/**
+ * Expand details, expand routes, and collapse routes button styling, removing background, border, text color, padding, font size, cursor, and left margin.
+ */
 .expand-details, .expand-routes, .collapse-routes {
   background: none;
   border: none;
@@ -162,10 +249,16 @@ td a:hover {
   margin-left: 0.25rem;
 }
 
+/**
+ * Hover state for expand details, expand routes, and collapse routes buttons, adding underline on hover.
+ */
 .expand-details:hover, .expand-routes:hover, .collapse-routes:hover {
   text-decoration: underline;
 }
 
+/**
+ * Modal overlay styling, setting position to fixed, background color with opacity, flexbox layout, alignment, and z-index for stacking order.
+ */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -179,6 +272,9 @@ td a:hover {
   z-index: 1000;
 }
 
+/**
+ * Modal content styling, setting background color, padding, border radius, overflow for scrolling, and relative positioning.
+ */
 .modal-content {
   background-color: white;
   padding: 2rem;
@@ -189,6 +285,9 @@ td a:hover {
   position: relative;
 }
 
+/**
+ * Close modal button styling, setting absolute positioning, top and right margins, font size, background, border, cursor, color, and padding.
+ */
 .close-modal {
   position: absolute;
   top: 10px;
@@ -201,16 +300,25 @@ td a:hover {
   padding: 5px;
 }
 
+/**
+ * Sources, sinks, and routes table container styling, adding horizontal overflow for large tables.
+ */
 .sources-table-container,
 .sinks-table-container,
 .routes-table-container {
   overflow-x: auto;
 }
 
+/**
+ * Source name, sink name, and route name styling, setting font weight to bold.
+ */
 .source-name, .sink-name, .route-name {
   font-weight: bold;
 }
 
+/**
+ * Route link styling, displaying inline-block with right margin, font size, color, and no underline.
+ */
 .route-link {
   display: inline-block;
   margin-right: 0.5rem;
@@ -219,18 +327,30 @@ td a:hover {
   text-decoration: none;
 }
 
+/**
+ * Hover state for route links, adding underline on hover.
+ */
 .route-link:hover {
   text-decoration: underline;
 }
 
+/**
+ * Active route link styling, setting font weight to bold.
+ */
 .route-link.active {
   font-weight: bold;
 }
 
+/**
+ * Disabled route link styling, changing color to dark gray.
+ */
 .route-link.disabled {
   color: #999;
 }
 
+/**
+ * Visualizer container styling, adding top margin, border, padding, and border radius.
+ */
 .visualizer-container {
   margin-top: 2rem;
   border: 1px solid #ddd;
@@ -238,30 +358,48 @@ td a:hover {
   border-radius: 4px;
 }
 
+/**
+ * Active button styling, changing background color to blue.
+ */
 button.active {
   background-color: #008CBA;
 }
 
+/**
+ * Range input styling, setting width to full container and adding top and bottom margin.
+ */
 input[type="range"] {
   width: 100%;
   margin: 0.5rem 0;
 }
 
+/**
+ * Error message styling, setting text color to red and adding bottom margin for spacing.
+ */
 .error-message {
   color: #f44336;
   margin-bottom: 1rem;
 }
 
+/**
+ * Actions container styling, adding bottom margin for spacing.
+ */
 .actions {
   margin-bottom: 1rem;
 }
 
+/**
+ * Group members styling, setting font size, color, and top margin.
+ */
 .group-members {
   font-size: 0.8em;
   color: #666;
   margin-top: 0.25rem;
 }
 
+/**
+ * Drag handle styling, setting cursor to move, user select to none, padding, and text color.
+ */
 .drag-handle {
   cursor: move;
   user-select: none;
@@ -269,23 +407,38 @@ input[type="range"] {
   color: #888;
 }
 
+/**
+ * Draggable row styling, adding transition for background color on hover.
+ */
 .draggable-row {
   transition: background-color 0.2s;
 }
 
+/**
+ * Hover state for draggable rows, changing background color to light gray.
+ */
 .draggable-row:hover {
   background-color: #f5f5f5;
 }
 
+/**
+ * Dragging state for draggable rows, changing background color and opacity.
+ */
 .draggable-row.dragging {
   background-color: #e0e0e0;
   opacity: 0.8;
 }
 
+/**
+ * Drag over styling, adding top border with green color.
+ */
 .drag-over {
   border-top: 2px solid #4CAF50;
 }
 
+/**
+ * Media query for screens up to 768px wide, adjusting font size and button padding/font size for better readability.
+ */
 @media (max-width: 768px) {
   table {
     font-size: 0.9em;
@@ -295,6 +448,4 @@ input[type="range"] {
     padding: 0.4rem 0.8rem;
     font-size: 12px;
   }
-
-  
 }

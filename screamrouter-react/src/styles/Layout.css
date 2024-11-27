@@ -1,3 +1,6 @@
+/**
+ * Layout container using flexbox to create a column layout with full viewport height and a light gray background.
+ */
 .layout {
   display: flex;
   flex-direction: column;
@@ -5,6 +8,9 @@
   background-color: #f9f9f9;
 }
 
+/**
+ * Header styling, including background color, text color, padding, box shadow, and font size adjustments.
+ */
 header {
   background-color: #2c3e50;
   color: white;
@@ -12,6 +18,9 @@ header {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+/**
+ * Not playing message styling, setting font size, color, style, weight, alignment, margin, height, and vertical alignment.
+ */
 .not-playing {
     font-size: 2em;
     color: #5a6268; /* Dark gray color */
@@ -24,6 +33,9 @@ header {
     vertical-align: center;
 }
 
+/**
+ * Header title styling, removing default margin, setting font size, display to flex, and aligning items.
+ */
 header h1 {
   margin: 0;
   font-size: 2rem;
@@ -31,16 +43,25 @@ header h1 {
   align-items: center;
 }
 
+/**
+ * Pseudo-element before the header title, adding a music note icon with right margin and color.
+ */
 header h1::before {
   content: '♪';
   margin-right: 10px;
   color: #2ecc71;
 }
 
+/**
+ * Navigation styling, setting top margin for spacing.
+ */
 nav {
   margin-top: 1rem;
 }
 
+/**
+ * Navigation unordered list styling, removing default list style and padding, displaying items in a row with gaps.
+ */
 nav ul {
   list-style-type: none;
   padding: 0;
@@ -48,6 +69,9 @@ nav ul {
   gap: 1.5rem;
 }
 
+/**
+ * Navigation link styling, setting text color, removing underline, font size, padding, border radius, and transitions for hover effects.
+ */
 nav ul li a {
   color: white;
   text-decoration: none;
@@ -57,11 +81,17 @@ nav ul li a {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+/**
+ * Hover state for navigation links, changing background color to dark blue and text color to green.
+ */
 nav ul li a:hover {
   background-color: #34495e;
   color: #2ecc71;
 }
 
+/**
+ * Main content area styling, flexing to take up remaining space with padding, relative positioning, and hidden overflow.
+ */
 main {
   flex-grow: 1;
   padding: 2rem;
@@ -69,6 +99,9 @@ main {
   overflow: hidden;
 }
 
+/**
+ * Pseudo-element before the main content, adding a background image of a musical wave pattern for visual interest.
+ */
 main::before {
   content: '';
   position: absolute;
@@ -83,6 +116,9 @@ main::before {
   z-index: -1;
 }
 
+/**
+ * Footer styling, including background color, text color, alignment, padding, and automatic margin top.
+ */
 footer {
   background-color: #2c3e50;
   color: white;
@@ -91,7 +127,9 @@ footer {
   margin-top: auto;
 }
 
-/* Status section styles */
+/**
+ * Status section container using flexbox to space items between each other with bottom margin, light gray background, padding, border radius, and box shadow.
+ */
 .status-section {
   display: flex;
   justify-content: space-between;
@@ -102,10 +140,16 @@ footer {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+/**
+ * Collapsible section styling within the status section, setting flex to grow and taking up available space.
+ */
 .status-section .collapsible-section {
     flex: 1;
 }
 
+/**
+ * Generic collapsible section styling, including margin, white background, border radius, box shadow, and transition effects for smooth animations.
+ */
 .collapsible-section {
   margin: 0 0.5rem;
   background-color: white;
@@ -115,6 +159,9 @@ footer {
   transition: all 0.3s ease-in-out;
 }
 
+/**
+ * Section header styling, using flexbox to align items and center them, setting padding, cursor for interactivity, light gray background, bottom border, and transition effects.
+ */
 .section-header {
   display: flex;
   justify-content: space-between;
@@ -125,6 +172,9 @@ footer {
   border-bottom: 1px solid #e9ecef;
 }
 
+/**
+ * Section header title styling, removing default margin, setting text color, flex display for alignment, and wrapping long text.
+ */
 .section-header h3 {
   margin: 0;
   color: #2c3e50;
@@ -133,6 +183,9 @@ footer {
   flex-wrap: wrap;
 }
 
+/**
+ * Section subtitle styling, setting font size, color, left margin, normal weight, and alignment to the right of the title.
+ */
 .section-subtitle {
   font-size: 0.9em;
   color: #7f8c8d;
@@ -140,27 +193,42 @@ footer {
   font-weight: normal;
 }
 
+/**
+ * Expand toggle icon styling, setting font size, color, and transition effects for smooth rotation on hover.
+ */
 .expand-toggle {
   font-size: 1.2rem;
   color: #3498db;
   transition: transform 0.3s ease;
 }
 
+/**
+ * Expanded state for the expand toggle icon, rotating it by 90 degrees to indicate open section.
+ */
 .collapsible-section.expanded .expand-toggle {
   transform: rotate(90deg);
 }
 
+/**
+ * Section content styling, setting padding, hidden overflow, and transition effects for smooth height changes on expansion.
+ */
 .section-content {
   padding: 1rem;
   overflow: hidden;
   transition: max-height 0.3s ease-out, padding 0.3s ease-out;
 }
 
+/**
+ * Expanded state for the section content, setting maximum height to a large value and adjusting padding for visibility.
+ */
 .collapsible-section.expanded .section-content {
   max-height: 50000px; /* Adjust this value based on your content */
   padding: 1rem;
 }
 
+/**
+ * Active source section paragraph styling, using flexbox for alignment, italic font style, dark gray color, height, margin removal, padding, text centering, and vertical alignment.
+ */
 .active-source-section p,
 .now-playing-section p {
   display: flex;
@@ -174,7 +242,9 @@ footer {
   text-align: center;
 }
 
-/* Control bar styles */
+/**
+ * Control bar styling, using flexbox for alignment and spacing between items.
+ */
 .control-bar {
   display: flex;
   align-items: center;
@@ -182,17 +252,25 @@ footer {
   margin-top: 0.5rem;
 }
 
+/**
+ * Control bar button styling, setting padding, font size, and transition effects for smooth hover effects.
+ */
 .control-bar button {
   padding: 0.25rem 0.5rem;
   font-size: 0.9rem;
 }
 
+/**
+ * Volume slider styling, flexing to take up available space with left and right margins.
+ */
 .volume-slider {
   flex: 1;
   margin: 0 0.5rem;
 }
 
-/* Audio Visualizer styles */
+/**
+ * Audio visualizer container styling, setting fixed position, covering the entire viewport, no pointer events, and high z-index for stacking order.
+ */
 .audio-visualizer {
   position: fixed;
   top: 0;
@@ -203,12 +281,17 @@ footer {
   z-index: 1000;
 }
 
+/**
+ * Audio visualizer canvas styling, setting width and height to cover the entire container.
+ */
 .audio-visualizer canvas {
   width: 100%;
   height: 100%;
 }
 
-/* Responsive design */
+/**
+ * Media query for screens up to 768px wide, adjusting header padding, navigation layout, status section direction, collapsible section margins, section header alignment, section subtitle margin, main content padding, control bar wrapping, button size and width, volume slider flex and margin, table font size, display, overflow, white space, table cell padding, input and select font size for iOS zoom prevention, button padding and size, iframe height, and VNC container overflow.
+ */
 @media (max-width: 768px) {
   header {
     padding: 1rem;
@@ -285,6 +368,9 @@ footer {
   }
 }
 
+/**
+ * VNC iframe styling, removing border and padding, setting width to full container, height to 600px, rounded corners, and box shadow for visual interest.
+ */
 iframe#vnc-iframe {
   border: 0px;
   margin: 0px;
@@ -296,67 +382,103 @@ iframe#vnc-iframe {
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
 
+/**
+ * VNC iframe styling for full screen mode, setting width to full container and height to viewport height.
+ */
 iframe.vnc-iframe {
   width: 100% !important;
   height: 100vh;
   overflow: hidden;
 }
 
+/**
+ * VNC container styling, hiding overflow content.
+ */
 .vnc-container {
   overflow: hidden;
 }
 
+/**
+ * Hiding the noVNC control bar anchor element.
+ */
 #noVNC_control_bar_anchor {
   display: none;
 }
 
+/**
+ * Media query for screens up to 768px wide, adjusting VNC iframe height.
+ */
 @media (max-width: 768px) {
   iframe#vnc-iframe {
     height: 400px;
   }
 }
 
-/* Animations */
+/**
+ * Keyframes for the fade-in animation, transitioning opacity from 0 to 1.
+ */
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
+/**
+ * Fade-in class applying the fade-in animation with a duration of 0.3 seconds and ease-in timing function.
+ */
 .fade-in {
   animation: fadeIn 0.3s ease-in;
 }
 
+/**
+ * Keyframes for the slide-in animation, transitioning transform from -20px to 0 and opacity from 0 to 1.
+ */
 @keyframes slideIn {
   from { transform: translateY(-20px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
 
+/**
+ * Slide-in class applying the slide-in animation with a duration of 0.3 seconds and ease-out timing function.
+ */
 .slide-in {
   animation: slideIn 0.3s ease-out;
 }
 
-/* Additional styles for better visual hierarchy */
+/**
+ * Additional styles for better visual hierarchy, setting text color, top and bottom margins, font sizes, border-bottom, padding-bottom, and alignment for headings.
+ */
 h2, h3, h4 {
   color: #2c3e50;
   margin-top: 1.5rem;
   margin-bottom: 1rem;
 }
 
+/**
+ * Heading level 2 styling, setting larger font size, bottom border with green color, and padding below the border.
+ */
 h2 {
   font-size: 1.8rem;
   border-bottom: 2px solid #2ecc71;
   padding-bottom: 0.5rem;
 }
 
+/**
+ * Heading level 3 styling, setting medium font size.
+ */
 h3 {
   font-size: 1.5rem;
 }
 
+/**
+ * Heading level 4 styling, setting smaller font size.
+ */
 h4 {
   font-size: 1.2rem;
 }
 
-/* Button styles */
+/**
+ * Button styling, including background color, text color, no border, padding, border radius, cursor for interactivity, and transition effects for hover and active states.
+ */
 button {
   background-color: #3498db;
   color: white;
@@ -367,16 +489,24 @@ button {
   transition: background-color 0.3s ease, transform 0.1s ease;
 }
 
+/**
+ * Hover state for buttons, changing background color to dark blue and slightly lifting the button.
+ */
 button:hover {
   background-color: #2980b9;
   transform: translateY(-2px);
 }
 
+/**
+ * Active state for buttons, resetting the button position.
+ */
 button:active {
   transform: translateY(0);
 }
 
-/* Form styles */
+/**
+ * Form input styling, setting width to full container, padding, bottom margin, light gray border, rounded corners, and font size.
+ */
 input[type="text"],
 input[type="number"],
 select {
@@ -388,7 +518,9 @@ select {
   font-size: 1rem;
 }
 
-/* Table styles */
+/**
+ * Table styling, setting width to full container, separate border collapse, spacing between rows, and bottom margin.
+ */
 table {
   width: 100%;
   border-collapse: separate;
@@ -396,24 +528,35 @@ table {
   margin-bottom: 1rem;
 }
 
+/**
+ * Table header and cell styling, including padding, text alignment, and bottom border for separation.
+ */
 th, td {
   padding: 0.75rem;
   text-align: left;
   border-bottom: 1px solid #ddd;
 }
 
+/**
+ * Table header styling, setting background color to light gray, bold font weight, dark blue text color, and transition effects for hover states.
+ */
 th {
   background-color: #f2f2f2;
   font-weight: bold;
   color: #2c3e50;
 }
 
+/**
+ * Hover state for table rows, changing background color to light gray with smooth transitions.
+ */
 tr:hover {
   background-color: #f5f5f5;
   transition: background-color 0.3s ease;
 }
 
-/* Card-like container */
+/**
+ * Card-like container styling, including white background, rounded corners, box shadow, padding, and bottom margin for spacing.
+ */
 .card {
   background-color: white;
   border-radius: 8px;
@@ -422,27 +565,44 @@ tr:hover {
   margin-bottom: 1.5rem;
 }
 
-/* Utility classes */
+/**
+ * Utility class for text centering.
+ */
 .text-center {
   text-align: center;
 }
 
+/**
+ * Margin bottom utility class with small value.
+ */
 .mb-1 {
   margin-bottom: 0.5rem;
 }
 
+/**
+ * Margin bottom utility class with medium value.
+ */
 .mb-2 {
   margin-bottom: 1rem;
 }
 
+/**
+ * Margin top utility class with small value.
+ */
 .mt-1 {
   margin-top: 0.5rem;
 }
 
+/**
+ * Margin top utility class with medium value.
+ */
 .mt-2 {
   margin-top: 1rem;
 }
 
+/**
+ * Light/dark mode toggle container styling, setting absolute positioning, right and top margins, padding, and button width for larger screens.
+ */
 span.lightdarkmode {
     position: absolute;
     top: 0px;
@@ -451,10 +611,16 @@ span.lightdarkmode {
     padding-right: 15px;
 }
 
+/**
+ * Light/dark mode toggle button styling, setting fixed width for better visibility and user interaction.
+ */
 span.lightdarkmode button {
     width: 150px;
 }
 
+/**
+ * Media query for screens up to 768px wide, adjusting light/dark mode toggle container positioning, display, text alignment, padding, and button width for responsive design.
+ */
 @media (max-width: 768px) {
   span.lightdarkmode {
     position: static;

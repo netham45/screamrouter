@@ -1,3 +1,7 @@
+/**
+ * React component for displaying a list of sinks with functionalities such as adding, deleting,
+ * starring, enabling/disabling, adjusting volume and timeshift, and performing actions like listening to or visualizing the sink.
+ */
 import React, { useState, useEffect } from 'react';
 import SinkList from './SinkList';
 import { useAppContext } from '../context/AppContext';
@@ -8,9 +12,16 @@ import ConfirmationModal from './ConfirmationModal';
 import ApiService from '../api/api';
 import { Sink } from '../api/api';
 
+/**
+ * React functional component for rendering the sinks section.
+ *
+ * @returns {JSX.Element} The rendered JSX element.
+ */
 const Sinks: React.FC = () => {
+  // Hook to flash anchor elements
   useAnchorFlash();
 
+  // Destructuring context values
   const { 
     sinks, 
     routes, 
@@ -28,13 +39,34 @@ const Sinks: React.FC = () => {
     setShowEditModal
   } = useAppContext();
   
+  /**
+   * State variable to manage loading state.
+   */
   const [isLoading, setIsLoading] = useState(false);
+  /**
+   * State variable to manage error messages.
+   */
   const [error, setError] = useState<string | null>(null);
+  /**
+   * State variable to manage starred sinks.
+   */
   const [starredSinks, setStarredSinks] = useState<string[]>([]);
+  /**
+   * State variable to manage sorting configuration.
+   */
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'name', direction: 'asc' });
+  /**
+   * State variable to manage visibility of the delete confirmation modal.
+   */
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  /**
+   * State variable to manage the sink selected for deletion.
+   */
   const [sinkToDelete, setSinkToDelete] = useState<string | null>(null);
 
+  /**
+   * Effect hook to load sinks and restore starred sinks from local storage on component mount.
+   */
   useEffect(() => {
     if (sinks.length === 0) {
       loadSinks();
@@ -45,6 +77,9 @@ const Sinks: React.FC = () => {
     }
   }, []);
 
+  /**
+   * Function to fetch sinks from the API.
+   */
   const loadSinks = async () => {
     setIsLoading(true);
     setError(null);
@@ -58,6 +93,11 @@ const Sinks: React.FC = () => {
     }
   };
 
+  /**
+   * Function to handle sorting of sinks.
+   *
+   * @param {string} key - The key by which sinks are sorted.
+   */
   const onSort = (key: string) => {
     setSortConfig(prevConfig => ({
       key,
@@ -65,6 +105,11 @@ const Sinks: React.FC = () => {
     }));
   };
 
+  /**
+   * Function to toggle the star status of a sink.
+   *
+   * @param {string} name - The name of the sink.
+   */
   const onToggleStar = async (name: string) => {
     setStarredSinks(prev => {
       const newStarred = prev.includes(name)
@@ -75,18 +120,27 @@ const Sinks: React.FC = () => {
     });
   };
 
+  /**
+   * Function to handle adding a new sink.
+   */
   const handleAddSink = () => {
     setSelectedItem(null);
     setSelectedItemType('sinks');
     setShowEditModal(true);
   };
 
+  /**
+   * Function to handle adding a new group sink.
+   */
   const handleAddGroup = () => {
     setSelectedItem(null);
     setSelectedItemType('group-sink');
     setShowEditModal(true);
   };
 
+  /**
+   * Function to handle deleting a selected sink.
+   */
   const handleDeleteSink = async () => {
     if (sinkToDelete) {
       try {
@@ -102,6 +156,9 @@ const Sinks: React.FC = () => {
     setSinkToDelete(null);
   };
 
+  /**
+   * Actions object containing functions to manage sinks.
+   */
   const actions: Actions = {
     toggleEnabled: async (type, name) => {
       if (type === 'sinks') {
@@ -138,18 +195,33 @@ const Sinks: React.FC = () => {
     showVNC: () => {}, // Not applicable for sinks
     listenToSink: onListenToSink,
     visualizeSink: onVisualizeSink,
-    toggleActiveSource: () => {}, // Not applicable for sinks
+    toggleActiveSource: async () => {}, // Not applicable for sinks
     navigateToItem: () => {} // Not applicable for Sinks component
   };
 
+  /**
+   * Render loading state.
+   *
+   * @returns {JSX.Element} The rendered JSX element.
+   */
   if (isLoading) {
     return <div>Loading sinks...</div>;
   }
 
+  /**
+   * Render error state.
+   *
+   * @returns {JSX.Element} The rendered JSX element.
+   */
   if (error) {
     return <div>Error: {error}</div>;
   }
 
+  /**
+   * Main render function for the Sinks component.
+   *
+   * @returns {JSX.Element} The rendered JSX element.
+   */
   return (
     <div className="sinks-container">
       <h2>Sinks</h2>

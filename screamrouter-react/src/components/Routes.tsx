@@ -1,3 +1,10 @@
+/**
+ * React component for displaying and managing routes.
+ * This component handles fetching, sorting, starring, deleting, and editing routes.
+ * It also provides functionality to add new routes and show the equalizer modal for a route.
+ *
+ * @param {React.FC} props - The properties for the component.
+ */
 import React, { useState, useEffect } from 'react';
 import RouteList from './RouteList';
 import { useAppContext } from '../context/AppContext';
@@ -7,9 +14,20 @@ import { SortConfig, useAnchorFlash } from '../utils/commonUtils';
 import ConfirmationModal from './ConfirmationModal';
 import ApiService from '../api/api';
 
+/**
+ * React functional component for rendering the routes management page.
+ *
+ * @returns {JSX.Element} The rendered JSX element.
+ */
 const Routes: React.FC = () => {
+  /**
+   * Hook to flash anchor elements into view when they are focused.
+   */
   useAnchorFlash();
 
+  /**
+   * Destructuring context values from AppContext.
+   */
   const { 
     routes, 
     fetchRoutes, 
@@ -22,13 +40,39 @@ const Routes: React.FC = () => {
     setShowEditModal
   } = useAppContext();
   
+  /**
+   * State to track loading status.
+   */
   const [isLoading, setIsLoading] = useState(false);
+
+  /**
+   * State to track error messages.
+   */
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * State to track starred routes.
+   */
   const [starredRoutes, setStarredRoutes] = useState<string[]>([]);
+
+  /**
+   * State to track sorting configuration.
+   */
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'name', direction: 'asc' });
+
+  /**
+   * State to control the visibility of the delete confirmation modal.
+   */
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  /**
+   * State to track the route name that is being deleted.
+   */
   const [routeToDelete, setRouteToDelete] = useState<string | null>(null);
 
+  /**
+   * Effect hook to load routes and starred routes on component mount.
+   */
   useEffect(() => {
     if (routes.length === 0) {
       loadRoutes();
@@ -39,6 +83,9 @@ const Routes: React.FC = () => {
     }
   }, []);
 
+  /**
+   * Function to fetch routes from the API.
+   */
   const loadRoutes = async () => {
     setIsLoading(true);
     setError(null);
@@ -52,6 +99,11 @@ const Routes: React.FC = () => {
     }
   };
 
+  /**
+   * Function to handle sorting of routes.
+   *
+   * @param {string} key - The key by which to sort the routes.
+   */
   const onSort = (key: string) => {
     setSortConfig(prevConfig => ({
       key,
@@ -59,6 +111,11 @@ const Routes: React.FC = () => {
     }));
   };
 
+  /**
+   * Function to toggle a route's starred status.
+   *
+   * @param {string} name - The name of the route to toggle.
+   */
   const onToggleStar = async (name: string) => {
     setStarredRoutes(prev => {
       const newStarred = prev.includes(name)
@@ -69,12 +126,18 @@ const Routes: React.FC = () => {
     });
   };
 
+  /**
+   * Function to handle adding a new route.
+   */
   const handleAddRoute = () => {
     setSelectedItem(null);
     setSelectedItemType('routes');
     setShowEditModal(true);
   };
 
+  /**
+   * Function to handle deleting a selected route.
+   */
   const handleDeleteRoute = async () => {
     if (routeToDelete) {
       try {
@@ -90,6 +153,9 @@ const Routes: React.FC = () => {
     setRouteToDelete(null);
   };
 
+  /**
+   * Actions object containing functions for managing routes.
+   */
   const actions: Actions = {
     toggleEnabled: async (type, name) => {
       if (type === 'routes') {
@@ -126,9 +192,14 @@ const Routes: React.FC = () => {
     showVNC: () => {}, // Not applicable for routes
     listenToSink: () => {}, // Not applicable for routes
     visualizeSink: () => {}, // Not applicable for routes
-    toggleActiveSource: () => {} // Not applicable for routes
+    toggleActiveSource: () => {}, // Not applicable for routes
   };
 
+  /**
+   * Renders the Routes component.
+   *
+   * @returns {JSX.Element} The rendered JSX element.
+   */
   if (isLoading) {
     return <div>Loading routes...</div>;
   }

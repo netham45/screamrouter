@@ -1,7 +1,18 @@
+/**
+ * This file contains the ActiveSourceSection component, which displays and controls the primary audio source.
+ * It includes functionality for enabling/disabling the source, adjusting volume, opening equalizer and VNC modals,
+ * controlling playback (prev track, play, next track), and toggling star status.
+ */
+
 import React from 'react';
 import { Source, Route } from '../api/api';
+import ActionButton from './controls/ActionButton';
+import VolumeSlider from './controls/VolumeSlider';
 import { renderLinkWithAnchor, ActionButton, VolumeSlider } from '../utils/commonUtils';
 
+/**
+ * Interface defining the props for the PrimarySourceSection component.
+ */
 interface PrimarySourceSectionProps {
   primarySourceItem: Source | null;
   toggleEnabled: (type: 'sources', name: string, enabled: boolean) => void;
@@ -18,6 +29,11 @@ interface PrimarySourceSectionProps {
   onDataChange: () => void;
 }
 
+/**
+ * React functional component that displays and controls the primary audio source.
+ * @param {PrimarySourceSectionProps} props - Component properties including the primary source item, control functions, and state management functions.
+ * @returns {JSX.Element | null} Rendered PrimarySourceSection component or null if no primary source is available.
+ */
 const PrimarySourceSection: React.FC<PrimarySourceSectionProps> = ({
   primarySourceItem,
   toggleEnabled,
@@ -37,6 +53,11 @@ const PrimarySourceSection: React.FC<PrimarySourceSectionProps> = ({
     return null;
   }
 
+  /**
+   * Renders links to routes associated with the primary source.
+   * @param {Route[]} routes - Array of route objects.
+   * @returns {JSX.Element} Rendered route links or "None" if no routes are present.
+   */
   const renderRouteLinks = (routes: Route[]) => {
     if (routes.length === 0) return 'None';
     return routes.map((route, index) => (
@@ -47,6 +68,10 @@ const PrimarySourceSection: React.FC<PrimarySourceSectionProps> = ({
     ));
   };
 
+  /**
+   * Renders links to group members if the primary source is part of a group.
+   * @returns {JSX.Element | null} Rendered group member links or null if not part of a group.
+   */
   const renderGroupMembers = () => {
     if (!primarySourceItem.is_group || !primarySourceItem.group_members) return null;
     return (
@@ -64,6 +89,10 @@ const PrimarySourceSection: React.FC<PrimarySourceSectionProps> = ({
     );
   };
 
+  /**
+   * Renders control elements for the primary source.
+   * @returns {JSX.Element} Rendered control elements.
+   */
   const renderControls = () => {
     console.log('Rendering controls for primary source:', primarySourceItem); // Debug log
     return (
@@ -107,6 +136,10 @@ const PrimarySourceSection: React.FC<PrimarySourceSectionProps> = ({
     );
   };
 
+  /**
+   * Main render method for the PrimarySourceSection component.
+   * @returns {JSX.Element} Rendered PrimarySourceSection component structure.
+   */
   return (
     <div className="primary-source-section">
       <h2><i className="fas fa-broadcast-tower"></i> Primary Source</h2>
@@ -143,4 +176,7 @@ const PrimarySourceSection: React.FC<PrimarySourceSectionProps> = ({
   );
 };
 
+/**
+ * Exports the PrimarySourceSection component as the default export.
+ */
 export default PrimarySourceSection;

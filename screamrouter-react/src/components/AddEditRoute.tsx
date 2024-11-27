@@ -1,15 +1,28 @@
+/**
+ * This file contains the AddEditRoute component, which provides a modal interface for adding or editing routes.
+ * It includes functionality for selecting sources and sinks, adjusting volume and timeshift, and saving changes.
+ */
+
 import React, { useState, useEffect } from 'react';
 import ApiService, { Route, Source, Sink } from '../api/api';
 import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
 import ActionButton from './controls/ActionButton';
 
+/**
+ * Interface defining the props for the AddEditRoute component.
+ */
 interface AddEditRouteProps {
   route?: Route;
   onClose: () => void;
   onSave: () => void;
 }
 
+/**
+ * React functional component that provides a modal interface for adding or editing routes.
+ * @param {AddEditRouteProps} props - Component properties including optional route data, close function, and save function.
+ * @returns {JSX.Element} Rendered AddEditRoute component.
+ */
 const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSave }) => {
   const [name, setName] = useState(route?.name || '');
   const [source, setSource] = useState(route?.source || '');
@@ -21,6 +34,9 @@ const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSave }) =
   const [sinks, setSinks] = useState<Sink[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Effect hook that fetches sources and sinks when the component mounts.
+   */
   useEffect(() => {
     const fetchSourcesAndSinks = async () => {
       try {
@@ -39,6 +55,9 @@ const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSave }) =
     fetchSourcesAndSinks();
   }, []);
 
+  /**
+   * Handles form submission for adding or updating a route.
+   */
   const handleSubmit = async () => {
     const routeData: Partial<Route> = {
       name,
@@ -63,6 +82,10 @@ const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSave }) =
     }
   };
 
+  /**
+   * Main render method for the AddEditRoute component.
+   * @returns {JSX.Element} Rendered AddEditRoute component structure.
+   */
   return (
     <div className="modal-backdrop">
       <div className="modal-content">
@@ -120,4 +143,7 @@ const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSave }) =
   );
 };
 
+/**
+ * Exports the AddEditRoute component as the default export.
+ */
 export default AddEditRoute;

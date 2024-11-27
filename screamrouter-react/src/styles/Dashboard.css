@@ -1,41 +1,63 @@
+/**
+ * Styles for the Dashboard component.
+ */
+
+/**
+ * Main container for the dashboard, using flexbox to arrange content vertically and ensuring it takes up at least the full viewport height.
+ */
 .dashboard {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
 }
 
+/**
+ * Header section of the dashboard with a dark background color, white text, padding for spacing, centered alignment, and a subtle shadow for depth.
+ */
 .dashboard-header {
     background-color: #2c3e50;
     color: white;
     padding: 1rem 2rem;
     text-align: center;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  }
-  
-  .dashboard-title {
+}
+
+/**
+ * Title of the dashboard header, using a larger font size and centered alignment with space for an icon.
+ */
+.dashboard-title {
     font-size: 2rem;
     margin: 0;
     display: flex;
     justify-content: center;
     align-items: center;
-  }
-  
-  .music-note {
+}
+
+/**
+ * Music note icon in the dashboard title, styled with a specific color, margin, and size to enhance visual appeal.
+ */
+.music-note {
     color: #2ecc71;
     margin: 0 10px;
     font-size: 1.5rem;
-  }
-  
-  .dashboard-nav {
+}
+
+/**
+ * Navigation section of the dashboard header, using a darker background color, padding for spacing, centered alignment with wrapping flex items and gaps between them.
+ */
+.dashboard-nav {
     background-color: #34495e;
     padding: 1rem;
     display: flex;
     justify-content: center;
     flex-wrap: wrap;
     gap: 0.5rem;
-  }
-  
-  .dashboard-nav button {
+}
+
+/**
+ * Buttons in the dashboard navigation, styled with a green background color, white text, no border, padding for spacing, rounded corners, pointer cursor, smaller font size, and smooth transition effects.
+ */
+.dashboard-nav button {
     background-color: #2ecc71;
     color: white;
     border: none;
@@ -44,97 +66,142 @@
     cursor: pointer;
     font-size: 0.9rem;
     transition: all 0.3s ease;
-  }
-  
-  .dashboard-nav button:hover {
+}
+
+/**
+ * Hover styles for buttons in the dashboard navigation, changing background color and slightly lifting the button to create a pressed effect.
+ */
+.dashboard-nav button:hover {
     background-color: #27ae60;
     transform: translateY(-2px);
-  }
-  
-  .dashboard-content {
+}
+
+/**
+ * Main content area of the dashboard, taking up remaining space with padding at the top, using flexbox for vertical arrangement, and gaps between sections.
+ */
+.dashboard-content {
     flex: 1;
     padding-top: 2rem;
     display: flex;
     flex-direction: column;
     gap: 2rem;
-  }
-  
-  .dashboard-sections {
+}
+
+/**
+ * Container for dashboard sections, using flexbox to arrange columns side by side with gaps between them.
+ */
+.dashboard-sections {
     display: flex;
     gap: 2rem;
-  }
-  
-  .left-column,
-  .right-column {
+}
+
+/**
+ * Left and right columns in the dashboard sections, each taking up equal space and using flexbox for vertical arrangement with gaps between items.
+ */
+.left-column,
+.right-column {
     flex: 1;
     display: flex;
     flex-direction: column;
     gap: 2rem;
-  }
-  
-  .favorite-section,
-  .active-sources,
-  .active-sinks,
-  .active-routes,
-  .active-source-section {
+}
+
+/**
+ * Favorite section within the dashboard, styled with a white background color, rounded corners, padding for spacing, and subtle shadow for depth.
+ */
+.favorite-section,
+.active-sources,
+.active-sinks,
+.active-routes,
+.active-source-section {
     background-color: white;
     border-radius: 8px;
     padding: 1.5rem;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  }
-  
-  h2, h3 {
+}
+
+/**
+ * Headings within the dashboard sections, using a darker text color, larger font size, margin at the bottom for spacing, and centered alignment with an icon.
+ */
+h2, h3 {
     color: #2c3e50;
     font-size: 1.5rem;
     margin-bottom: 1rem;
     display: flex;
     align-items: center;
-  }
-  
-  h2 i, h3 i {
+}
+
+/**
+ * Icons within headings in the dashboard sections, styled with a specific color and margin to separate them from text.
+ */
+h2 i, h3 i {
     margin-right: 0.5rem;
     color: #2ecc71;
-  }
-  
-  table {
+}
+
+/**
+ * Tables used throughout the dashboard, taking up full width, using separate border spacing for cells, and no border collapse to allow individual cell borders.
+ */
+table {
     width: 100%;
     border-collapse: separate;
     border-spacing: 0;
-  }
-  
-  th, td {
+}
+
+/**
+ * Table headers and data cells, styled with padding for spacing, left text alignment, and a subtle bottom border for separation between rows.
+ */
+th, td {
     padding: 0.75rem;
     text-align: left;
     border-bottom: 1px solid #e0e0e0;
-  }
-  
-  th {
+}
+
+/**
+ * Table headers, using a light gray background color, bold font weight, darker text color, and no bottom border to distinguish them from data cells.
+ */
+th {
     background-color: #f2f2f2;
     font-weight: bold;
     color: #2c3e50;
-  }
-  
-  tr:hover {
+}
+
+/**
+ * Hover styles for table rows, changing background color to create a highlighted effect when hovered over.
+ */
+tr:hover {
     background-color: #f5f5f5;
-  }
-  
-  a {
+}
+
+/**
+ * Links used throughout the dashboard, styled with a blue text color, no underline, and smooth transition effects for hover states.
+ */
+a {
     color: #3498db;
     text-decoration: none;
     transition: color 0.3s ease;
-  }
-  
-  a:hover {
+}
+
+/**
+ * Hover styles for links in the dashboard, changing text color to a darker shade of blue.
+ */
+a:hover {
     color: #2980b9;
-  }
-  
-  .subtext {
+}
+
+/**
+ * Subtext elements used throughout the dashboard, styled with a smaller font size, gray text color, and margin at the top for spacing.
+ */
+.subtext {
     font-size: 0.9rem;
     color: #7f8c8d;
     margin-top: 0.25rem;
-  }
-  
-  button {
+}
+
+/**
+ * Buttons used throughout the dashboard, styled with a blue background color, white text, no border, padding for spacing, rounded corners, pointer cursor, smaller font size, and smooth transition effects.
+ */
+button {
     background-color: #3498db;
     color: white;
     border: none;
@@ -144,42 +211,63 @@
     font-size: 0.9rem;
     transition: all 0.3s ease;
     margin-right: 0.5rem;
-  }
-  
-  button:hover {
+}
+
+/**
+ * Hover styles for buttons in the dashboard, changing background color and slightly lifting the button to create a pressed effect.
+ */
+button:hover {
     background-color: #2980b9;
     transform: translateY(-2px);
-  }
-  
-  button.enabled {
+}
+
+/**
+ * Enabled state styles for buttons in the dashboard, using a green background color to indicate active or enabled status.
+ */
+button.enabled {
     background-color: #2ecc71;
-  }
-  
-  button.disabled {
+}
+
+/**
+ * Disabled state styles for buttons in the dashboard, using a red background color to indicate inactive or disabled status.
+ */
+button.disabled {
     background-color: #e74c3c;
-  }
-  
-  input[type="range"] {
+}
+
+/**
+ * Range input elements used throughout the dashboard, styled with specific width and vertical alignment to fit within button groups.
+ */
+input[type="range"] {
     width: 100px;
     margin: 0 0.5rem;
     vertical-align: middle;
-  }
-  
-  .error-message {
+}
+
+/**
+ * Error message container used throughout the dashboard, styled with a light red background color, dark red text color, padding for spacing, rounded corners, and margin at the bottom for separation.
+ */
+.error-message {
     background-color: #f8d7da;
     color: #721c24;
     padding: 1rem;
     border-radius: 4px;
     margin-bottom: 1rem;
-  }
-  
-  .connection-renderer-container {
+}
+
+/**
+ * Container for the connection renderer, styled with relative positioning, fixed height, and margin at the top for spacing.
+ */
+.connection-renderer-container {
     position: relative;
     height: 300px;
     margin-top: 2rem;
-  }
-  
-  .modal-overlay {
+}
+
+/**
+ * Overlay used for modal dialogs, styled with absolute positioning to cover the entire viewport, dark background color with opacity, flexbox for centered alignment, and high z-index to ensure it appears above other content.
+ */
+.modal-overlay {
     position: fixed;
     top: 0;
     left: 0;
@@ -190,19 +278,23 @@
     justify-content: center;
     align-items: center;
     z-index: 1000;
-  }
-  
-  .modal-content {
+}
+
+/**
+ * Content area for modal dialogs, styled with white background color, padding for spacing, rounded corners, and scrollable content.
+ */
+.modal-content {
     background-color: white;
     padding: 2rem;
     border-radius: 8px;
-    /*max-width: 80%;*/
-    /*max-height: 80%;*/
     overflow: auto;
     position: relative;
-  }
-  
-  .close-modal {
+}
+
+/**
+ * Close button for modal dialogs, styled with absolute positioning to place it in the top right corner, no background or border, pointer cursor, and smooth transition effects for hover states.
+ */
+.close-modal {
     position: absolute;
     top: 1rem;
     right: 1rem;
@@ -212,22 +304,33 @@
     cursor: pointer;
     color: #333;
     transition: color 0.3s ease;
-  }
-  
-  .close-modal:hover {
+}
+
+/**
+ * Hover styles for the close button in modal dialogs, changing text color to a red shade.
+ */
+.close-modal:hover {
     color: #e74c3c;
-  }
-  
-  @keyframes flash {
+}
+
+/**
+ * Flash animation keyframes used for collapsible sections, creating a subtle background color change effect.
+ */
+@keyframes flash {
     0%, 100% { background-color: transparent; }
     50% { background-color: rgba(46, 204, 113, 0.3); }
-  }
-  
-  .collapsible-section.flash {
-    animation: flash 1s;
-  }
+}
 
-/* Updated styles for collapsible sections */
+/**
+ * Collapsible section with a flash animation applied when the 'flash' class is added.
+ */
+.collapsible-section.flash {
+    animation: flash 1s;
+}
+
+/**
+ * Updated styles for collapsible sections, using a white background color, rounded corners, padding for spacing, and subtle shadow for depth.
+ */
 .collapsible-section {
   background-color: white;
   border-radius: 8px;
@@ -235,6 +338,9 @@
   margin-bottom: 1rem;
 }
 
+/**
+ * Header section of collapsible sections, styled with a light gray background color, padding for spacing, pointer cursor, and flexbox for centered alignment with space between items.
+ */
 .collapsible-section .section-header {
   background-color: #f2f2f2;
   padding: 1rem;
@@ -244,21 +350,33 @@
   align-items: center;
 }
 
+/**
+ * Headings within collapsible section headers, using a darker text color, larger font size, no margin, and centered alignment.
+ */
 .collapsible-section .section-header h3 {
   margin: 0;
   font-size: 1.2rem;
   color: #2c3e50;
 }
 
+/**
+ * Expand toggle icon within collapsible section headers, styled with a specific font size and smooth transition effects for hover states.
+ */
 .collapsible-section .section-header .expand-toggle {
   font-size: 1.2rem;
   transition: transform 0.3s ease;
 }
 
+/**
+ * Rotated expand toggle icon in expanded collapsible sections to indicate the section is open.
+ */
 .collapsible-section.expanded .section-header .expand-toggle {
   transform: rotate(90deg);
 }
 
+/**
+ * Content area of collapsible sections, using max height and opacity transitions for smooth opening and closing effects, padding for spacing, and overflow hidden to hide content when collapsed.
+ */
 .collapsible-section .section-content {
   max-height: 2000px;
   opacity: 1;
@@ -267,12 +385,18 @@
   padding: 1rem;
 }
 
+/**
+ * Collapsed content area of collapsible sections with zero max height and opacity to hide the content.
+ */
 .collapsible-section.collapsed .section-content {
   max-height: 0;
   opacity: 0;
   padding: 0;
 }
 
+/**
+ * Media query for screens up to 1200px wide, adjusting dashboard section layout to a single column with full width columns.
+ */
 @media (max-width: 1200px) {
     .dashboard-sections {
       flex-direction: column;
@@ -282,9 +406,12 @@
     .right-column {
       width: 100%;
     }
-  }
-  
-  @media (max-width: 768px) {
+}
+
+/**
+ * Media query for screens up to 768px wide, adjusting dashboard content padding and font sizes for smaller screens.
+ */
+@media (max-width: 768px) {
     .dashboard-content {
       padding: 1rem;
     }
@@ -326,9 +453,12 @@
     .collapsible-section .section-header h3 {
       font-size: 1rem;
     }
-  }
-  
-  @media (max-width: 480px) {
+}
+
+/**
+ * Media query for screens up to 480px wide, further adjusting dashboard content padding, table and button sizes, and icon sizes for very small screens.
+ */
+@media (max-width: 480px) {
     .dashboard-content {
       padding: 0.5rem;
     }
@@ -358,4 +488,4 @@
     .collapsible-section .section-header h3 {
       font-size: 0.9rem;
     }
-  }
+}

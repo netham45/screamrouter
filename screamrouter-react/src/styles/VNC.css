@@ -1,3 +1,6 @@
+/**
+ * VNC container styling, using flexbox for column layout, centering items, setting padding, width, height, maximum width and height, margin auto for centering, hidden overflow, and specific overflow-x handling.
+ */
 .vnc-container {
   display: flex;
   flex-direction: column;
@@ -12,6 +15,9 @@
   overflow-x: hidden;
 }
   
+/**
+ * VNC iframe styling, applying scale transformation with origin at top left, setting width and height to viewport height, important for overriding other styles.
+ */
 .vnc-iframe {
   transform: scale(0.8);
   transform-origin: top left;
@@ -19,18 +25,26 @@
   height: 100vh !important;
 }
 
+/**
+ * Pseudo-element after the VNC container, creating a block element with padding to maintain aspect ratio (16:9).
+ */
 .vnc-container::after {
   content: "";
   display: block;
   padding-bottom: 56.25%; /* 16:9 aspect ratio */
 }
 
-
+/**
+ * Heading level 3 styling within the VNC container, setting bottom margin and text alignment to center.
+ */
 .vnc-container h3 {
   margin-bottom: 1rem;
   text-align: center;
 }
 
+/**
+ * VNC iframe styling for maximum width, height, no border, box shadow for visual interest, and rounded corners.
+ */
 .vnc-iframe {
   max-width: 100%;
   max-height: 80vh;
@@ -39,12 +53,18 @@
   border-radius: 4px;
 }
 
+/**
+ * Error message styling, setting text color to red, bottom margin for spacing, and text alignment to center.
+ */
 .error-message {
   color: #f44336;
   margin-bottom: 1rem;
   text-align: center;
 }
 
+/**
+ * Media query for screens up to 768px wide, adjusting VNC container padding and iframe maximum height for better responsiveness.
+ */
 @media (max-width: 768px) {
   .vnc-container {
     padding: 0.5rem;

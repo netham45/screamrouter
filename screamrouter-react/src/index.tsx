@@ -1,13 +1,13 @@
+/**
+ * Main entry point for the React application.
+ * This file is responsible for rendering the root App component and setting up performance monitoring.
+ */
+
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
-
-/**
- * Main entry point for the React application
- * This file is responsible for rendering the root App component and setting up performance monitoring
- */
 
 // Find the root element in the DOM
 const container = document.getElementById('root');

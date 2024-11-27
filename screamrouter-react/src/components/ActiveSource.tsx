@@ -1,3 +1,9 @@
+/**
+ * This file contains the ActiveSource component, which displays and controls the primary audio source.
+ * It includes functionality for enabling/disabling the source, adjusting volume and timeshift,
+ * opening equalizer and VNC modals, and controlling playback (prev track, play, next track).
+ */
+
 import React, { useEffect } from 'react';
 import { Source, Route } from '../api/api';
 import { useAppContext } from '../context/AppContext';
@@ -8,11 +14,19 @@ import EnableButton from './controls/EnableButton';
 import ActionButton from './controls/ActionButton';
 import PlaybackControls from './controls/PlaybackControls';
 
+/**
+ * Interface defining the props for the ActiveSource component.
+ */
 interface ActiveSourceProps {
   isExpanded: boolean;
   onToggle: () => void;
 }
 
+/**
+ * React functional component that displays and controls the primary audio source.
+ * @param {ActiveSourceProps} props - Component properties including expansion state and toggle function.
+ * @returns {JSX.Element} Rendered ActiveSource component.
+ */
 const ActiveSource: React.FC<ActiveSourceProps> = ({ isExpanded, onToggle }) => {
   const {
     activeSource,
@@ -26,12 +40,23 @@ const ActiveSource: React.FC<ActiveSourceProps> = ({ isExpanded, onToggle }) => 
     openEqualizerModal
   } = useAppContext();
 
+  /**
+   * The currently active source object.
+   */
   const source = Array.isArray(sources) ? sources.find(s => s.name === activeSource) : undefined;
 
+  /**
+   * Effect hook that logs when the ActiveSource component re-renders.
+   */
   useEffect(() => {
     console.log('ActiveSource component re-rendered');
   });
 
+  /**
+   * Renders control elements for a given source item.
+   * @param {Source} item - The source object to render controls for.
+   * @returns {JSX.Element} Rendered control elements.
+   */
   const renderControls = (item: Source) => {
     return (
       <>
@@ -66,6 +91,11 @@ const ActiveSource: React.FC<ActiveSourceProps> = ({ isExpanded, onToggle }) => 
     );
   };
 
+  /**
+   * Renders links to routes associated with a given source.
+   * @param {Route[]} routes - Array of route objects.
+   * @returns {JSX.Element} Rendered route links or "None" if no routes are present.
+   */
   const renderRouteLinks = (routes: Route[]) => {
     if (routes.length === 0) return 'None';
     return routes.map((route, index) => (
@@ -76,6 +106,10 @@ const ActiveSource: React.FC<ActiveSourceProps> = ({ isExpanded, onToggle }) => 
     ));
   };
 
+  /**
+   * Main render method for the ActiveSource component.
+   * @returns {JSX.Element} Rendered ActiveSource component structure.
+   */
   return (
     <div className={`collapsible-section ${isExpanded ? 'expanded' : 'collapsed'}`}>
       <div className="section-header" onClick={onToggle}>
@@ -101,4 +135,7 @@ const ActiveSource: React.FC<ActiveSourceProps> = ({ isExpanded, onToggle }) => 
   );
 };
 
+/**
+ * Exports the ActiveSource component as the default export.
+ */
 export default ActiveSource;

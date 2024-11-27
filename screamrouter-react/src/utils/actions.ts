@@ -1,24 +1,141 @@
+/**
+ * React utility module for defining and creating actions used across the application.
+ * These actions handle various operations such as toggling enabled status, deleting items,
+ * updating volume and timeshift, managing starred items, editing items, showing modals,
+ * controlling sources, and navigating to specific items.
+ */
+
 import ApiService from '../api/api';
 import { Source, Sink, Route } from '../api/api';
 
 type ItemType = 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source';
 
+/**
+ * Interface defining the structure of actions available in the application.
+ */
 export interface Actions {
+  /**
+   * Toggles the enabled status of a source, sink, or route.
+   *
+   * @param {ItemType} type - The type of item ('sources', 'sinks', 'routes').
+   * @param {string} name - The name of the item to toggle.
+   */
   toggleEnabled: (type: ItemType, name: string) => Promise<void>;
+
+  /**
+   * Deletes a source, sink, or route.
+   *
+   * @param {ItemType} type - The type of item ('sources', 'sinks', 'routes').
+   * @param {string} name - The name of the item to delete.
+   */
   deleteItem: (type: ItemType, name: string) => Promise<void>;
+
+  /**
+   * Updates the volume of a source, sink, or route.
+   *
+   * @param {ItemType} type - The type of item ('sources', 'sinks', 'routes').
+   * @param {string} name - The name of the item to update.
+   * @param {number} volume - The new volume level.
+   */
   updateVolume: (type: ItemType, name: string, volume: number) => Promise<void>;
+
+  /**
+   * Updates the timeshift of a source, sink, or route.
+   *
+   * @param {ItemType} type - The type of item ('sources', 'sinks', 'routes').
+   * @param {string} name - The name of the item to update.
+   * @param {number} timeshift - The new timeshift value.
+   */
   updateTimeshift: (type: ItemType, name: string, timeshift: number) => Promise<void>;
+
+  /**
+   * Toggles an item as starred or unstarred.
+   *
+   * @param {ItemType} type - The type of item ('sources', 'sinks', 'routes').
+   * @param {string} name - The name of the item to toggle.
+   */
   toggleStar: (type: ItemType, name: string) => void;
+
+  /**
+   * Edits a source, sink, or route by opening an edit modal.
+   *
+   * @param {ItemType} type - The type of item ('sources', 'sinks', 'routes').
+   * @param {Source | Sink | Route} item - The item to edit.
+   */
   editItem: (type: ItemType, item: Source | Sink | Route) => void;
+
+  /**
+   * Shows or hides the equalizer modal for a source or sink.
+   *
+   * @param {boolean} show - Whether to show or hide the modal.
+   * @param {ItemType} type - The type of item ('sources', 'sinks').
+   * @param {Source | Sink | Route} item - The item associated with the equalizer.
+   */
   showEqualizer: (show: boolean, type: ItemType, item: Source | Sink | Route) => void;
+
+  /**
+   * Shows or hides the VNC modal for a source.
+   *
+   * @param {boolean} show - Whether to show or hide the modal.
+   * @param {Source} source - The source associated with the VNC.
+   */
   showVNC: (show: boolean, source: Source) => void;
+
+  /**
+   * Controls playback actions for a source.
+   *
+   * @param {string} sourceName - The name of the source to control.
+   * @param {'prevtrack' | 'play' | 'nexttrack'} action - The playback action ('prevtrack', 'play', 'nexttrack').
+   */
   controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => Promise<void>;
+
+  /**
+   * Toggles the active source.
+   *
+   * @param {string} name - The name of the source to toggle as active.
+   */
   toggleActiveSource: (name: string) => void;
+
+  /**
+   * Sets the sink to listen to.
+   *
+   * @param {Sink | null} sink - The sink to listen to, or null to stop listening.
+   */
   listenToSink: (sink: Sink | null) => void;
+
+  /**
+   * Sets the sink to visualize.
+   *
+   * @param {Sink | null} sink - The sink to visualize, or null to stop visualizing.
+   */
   visualizeSink: (sink: Sink | null) => void;
+
+  /**
+   * Navigates to a specific item by type and name.
+   *
+   * @param {ItemType} type - The type of item ('sources', 'sinks', 'routes').
+   * @param {string} name - The name of the item to navigate to.
+   */
   navigateToItem: (type: ItemType, name: string) => void;
 }
 
+/**
+ * Factory function for creating actions with specific callbacks and state setters.
+ *
+ * @param {() => Promise<void>} fetchData - Function to fetch data from the API.
+ * @param {(error: string | null) => void} setError - Function to set an error message.
+ * @param {(type: ItemType, setter: (prevItems: string[]) => string[]) => void} setStarredItems - Function to update starred items.
+ * @param {(show: boolean, type: ItemType, item: Source | Sink | Route) => void} setShowEqualizerModal - Function to show or hide the equalizer modal.
+ * @param {(item: Source | Sink | Route | null) => void} setSelectedItem - Function to set the selected item.
+ * @param {(type: ItemType | null) => void} setSelectedItemType - Function to set the type of the selected item.
+ * @param {(show: boolean, source: Source) => void} setShowVNCModal - Function to show or hide the VNC modal.
+ * @param {(setter: (prevActiveSource: string | null) => string | null) => void} setActiveSource - Function to set the active source.
+ * @param {(sink: Sink | null) => void} onListenToSink - Callback for listening to a sink.
+ * @param {(sink: Sink | null) => void} onVisualizeSink - Callback for visualizing a sink.
+ * @param {(show: boolean) => void} setShowEditModal - Function to show or hide the edit modal.
+ * @param {(type: ItemType, name: string) => void} onNavigateToItem - Callback for navigating to an item.
+ * @returns {Actions} An object containing all defined actions.
+ */
 export const createActions = (
   fetchData: () => Promise<void>,
   setError: (error: string | null) => void,
@@ -40,7 +157,7 @@ export const createActions = (
                  : await ApiService.getRoutes();
       const targetItem = item.data.find((i: Source | Sink | Route) => i.name === name);
       if (!targetItem) throw new Error(`${type} not found`);
-      
+
       const updateMethod = type === 'sources' ? ApiService.updateSource
                          : type === 'sinks' ? ApiService.updateSink
                          : ApiService.updateRoute;

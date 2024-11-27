@@ -1,3 +1,11 @@
+/**
+ * React component for the Desktop Menu.
+ * This component provides a user interface for navigating and managing sources, sinks, and routes.
+ * It includes buttons to switch between different views and lists of items with actions like starring,
+ * listening, visualizing, and opening in new windows.
+ *
+ * @param {React.FC} props - The properties for the component. No specific props are required.
+ */
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAppContext } from '../context/AppContext';
 import SourceList from './SourceList';
@@ -8,6 +16,9 @@ import { SortConfig } from '../utils/commonUtils';
 import { Source, Sink, Route } from '../api/api';
 import '../styles/DesktopMenu.css';
 
+/**
+ * Enum for different menu levels.
+ */
 enum MenuLevel {
   Main,
   NowListening,
@@ -19,9 +30,15 @@ enum MenuLevel {
   AllRoutes
 }
 
+/**
+ * Type definition for color modes.
+ */
 type ColorMode = 'light' | 'dark' | 'system';
 
 const DesktopMenu: React.FC = () => {
+  /**
+   * Context variables and functions provided by AppContext.
+   */
   const {
     sources,
     sinks,
@@ -34,22 +51,60 @@ const DesktopMenu: React.FC = () => {
     onToggleActiveSource,
   } = useAppContext();
 
+  /**
+   * State to keep track of the current menu level.
+   */
   const [currentMenu, setCurrentMenu] = useState<MenuLevel>(() => {
     const savedMenu = localStorage.getItem('currentMenu');
     return savedMenu ? parseInt(savedMenu, 10) : MenuLevel.Main;
   });
+
+  /**
+   * State to keep track of starred sources.
+   */
   const [starredSources, setStarredSources] = useState<string[]>([]);
+
+  /**
+   * State to keep track of starred sinks.
+   */
   const [starredSinks, setStarredSinks] = useState<string[]>([]);
+
+  /**
+   * State to keep track of starred routes.
+   */
   const [starredRoutes, setStarredRoutes] = useState<string[]>([]);
+
+  /**
+   * State to manage sorting configuration.
+   */
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: '', direction: 'asc' });
+
+  /**
+   * State to handle any error messages.
+   */
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * State to keep track of the color mode.
+   */
   const [colorMode] = useState<ColorMode>(() => {
     const savedMode = localStorage.getItem('colorMode');
     return (savedMode as ColorMode) || 'system';
   });
+
+  /**
+   * State to keep track of the currently selected item.
+   */
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
+
+  /**
+   * Ref for the content div to enable smooth scrolling and highlighting.
+   */
   const contentRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * Effect to load starred items from local storage.
+   */
   useEffect(() => {
     const starredSourcesData = JSON.parse(localStorage.getItem('starredSources') || '[]');
     const starredSinksData = JSON.parse(localStorage.getItem('starredSinks') || '[]');
@@ -59,10 +114,16 @@ const DesktopMenu: React.FC = () => {
     setStarredRoutes(starredRoutesData);
   }, []);
 
+  /**
+   * Effect to save the current menu level to local storage.
+   */
   useEffect(() => {
     localStorage.setItem('currentMenu', currentMenu.toString());
   }, [currentMenu]);
 
+  /**
+   * Effect to scroll to the selected item when it changes.
+   */
   useEffect(() => {
     if (selectedItem && contentRef.current) {
       const element = document.getElementById(`${currentMenu.toString().toLowerCase()}-${selectedItem}`);
@@ -72,6 +133,9 @@ const DesktopMenu: React.FC = () => {
     }
   }, [selectedItem, currentMenu]);
 
+  /**
+   * Function to apply the color mode.
+   */
   const applyColorMode = (mode: ColorMode) => {
     if (mode === 'system') {
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -81,6 +145,9 @@ const DesktopMenu: React.FC = () => {
     }
   };
 
+  /**
+   * Effect to apply the color mode and listen for changes in system preferences.
+   */
   useEffect(() => {
     applyColorMode(colorMode);
 
@@ -95,17 +162,26 @@ const DesktopMenu: React.FC = () => {
     return () => mediaQuery.removeListener(handleChange);
   }, [colorMode]);
 
+  /**
+   * Function to open a URL in a new window.
+   */
   const openInNewWindow = (url: string, width: number = 800, height: number = 600) => {
     const left = (window.screen.width - width) / 2;
     const top = (window.screen.height - height) / 2;
     window.open(url, '_blank', `width=${width},height=${height},left=${left},top=${top}`);
   };
 
+  /**
+   * Function to navigate to a specific item and menu level.
+   */
   const navigateToItem = (menuLevel: MenuLevel, itemName: string) => {
     setCurrentMenu(menuLevel);
     setSelectedItem(itemName);
   };
 
+  /**
+   * Memoized actions object to handle various operations on sources, sinks, and routes.
+   */
   const desktopMenuActions: Actions = useMemo(() => {
     const baseActions = createActions(
       () => {}, // No need to fetch data as it's handled by AppContext
@@ -153,10 +229,16 @@ const DesktopMenu: React.FC = () => {
     };
   }, [onListenToSink, onVisualizeSink, onToggleActiveSource]);
 
+  /**
+   * Function to open the full interface in a new window.
+   */
   const openFullInterface = () => {
     window.open('/', '_blank');
   };
 
+  /**
+   * Function to handle sorting of lists.
+   */
   const onSort = (key: string) => {
     setSortConfig(prevConfig => ({
       key,
@@ -164,6 +246,9 @@ const DesktopMenu: React.FC = () => {
     }));
   };
 
+  /**
+   * Function to render the content based on the current menu level.
+   */
   const renderContent = () => {
     let content;
     const primarySource = sources.find(source => source.name === contextActiveSource);
@@ -270,8 +355,14 @@ const DesktopMenu: React.FC = () => {
     return content;
   };
 
+  /**
+   * Boolean to determine if the current color mode is dark.
+   */
   const isDarkMode = colorMode === 'dark' || (colorMode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
+  /**
+   * Main render function for the DesktopMenu component.
+   */
   return (
     <div className={`desktop-menu ${isDarkMode ? 'dark-mode' : ''}`}>
       {error && <div className="error-message">{error}</div>}

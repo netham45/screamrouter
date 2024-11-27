@@ -1,5 +1,10 @@
-import axios from 'axios';
+/**
+ * This file contains the API service for interacting with the backend.
+ * It includes interfaces for Source, Sink, Route, and Equalizer objects,
+ * as well as functions to manage WebSocket connections and perform HTTP requests.
+ */
 
+import axios from 'axios';
 // Base URL for API requests
 const BASE_URL = "/";
 
@@ -170,9 +175,9 @@ const ApiService = {
   addRoute: (data: Route) => axios.post<Route>('/routes', data),
 
   // PUT requests for updating existing items
-  updateSource: (name: string, data: Partial<Source>) => axios.put<Source>(`/sources/${name}`, data),
-  updateSink: (name: string, data: Partial<Sink>) => axios.put<Sink>(`/sinks/${name}`, data),
-  updateRoute: (name: string, data: Partial<Route>) => axios.put<Route>(`/routes/${name}`, data),
+  updateSource: (name: string, data: Partial<Source>) => axios.put<Source>( `/sources/${name}`, data),
+  updateSink: (name: string, data: Partial<Sink>) => axios.put<Sink>( `/sinks/${name}`, data),
+  updateRoute: (name: string, data: Partial<Route>) => axios.put<Route>( `/routes/${name}`, data),
 
   // DELETE requests
   deleteSource: (name: string) => axios.delete(`/sources/${name}`),

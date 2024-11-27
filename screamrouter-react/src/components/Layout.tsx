@@ -1,3 +1,11 @@
+/**
+ * React component for the main layout of the application.
+ * This component provides a consistent structure and navigation across different pages.
+ * It includes a header with navigation links, a status section for active sources and now playing information,
+ * a main content area for nested routes, and a footer with copyright information.
+ *
+ * @param {React.FC} props - The properties for the component.
+ */
 import React, { useState, useEffect } from 'react';
 import { Link, Outlet } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
@@ -8,7 +16,28 @@ import Equalizer from './Equalizer';
 
 type ColorMode = 'light' | 'dark' | 'system';
 
+/**
+ * React functional component for the Layout.
+ *
+ * @returns {JSX.Element} The rendered JSX element.
+ */
 const Layout: React.FC = () => {
+  /**
+   * State to keep track of whether the status section is expanded or collapsed.
+   */
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  /**
+   * State to keep track of the current color mode (light, dark, or system default).
+   */
+  const [colorMode, setColorMode] = useState<ColorMode>(() => {
+    const savedMode = localStorage.getItem('colorMode');
+    return (savedMode as ColorMode) || 'system';
+  });
+
+  /**
+   * Context values from AppContext.
+   */
   const { 
     activeSource, 
     listeningToSink,
@@ -20,16 +49,17 @@ const Layout: React.FC = () => {
     fetchSinks,
     fetchRoutes
   } = useAppContext();
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [colorMode, setColorMode] = useState<ColorMode>(() => {
-    const savedMode = localStorage.getItem('colorMode');
-    return (savedMode as ColorMode) || 'system';
-  });
 
+  /**
+   * Toggles the expanded state of the status section.
+   */
   const toggleExpanded = () => {
     setIsExpanded(!isExpanded);
   };
 
+  /**
+   * Cycles through color modes (light, dark, system default).
+   */
   const toggleColorMode = () => {
     const modes: ColorMode[] = ['light', 'dark', 'system'];
     const currentIndex = modes.indexOf(colorMode);
@@ -38,6 +68,11 @@ const Layout: React.FC = () => {
     localStorage.setItem('colorMode', newMode);
   };
 
+  /**
+   * Applies the color mode to the document body.
+   *
+   * @param {ColorMode} mode - The color mode to apply.
+   */
   const applyColorMode = (mode: ColorMode) => {
     if (mode === 'system') {
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -47,6 +82,9 @@ const Layout: React.FC = () => {
     }
   };
 
+  /**
+   * Effect to apply the color mode when it changes and listens for system color scheme changes.
+   */
   useEffect(() => {
     applyColorMode(colorMode);
 
@@ -61,6 +99,11 @@ const Layout: React.FC = () => {
     return () => mediaQuery.removeListener(handleChange);
   }, [colorMode]);
 
+  /**
+   * Returns the text representation of the current color mode.
+   *
+   * @returns {string} The color mode text.
+   */
   const getCurrentColorModeText = () => {
     switch (colorMode) {
       case 'light':
@@ -72,14 +115,27 @@ const Layout: React.FC = () => {
     }
   };
 
+  /**
+   * Determines if the current color mode is dark.
+   *
+   * @returns {boolean} True if dark mode, false otherwise.
+   */
   const isDarkMode = colorMode === 'dark' || (colorMode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
+  /**
+   * Fetches data for sources, sinks, and routes when the equalizer modal is closed.
+   */
   const handleDataChange = async () => {
     await fetchSources();
     await fetchSinks();
     await fetchRoutes();
   };
 
+  /**
+   * Renders the Layout component.
+   *
+   * @returns {JSX.Element} The rendered JSX element.
+   */
   return (
     <div className={`layout ${isDarkMode ? 'dark-mode' : ''}`}>
       <header className="layout-header">

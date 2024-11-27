@@ -1,3 +1,11 @@
+/**
+ * React component for displaying a single route item in the routes list.
+ * This component includes controls for enabling/disabling, starring, editing, deleting,
+ * and adjusting volume and timeshift of the route. It also supports drag-and-drop functionality
+ * for reordering routes.
+ *
+ * @param {React.FC} props - The properties for the component.
+ */
 import React from 'react';
 import { Route } from '../api/api';
 import { Actions } from '../utils/actions';
@@ -8,6 +16,9 @@ import ActionButton from './controls/ActionButton';
 import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
 
+/**
+ * Interface for the properties of RouteItem component.
+ */
 interface RouteItemProps {
   route: Route;
   index: number;
@@ -22,6 +33,12 @@ interface RouteItemProps {
   isSelected?: boolean;
 }
 
+/**
+ * React functional component for rendering a single route item.
+ *
+ * @param {RouteItemProps} props - The properties for the component.
+ * @returns {JSX.Element} The rendered JSX element.
+ */
 const RouteItem: React.FC<RouteItemProps> = ({
   route,
   index,
@@ -35,6 +52,11 @@ const RouteItem: React.FC<RouteItemProps> = ({
   isDesktopMenu = false,
   isSelected = false,
 }) => {
+  /**
+   * Renders the RouteItem component.
+   *
+   * @returns {JSX.Element} The rendered JSX element.
+   */
   return (
     <tr
       onDragEnter={(e) => onDragEnter(e, index)}

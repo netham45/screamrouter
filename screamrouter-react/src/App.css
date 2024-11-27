@@ -1,93 +1,93 @@
 /* Global styles */
 body {
-  font-family: 'Roboto', sans-serif;
-  line-height: 1.6;
-  color: #333;
-  background-color: #f4f4f4;
-  margin: 0;
-  padding: 0;
+  font-family: 'Roboto', sans-serif; /* Sets the default font for the entire application */
+  line-height: 1.6; /* Sets the line height for better readability */
+  color: #333; /* Sets the default text color */
+  background-color: #f4f4f4; /* Sets the background color of the body */
+  margin: 0; /* Removes default margin from the body */
+  padding: 0; /* Removes default padding from the body */
 }
 
 /* Utility classes */
 .container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 15px;
+  max-width: 1200px; /* Limits the maximum width of the container */
+  margin: 0 auto; /* Centers the container horizontally */
+  padding: 0 15px; /* Adds horizontal padding to the container */
 }
 
 /* Buttons */
 .btn {
-  display: inline-block;
-  background: #3498db;
-  color: #fff;
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 1rem;
-  transition: background-color 0.3s ease;
+  display: inline-block; /* Makes the button an inline block element */
+  background: #3498db; /* Sets the default background color of the button */
+  color: #fff; /* Sets the text color of the button */
+  padding: 0.5rem 1rem; /* Adds padding inside the button */
+  border: none; /* Removes the default border from the button */
+  border-radius: 4px; /* Rounds the corners of the button */
+  cursor: pointer; /* Changes the cursor to a pointer when hovering over the button */
+  font-size: 1rem; /* Sets the font size of the text inside the button */
+  transition: background-color 0.3s ease; /* Adds a smooth transition effect for background color changes */
 }
 
 .btn:hover {
-  background: #2980b9;
+  background: #2980b9; /* Changes the background color when hovering over the button */
 }
 
 .btn-danger {
-  background: #e74c3c;
+  background: #e74c3c; /* Sets a different background color for danger buttons */
 }
 
 .btn-danger:hover {
-  background: #c0392b;
+  background: #c0392b; /* Changes the background color of danger buttons on hover */
 }
 
 /* Form elements */
 input[type="text"],
 input[type="number"],
 select {
-  width: 100%;
-  padding: 0.5rem;
-  margin-bottom: 1rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  width: 100%; /* Makes form inputs and selects take up full width */
+  padding: 0.5rem; /* Adds padding inside form inputs and selects */
+  margin-bottom: 1rem; /* Adds space below form inputs and selects */
+  border: 1px solid #ddd; /* Adds a light gray border around form inputs and selects */
+  border-radius: 4px; /* Rounds the corners of form inputs and selects */
 }
 
 /* Tables */
 table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 1rem;
+  width: 100%; /* Makes tables take up full width */
+  border-collapse: collapse; /* Collapses table borders into a single border */
+  margin-bottom: 1rem; /* Adds space below tables */
 }
 
 th, td {
-  text-align: left;
-  padding: 0.75rem;
-  border-bottom: 1px solid #ddd;
+  text-align: left; /* Aligns table header and data cells to the left */
+  padding: 0.75rem; /* Adds padding inside table header and data cells */
+  border-bottom: 1px solid #ddd; /* Adds a light gray bottom border to table rows */
 }
 
 th {
-  background-color: #f2f2f2;
-  font-weight: bold;
+  background-color: #f2f2f2; /* Sets the background color of table headers */
+  font-weight: bold; /* Makes table headers bold */
 }
 
 /* Modal styles */
 .modal-backdrop {
-  position: fixed;
+  position: fixed; /* Positions the modal backdrop as a fixed element */
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.5);
-  display: flex;
+  background-color: rgba(0, 0, 0, 0.5); /* Sets a semi-transparent black background for the modal backdrop */
+  display: flex; /* Uses flexbox to center the modal content */
   justify-content: center;
   align-items: center;
-  z-index: 1000;
+  z-index: 1000; /* Ensures the modal is above other elements */
 }
 
 .modal-content {
-  background-color: #fff;
-  padding: 2rem;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  background-color: #fff; /* Sets a white background for the modal content */
+  padding: 2rem; /* Adds padding inside the modal content */
+  border-radius: 8px; /* Rounds the corners of the modal content */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); /* Adds a subtle shadow to the modal content */
   width: auto;
   max-width: 100%;
 }
@@ -95,192 +95,192 @@ th {
 /* Responsive design */
 @media (max-width: 768px) {
   .container {
-    padding: 0 10px;
+    padding: 0 10px; /* Reduces horizontal padding on smaller screens */
   }
 
   table {
-    font-size: 0.9rem;
+    font-size: 0.9rem; /* Reduces the font size of tables on smaller screens */
   }
 
   th, td {
-    padding: 0.5rem;
+    padding: 0.5rem; /* Reduces padding inside table cells on smaller screens */
   }
 }
 
 /* Animations */
 @keyframes fadeIn {
   from {
-    opacity: 0;
+    opacity: 0; /* Starts with full transparency */
   }
   to {
-    opacity: 1;
+    opacity: 1; /* Ends with full opacity */
   }
 }
 
 .fade-in {
-  animation: fadeIn 0.3s ease-in;
+  animation: fadeIn 0.3s ease-in; /* Applies the fade in animation */
 }
 
 /* Error message */
 .error-message {
-  background-color: #f8d7da;
-  color: #721c24;
-  padding: 0.75rem;
-  margin-bottom: 1rem;
-  border: 1px solid #f5c6cb;
-  border-radius: 4px;
+  background-color: #f8d7da; /* Sets a light red background for error messages */
+  color: #721c24; /* Sets the text color of error messages */
+  padding: 0.75rem; /* Adds padding inside error messages */
+  margin-bottom: 1rem; /* Adds space below error messages */
+  border: 1px solid #f5c6cb; /* Adds a red border around error messages */
+  border-radius: 4px; /* Rounds the corners of error messages */
 }
 
 /* Success message */
 .success-message {
-  background-color: #d4edda;
-  color: #155724;
-  padding: 0.75rem;
-  margin-bottom: 1rem;
-  border: 1px solid #c3e6cb;
-  border-radius: 4px;
+  background-color: #d4edda; /* Sets a light green background for success messages */
+  color: #155724; /* Sets the text color of success messages */
+  padding: 0.75rem; /* Adds padding inside success messages */
+  margin-bottom: 1rem; /* Adds space below success messages */
+  border: 1px solid #c3e6cb; /* Adds a green border around success messages */
+  border-radius: 4px; /* Rounds the corners of success messages */
 }
 
 /* Volume slider */
 input[type="range"] {
   -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 8px;
-  border-radius: 5px;
-  background: #d3d3d3;
-  outline: none;
-  opacity: 0.7;
-  transition: opacity .2s;
+  appearance: none; /* Removes default styling from range inputs */
+  width: 100%; /* Makes range inputs take up full width */
+  height: 8px; /* Sets the height of range inputs */
+  border-radius: 5px; /* Rounds the corners of range inputs */
+  background: #d3d3d3; /* Sets a light gray background for range inputs */
+  outline: none; /* Removes default focus outline from range inputs */
+  opacity: 0.7; /* Sets the initial opacity of range inputs */
+  transition: opacity .2s; /* Adds a smooth transition effect for opacity changes */
 }
 
 input[type="range"]:hover {
-  opacity: 1;
+  opacity: 1; /* Increases opacity on hover */
 }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  appearance: none;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #3498db;
-  cursor: pointer;
+  appearance: none; /* Removes default styling from the slider thumb */
+  width: 20px; /* Sets the width of the slider thumb */
+  height: 20px; /* Sets the height of the slider thumb */
+  border-radius: 50%; /* Makes the slider thumb circular */
+  background: #3498db; /* Sets a blue background for the slider thumb */
+  cursor: pointer; /* Changes the cursor to a pointer when hovering over the slider thumb */
 }
 
 input[type="range"]::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #3498db;
-  cursor: pointer;
+  width: 20px; /* Sets the width of the slider thumb in Firefox */
+  height: 20px; /* Sets the height of the slider thumb in Firefox */
+  border-radius: 50%; /* Makes the slider thumb circular in Firefox */
+  background: #3498db; /* Sets a blue background for the slider thumb in Firefox */
+  cursor: pointer; /* Changes the cursor to a pointer when hovering over the slider thumb in Firefox */
 }
 
 /* Visualizer styles */
 .visualizer-container {
-  margin-top: 20px;
-  padding: 20px;
-  background-color: #f0f0f0;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-top: 20px; /* Adds space above the visualizer container */
+  padding: 20px; /* Adds padding inside the visualizer container */
+  background-color: #f0f0f0; /* Sets a light gray background for the visualizer container */
+  border-radius: 8px; /* Rounds the corners of the visualizer container */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Adds a subtle shadow to the visualizer container */
 }
 
 .visualizer-container h3 {
-  margin-bottom: 10px;
-  color: #333;
+  margin-bottom: 10px; /* Adds space below the heading inside the visualizer container */
+  color: #333; /* Sets the text color of headings inside the visualizer container */
 }
 
 .visualizer-container canvas {
-  width: 100%;
-  height: auto;
-  border-radius: 4px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  width: 100%; /* Makes the canvas take up full width */
+  height: auto; /* Maintains aspect ratio for the canvas */
+  border-radius: 4px; /* Rounds the corners of the canvas */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Adds a subtle shadow to the canvas */
 }
 
 /* Button styles */
 button {
-  padding: 8px 16px;
-  margin: 4px;
-  border: none;
-  border-radius: 4px;
-  background-color: #3498db;
-  color: white;
-  cursor: pointer;
-  transition: background-color 0.3s ease;
+  padding: 8px 16px; /* Adds padding inside buttons */
+  margin: 4px; /* Adds space around buttons */
+  border: none; /* Removes default borders from buttons */
+  border-radius: 4px; /* Rounds the corners of buttons */
+  background-color: #3498db; /* Sets a blue background for buttons */
+  color: white; /* Sets the text color of buttons */
+  cursor: pointer; /* Changes the cursor to a pointer when hovering over buttons */
+  transition: background-color 0.3s ease; /* Adds a smooth transition effect for background color changes */
 }
 
 button:hover {
-  background-color: #2980b9;
+  background-color: #2980b9; /* Changes the background color on hover */
 }
 
 button.delete-button {
-  background-color: #e74c3c;
+  background-color: #e74c3c; /* Sets a red background for delete buttons */
 }
 
 button.delete-button:hover {
-  background-color: #c0392b;
+  background-color: #c0392b; /* Changes the background color of delete buttons on hover */
 }
 
 button.listening {
-  background-color: #2ecc71;
+  background-color: #2ecc71; /* Sets a green background for listening buttons */
 }
 
 button.listening:hover {
-  background-color: #27ae60;
+  background-color: #27ae60; /* Changes the background color of listening buttons on hover */
 }
 
 /* Music-related design elements */
 .music-icon::before {
-  content: '♪';
-  margin-right: 5px;
+  content: '♪'; /* Adds a music note icon before elements with this class */
+  margin-right: 5px; /* Adds space to the right of the music note icon */
 }
 
 /* Subtle green accents */
 .dashboard-item {
-  border-left: 4px solid #2ecc71;
+  border-left: 4px solid #2ecc71; /* Adds a left border with a subtle green accent */
 }
 
 .favorite-section h3,
 .active-source-section h3 {
-  color: #27ae60;
+  color: #27ae60; /* Sets the text color of headings in favorite and active source sections */
 }
 
 /* Improved flow and feel */
 .dashboard-content {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 20px;
+  display: flex; /* Uses flexbox to arrange dashboard content */
+  flex-wrap: wrap; /* Allows items to wrap onto multiple lines if necessary */
+  gap: 20px; /* Adds space between items in the dashboard content */
 }
 
 .sources-column,
 .sinks-column {
-  flex: 1;
-  min-width: 300px;
+  flex: 1; /* Makes columns take up equal space */
+  min-width: 300px; /* Sets a minimum width for columns */
 }
 
 /* Waveform background */
 .waveform-background {
-  position: relative;
+  position: relative; /* Positions the waveform background relatively */
 }
 
 .waveform-background::before {
-  content: '';
-  position: absolute;
+  content: ''; /* Creates an empty pseudo-element */
+  position: absolute; /* Positions the pseudo-element absolutely within the waveform background */
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><path d="M0 50 Q 25 30, 50 50 T 100 50" fill="none" stroke="%232ecc71" stroke-width="2" opacity="0.1"/></svg>');
-  background-repeat: repeat-x;
-  background-size: 100px 50px;
-  opacity: 0.1;
-  z-index: -1;
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><path d="M0 50 Q 25 30, 50 50 T 100 50" fill="none" stroke="%232ecc71" stroke-width="2" opacity="0.1"/></svg>'); /* Sets a waveform pattern as the background image */
+  background-repeat: repeat-x; /* Repeats the background image horizontally */
+  background-size: 100px 50px; /* Sets the size of the background image */
+  opacity: 0.1; /* Sets the initial opacity of the background image */
+  z-index: -1; /* Ensures the background image is behind other content */
 }
 
 /* Table hover effect */
 tr:hover {
-  background-color: #f5f5f5;
-  transition: background-color 0.3s ease;
+  background-color: #f5f5f5; /* Changes the background color on hover */
+  transition: background-color 0.3s ease; /* Adds a smooth transition effect for background color changes */
 }
 
 /* Favorite sources background color (light mode) */
@@ -290,40 +290,40 @@ tr:hover {
 .active-sources,
 .active-sinks,
 .active-routes {
-  background-color: #e8f4fd;
-  border: 1px solid #bde0fe;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1rem;
+  background-color: #e8f4fd; /* Sets a light blue background for favorite and active sections */
+  border: 1px solid #bde0fe; /* Adds a blue border around favorite and active sections */
+  border-radius: 8px; /* Rounds the corners of favorite and active sections */
+  padding: 1rem; /* Adds padding inside favorite and active sections */
+  margin-bottom: 1rem; /* Adds space below favorite and active sections */
 }
 
 /* Now playing/active sink section (light mode) */
 .status-section {
-  background-color: #d4edda;
-  border: 1px solid #c3e6cb;
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1rem;
+  background-color: #d4edda; /* Sets a light green background for the status section */
+  border: 1px solid #c3e6cb; /* Adds a green border around the status section */
+  border-radius: 8px; /* Rounds the corners of the status section */
+  padding: 1rem; /* Adds padding inside the status section */
+  margin-bottom: 1rem; /* Adds space below the status section */
 }
 
 .collapsible-section {
-  background-color: #fff;
-  border: 1px solid #d1d1d1;
-  border-radius: 8px;
-  margin-bottom: 1rem;
+  background-color: #fff; /* Sets a white background for collapsible sections */
+  border: 1px solid #d1d1d1; /* Adds a light gray border around collapsible sections */
+  border-radius: 8px; /* Rounds the corners of collapsible sections */
+  margin-bottom: 1rem; /* Adds space below collapsible sections */
 }
 
 .section-header {
-  background-color: #f8f9fa;
-  padding: 0.5rem 1rem;
-  border-bottom: 1px solid #d1d1d1;
-  border-radius: 8px 8px 0 0;
+  background-color: #f8f9fa; /* Sets a light gray background for section headers */
+  padding: 0.5rem 1rem; /* Adds padding inside section headers */
+  border-bottom: 1px solid #d1d1d1; /* Adds a light gray bottom border to section headers */
+  border-radius: 8px 8px 0 0; /* Rounds the top corners of section headers */
 }
 
 .section-content {
-  padding: 1rem;
+  padding: 1rem; /* Adds padding inside section content */
 }
 
 iframe {
-  border: 0px;
+  border: 0px; /* Removes default borders from iframes */
 }

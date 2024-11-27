@@ -1,3 +1,11 @@
+/**
+ * React component for the Dashboard.
+ * This component serves as the main interface for managing sources, sinks, and routes.
+ * It includes collapsible sections for favorite and active items, navigation buttons,
+ * and modals for editing and equalizing items.
+ *
+ * @param {React.FC} props - The properties for the component. No specific props are required.
+ */
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Source, Sink, Route } from '../api/api';
 import Equalizer from './Equalizer';
@@ -13,9 +21,15 @@ import '../styles/Dashboard.css';
 import { CollapsibleSection } from './CollapsibleSection';
 import { createActions, Actions } from '../utils/actions';
 
+/**
+ * Type definition for the selected item type.
+ */
 type SelectedItemType = Source | Sink | Route | null;
 
 const Dashboard: React.FC = () => {
+    /**
+     * Context variables and functions provided by AppContext.
+     */
     const { 
       listeningToSink, 
       visualizingSink, 
@@ -30,16 +44,54 @@ const Dashboard: React.FC = () => {
       navigateToItem
     } = useAppContext();
 
+    /**
+     * State to keep track of starred sources.
+     */
     const [starredSources, setStarredSources] = useState<string[]>([]);
+
+    /**
+     * State to keep track of starred sinks.
+     */
     const [starredSinks, setStarredSinks] = useState<string[]>([]);
+
+    /**
+     * State to keep track of starred routes.
+     */
     const [starredRoutes, setStarredRoutes] = useState<string[]>([]);
+
+    /**
+     * State to handle any error messages.
+     */
     const [error, setError] = useState<string | null>(null);
+
+    /**
+     * State to control the visibility of the equalizer modal.
+     */
     const [showEqualizerModal, setShowEqualizerModal] = useState(false);
+
+    /**
+     * State to control the visibility of the edit modal.
+     */
     const [showEditModal, setShowEditModal] = useState(false);
+
+    /**
+     * State to keep track of the currently selected item.
+     */
     const [selectedItem, setSelectedItem] = useState<SelectedItemType>(null);
+
+    /**
+     * State to keep track of the type of the currently selected item.
+     */
     const [selectedItemType, setSelectedItemType] = useState<'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null>(null);
+
+    /**
+     * State to manage sorting configuration.
+     */
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: '', direction: 'asc' });
 
+    /**
+     * Refs for section elements to enable smooth scrolling and highlighting.
+     */
     const sectionRefs = {
         favoriteSources: useRef<HTMLDivElement>(null),
         favoriteSinks: useRef<HTMLDivElement>(null),
@@ -49,6 +101,9 @@ const Dashboard: React.FC = () => {
         activeRoutes: useRef<HTMLDivElement>(null),
     };
 
+    /**
+     * State to manage the expanded/collapsed state of sections.
+     */
     const [expandedSections, setExpandedSections] = useState(() => {
       const savedState = localStorage.getItem('dashboardExpandedSections');
       return savedState ? JSON.parse(savedState) : {
@@ -61,6 +116,9 @@ const Dashboard: React.FC = () => {
       };
     });
 
+    /**
+     * Effect to load starred items from local storage.
+     */
     useEffect(() => {
       const starredSourcesData = JSON.parse(localStorage.getItem('starredSources') || '[]');
       const starredSinksData = JSON.parse(localStorage.getItem('starredSinks') || '[]');
@@ -70,6 +128,9 @@ const Dashboard: React.FC = () => {
       setStarredRoutes(starredRoutesData);
     }, []);
 
+    /**
+     * Memoized actions object to handle various operations on sources, sinks, and routes.
+     */
     const actions: Actions = useMemo(() => createActions(
       async () => Promise.resolve(), // No need to fetch data as it's handled by AppContext
       setError,
@@ -81,14 +142,17 @@ const Dashboard: React.FC = () => {
       setShowEqualizerModal,
       setSelectedItem,
       setSelectedItemType,
-      (_show, source) => openVNCModal(source), // Fixed: Pass source directly to openVNCModal
-      onToggleActiveSource,
-      onListenToSink,
-      onVisualizeSink,
-      setShowEditModal,
-      navigateToItem
+      openVNCModal, // Pass the function directly
+      onToggleActiveSource, // Pass the function directly
+      onListenToSink, // Pass the function directly
+      onVisualizeSink, // Pass the function directly
+      setShowEditModal, // Pass the function directly
+      navigateToItem // Pass the function directly
     ), [onListenToSink, onVisualizeSink, onToggleActiveSource, openVNCModal, navigateToItem]);
 
+    /**
+     * Function to toggle the expanded/collapsed state of a section.
+     */
     const toggleSection = (section: keyof typeof expandedSections) => {
       setExpandedSections((prev: typeof expandedSections) => {
         const newState = { ...prev, [section]: !prev[section] };
@@ -97,6 +161,9 @@ const Dashboard: React.FC = () => {
       });
     };
 
+    /**
+     * Function to handle sorting of lists.
+     */
     const onSort = (key: string) => {
       setSortConfig(prevConfig => ({
         key,
@@ -104,6 +171,9 @@ const Dashboard: React.FC = () => {
       }));
     };
 
+    /**
+     * Function to scroll to a specific section.
+     */
     const scrollToSection = (sectionKey: keyof typeof sectionRefs) => {
       const sectionRef = sectionRefs[sectionKey];
       if (sectionRef.current) {
@@ -115,6 +185,9 @@ const Dashboard: React.FC = () => {
       }
     };
 
+    /**
+     * Function to render the navigation bar.
+     */
     const renderNavigationBar = () => (
       <nav className="dashboard-nav">
         <ActionButton onClick={() => scrollToSection('favoriteSources')}>Favorite Sources</ActionButton>
@@ -126,6 +199,9 @@ const Dashboard: React.FC = () => {
       </nav>
     );
 
+    /**
+     * Function to render the edit modal.
+     */
     const renderEditModal = () => {
       if (!showEditModal || !selectedItem || !selectedItemType) return null;
 
@@ -147,6 +223,9 @@ const Dashboard: React.FC = () => {
       }
     };
 
+    /**
+     * Main render function for the Dashboard component.
+     */
     return (
       <div className="dashboard">
         <h2>Dashboard</h2>

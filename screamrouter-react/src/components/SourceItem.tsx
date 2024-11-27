@@ -1,3 +1,8 @@
+/**
+ * React component for displaying a single source item in a list of sources.
+ * It includes functionalities such as starring, enabling/disabling, adjusting volume and timeshift,
+ * and performing actions like showing equalizer or VNC controls.
+ */
 import React, { useState } from 'react';
 import { Source, Route } from '../api/api';
 import { Actions } from '../utils/actions';
@@ -10,25 +15,92 @@ import TimeshiftSlider from './controls/TimeshiftSlider';
 import PlaybackControls from './controls/PlaybackControls';
 import ItemRoutes from './controls/ItemRoutes';
 
+/**
+ * Interface defining the props for the SourceItem component.
+ */
 interface SourceItemProps {
+  /**
+   * The source object containing details about the source.
+   */
   source: Source;
+  /**
+   * The index of the source in the list.
+   */
   index: number;
+  /**
+   * Boolean indicating if the source is starred.
+   */
   isStarred: boolean;
+  /**
+   * Boolean indicating if the source is active.
+   */
   isActive: boolean;
+  /**
+   * Actions object containing functions to manage sources.
+   */
   actions: Actions;
+  /**
+   * React ref object to store references to source table rows.
+   */
   sourceRefs: React.MutableRefObject<{[key: string]: HTMLTableRowElement}>;
+  /**
+   * Function to handle drag enter event on the source row.
+   *
+   * @param {React.DragEvent<HTMLTableRowElement>} e - The drag event.
+   * @param {number} index - The index of the source in the list.
+   */
   onDragEnter: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
+  /**
+   * Function to handle drag leave event on the source row.
+   *
+   * @param {React.DragEvent<HTMLTableRowElement>} e - The drag event.
+   */
   onDragLeave: (e: React.DragEvent<HTMLTableRowElement>) => void;
+  /**
+   * Function to handle drag over event on the source row.
+   *
+   * @param {React.DragEvent<HTMLTableRowElement>} e - The drag event.
+   */
   onDragOver: (e: React.DragEvent<HTMLTableRowElement>) => void;
+  /**
+   * Function to handle drop event on the source row.
+   *
+   * @param {React.DragEvent<HTMLTableRowElement>} e - The drag event.
+   * @param {number} index - The index of the source in the list.
+   */
   onDrop: (e: React.DragEvent<HTMLTableRowElement>, index: number) => void;
+  /**
+   * Array of active routes associated with the source.
+   */
   activeRoutes: Route[];
+  /**
+   * Array of disabled routes associated with the source.
+   */
   disabledRoutes: Route[];
+  /**
+   * Boolean indicating if specific buttons should be hidden.
+   */
   hideSpecificButtons?: boolean;
+  /**
+   * Boolean indicating if extra columns should be hidden.
+   */
   hideExtraColumns?: boolean;
+  /**
+   * Boolean indicating if the component is being used in the desktop menu.
+   */
   isDesktopMenu?: boolean;
+  /**
+   * Boolean indicating if the source row is selected.
+   */
   isSelected?: boolean;
 }
 
+/**
+ * React functional component for rendering a single source item.
+ *
+ * @param {SourceItemProps} props - The props passed to the SourceItem component.
+ * @returns {JSX.Element} The rendered JSX element.
+ */
 const SourceItem: React.FC<SourceItemProps> = ({
   source,
   index,
@@ -47,8 +119,14 @@ const SourceItem: React.FC<SourceItemProps> = ({
   isDesktopMenu = false,
   isSelected = false
 }) => {
+  /**
+   * State variable to manage the expanded state of routes.
+   */
   const [isExpanded, setIsExpanded] = useState(false);
 
+  /**
+   * Function to toggle the expansion of routes.
+   */
   const toggleExpandRoutes = () => {
     setIsExpanded(!isExpanded);
   };

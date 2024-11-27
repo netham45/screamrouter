@@ -1,3 +1,14 @@
+/**
+ * React component for adding or editing a sink.
+ * This component provides a form to input details about a sink, including its name, IP address,
+ * port, bit depth, sample rate, channels, channel layout, volume, delay, time sync settings, and more.
+ * It allows the user to either add a new sink or update an existing one.
+ *
+ * @param {AddEditSinkProps} props - The properties for the component.
+ * @param {Sink | undefined} props.sink - Optional. If provided, this is the sink being edited.
+ * @param {() => void} props.onClose - Callback function to close the modal.
+ * @param {() => void} props.onSave - Callback function to save changes and close the modal.
+ */
 import React, { useState } from 'react';
 import ApiService, { Sink } from '../api/api';
 import ActionButton from './controls/ActionButton';
@@ -24,6 +35,10 @@ const AddEditSink: React.FC<AddEditSinkProps> = ({ sink, onClose, onSave }) => {
   const [timeSyncDelay, setTimeSyncDelay] = useState(sink?.time_sync_delay?.toString() || '0');
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Handles form submission to add or update a sink.
+   * Validates input and sends the data to the API service.
+   */
   const handleSubmit = async () => {
     const sinkData: Partial<Sink> = {
       name,

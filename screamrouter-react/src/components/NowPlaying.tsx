@@ -1,3 +1,12 @@
+/**
+ * React component for displaying the currently playing audio sink and its controls.
+ * This component shows detailed information about the sink being listened to, including routes from sources,
+ * volume control, timeshift control, equalizer settings, and options to stop listening or visualize the stream.
+ *
+ * @param {React.FC} props - The properties for the component.
+ * @param {boolean} props.isExpanded - Indicates whether the section is expanded or collapsed.
+ * @param {() => void} props.onToggle - Function to toggle the expanded state of the section.
+ */
 import React from 'react';
 import { Sink, Route } from '../api/api';
 import { useAppContext } from '../context/AppContext';
@@ -12,7 +21,16 @@ interface NowPlayingProps {
   onToggle: () => void;
 }
 
+/**
+ * React functional component for the NowPlaying section.
+ *
+ * @param {NowPlayingProps} props - The properties for the component.
+ * @returns {JSX.Element} The rendered JSX element.
+ */
 const NowPlaying: React.FC<NowPlayingProps> = ({ isExpanded, onToggle }) => {
+  /**
+   * Context values from AppContext.
+   */
   const {
     listeningToSink,
     sinks,
@@ -28,8 +46,18 @@ const NowPlaying: React.FC<NowPlayingProps> = ({ isExpanded, onToggle }) => {
     visualizingSink,
   } = useAppContext();
 
+  /**
+   * The sink that is currently being listened to.
+   */
   const sink = listeningToSink ? sinks.find(s => s.name === listeningToSink.name) : null;
 
+  /**
+   * Renders the controls for a given sink, including enable button, volume slider, timeshift slider,
+   * equalizer button, stop listening button, and visualize button.
+   *
+   * @param {Sink} item - The sink item to render controls for.
+   * @returns {JSX.Element} The rendered JSX element containing the controls.
+   */
   const renderControls = (item: Sink) => {
     return (
       <>
@@ -68,6 +96,12 @@ const NowPlaying: React.FC<NowPlayingProps> = ({ isExpanded, onToggle }) => {
     );
   };
 
+  /**
+   * Renders links to the sources that have routes to the given sink.
+   *
+   * @param {Route[]} routes - The list of routes for the sink.
+   * @returns {JSX.Element} The rendered JSX element containing the route links.
+   */
   const renderRouteLinks = (routes: Route[]) => {
     if (routes.length === 0) return 'None';
     return routes.map((route, index) => (
@@ -78,6 +112,11 @@ const NowPlaying: React.FC<NowPlayingProps> = ({ isExpanded, onToggle }) => {
     ));
   };
 
+  /**
+   * Renders the NowPlaying component.
+   *
+   * @returns {JSX.Element} The rendered JSX element.
+   */
   return (
     <div className={`collapsible-section ${isExpanded ? 'expanded' : 'collapsed'}`}>
       <div className="section-header" onClick={onToggle}>

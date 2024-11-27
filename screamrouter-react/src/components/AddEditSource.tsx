@@ -1,3 +1,13 @@
+/**
+ * React component for adding or editing a source.
+ * This component provides a form to input details about a source, including its name, IP address,
+ * VNC IP and port, volume, and delay. It allows the user to either add a new source or update an existing one.
+ *
+ * @param {AddEditSourceProps} props - The properties for the component.
+ * @param {Source | undefined} props.source - Optional. If provided, this is the source being edited.
+ * @param {() => void} props.onClose - Callback function to close the modal.
+ * @param {() => void} props.onSave - Callback function to save changes and close the modal.
+ */
 import React, { useState } from 'react';
 import ApiService, { Source } from '../api/api';
 import ActionButton from './controls/ActionButton';
@@ -19,6 +29,10 @@ const AddEditSource: React.FC<AddEditSourceProps> = ({ source, onClose, onSave }
   const [delay, setDelay] = useState(source?.delay || 0);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Handles form submission to add or update a source.
+   * Validates input and sends the data to the API service.
+   */
   const handleSubmit = async () => {
     const sourceData: Partial<Source> = {
       name,

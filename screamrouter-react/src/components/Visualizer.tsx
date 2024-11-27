@@ -1,17 +1,40 @@
+/**
+ * React component for visualizing audio streams.
+ * It handles starting and stopping the visualization, resizing the canvas,
+ * and managing the visualizer's lifecycle.
+ */
 import React, { useEffect, useState } from 'react';
 import ApiService from '../api/api';
 
+/**
+ * Interface defining the props for the Visualizer component.
+ */
 interface VisualizerProps {
   ip: string;
 }
 
+/**
+ * React functional component for rendering the audio stream visualizer.
+ *
+ * @param {VisualizerProps} props - The props passed to the component.
+ * @returns {JSX.Element} The rendered JSX element.
+ */
 const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
+  /**
+   * State variable to indicate if the visualization has started.
+   */
   const [started, setStarted] = useState(false);
 
+  /**
+   * Effect hook to handle document title and canvas resizing on component mount and unmount.
+   */
   useEffect(() => {
     document.title = `ScreamRouter - Visualizer`;
     document.body.style.overflow = 'hidden';
 
+    /**
+     * Function to handle window resize events, adjusting the canvas size accordingly.
+     */
     const handleResize = () => {
       const canvas = document.getElementById('canvas') as HTMLCanvasElement;
       if (canvas) {
@@ -34,6 +57,9 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
     };
   }, []);
 
+  /**
+   * Function to start the audio stream visualization.
+   */
   const startVisualization = () => {
     const streamUrl = ApiService.getSinkStreamUrl(ip);
     if (window.startVisualizer) {
@@ -42,6 +68,9 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
     }
   };
 
+  /**
+   * Render the Visualizer component with a button to start visualization and a canvas for rendering.
+   */
   return (
     <div style={{ width: '100vw', height: '100vh', margin: 0, padding: 0, overflow: 'hidden', background: '#000' }}>
       {!started && (

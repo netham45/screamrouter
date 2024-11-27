@@ -1,7 +1,22 @@
+/**
+ * React component for the Equalizer.
+ * This component provides a user interface to adjust equalizer settings for audio sources, sinks, or routes.
+ * It includes sliders for each frequency band, preset selection, and buttons to apply changes, reset to default,
+ * and close the window.
+ *
+ * @param {React.FC} props - The properties for the component.
+ * @param {Object} props.item - The item (source, sink, or route) that the equalizer is being configured for.
+ * @param {string} props.type - The type of item ('sources', 'sinks', 'routes', 'group-sink', 'group-source').
+ * @param {Function} props.onClose - Function to call when closing the equalizer window.
+ * @param {Function} props.onDataChange - Function to call when data changes (e.g., after applying settings).
+ */
 import React, { useState, useEffect, useRef } from 'react';
 import ApiService, { Equalizer as EqualizerType } from '../api/api';
 import '../styles/Equalizer.css';
 
+/**
+ * Interface for the properties of the Equalizer component.
+ */
 interface EqualizerProps {
   item: {
     name: string;
@@ -12,11 +27,17 @@ interface EqualizerProps {
   onDataChange: () => void;
 }
 
+/**
+ * Default equalizer settings with all bands set to 1.
+ */
 const defaultEqualizer: EqualizerType = {
   b1: 1, b2: 1, b3: 1, b4: 1, b5: 1, b6: 1, b7: 1, b8: 1, b9: 1,
   b10: 1, b11: 1, b12: 1, b13: 1, b14: 1, b15: 1, b16: 1, b17: 1, b18: 1
 };
 
+/**
+ * Preset equalizer settings for different music genres.
+ */
 const musicPresets: { [key: string]: EqualizerType } = {
   'Flat': defaultEqualizer,
   'Classical': {
@@ -41,19 +62,33 @@ const musicPresets: { [key: string]: EqualizerType } = {
   }
 };
 
+/**
+ * Class representing a Biquad filter.
+ */
 class BiquadFilter {
     a0: number; a1: number; a2: number;
     b0: number; b1: number; b2: number;
-  
+
+    /**
+     * Constructor for the BiquadFilter class.
+     */
     constructor() {
       this.a0 = this.b0 = 1.0;
       this.a1 = this.a2 = this.b1 = this.b2 = 0.0;
     }
-  
+
+    /**
+     * Sets the parameters of the filter.
+     *
+     * @param {number} freq - Frequency in Hz.
+     * @param {number} Q - Quality factor.
+     * @param {number} peakGain - Peak gain in dB.
+     * @param {number} sampleRate - Sample rate in Hz.
+     */
     setParams(freq: number, Q: number, peakGain: number, sampleRate: number) {
       const V = Math.pow(10, Math.abs(peakGain) / 20);
       const K = Math.tan(Math.PI * freq / sampleRate);
-      
+
       if (peakGain >= 0) {    // boost
         const norm = 1 / (1 + 1/Q * K + K * K);
         this.b0 = (1 + V/Q * K + K * K) * norm;
@@ -73,23 +108,50 @@ class BiquadFilter {
     }
 }
 
+/**
+ * React functional component for the Equalizer.
+ *
+ * @param {EqualizerProps} props - The properties for the component.
+ */
 const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange }) => {
+  /**
+   * State to keep track of the current equalizer settings.
+   */
   const [equalizer, setEqualizer] = useState<EqualizerType>(item.equalizer);
+
+  /**
+   * State to keep track of any error messages.
+   */
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * State to keep track of the selected preset.
+   */
   const [preset, setPreset] = useState<string>('Custom');
+
+  /**
+   * Reference to the canvas element for drawing the equalizer response graph.
+   */
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  /**
+   * Effect to check if the current equalizer matches any preset when the component mounts.
+   */
   useEffect(() => {
-    // Check if the current equalizer matches any preset when component mounts
     checkAndSetPreset(item.equalizer);
   }, []);
 
+  /**
+   * Checks if the given equalizer settings match any of the presets and sets the preset state accordingly.
+   *
+   * @param {EqualizerType} eq - The equalizer settings to check.
+   */
   const checkAndSetPreset = (eq: EqualizerType) => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const matchingPreset = Object.entries(musicPresets).find(([_, presetEq]) => 
+    const matchingPreset = Object.entries(musicPresets).find(([_, presetEq]) =>
       Object.entries(presetEq).every(([band, value]) => Math.abs(eq[band as keyof EqualizerType] - value) < 0.01)
     );
-    
+
     if (matchingPreset) {
       setPreset(matchingPreset[0]);
     } else {
@@ -97,6 +159,9 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     }
   };
 
+  /**
+   * Updates the equalizer settings on the server.
+   */
   const updateEqualizer = async () => {
     try {
       setError(null);
@@ -117,6 +182,12 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     }
   };
 
+  /**
+   * Handles changes to the equalizer sliders.
+   *
+   * @param {keyof EqualizerType} band - The frequency band that was changed.
+   * @param {number} value - The new value for the frequency band.
+   */
   const handleChange = (band: keyof EqualizerType, value: number) => {
     setEqualizer(prev => {
       const newEqualizer = { ...prev, [band]: value };
@@ -125,11 +196,19 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     });
   };
 
+  /**
+   * Resets the equalizer settings to the default values.
+   */
   const resetToDefault = () => {
     setEqualizer(defaultEqualizer);
     setPreset('Flat');
   };
 
+  /**
+   * Handles changes to the preset selection dropdown.
+   *
+   * @param {React.ChangeEvent<HTMLSelectElement>} event - The change event from the select element.
+   */
   const handlePresetChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedPreset = event.target.value;
     setPreset(selectedPreset);
@@ -138,21 +217,37 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     }
   };
 
+  /**
+   * Closes the equalizer window and triggers a data reload.
+   */
   const handleClose = () => {
     onClose();
     onDataChange(); // Trigger data reload when the equalizer window is closed
   };
 
+  /**
+   * Sorted list of frequency bands for rendering sliders in order.
+   */
   const sortedBands = Object.entries(equalizer).sort((a, b) => {
     const bandA = parseInt(a[0].slice(1));
     const bandB = parseInt(b[0].slice(1));
     return bandA - bandB;
   });
 
+  /**
+   * Frequencies corresponding to each equalizer band.
+   */
   const frequencies = [65.406392, 92.498606, 130.81278, 184.99721, 261.62557, 369.99442, 523.25113, 739.9884,
                        1046.5023, 1479.9768, 2093.0045, 2959.9536, 4186.0091, 5919.9072, 8372.0181, 11839.814,
                        16744.036, 20000.0];
 
+  /**
+   * Calculates the magnitude response of the equalizer at a given frequency.
+   *
+   * @param {number} freq - The frequency in Hz.
+   * @param {number} sampleRate - The sample rate in Hz.
+   * @returns {number} The magnitude response in dB.
+   */
   const calculateMagnitudeResponse = (freq: number, sampleRate: number): number => {
     let totalGain = 1;
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -176,11 +271,14 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     return 20 * Math.log10(totalGain);
   };
 
+  /**
+   * Effect to draw the equalizer response graph on the canvas.
+   */
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas) {
       const ctx = canvas.getContext('2d');
-      if (ctx) { 
+      if (ctx) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         // Set canvas background to dark
@@ -235,7 +333,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
         for (let i = 0; i < points; i++) {
           const freq = Math.exp(Math.log(20) + (Math.log(24000) - Math.log(20)) * (i / (points - 1)));
           const magnitude = calculateMagnitudeResponse(freq, sampleRate);
-          
+
           const x = (Math.log2(freq / 20)) / (Math.log2(24000 / 20)) * canvas.width;
           const y = canvas.height / 2 - 10 - (magnitude / maxDb) * ((canvas.height - 20) / 2);
 
@@ -264,6 +362,11 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     }
   }, [equalizer]);
 
+  /**
+   * Renders the Equalizer component.
+   *
+   * @returns {JSX.Element} The rendered JSX element.
+   */
   return (
     <div className="equalizer-container">
       <h3 className="equalizer-title">

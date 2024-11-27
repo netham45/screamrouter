@@ -1,31 +1,54 @@
-/* Dark mode styles */
+/**
+ * Dark mode styles for the application.
+ */
+
+/**
+ * Styles for the body element in dark mode, setting a dark background and light text color.
+ */
 body.dark-mode {
   background-color: #1a1a1a;
   color: #f0f0f0;
 }
 
+/**
+ * Styles for the layout container in dark mode, maintaining a consistent dark background.
+ */
 .dark-mode .layout {
   background-color: #1a1a1a;
 }
 
+/**
+ * Styles for the header element in dark mode, using a darker shade of blue and light text color.
+ */
 .dark-mode header {
   background-color: #2c3e50;
 }
 
+/**
+ * Hover styles for navigation links in dark mode, changing background to a lighter blue and text to green.
+ */
 .dark-mode nav ul li a:hover {
   background-color: #34495e;
   color: #2ecc71;
 }
 
+/**
+ * Styles for the main content pseudo-element in dark mode, adding a subtle overlay effect.
+ */
 .dark-mode main::before {
   opacity: 0.02;
 }
 
+/**
+ * Styles for the footer element in dark mode, using a darker shade of blue and light text color.
+ */
 .dark-mode footer {
   background-color: #2c3e50;
 }
 
-/* Adjust colors for better contrast */
+/**
+ * Adjust colors for better contrast in status sections, using a darker background with lighter borders and text.
+ */
 .dark-mode .status-section {
   background-color: #14293e;
   border: 1px solid #2c3e50;
@@ -34,6 +57,9 @@ body.dark-mode {
   margin-bottom: 1rem;
 }
 
+/**
+ * Styles for collapsible sections in dark mode, using a darker shade of blue and light text color.
+ */
 .dark-mode .collapsible-section {
   background-color: #2c3e50;
   border: 1px solid #34495e;
@@ -41,6 +67,9 @@ body.dark-mode {
   margin-bottom: 1rem;
 }
 
+/**
+ * Styles for section headers in dark mode, using a lighter shade of blue and light text color.
+ */
 .dark-mode .section-header {
   background-color: #34495e;
   padding: 0.5rem 1rem;
@@ -48,47 +77,77 @@ body.dark-mode {
   border-radius: 8px 8px 0 0;
 }
 
+/**
+ * Styles for section content in dark mode, maintaining a consistent background color and light text.
+ */
 .dark-mode .section-content {
   background-color: #2c3e50;
   padding: 1rem;
 }
 
+/**
+ * Styles for section header titles in dark mode, using green text for emphasis.
+ */
 .dark-mode .section-header h3 {
   color: #2ecc71;
 }
 
+/**
+ * Styles for section subtitles in dark mode, using a lighter gray text color.
+ */
 .dark-mode .section-subtitle {
   color: #bdc3c7;
 }
 
+/**
+ * Styles for expand toggle buttons in dark mode, using blue text for visibility.
+ */
 .dark-mode .expand-toggle {
   color: #3498db;
 }
 
+/**
+ * Styles for paragraphs in active source and now playing sections in dark mode, ensuring light text color.
+ */
 .dark-mode .active-source-section p,
 .dark-mode .now-playing-section p {
   color: #ecf0f1;
 }
 
+/**
+ * Styles for buttons in dark mode, using blue background with white text for contrast.
+ */
 .dark-mode button {
   background-color: #3498db;
   color: #f0f0f0;
 }
 
+/**
+ * Styles for disabled buttons in dark mode, changing background to a darker orange and maintaining white text.
+ */
 .dark-mode button.disabled {
     background-color: #9b5814;
     color: #f0f0f0;
 }
 
+/**
+ * Styles for enabled buttons in dark mode, using green background with white text for emphasis.
+ */
 .dark-mode button.enabled {
     background-color: #149b58;
     color: #f0f0f0;
 }
 
+/**
+ * Hover styles for buttons in dark mode, changing background to a darker blue.
+ */
 .dark-mode button:hover {
   background-color: #2980b9;
 }
 
+/**
+ * Styles for text inputs, number inputs, and select elements in dark mode, using a darker shade of blue with light text and borders.
+ */
 .dark-mode input[type="text"],
 .dark-mode input[type="number"],
 .dark-mode select {
@@ -97,38 +156,61 @@ body.dark-mode {
   border: 1px solid #4a4a4a;
 }
 
+/**
+ * Styles for tables in dark mode, ensuring light text color.
+ */
 .dark-mode table {
   color: #f0f0f0;
 }
 
+/**
+ * Styles for table headers in dark mode, using a darker shade of blue and light text color.
+ */
 .dark-mode th {
   background-color: #2c3e50;
   color: #f0f0f0;
 }
 
+/**
+ * Styles for table data cells in dark mode, adding a subtle border between rows.
+ */
 .dark-mode td {
   border-bottom: 1px solid #4a4a4a;
 }
 
+/**
+ * Hover styles for table rows in dark mode, changing background to a lighter blue on hover.
+ */
 .dark-mode tr:hover {
   background-color: #34495e;
 }
 
+/**
+ * Styles for cards in dark mode, using a darker shade of blue and light text color.
+ */
 .dark-mode .card {
   background-color: #2c3e50;
 }
 
+/**
+ * Styles for headings in dark mode, using green text for emphasis.
+ */
 .dark-mode h2,
 .dark-mode h3,
 .dark-mode h4 {
   color: #2ecc71;
 }
 
+/**
+ * Specific styles for level 2 headings in dark mode, adding a bottom border for separation.
+ */
 .dark-mode h2 {
   border-bottom: 2px solid #2ecc71;
 }
 
-/* Dark mode toggle button */
+/**
+ * Styles for the dark mode toggle button, using blue background with white text and rounded corners.
+ */
 .dark-mode-toggle {
   background-color: #3498db;
   color: #f0f0f0;
@@ -142,20 +224,31 @@ body.dark-mode {
   right: 1rem;
 }
 
+/**
+ * Hover styles for the dark mode toggle button, changing background to a darker blue.
+ */
 .dark-mode-toggle:hover {
   background-color: #2980b9;
 }
 
+/**
+ * Styles for the dark mode toggle button when in dark mode, using white background with dark text.
+ */
 .dark-mode .dark-mode-toggle {
   background-color: #f0f0f0;
   color: #333;
 }
 
+/**
+ * Hover styles for the dark mode toggle button when in dark mode, changing background to a lighter gray.
+ */
 .dark-mode .dark-mode-toggle:hover {
   background-color: #e0e0e0;
 }
 
-/* Active section on dashboard */
+/**
+ * Styles for favorite sections on the dashboard in dark mode, using consistent colors and borders.
+ */
 .dark-mode .favorite-sources,
 .dark-mode .favorite-sinks,
 .dark-mode .favorite-routes,
@@ -169,6 +262,9 @@ body.dark-mode {
   margin-bottom: 1rem;
 }
 
+/**
+ * Styles for headings in favorite sections on the dashboard in dark mode, using green text for emphasis.
+ */
 .dark-mode .favorite-sources h3,
 .dark-mode .favorite-sinks h3,
 .dark-mode .favorite-routes h3,
@@ -178,76 +274,120 @@ body.dark-mode {
   color: #2ecc71;
 }
 
-/* Fix title bar styling */
+/**
+ * Styles for the layout header in dark mode, using green text for headings.
+ */
 .dark-mode .layout-header h1 {
   color: #2ecc71;
 }
 
+/**
+ * Styles for navigation links in the layout header in dark mode, ensuring light text color.
+ */
 .dark-mode .layout-header nav ul li a {
   color: #f0f0f0;
 }
 
+/**
+ * Hover styles for navigation links in the layout header in dark mode, changing background to a lighter blue and text to green.
+ */
 .dark-mode .layout-header nav ul li a:hover {
   background-color: #34495e;
   color: #2ecc71;
 }
 
-/* Additional styles for better visibility */
+/**
+ * Styles for subtext elements in dark mode, using a lighter gray text color.
+ */
 .dark-mode .subtext {
   color: #bdc3c7;
 }
 
+/**
+ * Styles for control bar buttons in dark mode, using blue background with white text and rounded corners.
+ */
 .dark-mode .control-bar button {
   background-color: #3498db;
   color: #f0f0f0;
 }
 
+/**
+ * Hover styles for control bar buttons in dark mode, changing background to a darker blue.
+ */
 .dark-mode .control-bar button:hover {
   background-color: #2980b9;
 }
 
+/**
+ * Styles for volume sliders in dark mode, using a lighter shade of blue and rounded corners.
+ */
 .dark-mode .volume-slider {
   background-color: #34495e;
 }
 
+/**
+ * Styles for the thumb of volume sliders in dark mode (WebKit), using green color for visibility.
+ */
 .dark-mode .volume-slider::-webkit-slider-thumb {
   background-color: #2ecc71;
 }
 
+/**
+ * Styles for the thumb of volume sliders in dark mode (Mozilla), using green color for visibility.
+ */
 .dark-mode .volume-slider::-moz-range-thumb {
   background-color: #2ecc71;
 }
 
-/* Ensure text is visible on all backgrounds */
+/**
+ * Styles for not playing text elements in dark mode, using a lighter gray text color.
+ */
 .dark-mode .not-playing {
   color: #bdc3c7;
 }
 
-/* Improve contrast for active elements */
+/**
+ * Styles for active buttons and button-like elements in dark mode, using blue background with darker text.
+ */
 .dark-mode .btn.active,
 .dark-mode button.active {
   background-color: #008CBA;
   color: #2c3e50;
 }
 
+/**
+ * Hover styles for active buttons and button-like elements in dark mode, changing background to a lighter green.
+ */
 .dark-mode .btn.active:hover,
 .dark-mode button.active:hover {
   background-color: #27ae60;
 }
 
-/* Adjust link colors for better visibility */
+/**
+ * Styles for links in dark mode, using a light blue color with smooth transition effects.
+ */
 .dark-mode a {
   color: #b4d8fb;
 }
 
+/**
+ * Hover styles for links in dark mode, changing text to green on hover.
+ */
 .dark-mode a:hover {
   color: #2ecc71;
 }
 
+/**
+ * Styles for modal content in dark mode, using a darker shade of blue and light text color.
+ */
 .dark-mode .modal-content {
   background-color: #34495e;   
 }
 
-.dark-mode button.expand-routes, .dark-mode button.collapse-routes {
+/**
+ * Styles for expand and collapse routes buttons in dark mode, ensuring they inherit styles without additional modifications.
+ */
+.dark-mode button.expand-routes, 
+.dark-mode button.collapse-routes {
   background-color: inherit !important;
 }

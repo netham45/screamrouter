@@ -1,12 +1,18 @@
+/**
+ * Root CSS variables for the Equalizer component, defining colors and dimensions.
+ */
 :root {
-  --primary-color: #2ecc71;
-  --secondary-color: #27ae60;
-  --background-color: #f0f8f1;
-  --text-color: #2c3e50;
-  --slider-height: 200px;
-  --slider-width: 30px;
+  --primary-color: #2ecc71; /* Primary color used for interactive elements */
+  --secondary-color: #27ae60; /* Secondary color used for accents */
+  --background-color: #f0f8f1; /* Background color of the container */
+  --text-color: #2c3e50; /* Text color for labels and titles */
+  --slider-height: 200px; /* Height of the vertical sliders */
+  --slider-width: 30px; /* Width of the vertical sliders */
 }
 
+/**
+ * Container for the Equalizer component, setting padding, max width, margin, position, and overflow.
+ */
 .equalizer-container {
   padding: 30px;
   max-width: 1000px;
@@ -15,7 +21,9 @@
   overflow: hidden;
 }
 
-
+/**
+ * Title of the Equalizer section, styled with color, font size, margin, text alignment, and z-index.
+ */
 .equalizer-title {
   color: var(--text-color);
   font-size: 2rem;
@@ -25,12 +33,18 @@
   z-index: 1;
 }
 
+/**
+ * Music note icon next to the title, styled with color and font size.
+ */
 .music-note {
   color: var(--primary-color);
   font-size: 1.5rem;
   margin: 0 10px;
 }
 
+/**
+ * Container for the equalizer graph, including background color, border radius, padding, and box shadow.
+ */
 .equalizer-graph {
   margin-bottom: 20px;
   background-color: #1e1e1e;
@@ -39,11 +53,17 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+/**
+ * Canvas element within the equalizer graph, ensuring it takes full width and adjusts height automatically.
+ */
 .equalizer-graph canvas {
   width: 100%;
   height: auto;
 }
 
+/**
+ * Container for the equalizer sliders, using flexbox to distribute space between sliders with a gap.
+ */
 .equalizer-sliders {
   display: flex;
   justify-content: space-between;
@@ -53,6 +73,9 @@
   z-index: 1;
 }
 
+/**
+ * Individual equalizer band, using flexbox to align items vertically and setting a fixed width.
+ */
 .equalizer-band {
   display: flex;
   flex-direction: column;
@@ -60,6 +83,9 @@
   width: var(--slider-width);
 }
 
+/**
+ * Vertical slider input element, styled with custom appearance, margin, background color, and transform for vertical orientation.
+ */
 .vertical-slider {
   margin-top: 40px;
   margin-bottom: 40px;
@@ -77,6 +103,9 @@
   margin-bottom: 50px !important;
 }
 
+/**
+ * Pseudo-element before the vertical slider, creating a gradient background for visual effect.
+ */
 .vertical-slider::before {
   content: '';
   position: absolute;
@@ -88,6 +117,9 @@
   border-radius: 10px;
 }
 
+/**
+ * Custom thumb for the vertical slider in WebKit browsers, styled with size, background color, cursor, border radius, box shadow, and transition.
+ */
 .vertical-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
@@ -100,6 +132,9 @@
   transition: all 0.3s ease;
 }
 
+/**
+ * Custom thumb for the vertical slider in Mozilla browsers, styled with size, background color, cursor, border radius, box shadow, and transition.
+ */
 .vertical-slider::-moz-range-thumb {
   width: 20px;
   height: 20px;
@@ -111,12 +146,18 @@
   border: none;
 }
 
+/**
+ * Hover state for the vertical slider thumb in both WebKit and Mozilla browsers, scaling up and changing box shadow.
+ */
 .vertical-slider::-webkit-slider-thumb:hover,
 .vertical-slider::-moz-range-thumb:hover {
   transform: scale(1.2);
   box-shadow: 0 0 15px rgba(46, 204, 113, 0.7);
 }
 
+/**
+ * Container for slider information, using flexbox to align items vertically and setting margin.
+ */
 .slider-info {
   display: flex;
   flex-direction: column;
@@ -124,6 +165,9 @@
   margin-top: 10px;
 }
 
+/**
+ * Label for each equalizer band, styled with font size, color, margin, and rotation for better visibility.
+ */
 .equalizer-band label {
   font-size: 0.8rem;
   color: var(--text-color);
@@ -131,12 +175,18 @@
   transform: rotate(-45deg);
 }
 
+/**
+ * Displayed value of the slider, styled with font size, color, and weight for emphasis.
+ */
 .slider-value {
   font-size: 0.9rem;
   color: var(--primary-color);
   font-weight: bold;
 }
 
+/**
+ * Container for equalizer buttons, using flexbox to distribute space between buttons and setting margin.
+ */
 .equalizer-buttons {
   display: flex;
   justify-content: center;
@@ -146,6 +196,9 @@
   z-index: 1;
 }
 
+/**
+ * Generic button style for equalizer actions, styled with padding, font size, cursor, border radius, transition, text transform, letter spacing, and weight.
+ */
 .equalizer-buttons button {
   padding: 12px 24px;
   font-size: 1rem;
@@ -158,32 +211,50 @@
   font-weight: bold;
 }
 
+/**
+ * Style for the apply button, using primary color background and white text.
+ */
 .apply-button {
   background-color: var(--primary-color);
   color: white;
 }
 
+/**
+ * Style for the default button, using secondary color background and white text.
+ */
 .default-button {
   background-color: var(--secondary-color);
   color: white;
 }
 
+/**
+ * Style for the close button, using text color background and white text.
+ */
 .close-button {
   background-color: var(--text-color);
   color: white;
 }
 
+/**
+ * Hover state for equalizer buttons, reducing opacity, translating vertically, and adding box shadow.
+ */
 .equalizer-buttons button:hover {
   opacity: 0.9;
   transform: translateY(-3px);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
+/**
+ * Active state for equalizer buttons, translating vertically slightly and adding box shadow.
+ */
 .equalizer-buttons button:active {
   transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
+/**
+ * Media query for screens up to 768px wide, adjusting flex direction and alignment for equalizer sliders.
+ */
 @media (max-width: 768px) {
   .equalizer-sliders {
     flex-wrap: wrap;
@@ -206,6 +277,9 @@
   }
 }
 
+/**
+ * Media query for screens up to 480px wide, adjusting root variables and font sizes for better readability.
+ */
 @media (max-width: 480px) {
   :root {
     --slider-height: 150px;
@@ -221,6 +295,9 @@
   }
 }
 
+/**
+ * Keyframes for the pulse animation, scaling up and down to create a pulsing effect.
+ */
 @keyframes pulse {
   0% {
     transform: scale(1);
@@ -233,21 +310,33 @@
   }
 }
 
+/**
+ * Hover state for equalizer bands, applying the pulse animation to the slider thumb.
+ */
 .equalizer-band:hover .vertical-slider::-webkit-slider-thumb,
 .equalizer-band:hover .vertical-slider::-moz-range-thumb {
   animation: pulse 1s infinite;
 }
 
+/**
+ * Label for frequency (Hz) below each equalizer band, styled with width, text alignment, and margin.
+ */
 .hz-label {
     width: 100%;
     text-align: center;
     margin-top: -25px;
 }
 
+/**
+ * Dark mode style for the Hz label, changing color to a lighter shade of blue.
+ */
 .dark-mode .hz-label {
     color: #99aaff;
 }
 
+/**
+ * Dark mode style for equalizer band labels, changing color to a lighter shade of blue.
+ */
 .dark-mode .equalizer-band label {
     color: #99aaff;
 }

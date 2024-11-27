@@ -1,8 +1,18 @@
+/**
+ * Styles for the DesktopMenu component.
+ */
+
+/**
+ * Body styles to apply a semi-transparent background color and blur effect, ensuring content is readable over various backgrounds.
+ */
 body {
   background-color: rgba(245, 245, 245, 0.5);
   backdrop-filter: blur(10px);
 }
 
+/**
+ * Main container for the desktop menu, setting a fixed width and height, hiding overflow, using Arial font, rounded corners, subtle shadow, flexbox layout, column direction, semi-transparent background color with blur effect, text color, border, and important blur filter.
+ */
 .desktop-menu {
   width: 1000px;
   height: 600px;
@@ -14,11 +24,13 @@ body {
   flex-direction: column;
   background-color: rgba(245, 245, 245, 0.5);
   color: #333;
-  backdrop-filter: blur(10px);
   border: 1px solid rgba(50,50,50,.7);
   backdrop-filter: blur(50px) !important;
 }
 
+/**
+ * Header section of the desktop menu, using flexbox for layout with space between items, padding, semi-transparent background color with blur effect, and wrapping flex items.
+ */
 .menu-header {
   display: flex;
   justify-content: space-between;
@@ -28,6 +40,9 @@ body {
   flex-wrap: wrap;
 }
 
+/**
+ * Buttons in the menu header, styled with semi-transparent background color, text color, no border, padding for spacing, rounded corners, pointer cursor, smooth transition effects for hover states, margin for spacing, and blur filter.
+ */
 .menu-button {
   background-color: rgba(240, 240, 240, 0.5);
   color: #333;
@@ -40,15 +55,24 @@ body {
   backdrop-filter: blur(5px);
 }
 
+/**
+ * Hover styles for menu buttons, changing background color to a darker shade.
+ */
 .menu-button:hover {
   background-color: rgba(208, 208, 208, 0.5);
 }
 
+/**
+ * Active state styles for menu buttons, using a blue background color and white text color to indicate the active button.
+ */
 .menu-button.active {
   background-color: rgba(0, 123, 255, 0.5);
   color: white;
 }
 
+/**
+ * Content area of the desktop menu, taking up remaining space with padding for spacing, scrollable vertical content, semi-transparent background color with blur effect.
+ */
 .menu-content {
   flex-grow: 1;
   padding: 20px;
@@ -57,11 +81,17 @@ body {
   backdrop-filter: blur(10px);
 }
 
+/**
+ * Tables within the menu content, taking up full width and using collapsed border spacing.
+ */
 .menu-content table {
   width: 100%;
   border-collapse: collapse;
 }
 
+/**
+ * Table headers and data cells in the menu content, styled with padding for spacing, left text alignment, and semi-transparent bottom borders.
+ */
 .menu-content th,
 .menu-content td {
   padding: 10px;
@@ -69,11 +99,17 @@ body {
   border-bottom: 1px solid rgba(221, 221, 221, 0.5);
 }
 
+/**
+ * Table headers in the menu content, using a semi-transparent background color and bold font weight.
+ */
 .menu-content th {
   background-color: rgba(240, 240, 240, 0.5);
   font-weight: bold;
 }
 
+/**
+ * Status buttons within the menu content, styled with green background color, white text color, no border, padding for spacing, rounded corners, pointer cursor.
+ */
 .menu-content .status-button {
   background-color: rgba(76, 175, 80, 0.5);
   color: white;
@@ -83,6 +119,9 @@ body {
   cursor: pointer;
 }
 
+/**
+ * Volume and timeshift sliders within the menu content, styled with full width, semi-transparent background color, no default appearance, specific height, no outline, opacity transition effects, and blur filter.
+ */
 .menu-content .volume-slider,
 .menu-content .timeshift-slider {
   width: 100%;
@@ -94,6 +133,9 @@ body {
   transition: opacity 0.2s;
 }
 
+/**
+ * Slider thumbs for volume and timeshift sliders within the menu content, styled with no default appearance, specific width and height, green background color, pointer cursor, and rounded shape.
+ */
 .menu-content .volume-slider::-webkit-slider-thumb,
 .menu-content .timeshift-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -105,11 +147,17 @@ body {
   border-radius: 50%;
 }
 
+/**
+ * Container for action buttons within the menu content, using flexbox for layout with gaps between items.
+ */
 .menu-content .action-buttons {
   display: flex;
   gap: 5px;
 }
 
+/**
+ * Action buttons within the menu content, styled with blue background color, white text color, no border, padding for spacing, rounded corners, pointer cursor.
+ */
 .menu-content .action-button {
   background-color: rgba(0, 123, 255, 0.5);
   color: white;
@@ -119,55 +167,91 @@ body {
   cursor: pointer;
 }
 
+/**
+ * Error message container within the menu content, styled with red text color and margin at the bottom for spacing.
+ */
 .error-message {
   color: rgba(255, 0, 0, 0.5);
   margin-bottom: 10px;
 }
 
+/**
+ * Dark mode styles for the desktop menu, using a darker background color, white text color, border with higher opacity, and blur filter.
+ */
 .desktop-menu.dark-mode {
   background-color: rgba(43, 43, 43, 0.5);
   color: #fff;
   border: 1px solid rgba(90,90,90,.7);
 }
 
+/**
+ * Dark mode styles for the menu header in the desktop menu, using a darker semi-transparent background color.
+ */
 .desktop-menu.dark-mode .menu-header {
   background-color: rgba(51, 51, 51, 0.5);
 }
 
+/**
+ * Dark mode styles for buttons in the menu header, using a darker semi-transparent background color and white text color.
+ */
 .desktop-menu.dark-mode .menu-button {
   background-color: rgba(74, 74, 74, 0.5);
   color: #fff;
 }
 
+/**
+ * Hover styles for buttons in the dark mode menu header, changing background color to a darker shade.
+ */
 .desktop-menu.dark-mode .menu-button:hover {
   background-color: rgba(90, 90, 90, 0.5);
 }
 
+/**
+ * Active state styles for buttons in the dark mode menu header, using a blue background color and white text color to indicate the active button.
+ */
 .desktop-menu.dark-mode .menu-button.active {
   background-color: rgba(0, 123, 255, 0.5);
 }
 
+/**
+ * Dark mode styles for the content area in the desktop menu, using a darker semi-transparent background color.
+ */
 .desktop-menu.dark-mode .menu-content {
   background-color: rgba(43, 43, 43, 0.5);
 }
 
+/**
+ * Table headers in the dark mode menu content, using a darker semi-transparent background color and bold font weight.
+ */
 .desktop-menu.dark-mode .menu-content th {
   background-color: rgba(51, 51, 51, 0.5);
 }
 
+/**
+ * Table data cells in the dark mode menu content, using a darker semi-transparent bottom border.
+ */
 .desktop-menu.dark-mode .menu-content td {
   border-bottom: 1px solid rgba(68, 68, 68, 0.5);
 }
 
+/**
+ * Volume and timeshift sliders in the dark mode menu content, styled with a darker semi-transparent background color.
+ */
 .desktop-menu.dark-mode .menu-content .volume-slider,
 .desktop-menu.dark-mode .menu-content .timeshift-slider {
   background-color: rgba(85, 85, 85, 0.5);
 }
 
+/**
+ * Error message container in the dark mode menu content, styled with a darker red text color.
+ */
 .desktop-menu.dark-mode .error-message {
   color: rgba(255, 107, 107, 0.5);
 }
 
+/**
+ * Overriding body background color to be fully transparent, ensuring it does not interfere with the desktop menu styles.
+ */
 body {
   background-color: rgba(0,0,0,0) !important;
 }

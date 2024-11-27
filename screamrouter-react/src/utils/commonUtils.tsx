@@ -1,11 +1,29 @@
+/**
+ * React utility module for defining and creating common components and functions used across the application.
+ * These utilities handle various operations such as rendering links with anchors, handling anchor flashing,
+ * creating action buttons, volume sliders, sorting items, determining next sort direction, and getting stock sorted items.
+ */
+
 import React, { useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
+/**
+ * Interface defining the configuration for sorting.
+ */
 export interface SortConfig {
   key: string;
   direction: 'asc' | 'desc';
 }
 
+/**
+ * Renders a link with an anchor tag based on provided parameters.
+ *
+ * @param {string} to - The path to navigate to.
+ * @param {string} name - The name of the item being linked.
+ * @param {string} icon - The icon class for the link.
+ * @param {'sink' | 'source'} fromType - Optional parameter indicating the type of item ('sink' or 'source').
+ * @returns {JSX.Element} A Link component with an anchor tag.
+ */
 export const renderLinkWithAnchor = (to: string, name: string, icon: string, fromType?: 'sink' | 'source') => {
   const queryParam = fromType ? `?sort=${fromType}&direction=asc` : '';
   const anchor = `#${to.replace(/^\//,'').replace(/s$/,'')}-${encodeURIComponent(name)}`;
@@ -16,6 +34,9 @@ export const renderLinkWithAnchor = (to: string, name: string, icon: string, fro
   );
 };
 
+/**
+ * Custom hook for handling anchor flashing when navigating to an element with a hash.
+ */
 export const useAnchorFlash = () => {
   const location = useLocation();
 
@@ -34,6 +55,14 @@ export const useAnchorFlash = () => {
   }, [location]);
 };
 
+/**
+ * ActionButton component for creating a button with an onClick event.
+ *
+ * @param {() => void} onClick - The function to call when the button is clicked.
+ * @param {string} className - Optional class name for styling.
+ * @param {React.ReactNode} children - The content of the button.
+ * @returns {JSX.Element} A button component.
+ */
 export const ActionButton: React.FC<{
   onClick: () => void;
   className?: string;
@@ -44,6 +73,13 @@ export const ActionButton: React.FC<{
   </button>
 );
 
+/**
+ * VolumeSlider component for creating a volume control slider.
+ *
+ * @param {number} value - The current volume level (0 to 1).
+ * @param {(value: number) => void} onChange - The function to call when the volume changes.
+ * @returns {JSX.Element} An input range element representing the volume slider.
+ */
 export const VolumeSlider: React.FC<{
   value: number;
   onChange: (value: number) => void;
@@ -101,6 +137,14 @@ export const VolumeSlider: React.FC<{
   );
 };
 
+/**
+ * Sorts items based on the provided sort configuration and starred items.
+ *
+ * @param {T[]} items - The array of items to sort.
+ * @param {SortConfig} sortConfig - The sorting configuration.
+ * @param {string[]} starredItems - An array of names of starred items.
+ * @returns {T[]} A new sorted array of items.
+ */
 export const getSortedItems = <T extends Record<string, any>>(
   items: T[],
   sortConfig: SortConfig,
@@ -139,6 +183,13 @@ export const getSortedItems = <T extends Record<string, any>>(
   return sortedItems;
 };
 
+/**
+ * Determines the next sort direction based on the current sort configuration and clicked key.
+ *
+ * @param {SortConfig} sortConfig - The current sorting configuration.
+ * @param {string} clickedKey - The key that was clicked to change the sort direction.
+ * @returns {'asc' | 'desc'} The new sort direction.
+ */
 export const getNextSortDirection = (sortConfig: SortConfig, clickedKey: string): 'asc' | 'desc' => {
   if (sortConfig.key === clickedKey) {
     return sortConfig.direction === 'asc' ? 'desc' : 'asc';
@@ -146,6 +197,13 @@ export const getNextSortDirection = (sortConfig: SortConfig, clickedKey: string)
   return 'asc';
 };
 
+/**
+ * Gets items sorted by stock status and starred items.
+ *
+ * @param {T[]} items - The array of items to sort.
+ * @param {string[]} starredItems - An array of names of starred items.
+ * @returns {T[]} A new sorted array of items.
+ */
 export const getStockSortedItems = <T extends Record<string, any>>(
   items: T[],
   starredItems: string[]
