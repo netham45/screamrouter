@@ -49,10 +49,6 @@ interface SinkItemProps {
    */
   isListening: boolean;
   /**
-   * Boolean indicating if the sink is currently being visualized.
-   */
-  isVisualizing: boolean;
-  /**
    * Optional boolean to hide specific buttons.
    */
   hideSpecificButtons?: boolean;
@@ -84,7 +80,6 @@ const SinkItem: React.FC<SinkItemProps> = ({
   activeRoutes,
   disabledRoutes,
   isListening,
-  isVisualizing,
   hideSpecificButtons = false,
   hideExtraColumns = false,
   isDesktopMenu = false,

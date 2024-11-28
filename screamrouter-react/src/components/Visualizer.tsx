@@ -14,6 +14,13 @@ interface VisualizerProps {
 }
 
 /**
+ * Interface defining the visualizer object.
+ */
+interface Visualizer {
+  setRendererSize: (width: number, height: number) => void;
+}
+
+/**
  * React functional component for rendering the audio stream visualizer.
  *
  * @param {VisualizerProps} props - The props passed to the component.
@@ -40,8 +47,8 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
       if (canvas) {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
-        if ((window as any).visualizer) {
-          (window as any).visualizer.setRendererSize(canvas.width, canvas.height);
+        if (window.visualizer) {
+          window.visualizer.setRendererSize(canvas.width, canvas.height);
         }
       }
     };
@@ -123,7 +130,7 @@ declare global {
   interface Window {
     startVisualizer: (url: string) => void;
     stopVisualizer: () => void;
-    visualizer: any;
+    visualizer: Visualizer | undefined;
   }
 }
 

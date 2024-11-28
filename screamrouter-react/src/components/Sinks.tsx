@@ -187,7 +187,7 @@ const Sinks: React.FC = () => {
         setShowEditModal(true);
       }
     },
-    showEqualizer: (type, item) => {
+    showEqualizer: (show, type, item) => {
       if (type === 'sinks' && typeof item === 'object' && 'ip' in item) {
         openEqualizerModal(item as Sink, type);
       }
@@ -196,7 +196,8 @@ const Sinks: React.FC = () => {
     listenToSink: onListenToSink,
     visualizeSink: onVisualizeSink,
     toggleActiveSource: async () => {}, // Not applicable for sinks
-    navigateToItem: () => {} // Not applicable for Sinks component
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    navigateToItem: (_type, _name) => {} // Placeholder function for navigateToItem
   };
 
   /**

@@ -8,7 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import RouteList from './RouteList';
 import { useAppContext } from '../context/AppContext';
-import { Actions } from '../utils/actions';
+import { Actions } from '../utils/actions'; // Import ItemType from utils/actions
 import ActionButton from './controls/ActionButton';
 import { SortConfig, useAnchorFlash } from '../utils/commonUtils';
 import ConfirmationModal from './ConfirmationModal';
@@ -37,7 +37,8 @@ const Routes: React.FC = () => {
     openEqualizerModal,
     setSelectedItem,
     setSelectedItemType,
-    setShowEditModal
+    setShowEditModal,
+    navigateToItem // Ensure navigateToItem is destructured
   } = useAppContext();
   
   /**
@@ -184,7 +185,7 @@ const Routes: React.FC = () => {
         setShowEditModal(true);
       }
     },
-    showEqualizer: (type, item) => {
+    showEqualizer: (show, type, item) => {
       if (type === 'routes') {
         openEqualizerModal(item, type);
       }
@@ -193,6 +194,7 @@ const Routes: React.FC = () => {
     listenToSink: () => {}, // Not applicable for routes
     visualizeSink: () => {}, // Not applicable for routes
     toggleActiveSource: () => {}, // Not applicable for routes
+    navigateToItem: navigateToItem // Add navigateToItem to actions
   };
 
   /**

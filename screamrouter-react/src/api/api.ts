@@ -67,10 +67,10 @@ export interface Route {
  * Interface for Equalizer object
  */
 export interface Equalizer {
-  name?: string; // Added optional name field for custom equalizers
   b1: number; b2: number; b3: number; b4: number; b5: number; b6: number;
   b7: number; b8: number; b9: number; b10: number; b11: number; b12: number;
   b13: number; b14: number; b15: number; b16: number; b17: number; b18: number;
+  name?: string;
 }
 
 /**
@@ -226,7 +226,10 @@ const ApiService = {
   getVncUrl: (sourceName: string) => `/site/vnc/${sourceName}`,
 
   // Custom equalizer requests
-  saveEqualizer: (equalizer: Equalizer) => axios.post('/equalizers/', equalizer),
+  saveEqualizer: (name: string, equalizer: Equalizer) => { 
+    const new_eq = {... equalizer};
+    new_eq.name = name;
+    return axios.post('/equalizers/', new_eq); } ,
   listEqualizers: () => axios.get<{ equalizers: Equalizer[] }>('/equalizers/'),
   deleteEqualizer: (name: string) => axios.delete(`/equalizers/${name}`),
 

@@ -156,12 +156,12 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
           if (eq.name == undefined)
             return;
           const name = `🛠️${eq.name}`;
-          delete eq.name;
           customEq[name] = eq;
           musicPresets[name] = eq;
         });
         setCustomEqualizers(customEq);
         checkAndSetPreset(item.equalizer);
+        console.log(musicPresets);
       } catch (error) {
         console.error('Error loading equalizers:', error);
         setError('Failed to load equalizers. Please try again.');
@@ -181,6 +181,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const matchingPreset = Object.entries({ ...musicPresets, ...customEqualizers }).find(([_, presetEq]) =>
       Object.entries(presetEq).every(([band, value]) => {
+        if (band === "name") return true;
         const eqValue = eq[band as keyof EqualizerType];
         return typeof eqValue === 'number' && Math.abs(eqValue - value) < 0.01;
       })
@@ -266,7 +267,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     }
     try {
       setError(null);
-      await ApiService.saveEqualizer({ name, ...equalizer });
+      await ApiService.saveEqualizer(name, equalizer);
       setCustomEqualizers(prev => ({ ...prev, [`🛠️${name}`]: equalizer }));
       setPreset(`🛠️${name}`);
     } catch (error) {
@@ -292,7 +293,6 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
         return newCustomEq;
       });
       setPreset('Custom');
-      setEqualizer(defaultEqualizer);
     } catch (error) {
       console.error('Error deleting equalizer:', error);
       setError('Failed to delete equalizer. Please try again.');
@@ -302,7 +302,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   /**
    * Sorted list of frequency bands for rendering sliders in order.
    */
-  const sortedBands = Object.entries(equalizer).sort((a, b) => {
+  const sortedBands = Object.entries(equalizer).filter(([key]) => key !== 'name').sort((a, b) => {
     const bandA = parseInt(a[0].slice(1), 10);
     const bandB = parseInt(b[0].slice(1), 10);
     return bandA - bandB;
@@ -325,7 +325,8 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   const calculateMagnitudeResponse = (freq: number, sampleRate: number): number => {
     let totalGain = 1;
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    sortedBands.forEach(([_, gain], index) => {
+    sortedBands.forEach(([band, gain], index) => {
+      console.log(band);
       const filter = new BiquadFilter();
       filter.setParams(frequencies[index], 1.41, 20 * Math.log10(Math.max(gain, 0.001)), sampleRate);
 

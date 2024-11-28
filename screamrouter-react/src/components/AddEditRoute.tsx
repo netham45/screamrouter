@@ -44,8 +44,14 @@ const AddEditRoute: React.FC<AddEditRouteProps> = ({ route, onClose, onSave }) =
           ApiService.getSources(),
           ApiService.getSinks()
         ]);
-        setSources(sourcesResponse.data);
-        setSinks(sinksResponse.data);
+
+        // Convert Record<string, Source> to Source[]
+        const sourcesArray = Object.values(sourcesResponse.data);
+        // Convert Record<string, Sink> to Sink[]
+        const sinksArray = Object.values(sinksResponse.data);
+
+        setSources(sourcesArray);
+        setSinks(sinksArray);
       } catch (error) {
         console.error('Error fetching sources and sinks:', error);
         setError('Failed to fetch sources and sinks. Please try again.');
