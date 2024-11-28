@@ -9,9 +9,13 @@ import src.screamrouter_types.annotations as annotations
 
 
 class Equalizer(BaseModel):
-    """Holds data for the equalizer for a sink""" 
-    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True, json_schema_serialization_defaults_required=True)
+    """Holds data for an equalizer"""
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
 
+    name: Optional[str] = None
+    """Custom name for the equalizer configuration."""
     b1: annotations.EqualizerBandType1 = float(1.0)
     """Set 65Hz band gain."""
     b2: annotations.EqualizerBandType2 = float(1.0)
@@ -55,7 +59,7 @@ class Equalizer(BaseModel):
         if isinstance(other, type(self)):
             for field_name in self.model_fields:
                 if (not field_name in list(self.model_fields_set) and
-                not field_name in list(self.model_fields_set)):
+                    not field_name in list(self.model_fields_set)):
                     continue
                 if not getattr(self, field_name) == getattr(other, field_name):
                     return False
@@ -101,7 +105,9 @@ class SinkDescription(BaseModel):
     """
     Holds either a sink IP and Port or a group of sink names
     """
-    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True, json_schema_serialization_defaults_required=True)
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
 
     name: annotations.SinkNameType = ""
     """Sink Name, Endpoint and Group"""
@@ -152,7 +158,7 @@ class SinkDescription(BaseModel):
                     not field_name in list(self.model_fields_set)):
                     return False
                 if (not field_name in list(self.model_fields_set) and
-                not field_name in list(self.model_fields_set)):
+                    not field_name in list(self.model_fields_set)):
                     continue
                 if not getattr(self, field_name) == getattr(other, field_name):
                     return False
@@ -174,7 +180,9 @@ class SourceDescription(BaseModel):
     """
     Holds either a source IP or a group of source names
     """
-    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True, json_schema_serialization_defaults_required=True)
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
 
     name: annotations.SourceNameType = ""
     """Source Name, Endpoint and Group"""
@@ -217,7 +225,7 @@ class SourceDescription(BaseModel):
                     not field_name in list(self.model_fields_set)):
                     return False
                 if (not field_name in list(self.model_fields_set) and
-                not field_name in list(self.model_fields_set)):
+                    not field_name in list(self.model_fields_set)):
                     continue
                 if not getattr(self, field_name) == getattr(other, field_name):
                     return False
@@ -240,7 +248,9 @@ class RouteDescription(BaseModel):
     """
     Holds a route mapping from source to sink
     """
-    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True, json_schema_serialization_defaults_required=True)
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
 
     name: annotations.RouteNameType = ""
     """Route Name"""
@@ -275,7 +285,7 @@ class RouteDescription(BaseModel):
                     not field_name in list(self.model_fields_set)):
                     return False
                 if (not field_name in list(self.model_fields_set) and
-                not field_name in list(self.model_fields_set)):
+                    not field_name in list(self.model_fields_set)):
                     continue
                 if not getattr(self, field_name) == getattr(other, field_name):
                     return False

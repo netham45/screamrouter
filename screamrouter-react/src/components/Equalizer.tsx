@@ -38,29 +38,33 @@ const defaultEqualizer: EqualizerType = {
 /**
  * Preset equalizer settings for different music genres.
  */
-const musicPresets: { [key: string]: EqualizerType } = {
-  'Flat': defaultEqualizer,
-  'Classical': {
+
+const stockMusicPresets: { [key: string]: EqualizerType } = {
+  '📦Flat': defaultEqualizer,
+  '📦Classical': {
     b1: 1.2, b2: 1.2, b3: 1, b4: 1, b5: 1, b6: 1, b7: 0.9, b8: 0.9, b9: 0.9,
     b10: 0.8, b11: 0.8, b12: 0.8, b13: 0.8, b14: 0.8, b15: 0.8, b16: 0.8, b17: 0.8, b18: 0.8
   },
-  'Rock': {
+  '📦Rock': {
     b1: 1.2, b2: 1.1, b3: 0.8, b4: 0.9, b5: 1, b6: 1.2, b7: 1.4, b8: 1.4, b9: 1.4,
     b10: 1.3, b11: 1.2, b12: 1.1, b13: 1, b14: 1, b15: 1, b16: 1.1, b17: 1.2, b18: 1.2
   },
-  'Pop': {
+  '📦Pop': {
     b1: 0.8, b2: 0.9, b3: 1, b4: 1.1, b5: 1.2, b6: 1.2, b7: 1.1, b8: 1, b9: 1,
     b10: 1, b11: 1, b12: 1.1, b13: 1.2, b14: 1.2, b15: 1.1, b16: 1, b17: 0.9, b18: 0.8
   },
-  'Jazz': {
+  '📦Jazz': {
     b1: 1.1, b2: 1.1, b3: 1, b4: 1, b5: 1, b6: 1.1, b7: 1.2, b8: 1.2, b9: 1.2,
     b10: 1.1, b11: 1, b12: 0.9, b13: 0.9, b14: 0.9, b15: 1, b16: 1.1, b17: 1.1, b18: 1.1
   },
-  'Electronic': {
+  '📦Electronic': {
     b1: 1.4, b2: 1.3, b3: 1.2, b4: 1, b5: 0.8, b6: 1, b7: 1.2, b8: 1.3, b9: 1.4,
     b10: 1.4, b11: 1.3, b12: 1.2, b13: 1.1, b14: 1, b15: 1.1, b16: 1.2, b17: 1.3, b18: 1.4
   }
 };
+
+
+const musicPresets: { [key: string]: EqualizerType } = {...stockMusicPresets};
 
 /**
  * Class representing a Biquad filter.
@@ -130,15 +134,42 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   const [preset, setPreset] = useState<string>('Custom');
 
   /**
+   * State to keep track of custom equalizers.
+   */
+  const [customEqualizers, setCustomEqualizers] = useState<{ [key: string]: EqualizerType }>({});
+
+  /**
    * Reference to the canvas element for drawing the equalizer response graph.
    */
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   /**
-   * Effect to check if the current equalizer matches any preset when the component mounts.
+   * Effect to load existing equalizers from the server and append them to musicPresets.
    */
   useEffect(() => {
-    checkAndSetPreset(item.equalizer);
+    const loadEqualizers = async () => {
+      try {
+        const response = await ApiService.listEqualizers();
+        const equalizers = response.data['equalizers'];
+        const customEq: { [key: string]: EqualizerType } = {};
+        equalizers.forEach(eq => {
+          if (eq.name == undefined)
+            return;
+          const name = `🛠️${eq.name}`;
+          delete eq.name;
+          customEq[name] = eq;
+          musicPresets[name] = eq;
+        });
+        setCustomEqualizers(customEq);
+        checkAndSetPreset(item.equalizer);
+      } catch (error) {
+        console.error('Error loading equalizers:', error);
+        setError('Failed to load equalizers. Please try again.');
+      }
+      console.log(musicPresets);
+    };
+
+    loadEqualizers();
   }, []);
 
   /**
@@ -148,8 +179,11 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
    */
   const checkAndSetPreset = (eq: EqualizerType) => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const matchingPreset = Object.entries(musicPresets).find(([_, presetEq]) =>
-      Object.entries(presetEq).every(([band, value]) => Math.abs(eq[band as keyof EqualizerType] - value) < 0.01)
+    const matchingPreset = Object.entries({ ...musicPresets, ...customEqualizers }).find(([_, presetEq]) =>
+      Object.entries(presetEq).every(([band, value]) => {
+        const eqValue = eq[band as keyof EqualizerType];
+        return typeof eqValue === 'number' && Math.abs(eqValue - value) < 0.01;
+      })
     );
 
     if (matchingPreset) {
@@ -197,14 +231,6 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   };
 
   /**
-   * Resets the equalizer settings to the default values.
-   */
-  const resetToDefault = () => {
-    setEqualizer(defaultEqualizer);
-    setPreset('Flat');
-  };
-
-  /**
    * Handles changes to the preset selection dropdown.
    *
    * @param {React.ChangeEvent<HTMLSelectElement>} event - The change event from the select element.
@@ -213,7 +239,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     const selectedPreset = event.target.value;
     setPreset(selectedPreset);
     if (selectedPreset !== 'Custom') {
-      setEqualizer(musicPresets[selectedPreset]);
+      setEqualizer({ ...musicPresets[selectedPreset], ...customEqualizers[selectedPreset] });
     }
   };
 
@@ -226,11 +252,59 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   };
 
   /**
+   * Saves a new equalizer preset.
+   */
+  const saveEqualizer = async () => {
+    const name = prompt('Enter a name for the new equalizer preset:');
+    if (!name) {
+      setError('Name is required.');
+      return;
+    }
+    if (musicPresets[name] || customEqualizers[name]) {
+      setError('Preset name already exists.');
+      return;
+    }
+    try {
+      setError(null);
+      await ApiService.saveEqualizer({ name, ...equalizer });
+      setCustomEqualizers(prev => ({ ...prev, [`🛠️${name}`]: equalizer }));
+      setPreset(`🛠️${name}`);
+    } catch (error) {
+      console.error('Error saving equalizer:', error);
+      setError('Failed to save equalizer. Please try again.');
+    }
+  };
+
+  /**
+   * Deletes a custom equalizer preset.
+   */
+  const deleteEqualizer = async () => {
+    if (preset in stockMusicPresets) {
+      setError('Cannot delete a hard-coded preset.');
+      return;
+    }
+    try {
+      setError(null);
+      await ApiService.deleteEqualizer(preset.replace("🛠️",""));
+      setCustomEqualizers(prev => {
+        const newCustomEq = { ...prev };
+        delete newCustomEq[preset];
+        return newCustomEq;
+      });
+      setPreset('Custom');
+      setEqualizer(defaultEqualizer);
+    } catch (error) {
+      console.error('Error deleting equalizer:', error);
+      setError('Failed to delete equalizer. Please try again.');
+    }
+  };
+
+  /**
    * Sorted list of frequency bands for rendering sliders in order.
    */
   const sortedBands = Object.entries(equalizer).sort((a, b) => {
-    const bandA = parseInt(a[0].slice(1));
-    const bandB = parseInt(b[0].slice(1));
+    const bandA = parseInt(a[0].slice(1), 10);
+    const bandB = parseInt(b[0].slice(1), 10);
     return bandA - bandB;
   });
 
@@ -363,14 +437,34 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   }, [equalizer]);
 
   /**
+   * Effect to clear the error message after 10 seconds if it is set.
+   */
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+
+    if (error) {
+      timer = setTimeout(() => {
+        setError(null);
+      }, 10000);
+    }
+
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [error]);
+
+  /**
    * Renders the Equalizer component.
    *
    * @returns {JSX.Element} The rendered JSX element.
    */
+  
   return (
     <div className="equalizer-container">
       <h3 className="equalizer-title">
-        <span className="music-note">♪</span> Equalizer: {item.name} <span className="music-note">♪</span>
+      {item.name} {type.replace(/s$/,"").replace(/^(.)/, function(m){return m.toUpperCase()})} Equalizer
       </h3>
       {error && <div className="error-message">{error}</div>}
       <div className="equalizer-graph">
@@ -381,10 +475,12 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
           <label htmlFor="preset-select">Preset: </label>
           <select id="preset-select" value={preset} onChange={handlePresetChange} className="preset-select">
             <option value="Custom">Custom</option>
-            {Object.keys(musicPresets).map(presetName => (
+            {Object.keys({ ...musicPresets, ...customEqualizers }).map(presetName => (
               <option key={presetName} value={presetName}>{presetName}</option>
             ))}
           </select>
+          <button className="save-button" onClick={saveEqualizer}>Save</button>
+          <button className="delete-button" onClick={deleteEqualizer}>Delete</button>
         </div>
         <div className="equalizer-sliders">
           {sortedBands.map(([band, value], index) => (
@@ -409,7 +505,6 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
       </div>
       <div className="equalizer-buttons">
         <button className="apply-button" onClick={updateEqualizer}>Apply</button>
-        <button className="default-button" onClick={resetToDefault}>Default</button>
         <button className="close-button" onClick={handleClose}>Close</button>
       </div>
     </div>

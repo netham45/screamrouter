@@ -8,7 +8,7 @@ import React from 'react';
 import { Source, Route } from '../api/api';
 import ActionButton from './controls/ActionButton';
 import VolumeSlider from './controls/VolumeSlider';
-import { renderLinkWithAnchor, ActionButton, VolumeSlider } from '../utils/commonUtils';
+import { renderLinkWithAnchor } from '../utils/commonUtils';
 
 /**
  * Interface defining the props for the PrimarySourceSection component.

@@ -518,6 +518,10 @@ select {
   font-size: 1rem;
 }
 
+div.preset-selector {
+  text-align: center;
+}
+
 /**
  * Table styling, setting width to full container, separate border collapse, spacing between rows, and bottom margin.
  */

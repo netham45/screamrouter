@@ -15,6 +15,7 @@ from src.api.api_website import APIWebsite
 from src.api.api_webstream import APIWebStream
 from src.api.api_websocket_config import APIWebsocketConfig
 from src.api.api_websocket_debug import APIWebsocketDebug
+from src.api.api_equalizer import APIEqualizer
 from src.configuration.configuration_manager import ConfigurationManager
 from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_logger.screamrouter_logger import get_logger
@@ -97,6 +98,7 @@ screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstrea
                                                                         websocket_config)
 api_controller = APIConfiguration(app, screamrouter_configuration)
 website: APIWebsite = APIWebsite(app, screamrouter_configuration)
+equalizer: APIEqualizer = APIEqualizer(app)
 
 config = uvicorn.Config(app=app,
                         port=constants.API_PORT,

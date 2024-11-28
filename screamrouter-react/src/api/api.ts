@@ -5,8 +5,6 @@
  */
 
 import axios from 'axios';
-// Base URL for API requests
-const BASE_URL = "/";
 
 /**
  * Interface for Source object
@@ -69,6 +67,7 @@ export interface Route {
  * Interface for Equalizer object
  */
 export interface Equalizer {
+  name?: string; // Added optional name field for custom equalizers
   b1: number; b2: number; b3: number; b4: number; b5: number; b6: number;
   b7: number; b8: number; b9: number; b10: number; b11: number; b12: number;
   b13: number; b14: number; b15: number; b16: number; b17: number; b18: number;
@@ -211,6 +210,7 @@ const ApiService = {
   updateSourceEqualizer: (name: string, equalizer: Equalizer) => axios.post(`/sources/${name}/equalizer`, equalizer),
   updateSinkEqualizer: (name: string, equalizer: Equalizer) => axios.post(`/sinks/${name}/equalizer`, equalizer),
   updateRouteEqualizer: (name: string, equalizer: Equalizer) => axios.post(`/routes/${name}/equalizer`, equalizer),
+  
 
   // Reorder requests
   reorderSource: (name: string, newIndex: number) => axios.get(`/sources/${name}/reorder/${newIndex}`),
@@ -224,6 +224,16 @@ const ApiService = {
   // Utility methods
   getSinkStreamUrl: (sinkIp: string) => `/stream/${sinkIp}/?random=${Math.random()}`,
   getVncUrl: (sourceName: string) => `/site/vnc/${sourceName}`,
+
+  // Custom equalizer requests
+  saveEqualizer: (equalizer: Equalizer) => axios.post('/equalizers/', equalizer),
+  listEqualizers: () => axios.get<{ equalizers: Equalizer[] }>('/equalizers/'),
+  deleteEqualizer: (name: string) => axios.delete(`/equalizers/${name}`),
+
+  // New method to update equalizer based on type and name
+  updateEqualizer: (type: 'sources' | 'sinks' | 'routes', name: string, equalizer: Equalizer) => {
+    return axios.post(`/equalizers/${type}/${name}`, equalizer);
+  }
 };
 
 export default ApiService;

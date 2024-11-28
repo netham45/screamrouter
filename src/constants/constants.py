@@ -37,6 +37,11 @@ TIMESHIFT_DURATION: int = int(os.getenv("TIMESHIFT_DURATION", "300"))
 """Timeshift duration in seconds."""
 CONFIGURATION_RELOAD_TIMEOUT: int = int(os.getenv("CONFIGURATION_RELOAD_TIMEOUT", "3"))
 """Configuration reload timeout in seconds."""
+CONFIG_PATH = os.path.join(os.getcwd(), os.getenv("CONFIG_PATH", "config.yaml"))
+"""Path to the configuration file"""
+EQUALIZER_CONFIG_PATH = os.path.join(os.getcwd(),
+                                     os.getenv("EQUALIZER_CONFIG_PATH", "equalizers.yaml"))
+"""Path to the equalizer configurations file"""
 
 # ##########
 # Internal Options
