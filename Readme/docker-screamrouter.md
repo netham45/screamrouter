@@ -89,8 +89,8 @@ The Docker setup maps three important directories to persist data:
 The Docker container automatically generates self-signed SSL certificates on first run if they don't already exist in the mounted certificate directory. These certificates enable HTTPS access to the web interface.
 
 The certificates are stored in the `docker/cert` directory and are preserved between container restarts. If you want to use your own certificates, you can place them in this directory as:
-- `server.crt`: The certificate file
-- `server.key`: The private key file
+- `cert.pem`: The certificate file
+- `privkey.pem`: The private key file
 
 ### Network Configuration
 

@@ -54,7 +54,7 @@ docker run -d --network host \
 This container uses host networking mode for optimal audio streaming performance. This is required for proper functioning of multicast-based protocols like Scream.
 
 ### SSL Certificates
-Self-signed SSL certificates are automatically generated on first run if not found in the mounted certificate volume. To use your own certificates, place them in the cert volume as `server.crt` and `server.key`.
+Self-signed SSL certificates are automatically generated on first run if not found in the mounted certificate volume. To use your own certificates, place them in the cert volume as `cert.pem` and `privkey.pem`.
 
 ## Supported Audio Sources
 - RTP/Linux sources

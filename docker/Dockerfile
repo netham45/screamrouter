@@ -65,6 +65,10 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV API_PORT=443
 ENV HTTP_PORT=80
+ENV CERTIFICATE=/app/cert/cert.pem
+ENV CERTIFICATE_KEY=/app/cert/privkey.pem
+ENV CONFIG_PATH=/app/config/config.yaml
+ENV EQUALIZER_CONFIG_PATH=/app/config/equalizers.yaml
 
 # Copy SSL certificate generation script
 COPY docker/generate-certs.sh /app/

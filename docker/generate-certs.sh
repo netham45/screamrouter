@@ -2,8 +2,8 @@
 
 # Define certificate paths
 CERT_DIR="/app/cert"
-CERT_FILE="$CERT_DIR/server.crt"
-KEY_FILE="$CERT_DIR/server.key"
+CERT_FILE="$CERT_DIR/cert.pem"
+KEY_FILE="$CERT_DIR/privkey.pem"
 
 # Check if certificate and key already exist
 if [ -f "$CERT_FILE" ] && [ -f "$KEY_FILE" ]; then
