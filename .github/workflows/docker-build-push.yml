@@ -32,7 +32,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/screamrouter
+          images: netham45/screamrouter
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

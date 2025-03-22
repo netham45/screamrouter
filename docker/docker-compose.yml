@@ -2,10 +2,11 @@ version: '3.8'
 
 services:
   screamrouter:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: screamrouter:latest
+    image: netham45/screamrouter:latest
+    # Uncomment the following lines to build from source instead
+    # build:
+    #   context: ..
+    #   dockerfile: docker/Dockerfile
     container_name: screamrouter
     restart: unless-stopped
     volumes:

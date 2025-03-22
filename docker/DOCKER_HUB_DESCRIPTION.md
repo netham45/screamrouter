@@ -112,7 +112,7 @@ docker run -d --network host \
   -v ./cert:/app/cert \
   -e API_PORT=8443 \
   --name screamrouter \
-  yourusername/screamrouter:latest
+  netham45/screamrouter:latest
 ```
 
 ## Access

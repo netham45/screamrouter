@@ -15,9 +15,24 @@ The ScreamRouter Docker setup consists of:
 2. A Docker Compose configuration for easy deployment
 3. Helper scripts for building and running the container
 
-## Building the Docker Image
+## Using the Official Docker Image
 
-To build the ScreamRouter Docker image, use the provided build script:
+The recommended way to run ScreamRouter is to use the official Docker image from Docker Hub:
+
+```bash
+docker run -d --network host \
+  -v ./config:/app/config \
+  -v ./logs:/app/logs \
+  -v ./cert:/app/cert \
+  --name screamrouter \
+  netham45/screamrouter:latest
+```
+
+This image is maintained at [https://hub.docker.com/r/netham45/screamrouter](https://hub.docker.com/r/netham45/screamrouter) and contains the latest stable version of ScreamRouter.
+
+## Building from Source (Optional)
+
+If you prefer to build the Docker image yourself, use the provided build script:
 
 ```bash
 ./docker/build.sh
