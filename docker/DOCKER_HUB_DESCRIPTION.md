@@ -51,7 +51,10 @@ docker run -d --network host \
 - `/app/cert`: SSL certificates (persistent, auto-generated on first run)
 
 ### Networking
-This container uses host networking mode for optimal audio streaming performance. This is required for proper functioning of multicast-based protocols like Scream.
+
+On Linux and macOS, this container should use host networking mode for optimal audio streaming performance. This is required for proper functioning of multicast-based protocols like Scream.
+
+On Windows, Docker's host networking has limitations. The port mapping approach works for basic functionality, but multicast-based features (like automatic Scream source discovery) won't work. For best results on Windows, use Docker with WSL2 backend.
 
 ### SSL Certificates
 Self-signed SSL certificates are automatically generated on first run if not found in the mounted certificate volume. To use your own certificates, place them in the cert volume as `cert.pem` and `privkey.pem`.
@@ -104,16 +107,39 @@ Self-signed SSL certificates are automatically generated on first run if not fou
 - `TIMESHIFT_DURATION`: Audio time-shifting buffer duration in seconds (default: 300)
 - `CONFIGURATION_RELOAD_TIMEOUT`: Configuration reload timeout in seconds (default: 3)
 
-Example with custom ports:
+### Example Commands
+
+#### Linux/macOS with Custom Settings
+
 ```bash
+# Linux/macOS with default settings
 docker run -d --network host \
   -v ./config:/app/config \
   -v ./logs:/app/logs \
   -v ./cert:/app/cert \
-  -e API_PORT=8443 \
   --name screamrouter \
   netham45/screamrouter:latest
 ```
+
+#### Windows
+
+```bash
+# Windows with port forwards (multicast features won't work)
+docker run -d \
+  -p 443:443 \
+  -p 16401:16401/udp \
+  -p 40001:40001/udp \
+  -p 4011-4020:4011-4020/udp \
+  -v ./config:/app/config \
+  -v ./logs:/app/logs \
+  -v ./cert:/app/cert \
+  --name screamrouter \
+  netham45/screamrouter:latest
+```
+
+#### Docker Compose
+
+For more persistent setups, use Docker Compose as described in the GitHub repository.
 
 ## Access
 - Web Interface: http://localhost or https://localhost (SSL)

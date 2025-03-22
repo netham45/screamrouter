@@ -29,7 +29,7 @@ from src.screamrouter_types.website import (AddEditRouteInfo, AddEditSinkInfo,
 
 logger = get_logger(__name__)
 
-NPM_REACT_DEBUG_SITE: bool = True
+
 SITE_PREFIX: str = "/site"
 TEMPLATE_DIRECTORY_PREFIX: str = "."
 
@@ -53,7 +53,7 @@ class APIWebsite():
         """Holds a list of websockify processes to kill"""
         self.vnc_port: int = 5900
         """Holds the current vnc port, gets incremented by one per connection"""
-        if NPM_REACT_DEBUG_SITE:
+        if constants.NPM_REACT_DEBUG_SITE:
             self.main_api.get("/site/{path:path}", name="site2")(self.proxy_npm_devsite)
         else:
             self.main_api.get("/site/{path}", name="site")(self.serve_static_or_index)

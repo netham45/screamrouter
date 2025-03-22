@@ -29,6 +29,8 @@ SHOW_FFMPEG_OUTPUT: bool = os.getenv("SHOW_FFMPEG_OUTPUT", "False").lower() == "
 """Show ffmpeg output"""
 DEBUG_MULTIPROCESSING: bool = os.getenv("DEBUG_MULTIPROCESSING", "False").lower() == "true"
 """Debugs Multiprocessing to stdout."""
+NPM_REACT_DEBUG_SITE: bool = os.getenv("NPM_REACT_DEBUG_SITE", "False").lower() == "true"
+"""Enable to use a locally running npm dev server for the React site"""
 CERTIFICATE: str = os.getenv("CERTIFICATE", "/root/screamrouter/cert/cert.pem")
 """SSL Cert"""
 CERTIFICATE_KEY: str = os.getenv("CERTIFICATE_KEY", "/root/screamrouter/cert/privkey.pem")
