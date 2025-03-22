@@ -13,6 +13,31 @@
   margin: 0 auto;
   overflow: hidden;
   overflow-x: hidden;
+  position: relative;
+}
+
+/**
+ * Close button styling for the VNC view, positioned absolutely in the top right corner.
+ */
+.close-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+/**
+ * Hover state for the close button, darkening the background.
+ */
+.close-button:hover {
+  background-color: rgba(0, 0, 0, 0.7);
 }
   
 /**

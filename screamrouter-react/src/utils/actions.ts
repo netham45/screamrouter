@@ -7,6 +7,7 @@
 
 import ApiService from '../api/api';
 import { Source, Sink, Route } from '../api/api';
+import { openEditPage } from '../components/fullMenu/utils';
 
 type ItemType = 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source';
 
@@ -90,7 +91,7 @@ export interface Actions {
   controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => Promise<void>;
 
   /**
-   * Toggles the active source.
+   * Toggles the Primary Source.
    *
    * @param {string} name - The name of the source to toggle as active.
    */
@@ -129,7 +130,7 @@ export interface Actions {
  * @param {(item: Source | Sink | Route | null) => void} setSelectedItem - Function to set the selected item.
  * @param {(type: ItemType | null) => void} setSelectedItemType - Function to set the type of the selected item.
  * @param {(show: boolean, source: Source) => void} setShowVNCModal - Function to show or hide the VNC modal.
- * @param {(setter: (prevActiveSource: string | null) => string | null) => void} setActiveSource - Function to set the active source.
+ * @param {(setter: (prevActiveSource: string | null) => string | null) => void} setActiveSource - Function to set the Primary Source.
  * @param {(sink: Sink | null) => void} onListenToSink - Callback for listening to a sink.
  * @param {(sink: Sink | null) => void} onVisualizeSink - Callback for visualizing a sink.
  * @param {(show: boolean) => void} setShowEditModal - Function to show or hide the edit modal.
@@ -155,7 +156,7 @@ export const createActions = (
       const item = type === 'sources' ? await ApiService.getSources()
                  : type === 'sinks' ? await ApiService.getSinks()
                  : await ApiService.getRoutes();
-      const targetItem = item.data.find((i: Source | Sink | Route) => i.name === name);
+      const targetItem = Object.values(item.data).find((i: Source | Sink | Route) => i.name === name);
       if (!targetItem) throw new Error(`${type} not found`);
 
       const updateMethod = type === 'sources' ? ApiService.updateSource
@@ -214,9 +215,8 @@ export const createActions = (
     });
   },
   editItem: (type, item) => {
-    setSelectedItem(item);
-    setSelectedItemType(type);
-    setShowEditModal(true);
+    // Use the new openEditPage function instead of showing a modal
+    openEditPage(type, item);
   },
   showEqualizer: (show, type, item) => {
     setSelectedItem(item);

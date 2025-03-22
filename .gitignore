@@ -1,4 +1,5 @@
 config.yaml
+equalizers.yaml
 __pycache__/
 *.py[cod]
 logs/

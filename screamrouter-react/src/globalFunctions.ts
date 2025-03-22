@@ -68,12 +68,35 @@ export const nextSongOnPrimarySource = async () => {
   await controlPrimarySource('nexttrack');
 };
 
+/**
+ * Function called when the Desktop Menu is shown.
+ * The actual color mode changing functionality will be provided by GlobalFunctionsComponent.
+ */
+export const DesktopMenuShow = () => {
+  // The actual implementation will be overridden by GlobalFunctionsComponent
+  console.log("DesktopMenuShow called - this is the original implementation");
+  
+  // Just dispatch resize event, the actual color mode change will be handled by the component
+  window.dispatchEvent(new Event('resize'));
+};
+
+/**
+ * Function called when the Desktop Menu is hidden.
+ * Currently doesn't perform any actions, but is included for future extensibility.
+ */
+export const DesktopMenuHide = () => {
+  // No implementation required at this time
+  // This function is included for future use
+};
+
 // Extend the global window object to include functions for controlling the primary source.
 declare global {
   interface Window {
     previousSongOnPrimarySource: () => Promise<void>;
     playPauseOnPrimarySource: () => Promise<void>;
     nextSongOnPrimarySource: () => Promise<void>;
+    DesktopMenuShow: () => void;
+    DesktopMenuHide: () => void;
   }
 }
 
@@ -81,3 +104,5 @@ declare global {
 window.previousSongOnPrimarySource = previousSongOnPrimarySource;
 window.playPauseOnPrimarySource = playPauseOnPrimarySource;
 window.nextSongOnPrimarySource = nextSongOnPrimarySource;
+window.DesktopMenuShow = DesktopMenuShow;
+window.DesktopMenuHide = DesktopMenuHide;

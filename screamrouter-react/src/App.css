@@ -1,286 +1,573 @@
 /* Global styles */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
 body {
-  font-family: 'Roboto', sans-serif; /* Sets the default font for the entire application */
-  line-height: 1.6; /* Sets the line height for better readability */
-  color: #333; /* Sets the default text color */
-  background-color: #f4f4f4; /* Sets the background color of the body */
-  margin: 0; /* Removes default margin from the body */
-  padding: 0; /* Removes default padding from the body */
+  font-family: 'Poppins', sans-serif;
+  line-height: 1.6;
+  color: #333;
+  background-color: #f4f4f4;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  background: transparent !important;
+}
+
+@keyframes gradientBG {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 /* Utility classes */
 .container {
-  max-width: 1200px; /* Limits the maximum width of the container */
-  margin: 0 auto; /* Centers the container horizontally */
-  padding: 0 15px; /* Adds horizontal padding to the container */
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 15px;
 }
 
-/* Buttons */
+/* Music-themed elements */
+.music-note {
+  display: inline-block;
+  animation: float 3s ease-in-out infinite;
+  margin-right: 5px;
+}
+
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+  100% { transform: translateY(0px); }
+}
+
+.music-wave {
+  position: relative;
+  overflow: hidden;
+}
+
+.music-wave::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -5px;
+  height: 10px;
+  background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 320" preserveAspectRatio="none"><path fill="%239b59b6" fill-opacity="0.2" d="M0,128L48,144C96,160,192,192,288,186.7C384,181,480,139,576,149.3C672,160,768,224,864,218.7C960,213,1056,139,1152,133.3C1248,128,1344,192,1392,224L1440,256L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z"></path></svg>');
+  background-size: cover;
+  z-index: -1;
+}
+
+/* Angled Cards & Containers */
+.angled-card {
+  transform: skewX(-5deg);
+  transition: all 0.3s ease;
+}
+
+.angled-card > * {
+  transform: skewX(5deg); /* Counter skew for content */
+}
+
+.angled-card:hover {
+  transform: skewX(-5deg) translateY(-5px);
+  no-box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+}
+
+/* Buttons with dynamic angles */
 .btn {
-  display: inline-block; /* Makes the button an inline block element */
-  background: #3498db; /* Sets the default background color of the button */
-  color: #fff; /* Sets the text color of the button */
-  padding: 0.5rem 1rem; /* Adds padding inside the button */
-  border: none; /* Removes the default border from the button */
-  border-radius: 4px; /* Rounds the corners of the button */
-  cursor: pointer; /* Changes the cursor to a pointer when hovering over the button */
-  font-size: 1rem; /* Sets the font size of the text inside the button */
-  transition: background-color 0.3s ease; /* Adds a smooth transition effect for background color changes */
+  display: inline-block;
+  background: linear-gradient(45deg, #3498db, #9b59b6);
+  color: #fff;
+  padding: 0.5rem 1.2rem;
+  border: none;
+  border-radius: 25px;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  z-index: 1;
+  no-box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.btn::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(45deg, #9b59b6, #3498db);
+  z-index: -1;
+  transition: opacity 0.3s ease;
+  opacity: 0;
 }
 
 .btn:hover {
-  background: #2980b9; /* Changes the background color when hovering over the button */
+  transform: translateY(-3px);
+  no-box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+.btn:hover::after {
+  opacity: 1;
 }
 
 .btn-danger {
-  background: #e74c3c; /* Sets a different background color for danger buttons */
+  background: linear-gradient(45deg, #e74c3c, #c0392b);
 }
 
 .btn-danger:hover {
-  background: #c0392b; /* Changes the background color of danger buttons on hover */
+  background: linear-gradient(45deg, #c0392b, #e74c3c);
+}
+
+/* Dynamic action buttons */
+.action-btn {
+  position: relative;
+  padding: 0.8rem 1.5rem;
+  border-radius: 50px;
+  background: linear-gradient(45deg, #9B59B6, #3498db);
+  color: white;
+  border: none;
+  font-weight: 500;
+  cursor: pointer;
+  no-box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.action-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  transition: all 0.5s ease;
+}
+
+.action-btn:hover {
+  transform: translateY(-3px);
+  no-box-shadow: 0 6px 15px rgba(0,0,0,0.2);
+}
+
+.action-btn:hover::before {
+  left: 100%;
 }
 
 /* Form elements */
 input[type="text"],
 input[type="number"],
 select {
-  width: 100%; /* Makes form inputs and selects take up full width */
-  padding: 0.5rem; /* Adds padding inside form inputs and selects */
-  margin-bottom: 1rem; /* Adds space below form inputs and selects */
-  border: 1px solid #ddd; /* Adds a light gray border around form inputs and selects */
-  border-radius: 4px; /* Rounds the corners of form inputs and selects */
+  width: 100%;
+  padding: 0.8rem 1rem;
+  margin-bottom: 1rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-family: 'Poppins', sans-serif;
+  font-size: 0.95rem;
+  transition: all 0.3s ease;
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus {
+  border-color: #9b59b6;
+  no-box-shadow: 0 0 0 3px rgba(155, 89, 182, 0.2);
+  outline: none;
 }
 
 /* Tables */
 table {
-  width: 100%; /* Makes tables take up full width */
-  border-collapse: collapse; /* Collapses table borders into a single border */
-  margin-bottom: 1rem; /* Adds space below tables */
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+  border-radius: 12px;
+  overflow: hidden;
+  no-box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 th, td {
-  text-align: left; /* Aligns table header and data cells to the left */
-  padding: 0.75rem; /* Adds padding inside table header and data cells */
-  border-bottom: 1px solid #ddd; /* Adds a light gray bottom border to table rows */
+  text-align: left;
+  padding: 1rem;
+  border-bottom: 1px solid #eee;
 }
 
 th {
-  background-color: #f2f2f2; /* Sets the background color of table headers */
-  font-weight: bold; /* Makes table headers bold */
+  background: linear-gradient(45deg, rgba(155, 89, 182, 0.2), rgba(52, 152, 219, 0.2));
+  font-weight: 600;
+  color: #333;
+}
+
+tr:nth-child(even) {
+  background-color: rgba(128, 128, 128, 0.05);
+}
+
+tr:hover {
+  background-color: rgba(155, 89, 182, 0.05);
+  transition: background-color 0.3s ease;
 }
 
 /* Modal styles */
 .modal-backdrop {
-  position: fixed; /* Positions the modal backdrop as a fixed element */
+  position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.5); /* Sets a semi-transparent black background for the modal backdrop */
-  display: flex; /* Uses flexbox to center the modal content */
+  background-color: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(5px);
+  display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 1000; /* Ensures the modal is above other elements */
+  z-index: 1000;
 }
 
 .modal-content {
-  background-color: #fff; /* Sets a white background for the modal content */
-  padding: 2rem; /* Adds padding inside the modal content */
-  border-radius: 8px; /* Rounds the corners of the modal content */
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1); /* Adds a subtle shadow to the modal content */
+  background-color: #fff;
+  padding: 2rem;
+  border-radius: 16px;
+  no-box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
   width: auto;
-  max-width: 100%;
+  max-width: 90%;
+  transform: translateY(20px);
+  animation: modalFadeIn 0.4s forwards;
+  position: relative;
+  overflow: hidden;
+}
+
+.modal-content::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  background: linear-gradient(90deg, #9b59b6, #3498db);
+}
+
+@keyframes modalFadeIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Responsive design */
 @media (max-width: 768px) {
   .container {
-    padding: 0 10px; /* Reduces horizontal padding on smaller screens */
+    padding: 0 10px;
   }
-
+  
   table {
-    font-size: 0.9rem; /* Reduces the font size of tables on smaller screens */
+    font-size: 0.9rem;
   }
-
+  
   th, td {
-    padding: 0.5rem; /* Reduces padding inside table cells on smaller screens */
+    padding: 0.5rem;
   }
 }
 
 /* Animations */
 @keyframes fadeIn {
   from {
-    opacity: 0; /* Starts with full transparency */
+    opacity: 0;
+    transform: translateY(10px);
   }
   to {
-    opacity: 1; /* Ends with full opacity */
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
 .fade-in {
-  animation: fadeIn 0.3s ease-in; /* Applies the fade in animation */
+  animation: fadeIn 0.4s ease-out;
+}
+
+/* Pulse animation for active items */
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+.pulse {
+  animation: pulse 2s infinite;
 }
 
 /* Error message */
 .error-message {
-  background-color: #f8d7da; /* Sets a light red background for error messages */
-  color: #721c24; /* Sets the text color of error messages */
-  padding: 0.75rem; /* Adds padding inside error messages */
-  margin-bottom: 1rem; /* Adds space below error messages */
-  border: 1px solid #f5c6cb; /* Adds a red border around error messages */
-  border-radius: 4px; /* Rounds the corners of error messages */
+  background: linear-gradient(45deg, #ff7675, #e74c3c);
+  color: white;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 8px;
+  font-weight: 500;
+  no-box-shadow: 0 4px 10px rgba(231, 76, 60, 0.3);
+  transform: translateX(-5px);
 }
 
 /* Success message */
 .success-message {
-  background-color: #d4edda; /* Sets a light green background for success messages */
-  color: #155724; /* Sets the text color of success messages */
-  padding: 0.75rem; /* Adds padding inside success messages */
-  margin-bottom: 1rem; /* Adds space below success messages */
-  border: 1px solid #c3e6cb; /* Adds a green border around success messages */
-  border-radius: 4px; /* Rounds the corners of success messages */
+  background: linear-gradient(45deg, #55efc4, #00b894);
+  color: white;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 8px;
+  font-weight: 500;
+  no-box-shadow: 0 4px 10px rgba(0, 184, 148, 0.3);
+  transform: translateX(-5px);
 }
 
 /* Volume slider */
 input[type="range"] {
   -webkit-appearance: none;
-  appearance: none; /* Removes default styling from range inputs */
-  width: 100%; /* Makes range inputs take up full width */
-  height: 8px; /* Sets the height of range inputs */
-  border-radius: 5px; /* Rounds the corners of range inputs */
-  background: #d3d3d3; /* Sets a light gray background for range inputs */
-  outline: none; /* Removes default focus outline from range inputs */
-  opacity: 0.7; /* Sets the initial opacity of range inputs */
-  transition: opacity .2s; /* Adds a smooth transition effect for opacity changes */
+  appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: 25px;
+  background: linear-gradient(90deg, #9b59b6, #3498db);
+  outline: none;
+  opacity: 0.8;
+  transition: opacity .2s, transform 0.3s;
 }
 
 input[type="range"]:hover {
-  opacity: 1; /* Increases opacity on hover */
+  opacity: 1;
+  transform: scaleY(1.2);
 }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  appearance: none; /* Removes default styling from the slider thumb */
-  width: 20px; /* Sets the width of the slider thumb */
-  height: 20px; /* Sets the height of the slider thumb */
-  border-radius: 50%; /* Makes the slider thumb circular */
-  background: #3498db; /* Sets a blue background for the slider thumb */
-  cursor: pointer; /* Changes the cursor to a pointer when hovering over the slider thumb */
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  no-box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  no-box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 input[type="range"]::-moz-range-thumb {
-  width: 20px; /* Sets the width of the slider thumb in Firefox */
-  height: 20px; /* Sets the height of the slider thumb in Firefox */
-  border-radius: 50%; /* Makes the slider thumb circular in Firefox */
-  background: #3498db; /* Sets a blue background for the slider thumb in Firefox */
-  cursor: pointer; /* Changes the cursor to a pointer when hovering over the slider thumb in Firefox */
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  no-box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: all 0.3s;
+  border: none;
 }
 
 /* Visualizer styles */
 .visualizer-container {
-  margin-top: 20px; /* Adds space above the visualizer container */
-  padding: 20px; /* Adds padding inside the visualizer container */
-  background-color: #f0f0f0; /* Sets a light gray background for the visualizer container */
-  border-radius: 8px; /* Rounds the corners of the visualizer container */
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Adds a subtle shadow to the visualizer container */
+  margin-top: 20px;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 16px;
+  no-box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.visualizer-container::before {
+  content: '';
+  position: absolute;
+  top: -10px;
+  left: -10px;
+  right: -10px;
+  bottom: -10px;
+  background: linear-gradient(45deg, rgba(155, 89, 182, 0.05), rgba(52, 152, 219, 0.05));
+  z-index: -1;
+  filter: blur(10px);
 }
 
 .visualizer-container h3 {
-  margin-bottom: 10px; /* Adds space below the heading inside the visualizer container */
-  color: #333; /* Sets the text color of headings inside the visualizer container */
+  margin-bottom: 15px;
+  color: #9b59b6;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  display: inline-block;
+  position: relative;
+}
+
+.visualizer-container h3::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 0;
+  width: 50%;
+  height: 3px;
+  background: linear-gradient(90deg, #9b59b6, #3498db);
 }
 
 .visualizer-container canvas {
-  width: 100%; /* Makes the canvas take up full width */
-  height: auto; /* Maintains aspect ratio for the canvas */
-  border-radius: 4px; /* Rounds the corners of the canvas */
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Adds a subtle shadow to the canvas */
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  no-box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+.visualizer-container canvas:hover {
+  transform: scale(1.02);
 }
 
 /* Button styles */
 button {
-  padding: 8px 16px; /* Adds padding inside buttons */
-  margin: 4px; /* Adds space around buttons */
-  border: none; /* Removes default borders from buttons */
-  border-radius: 4px; /* Rounds the corners of buttons */
-  background-color: #3498db; /* Sets a blue background for buttons */
-  color: white; /* Sets the text color of buttons */
-  cursor: pointer; /* Changes the cursor to a pointer when hovering over buttons */
-  transition: background-color 0.3s ease; /* Adds a smooth transition effect for background color changes */
+  padding: 10px 20px;
+  margin: 5px;
+  border: none;
+  border-radius: 25px;
+  background: linear-gradient(45deg, #3498db, #9b59b6);
+  color: white;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-family: 'Poppins', sans-serif;
+  font-weight: 500;
+  position: relative;
+  overflow: hidden;
+  no-box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+button::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+  transition: all 0.5s ease;
 }
 
 button:hover {
-  background-color: #2980b9; /* Changes the background color on hover */
+  transform: translateY(-3px);
+  no-box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+}
+
+button:hover::after {
+  left: 100%;
 }
 
 button.delete-button {
-  background-color: #e74c3c; /* Sets a red background for delete buttons */
+  background: linear-gradient(45deg, #ff7675, #e74c3c);
 }
 
 button.delete-button:hover {
-  background-color: #c0392b; /* Changes the background color of delete buttons on hover */
+  background: linear-gradient(45deg, #e74c3c, #ff7675);
 }
 
 button.listening {
-  background-color: #2ecc71; /* Sets a green background for listening buttons */
+  background: linear-gradient(45deg, #00b894, #55efc4);
 }
 
 button.listening:hover {
-  background-color: #27ae60; /* Changes the background color of listening buttons on hover */
+  background: linear-gradient(45deg, #00b894, #00b894);
 }
 
 /* Music-related design elements */
 .music-icon::before {
-  content: '♪'; /* Adds a music note icon before elements with this class */
-  margin-right: 5px; /* Adds space to the right of the music note icon */
+  content: '♪';
+  margin-right: 5px;
+  display: inline-block;
+  animation: bounce 1s infinite alternate;
 }
 
-/* Subtle green accents */
+@keyframes bounce {
+  from { transform: translateY(0); }
+  to { transform: translateY(-5px); }
+}
+
+/* Angled section borders */
 .dashboard-item {
-  border-left: 4px solid #2ecc71; /* Adds a left border with a subtle green accent */
+  border-left: 4px solid #9b59b6;
+  position: relative;
+  padding-left: 15px;
+}
+
+.dashboard-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(to bottom, #9b59b6, #3498db);
+  transform: skewY(-5deg);
 }
 
 .favorite-section h3,
 .active-source-section h3 {
-  color: #27ae60; /* Sets the text color of headings in favorite and active source sections */
+  color: #9b59b6;
+  position: relative;
+  display: inline-block;
+}
+
+.favorite-section h3::after,
+.active-source-section h3::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 0;
+  width: 70%;
+  height: 2px;
+  background: linear-gradient(90deg, #9b59b6, #3498db);
 }
 
 /* Improved flow and feel */
 .dashboard-content {
-  display: flex; /* Uses flexbox to arrange dashboard content */
-  flex-wrap: wrap; /* Allows items to wrap onto multiple lines if necessary */
-  gap: 20px; /* Adds space between items in the dashboard content */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 25px;
 }
 
 .sources-column,
 .sinks-column {
-  flex: 1; /* Makes columns take up equal space */
-  min-width: 300px; /* Sets a minimum width for columns */
+  flex: 1;
+  min-width: 300px;
+  transition: all 0.3s ease;
+}
+
+.sources-column:hover,
+.sinks-column:hover {
+  transform: translateY(-5px);
 }
 
 /* Waveform background */
 .waveform-background {
-  position: relative; /* Positions the waveform background relatively */
+  position: relative;
+  overflow: hidden;
 }
 
 .waveform-background::before {
-  content: ''; /* Creates an empty pseudo-element */
-  position: absolute; /* Positions the pseudo-element absolutely within the waveform background */
+  content: '';
+  position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><path d="M0 50 Q 25 30, 50 50 T 100 50" fill="none" stroke="%232ecc71" stroke-width="2" opacity="0.1"/></svg>'); /* Sets a waveform pattern as the background image */
-  background-repeat: repeat-x; /* Repeats the background image horizontally */
-  background-size: 100px 50px; /* Sets the size of the background image */
-  opacity: 0.1; /* Sets the initial opacity of the background image */
-  z-index: -1; /* Ensures the background image is behind other content */
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 320" preserveAspectRatio="none"><path fill="%239b59b6" fill-opacity="0.1" d="M0,224L48,208C96,192,192,160,288,154.7C384,149,480,171,576,165.3C672,160,768,128,864,117.3C960,107,1056,117,1152,138.7C1248,160,1344,192,1392,208L1440,224L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z"></path></svg>');
+  background-repeat: repeat-x;
+  background-size: 100% 100%;
+  opacity: 0.3;
+  z-index: -1;
+  animation: wave 10s linear infinite;
+}
+
+@keyframes wave {
+  0% { background-position-x: 0; }
+  100% { background-position-x: 1440px; }
 }
 
 /* Table hover effect */
 tr:hover {
-  background-color: #f5f5f5; /* Changes the background color on hover */
-  transition: background-color 0.3s ease; /* Adds a smooth transition effect for background color changes */
+  background-color: rgba(155, 89, 182, 0.1);
+  transition: background-color 0.3s ease;
 }
 
 /* Favorite sources background color (light mode) */
@@ -290,40 +577,219 @@ tr:hover {
 .active-sources,
 .active-sinks,
 .active-routes {
-  background-color: #e8f4fd; /* Sets a light blue background for favorite and active sections */
-  border: 1px solid #bde0fe; /* Adds a blue border around favorite and active sections */
-  border-radius: 8px; /* Rounds the corners of favorite and active sections */
-  padding: 1rem; /* Adds padding inside favorite and active sections */
-  margin-bottom: 1rem; /* Adds space below favorite and active sections */
+  background: linear-gradient(165deg, rgba(155, 89, 182, 0.08), rgba(52, 152, 219, 0.08));
+  border: 1px solid rgba(155, 89, 182, 0.2);
+  border-radius: 16px;
+  padding: 1.2rem;
+  margin-bottom: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  no-box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+}
+
+.favorite-sources::before,
+.favorite-sinks::before,
+.favorite-routes::before,
+.active-sources::before,
+.active-sinks::before,
+.active-routes::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 5px;
+  background: linear-gradient(90deg, #9b59b6, #3498db);
 }
 
 /* Now playing/active sink section (light mode) */
 .status-section {
-  background-color: #d4edda; /* Sets a light green background for the status section */
-  border: 1px solid #c3e6cb; /* Adds a green border around the status section */
-  border-radius: 8px; /* Rounds the corners of the status section */
-  padding: 1rem; /* Adds padding inside the status section */
-  margin-bottom: 1rem; /* Adds space below the status section */
+  background: linear-gradient(165deg, rgba(46, 204, 113, 0.1), rgba(52, 152, 219, 0.1));
+  border: 1px solid rgba(46, 204, 113, 0.2);
+  border-radius: 16px;
+  padding: 1.2rem;
+  margin-bottom: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  transform: skewY(-1deg);
+  no-box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+}
+
+.status-section > * {
+  transform: skewY(1deg); /* Counter-skew for content */
 }
 
 .collapsible-section {
-  background-color: #fff; /* Sets a white background for collapsible sections */
-  border: 1px solid #d1d1d1; /* Adds a light gray border around collapsible sections */
-  border-radius: 8px; /* Rounds the corners of collapsible sections */
-  margin-bottom: 1rem; /* Adds space below collapsible sections */
+  background-color: #fff;
+  border-radius: 16px;
+  margin-bottom: 1.5rem;
+  no-box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+  transition: all 0.3s ease;
+  transform: perspective(500px) rotateX(1deg);
+}
+
+.collapsible-section:hover {
+  transform: perspective(500px) rotateX(0);
+  no-box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
 }
 
 .section-header {
-  background-color: #f8f9fa; /* Sets a light gray background for section headers */
-  padding: 0.5rem 1rem; /* Adds padding inside section headers */
-  border-bottom: 1px solid #d1d1d1; /* Adds a light gray bottom border to section headers */
-  border-radius: 8px 8px 0 0; /* Rounds the top corners of section headers */
+  background: linear-gradient(90deg, rgba(155, 89, 182, 0.1), rgba(52, 152, 219, 0.1));
+  padding: 0.7rem 1.2rem;
+  border-bottom: 1px solid rgba(155, 89, 182, 0.1);
+  border-radius: 16px 16px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .section-content {
-  padding: 1rem; /* Adds padding inside section content */
+  padding: 1.2rem;
 }
 
 iframe {
-  border: 0px; /* Removes default borders from iframes */
+  border: 0px;
+  border-radius: 12px;
+  overflow: hidden;
+  no-box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+}
+
+/* Equalizer specific styling */
+.equalizer-container {
+  background: linear-gradient(165deg, rgba(155, 89, 182, 0.05), rgba(52, 152, 219, 0.05));
+  border-radius: 16px;
+  no-box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+  padding: 1.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.equalizer-control {
+  margin-bottom: 1.5rem;
+  position: relative;
+}
+
+.equalizer-slider {
+  height: 150px;
+  margin: 0 8px;
+  position: relative;
+}
+
+.equalizer-slider::before {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, #9b59b6, #3498db);
+  no-box-shadow: 0 0 8px rgba(155, 89, 182, 0.4);
+}
+
+.eq-band-label {
+  font-size: 0.8rem;
+  color: #9b59b6;
+  font-weight: 500;
+  margin-top: 5px;
+  text-align: center;
+}
+
+/* Music player controls */
+.player-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  margin: 1.5rem 0;
+}
+
+.player-controls button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(45deg, #3498db, #9b59b6);
+  color: white;
+  border: none;
+  no-box-shadow: 0 4px 10px rgba(155, 89, 182, 0.3);
+  transition: all 0.3s ease;
+}
+
+.player-controls button:hover {
+  transform: scale(1.1);
+  no-box-shadow: 0 6px 12px rgba(155, 89, 182, 0.4);
+}
+
+.play-button {
+  width: 50px !important;
+  height: 50px !important;
+}
+
+.now-playing-info {
+  padding: 1rem;
+  border-radius: 12px;
+  background: linear-gradient(165deg, rgba(155, 89, 182, 0.05), rgba(52, 152, 219, 0.05));
+  display: flex;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.now-playing-album {
+  width: 60px;
+  height: 60px;
+  border-radius: 8px;
+  background: linear-gradient(45deg, #9b59b6, #3498db);
+  margin-right: 15px;
+  no-box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.now-playing-album::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 15px;
+  height: 15px;
+  background: white;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.now-playing-track {
+  flex: 1;
+}
+
+.track-name {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 5px;
+}
+
+.track-artist {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: #e0e0e0;
+  margin: 1rem 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #9b59b6, #3498db);
+  width: 35%;
+  border-radius: 3px;
 }

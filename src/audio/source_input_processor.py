@@ -121,7 +121,6 @@ class SourceInputProcessor():
                         ])
         return command
 
-
     def update_equalizer(self, equalizer: Equalizer) -> None:
         """Updates the equalizer for this source"""
         self.source_info.equalizer = equalizer
@@ -144,18 +143,22 @@ class SourceInputProcessor():
         self.send_command("b17", equalizer.b17)
         self.send_command("b18", equalizer.b18)
         self.send_command("a") # Apply
+        self.source_info.equalizer = equalizer
 
     def update_volume(self, volume: VolumeType):
         """Updates the volume for this source"""
         self.send_command("v", volume)
+        self.source_info.volume = volume
 
     def update_delay(self, delay: DelayType):
         """Updates the volume for this source"""
         self.send_command("d", delay)
+        self.source_info.delay = delay
 
     def update_timeshift(self, timeshift: TimeshiftType):
         """Updates the volume for this source"""
         self.send_command("t", timeshift)
+        self.source_info.timeshift = timeshift
 
     def send_command(self, command, value=None) -> None:
         """Sends a command to the source_input_processor"""

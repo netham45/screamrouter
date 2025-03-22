@@ -5,9 +5,11 @@
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import './styles/index.css';
+import { ChakraProvider } from '@chakra-ui/react';
+import theme from './theme';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+import './globalFunctions'; // Import globalFunctions to expose functions on window object
 
 // Find the root element in the DOM
 const container = document.getElementById('root');
@@ -17,10 +19,12 @@ if (container) {
   // Create a root for the React app
   const root = createRoot(container);
 
-  // Render the App component within StrictMode for additional checks and warnings
+  // Render the App component within ChakraProvider for Chakra UI theming
   root.render(
     <React.StrictMode>
-      <App />
+      <ChakraProvider theme={theme}>
+        <App />
+      </ChakraProvider>
     </React.StrictMode>
   );
 }

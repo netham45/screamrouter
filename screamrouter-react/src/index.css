@@ -11,6 +11,25 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Highlight effect for navigation */
+.highlight-item {
+  animation: highlight-pulse 2s ease-in-out;
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes highlight-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(66, 153, 225, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(66, 153, 225, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(66, 153, 225, 0);
+  }
+}
+
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;

@@ -227,7 +227,7 @@ footer {
 }
 
 /**
- * Active source section paragraph styling, using flexbox for alignment, italic font style, dark gray color, height, margin removal, padding, text centering, and vertical alignment.
+ * Primary Source section paragraph styling, using flexbox for alignment, italic font style, dark gray color, height, margin removal, padding, text centering, and vertical alignment.
  */
 .active-source-section p,
 .now-playing-section p {

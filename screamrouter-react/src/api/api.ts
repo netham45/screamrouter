@@ -89,43 +89,68 @@ export type WebSocketMessageHandler = (update: WebSocketUpdate) => void;
 
 let ws: WebSocket | null = null;
 let messageHandler: WebSocketMessageHandler | null = null;
+let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Function to create WebSocket connection
 const createWebSocket = () => {
-  if (ws) return; // Don't create if already exists
+  if (ws && ws.readyState === WebSocket.OPEN) return; // Don't create if already exists and open
+
+  // Clear any existing reconnect timeout
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
 
   // Get the current URL's host and protocol
   const host = window.location.host;
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${host}:443/ws/config`;
+  
+  // Use the same host without hardcoded port
+  const wsUrl = `${protocol}//${host}/ws/config`;
   console.log("Creating WebSocket connection to:", wsUrl);
 
-  ws = new WebSocket(wsUrl);
+  try {
+    ws = new WebSocket(wsUrl);
 
-  ws.onmessage = (event) => {
-    if (messageHandler) {
-      try {
-        const update = JSON.parse(event.data);
-        messageHandler(update);
-      } catch (error) {
-        console.error('Error parsing WebSocket message:', error);
+    ws.onmessage = (event) => {
+      if (messageHandler) {
+        try {
+          const update = JSON.parse(event.data);
+          console.log("WebSocket update received:", update);
+          messageHandler(update);
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error);
+        }
       }
-    }
-  };
+    };
 
-  ws.onclose = () => {
-    console.log("WebSocket closed, reloading page");
-    window.location.reload();
-  };
+    ws.onclose = (event) => {
+      console.log(`WebSocket closed (code: ${event.code}, reason: ${event.reason})`);
+      ws = null;
+      
+      // Attempt to reconnect after 5 seconds
+      reconnectTimeout = setTimeout(() => {
+        console.log("Attempting to reconnect WebSocket...");
+        createWebSocket();
+      }, 5000);
+    };
 
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error);
-    ws?.close();
-  };
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      // Let onclose handle reconnection
+    };
 
-  ws.onopen = () => {
-    console.log("WebSocket connected successfully");
-  };
+    ws.onopen = () => {
+      console.log("WebSocket connected successfully");
+    };
+  } catch (error) {
+    console.error('Error creating WebSocket:', error);
+    // Attempt to reconnect after 5 seconds
+    reconnectTimeout = setTimeout(() => {
+      console.log("Attempting to reconnect WebSocket...");
+      createWebSocket();
+    }, 5000);
+  }
 };
 
 // Function to fetch initial state and set up handler
@@ -133,9 +158,7 @@ const setupWebSocket = async (handler: WebSocketMessageHandler) => {
   messageHandler = handler;
 
   // Create WebSocket connection if it doesn't exist
-  if (!ws) {
-    createWebSocket();
-  }
+  createWebSocket();
 
   // Fetch initial state
   try {

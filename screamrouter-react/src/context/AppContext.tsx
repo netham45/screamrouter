@@ -9,7 +9,7 @@ type ItemType = Source | Sink | Route;
 
 interface AppContextType {
   /**
-   * The currently active source name.
+   * The currently Primary Source name.
    */
   activeSource: string | null;
   /**
@@ -33,7 +33,7 @@ interface AppContextType {
    */
   routes: Route[];
   /**
-   * Toggles the active source.
+   * Toggles the Primary Source.
    * @param sourceName - The name of the source to toggle.
    */
   onToggleActiveSource: (sourceName: string) => void;
@@ -196,6 +196,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedEqualizerItem, setSelectedEqualizerItem] = useState<ItemType | null>(null);
   const [selectedEqualizerType, setSelectedEqualizerType] = useState<'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Flag to track whether we need to refetch all data
+  const [needsFullRefresh, setNeedsFullRefresh] = useState<boolean>(false);
+  // Flag to track whether initial data has been loaded
+  const [initialDataLoaded, setInitialDataLoaded] = useState<boolean>(false);
 
   /**
    * Opens a new window with the specified URL.
@@ -213,20 +217,133 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
    * Fetches initial data for sources, sinks, and routes from the API.
    */
   const fetchInitialData = async () => {
+    console.log("Fetching initial data...");
     try {
       const [sourcesResponse, sinksResponse, routesResponse] = await Promise.all([
         ApiService.getSources(),
         ApiService.getSinks(),
         ApiService.getRoutes()
       ]);
+      // Set data directly, replacing any existing data
       setSources(Object.values(sourcesResponse.data));
       setSinks(Object.values(sinksResponse.data));
       setRoutes(Object.values(routesResponse.data));
+      console.log("Initial data fetched successfully");
+      setNeedsFullRefresh(false);
+      setInitialDataLoaded(true);
     } catch (error) {
       console.error('Error fetching initial data:', error);
     }
   };
 
+  // Handle WebSocket updates
+  const handleWebSocketUpdate = (update: WebSocketUpdate) => {
+    console.log("Processing WebSocket update:", update);
+    
+    // If this is the initial data load from api.ts setupWebSocket function, 
+    // and we've already loaded data directly, skip this update to prevent duplicates
+    if (!initialDataLoaded &&
+        update.sources && Object.keys(update.sources).length > 0 &&
+        update.sinks && Object.keys(update.sinks).length > 0 &&
+        update.routes && Object.keys(update.routes).length > 0) {
+      console.log("Initial data from WebSocket - using direct API data instead");
+      setInitialDataLoaded(true);
+      return;
+    }
+    
+    // If we have an update from WebSocket before our direct API call completes,
+    // mark initialDataLoaded to prevent the direct API call from overwriting WebSocket data
+    if (!initialDataLoaded && 
+        (update.sources || update.sinks || update.routes)) {
+      setInitialDataLoaded(true);
+    }
+    
+    // Handle source updates - fixed to properly merge by name
+    if (update.sources && Object.keys(update.sources).length > 0) {
+      setSources(prevSources => {
+        // Create a map of all existing sources keyed by name
+        const nameToSourceMap = new Map<string, Source>();
+        
+        // Add all existing sources to the map
+        prevSources.forEach(source => {
+          nameToSourceMap.set(source.name, source);
+        });
+        
+        // Update/add sources from the update
+        Object.entries(update.sources!).forEach(([name, source]) => {
+          const isNew = !nameToSourceMap.has(name);
+          nameToSourceMap.set(name, source);
+          
+          if (isNew) {
+            console.log(`Added new source: ${name}`);
+          } else {
+            console.log(`Updated existing source: ${name}`);
+          }
+        });
+        
+        // Convert the map back to an array
+        return Array.from(nameToSourceMap.values());
+      });
+    }
+    
+    // Handle sink updates - fixed to properly merge by name
+    if (update.sinks && Object.keys(update.sinks).length > 0) {
+      setSinks(prevSinks => {
+        // Create a map of all existing sinks keyed by name
+        const nameToSinkMap = new Map<string, Sink>();
+        
+        // Add all existing sinks to the map
+        prevSinks.forEach(sink => {
+          nameToSinkMap.set(sink.name, sink);
+        });
+        
+        // Update/add sinks from the update
+        Object.entries(update.sinks!).forEach(([name, sink]) => {
+          const isNew = !nameToSinkMap.has(name);
+          nameToSinkMap.set(name, sink);
+          
+          if (isNew) {
+            console.log(`Added new sink: ${name}`);
+          } else {
+            console.log(`Updated existing sink: ${name}`);
+          }
+        });
+        
+        // Convert the map back to an array
+        return Array.from(nameToSinkMap.values());
+      });
+    }
+    
+    // Handle route updates - fixed to properly merge by name
+    if (update.routes && Object.keys(update.routes).length > 0) {
+      setRoutes(prevRoutes => {
+        // Create a map of all existing routes keyed by name
+        const nameToRouteMap = new Map<string, Route>();
+        
+        // Add all existing routes to the map
+        prevRoutes.forEach(route => {
+          nameToRouteMap.set(route.name, route);
+        });
+        
+        // Update/add routes from the update
+        Object.entries(update.routes!).forEach(([name, route]) => {
+          const isNew = !nameToRouteMap.has(name);
+          nameToRouteMap.set(name, route);
+          
+          if (isNew) {
+            console.log(`Added new route: ${name}`);
+          } else {
+            console.log(`Updated existing route: ${name}`);
+          }
+        });
+        
+        // Convert the map back to an array
+        return Array.from(nameToRouteMap.values());
+      });
+    }
+  };
+
+  // Set up WebSocket and initial data
   useEffect(() => {
     const storedActiveSource = localStorage.getItem('activeSource');
     if (storedActiveSource) {
@@ -235,49 +352,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     audioRef.current = document.getElementById('audio') as HTMLAudioElement;
 
-    // Fetch initial data
+    // Set up WebSocket handler before fetching initial data
+    // This ensures any realtime updates that come in during/after initial load are processed
+    ApiService.setWebSocketHandler((update: WebSocketUpdate) => {
+      handleWebSocketUpdate(update);
+    });
+
+    // Now fetch initial data directly - this provides a clean initial state
     fetchInitialData();
 
-    // Set up WebSocket handler
-    ApiService.setWebSocketHandler((update: WebSocketUpdate) => {
-      if (update.sources) {
-        setSources(prevSources => {
-          const updatedSources = [...prevSources];
-          Object.entries(update.sources || {}).forEach(([name, source]) => {
-            const index = updatedSources.findIndex(s => s.name === name);
-            if (index !== -1) {
-              updatedSources[index] = source;
-            }
-          });
-          return updatedSources;
-        });
+    // Setup periodic check for full refresh
+    const refreshInterval = setInterval(() => {
+      if (needsFullRefresh) {
+        console.log("Performing full data refresh");
+        fetchInitialData();
       }
-      if (update.sinks) {
-        setSinks(prevSinks => {
-          const updatedSinks = [...prevSinks];
-          Object.entries(update.sinks || {}).forEach(([name, sink]) => {
-            const index = updatedSinks.findIndex(s => s.name === name);
-            if (index !== -1) {
-              updatedSinks[index] = sink;
-            }
-          });
-          return updatedSinks;
-        });
-      }
-      if (update.routes) {
-        setRoutes(prevRoutes => {
-          const updatedRoutes = [...prevRoutes];
-          Object.entries(update.routes || {}).forEach(([name, route]) => {
-            const index = updatedRoutes.findIndex(r => r.name === name);
-            if (index !== -1) {
-              updatedRoutes[index] = route;
-            }
-          });
-          return updatedRoutes;
-        });
-      }
-    });
-  }, []);
+    }, 30000); // Check every 30 seconds
+
+    // Cleanup on component unmount
+    return () => {
+      clearInterval(refreshInterval);
+    };
+  }, [needsFullRefresh]);
 
   /**
    * Fetches all sources from the API and updates the state.
@@ -316,7 +412,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   /**
-   * Toggles the active source.
+   * Toggles the Primary Source.
    * @param sourceName - The name of the source to toggle.
    */
   const onToggleActiveSource = (sourceName: string) => {
@@ -334,7 +430,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setListeningToSink(sink);
       if (audioRef.current) {
         audioRef.current.src = ApiService.getSinkStreamUrl(sink.ip);
-        audioRef.current.play();
+        audioRef.current.play().catch(error => {
+          // Ignore abort errors as they're expected when the user stops listening
+          if (error.name !== 'AbortError') {
+            console.error('Error playing audio:', error);
+          }
+        });
       }
     } else {
       setListeningToSink(null);

@@ -107,7 +107,7 @@ body.dark-mode {
 }
 
 /**
- * Styles for paragraphs in active source and now playing sections in dark mode, ensuring light text color.
+ * Styles for paragraphs in Primary Source and now playing sections in dark mode, ensuring light text color.
  */
 .dark-mode .active-source-section p,
 .dark-mode .now-playing-section p {

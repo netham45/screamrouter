@@ -117,25 +117,29 @@ class AudioController():
         """Update the equalizer for a source"""
         for source in self.sources.values():
             if source.source_info.name == source_name:
-                source.update_equalizer(equalizer)
+                if source.source_info.equalizer != equalizer:
+                    source.update_equalizer(equalizer)
 
     def update_volume(self, source_name: SourceNameType, volume: VolumeType):
         """Update the volume for a source"""
         for source in self.sources.values():
             if source.source_info.name == source_name:
-                source.update_volume(volume)
+                if source.source_info.volume != volume:
+                    source.update_volume(volume)
 
     def update_delay(self, source_name: SourceNameType, delay: DelayType):
         """Update the delay for a source"""
         for source in self.sources.values():
             if source.source_info.name == source_name:
-                source.update_delay(delay)
+                if source.source_info.delay != delay:
+                    source.update_delay(delay)
 
     def update_timeshift(self, source_name: SourceNameType, timeshift: TimeshiftType):
         """Update the Timeshift for a source"""
         for source in self.sources.values():
             if source.source_info.name == source_name:
-                source.update_timeshift(timeshift)
+                if source.source_info.timeshift != timeshift:
+                    source.update_timeshift(timeshift)
 
     def stop(self) -> None:
         """Stops the Sink, closes all handles"""

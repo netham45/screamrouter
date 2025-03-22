@@ -1,20 +1,34 @@
 /**
  * React component for the main layout of the application.
  * This component provides a consistent structure and navigation across different pages.
- * It includes a header with navigation links, a status section for active sources and now playing information,
+ * It includes a header with navigation links, a status section for Primary Sources and now playing information,
  * a main content area for nested routes, and a footer with copyright information.
+ * Uses Chakra UI components for consistent styling.
  *
  * @param {React.FC} props - The properties for the component.
  */
 import React, { useState, useEffect } from 'react';
-import { Link, Outlet } from 'react-router-dom';
-import { useAppContext } from '../context/AppContext';
-import '../styles/Layout.css';
-import ActiveSource from './ActiveSource';
-import NowPlaying from './NowPlaying';
-import Equalizer from './Equalizer';
+import { Link as RouterLink, Outlet } from 'react-router-dom';
 
 type ColorMode = 'light' | 'dark' | 'system';
+import {
+  Box,
+  Flex,
+  Heading,
+  Text,
+  Button,
+  Link,
+  HStack,
+  Container,
+  useColorModeValue,
+  Modal,
+  ModalOverlay,
+  ModalContent,
+  ModalCloseButton
+} from '@chakra-ui/react';
+import { ExternalLinkIcon, MoonIcon, SunIcon } from '@chakra-ui/icons';
+import { useAppContext } from '../context/AppContext';
+import Equalizer from './pages/EqualizerPage';
 
 /**
  * React functional component for the Layout.
@@ -22,11 +36,6 @@ type ColorMode = 'light' | 'dark' | 'system';
  * @returns {JSX.Element} The rendered JSX element.
  */
 const Layout: React.FC = () => {
-  /**
-   * State to keep track of whether the status section is expanded or collapsed.
-   */
-  const [isExpanded, setIsExpanded] = useState(false);
-
   /**
    * State to keep track of the current color mode (light, dark, or system default).
    */
@@ -49,13 +58,6 @@ const Layout: React.FC = () => {
     fetchSinks,
     fetchRoutes
   } = useAppContext();
-
-  /**
-   * Toggles the expanded state of the status section.
-   */
-  const toggleExpanded = () => {
-    setIsExpanded(!isExpanded);
-  };
 
   /**
    * Cycles through color modes (light, dark, system default).
@@ -131,58 +133,115 @@ const Layout: React.FC = () => {
     await fetchRoutes();
   };
 
+  // Color values for light/dark mode
+  const bg = useColorModeValue('white', 'gray.800');
+  const headerBg = useColorModeValue('blue.500', 'blue.700');
+  const textColor = useColorModeValue('gray.800', 'white');
+  const borderColor = useColorModeValue('gray.200', 'gray.700');
+
   /**
    * Renders the Layout component.
    *
    * @returns {JSX.Element} The rendered JSX element.
    */
   return (
-    <div className={`layout ${isDarkMode ? 'dark-mode' : ''}`}>
-      <header className="layout-header">
-        <h1>ScreamRouter</h1>
-        <span className="lightdarkmode">
-            <button className="color-mode-toggle" onClick={toggleColorMode}>
-            {getCurrentColorModeText()}
-            </button>
-        </span>
-        <nav>
-          <ul>
-            <li><Link to="/">Dashboard</Link></li>
-            <li><Link to="/sources">Sources</Link></li>
-            <li><Link to="/sinks">Sinks</Link></li>
-            <li><Link to="/routes">Routes</Link></li>
-            <li><Link to="/desktopmenu">Desktop Menu</Link></li>
-            <li><a href="https://github.com/netham45/screamrouter/tree/master/Readme" target="_blank" rel="noopener noreferrer">Docs</a></li>
-            <li><a href="https://github.com/netham45/screamrouter" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-          </ul>
-        </nav>
-      </header>
+    <Box bg={bg} color={textColor} minH="100vh" display="flex" flexDirection="column">
+      <Flex
+        as="header"
+        bg={headerBg}
+        color="white"
+        p={4}
+        alignItems="center"
+        justifyContent="space-between"
+        flexWrap={["wrap", "wrap", "nowrap"]}
+        shadow="md"
+      >
+        <Heading as="h1" size="lg" mr={5}>ScreamRouter</Heading>
+        
+        <Button
+          variant="outline"
+          colorScheme="whiteAlpha"
+          onClick={toggleColorMode}
+          size="sm"
+          mr={[0, 0, 5]}
+          leftIcon={isDarkMode ? <SunIcon /> : <MoonIcon />}
+        >
+          {getCurrentColorModeText()}
+        </Button>
+        
+        <HStack
+          as="nav"
+          spacing={4}
+          display={{ base: 'none', md: 'flex' }}
+          width={{ base: 'full', md: 'auto' }}
+          alignItems="center"
+          flexGrow={1}
+          mt={{ base: 4, md: 0 }}
+        >
+          <Link as={RouterLink} to="/" px={2} py={1} rounded="md" _hover={{ textDecoration: 'none', bg: 'blue.600' }}>
+            Dashboard
+          </Link>
+          <Link as={RouterLink} to="/sources" px={2} py={1} rounded="md" _hover={{ textDecoration: 'none', bg: 'blue.600' }}>
+            Sources
+          </Link>
+          <Link as={RouterLink} to="/sinks" px={2} py={1} rounded="md" _hover={{ textDecoration: 'none', bg: 'blue.600' }}>
+            Sinks
+          </Link>
+          <Link as={RouterLink} to="/routes" px={2} py={1} rounded="md" _hover={{ textDecoration: 'none', bg: 'blue.600' }}>
+            Routes
+          </Link>
+          <Link as={RouterLink} to="/desktopmenu" px={2} py={1} rounded="md" _hover={{ textDecoration: 'none', bg: 'blue.600' }}>
+            Desktop Menu
+          </Link>
+          <Link href="https://github.com/netham45/screamrouter/tree/master/Readme" isExternal px={2} py={1} rounded="md" _hover={{ textDecoration: 'none', bg: 'blue.600' }}>
+            Docs <ExternalLinkIcon mx="2px" />
+          </Link>
+          <Link href="https://github.com/netham45/screamrouter" isExternal px={2} py={1} rounded="md" _hover={{ textDecoration: 'none', bg: 'blue.600' }}>
+            GitHub <ExternalLinkIcon mx="2px" />
+          </Link>
+        </HStack>
+      </Flex>
       {(activeSource || listeningToSink) && (
-        <div className="status-section">
-          <ActiveSource isExpanded={isExpanded} onToggle={toggleExpanded} />
-          <NowPlaying isExpanded={isExpanded} onToggle={toggleExpanded} />
-        </div>
+        <Box
+          p={4}
+          bg={useColorModeValue('blue.50', 'blue.900')}
+          borderBottomWidth="1px"
+          borderColor={borderColor}
+        >
+        </Box>
       )}
-      <main className="layout-main">
-        <Outlet />
-      </main>
-      <footer className="layout-footer">
-        <p>&copy; {new Date().getFullYear()} Netham45</p>
-      </footer>
+      
+      <Box as="main" flex="1" p={6}>
+        <Container maxW="container.xl">
+          <Outlet />
+        </Container>
+      </Box>
+      
+      <Box
+        as="footer"
+        p={4}
+        bg={headerBg}
+        color="white"
+        textAlign="center"
+      >
+        <Text>&copy; {new Date().getFullYear()} Netham45</Text>
+      </Box>
+      
       {showEqualizerModal && selectedEqualizerItem && selectedEqualizerType && (
-        <div className="modal-overlay">
-          <div className="modal-content">
-            <button className="close-modal" onClick={closeEqualizerModal}>×</button>
+        <Modal isOpen={true} onClose={closeEqualizerModal} size="xl">
+          <ModalOverlay />
+          <ModalContent>
+            <ModalCloseButton />
             <Equalizer
               item={selectedEqualizerItem}
               type={selectedEqualizerType}
               onClose={closeEqualizerModal}
               onDataChange={handleDataChange}
             />
-          </div>
-        </div>
+          </ModalContent>
+        </Modal>
       )}
-    </div>
+    </Box>
   );
 };
 

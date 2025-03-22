@@ -4,6 +4,10 @@
   "private": true,
   "homepage": "/site",
   "dependencies": {
+    "@chakra-ui/icons": "^2.2.4",
+    "@chakra-ui/react": "^2.10.7",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
     "@testing-library/jest-dom": "^5.16.5",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
@@ -15,9 +19,11 @@
     "axios": "^1.3.6",
     "butterchurn": "^2.6.7",
     "butterchurn-presets": "^2.4.7",
+    "framer-motion": "^6.5.1",
     "react": "^18.2.0",
     "react-beautiful-dnd": "^13.1.1",
     "react-dom": "^18.2.0",
+    "react-icons": "^5.5.0",
     "react-router-dom": "^6.10.0",
     "typescript": "^4.9.5",
     "web-vitals": "^2.1.4"

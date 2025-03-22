@@ -6,6 +6,7 @@
 
 import React, { useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { Button } from '@chakra-ui/react';
 
 /**
  * Interface defining the configuration for sorting.
@@ -57,20 +58,28 @@ export const useAnchorFlash = () => {
 
 /**
  * ActionButton component for creating a button with an onClick event.
+ * Uses Chakra UI Button for consistent styling.
  *
  * @param {() => void} onClick - The function to call when the button is clicked.
  * @param {string} className - Optional class name for styling.
  * @param {React.ReactNode} children - The content of the button.
- * @returns {JSX.Element} A button component.
+ * @returns {JSX.Element} A Chakra UI Button component.
  */
 export const ActionButton: React.FC<{
   onClick: () => void;
   className?: string;
   children: React.ReactNode;
 }> = ({ onClick, className, children }) => (
-  <button onClick={onClick} className={className}>
+  <Button
+    onClick={onClick}
+    className={className}
+    size="sm"
+    colorScheme="blue"
+    _hover={{ transform: 'translateY(-2px)' }}
+    transition="all 0.3s ease"
+  >
     {children}
-  </button>
+  </Button>
 );
 
 /**
@@ -145,7 +154,7 @@ export const VolumeSlider: React.FC<{
  * @param {string[]} starredItems - An array of names of starred items.
  * @returns {T[]} A new sorted array of items.
  */
-export const getSortedItems = <T extends Record<string, any>>(
+export const getSortedItems = <T extends Record<string, unknown>>(
   items: T[],
   sortConfig: SortConfig,
   starredItems: string[]
@@ -204,7 +213,7 @@ export const getNextSortDirection = (sortConfig: SortConfig, clickedKey: string)
  * @param {string[]} starredItems - An array of names of starred items.
  * @returns {T[]} A new sorted array of items.
  */
-export const getStockSortedItems = <T extends Record<string, any>>(
+export const getStockSortedItems = <T extends Record<string, unknown>>(
   items: T[],
   starredItems: string[]
 ): T[] => {

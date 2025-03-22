@@ -6,8 +6,7 @@
  * Body styles to apply a semi-transparent background color and blur effect, ensuring content is readable over various backgrounds.
  */
 body {
-  background-color: rgba(245, 245, 245, 0.5);
-  backdrop-filter: blur(10px);
+  background: transparent !important;
 }
 
 /**
@@ -22,7 +21,7 @@ body {
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
-  background-color: rgba(245, 245, 245, 0.5);
+  
   color: #333;
   border: 1px solid rgba(50,50,50,.7);
   backdrop-filter: blur(50px) !important;
@@ -252,6 +251,12 @@ body {
 /**
  * Overriding body background color to be fully transparent, ensuring it does not interfere with the desktop menu styles.
  */
-body {
+body, body::before {
   background-color: rgba(0,0,0,0) !important;
+  background: rgba(0,0,0,0) !important;
+  animation: none !important;
+}
+
+tr:nth-child(even) {
+  background-color: inherit !important;
 }
