@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  screamrouter:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: screamrouter:latest
+    container_name: screamrouter
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./cert:/app/cert
+    network_mode: "host"
+    environment:
+      - TZ=UTC
+      - API_PORT=443

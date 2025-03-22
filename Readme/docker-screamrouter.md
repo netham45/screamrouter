@@ -5,66 +5,110 @@ ScreamRouter can be run in a Docker container, which provides an isolated and co
 ## Prerequisites
 
 - Docker installed on your system
+- Docker Compose installed on your system
 - Basic knowledge of Docker commands
 
-## Docker Image
+## Docker Setup
 
-The ScreamRouter Docker image is based on Debian and includes all necessary dependencies and components to run ScreamRouter. The Docker container scripts are located in a separate repository: [screamrouter-docker](https://github.com/netham45/screamrouter-docker/).
+The ScreamRouter Docker setup consists of:
+1. A multi-stage Dockerfile that builds the frontend and C utilities
+2. A Docker Compose configuration for easy deployment
+3. Helper scripts for building and running the container
 
 ## Building the Docker Image
 
-To build the ScreamRouter Docker image, navigate to the screamrouter-docker repository and run:
+To build the ScreamRouter Docker image, use the provided build script:
 
 ```bash
-./build.sh
+./docker/build.sh
 ```
 
-This script will build the Docker image with the latest version of ScreamRouter.
+This script will build a multi-stage Docker image that:
+1. Builds the React frontend
+2. Compiles the C utilities
+3. Sets up the Python backend with all dependencies
 
 ## Running the Docker Container
 
-To run the ScreamRouter Docker container, use:
+To run the ScreamRouter Docker container, use the provided run script:
 
 ```bash
-./run.sh
+./docker/run.sh
 ```
 
-This script will start the ScreamRouter container, mapping the necessary ports and volumes.
+This script will:
+1. Create necessary directories for configuration and logs
+2. Stop any existing ScreamRouter container
+3. Start the container with host networking mode
+
+## Docker Container Details
+
+The ScreamRouter Docker container uses host networking mode to ensure proper functioning of audio streaming protocols like Scream and RTP. This means the container has direct access to the host's network interfaces and ports, avoiding NAT issues that can affect real-time audio streaming.
+
+### Environment Variables
+
+The following environment variables can be used to customize the container:
+
+#### Core Settings
+- `TZ`: Set the timezone (default: UTC)
+- `API_PORT`: HTTPS port for the web interface (default: 443)
+- `HTTP_PORT`: HTTP port for the web interface (default: 80)
+- `API_HOST`: Host the web interface binds to (default: 0.0.0.0)
+
+#### Network Ports
+- `SCREAM_RECEIVER_PORT`: Port to receive Scream audio data (default: 16401)
+- `RTP_RECEIVER_PORT`: Port to receive RTP audio data (default: 40000)
+- `SINK_PORT`: Base port for Scream Sink (default: 4010)
+
+For a complete list of environment variables, see the Docker Hub description or refer to the constants module in the source code.
+
+### Persistent Data
+
+The Docker setup maps three important directories to persist data:
+- `docker/config`: Contains all configuration files
+- `docker/logs`: Contains application logs
+- `docker/cert`: Contains SSL certificates
+
+### SSL Certificates
+
+The Docker container automatically generates self-signed SSL certificates on first run if they don't already exist in the mounted certificate directory. These certificates enable HTTPS access to the web interface.
+
+The certificates are stored in the `docker/cert` directory and are preserved between container restarts. If you want to use your own certificates, you can place them in this directory as:
+- `server.crt`: The certificate file
+- `server.key`: The private key file
+
+### Network Configuration
+
+The container uses host networking mode, which means it shares the host's network namespace. This is required for proper functioning of audio streaming protocols like Scream and RTP that may rely on multicast or specific network configurations.
+
+## Managing the Container
+
+- To view logs: `docker-compose -f docker/docker-compose.yml logs -f`
+- To stop the container: `docker-compose -f docker/docker-compose.yml down`
+- To restart the container: `docker-compose -f docker/docker-compose.yml restart`
 
 ## Accessing ScreamRouter
 
-After the container is running, you can access the ScreamRouter web interface by opening a web browser and navigating to `https://localhost` (or replace `localhost` with your server's IP address if accessing from another device). You may need to accept the self-signed certificate warning.
-
-## Persisting Configuration
-
-The run script maps a volume to persist ScreamRouter's configuration. By default, this is mapped to `./config` in the directory where you run the script. This ensures that your settings are saved even if the container is stopped or restarted.
-
-## Stopping and Restarting the Container
-
-To stop the ScreamRouter container, you can use:
-
-```bash
-docker stop screamrouter
-```
-
-To restart the container:
-
-```bash
-docker start screamrouter
-```
-
-Or, you can use the `run.sh` script again, which will stop any existing container and start a new one.
+After the container is running, you can access the ScreamRouter web interface by opening a web browser and navigating to `http://localhost` or the IP address of your server.
 
 ## Updating ScreamRouter
 
-To update to the latest version of ScreamRouter, you'll need to rebuild the Docker image. Stop the current container, then run the build and run scripts again:
+To update to the latest version, pull the latest code and rebuild the Docker image:
 
 ```bash
-docker stop screamrouter
-./build.sh
-./run.sh
+git pull
+./docker/build.sh
+./docker/run.sh
 ```
 
-This will create a new image with the latest ScreamRouter code and start a new container.
+This will rebuild the image with the latest code and restart the container.
+
+## Troubleshooting
+
+If you encounter issues with the Docker container, check the logs:
+
+```bash
+docker-compose -f docker/docker-compose.yml logs -f
+```
 
 For more information on using ScreamRouter and its features, please refer to the [main README](../README.md) and other documentation files in the Readme directory.
