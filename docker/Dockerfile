@@ -51,14 +51,16 @@ RUN mkdir -p /app/cert
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy entire project
+COPY . ./
+
+RUN rm -rf ./screamrouter-react/
+
 # Copy built frontend
 COPY --from=frontend-builder /app/site/ ./site/
 
 # Copy built C utils
 COPY --from=c-utils-builder /app/c_utils/bin/ ./c_utils/bin/
-
-# Copy entire project
-COPY . ./
 
 # Add environment variables
 ENV PYTHONUNBUFFERED=1

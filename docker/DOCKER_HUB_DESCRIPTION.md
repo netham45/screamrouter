@@ -147,4 +147,4 @@ For more persistent setups, use Docker Compose as described in the GitHub reposi
 
 ## Documentation and Resources
 - [GitHub Repository](https://github.com/netham45/screamrouter)
-- [Detailed Documentation](https://github.com/netham45/screamrouter/tree/master/Readme)
+- [Detailed Documentation](https://github.com/netham45/screamrouter/blob/main/README.md)

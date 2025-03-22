@@ -8,3 +8,7 @@ build/
 c_utils/bin/
 src/**/*.c
 **/callgrind.out.*
+src/site/**/*.js
+src/site/**/*.html
+src/site/**/*.txt
+!src/site/**/robots.txt
