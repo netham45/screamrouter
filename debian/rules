@@ -35,13 +35,7 @@ override_dh_auto_install:
 	cp -r images/ debian/screamrouter/usr/share/screamrouter/
 	cp -r site/* debian/screamrouter/usr/share/screamrouter/site/
 	
-	# Generate self-signed certificate if not exist
-	if [ ! -f debian/screamrouter/etc/screamrouter/cert/cert.pem ]; then \
-		openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
-		-subj "/C=US/ST=State/L=City/O=Organization/CN=screamrouter" \
-		-keyout debian/screamrouter/etc/screamrouter/cert/privkey.pem \
-		-out debian/screamrouter/etc/screamrouter/cert/cert.pem; \
-	fi
+	# Certificate generation is handled in postinst
 
 override_dh_installsystemd:
 	dh_installsystemd --name=screamrouter

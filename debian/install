@@ -5,4 +5,3 @@ site/ usr/share/screamrouter/site/
 src/ usr/share/screamrouter/src/
 c_utils/bin/* usr/share/screamrouter/c_utils/bin/
 images/ usr/share/screamrouter/images/
-screamrouter-react/build/* usr/share/screamrouter/site/
