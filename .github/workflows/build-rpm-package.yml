@@ -14,11 +14,17 @@ on:
 jobs:
   build-rpm-package:
     runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
     outputs:
       rpm_path: ${{ steps.save_path.outputs.rpm_path }}
       version: ${{ env.VERSION }}
     
     steps:
+      - name: Install Git and other dependencies
+        run: |
+          dnf install -y git nodejs npm gcc gcc-c++ make lame-devel rpmdevtools rpmlint openssl
+      
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -27,11 +33,6 @@ jobs:
       - name: Get commit short SHA
         id: sha
         run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-          
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y rpm rpmlint rpmdevtools nodejs npm libmp3lame-dev gcc g++ make
         
       - name: Set version from tag or commit
         id: get_version
@@ -39,7 +40,7 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
           else
-            VERSION="0.0.0.${{ env.SHORT_SHA }}"
+            VERSION="0.0.0.$(echo ${{ env.SHORT_SHA }})"
           fi
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
           
@@ -63,18 +64,19 @@ jobs:
         run: |
           # The site is built as part of the RPM spec %build section
           rpmbuild -ba rpm/screamrouter.spec
-          # Copy the built RPM to the repo root
-          cp ~/rpmbuild/RPMS/x86_64/screamrouter-*.rpm .
+          # Copy the built RPM to the repository root
+          mkdir -p /github/workspace/artifacts
+          cp ~/rpmbuild/RPMS/x86_64/screamrouter-*.rpm /github/workspace/artifacts/
       
       - name: Save artifact path
         id: save_path
         run: |
-          RPM_PATH=$(ls screamrouter-*.rpm)
+          RPM_PATH=$(ls /github/workspace/artifacts/screamrouter-*.rpm)
           echo "rpm_path=${RPM_PATH}" >> $GITHUB_OUTPUT
           
       - name: Upload RPM package artifact
         uses: actions/upload-artifact@v4
         with:
           name: screamrouter-rpm
-          path: screamrouter-*.rpm
+          path: /github/workspace/artifacts/screamrouter-*.rpm
           retention-days: 1

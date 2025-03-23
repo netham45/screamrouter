@@ -3,17 +3,13 @@
 # output every command that modifies files on the build system.
 #export DH_VERBOSE = 1
 
-export PYBUILD_NAME=screamrouter
-
 %:
-	dh $@ --with python3 --buildsystem=pybuild
+	dh $@ --with python3
 
 override_dh_auto_clean:
-	dh_auto_clean
 	rm -rf build/ *.egg-info
 
 override_dh_auto_build:
-	dh_auto_build
 	# Build C utilities
 	cd c_utils && ./build.sh
 	# Build React site
@@ -23,10 +19,23 @@ override_dh_auto_build:
 	npm run build
 
 override_dh_auto_install:
-	dh_auto_install
 	# Create directories
 	mkdir -p debian/screamrouter/etc/screamrouter/cert
 	mkdir -p debian/screamrouter/usr/share/screamrouter/site
+	mkdir -p debian/screamrouter/usr/share/screamrouter/src
+	mkdir -p debian/screamrouter/usr/share/screamrouter/c_utils/bin
+	mkdir -p debian/screamrouter/usr/share/screamrouter/images
+	
+	# Copy files manually
+	cp -r screamrouter.py debian/screamrouter/usr/share/screamrouter/
+	cp -r requirements.txt debian/screamrouter/usr/share/screamrouter/
+	cp -r uvicorn_log_config.yaml debian/screamrouter/usr/share/screamrouter/
+	cp -r site/ debian/screamrouter/usr/share/screamrouter/
+	cp -r src/ debian/screamrouter/usr/share/screamrouter/
+	cp -r c_utils/bin/* debian/screamrouter/usr/share/screamrouter/c_utils/bin/
+	cp -r images/ debian/screamrouter/usr/share/screamrouter/
+	cp -r screamrouter-react/build/* debian/screamrouter/usr/share/screamrouter/site/
+	
 	# Generate self-signed certificate if not exist
 	if [ ! -f debian/screamrouter/etc/screamrouter/cert/cert.pem ]; then \
 		openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
