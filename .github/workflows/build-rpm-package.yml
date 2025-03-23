@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: fedora:latest
-    outputs:
+    outputs:r
       rpm_path: ${{ steps.save_path.outputs.rpm_path }}
       version: ${{ env.VERSION }}
     

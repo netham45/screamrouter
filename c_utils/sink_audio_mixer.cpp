@@ -15,7 +15,6 @@
 #endif
 #include <immintrin.h>
 #include "audio_processor.h"
-#include "dcaenc/dcaenc.h"
 
 AudioProcessor *lameProcessor = NULL;
 using namespace std;
@@ -56,7 +55,6 @@ int output_channels = 0; // Number of channels in the output audio stream
 int output_chlayout1 = 0; // Channel layout part 1 for the output audio stream
 int output_chlayout2 = 0; // Channel layout part 2 for the output audio stream
 int use_dts = 0; // Is it outputting DTS?
-dcaenc_context_s *dca_context; // DTS encoding context
 
 // Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
 int* config_argv[] = {NULL, // Process File Name
@@ -320,11 +318,6 @@ int main(int argc, char* argv[]) {
             log("DTS requires 44.1kHz or 48kHz but  " + to_string(output_channels) + " was specified. Exiting.");
             exit(1);
         }
-        dca_context = dcaenc_create(
-                        output_samplerate,
-                        DCAENC_CHANNELS_3FRONT_2REAR,
-                        1509000, // DVD bitrate
-                        DCAENC_FLAG_IEC_WRAP | DCAENC_FLAG_LFE | DCAENC_FLAG_28BIT | DCAENC_FLAG_PERFECT_QMF);
     }
     lameProcessor = new AudioProcessor(output_channels, 2, 32, output_samplerate, output_samplerate, 1);
     log("Starting Ouput Mixer, sending UDP to " + output_ip +  ":" + to_string(output_port) + ", TCP Enabled: " + (tcp_output_fd > 0?"Yes":"No"));
