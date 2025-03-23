@@ -23,7 +23,8 @@ jobs:
     steps:
       - name: Install Git and other dependencies
         run: |
-          dnf install -y git nodejs npm gcc gcc-c++ make lame-devel rpmdevtools rpmlint openssl
+          dnf install -y git nodejs npm gcc gcc-c++ make lame-devel rpmdevtools rpmlint openssl \
+            python3-devel python3-pip python3-setuptools python3-virtualenv
       
       - name: Checkout code
         uses: actions/checkout@v4

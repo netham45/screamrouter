@@ -30,11 +30,10 @@ override_dh_auto_install:
 	cp -r screamrouter.py debian/screamrouter/usr/share/screamrouter/
 	cp -r requirements.txt debian/screamrouter/usr/share/screamrouter/
 	cp -r uvicorn_log_config.yaml debian/screamrouter/usr/share/screamrouter/
-	cp -r site/ debian/screamrouter/usr/share/screamrouter/
 	cp -r src/ debian/screamrouter/usr/share/screamrouter/
 	cp -r c_utils/bin/* debian/screamrouter/usr/share/screamrouter/c_utils/bin/
 	cp -r images/ debian/screamrouter/usr/share/screamrouter/
-	cp -r screamrouter-react/build/* debian/screamrouter/usr/share/screamrouter/site/
+	cp -r site/* debian/screamrouter/usr/share/screamrouter/site/
 	
 	# Generate self-signed certificate if not exist
 	if [ ! -f debian/screamrouter/etc/screamrouter/cert/cert.pem ]; then \
