@@ -20,7 +20,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
           
@@ -73,7 +73,7 @@ jobs:
           echo "rpm_path=${RPM_PATH}" >> $GITHUB_OUTPUT
           
       - name: Upload RPM package artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: screamrouter-rpm
           path: screamrouter-*.rpm

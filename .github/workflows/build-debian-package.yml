@@ -20,7 +20,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
           
@@ -61,7 +61,7 @@ jobs:
           echo "deb_path=${DEB_PATH}" >> $GITHUB_OUTPUT
           
       - name: Upload Debian package artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: screamrouter-deb
           path: screamrouter_*.deb
