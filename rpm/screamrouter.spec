@@ -3,7 +3,7 @@ Version:        1.0.0
 Release:        1%{?dist}
 Summary:        Audio routing and management system for network audio streaming
 
-License:        GPLv3+
+License:        NONE
 URL:            https://github.com/netham45/screamrouter
 Source0:        %{name}-%{version}.tar.gz
 
@@ -114,7 +114,6 @@ ln -sf %{_sysconfdir}/%{name}/cert %{_datadir}/%{name}/cert
 %systemd_postun_with_restart screamrouter.service
 
 %files
-%license COPYING
 %{_datadir}/%{name}/
 %{_unitdir}/screamrouter.service
 %dir %{_sysconfdir}/%{name}
