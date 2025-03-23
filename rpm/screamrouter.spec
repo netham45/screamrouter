@@ -44,7 +44,7 @@ Features include:
 %build
 # Build C utilities
 cd c_utils
-./build.sh
+CC=gcc CXX=g++ ./build.sh
 cd ..
 
 # Build React site
