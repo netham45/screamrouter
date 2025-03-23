@@ -24,6 +24,7 @@ BuildRequires:  automake
 BuildRequires:  libtool
 BuildRequires:  glibc-devel
 BuildRequires:  glibc-headers
+BuildRequires:  pkgconfig
 
 Requires:       python3
 Requires:       python3-pip
@@ -50,7 +51,7 @@ Features include:
 %build
 # Build C utilities
 cd c_utils
-CC=gcc CXX=g++ ./build.sh
+CMAKE_INSTALL_LIBDIR=/usr/lib64 CC=gcc CXX=g++ ./build.sh
 cd ..
 
 # Build React site
