@@ -1,6 +1,8 @@
 name: Build and Release Packages
 
 on:
+  permissions:
+    contents: write
   push:
     branches: [ main, master ]
     tags: [ 'v*' ]
