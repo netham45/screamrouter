@@ -21,14 +21,16 @@ jobs:
       version: ${{ env.VERSION }}
     
     steps:
-      - name: Install Git and other dependencies
+      - name: Install Git and basic dependencies
         run: |
           dnf install -y git gcc gcc-c++ make lame-devel rpmdevtools rpmlint openssl \
             python3-devel python3-pip python3-setuptools python3-virtualenv \
-            autoconf automake libtool nodejs-20
+            autoconf automake libtool curl
 
-      - name: Verify Node.js version
+      - name: Install Node.js 20
         run: |
+          curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+          dnf install -y nodejs
           node --version
       
       - name: Checkout code
