@@ -1,0 +1,68 @@
+name: Build Debian Package
+
+on:
+  workflow_call:
+    outputs:
+      deb_path:
+        description: "Path to the built .deb file"
+        value: ${{ jobs.build-debian-package.outputs.deb_path }}
+      version:
+        description: "Version of the built package"
+        value: ${{ jobs.build-debian-package.outputs.version }}
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build-debian-package:
+    runs-on: ubuntu-latest
+    outputs:
+      deb_path: ${{ steps.save_path.outputs.deb_path }}
+      version: ${{ env.VERSION }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          
+      - name: Get commit short SHA
+        id: sha
+        run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential debhelper dh-python python3-all python3-setuptools python3-venv libmp3lame0 libmp3lame-dev nodejs npm
+          
+      - name: Set version from tag or commit
+        id: get_version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-${{ env.SHORT_SHA }}"
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+      
+      - name: Update debian/changelog
+        run: |
+          sed -i "s/screamrouter (1.0.0)/screamrouter (${{ env.VERSION }})/" debian/changelog
+      
+      - name: Build Debian package
+        run: |
+          # The site is built as part of the dh_auto_build process in debian/rules
+          dpkg-buildpackage -us -uc -b
+          # Move the .deb file to the current directory
+          mv ../screamrouter_*.deb .
+      
+      - name: Save artifact path
+        id: save_path
+        run: |
+          DEB_PATH=$(ls screamrouter_*.deb)
+          echo "deb_path=${DEB_PATH}" >> $GITHUB_OUTPUT
+          
+      - name: Upload Debian package artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: screamrouter-deb
+          path: screamrouter_*.deb
+          retention-days: 1

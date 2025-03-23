@@ -1,0 +1,39 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Create virtual environment
+        python3 -m venv /usr/share/screamrouter/venv
+
+        # Activate virtual environment and install Python requirements
+        /usr/share/screamrouter/venv/bin/pip install --upgrade pip
+        /usr/share/screamrouter/venv/bin/pip install -r /usr/share/screamrouter/requirements.txt
+
+        # Create directory for logs if it doesn't exist
+        mkdir -p /var/log/screamrouter
+        
+        # Create config directory
+        mkdir -p /etc/screamrouter/cert
+
+        # Generate SSL certificates if they don't exist
+        if [ ! -f /etc/screamrouter/cert/cert.pem ] || [ ! -f /etc/screamrouter/cert/privkey.pem ]; then
+            echo "Generating self-signed SSL certificate..."
+            openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
+              -subj "/C=US/ST=State/L=City/O=Organization/CN=screamrouter" \
+              -keyout /etc/screamrouter/cert/privkey.pem -out /etc/screamrouter/cert/cert.pem
+        fi
+
+        # Create symlink to certificate directory
+        ln -sf /etc/screamrouter/cert /usr/share/screamrouter/cert
+
+        # Enable and start the service
+        systemctl daemon-reload
+        systemctl enable screamrouter.service
+        systemctl start screamrouter.service
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -1,0 +1,25 @@
+Source: screamrouter
+Section: sound
+Priority: optional
+Maintainer: ScreamRouter Maintainers <maintainers@example.com>
+Build-Depends: debhelper (>= 11), dh-python, python3-all, python3-setuptools, 
+ python3-venv, nodejs, npm
+Standards-Version: 4.1.3
+Homepage: https://github.com/netham45/screamrouter
+X-Python3-Version: >= 3.7
+
+Package: screamrouter
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python3:Depends},
+ libmp3lame0, libmp3lame-dev, python3, python3-pip, python3-venv
+Description: Audio routing and management system for network audio streaming
+ ScreamRouter is a versatile audio routing and management system with a 
+ Python frontend/configuration layer and C++ backend, designed for
+ network audio streaming. It supports Scream and RTP audio sources, 
+ along with Scream receivers and web-based MP3 streamers.
+ .
+ Features include:
+  * Audio Routing and Configuration
+  * Audio Processing and Playback
+  * Integration and Compatibility with Home Assistant
+  * System Management

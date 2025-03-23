@@ -1,0 +1,14 @@
+[Unit]
+Description=ScreamRouter Audio Router
+After=network.target
+
+[Service]
+WorkingDirectory=/usr/share/screamrouter/
+ExecStart=/usr/share/screamrouter/venv/bin/python /usr/share/screamrouter/screamrouter.py
+User=root
+Group=root
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

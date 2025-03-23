@@ -9,7 +9,7 @@ ScreamRouter is a versatile audio routing and management system with a Python fr
 ## Quick Start
 
 ```bash
-# Run with host networking (required)
+# Run with host networking (required for Multicast, Linux only)
 docker run -d --network host \
   -v ./config:/app/config \
   -v ./logs:/app/logs \
@@ -18,6 +18,20 @@ docker run -d --network host \
   netham45/screamrouter:latest
 
 # Access the web interface over https
+```
+
+```bash
+# Run with port forwards (Multicast features won't work, compatible with Windows)
+docker run -d \
+  -p 443:443 \
+  -p 16401:16401/udp \
+  -p 40001:40001/udp \
+  -p 4011-4020:4011-4020/udp \
+  -v ./config:/app/config \
+  -v ./logs:/app/logs \
+  -v ./cert:/app/cert \
+  --name screamrouter \
+  netham45/screamrouter:latest
 ```
 
 ## Key Features
@@ -106,36 +120,6 @@ Self-signed SSL certificates are automatically generated on first run if not fou
 ### Audio Features
 - `TIMESHIFT_DURATION`: Audio time-shifting buffer duration in seconds (default: 300)
 - `CONFIGURATION_RELOAD_TIMEOUT`: Configuration reload timeout in seconds (default: 3)
-
-### Example Commands
-
-#### Linux/macOS with Custom Settings
-
-```bash
-# Linux/macOS with default settings
-docker run -d --network host \
-  -v ./config:/app/config \
-  -v ./logs:/app/logs \
-  -v ./cert:/app/cert \
-  --name screamrouter \
-  netham45/screamrouter:latest
-```
-
-#### Windows
-
-```bash
-# Windows with port forwards (multicast features won't work)
-docker run -d \
-  -p 443:443 \
-  -p 16401:16401/udp \
-  -p 40001:40001/udp \
-  -p 4011-4020:4011-4020/udp \
-  -v ./config:/app/config \
-  -v ./logs:/app/logs \
-  -v ./cert:/app/cert \
-  --name screamrouter \
-  netham45/screamrouter:latest
-```
 
 #### Docker Compose
 

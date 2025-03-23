@@ -1,0 +1,39 @@
+#!/usr/bin/make -f
+# See debhelper(7) (uncomment to enable)
+# output every command that modifies files on the build system.
+#export DH_VERBOSE = 1
+
+export PYBUILD_NAME=screamrouter
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+override_dh_auto_clean:
+	dh_auto_clean
+	rm -rf build/ *.egg-info
+
+override_dh_auto_build:
+	dh_auto_build
+	# Build C utilities
+	cd c_utils && ./build.sh
+	# Build React site
+	cd screamrouter-react && \
+	npm install && \
+	npm install --save-dev copy-webpack-plugin && \
+	npm run build
+
+override_dh_auto_install:
+	dh_auto_install
+	# Create directories
+	mkdir -p debian/screamrouter/etc/screamrouter/cert
+	mkdir -p debian/screamrouter/usr/share/screamrouter/site
+	# Generate self-signed certificate if not exist
+	if [ ! -f debian/screamrouter/etc/screamrouter/cert/cert.pem ]; then \
+		openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 \
+		-subj "/C=US/ST=State/L=City/O=Organization/CN=screamrouter" \
+		-keyout debian/screamrouter/etc/screamrouter/cert/privkey.pem \
+		-out debian/screamrouter/etc/screamrouter/cert/cert.pem; \
+	fi
+
+override_dh_installsystemd:
+	dh_installsystemd --name=screamrouter
