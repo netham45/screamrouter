@@ -90,73 +90,7 @@ Maintains a rolling buffer of the most recent 5 minutes of audio for each stream
 
 ## Documentation
 
-### Install/Configuration
-- [Docker ScreamRouter Install Guide](Readme/docker-screamrouter.md)
-  - Guide to running ScreamRouter in a Docker container.
-- [Debian ScreamRouter Install Guide](Readme/debian-screamrouter.md)
-  - Guide to running ScreamRouter on Debian.
-
-### General Information
-- [Audio Processor](Readme/processor.md)
-  - Details on the custom mixer/equalizer/channel layout processor.
-- [Configuration](Readme/configuration.md)
-  - Description of ScreamRouter's routing configuration and configuration management system.
-
-### Senders
-- [RTP/Linux Source](Readme/rtp-source.md)
-  - Guide to using RTP from PulseAudio and Pipewire as an audio source.
-- [Windows Source](Readme/scream-source.md)
-  - Information on configuring a Windows audio source.
-- [Docker Sources](Readme/docker-sources.md)
-  - Information on Docker containers for various streaming services.
-- [ESP32S3 USB Audio Card and Toslink Senders](Readme/esp32-scream-sender.md)
-  - Information on using an ESP32S3 as a USB sound card to stream to Scream, or an ESP32 as a TOSLINK bridge for Scream.
-- [Raspberry Pi Zero W / Raspberry Pi Zero 2 USB Gadget Sound Card Sender](Readme/raspberry-pi-zero-screamsender.md)
-  - Information on configuring a Raspberry Pi Zero W / Raspberry Pi Zero 2 as a USB Gadget Sound Card that forwards to ScreamRouter.
-
-#### Docker Containers
-- [Amazon Music Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-amazon-music-docker)
-  - Repo for running Amazon Music as a Docker container that outputs over RTP to ScreamRouter.
-- [Firefox Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-firefox-docker)
-  - Repo for running Firefox as a Docker container that outputs over RTP to ScreamRouter.
-- [Spotify Docker Container for ScreamRouter](https://github.com/netham45/screamrouter-spotify-docker)
-  - Repo for running Spotify in a Docker container that outputs over RTP to ScreamRouter.
-
-### Receivers
-- [Windows Receivers](Readme/windows-scream-receiver.md)
-  - Information on configuring a Windows audio receiver.
-- [Raspberry Pi/Linux Receiver](Readme/raspberry-pi-receiver.md)
-  - Information on configuring a Raspberry Pi or other Linux system as a Scream audio receiver and have it start on boot.
-- [ESP32/ESP32s3 spdif/USB UAC 1.0 audio receiver](https://github.com/netham45/esp32-scream-receiver)
-  - Repo for an esp32s3 spdif/USB UAC 1.0 audio receiver.
-- [ESP32 A1S Audiokit Receiver](https://github.com/netham45/esp32-audiokit-screamreader)
-  - Repo for an ESP32 A1S Audiokit receiver.
-- [Android Receiver](https://github.com/martinellimarco/scream-android/)
-  - Repo for an Android receiver.
-- [Python Scream Receiver](https://github.com/netham45/pyscreamreader)
-  - Repo for a Python receiver.
-
-### UI
-- [User Interface Guide](Readme/ui.md)
-  - Documentation on using the ScreamRouter web interface.
-- [Chrome App](Readme/chrome-app-manifest.md)
-  - Guide to installing it as an app using Chrome.
-- [VNC Integration](Readme/vnc.md)
-  - Guide to using the embedded noVNC for remote computer control.
-
-### API
-- [Swagger Documentation](https://netham45.org/wp-content/uploads/screamrouter-docs/)
-  - Swagger Docs for ScreamRouter API.
-- [API Structure](Readme/api.md)
-  - Overview of the API structure and available endpoints.
-- [Plugins System](Readme/plugins.md)
-  - Documentation on the flexible plugin system for adding new sources and functionalities.
-- [Source Command Receiver](Readme/command_receiver.md)
-  - Information about the command receiver module for remote control.
-
-### Home Assistant
-- [Home Assistant Integration](Readme/homeassistant.md)
-  - Instructions for integrating ScreamRouter with Home Assistant.
+All documentation is available at [https://screamrouter.net](https://screamrouter.net)
 
 ## Accessibility
 
