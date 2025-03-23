@@ -18,6 +18,12 @@ BuildRequires:  make
 BuildRequires:  lame-devel
 BuildRequires:  openssl
 BuildRequires:  systemd-rpm-macros
+BuildRequires:  cmake
+BuildRequires:  autoconf
+BuildRequires:  automake
+BuildRequires:  libtool
+BuildRequires:  glibc-devel
+BuildRequires:  glibc-headers
 
 Requires:       python3
 Requires:       python3-pip
