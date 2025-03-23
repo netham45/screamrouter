@@ -1,5 +1,6 @@
 #!/usr/bin/make
-CC = g++
+CC=gcc
+CXX = g++
 CFLAGS = -Ofast -fopenmp -std=c++14 -mavx -march=native -mavx -msse4.1
 LIBS = -lm
 
@@ -19,16 +20,16 @@ libsamplerate/src/libsamplerate.a:
 	cd libsamplerate && (make || cmake . && $(MAKE))
 
 bin/sink_audio_mixer: sink_audio_mixer.cpp biquad/biquad.cpp audio_processor.cpp speaker_mix.cpp libsamplerate/src/libsamplerate.a
-	$(CC) $^ -o $@ $(LIBS) libsamplerate/src/libsamplerate.a $(LIBMP3LAME_PATH) $(CFLAGS)
+	$(CXX) $^ -o $@ $(LIBS) libsamplerate/src/libsamplerate.a $(LIBMP3LAME_PATH) $(CFLAGS)
 
 bin/source_input_processor: source_input_processor.cpp biquad/biquad.cpp audio_processor.cpp speaker_mix.cpp libsamplerate/src/libsamplerate.a
-	$(CC) $^ -o $@ $(LIBS) libsamplerate/src/libsamplerate.a $(CFLAGS)
+	$(CXX) $^ -o $@ $(LIBS) libsamplerate/src/libsamplerate.a $(CFLAGS)
 
 bin/rtp_receiver: rtp_receiver.cpp
-	$(CC) $< -o $@ $(CFLAGS)
+	$(CXX) $< -o $@ $(CFLAGS)
 
 bin/scream_receiver: scream_receiver.cpp
-	$(CC) $< -o $@ $(CFLAGS)
+	$(CXX) $< -o $@ $(CFLAGS)
 
 clean:
 	rm -f bin/sink_audio_mixer bin/source_input_processor bin/rtp_receiver bin/scream_receiver
