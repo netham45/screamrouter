@@ -51,7 +51,7 @@ Features include:
 %build
 # Build C utilities
 cd c_utils
-CMAKE_INSTALL_LIBDIR=/usr/lib64 CC=gcc CXX=g++ ./build.sh
+./build.sh
 cd ..
 
 # Build React site
