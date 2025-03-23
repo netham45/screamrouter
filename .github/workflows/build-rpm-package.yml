@@ -25,7 +25,7 @@ jobs:
         run: |
           dnf install -y git gcc gcc-c++ make lame-devel rpmdevtools rpmlint openssl \
             python3-devel python3-pip python3-setuptools python3-virtualenv \
-            autoconf automake libtool curl
+            autoconf automake libtool curl cmake
 
       - name: Install Node.js 20
         run: |
@@ -37,10 +37,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          
-      - name: Pre-create c_utils/bin directory
-        run: |
-          mkdir -p c_utils/bin
           
       - name: Get commit short SHA
         id: sha
