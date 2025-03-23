@@ -1,8 +1,6 @@
 name: Build and Release Packages
 
 on:
-  permissions:
-    contents: write
   push:
     branches: [ main, master ]
     tags: [ 'v*' ]
@@ -20,6 +18,8 @@ jobs:
   create-release:
     needs: [build-deb, build-rpm]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed for creating releases
     if: github.event_name != 'pull_request'
     
     steps:
