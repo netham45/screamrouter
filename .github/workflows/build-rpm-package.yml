@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: fedora:latest
-    outputs:r
+    outputs:
       rpm_path: ${{ steps.save_path.outputs.rpm_path }}
       version: ${{ env.VERSION }}
     
@@ -37,6 +37,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          
+      - name: Pre-create c_utils/bin directory
+        run: |
+          mkdir -p c_utils/bin
           
       - name: Get commit short SHA
         id: sha
@@ -74,13 +78,24 @@ jobs:
           rpmbuild -ba rpm/screamrouter.spec
           # Copy the built RPM to the repository root
           mkdir -p /github/workspace/artifacts
-          cp ~/rpmbuild/RPMS/x86_64/screamrouter-*.rpm /github/workspace/artifacts/
+          cp ~/rpmbuild/RPMS/x86_64/screamrouter-*.rpm /github/workspace/artifacts/ || cp ~/rpmbuild/RPMS/noarch/screamrouter-*.rpm /github/workspace/artifacts/
+      
+      - name: Debug RPM build failure
+        if: failure()
+        run: |
+          echo "RPM build failed. Checking build logs..."
+          find ~/rpmbuild -name "*.log" -exec cat {} \;
       
       - name: Save artifact path
         id: save_path
         run: |
-          RPM_PATH=$(ls /github/workspace/artifacts/screamrouter-*.rpm)
-          echo "rpm_path=${RPM_PATH}" >> $GITHUB_OUTPUT
+          RPM_PATH=$(ls /github/workspace/artifacts/screamrouter-*.rpm 2>/dev/null || echo "")
+          if [ -n "$RPM_PATH" ]; then
+            echo "rpm_path=${RPM_PATH}" >> $GITHUB_OUTPUT
+          else
+            echo "Failed to find RPM artifact" >&2
+            exit 1
+          fi
           
       - name: Upload RPM package artifact
         uses: actions/upload-artifact@v4
