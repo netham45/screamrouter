@@ -25,6 +25,7 @@ BuildRequires:  libtool
 BuildRequires:  glibc-devel
 BuildRequires:  glibc-headers
 BuildRequires:  pkgconfig
+%define debug_package %{nil}
 
 Requires:       python3
 Requires:       python3-pip

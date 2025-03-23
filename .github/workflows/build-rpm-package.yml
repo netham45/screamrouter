@@ -38,6 +38,9 @@ jobs:
         with:
           submodules: recursive
           
+      - name: Configure Git
+        run: git config --global --add safe.directory /__w/screamrouter/screamrouter
+
       - name: Get commit short SHA
         id: sha
         run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
