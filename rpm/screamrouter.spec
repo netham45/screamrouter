@@ -75,7 +75,6 @@ cp -r site/ %{buildroot}%{_datadir}/%{name}/
 cp -r src/ %{buildroot}%{_datadir}/%{name}/
 cp -r c_utils/bin/* %{buildroot}%{_datadir}/%{name}/c_utils/bin/
 cp -r images/ %{buildroot}%{_datadir}/%{name}/
-cp -r screamrouter-react/build/* %{buildroot}%{_datadir}/%{name}/site/
 
 # Install systemd service
 install -D -m 644 rpm/screamrouter.service %{buildroot}%{_unitdir}/screamrouter.service
