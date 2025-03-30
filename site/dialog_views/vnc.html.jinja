@@ -1,20 +1,80 @@
 <html>
     <head>
-        <title>VNC Viewer</title>
-        <script>
+        <title>ScreamRouter VNC</title><script>
+            let vncMenuVisible = localStorage.getItem('vncMenuVisible') !== 'false';
+            
+            function toggleVncMenu() {
+                const iframe = document.getElementById("vnc-iframe");
+                const controlBar = iframe.contentWindow.document.getElementById("noVNC_control_bar_anchor");
+                const statusBar = iframe.contentWindow.document.getElementById("noVNC_status");
+                
+                vncMenuVisible = !vncMenuVisible;
+                localStorage.setItem('vncMenuVisible', vncMenuVisible);
+                
+                if (vncMenuVisible) {
+                    controlBar.style.left = "0px";
+                    statusBar.style.left = "0px";
+                    controlBar.style.display = "inline";
+                    statusBar.style.display = "inline";
+                } else {
+                    controlBar.style.left = "-75px";
+                    statusBar.style.left = "-75px";
+                    controlBar.style.display = "none";
+                    statusBar.style.display = "none";
+                }
+            }
+
+            // F8 handler function
+            function handleF8(e) {
+                if (e.key === 'F8') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleVncMenu();
+                    return false;
+                }
+            }
+
+            // Add F8 handler to parent window
+            window.addEventListener('keydown', handleF8, true);
+
             function vnc_onload() {
+                // Also add F8 handler to iframe document
+                document.getElementById("vnc-iframe").contentWindow.document.addEventListener('keydown', handleF8, true);
+
                 let interval = setInterval(
                     function() {
-                        document.getElementById("vnc-iframe").contentWindow.document.getElementById("noVNC_control_bar_anchor").style.left="100000px";
-                        document.getElementById("vnc-iframe").contentWindow.document.getElementById("noVNC_status").style.left="100000px";
+                        const iframe = document.getElementById("vnc-iframe");
+                        if (!iframe || !iframe.contentWindow || !iframe.contentWindow.document) return;
+
+                        const controlBar = iframe.contentWindow.document.getElementById("noVNC_control_bar_anchor");
+                        const statusBar = iframe.contentWindow.document.getElementById("noVNC_status");
+                        
+                        if (!controlBar || !statusBar) return;
+                        
+                        if (!vncMenuVisible) {
+                            controlBar.style.display = "none";
+                            statusBar.style.display = "none";
+                            controlBar.style.left = "-75px";
+                            statusBar.style.left = "-75px";
+                        }
+                        
                         clearInterval(interval);
-                    }, 10);
+                    },
+                10);
             }
         </script>
     </head>
     <body style="margin: 0px; padding: 0px; border: 0px; overflow: hidden;">
         <div>
-            <iframe onload="vnc_onload()" width="100%" height="100%" id="vnc-iframe" src="/site/noVNC/vnc.html?autoconnect=true&resize=remote&port={{port}}"></iframe>
+            <iframe 
+                style="top: 0; left: 0; bottom: 0; right: 0; position: fixed;" 
+                onload="vnc_onload()"
+                width="100%"
+                height="100%"
+                id="vnc-iframe"
+                src="/site/noVNC/vnc.html?autoconnect=true&resize=remote&port={{port}}"
+            >
+            </iframe>
         </div>
     <body>
 </html>

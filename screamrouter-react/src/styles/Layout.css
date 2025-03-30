@@ -402,7 +402,7 @@ iframe.vnc-iframe {
  * Hiding the noVNC control bar anchor element.
  */
 #noVNC_control_bar_anchor {
-  display: none;
+  /*display: none;*/
 }
 
 /**
@@ -433,7 +433,7 @@ iframe.vnc-iframe {
  * Keyframes for the slide-in animation, transitioning transform from -20px to 0 and opacity from 0 to 1.
  */
 @keyframes slideIn {
-  from { transform: translateY(-20px); opacity: 0; }
+  from { //transform: translateY(-20px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
 
@@ -494,7 +494,7 @@ button {
  */
 button:hover {
   background-color: #2980b9;
-  transform: translateY(-2px);
+  //transform: translateY(-2px);
 }
 
 /**

@@ -111,10 +111,10 @@ const SourceItem: React.FC<SourceItemProps> = ({
           flip
           preventOverflow
         >
-          <MenuButton as={Text} fontWeight="medium">
+          <MenuButton as={Text} fontWeight="normal">
             {source.name}
           </MenuButton>
-          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden">
+          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden"  pr={2.5}>
             <Box px={3} py={2}>
               <Text fontSize="sm">
                 {activeRoutes} active route{activeRoutes !== 1 ? 's' : ''}
@@ -217,22 +217,18 @@ const SourceItem: React.FC<SourceItemProps> = ({
           <HStack spacing={1}>
             <ActionButton
               icon="desktop"
-              backgroundColor="#5577AA"
               onClick={() => actions.showVNC(true, source)}
             />
             <ActionButton
               icon="prevtrack"
-              backgroundColor="#5577AA"
               onClick={() => actions.controlSource(source.name, 'prevtrack')}
             />
             <ActionButton
               icon="play"
-              backgroundColor="#5577AA"
               onClick={() => actions.controlSource(source.name, 'play')}
             />
             <ActionButton
               icon="nexttrack"
-              backgroundColor="#5577AA"
               onClick={() => actions.controlSource(source.name, 'nexttrack')}
             />
           </HStack>

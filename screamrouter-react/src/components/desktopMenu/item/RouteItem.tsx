@@ -71,10 +71,10 @@ const RouteItem: React.FC<RouteItemProps> = ({
           flip
           preventOverflow
         >
-          <MenuButton as={Text} fontWeight="medium">
+          <MenuButton as={Text} fontWeight="normal">
             {route.name}
           </MenuButton>
-          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden">
+          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden" pr={2.5}>
             <Box px={3} py={2}>
               <Text fontSize="sm">
                 {route.source} → {route.sink}

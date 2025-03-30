@@ -119,7 +119,7 @@ declare global {
     previousSongOnPrimarySource: () => Promise<void>;
     playPauseOnPrimarySource: () => Promise<void>;
     nextSongOnPrimarySource: () => Promise<void>;
-    DesktopMenuShow: (r: number, g: number, b: number) => void;
+    DesktopMenuShow: (r: number, g: number, b: number, a: number) => void;
     DesktopMenuHide: () => void;
   }
 }

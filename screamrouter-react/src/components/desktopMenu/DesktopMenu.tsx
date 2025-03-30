@@ -3,7 +3,7 @@
  * This is a specialized component for the slide-out panel interface.
  */
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Flex, ButtonGroup, Button, Alert, AlertIcon } from '@chakra-ui/react';
+import { Box, Flex, ButtonGroup, Button, Alert, AlertIcon, HStack } from '@chakra-ui/react';
 import { colorContextInstance } from './context/ColorContext';
 import { useAppContext } from '../../context/AppContext';
 import SourceList from './list/SourceList';
@@ -59,8 +59,8 @@ const DesktopMenu: React.FC = () => {
   }, []);
   
   // Get colors from the global singleton
-  const bgColor = colorContextInstance.getDarkerColor(.85, .9);
-  const borderColor = colorContextInstance.getDarkerColor(.75, .75); // Subtle border
+  const bgColor = colorContextInstance.getDarkerColor(.9, .9);
+  const borderColor = colorContextInstance.getDarkerColor(.88, .9); // Subtle border
   const buttonBgActive = colorContextInstance.getDarkerColor(.7); // Full color for active
   const buttonBgInactive = colorContextInstance.getDarkerColor(0.5); // Darker for inactive
   const buttonTextActive = '#EEEEEE'; // White text on colored background
@@ -272,7 +272,9 @@ const DesktopMenu: React.FC = () => {
           borderColor: borderColor,
           borderStyle: "solid",
           borderRadius: "4px",
-          color: "#EEEEEE"
+          color: "#EEEEEE",
+          fontWeight: "lighter",
+          fontFamily: "Segoe UI"
         }}
         pb={3}
         pr={3}
@@ -301,7 +303,7 @@ const DesktopMenu: React.FC = () => {
           style={{
             borderWidth: "1px",
             borderStyle: "solid",
-            borderColor: colorContextInstance.getLighterColor(1.33),
+            borderColor: "rgba(128, 128, 128, .5)",
             borderTopWidth: "1px",
             borderLeftWidth: "1px",
             borderRightWidth: "1px",
@@ -329,7 +331,7 @@ const DesktopMenu: React.FC = () => {
           style={{
             backgroundColor: borderColor,
             border: "solid",
-            borderColor: colorContextInstance.getLighterColor(1.33),
+            borderColor: "rgba(128, 128, 128, .5)",
             borderTopLeftRadius: "0px",
             borderTopRightRadius: "0px",
             borderBottomLeftRadius: "8px",
@@ -342,97 +344,100 @@ const DesktopMenu: React.FC = () => {
           }}
           wrap="wrap"
           gap={1}
+          width="100%"
         >
-          <ButtonGroup variant="outline" isAttached spacing={0} size="sm">
-            <Button
-              style={{
-                backgroundColor: currentMenu === MenuLevel.Main ? buttonBgActive : buttonBgInactive,
-                color: currentMenu === MenuLevel.Main ? buttonTextActive : buttonTextInactive
-              }}
-              onClick={() => setCurrentMenu(MenuLevel.Main)}
-              _hover={{ opacity: 0.8 }}
-              size="xs"
-            >
-              Primary
-            </Button>
-            <Button
-              style={{
-                backgroundColor: currentMenu === MenuLevel.Sources ? buttonBgActive : buttonBgInactive,
-                color: currentMenu === MenuLevel.Sources ? buttonTextActive : buttonTextInactive
-              }}
-              onClick={() => setCurrentMenu(MenuLevel.Sources)}
-              _hover={{ opacity: 0.8 }}
-              size="xs"
-            >
-              ★ Sources
-            </Button>
-            <Button
-              style={{
-                backgroundColor: currentMenu === MenuLevel.Sinks ? buttonBgActive : buttonBgInactive,
-                color: currentMenu === MenuLevel.Sinks ? buttonTextActive : buttonTextInactive
-              }}
-              onClick={() => setCurrentMenu(MenuLevel.Sinks)}
-              _hover={{ opacity: 0.8 }}
-              size="xs"
-            >
-              ★ Sinks
-            </Button>
-            <Button
-              style={{
-                backgroundColor: currentMenu === MenuLevel.Routes ? buttonBgActive : buttonBgInactive,
-                color: currentMenu === MenuLevel.Routes ? buttonTextActive : buttonTextInactive
-              }}
-              onClick={() => setCurrentMenu(MenuLevel.Routes)}
-              _hover={{ opacity: 0.8 }}
-              size="xs"
-            >
-              ★ Routes
-            </Button>
-            <Button
-              style={{
-                backgroundColor: currentMenu === MenuLevel.AllSources ? buttonBgActive : buttonBgInactive,
-                color: currentMenu === MenuLevel.AllSources ? buttonTextActive : buttonTextInactive
-              }}
-              onClick={() => setCurrentMenu(MenuLevel.AllSources)}
-              _hover={{ opacity: 0.8 }}
-              size="xs"
-            >
-              All Sources
-            </Button>
-            <Button
-              style={{
-                backgroundColor: currentMenu === MenuLevel.AllSinks ? buttonBgActive : buttonBgInactive,
-                color: currentMenu === MenuLevel.AllSinks ? buttonTextActive : buttonTextInactive
-              }}
-              onClick={() => setCurrentMenu(MenuLevel.AllSinks)}
-              _hover={{ opacity: 0.8 }}
-              size="xs"
-            >
-              All Sinks
-            </Button>
-            <Button
-              style={{
-                backgroundColor: currentMenu === MenuLevel.AllRoutes ? buttonBgActive : buttonBgInactive,
-                color: currentMenu === MenuLevel.AllRoutes ? buttonTextActive : buttonTextInactive
-              }}
-              onClick={() => setCurrentMenu(MenuLevel.AllRoutes)}
-              _hover={{ opacity: 0.8 }}
-              size="xs"
-            >
-              All Routes
-            </Button>
-            <Button
-              style={{
-                backgroundColor: buttonBgInactive,
-                color: buttonTextInactive
-              }}
-              onClick={openFullInterface}
-              _hover={{ opacity: 0.8 }}
-              size="xs"
-            >
-              Full View
-            </Button>
-          </ButtonGroup>
+          <HStack width="100%" justify="space-evenly">
+            <ButtonGroup variant="outline" isAttached spacing={0} size="sm">
+              <Button
+                style={{
+                  backgroundColor: currentMenu === MenuLevel.Main ? buttonBgActive : buttonBgInactive,
+                  color: currentMenu === MenuLevel.Main ? buttonTextActive : buttonTextInactive
+                }}
+                onClick={() => setCurrentMenu(MenuLevel.Main)}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                Primary
+              </Button>
+              <Button
+                style={{
+                  backgroundColor: currentMenu === MenuLevel.Sources ? buttonBgActive : buttonBgInactive,
+                  color: currentMenu === MenuLevel.Sources ? buttonTextActive : buttonTextInactive
+                }}
+                onClick={() => setCurrentMenu(MenuLevel.Sources)}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                ★ Sources
+              </Button>
+              <Button
+                style={{
+                  backgroundColor: currentMenu === MenuLevel.Sinks ? buttonBgActive : buttonBgInactive,
+                  color: currentMenu === MenuLevel.Sinks ? buttonTextActive : buttonTextInactive
+                }}
+                onClick={() => setCurrentMenu(MenuLevel.Sinks)}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                ★ Sinks
+              </Button>
+              <Button
+                style={{
+                  backgroundColor: currentMenu === MenuLevel.Routes ? buttonBgActive : buttonBgInactive,
+                  color: currentMenu === MenuLevel.Routes ? buttonTextActive : buttonTextInactive
+                }}
+                onClick={() => setCurrentMenu(MenuLevel.Routes)}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                ★ Routes
+              </Button>
+              <Button
+                style={{
+                  backgroundColor: currentMenu === MenuLevel.AllSources ? buttonBgActive : buttonBgInactive,
+                  color: currentMenu === MenuLevel.AllSources ? buttonTextActive : buttonTextInactive
+                }}
+                onClick={() => setCurrentMenu(MenuLevel.AllSources)}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                All Sources
+              </Button>
+              <Button
+                style={{
+                  backgroundColor: currentMenu === MenuLevel.AllSinks ? buttonBgActive : buttonBgInactive,
+                  color: currentMenu === MenuLevel.AllSinks ? buttonTextActive : buttonTextInactive
+                }}
+                onClick={() => setCurrentMenu(MenuLevel.AllSinks)}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                All Sinks
+              </Button>
+              <Button
+                style={{
+                  backgroundColor: currentMenu === MenuLevel.AllRoutes ? buttonBgActive : buttonBgInactive,
+                  color: currentMenu === MenuLevel.AllRoutes ? buttonTextActive : buttonTextInactive
+                }}
+                onClick={() => setCurrentMenu(MenuLevel.AllRoutes)}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                All Routes
+              </Button>
+              <Button
+                style={{
+                  backgroundColor: buttonBgInactive,
+                  color: buttonTextInactive
+                }}
+                onClick={openFullInterface}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                Full View
+              </Button>
+            </ButtonGroup>
+          </HStack>
         </Flex>
       </Box>
     </Flex>

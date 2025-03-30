@@ -34,7 +34,7 @@ body {
 
 @keyframes float {
   0% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
+  50% { //transform: translateY(-10px); }
   100% { transform: translateY(0px); }
 }
 
@@ -102,7 +102,7 @@ body {
 }
 
 .btn:hover {
-  transform: translateY(-3px);
+  //transform: translateY(-3px);
   no-box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
 }
 
@@ -145,7 +145,7 @@ body {
 }
 
 .action-btn:hover {
-  transform: translateY(-3px);
+  //transform: translateY(-3px);
   no-box-shadow: 0 6px 15px rgba(0,0,0,0.2);
 }
 
@@ -446,7 +446,7 @@ button::after {
 }
 
 button:hover {
-  transform: translateY(-3px);
+  //transform: translateY(-3px);
   no-box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
 }
 
@@ -480,7 +480,7 @@ button.listening:hover {
 
 @keyframes bounce {
   from { transform: translateY(0); }
-  to { transform: translateY(-5px); }
+  to { //transform: translateY(-5px); }
 }
 
 /* Angled section borders */
@@ -535,7 +535,7 @@ button.listening:hover {
 
 .sources-column:hover,
 .sinks-column:hover {
-  transform: translateY(-5px);
+  //transform: translateY(-5px);
 }
 
 /* Waveform background */

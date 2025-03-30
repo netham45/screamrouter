@@ -78,7 +78,7 @@ const components = {
       borderRadius: '4px',
       transition: 'all 0.3s ease',
       _hover: {
-        transform: 'translateY(-2px)',
+        //transform: 'translateY(-2px)',
         boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
       },
     },
@@ -170,7 +170,7 @@ const components = {
         overflow: 'hidden',
         transition: 'all 0.3s ease',
         _hover: {
-          transform: 'translateY(-4px)',
+          //transform: 'translateY(-4px)',
           boxShadow: '0 8px 16px rgba(0, 0, 0, 0.1)',
         },
       },

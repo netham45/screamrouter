@@ -54,14 +54,14 @@ const GlobalFunctionsComponent: React.FC = () => {
     const originalDesktopMenuShow = window.DesktopMenuShow;
     
     // Override the DesktopMenuShow function to combine color mode handling with our proper implementation
-    window.DesktopMenuShow = (r: number, g: number, b: number) => {
-      console.log(`Got RGB from GlobalFunctionsComponent: ${r} ${g} ${b}`);
+    window.DesktopMenuShow = (r: number, g: number, b: number, a: number) => {
+      console.log(`Got RGB from GlobalFunctionsComponent: ${r} ${g} ${b} ${a}`);
       
       // Apply color mode from localStorage
       applyColorModeFromLocalStorage();
       
       // Just use the ColorContext properly
-      ourDesktopMenuShow(r, g, b);
+      ourDesktopMenuShow(r, g, b, a);
     };
 
     return () => {

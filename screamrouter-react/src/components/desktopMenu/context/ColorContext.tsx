@@ -9,6 +9,7 @@ export interface RGBColor {
   r: number;
   g: number;
   b: number;
+  a?: number;
 }
 
 // Context type definition
@@ -30,7 +31,7 @@ interface ColorContextType {
 // Create context with a default blue color
 const ColorContext = createContext<ColorContextType | null>(null);
 
-const defaultColor: RGBColor = { r: 68, g: 77, b: 82 };
+const defaultColor: RGBColor = { r: 68, g: 77, b: 82, a: 1 };
 
 // Global singleton to manage color outside React
 class ColorContextManager {
@@ -60,17 +61,18 @@ class ColorContextManager {
     }
   }
   
-  setCurrentColor(color: RGBColor = {r: 0, g: 0, b: 0}): void {
+  setCurrentColor(color: RGBColor = {r: 0, g: 0, b: 0, a: 0}): void {
     // Check if color is black (#000000)
     if (color.r === 0 && color.g === 0 && color.b === 0) {
       this.currentColor = defaultColor;
     } else {
-      console.log(`ColorContextManager: Setting color to RGB(${color.r}, ${color.g}, ${color.b})`);
+      console.log(`ColorContextManager: Setting color to RGB(${color.r}, ${color.g}, ${color.b}, ${color.a})`);
       // Limit saturation by ensuring no color channel is more than 50% brighter than the average
       const avg = (color.r + color.g + color.b) / 3;
-      const maxDiff = avg * 0.2;
+      const maxDiff = avg * 0.15;
       
       this.currentColor = {
+        a: color.a,
         r: Math.round(Math.min(color.r, avg + maxDiff)),
         g: Math.round(Math.min(color.g, avg + maxDiff)),
         b: Math.round(Math.min(color.b, avg + maxDiff))
@@ -129,7 +131,8 @@ class ColorContextManager {
     const ret: RGBColor = {
       r: Math.round(this.currentColor.r * factor),
       g: Math.round(this.currentColor.g * factor),
-      b: Math.round(this.currentColor.b * factor)};
+      b: Math.round(this.currentColor.b * factor),
+      a: this.currentColor.a};
       return ret;
   }
 
@@ -137,7 +140,8 @@ class ColorContextManager {
     const ret: RGBColor = {
       r: Math.min(Math.round(this.currentColor.r * factor), 255),
       g: Math.min(Math.round(this.currentColor.g * factor), 255),
-      b: Math.min(Math.round(this.currentColor.b * factor), 255)};
+      b: Math.min(Math.round(this.currentColor.b * factor), 255),
+      a: this.currentColor.a};
       return ret;
   }
 }

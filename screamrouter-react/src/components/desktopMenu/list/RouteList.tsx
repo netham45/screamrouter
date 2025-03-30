@@ -4,7 +4,6 @@
  */
 import React, { useState } from 'react';
 import { Box, Table, Thead, Tbody, Tr, Th, Icon, Flex } from '@chakra-ui/react';
-import { useColorContext } from '../context/ColorContext';
 import { TriangleDownIcon, TriangleUpIcon } from '@chakra-ui/icons';
 import { Route } from '../../../api/api';
 import RouteItem from '../item/RouteItem';
@@ -47,9 +46,8 @@ const RouteList: React.FC<RouteListProps> = ({
   actions,
   selectedItem
 }) => {
-  // Get colors from context
-  const { getDarkerColor } = useColorContext();
-  const tableHeaderBg = getDarkerColor(.75, 1);
+
+  const tableHeaderBg = "transparent";//getDarkerColor(.75, 1);
   
   // State for sorting with localStorage persistence
   const [sortField, setSortField] = useState<SortField | null>(() => {
@@ -117,7 +115,7 @@ const RouteList: React.FC<RouteListProps> = ({
   return (
     <Box overflowX="auto" width="100%">
       <Table variant="simple" size="sm" width="100%">
-        <Thead>
+        <Thead sx={{"th": {"borderBottom": '1px', "borderColor": "rgba(0,0,0,.1)"}}}>
           <Tr sx={{th: {color:"#EEEEEE"}}}>
             <Th 
               bg={tableHeaderBg} 

@@ -126,10 +126,10 @@ const SinkItem: React.FC<SinkItemProps> = ({
           flip
           preventOverflow
         >
-          <MenuButton as={Text} fontWeight="medium">
+          <MenuButton as={Text} fontWeight="normal">
             {sink.name}
           </MenuButton>
-          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden">
+          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden"  pr={2.5}>
             <Box px={3} py={2}>
               <Text fontSize="sm">
                 {activeRoutes} active route{activeRoutes !== 1 ? 's' : ''}

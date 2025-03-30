@@ -41,7 +41,7 @@ const VolumeControl: React.FC<VolumeControlProps> = ({
   // Generate dynamic colors - use base color directly for high visibility
   const trackBg = enabled ? getLighterColor(2) : getDarkerColor(.2);
   const filledTrackBg = enabled ? getLighterColor(5) : getDarkerColor(.4);
-  const thumbBg = enabled ? getLighterColor(66) : getLighterColor(3);
+  const thumbBg = enabled ? "white" : getLighterColor(3);
   
   return (
     <Box width="100%" maxWidth={maxWidth}>

@@ -240,7 +240,7 @@
  */
 .equalizer-buttons button:hover {
   opacity: 0.9;
-  transform: translateY(-3px);
+  //transform: translateY(-3px);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
@@ -248,7 +248,7 @@
  * Active state for equalizer buttons, translating vertically slightly and adding box shadow.
  */
 .equalizer-buttons button:active {
-  transform: translateY(-1px);
+  //transform: translateY(-1px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 

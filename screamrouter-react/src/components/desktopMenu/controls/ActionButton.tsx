@@ -10,6 +10,7 @@ import {
   FaArrowRight, FaArrowLeft, FaPause, FaStepBackward, 
   FaStepForward
 } from 'react-icons/fa';
+import { useColorContext } from '../context/ColorContext';
 
 interface ActionButtonProps {
   /**
@@ -42,8 +43,7 @@ interface ActionButtonProps {
 const ActionButton: React.FC<ActionButtonProps> = ({
   icon,
   onClick,
-  isActive = false,
-  backgroundColor,
+  isActive = true,
   ...rest
 }) => {
   // Map icon string to icon component
@@ -68,15 +68,20 @@ const ActionButton: React.FC<ActionButtonProps> = ({
     }
   };
 
+  const { getLighterColor, getDarkerColor } = useColorContext();
+
+  const borderColor = isActive ? getLighterColor(5) : getDarkerColor(.5);
+
   return (
     <IconButton
       aria-label={icon}
       icon={getIconComponent(icon)}
       size="xs"
-      color={isActive ? 'white' : 'white'}
-      backgroundColor={backgroundColor? backgroundColor : isActive ? '#55AA77' : '#AA5577'}
+      bgColor="transparent"
+      border={`1px ${borderColor}`}
       onClick={onClick}
       _hover={{ opacity: 0.8 }}
+      mx={0}
       {...rest}
     />
   );

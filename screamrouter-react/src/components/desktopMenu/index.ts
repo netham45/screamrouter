@@ -6,8 +6,8 @@ import DesktopMenu from './DesktopMenu';
 import { colorContextInstance } from './context/ColorContext';
 
 // Function to show the desktop menu with the given base color
-export const DesktopMenuShow = (r: number, g: number, b: number) => {
-  colorContextInstance.setCurrentColor({ r, g, b });
+export const DesktopMenuShow = (r: number, g: number, b: number, a: number) => {
+  colorContextInstance.setCurrentColor({ r: r, g: g, b: b, a: a });
 };
 
 // Function to hide the desktop menu
