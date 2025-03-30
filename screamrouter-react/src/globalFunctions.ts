@@ -72,8 +72,9 @@ export const nextSongOnPrimarySource = async () => {
  * Function called when the Desktop Menu is shown.
  * The actual color mode changing functionality will be provided by GlobalFunctionsComponent.
  */
-export const DesktopMenuShow = () => {
-  // The actual implementation will be overridden by GlobalFunctionsComponent
+export const DesktopMenuShow = (r: number, g: number, b: number) => {
+  console.log(`Got RGB: ${r} ${g} ${b}`);
+  // The actual implementation will be overridden by GlobalFuncionsComponent
   console.log("DesktopMenuShow called - this is the original implementation");
   
   // Just dispatch resize event, the actual color mode change will be handled by the component
@@ -82,11 +83,34 @@ export const DesktopMenuShow = () => {
 
 /**
  * Function called when the Desktop Menu is hidden.
- * Currently doesn't perform any actions, but is included for future extensibility.
+ * Closes any open context menus in the desktop menu components.
  */
 export const DesktopMenuHide = () => {
-  // No implementation required at this time
-  // This function is included for future use
+  // Find and close all Chakra UI menus that might be open
+  
+  // 1. First, try to find any open menu lists which are the dropdown parts of the menus
+  const openMenus = document.querySelectorAll('[role="menu"]');
+  
+  if (openMenus.length > 0) {
+    // Menu(s) are open - create a click event outside the menu to dismiss it
+    // This simulates clicking outside the menu which is how Chakra UI menus are closed normally
+    document.body.click();
+    
+    // In case the above doesn't work for all menus, find all menu buttons and close them programmatically
+    const menuButtons = document.querySelectorAll('[aria-expanded="true"]');
+    menuButtons.forEach(button => {
+      if (button instanceof HTMLElement) {
+        button.click();
+      }
+    });
+    
+    console.log(`DesktopMenuHide: Closed ${openMenus.length} open context menu(s)`);
+  } else {
+    console.log('DesktopMenuHide: No open context menus detected');
+  }
+  
+  // Allow the menu close operation to complete
+  return true;
 };
 
 // Extend the global window object to include functions for controlling the primary source.
@@ -95,7 +119,7 @@ declare global {
     previousSongOnPrimarySource: () => Promise<void>;
     playPauseOnPrimarySource: () => Promise<void>;
     nextSongOnPrimarySource: () => Promise<void>;
-    DesktopMenuShow: () => void;
+    DesktopMenuShow: (r: number, g: number, b: number) => void;
     DesktopMenuHide: () => void;
   }
 }

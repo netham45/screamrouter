@@ -3,7 +3,8 @@
  * This is a specialized component for the slide-out panel interface.
  */
 import React, { useState, useEffect, useMemo } from 'react';
-import { Box, Flex, ButtonGroup, Button, Alert, AlertIcon, useColorModeValue } from '@chakra-ui/react';
+import { Box, Flex, ButtonGroup, Button, Alert, AlertIcon } from '@chakra-ui/react';
+import { colorContextInstance } from './context/ColorContext';
 import { useAppContext } from '../../context/AppContext';
 import SourceList from './list/SourceList';
 import SinkList from './list/SinkList';
@@ -48,15 +49,24 @@ const DesktopMenu: React.FC = () => {
   // Reference to content area for scrolling
   const contentRef = React.useRef<HTMLDivElement>(null);
   
-  // Color values for light/dark mode
-  const bgColor = useColorModeValue('rgba(255,255,255,.95)', 'rgba(39,39,42,.95)');
-  const borderColor = useColorModeValue('gray.200', 'gray.700');
-  const buttonBgActive = useColorModeValue('blue.500', 'blue.300');
-  const buttonBgInactive = useColorModeValue('gray.100', 'gray.700');
-  const buttonTextActive = useColorModeValue('white', 'gray.900');
-  const buttonTextInactive = useColorModeValue('gray.800', 'white');
+  // Track color changes
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_, setColorUpdate] = useState(0);
+  useEffect(() => {
+    return colorContextInstance.subscribe(() => {
+      setColorUpdate(n => n + 1);
+    });
+  }, []);
   
-  // Load starred items from localStorage
+  // Get colors from the global singleton
+  const bgColor = colorContextInstance.getDarkerColor(.85, .9);
+  const borderColor = colorContextInstance.getDarkerColor(.75, .75); // Subtle border
+  const buttonBgActive = colorContextInstance.getDarkerColor(.7); // Full color for active
+  const buttonBgInactive = colorContextInstance.getDarkerColor(0.5); // Darker for inactive
+  const buttonTextActive = '#EEEEEE'; // White text on colored background
+  const buttonTextInactive = '#EEE'; // Gray text for inactive
+  
+  // Load starred items from localStorage - refresh when activeSource changes
   useEffect(() => {
     const starredSourcesData = JSON.parse(localStorage.getItem('starredSources') || '[]');
     const starredSinksData = JSON.parse(localStorage.getItem('starredSinks') || '[]');
@@ -64,6 +74,28 @@ const DesktopMenu: React.FC = () => {
     setStarredSources(starredSourcesData);
     setStarredSinks(starredSinksData);
     setStarredRoutes(starredRoutesData);
+  }, [activeSource]); // Add activeSource as dependency so the component refreshes when it changes
+  
+  // Listen for changes to localStorage to refresh when favorites change
+  useEffect(() => {
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === 'starredSources' || event.key === 'starredSinks' || event.key === 'starredRoutes') {
+        const key = event.key;
+        const newValue = JSON.parse(event.newValue || '[]');
+        if (key === 'starredSources') {
+          setStarredSources(newValue);
+        } else if (key === 'starredSinks') {
+          setStarredSinks(newValue);
+        } else if (key === 'starredRoutes') {
+          setStarredRoutes(newValue);
+        }
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
   }, []);
   
   // Save current menu to localStorage
@@ -232,15 +264,22 @@ const DesktopMenu: React.FC = () => {
   };
   
   return (
-    <Flex direction="column" height="610px" maxHeight="610px" justifyContent="flex-end" alignContent="flex-end">
+    <Flex direction="column" height="950px" maxHeight="950px" justifyContent="flex-end" alignContent="flex-end">
       <Box
-        bg={bgColor}
-        borderWidth="1px"
-        borderColor={borderColor}
-        borderRadius="md"
-        p={2}
-        width="100%"
-        maxH="610px"
+        style={{
+          backgroundColor: "rgba(0,0,0,0);",
+          borderWidth: "0px",
+          borderColor: borderColor,
+          borderStyle: "solid",
+          borderRadius: "4px",
+          color: "#EEEEEE"
+        }}
+        pb={3}
+        pr={3}
+        marginLeft="30%"
+        width="70%"
+        maxW="70%"
+        maxH="950px"
         display="flex"
         flexDirection="column"
         className="desktop-menu"
@@ -259,25 +298,57 @@ const DesktopMenu: React.FC = () => {
           flex="1"
           overflow="auto"
           ref={contentRef}
-          borderWidth="1px"
-          borderColor={borderColor}
-          borderRadius="md"
-          p={1}
+          style={{
+            borderWidth: "1px",
+            borderStyle: "solid",
+            borderColor: colorContextInstance.getLighterColor(1.33),
+            borderTopWidth: "1px",
+            borderLeftWidth: "1px",
+            borderRightWidth: "1px",
+            borderBottomWidth: "0px",
+            borderTopLeftRadius: "8px",
+            borderTopRightRadius: "8px",
+            borderBottomLeftRadius: "0px",
+            borderBottomRightRadius: "0px",
+            padding: "4px"
+          }}
+          sx={{
+            'td': {
+              "padding-bottom": "0",
+              "padding-top": "0",
+              "border": "0",
+            },
+          }}
+          backgroundColor={bgColor}
         >
           {renderContent()}
         </Box>
         <Flex
           as="nav"
           p={1}
-          bg={borderColor}
-          borderRadius="md"
+          style={{
+            backgroundColor: borderColor,
+            border: "solid",
+            borderColor: colorContextInstance.getLighterColor(1.33),
+            borderTopLeftRadius: "0px",
+            borderTopRightRadius: "0px",
+            borderBottomLeftRadius: "8px",
+            borderBottomRightRadius: "8px",
+            borderTopWidth: "0px",
+            borderLeftWidth: "1px",
+            borderRightWidth: "1px",
+            borderBottomWidth: "1px",
+            padding: "4px"
+          }}
           wrap="wrap"
           gap={1}
         >
           <ButtonGroup variant="outline" isAttached spacing={0} size="sm">
             <Button
-              bg={currentMenu === MenuLevel.Main ? buttonBgActive : buttonBgInactive}
-              color={currentMenu === MenuLevel.Main ? buttonTextActive : buttonTextInactive}
+              style={{
+                backgroundColor: currentMenu === MenuLevel.Main ? buttonBgActive : buttonBgInactive,
+                color: currentMenu === MenuLevel.Main ? buttonTextActive : buttonTextInactive
+              }}
               onClick={() => setCurrentMenu(MenuLevel.Main)}
               _hover={{ opacity: 0.8 }}
               size="xs"
@@ -285,8 +356,10 @@ const DesktopMenu: React.FC = () => {
               Primary
             </Button>
             <Button
-              bg={currentMenu === MenuLevel.Sources ? buttonBgActive : buttonBgInactive}
-              color={currentMenu === MenuLevel.Sources ? buttonTextActive : buttonTextInactive}
+              style={{
+                backgroundColor: currentMenu === MenuLevel.Sources ? buttonBgActive : buttonBgInactive,
+                color: currentMenu === MenuLevel.Sources ? buttonTextActive : buttonTextInactive
+              }}
               onClick={() => setCurrentMenu(MenuLevel.Sources)}
               _hover={{ opacity: 0.8 }}
               size="xs"
@@ -294,8 +367,10 @@ const DesktopMenu: React.FC = () => {
               ★ Sources
             </Button>
             <Button
-              bg={currentMenu === MenuLevel.Sinks ? buttonBgActive : buttonBgInactive}
-              color={currentMenu === MenuLevel.Sinks ? buttonTextActive : buttonTextInactive}
+              style={{
+                backgroundColor: currentMenu === MenuLevel.Sinks ? buttonBgActive : buttonBgInactive,
+                color: currentMenu === MenuLevel.Sinks ? buttonTextActive : buttonTextInactive
+              }}
               onClick={() => setCurrentMenu(MenuLevel.Sinks)}
               _hover={{ opacity: 0.8 }}
               size="xs"
@@ -303,8 +378,10 @@ const DesktopMenu: React.FC = () => {
               ★ Sinks
             </Button>
             <Button
-              bg={currentMenu === MenuLevel.Routes ? buttonBgActive : buttonBgInactive}
-              color={currentMenu === MenuLevel.Routes ? buttonTextActive : buttonTextInactive}
+              style={{
+                backgroundColor: currentMenu === MenuLevel.Routes ? buttonBgActive : buttonBgInactive,
+                color: currentMenu === MenuLevel.Routes ? buttonTextActive : buttonTextInactive
+              }}
               onClick={() => setCurrentMenu(MenuLevel.Routes)}
               _hover={{ opacity: 0.8 }}
               size="xs"
@@ -312,8 +389,10 @@ const DesktopMenu: React.FC = () => {
               ★ Routes
             </Button>
             <Button
-              bg={currentMenu === MenuLevel.AllSources ? buttonBgActive : buttonBgInactive}
-              color={currentMenu === MenuLevel.AllSources ? buttonTextActive : buttonTextInactive}
+              style={{
+                backgroundColor: currentMenu === MenuLevel.AllSources ? buttonBgActive : buttonBgInactive,
+                color: currentMenu === MenuLevel.AllSources ? buttonTextActive : buttonTextInactive
+              }}
               onClick={() => setCurrentMenu(MenuLevel.AllSources)}
               _hover={{ opacity: 0.8 }}
               size="xs"
@@ -321,8 +400,10 @@ const DesktopMenu: React.FC = () => {
               All Sources
             </Button>
             <Button
-              bg={currentMenu === MenuLevel.AllSinks ? buttonBgActive : buttonBgInactive}
-              color={currentMenu === MenuLevel.AllSinks ? buttonTextActive : buttonTextInactive}
+              style={{
+                backgroundColor: currentMenu === MenuLevel.AllSinks ? buttonBgActive : buttonBgInactive,
+                color: currentMenu === MenuLevel.AllSinks ? buttonTextActive : buttonTextInactive
+              }}
               onClick={() => setCurrentMenu(MenuLevel.AllSinks)}
               _hover={{ opacity: 0.8 }}
               size="xs"
@@ -330,8 +411,10 @@ const DesktopMenu: React.FC = () => {
               All Sinks
             </Button>
             <Button
-              bg={currentMenu === MenuLevel.AllRoutes ? buttonBgActive : buttonBgInactive}
-              color={currentMenu === MenuLevel.AllRoutes ? buttonTextActive : buttonTextInactive}
+              style={{
+                backgroundColor: currentMenu === MenuLevel.AllRoutes ? buttonBgActive : buttonBgInactive,
+                color: currentMenu === MenuLevel.AllRoutes ? buttonTextActive : buttonTextInactive
+              }}
               onClick={() => setCurrentMenu(MenuLevel.AllRoutes)}
               _hover={{ opacity: 0.8 }}
               size="xs"
@@ -339,6 +422,10 @@ const DesktopMenu: React.FC = () => {
               All Routes
             </Button>
             <Button
+              style={{
+                backgroundColor: buttonBgInactive,
+                color: buttonTextInactive
+              }}
               onClick={openFullInterface}
               _hover={{ opacity: 0.8 }}
               size="xs"

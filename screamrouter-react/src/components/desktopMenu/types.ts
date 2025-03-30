@@ -37,9 +37,9 @@ export interface DesktopMenuActions {
   updateVolume: (type: 'sources' | 'sinks' | 'routes', name: string, value: number) => void;
   
   /**
-   * Update timeshift for a source.
+   * Update timeshift for a source, sink, or route.
    */
-  updateTimeshift: (type: 'sources', name: string, value: number) => void;
+  updateTimeshift: (type: 'sources' | 'sinks' | 'routes', name: string, value: number) => void;
   
   /**
    * Show equalizer for an item.

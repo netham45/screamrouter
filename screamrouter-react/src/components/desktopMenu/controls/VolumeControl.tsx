@@ -8,9 +8,9 @@ import {
   Slider,
   SliderTrack,
   SliderFilledTrack,
-  SliderThumb,
-  useColorModeValue
+  SliderThumb
 } from '@chakra-ui/react';
+import { useColorContext } from '../context/ColorContext';
 
 interface VolumeControlProps {
   /**
@@ -23,6 +23,7 @@ interface VolumeControlProps {
    */
   onChange: (value: number) => void;
   maxWidth?: string;
+  enabled?: boolean;
 }
 
 /**
@@ -31,12 +32,16 @@ interface VolumeControlProps {
 const VolumeControl: React.FC<VolumeControlProps> = ({
   value,
   onChange,
-  maxWidth="100px"
+  maxWidth="100px",
+  enabled
 }) => {
-  // Color values for light/dark mode
-  const trackBg = useColorModeValue('gray.100', 'gray.700');
-  const filledTrackBg = useColorModeValue('green.500', 'green.300');
-  const thumbBg = useColorModeValue('white', 'gray.200');
+  // Get colors from context
+  const { getDarkerColor, getLighterColor, } = useColorContext();
+  
+  // Generate dynamic colors - use base color directly for high visibility
+  const trackBg = enabled ? getLighterColor(2) : getDarkerColor(.2);
+  const filledTrackBg = enabled ? getLighterColor(5) : getDarkerColor(.4);
+  const thumbBg = enabled ? getLighterColor(66) : getLighterColor(3);
   
   return (
     <Box width="100%" maxWidth={maxWidth}>
@@ -48,11 +53,26 @@ const VolumeControl: React.FC<VolumeControlProps> = ({
         value={value}
         onChange={onChange}
         size="sm"
+        isDisabled={!enabled}
+        style={{ width: "100%" }}
       >
-        <SliderTrack bg={trackBg} height="4px">
-          <SliderFilledTrack bg={filledTrackBg} />
+        <SliderTrack bg={trackBg} height="6px" borderRadius="3px">
+          <SliderFilledTrack 
+            style={{ 
+              backgroundColor: filledTrackBg,
+              opacity: enabled ? 1 : 0.5,
+              height: "6px"
+            }} 
+          />
         </SliderTrack>
-        <SliderThumb boxSize={3} bg={thumbBg} />
+        <SliderThumb 
+          boxSize={4} 
+          style={{ 
+            backgroundColor: thumbBg,
+            opacity: enabled ? 1 : 0.5,
+            border: enabled ? `2px solid ${thumbBg}` : 'none'
+          }}
+        />
       </Slider>
     </Box>
   );

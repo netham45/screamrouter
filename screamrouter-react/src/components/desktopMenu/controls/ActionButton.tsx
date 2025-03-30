@@ -5,8 +5,8 @@
 import React from 'react';
 import { IconButton } from '@chakra-ui/react';
 import { 
-  FaStar, FaCheck, FaTimes, FaVolumeUp, FaCogs, 
-  FaDesktop, FaPlay, FaHeadphones, FaWaveSquare, 
+  FaStar, FaCheck, FaTimes, FaVolumeUp, FaVolumeMute,
+  FaCogs, FaDesktop, FaPlay, FaHeadphones, FaWaveSquare, 
   FaArrowRight, FaArrowLeft, FaPause, FaStepBackward, 
   FaStepForward
 } from 'react-icons/fa';
@@ -31,6 +31,8 @@ interface ActionButtonProps {
    * Additional props to pass to the IconButton
    */
   [key: string]: unknown;
+
+  backgroundColor?: string;
 }
 
 /**
@@ -41,6 +43,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({
   icon,
   onClick,
   isActive = false,
+  backgroundColor,
   ...rest
 }) => {
   // Map icon string to icon component
@@ -50,6 +53,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({
       case 'check': return <FaCheck />;
       case 'x': return <FaTimes />;
       case 'volume': return <FaVolumeUp />;
+      case 'volume-mute': return <FaVolumeMute />;
       case 'equalizer': return <FaCogs />;
       case 'desktop': return <FaDesktop />;
       case 'play': return <FaPlay />;
@@ -69,7 +73,8 @@ const ActionButton: React.FC<ActionButtonProps> = ({
       aria-label={icon}
       icon={getIconComponent(icon)}
       size="xs"
-      colorScheme={isActive ? 'blue' : 'gray'}
+      color={isActive ? 'white' : 'white'}
+      backgroundColor={backgroundColor? backgroundColor : isActive ? '#55AA77' : '#AA5577'}
       onClick={onClick}
       _hover={{ opacity: 0.8 }}
       {...rest}

@@ -15,7 +15,8 @@ import AddEditSourcePage from './components/pages/AddEditSourcePage'; // Import 
 import AddEditSinkPage from './components/pages/AddEditSinkPage'; // Import the AddEditSinkPage component
 import AddEditRoutePage from './components/pages/AddEditRoutePage'; // Import the AddEditRoutePage component
 import AddEditGroupPage from './components/pages/AddEditGroupPage'; // Import the AddEditGroupPage component
-import DesktopMenu from './components/DesktopMenu'; // Import the DesktopMenu component
+import { DesktopMenu } from './components/desktopMenu'; // Import DesktopMenu
+import { ColorProvider } from './components/desktopMenu/context/ColorContext'; // Import ColorProvider
 import FullMenu from './components/FullMenu'; // Import the FullMenu component
 import GlobalFunctionsComponent from './GlobalFunctionsComponent'; // Import the GlobalFunctionsComponent
 import './App.css'; // Import global styles
@@ -106,7 +107,7 @@ const AppContent: React.FC = () => {
       <GlobalFunctionsComponent />
       
       <Routes> {/* Define routes */}
-        <Route path="/desktopmenu" element={<DesktopMenu />} /> {/* Route to DesktopMenu component */}
+        <Route path="/desktopmenu" element={<ColorProvider><DesktopMenu /></ColorProvider>} /> {/* Route to DesktopMenu with color context */}
         <Route path="/" element={<FullMenu />} /> {/* Root route now uses FullMenu component */}
         <Route path="/equalizer" element={<EqualizerRoute />} /> {/* Route to EqualizerRoute component */}
         <Route path="/vnc" element={<VNCRoute />} /> {/* Route to VNCRoute component */}

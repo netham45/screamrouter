@@ -6,6 +6,7 @@
 import React, { useEffect } from 'react';
 import { useColorMode } from '@chakra-ui/react';
 import './globalFunctions'; // Import the existing global functions
+import { DesktopMenuShow as ourDesktopMenuShow } from './components/desktopMenu';
 
 /**
  * Component that connects the global functions to Chakra UI's hooks.
@@ -49,14 +50,18 @@ const GlobalFunctionsComponent: React.FC = () => {
     // Add event listener for storage events
     window.addEventListener('storage', handleStorageChange);
     
-    // Override the DesktopMenuShow function to use Chakra's setColorMode
+    // Store the original function from globalFunctions.ts
     const originalDesktopMenuShow = window.DesktopMenuShow;
-    window.DesktopMenuShow = () => {
+    
+    // Override the DesktopMenuShow function to combine color mode handling with our proper implementation
+    window.DesktopMenuShow = (r: number, g: number, b: number) => {
+      console.log(`Got RGB from GlobalFunctionsComponent: ${r} ${g} ${b}`);
+      
       // Apply color mode from localStorage
       applyColorModeFromLocalStorage();
       
-      // Dispatch resize event for other functionality in the original function
-      window.dispatchEvent(new Event('resize'));
+      // Just use the ColorContext properly
+      ourDesktopMenuShow(r, g, b);
     };
 
     return () => {
