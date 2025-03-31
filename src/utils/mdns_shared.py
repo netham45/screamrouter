@@ -26,13 +26,13 @@ class MDNSShared:
         
         # Bind to mDNS port
         self.sock.bind(('', 5353))
-        #logger.debug("Bound to port 5353")
+        logger.debug("Bound to port 5353")
         
         # Join multicast group
         mreq = struct.pack("4s4s", socket.inet_aton("224.0.0.251"),
                           socket.inet_aton("0.0.0.0"))
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        #logger.debug("Joined multicast group 224.0.0.251")
+        logger.debug("Joined multicast group 224.0.0.251")
         
         self.pinger = None
         self.responder = None
@@ -66,15 +66,15 @@ class MDNSShared:
         while self.running:
             try:
                 data, addr = self.sock.recvfrom(4096)
-                #logger.debug(f"Received {len(data)} bytes from {addr}")
+                logger.debug(f"Received {len(data)} bytes from {addr}")
                 
                 if len(data) < 12:  # DNS header is 12 bytes
-                    #logger.debug(f"Packet too short: {len(data)} bytes")
+                    logger.debug(f"Packet too short: {len(data)} bytes")
                     continue
                 
                 # Parse header flags
                 flags = struct.unpack("!H", data[2:4])[0]
-                #logger.debug(f"Packet flags=0x{flags:04x}, from={addr}, data={data.hex()}")
+                logger.debug(f"Packet flags=0x{flags:04x}, from={addr}, data={data.hex()}")
                 
                 # Route packets based on QR bit
                 if (flags & 0x8000) != 0:  # Response

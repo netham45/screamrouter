@@ -103,8 +103,8 @@ mdns_responder = MDNSResponder(mdns_shared)
 mdns_pinger = MDNSPinger(mdns_shared)
 
 # Connect handlers and start
-mdns_shared.set_handlers(mdns_pinger, mdns_responder)
-mdns_shared.start()
+#mdns_shared.set_handlers(mdns_pinger, mdns_responder)
+#mdns_shared.start()
 mdns_pinger.start()
 screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream,
                                                                         plugin_manager,

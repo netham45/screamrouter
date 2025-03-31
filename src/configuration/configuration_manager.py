@@ -972,6 +972,8 @@ class ConfigurationManager(threading.Thread):
             old_multicast_scream_recevier.stop()
             old_rtp_receiver.stop()
 
+        self.__save_config()
+
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
             _logger.debug("[Configuration Manager] Notifying plugin manager")
             self.plugin_manager.load_registered_plugins(source_write_fds)
@@ -1095,7 +1097,6 @@ class ConfigurationManager(threading.Thread):
             sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(1)
             
-            # Send query to bitdepth.sink.scream at the IP
             query_message: bytes = b"query_audio_settings"
             sock.sendto(query_message, (str(ip), 5353))
             
