@@ -80,6 +80,11 @@ export interface WebSocketUpdate {
   sources?: Record<string, Source>;
   sinks?: Record<string, Sink>;
   routes?: Record<string, Route>;
+  removals?: {
+    sources?: string[];
+    sinks?: string[];
+    routes?: string[];
+  };
 }
 
 /**

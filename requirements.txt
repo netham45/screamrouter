@@ -1,4 +1,6 @@
+dnspython
 fastapi
+httpx
 Jinja2
 numpy
 pydantic
@@ -9,5 +11,4 @@ uvicorn
 websockets
 websockify
 uvicorn
-dnspython
-httpx
+zeroconf

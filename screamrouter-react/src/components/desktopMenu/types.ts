@@ -75,4 +75,9 @@ export interface DesktopMenuActions {
    * Navigate to an item.
    */
   navigate: (type: 'sources' | 'sinks' | 'routes', name: string) => void;
+  
+  /**
+   * Show confirmation dialog before deleting an item.
+   */
+  confirmDelete: (type: 'sources' | 'sinks' | 'routes', name: string) => void;
 }

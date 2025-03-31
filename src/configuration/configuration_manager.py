@@ -42,14 +42,24 @@ from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
                                                   SinkDescription,
                                                   SourceDescription)
 from src.screamrouter_types.exceptions import InUseError
+from src.utils.mdns_pinger import MDNSPinger
+from src.utils.mdns_responder import MDNSResponder
 
 _logger = screamrouter_logger.get_logger(__name__)
 
 class ConfigurationManager(threading.Thread):
     """Tracks configuration and loading the main receiver/sinks based off of it"""
-    def __init__(self, websocket: APIWebStream, plugin_manager: PluginManager, websocket_config: APIWebsocketConfig):
+    def __init__(self, websocket: APIWebStream,
+                 plugin_manager: PluginManager,
+                 websocket_config: APIWebsocketConfig,
+                 mdns_responder: MDNSResponder,
+                 mdns_pinger: MDNSPinger):
         """Initialize the controller"""
         super().__init__(name="Configuration Manager")
+        """MDNS Responder, handles returning responses over MDNS for receivers/senders to configure to"""
+        self.mdns_responder: MDNSResponder = mdns_responder
+        """MDNS Responder, handles querying for receivers and senders to add entries for"""
+        self.mdns_pinger: MDNSPinger = mdns_pinger
         self.sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
         self.source_descriptions:  List[SourceDescription] = []
@@ -147,6 +157,7 @@ class ConfigurationManager(threading.Thread):
 
     def delete_sink(self, sink_name: SinkNameType) -> bool:
         """Deletes a sink by name"""
+        _logger.debug(f"Deleting {sink_name}")
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         self.__verify_sink_unused(sink)
         self.sink_descriptions.remove(sink)
@@ -471,6 +482,10 @@ class ConfigurationManager(threading.Thread):
         for audio_controller in self.audio_controllers:
             audio_controller.stop()
         _logger.debug("[Configuration Manager] Audio controllers stopped")
+        _logger.debug("[Configuration Manager] Stopping mDNS")
+        self.mdns_responder.stop()
+        self.mdns_pinger.stop()
+        _logger.debug("[Configuration Manager] mDNS stopped")
         self.running = False
 
         if constants.WAIT_FOR_CLOSES:
@@ -648,6 +663,10 @@ class ConfigurationManager(threading.Thread):
             raise exc
             #sys.exit(-1)
 
+        asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
+                                                                self.sink_descriptions,
+                                                                self.route_descriptions))
+
     def __multiprocess_save(self):
         """Saves the config to config.yaml"""
         save_data: dict = {"sinks": self.sink_descriptions, "sources": self.source_descriptions,
@@ -665,8 +684,8 @@ class ConfigurationManager(threading.Thread):
         proc.start()
         proc.join()
         asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
-                                                                  self.sink_descriptions,
-                                                                  self.route_descriptions))
+                                                                self.sink_descriptions,
+                                                                self.route_descriptions))
         self.configuration_semaphore.release()
 
 # Configuration processing functions
@@ -818,12 +837,18 @@ class ConfigurationManager(threading.Thread):
 
     def __reload_configuration(self) -> None:
         """Notifies the configuration manager to reload the configuration"""
-        if not self.reload_condition.acquire(timeout=1):
+        asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
+                                                        self.sink_descriptions,
+                                                        self.route_descriptions))
+        _logger.debug("[Configuration Manager] Requesting config reload")
+        if not self.reload_condition.acquire(timeout=10):
             raise TimeoutError("Failed to get configuration reload condition")
         try:
+            _logger.debug("[Configuration Manager] Requesting Reload - Got lock")
             self.reload_condition.notify()
         except RuntimeError:
             pass
+        _logger.debug("[Configuration Manager] Requesting Reload - Released lock")
         self.reload_condition.release()
         self.reload_config = True
         _logger.debug("[Configuration Manager] Marking config for reload")
@@ -855,6 +880,10 @@ class ConfigurationManager(threading.Thread):
                         audio_controller.update_equalizer(source.name, source.equalizer)
                         audio_controller.update_delay(source.name, source.delay)
                         audio_controller.update_timeshift(source.name, source.timeshift)
+        try:
+            self.volume_eq_reload_condition.release()
+        except:
+            pass
 
         self.__save_config()
 
@@ -943,17 +972,21 @@ class ConfigurationManager(threading.Thread):
             old_multicast_scream_recevier.stop()
             old_rtp_receiver.stop()
 
-        # Check if there was a change before reloading or saving
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            _logger.debug("[Configuration Manager] Saving configuration")
-            self.__save_config()
             _logger.debug("[Configuration Manager] Notifying plugin manager")
             self.plugin_manager.load_registered_plugins(source_write_fds)
             _logger.debug("[Configuration Manager] Reload done")
 
+        try:
+            self.reload_condition.release()
+            _logger.debug("Process - Releasedconfiguration reload condition")
+        except:
+            pass
+
     def __process_and_apply_configuration_with_timeout(self):
         """Apply the configuration with a timeout for logging and ensuring it doesn't hang"""
         with concurrent.futures.ThreadPoolExecutor() as executor:
+            _logger.debug("Running with timeout")
             future = executor.submit(self.__process_and_apply_configuration)
             try:
                 future.result(timeout=constants.CONFIGURATION_RELOAD_TIMEOUT)
@@ -1012,54 +1045,174 @@ class ConfigurationManager(threading.Thread):
         except OSError:
             _logger.debug("[Configuration Manager] Adding source %s, VNC not available", ip)
             self.add_source(SourceDescription(name=hostname, ip=ip))
+        self.__process_and_apply_configuration_with_timeout()
+
+    def auto_add_sink(self, ip: IPAddressType):
+        """Adds a sink with settings queried from the device or defaults if query fails"""
+        hostname: str = str(ip)
+        try:
+            hostname = socket.gethostbyaddr(str(ip))[0].split(".")[0]
+            _logger.debug("[Configuration Manager] Adding sink %s got hostname %s via DNS",
+                          ip, hostname)
+        except socket.herror:
+            try:
+                _logger.debug(
+                    "[Configuration Manager] Adding sink %s couldn't get DNS, trying mDNS",
+                    ip)
+                resolver: dns.resolver.Resolver = dns.resolver.Resolver()
+                resolver.nameservers = [str(ip)]
+                resolver.nameserver_ports = {str(ip): 5353}
+                answer = resolver.resolve_address(str(ip))
+                rrset: dns.rrset.RRset = answer.response.answer[0]
+                if isinstance(rrset[0], dns.rdtypes.ANY.PTR.PTR):
+                    ptr: dns.rdtypes.ANY.PTR.PTR = rrset[0] # type: ignore
+                    hostname = str(ptr.target).split(".", maxsplit=1)[0]
+                    _logger.debug(
+                        "[Configuration Manager] Adding sink %s got hostname %s via mDNS",
+                        ip, hostname)
+            except dns.resolver.LifetimeTimeout:
+                _logger.debug(
+                    "[Configuration Manager] Adding sink %s couldn't get hostname, using IP",
+                    ip)
+        try:
+            original_hostname: str = hostname
+            counter: int = 1
+            while self.get_source_by_name(hostname):
+                hostname = f"{original_hostname} ({counter})"
+                counter += 1
+        except NameError:
+            pass
+        
+        # Default audio settings
+        bit_depth: int = 16
+        sample_rate: int = 48000
+        channels: int = 2
+        channel_layout: str = "stereo"
+        
+        # Try to query audio settings from the sink
+        try:
+            _logger.debug("[Configuration Manager] Querying audio settings from %s", ip)
+            sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(1)
+            
+            # Send query to bitdepth.sink.scream at the IP
+            query_message: bytes = b"query_audio_settings"
+            sock.sendto(query_message, (str(ip), 5353))
+            
+            # Wait for response
+            try:
+                response: bytes
+                addr: tuple
+                response, addr = sock.recvfrom(1024)
+                response_str: str = response.decode('utf-8')
+                _logger.debug("[Configuration Manager] Received settings response: %s", response_str)
+                
+                # Parse response - expected format is key=value pairs
+                settings: dict[str, str] = {}
+                for pair in response_str.split(';'):
+                    if '=' in pair:
+                        key: str
+                        value: str
+                        key, value = pair.split('=', 1)
+                        settings[key.strip()] = value.strip()
+                
+                # Extract settings if available
+                if 'bit_depth' in settings:
+                    bit_depth = int(settings['bit_depth'])
+                if 'sample_rate' in settings:
+                    sample_rate = int(settings['sample_rate'])
+                if 'channels' in settings:
+                    channels = int(settings['channels'])
+                if 'channel_layout' in settings:
+                    channel_layout = settings['channel_layout']
+                
+                _logger.info("[Configuration Manager] Using queried settings for sink %s: "
+                             "bit_depth=%d, sample_rate=%d, channels=%d, channel_layout=%s",
+                             ip, bit_depth, sample_rate, channels, channel_layout)
+            except socket.timeout:
+                _logger.debug("[Configuration Manager] No response from %s, using default settings", ip)
+            finally:
+                sock.close()
+        except Exception as e:
+            _logger.warning("[Configuration Manager] Error querying sink settings: %s", str(e))
+            _logger.debug("[Configuration Manager] Using default settings for sink %s", ip)
+        
+        _logger.debug("[Configuration Manager] Adding sink %s with settings: "
+                     "bit_depth=%d, sample_rate=%d, channels=%d, channel_layout=%s",
+                     ip, bit_depth, sample_rate, channels, channel_layout)
+        
+        self.add_sink(SinkDescription(name=hostname,
+                                      ip=ip,
+                                      bit_depth=bit_depth,
+                                      sample_rate=sample_rate,
+                                      channels=channels,
+                                      channel_layout=channel_layout))
+        self.__process_and_apply_configuration_with_timeout()
 
     def check_receiver_sources(self):
         """This checks the IPs receivers have seen and adds any as sources if they don't exist"""
         self.scream_recevier.check_known_ips()
         self.multicast_scream_recevier.check_known_ips()
         self.rtp_receiver.check_known_ips()
-        known_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
+        known_source_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
+        known_sink_ips: List[str] = [str(desc.ip) for desc in self.sink_descriptions]
         for ip in self.scream_recevier.known_ips:
-            if not str(ip) in known_ips:
+            if not str(ip) in known_source_ips:
                 _logger.info("[Configuration Manager] Adding new source from Scream port %s", ip)
                 self.auto_add_source(ip)
         for ip in self.multicast_scream_recevier.known_ips:
-            if not str(ip) in known_ips:
+            if not str(ip) in known_source_ips:
                 _logger.info(
                     "[Configuration Manager] Adding new source from Multicast Scream port %s", ip)
                 self.auto_add_source(ip)
         for ip in self.rtp_receiver.known_ips:
-            if not str(ip) in known_ips:
+            if not str(ip) in known_source_ips:
                 _logger.info("[Configuration Manager] Adding new source from RTP port %s", ip)
                 self.auto_add_source(ip)
-
+        for ip in self.mdns_pinger.get_source_ips():
+            if not str(ip) in known_source_ips:
+                _logger.info("[Configuration Manager] Adding new source from mDNS %s", ip)
+                self.auto_add_source(ip)
+        for ip in self.mdns_pinger.get_sink_ips():
+            if not str(ip) in known_sink_ips:
+                _logger.info("[Configuration Manager] Adding new sink from mDNS %s", ip)
+                self.auto_add_sink(ip)
+        
     def run(self):
         """Monitors for the reload condition to be set and reloads the config when it is set"""
         self.__process_and_apply_configuration()
         while self.running:
-            if not self.reload_condition.acquire(timeout=1):
-                raise TimeoutError("Failed to get configuration reload condition")
-            if self.reload_condition.wait(timeout=.3) or self.plugin_manager.wants_reload(False):
-                # This will get set to true if something else wants to reload the configuration
-                # while it's already reloading
-                if self.plugin_manager.wants_reload():
-                    _logger.info("[Configuration Manager] Plugin Manager")
-                    self.reload_config = True
-                for audio_controller in self.audio_controllers:
-                    if audio_controller.wants_reload():
+            try:
+                if not self.reload_condition.acquire(timeout=1):
+                    raise TimeoutError("Failed to get configuration reload condition")
+                if self.reload_condition.wait(timeout=.3) or self.plugin_manager.wants_reload(False):
+                    # This will get set to true if something else wants to reload the configuration
+                    # while it's already reloading
+                    if self.plugin_manager.wants_reload():
+                        _logger.info("[Configuration Manager] Plugin Manager")
                         self.reload_config = True
-                if self.tcp_manager.wants_reload:
-                    _logger.info("[Configuration Manager] TCP Manager Wants Reload")
-                    self.tcp_manager.wants_reload = False
-                    self.reload_config = True
-                if self.reload_config:
-                    self.reload_config = False
-                    _logger.info("[Configuration Manager] Reloading the configuration")
-                    if not self.__process_and_apply_configuration_with_timeout():
-                        _logger.error("Configuration reload aborted due to errors or timeout.")
-                        continue  # Skip the rest of the loop iteration
-            if not self.volume_eq_reload_condition.acquire(timeout=1):
-                raise TimeoutError("Failed to get configuration reload condition")
-            if self.volume_eq_reload_condition.wait(timeout=.3):
-                self.__process_and_apply_volume_eq_delay_timeshift()
-            self.check_receiver_sources()
+                    for audio_controller in self.audio_controllers:
+                        if audio_controller.wants_reload():
+                            self.reload_config = True
+                    if self.tcp_manager.wants_reload:
+                        _logger.info("[Configuration Manager] TCP Manager Wants Reload")
+                        self.tcp_manager.wants_reload = False
+                        self.reload_config = True
+                    if self.reload_config:
+                        self.reload_config = False
+                        _logger.info("[Configuration Manager] Reloading the configuration")
+                        if not self.__process_and_apply_configuration_with_timeout():
+                            _logger.error("Configuration reload aborted due to errors or timeout.")
+                            continue  # Skip the rest of the loop iteration
+                else:
+                    try:
+                        self.reload_condition.release()
+                    except:
+                        pass
+                if not self.volume_eq_reload_condition.acquire(timeout=1):
+                    raise TimeoutError("Failed to get configuration reload condition")
+                if self.volume_eq_reload_condition.wait(timeout=.3):
+                    self.__process_and_apply_volume_eq_delay_timeshift()
+                self.check_receiver_sources()
+            except:
+                pass

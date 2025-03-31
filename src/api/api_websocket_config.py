@@ -59,7 +59,7 @@ class APIWebsocketConfig():
             sinks (List[SinkDescription]): Current list of sinks
             routes (List[RouteDescription]): Current list of routes
         """
-        updates: Dict = {"sources": {}, "sinks": {}, "routes": {}}
+        updates: Dict = {"sources": {}, "sinks": {}, "routes": {}, "removals": {"sources": [], "sinks": [], "routes": []}}
         do_update: bool = False
 
         # Convert current lists to dictionaries for easier comparison
@@ -67,6 +67,7 @@ class APIWebsocketConfig():
         current_sinks = {s.name: s for s in sinks}
         current_routes = {r.name: r for r in routes}
 
+        # Check for additions and modifications
         for idx, source in current_sources.items():
             if self._last_sources.get(idx, None) != source:
                 updates["sources"].update({idx: source.model_dump(mode='json')})
@@ -83,6 +84,22 @@ class APIWebsocketConfig():
             ##print(f"Comparing {idx} - {route} == {self._last_routes.get(idx, '')}")
             if self._last_routes.get(idx, None) != route:
                 updates["routes"].update({idx: route.model_dump(mode='json')})
+                do_update = True
+
+        # Check for removals
+        for idx in self._last_sources:
+            if idx not in current_sources:
+                updates["removals"]["sources"].append(idx)
+                do_update = True
+
+        for idx in self._last_sinks:
+            if idx not in current_sinks:
+                updates["removals"]["sinks"].append(idx)
+                do_update = True
+
+        for idx in self._last_routes:
+            if idx not in current_routes:
+                updates["removals"]["routes"].append(idx)
                 do_update = True
 
         # Update last known state

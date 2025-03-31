@@ -12,6 +12,7 @@ import {
 import { useColorContext } from '../context/ColorContext';
 import { Sink, Route } from '../../../api/api';
 import { DesktopMenuActions } from '../types';
+import { openEditPage } from '../../fullMenu/utils';
 import ActionButton from '../controls/ActionButton';
 import VolumeControl from '../controls/VolumeControl';
 
@@ -149,11 +150,14 @@ const SinkItem: React.FC<SinkItemProps> = ({
             <MenuItem onClick={() => actions.toggleEnabled('sinks', sink.name, !sink.enabled)}>
               {sink.enabled ? 'Disable' : 'Enable'}
             </MenuItem>
-            <MenuItem onClick={() => actions.navigate('sinks', sink.name)}>
+            <MenuItem onClick={() => openEditPage('sinks', sink)}>
               Edit Settings
             </MenuItem>
             <MenuItem onClick={() => actions.showEqualizer(true, 'sinks', sink)}>
               Equalize
+            </MenuItem>
+            <MenuItem onClick={() => actions.confirmDelete('sinks', sink.name)}>
+              Delete
             </MenuItem>
 
             {isRealSink && (

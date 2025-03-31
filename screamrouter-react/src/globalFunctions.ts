@@ -83,7 +83,7 @@ export const DesktopMenuShow = (r: number, g: number, b: number) => {
 
 /**
  * Function called when the Desktop Menu is hidden.
- * Closes any open context menus in the desktop menu components.
+ * Closes any open context menus and hides the desktop menu box.
  */
 export const DesktopMenuHide = () => {
   // Find and close all Chakra UI menus that might be open
@@ -107,6 +107,20 @@ export const DesktopMenuHide = () => {
     console.log(`DesktopMenuHide: Closed ${openMenus.length} open context menu(s)`);
   } else {
     console.log('DesktopMenuHide: No open context menus detected');
+  }
+  
+  // Close any open confirmation dialogs
+  const dialogs = document.querySelectorAll('[role="alertdialog"]');
+  if (dialogs.length > 0) {
+    // Find the cancel button in each dialog and click it
+    dialogs.forEach(dialog => {
+      const cancelButton = dialog.querySelector('button[aria-label="Cancel"]') || 
+                          dialog.querySelector('button:not([data-destructive])');
+      if (cancelButton instanceof HTMLElement) {
+        cancelButton.click();
+      }
+    });
+    console.log(`DesktopMenuHide: Closed ${dialogs.length} open dialog(s)`);
   }
   
   // Allow the menu close operation to complete

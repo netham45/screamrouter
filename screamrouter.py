@@ -20,6 +20,9 @@ from src.configuration.configuration_manager import ConfigurationManager
 from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.utils.utils import set_process_name
+from src.utils.mdns_shared import MDNSShared
+from src.utils.mdns_responder import MDNSResponder
+from src.utils.mdns_pinger import MDNSPinger
 
 try:
     os.nice(-15)
@@ -42,6 +45,7 @@ def signal_handler(_signal, __):
         website.stop()
         try:
             screamrouter_configuration.stop()
+            mdns_shared.stop()
         except NameError:
             pass
         server.should_exit = True
@@ -93,9 +97,20 @@ websocket_config: APIWebsocketConfig = APIWebsocketConfig(app)
 websocket_debug: APIWebsocketDebug = APIWebsocketDebug(app)
 plugin_manager: PluginManager = PluginManager(app)
 plugin_manager.start_registered_plugins()
+# Create shared mDNS handler and services
+mdns_shared = MDNSShared()
+mdns_responder = MDNSResponder(mdns_shared)
+mdns_pinger = MDNSPinger(mdns_shared)
+
+# Connect handlers and start
+mdns_shared.set_handlers(mdns_pinger, mdns_responder)
+mdns_shared.start()
+mdns_pinger.start()
 screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream,
                                                                         plugin_manager,
-                                                                        websocket_config)
+                                                                        websocket_config,
+                                                                        mdns_responder,
+                                                                        mdns_pinger)
 api_controller = APIConfiguration(app, screamrouter_configuration)
 website: APIWebsite = APIWebsite(app, screamrouter_configuration)
 equalizer: APIEqualizer = APIEqualizer(app)

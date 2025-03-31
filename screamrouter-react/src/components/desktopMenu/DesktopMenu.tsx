@@ -4,6 +4,8 @@
  */
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Flex, ButtonGroup, Button, Alert, AlertIcon, HStack } from '@chakra-ui/react';
+import ConfirmationDialog from '../dialogs/ConfirmationDialog';
+import ApiService from '../../api/api';
 import { colorContextInstance } from './context/ColorContext';
 import { useAppContext } from '../../context/AppContext';
 import SourceList from './list/SourceList';
@@ -45,6 +47,11 @@ const DesktopMenu: React.FC = () => {
   
   // State for error messages
   const [error, setError] = useState<string | null>(null);
+  
+  // State for delete confirmation dialog
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteItemType, setDeleteItemType] = useState<'sources' | 'sinks' | 'routes' | null>(null);
+  const [deleteItemName, setDeleteItemName] = useState<string | null>(null);
   
   // Reference to content area for scrolling
   const contentRef = React.useRef<HTMLDivElement>(null);
@@ -263,9 +270,74 @@ const DesktopMenu: React.FC = () => {
     }
   };
   
+  // Function to handle delete confirmation
+  const handleConfirmDelete = async () => {
+    if (!deleteItemType || !deleteItemName) return;
+    
+    try {
+      if (deleteItemType === 'sources') {
+        await ApiService.deleteSource(deleteItemName);
+      } else if (deleteItemType === 'sinks') {
+        await ApiService.deleteSink(deleteItemName);
+      } else if (deleteItemType === 'routes') {
+        await ApiService.deleteRoute(deleteItemName);
+      }
+      
+      // Remove from starred items if it was starred
+      if (deleteItemType === 'sources' && starredSources.includes(deleteItemName)) {
+        setStarredItemsHandler('sources', prev => prev.filter(item => item !== deleteItemName));
+      } else if (deleteItemType === 'sinks' && starredSinks.includes(deleteItemName)) {
+        setStarredItemsHandler('sinks', prev => prev.filter(item => item !== deleteItemName));
+      } else if (deleteItemType === 'routes' && starredRoutes.includes(deleteItemName)) {
+        setStarredItemsHandler('routes', prev => prev.filter(item => item !== deleteItemName));
+      }
+    } catch (error) {
+      console.error(`Error deleting ${deleteItemType}:`, error);
+      setError(`Error deleting ${deleteItemType}`);
+    } finally {
+      // Reset dialog state
+      setDeleteDialogOpen(false);
+      setDeleteItemType(null);
+      setDeleteItemName(null);
+    }
+  };
+  
+  // Function to open delete confirmation dialog
+  const openDeleteDialog = (type: 'sources' | 'sinks' | 'routes', name: string) => {
+    setDeleteItemType(type);
+    setDeleteItemName(name);
+    setDeleteDialogOpen(true);
+  };
+  
+  // Function to handle clicks on the desktop menu when alert is open
+  const handleDesktopMenuClick = (e: React.MouseEvent) => {
+    // Only close the dialog if the desktop menu is clicked (not the dialog itself)
+    if (deleteDialogOpen) {
+      // Check if the click is on the desktop menu but not on the dialog
+      const dialogElement = document.querySelector('[role="alertdialog"]');
+      if (dialogElement && !dialogElement.contains(e.target as Node)) {
+        setDeleteDialogOpen(false);
+        // Stop propagation to prevent the click from affecting other elements
+        e.stopPropagation();
+      }
+    }
+  };
+  
+  // Override the confirmDelete action with our local implementation
+  actions.confirmDelete = openDeleteDialog;
+  
   return (
     <Flex direction="column" height="950px" maxHeight="950px" justifyContent="flex-end" alignContent="flex-end">
+      {/* Delete Confirmation Dialog */}
+      <ConfirmationDialog
+        isOpen={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        onConfirm={handleConfirmDelete}
+        title="Delete Item"
+        message={`Are you sure you want to delete ${deleteItemName}? This action cannot be undone.`}
+      />
       <Box
+        onClick={handleDesktopMenuClick}
         style={{
           backgroundColor: "rgba(0,0,0,0);",
           borderWidth: "0px",

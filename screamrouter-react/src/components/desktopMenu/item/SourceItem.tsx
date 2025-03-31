@@ -12,6 +12,7 @@ import {
 import { useColorContext } from '../context/ColorContext';
 import { Source, Route } from '../../../api/api';
 import { DesktopMenuActions } from '../types';
+import { openEditPage } from '../../fullMenu/utils';
 import ActionButton from '../controls/ActionButton';
 import VolumeControl from '../controls/VolumeControl';
 
@@ -141,11 +142,14 @@ const SourceItem: React.FC<SourceItemProps> = ({
             <MenuItem onClick={() => actions.toggleEnabled('sources', source.name, !source.enabled)}>
               {source.enabled ? 'Disable' : 'Enable'}
             </MenuItem>
-            <MenuItem onClick={() => actions.navigate('sources', source.name)}>
+            <MenuItem onClick={() => openEditPage('sources', source)}>
               Edit Settings
             </MenuItem>
             <MenuItem onClick={() => actions.showEqualizer(true, 'sources', source)}>
               Equalize
+            </MenuItem>
+            <MenuItem onClick={() => actions.confirmDelete('sources', source.name)}>
+              Delete
             </MenuItem>
 
             {source.vnc_ip && (

@@ -341,6 +341,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return Array.from(nameToRouteMap.values());
       });
     }
+    
+    // Handle removals if present in the update
+    if (update.removals) {
+      // Handle source removals
+      if (update.removals.sources && update.removals.sources.length > 0) {
+        setSources(prevSources => {
+          const updatedSources = prevSources.filter(source => 
+            !update.removals!.sources!.includes(source.name)
+          );
+          update.removals!.sources!.forEach((name: string) => {
+            console.log(`Removed source: ${name}`);
+          });
+          return updatedSources;
+        });
+      }
+      
+      // Handle sink removals
+      if (update.removals.sinks && update.removals.sinks.length > 0) {
+        setSinks(prevSinks => {
+          const updatedSinks = prevSinks.filter(sink => 
+            !update.removals!.sinks!.includes(sink.name)
+          );
+          update.removals!.sinks!.forEach((name: string) => {
+            console.log(`Removed sink: ${name}`);
+          });
+          return updatedSinks;
+        });
+      }
+      
+      // Handle route removals
+      if (update.removals.routes && update.removals.routes.length > 0) {
+        setRoutes(prevRoutes => {
+          const updatedRoutes = prevRoutes.filter(route => 
+            !update.removals!.routes!.includes(route.name)
+          );
+          update.removals!.routes!.forEach((name: string) => {
+            console.log(`Removed route: ${name}`);
+          });
+          return updatedRoutes;
+        });
+      }
+    }
   };
 
   // Set up WebSocket and initial data

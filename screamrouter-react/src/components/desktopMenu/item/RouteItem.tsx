@@ -12,6 +12,7 @@ import {
 import { useColorContext } from '../context/ColorContext';
 import { Route } from '../../../api/api';
 import { DesktopMenuActions } from '../types';
+import { openEditPage } from '../../fullMenu/utils';
 import ActionButton from '../controls/ActionButton';
 import VolumeControl from '../controls/VolumeControl';
 
@@ -93,11 +94,14 @@ const RouteItem: React.FC<RouteItemProps> = ({
             <MenuItem onClick={() => actions.toggleEnabled('routes', route.name, !route.enabled)}>
               {route.enabled ? 'Disable' : 'Enable'}
             </MenuItem>
-            <MenuItem onClick={() => actions.navigate('routes', route.name)}>
+            <MenuItem onClick={() => openEditPage('routes', route)}>
               Edit Settings
             </MenuItem>
             <MenuItem onClick={() => actions.showEqualizer(true, 'routes', route)}>
               Equalize
+            </MenuItem>
+            <MenuItem onClick={() => actions.confirmDelete('routes', route.name)}>
+              Delete
             </MenuItem>
 
             <MenuDivider />
