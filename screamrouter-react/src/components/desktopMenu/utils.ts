@@ -20,6 +20,7 @@ export const createDesktopMenuActions = (
   setStarredItems: (type: 'sources' | 'sinks' | 'routes', setter: (prev: string[]) => string[]) => void,
   setError: (error: string | null) => void,
   onToggleActiveSource: (name: string) => void,
+  onTranscribeSink: (ip: string) => void,
   onListenToSink: (name: string | null) => void,
   onVisualizeSink: (name: string | null) => void,
   navigateToItem: (type: 'sources' | 'sinks' | 'routes', name: string) => void
@@ -129,6 +130,10 @@ export const createDesktopMenuActions = (
     
     toggleActiveSource: (name: string) => {
       onToggleActiveSource(name);
+    },
+
+    transcribeSink: (ip: string) => {
+      onTranscribeSink(ip);
     },
     
     listenToSink: (name: string | null) => {

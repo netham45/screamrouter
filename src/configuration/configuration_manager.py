@@ -22,6 +22,7 @@ import dns.rrset
 import fastapi
 import yaml
 from fastapi import Request
+from zeroconf import Zeroconf, ServiceInfo
 
 import src.constants.constants as constants
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
@@ -1084,56 +1085,63 @@ class ConfigurationManager(threading.Thread):
                 counter += 1
         except NameError:
             pass
-        
+       
         # Default audio settings
         bit_depth: int = 16
         sample_rate: int = 48000
         channels: int = 2
         channel_layout: str = "stereo"
         
-        # Try to query audio settings from the sink
+        # Try to query audio settings using a simple UDP request
         try:
             _logger.debug("[Configuration Manager] Querying audio settings from %s", ip)
-            sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(1)
             
-            query_message: bytes = b"query_audio_settings"
-            sock.sendto(query_message, (str(ip), 5353))
+            # Create a UDP socket for a direct query
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(1.0)  # 1 second timeout
             
-            # Wait for response
             try:
-                response: bytes
-                addr: tuple
-                response, addr = sock.recvfrom(1024)
-                response_str: str = response.decode('utf-8')
-                _logger.debug("[Configuration Manager] Received settings response: %s", response_str)
+                # Send a simple query string that the C# code might recognize
+                query_msg = "query_audio_settings".encode('ascii')
+                sock.sendto(query_msg, (str(ip), 5353))
                 
-                # Parse response - expected format is key=value pairs
-                settings: dict[str, str] = {}
+                # Try to receive a response
+                response, _ = sock.recvfrom(1500)
+                response_str = response.decode('utf-8', errors='ignore')
+                
+                _logger.debug("[Configuration Manager] Received response: %s", response_str)
+                
+                # Parse response - expected format is key=value pairs separated by semicolons
+                settings = {}
                 for pair in response_str.split(';'):
                     if '=' in pair:
-                        key: str
-                        value: str
                         key, value = pair.split('=', 1)
                         settings[key.strip()] = value.strip()
                 
                 # Extract settings if available
-                if 'bit_depth' in settings:
-                    bit_depth = int(settings['bit_depth'])
-                if 'sample_rate' in settings:
-                    sample_rate = int(settings['sample_rate'])
-                if 'channels' in settings:
-                    channels = int(settings['channels'])
-                if 'channel_layout' in settings:
-                    channel_layout = settings['channel_layout']
-                
-                _logger.info("[Configuration Manager] Using queried settings for sink %s: "
-                             "bit_depth=%d, sample_rate=%d, channels=%d, channel_layout=%s",
-                             ip, bit_depth, sample_rate, channels, channel_layout)
+                if settings:
+                    if 'bit_depth' in settings:
+                        bit_depth = int(settings['bit_depth'])
+                    if 'sample_rate' in settings:
+                        sample_rate = int(settings['sample_rate'])
+                    if 'channels' in settings:
+                        channels = int(settings['channels'])
+                    if 'channel_layout' in settings:
+                        channel_layout = settings['channel_layout']
+                    
+                    _logger.info("[Configuration Manager] Using queried settings for sink %s: "
+                                "bit_depth=%d, sample_rate=%d, channels=%d, channel_layout=%s",
+                                ip, bit_depth, sample_rate, channels, channel_layout)
+            
             except socket.timeout:
-                _logger.debug("[Configuration Manager] No response from %s, using default settings", ip)
+                _logger.debug("[Configuration Manager] No response received from %s, using default settings", ip)
+            except Exception as e:
+                _logger.debug("[Configuration Manager] Error in UDP query: %s, using default settings", str(e))
             finally:
                 sock.close()
+                
+        except Exception as e:
+            _logger.warning("[Configuration Manager] Error querying settings: %s, using default settings", str(e))
         except Exception as e:
             _logger.warning("[Configuration Manager] Error querying sink settings: %s", str(e))
             _logger.debug("[Configuration Manager] Using default settings for sink %s", ip)

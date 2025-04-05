@@ -3,7 +3,7 @@ import threading
 import logging
 import time
 from typing import Optional, Set
-from zeroconf import Zeroconf, DNSQuestion, DNSOutgoing, DNSRecord, DNSIncoming, current_time_millis, ServiceBrowser, ServiceListener
+from zeroconf import Zeroconf, DNSQuestion, DNSOutgoing, DNSRecord, DNSIncoming, current_time_millis, ServiceBrowser, ServiceListener, RecordUpdateListener
 
 # DNS record types and flags
 DNS_TYPE_A = 1  # A record type (IPv4 address)
@@ -22,13 +22,13 @@ class ScreamListener(ServiceListener):
         info = zc.get_service_info(type_, name)
         if info and info.addresses:
             ip = '.'.join(str(x) for x in info.addresses[0])
-            if "source.scream" in name:
+            if "_source._scream._udp.local" in name:
                 if ip not in self.source_ips:
-                    logger.info(f"Discovered new source: {ip}")
+                    #logger.info(f"Discovered new source: {ip}")
                     self.source_ips.add(ip)
-            elif "sink.scream" in name:
+            elif "_sink._scream._udp.local" in name:
                 if ip not in self.sink_ips:
-                    logger.info(f"Discovered new sink: {ip}")
+                    #logger.info(f"Discovered new sink: {ip}")
                     self.sink_ips.add(ip)
                     
     def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
@@ -56,7 +56,7 @@ class MDNSPinger:
         # Create listener for handling responses
         self.listener = ScreamListener()
         
-        logger.debug("Initializing Zeroconf mDNS handler")
+        #logger.debug("Initializing Zeroconf mDNS handler")
         
     def start(self):
         """Start the mDNS discovery"""
@@ -66,15 +66,12 @@ class MDNSPinger:
         self.running = True
         self.zeroconf = Zeroconf()
         
-        # Create service browser to listen for responses
-        self.browser = ServiceBrowser(self.zeroconf, "_scream._udp.local.", self.listener)
-        
         # Start refresh thread
         self.thread = threading.Thread(target=self._run)
         self.thread.daemon = True
         self.thread.start()
         
-        logger.info("mDNS discovery started")
+        #logger.info("mDNS discovery started")
         
     def stop(self):
         """Stop the mDNS discovery"""
@@ -84,7 +81,7 @@ class MDNSPinger:
         if self.zeroconf:
             self.zeroconf.close()
             self.zeroconf = None
-        logger.info("mDNS discovery stopped")
+        #logger.info("mDNS discovery stopped")
         
     def get_source_ips(self) -> Set[str]:
         """Get set of discovered source IPs"""
@@ -94,10 +91,35 @@ class MDNSPinger:
         """Get set of discovered sink IPs"""
         return self.listener.sink_ips.copy()
     
-    def _process_packet(self, data: bytes, addr: tuple) -> None:
-        """Process an mDNS packet (for compatibility with MDNSShared)"""
-        # This is a no-op since we're using zeroconf's listener now
-        pass
+    def update_record(self, zeroconf: Zeroconf, now: float, record: DNSRecord) -> None:
+        """Handle record updates from Zeroconf"""
+        #logger.info(f"Received record update: {record}")
+        
+        if record.type == DNS_TYPE_A:  # A record
+            name = record.name.lower()
+            #logger.info(f"Processing A record for {name}")
+            
+            if hasattr(record, 'address'):
+                if isinstance(record.address, bytes):
+                    ip = '.'.join(str(x) for x in record.address)
+                else:
+                    ip = record.address
+                
+                #logger.info(f"A record IP: {ip}")
+                
+                # Add the IP to the appropriate set regardless of the name
+                # This ensures we capture all responses
+                if "_source" in name:
+                    if ip not in self.listener.source_ips:
+                        #logger.info(f"Discovered new source via A record: {ip}")
+                        self.listener.source_ips.add(ip)
+                elif "_sink" in name:
+                    if ip not in self.listener.sink_ips:
+                        #logger.info(f"Discovered new sink via A record: {ip}")
+                        self.listener.sink_ips.add(ip)
+                else:
+                    pass
+                    #logger.info(f"Unrecognized service name: {name}")
         
     def _send_query(self, hostname: str) -> None:
         """Send an mDNS query and handle responses"""
@@ -109,7 +131,40 @@ class MDNSPinger:
         out.add_question(DNSQuestion(hostname, DNS_TYPE_A, 1))
         self.zeroconf.send(out)
         
-        # No need to process responses manually - the listener will handle them
+        # Wait a bit for responses to arrive
+        time.sleep(0.1)
+        
+        # Register a handler for incoming packets
+        class ResponseHandler(RecordUpdateListener):
+            def __init__(self, pinger):
+                self.pinger = pinger
+                
+            def update_record(self, zeroconf, now, record):
+                if record.type == DNS_TYPE_A:  # A record
+                    name = record.name.lower()
+                    #logger.info(f"Found A record for {name}")
+                    
+                    if hasattr(record, 'address'):
+                        if isinstance(record.address, bytes):
+                            ip = '.'.join(str(x) for x in record.address)
+                        else:
+                            ip = record.address
+                        
+                        #logger.info(f"A record IP: {ip}")
+                        
+                        # Add the IP to the appropriate set
+                        if "_source" in name:
+                            if ip not in self.pinger.listener.source_ips:
+                                #logger.info(f"Discovered new source via A record: {ip}")
+                                self.pinger.listener.source_ips.add(ip)
+                        elif "_sink" in name:
+                            if ip not in self.pinger.listener.sink_ips:
+                                #logger.info(f"Discovered new sink via A record: {ip}")
+                                self.pinger.listener.sink_ips.add(ip)
+        
+        # Create and register the handler
+        handler = ResponseHandler(self)
+        self.zeroconf.add_listener(handler, None)
         
     def _run(self):
         """Main loop that sends queries"""
@@ -117,14 +172,14 @@ class MDNSPinger:
             try:
                 # Send queries for source.scream and sink.scream
                 if self.zeroconf:
-                    self._send_query("source.scream")
-                    self._send_query("sink.scream")
+                    self._send_query("_source._scream._udp.local.")
+                    self._send_query("_sink._scream._udp.local.")
                 
                 # Wait for next interval
-                logger.debug(f"Sleeping for {self.interval} seconds")
+                #logger.debug(f"Sleeping for {self.interval} seconds")
                 time.sleep(self.interval)
 
             except Exception as e:
                 if self.running:
-                    logger.exception("Error in mDNS refresh loop")
+                    #logger.exception("Error in mDNS refresh loop")
                     time.sleep(1)  # Avoid tight loop on error

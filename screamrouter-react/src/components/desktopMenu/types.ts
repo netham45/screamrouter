@@ -55,6 +55,11 @@ export interface DesktopMenuActions {
    * Toggle Primary Source.
    */
   toggleActiveSource: (name: string) => void;
+
+  /**
+   * Transcribe a sink.
+   */
+  transcribeSink: (ip: string) => void;
   
   /**
    * Listen to a sink.

@@ -164,6 +164,11 @@ const SinkItem: React.FC<SinkItemProps> = ({
               <>
                 <MenuDivider />
                 <MenuItem 
+                  onClick={() => actions.transcribeSink(sink.ip)}
+                >
+                  Transcribe
+                </MenuItem>
+                <MenuItem 
                   onClick={() => actions.visualizeSink(visualizingSink === sink.name ? null : sink.name)}
                   _active={{ bg: visualizingSink === sink.name ? 'blue.500' : undefined }}
                 >

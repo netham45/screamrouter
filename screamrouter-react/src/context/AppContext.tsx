@@ -38,6 +38,11 @@ interface AppContextType {
    */
   onToggleActiveSource: (sourceName: string) => void;
   /**
+   * Sets the sink that is being transcribed.
+   * @param sink - The sink.
+   */
+  onTranscribeSink: (ip: string) => void;
+  /**
    * Sets the sink that is being listened to.
    * @param sink - The sink object or null to stop listening.
    */
@@ -463,6 +468,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('activeSource', newActiveSource || '');
   };
 
+  const onTranscribeSink = (ip: string) => {
+    window.open(`/site/transcribe/${ip}/`, "Transcription");
+  }
+
   /**
    * Sets the sink that is being listened to.
    * @param sink - The sink object or null to stop listening.
@@ -665,6 +674,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       sinks,
       routes,
       onToggleActiveSource,
+      onTranscribeSink,
       onListenToSink,
       onVisualizeSink,
       toggleEnabled,

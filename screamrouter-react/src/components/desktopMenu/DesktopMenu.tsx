@@ -26,6 +26,7 @@ const DesktopMenu: React.FC = () => {
     activeSource,
     listeningToSink,
     visualizingSink,
+    onTranscribeSink,
     onListenToSink,
     onVisualizeSink,
     onToggleActiveSource,
@@ -165,14 +166,15 @@ const DesktopMenu: React.FC = () => {
     setError,
     onToggleActiveSource,
     // Type conversion for the sink-related callbacks
+    (ip: string) => onTranscribeSink(ip),
     (name: string | null) => onListenToSink(name ? sinks.find(s => s.name === name) || null : null),
     (name: string | null) => onVisualizeSink(name ? sinks.find(s => s.name === name) || null : null),
     navigateToItem
-  ), [onToggleActiveSource, onListenToSink, onVisualizeSink, sinks]);
+  ), [onToggleActiveSource, onTranscribeSink, onListenToSink, onVisualizeSink, sinks]);
   
   // Function to open the full interface
   const openFullInterface = () => {
-    window.open('/', '_blank');
+     window.open('/site/', 'FullView');
   };
   
   // Function to render content based on current menu

@@ -4,13 +4,14 @@
  */
 
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, useSearchParams } from 'react-router-dom'; // Import necessary components from react-router-dom
+import { BrowserRouter as Router, Routes, Route, useSearchParams, useParams } from 'react-router-dom'; // Import necessary components from react-router-dom
 import { ChakraProvider } from '@chakra-ui/react'; // Import ChakraProvider
 import theme from './theme'; // Import custom theme
 import { AppProvider, useAppContext } from './context/AppContext'; // Import context provider and hook
 import VNC from './components/pages/VNCPage'; // Import the VNC component
 import Visualizer from './components/pages/VisualizerPage'; // Import the Visualizer component
 import Equalizer from './components/pages/EqualizerPage'; // Import the Equalizer component
+import TranscribePage from './components/pages/TranscribePage'; // Import the TranscribePage component
 import AddEditSourcePage from './components/pages/AddEditSourcePage'; // Import the AddEditSourcePage component
 import AddEditSinkPage from './components/pages/AddEditSinkPage'; // Import the AddEditSinkPage component
 import AddEditRoutePage from './components/pages/AddEditRoutePage'; // Import the AddEditRoutePage component
@@ -85,6 +86,19 @@ const VisualizerRoute: React.FC = () => {
 };
 
 /**
+ * @function TranscribeRoute
+ * @description Component to handle Transcribe route with route parameters.
+ */
+const TranscribeRoute: React.FC = () => {
+  const params = useParams(); // Hook to access URL route parameters
+  const ip = params.ip; // Get the 'ip' parameter from route
+
+  if (!ip) return <div>IP not provided</div>; // Return error message if IP is not provided
+
+  return <TranscribePage ip={ip} />; // Pass the IP to TranscribePage component
+};
+
+/**
  * @function AppContent
  * @description Main content of the application wrapped in Router and Routes.
  */
@@ -112,6 +126,7 @@ const AppContent: React.FC = () => {
         <Route path="/equalizer" element={<EqualizerRoute />} /> {/* Route to EqualizerRoute component */}
         <Route path="/vnc" element={<VNCRoute />} /> {/* Route to VNCRoute component */}
         <Route path="/visualizer" element={<VisualizerRoute />} /> {/* Route to VisualizerRoute component */}
+        <Route path="/transcribe/:ip" element={<TranscribeRoute />} /> {/* Route to TranscribeRoute component */}
         <Route path="/add-source" element={<AddEditSourcePage />} /> {/* Route to AddEditSourcePage component */}
         <Route path="/edit-source" element={<AddEditSourcePage />} /> {/* Route to AddEditSourcePage component */}
         <Route path="/add-sink" element={<AddEditSinkPage />} /> {/* Route to AddEditSinkPage component */}
