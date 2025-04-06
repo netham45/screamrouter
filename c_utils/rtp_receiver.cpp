@@ -34,7 +34,7 @@ int listen_fd = 0; // fd for audio input
 
 int data_fd = 0; // fd for writing IPs to
 
-vector<string> known_ips = {};
+vector<string> known_ip_procs = {};
 
 // Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
 int* config_argv[] = {NULL, // Process File Name
@@ -114,8 +114,8 @@ void send() {
     memset(buffer, 0, TAG_LENGTH);
     strcpy(reinterpret_cast<char*>(buffer), inet_ntoa(receive_addr.sin_addr));
     string ip_address = string(reinterpret_cast<char*>(buffer));
-    if (find(known_ips.begin(), known_ips.end(), ip_address) == known_ips.end()) {
-        known_ips.push_back(ip_address);
+    if (find(known_ip_procs.begin(), known_ip_procs.end(), ip_address) == known_ip_procs.end()) {
+        known_ip_procs.push_back(ip_address);
         write(data_fd, (ip_address + "\n").c_str(), ip_address.length());
     }
     memcpy(buffer + TAG_LENGTH, header, HEADER_SIZE);

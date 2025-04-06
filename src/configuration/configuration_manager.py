@@ -32,6 +32,7 @@ from src.audio.audio_controller import AudioController
 from src.audio.multicast_scream_receiver import MulticastScreamReceiver
 from src.audio.rtp_recevier import RTPReceiver
 from src.audio.scream_receiver import ScreamReceiver
+from src.audio.scream_per_process_receiver import ScreamPerProcessReceiver
 from src.audio.tcp_manager import TCPManager
 from src.configuration.configuration_solver import ConfigurationSolver
 from src.plugin_manager.plugin_manager import PluginManager
@@ -85,6 +86,8 @@ class ConfigurationManager(threading.Thread):
         """Rather the thread is running or not"""
         self.scream_recevier: ScreamReceiver = ScreamReceiver([])
         """Holds the thread that receives UDP packets from Scream"""
+        self.scream_per_process_recevier: ScreamPerProcessReceiver = ScreamPerProcessReceiver([])
+        """Holds the thread that receives per-process UDP packets from Scream"""
         self.multicast_scream_recevier: MulticastScreamReceiver = MulticastScreamReceiver([])
         """Holds the thread that receives UDP packets from Multicast Scream Streams"""
         self.rtp_receiver: RTPReceiver = RTPReceiver([])
@@ -956,11 +959,13 @@ class ConfigurationManager(threading.Thread):
                                     source in audio_controller.sources.values()])
 
         old_scream_recevier: ScreamReceiver = self.scream_recevier
+        old_scream_per_process_recevier: ScreamPerProcessReceiver = self.scream_per_process_recevier
         old_multicast_scream_recevier: MulticastScreamReceiver = self.multicast_scream_recevier
         old_rtp_receiver: RTPReceiver = self.rtp_receiver
 
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
             self.scream_recevier = ScreamReceiver(source_write_fds)
+            self.scream_per_process_recevier = ScreamPerProcessReceiver(source_write_fds)
             self.multicast_scream_recevier = MulticastScreamReceiver(source_write_fds)
             self.rtp_receiver = RTPReceiver(source_write_fds)
             controller_write_fds: List[int] = []
@@ -970,6 +975,7 @@ class ConfigurationManager(threading.Thread):
 
         if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
             old_scream_recevier.stop()
+            old_scream_per_process_recevier.stop()
             old_multicast_scream_recevier.stop()
             old_rtp_receiver.stop()
 
@@ -1161,8 +1167,10 @@ class ConfigurationManager(threading.Thread):
     def check_receiver_sources(self):
         """This checks the IPs receivers have seen and adds any as sources if they don't exist"""
         self.scream_recevier.check_known_ips()
+        self.scream_per_process_recevier.check_known_sources()
         self.multicast_scream_recevier.check_known_ips()
         self.rtp_receiver.check_known_ips()
+        known_source_tags: List[str] = [str(desc.tag) for desc in self.source_descriptions]
         known_source_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
         known_sink_ips: List[str] = [str(desc.ip) for desc in self.sink_descriptions]
         for ip in self.scream_recevier.known_ips:
@@ -1186,6 +1194,10 @@ class ConfigurationManager(threading.Thread):
             if not str(ip) in known_sink_ips:
                 _logger.info("[Configuration Manager] Adding new sink from mDNS %s", ip)
                 self.auto_add_sink(ip)
+        for tag in self.scream_per_process_recevier.known_sources:
+            if not str(tag) in known_source_tags:
+                _logger.info("[Configuration Manager] Adding new per-process source %s", tag)
+                self.add_source(SourceDescription(name=tag, tag=tag))
         
     def run(self):
         """Monitors for the reload condition to be set and reloads the config when it is set"""

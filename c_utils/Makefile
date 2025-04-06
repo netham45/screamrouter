@@ -11,7 +11,7 @@ ifeq ($(LIBMP3LAME_PATH),)
 $(error libmp3lame not found. Please install it and try again.)
 endif
 
-all: make_bin bin/sink_audio_mixer bin/source_input_processor bin/rtp_receiver bin/scream_receiver
+all: make_bin bin/sink_audio_mixer bin/source_input_processor bin/rtp_receiver bin/scream_receiver bin/scream_per_process_receiver
 
 make_bin:
 	mkdir -p bin
@@ -34,8 +34,11 @@ bin/rtp_receiver: rtp_receiver.cpp
 bin/scream_receiver: scream_receiver.cpp
 	$(CXX) $< -o $@ $(CFLAGS)
 
+bin/scream_per_process_receiver: scream_per_process_receiver.cpp
+	$(CXX) $< -o $@ $(CFLAGS)
+
 clean:
-	rm -f bin/sink_audio_mixer bin/source_input_processor bin/rtp_receiver bin/scream_receiver
+	rm -f bin/sink_audio_mixer bin/source_input_processor bin/rtp_receiver bin/scream_receiver bin/scream_per_process_receiver
 	-$(MAKE) -C libsamplerate clean
 	-$(MAKE) -C dcaenc clean
 

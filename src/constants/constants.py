@@ -8,6 +8,8 @@ import os
 
 SCREAM_RECEIVER_PORT: int = int(os.getenv("SCREAM_RECEIVER_PORT", "16401"))
 """This is the port to receive Scream data at"""
+SCREAM_PER_PROCESS_RECEIVER_PORT: int = int(os.getenv("SCREAM_PER_PROCESS_RECEIVER_PORT", "16402"))
+"""This is the port to receive per-process data at"""
 RTP_RECEIVER_PORT: int = int(os.getenv("RTP_RECEIVER_PORT", "40000"))
 """This is the port to receive RTP data at"""
 SINK_PORT: int = int(os.getenv("SINK_PORT", "4010"))
@@ -55,8 +57,13 @@ PACKET_DATA_SIZE_INT32: int = int(PACKET_DATA_SIZE / 4)
 """This is the number of int32's in a packet"""
 PACKET_HEADER_SIZE: int = 5
 """This is the packet header size"""
+TAG_MAX_LENGTH: int = 45
+"""Max length for an internal/plugin source tag, set to be long enough for a
+   full IPv6 address"""
 PACKET_SIZE = PACKET_HEADER_SIZE + PACKET_DATA_SIZE
 """This is the total packet size"""
+PER_PROCESS_PACKET_SIZE = PACKET_HEADER_SIZE + TAG_MAX_LENGTH + PACKET_DATA_SIZE
+"""This is the total packet size for per-process audio"""
 MP3_HEADER_LENGTH: int = 4
 """Length of MP3 header"""
 WAIT_FOR_CLOSES: bool = False
@@ -66,6 +73,3 @@ WAIT_FOR_CLOSES: bool = False
 KILL_AT_CLOSE: bool = True
 """Closes quickly but leaves lingering processes, doesn't reload any faster
    than disabling WAIT_FOR_CLOSES."""
-TAG_MAX_LENGTH: int = 45
-"""Max length for an internal/plugin source tag, set to be long enough for a
-   full IPv6 address"""

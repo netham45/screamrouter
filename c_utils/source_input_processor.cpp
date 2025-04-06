@@ -124,10 +124,12 @@ void check_update_header() {
 
 void receive_data_thread() {
     while (threads_running) {
-        while (int bytes = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE) != TAG_SIZE + PACKET_SIZE ||
-                strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)
-            if (bytes == -1)
-                threads_running = false;
+        int bytes;
+        while ((bytes = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE)) != TAG_SIZE + PACKET_SIZE ||
+                (strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)) {
+                    if (bytes == -1)
+                        threads_running = false;
+            }
         check_update_header();
         auto received_time = std::chrono::steady_clock::now();
         std::vector<uint8_t> new_packet(CHUNK_SIZE);
@@ -243,7 +245,6 @@ void data_input_thread() {
 
 void write_output_buffer() {
     write(fd_out, processed_buffer_int8, CHUNK_SIZE);
-    
     for (int pos = 0; pos < sizeof(processed_buffer) - CHUNK_SIZE; pos++)
         processed_buffer_int8[pos] = processed_buffer_int8[pos + CHUNK_SIZE];
     process_buffer_pos -= CHUNK_SIZE / sizeof(int32_t);

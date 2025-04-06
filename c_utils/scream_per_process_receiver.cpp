@@ -16,13 +16,14 @@ using namespace std;
 
 // Configuration variables
 #define CHUNK_SIZE 1152 // Chunk size in bytes for audio data
-#define HEADER_SIZE 5 // Size of the Scream header, which contains information about the output audio stream
-#define PACKET_SIZE (CHUNK_SIZE + HEADER_SIZE) // Total packet size including header and chunk
-#define TAG_LENGTH 45
+#define IP_LENGTH 15
+#define PROGRAM_TAG_LENGTH 30
+#define HEADER_SIZE 5 // Size of the Scream header, which contains information about the output audio strea
+#define PACKET_SIZE (CHUNK_SIZE + PROGRAM_TAG_LENGTH + HEADER_SIZE) // Total packet size including header and chunk
 
 bool running = true; // Flag to control loop execution
 
-uint8_t buffer[TAG_LENGTH + PACKET_SIZE] = {0}; // Vector of pointers to receive buffers for input streams
+uint8_t buffer[IP_LENGTH + PACKET_SIZE] = {0}; // Vector of pointers to receive buffers for input streams
 
 vector<int> output_fds; // Vector of file descriptors for audio input streams
 
@@ -44,7 +45,7 @@ struct sockaddr_in receive_addr;
 socklen_t receive_addr_len = sizeof(receive_addr);
 
 void log(const string &message, bool endl = true, bool tag = true) {
-    printf("%s %s%s", tag?"[RTP Listener]":"", message.c_str(), endl?"\n":"");
+    printf("%s %s%s", tag?"[Scream Per-Port Listener]":"", message.c_str(), endl?"\n":"");
 }
 
 // Function to process fixed command line arguments like IP address and output port
@@ -66,7 +67,8 @@ void process_fd_args(int argc, char* argv[]) {
 }
 
 bool receive() {
-    int bytes = recvfrom(listen_fd, buffer + TAG_LENGTH, PACKET_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
+    int bytes = recvfrom(listen_fd, buffer + IP_LENGTH, PACKET_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
+    //printf("Packet in Bytes: %i Process: %s\n", bytes, buffer);
     if (bytes == -1) 
         ::exit(-1);
     if (bytes != PACKET_SIZE)
@@ -75,18 +77,33 @@ bool receive() {
 }
 
 void send() {
-    memset(buffer, 0, TAG_LENGTH);
-    strcpy(reinterpret_cast<char*>(buffer), inet_ntoa(receive_addr.sin_addr));
-    string ip_address = string(reinterpret_cast<char*>(buffer));
-    if (find(known_ip_procs.begin(), known_ip_procs.end(), ip_address) == known_ip_procs.end()) {
-        known_ip_procs.push_back(ip_address);
-        write(data_fd, (ip_address + "\n").c_str(), ip_address.length());
+    //Format for buffer is
+    //XXX.XXX.XXX.XXXTAGTAGTAGTAGTAGTAGTAGTAGTAGTA\0DATADATA...
+    //If the IP does not fill the full size empty space is filled with spaces.
+    //The buffer has the TAG and data in it already and just needs the IP written
+    char* tag = reinterpret_cast<char*>(buffer);
+    memset(tag, ' ', IP_LENGTH); // Clear with space
+    strcpy(tag, inet_ntoa(receive_addr.sin_addr)); // Write IP to start
+    tag[strlen(tag)] = ' '; // Clear null terminator
+    tag[IP_LENGTH + PROGRAM_TAG_LENGTH - 1] = 0; // Ensure it's got a null terminator at the end of the tag
+    bool already_known = false;
+    for (int idx=0;idx<known_ip_procs.size();idx++) {
+        if (known_ip_procs.at(idx) == tag) {
+            already_known = true;
+            break;
+        }
     }
+    if (!already_known) {
+        dprintf(data_fd, "%s\n", tag);
+        known_ip_procs.push_back(tag);
+    }
+
     for (int fd_idx=0;fd_idx<output_fds.size();fd_idx++)
-        write(output_fds[fd_idx], buffer, PACKET_SIZE + TAG_LENGTH);
+        write(output_fds[fd_idx], buffer, PACKET_SIZE + IP_LENGTH);
 }
 
 int main(int argc, char* argv[]) {
+    log("Start");
     process_args(argc, argv);
 
     process_fd_args(argc, argv);
