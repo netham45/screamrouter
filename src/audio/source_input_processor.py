@@ -32,6 +32,7 @@ class SourceInputProcessor():
         self.source_input_fd: int
         """Written to by the input processor to write to the output processor"""
         self.source_output_fd, self.source_input_fd = os.pipe()
+        os.set_blocking(self.source_input_fd, False)
         self.data_output_fd: int
         """Listened to for new IP addresses to consider connected"""
         self.data_input_fd: int
@@ -86,7 +87,7 @@ class SourceInputProcessor():
     def __build_command(self) -> List[str]:
         """Builds Command to run"""
         command: List[str] = []
-        command.extend([#"/usr/bin/valgrind", "--tool=callgrind",
+        command.extend([#"/usr/bin/valgrind", "--tool=callgrind", "--trace-children=yes",
                         "c_utils/bin/source_input_processor",
                         str(self.source_info.tag if self.source_info.tag is not None
                             else self.source_info.ip),

@@ -62,7 +62,8 @@ class ScreamPerProcessReceiver():
     def __build_command(self) -> List[str]:
         """Builds Command to run"""
         command: List[str] = []
-        command.extend(["c_utils/bin/scream_per_process_receiver",
+        command.extend([#"/usr/bin/valgrind", "--tool=callgrind", "--trace-children=yes", "--collect-jumps=yes", "--dump-instr=yes",
+                        "c_utils/bin/scream_per_process_receiver",
                         str(self.socket_fd),
                         str(self.data_input_fd)])
         command.extend([str(fd) for fd in self.controller_write_fd_list])

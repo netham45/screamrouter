@@ -11,7 +11,7 @@ from copy import copy, deepcopy
 from ipaddress import IPv4Address
 from multiprocessing import Process
 from subprocess import TimeoutExpired
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import dns.nameserver
 import dns.rdtypes
@@ -1009,8 +1009,8 @@ class ConfigurationManager(threading.Thread):
                 return False
         return True
 
-    def auto_add_source(self, ip: IPAddressType):
-        """Checks if VNC is available and adds a source by IP with the correct options"""
+    def get_hostname_by_ip(self, ip: IPAddressType) -> str:
+        """Gets a hostname by IP"""
         hostname: str = str(ip)
         try:
             hostname = socket.gethostbyaddr(str(ip))[0].split(".")[0]
@@ -1036,6 +1036,11 @@ class ConfigurationManager(threading.Thread):
                 _logger.debug(
                     "[Configuration Manager] Adding source %s couldn't get hostname, using IP",
                     ip)
+        return hostname
+
+    def auto_add_source(self, ip: IPAddressType):
+        """Checks if VNC is available and adds a source by IP with the correct options"""
+        hostname: str = self.get_hostname_by_ip(ip)
         try:
             original_hostname: str = hostname
             counter: int = 1
@@ -1055,6 +1060,34 @@ class ConfigurationManager(threading.Thread):
             _logger.debug("[Configuration Manager] Adding source %s, VNC not available", ip)
             self.add_source(SourceDescription(name=hostname, ip=ip))
         self.__process_and_apply_configuration_with_timeout()
+
+    def auto_add_process_source(self, tag: str):
+        """Auto Add Process per Source"""
+        ip: IPAddressType = IPAddressType(tag[:15].strip())
+        hostname: str = self.get_hostname_by_ip(ip)
+        process: str = tag[15:]
+        sourcename: str = f"{hostname} - {process}"
+        try:
+            original_sourcename: str = sourcename
+            counter: int = 1
+            while self.get_source_by_name(sourcename):
+                sourcename = f"{original_sourcename} ({counter})"
+                counter += 1
+        except NameError:
+            pass
+        _logger.info("[Configuration Manager] Adding Source Process %s - %s", hostname, process)
+        source: SourceDescription = SourceDescription(name=sourcename, tag=tag, is_process=True)
+        source_group_search: List[SourceDescription]
+        source_group_search = [source for source in self.source_descriptions if source.tag == f"{hostname} All Processes"]
+        source_group: SourceDescription
+        if not source_group_search:
+            source_group = SourceDescription(name=f"{hostname} All Processes", tag=f"{hostname} All Processes", is_group=True)
+            self.add_source(source_group)
+        else:
+            source_group = source_group_search[0]
+        source_group.group_members.append(source.name)
+        self.add_source(source)
+        self.__reload_configuration()
 
     def auto_add_sink(self, ip: IPAddressType):
         """Adds a sink with settings queried from the device or defaults if query fails"""
@@ -1197,7 +1230,7 @@ class ConfigurationManager(threading.Thread):
         for tag in self.scream_per_process_recevier.known_sources:
             if not str(tag) in known_source_tags:
                 _logger.info("[Configuration Manager] Adding new per-process source %s", tag)
-                self.add_source(SourceDescription(name=tag, tag=tag))
+                self.auto_add_process_source(tag)
         
     def run(self):
         """Monitors for the reload condition to be set and reloads the config when it is set"""

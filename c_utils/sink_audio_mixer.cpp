@@ -182,7 +182,7 @@ inline void write_lame() {
 inline bool check_fd_active(int fd, bool is_active) {
     receive_timeout.tv_sec = 0;
         if (!is_active)
-            receive_timeout.tv_usec = 100; // 100uS, just check if it's got data
+            receive_timeout.tv_usec = 0; //don't wait if not active
         else    
             receive_timeout.tv_usec = 70000; // 70ms, wait for a chunk.
         FD_ZERO(&read_fds);

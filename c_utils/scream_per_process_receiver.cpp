@@ -9,6 +9,8 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <fcntl.h>
+#include <sys/select.h>
+#include <sys/time.h>
 #include <lame/lame.h>
 #include <algorithm>
 #include <string>
@@ -24,6 +26,7 @@ using namespace std;
 bool running = true; // Flag to control loop execution
 
 uint8_t buffer[IP_LENGTH + PACKET_SIZE] = {0}; // Vector of pointers to receive buffers for input streams
+char* tag = reinterpret_cast<char*>(buffer);
 
 vector<int> output_fds; // Vector of file descriptors for audio input streams
 
@@ -76,17 +79,19 @@ bool receive() {
     return true;
 }
 
-void send() {
+void set_tag() {
     //Format for buffer is
     //XXX.XXX.XXX.XXXTAGTAGTAGTAGTAGTAGTAGTAGTAGTA\0DATADATA...
     //If the IP does not fill the full size empty space is filled with spaces.
     //The buffer has the TAG and data in it already and just needs the IP written
-    char* tag = reinterpret_cast<char*>(buffer);
     memset(tag, ' ', IP_LENGTH); // Clear with space
     strcpy(tag, inet_ntoa(receive_addr.sin_addr)); // Write IP to start
     tag[strlen(tag)] = ' '; // Clear null terminator
     tag[IP_LENGTH + PROGRAM_TAG_LENGTH - 1] = 0; // Ensure it's got a null terminator at the end of the tag
-    bool already_known = false;
+}
+
+void check_if_known() {
+   bool already_known = false;
     for (int idx=0;idx<known_ip_procs.size();idx++) {
         if (known_ip_procs.at(idx) == tag) {
             already_known = true;
@@ -96,10 +101,33 @@ void send() {
     if (!already_known) {
         dprintf(data_fd, "%s\n", tag);
         known_ip_procs.push_back(tag);
-    }
+    } 
+}
 
-    for (int fd_idx=0;fd_idx<output_fds.size();fd_idx++)
-        write(output_fds[fd_idx], buffer, PACKET_SIZE + IP_LENGTH);
+
+void send() {
+
+    // Use select to check if sockets are ready for writing
+    fd_set write_fds;
+    struct timeval timeout;
+    
+    // Set timeout to 0 seconds, 100 microseconds (non-blocking)
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 100;
+    
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
+        // Initialize the file descriptor set
+        FD_ZERO(&write_fds);
+        FD_SET(output_fds[fd_idx], &write_fds);
+        
+        // Check if this socket is ready for writing
+        int select_result = select(output_fds[fd_idx] + 1, NULL, &write_fds, NULL, &timeout);
+        
+        // Write only if select indicates the socket is ready
+        if (select_result > 0 && FD_ISSET(output_fds[fd_idx], &write_fds)) {
+            write(output_fds[fd_idx], buffer, PACKET_SIZE + IP_LENGTH);
+        }
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -114,8 +142,12 @@ int main(int argc, char* argv[]) {
 
     while (running)
         if (receive())
+        {
+            set_tag();
+            check_if_known();
             send();
-        else
-            sleep(.2);
+        } else {
+            sleep(.01);
+        }
     return 0;
 }

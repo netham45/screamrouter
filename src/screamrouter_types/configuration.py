@@ -210,6 +210,8 @@ class SourceDescription(BaseModel):
     """IP Address for VNC connections"""
     vnc_port: Union[annotations.PortType, Literal[""]] = ""
     """Port for VNC connections"""
+    is_process: bool = False
+    """Is a process and should be grouped with a source by IP"""
 
     def __eq__(self, other):
         """Compares the name if a string.
