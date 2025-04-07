@@ -16,6 +16,7 @@
 #include <immintrin.h>
 #include "audio_processor.h"
 #include "dcaenc/dcaenc.h"
+#include <sys/time.h>
 
 AudioProcessor *lameProcessor = NULL;
 using namespace std;
@@ -156,13 +157,13 @@ inline void write_lame() {
     FD_ZERO(&lame_fd);
     FD_SET(mp3_write_fd, &lame_fd);
     lame_timeout.tv_sec = 0;
-    lame_timeout.tv_usec = lame_active ? 15000 : 0;
+    lame_timeout.tv_usec = lame_active ? 15000 : 100;
     int result = select(mp3_write_fd + 1, NULL, &lame_fd, NULL, &lame_timeout);
     // ScreamRouter will stop reading from the MP3 FD if there's no clients. Don't encode if there's no reader.
     if (result > 0 && FD_ISSET(mp3_write_fd, &lame_fd)) {
         if (!lame_active) {
             lame_active = true;
-            //log("MP3 Stream Active");
+            log("MP3 Stream Active");
         }
         int32_t processed_buffer[CHUNK_SIZE / sizeof(uint32_t)];
         int processed_samples = lameProcessor->processAudio(reinterpret_cast<const uint8_t*>(mixing_buffer), processed_buffer);
@@ -175,43 +176,135 @@ inline void write_lame() {
     else {
         if (lame_active) {
             lame_active = false;
-            //log("MP3 Stream Inactive");
+            log("MP3 Stream Inactive");
         }
     }
 }
+
+inline void mark_fds_active_inactive() {
+    fd_set check_fds;
+    fd_set active_fds;
+    FD_ZERO(&check_fds);
+    FD_ZERO(&active_fds);
+    int max_fd = 0;
+    int total_active = 0;
+    
+    // Find the max fd and set up active_fds
+    for (int idx = 0; idx < output_fds.size(); idx++) {
+        if (active[idx]) {
+            FD_SET(output_fds[idx], &active_fds);
+            if (output_fds[idx] > max_fd) {
+                max_fd = output_fds[idx];
+            }
+            total_active++;
+        }
+    }
+    
+    // Run a select against all active FDs with zero timeout
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    fd_set ready_fds = active_fds;
+    int result = select(max_fd + 1, &ready_fds, NULL, NULL, &tv);
+    
+    // If all active FDs have data, we're done with this part
+    if (result == total_active) {
+        // All active FDs have data, nothing to check
+    } else {
+        // Store all active FDs that do not have data pending in check_fds
+        for (int idx = 0; idx < output_fds.size(); idx++) {
+            if (active[idx] && !FD_ISSET(output_fds[idx], &ready_fds)) {
+                FD_SET(output_fds[idx], &check_fds);
+            }
+        }
+        
+        // If there are FDs in check_fds, poll every 1ms for up to 20ms
+        if (result < total_active) {
+            struct timeval start_time, current_time;
+            gettimeofday(&start_time, NULL);
+            
+            while (1) {
+                // Check if 20ms have elapsed
+                gettimeofday(&current_time, NULL);
+                long elapsed_usec = (current_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                                   (current_time.tv_usec - start_time.tv_usec);
+                if (elapsed_usec > 20000) { // 20ms timeout
+                    break;
+                }
+                
+                // Poll with 1ms timeout
+                fd_set temp_check_fds = check_fds;
+                tv.tv_sec = 0;
+                tv.tv_usec = 1000; // 1ms
+                result = select(max_fd + 1, &temp_check_fds, NULL, NULL, &tv);
+                
+                if (result <= 0) {
+                    continue; // No FDs ready or error
+                }
+                
+                // Remove FDs that now have data from check_fds
+                for (int idx = 0; idx < output_fds.size(); idx++) {
+                    if (active[idx] && FD_ISSET(output_fds[idx], &temp_check_fds)) {
+                        FD_CLR(output_fds[idx], &check_fds);
+                    }
+                }
+                
+                // If all FDs now have data, we can stop polling
+                if (FD_ISSET(0, &check_fds) == 0) {
+                    break;
+                }
+            }
+            
+            // After 20ms, mark any remaining FDs in check_fds as false in active[]
+            for (int idx = 0; idx < output_fds.size(); idx++) {
+                if (active[idx] && FD_ISSET(output_fds[idx], &check_fds)) {
+                    active[idx] = false;
+                }
+            }
+        }
+    }
+    
+    // Run a zero-ms select on all inactive FDs
+    FD_ZERO(&check_fds);
+    max_fd = 0;
+    
+    for (int idx = 0; idx < output_fds.size(); idx++) {
+        if (!active[idx]) {
+            FD_SET(output_fds[idx], &check_fds);
+            if (output_fds[idx] > max_fd) {
+                max_fd = output_fds[idx];
+            }
+        }
+    }
+    
+    if (max_fd > 0) {
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        fd_set temp_check_fds = check_fds;
+        result = select(max_fd + 1, &temp_check_fds, NULL, NULL, &tv);
+        
+        // If any inactive FDs are now active, set them to true in active[]
+        if (result > 0) {
+            for (int idx = 0; idx < output_fds.size(); idx++) {
+                if (!active[idx] && FD_ISSET(output_fds[idx], &temp_check_fds)) {
+                    active[idx] = true;
+                    total_active++;
+                }
+            }
+        }
+    }
+}
+
 inline bool handle_receive_buffers() {  // Receive data from input fds
     output_active = false;
-    
-    // Set up the timeout
-    receive_timeout.tv_sec = 0;
-    receive_timeout.tv_usec = 10000;
-    
-    // Initialize the fd_set
-    FD_ZERO(&read_fds);
-    
-    // Add all file descriptors to the set
-    int max_fd = 0;
+    mark_fds_active_inactive();
     for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
-        FD_SET(output_fds[fd_idx], &read_fds);
-        max_fd = max(max_fd, output_fds[fd_idx]);
-    }
-    
-    // Call select once for all file descriptors
-    if (select(max_fd + 1, &read_fds, NULL, NULL, &receive_timeout) < 0) {
-        cout << "Select failure: " << errno << strerror(errno) << endl;
-        return false;
-    }
-    
-    // Check each file descriptor against the result
-    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
-        active[fd_idx] = FD_ISSET(output_fds[fd_idx], &read_fds);
         if (active[fd_idx]) {
             for (int bytes_in = 0; running && bytes_in < CHUNK_SIZE;)
                 bytes_in += read(output_fds[fd_idx], receive_buffers[fd_idx] + bytes_in, CHUNK_SIZE - bytes_in);
             output_active = true;
         }
     }
-    
     return output_active;
 }
 
@@ -345,8 +438,10 @@ int main(int argc, char* argv[]) {
     setup_buffers();
 
     while (running) {
-        if (!handle_receive_buffers())
+        if (!handle_receive_buffers()) {
+            sleep(.5);
             continue;
+        }
         mix_buffers();
         write_lame();
         downscale_buffer();
