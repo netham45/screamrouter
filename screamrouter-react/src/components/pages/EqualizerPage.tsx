@@ -25,7 +25,18 @@ import {
   SliderThumb,
   Alert,
   AlertIcon,
-  useColorModeValue
+  useColorModeValue,
+  Input,
+  Modal,
+  ModalOverlay,
+  ModalContent,
+  ModalHeader,
+  ModalFooter,
+  ModalBody,
+  ModalCloseButton,
+  FormControl,
+  FormLabel,
+  Portal
 } from '@chakra-ui/react';
 import ApiService, { Equalizer as EqualizerType } from '../../api/api';
 
@@ -154,6 +165,12 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   const [customEqualizers, setCustomEqualizers] = useState<{ [key: string]: EqualizerType }>({});
 
   /**
+   * State to control the save preset modal.
+   */
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [newPresetName, setNewPresetName] = useState('');
+
+  /**
    * Reference to the canvas element for drawing the equalizer response graph.
    */
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -268,23 +285,38 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   };
 
   /**
+   * Opens the save preset modal.
+   */
+  const openSaveModal = () => {
+    setNewPresetName('');
+    setIsSaveModalOpen(true);
+  };
+
+  /**
+   * Closes the save preset modal.
+   */
+  const closeSaveModal = () => {
+    setIsSaveModalOpen(false);
+  };
+
+  /**
    * Saves a new equalizer preset.
    */
   const saveEqualizer = async () => {
-    const name = prompt('Enter a name for the new equalizer preset:');
-    if (!name) {
+    if (!newPresetName) {
       setError('Name is required.');
       return;
     }
-    if (musicPresets[name] || customEqualizers[name]) {
+    if (musicPresets[newPresetName] || customEqualizers[newPresetName]) {
       setError('Preset name already exists.');
       return;
     }
     try {
       setError(null);
-      await ApiService.saveEqualizer(name, equalizer);
-      setCustomEqualizers(prev => ({ ...prev, [`🛠️${name}`]: equalizer }));
-      setPreset(`🛠️${name}`);
+      await ApiService.saveEqualizer(newPresetName, equalizer);
+      setCustomEqualizers(prev => ({ ...prev, [`🛠️${newPresetName}`]: equalizer }));
+      setPreset(`🛠️${newPresetName}`);
+      closeSaveModal();
     } catch (error) {
       console.error('Error saving equalizer:', error);
       setError('Failed to save equalizer. Please try again.');
@@ -533,7 +565,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
               <option key={presetName} value={presetName}>{presetName}</option>
             ))}
           </Select>
-          <Button colorScheme="blue" size="sm" onClick={saveEqualizer} ml={2}>
+          <Button colorScheme="blue" size="sm" onClick={openSaveModal} ml={2}>
             Save
           </Button>
           <Button colorScheme="red" size="sm" onClick={deleteEqualizer}>
@@ -596,6 +628,56 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
           Close
         </Button>
       </Flex>
+      {/* Save Preset Modal - Using Portal to ensure it's at the root level */}
+      <Portal>
+        {isSaveModalOpen && (
+          <Box
+            position="fixed"
+            top="0"
+            left="0"
+            right="0"
+            bottom="0"
+            bg="rgba(0, 0, 0, 0.5)"
+            zIndex="9000"
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
+            onClick={closeSaveModal}
+          >
+            <Box
+              bg={bgColor}
+              borderRadius="md"
+              maxW="400px"
+              w="90%"
+              p={4}
+              boxShadow="lg"
+              onClick={(e) => e.stopPropagation()}
+              zIndex="9999"
+            >
+              <Heading as="h3" size="md" mb={4}>
+                Save Equalizer Preset
+              </Heading>
+              <FormControl mb={4}>
+                <FormLabel>Preset Name</FormLabel>
+                <Input 
+                  placeholder="Enter a name for your preset"
+                  value={newPresetName}
+                  onChange={(e) => setNewPresetName(e.target.value)}
+                  autoFocus
+                />
+              </FormControl>
+              <Flex justifyContent="flex-end">
+                <Button colorScheme="blue" mr={3} onClick={saveEqualizer}>
+                  Save
+                </Button>
+                <Button onClick={closeSaveModal}>
+                  Cancel
+                </Button>
+              </Flex>
+            </Box>
+          </Box>
+        )}
+      </Portal>
     </Box>
   );
 };
