@@ -224,11 +224,11 @@ inline void mark_fds_active_inactive() {
             gettimeofday(&start_time, NULL);
             
             while (1) {
-                // Check if 20ms have elapsed
+                // Check if 30ms have elapsed for timeout
                 gettimeofday(&current_time, NULL);
                 long elapsed_usec = (current_time.tv_sec - start_time.tv_sec) * 1000000 + 
                                    (current_time.tv_usec - start_time.tv_usec);
-                if (elapsed_usec > 70000) { // 70ms timeout
+                if (elapsed_usec > 30000) { // 30ms timeout
                     break;
                 }
                 
