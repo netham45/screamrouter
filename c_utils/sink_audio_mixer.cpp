@@ -203,7 +203,7 @@ inline void mark_fds_active_inactive() {
     // Run a select against all active FDs with zero timeout
     struct timeval tv;
     tv.tv_sec = 0;
-    tv.tv_usec = 0;
+    tv.tv_usec = 2000;
     fd_set ready_fds = active_fds;
     int result = select(max_fd + 1, &ready_fds, NULL, NULL, &tv);
     
@@ -228,7 +228,7 @@ inline void mark_fds_active_inactive() {
                 gettimeofday(&current_time, NULL);
                 long elapsed_usec = (current_time.tv_sec - start_time.tv_sec) * 1000000 + 
                                    (current_time.tv_usec - start_time.tv_usec);
-                if (elapsed_usec > 20000) { // 20ms timeout
+                if (elapsed_usec > 70000) { // 70ms timeout
                     break;
                 }
                 
