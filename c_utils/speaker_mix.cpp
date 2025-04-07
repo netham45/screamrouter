@@ -226,7 +226,7 @@ void AudioProcessor::updateSpeakerMix() {
 }
 
 void AudioProcessor::mixSpeakers() {
-    memset(remixed_channel_buffers, 0, sizeof(remixed_channel_buffers));
+    //memset(remixed_channel_buffers, 0, sizeof(remixed_channel_buffers));
     for (int pos = 0; pos < channel_buffer_pos; pos++) {
         for (int output_channel = 0; output_channel < outputChannels; output_channel++) {
             float mixed_sample = 0.0f;

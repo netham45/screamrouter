@@ -156,13 +156,13 @@ inline void write_lame() {
     FD_ZERO(&lame_fd);
     FD_SET(mp3_write_fd, &lame_fd);
     lame_timeout.tv_sec = 0;
-    lame_timeout.tv_usec = lame_active ? 15000 : 100;
+    lame_timeout.tv_usec = lame_active ? 15000 : 0;
     int result = select(mp3_write_fd + 1, NULL, &lame_fd, NULL, &lame_timeout);
     // ScreamRouter will stop reading from the MP3 FD if there's no clients. Don't encode if there's no reader.
     if (result > 0 && FD_ISSET(mp3_write_fd, &lame_fd)) {
         if (!lame_active) {
             lame_active = true;
-            log("MP3 Stream Active");
+            //log("MP3 Stream Active");
         }
         int32_t processed_buffer[CHUNK_SIZE / sizeof(uint32_t)];
         int processed_samples = lameProcessor->processAudio(reinterpret_cast<const uint8_t*>(mixing_buffer), processed_buffer);
@@ -175,36 +175,43 @@ inline void write_lame() {
     else {
         if (lame_active) {
             lame_active = false;
-            log("MP3 Stream Inactive");
+            //log("MP3 Stream Inactive");
         }
     }
 }
-inline bool check_fd_active(int fd, bool is_active) {
-    receive_timeout.tv_sec = 0;
-        if (!is_active)
-            receive_timeout.tv_usec = 0; //don't wait if not active
-        else    
-            receive_timeout.tv_usec = 70000; // 70ms, wait for a chunk.
-        FD_ZERO(&read_fds);
-        FD_SET(fd, &read_fds);
-        bool prev_state = is_active;
-        if (select(fd + 1, &read_fds, NULL, NULL, &receive_timeout) < 0)
-            cout << "Select failure: " << errno << strerror(errno) << endl;
-        is_active = FD_ISSET(fd, &read_fds);
-        if (prev_state != is_active)
-            log("Setting Input FD #" + to_string(fd) + (is_active ?" Active":" Inactive"));
-        return is_active;
-}
-
 inline bool handle_receive_buffers() {  // Receive data from input fds
     output_active = false;
+    
+    // Set up the timeout
+    receive_timeout.tv_sec = 0;
+    receive_timeout.tv_usec = 10000;
+    
+    // Initialize the fd_set
+    FD_ZERO(&read_fds);
+    
+    // Add all file descriptors to the set
+    int max_fd = 0;
     for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
-        if (active[fd_idx] = check_fd_active(output_fds[fd_idx], active[fd_idx])) {
+        FD_SET(output_fds[fd_idx], &read_fds);
+        max_fd = max(max_fd, output_fds[fd_idx]);
+    }
+    
+    // Call select once for all file descriptors
+    if (select(max_fd + 1, &read_fds, NULL, NULL, &receive_timeout) < 0) {
+        cout << "Select failure: " << errno << strerror(errno) << endl;
+        return false;
+    }
+    
+    // Check each file descriptor against the result
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
+        active[fd_idx] = FD_ISSET(output_fds[fd_idx], &read_fds);
+        if (active[fd_idx]) {
             for (int bytes_in = 0; running && bytes_in < CHUNK_SIZE;)
                 bytes_in += read(output_fds[fd_idx], receive_buffers[fd_idx] + bytes_in, CHUNK_SIZE - bytes_in);
             output_active = true;
         }
     }
+    
     return output_active;
 }
 
@@ -338,10 +345,8 @@ int main(int argc, char* argv[]) {
     setup_buffers();
 
     while (running) {
-        if (!handle_receive_buffers()) {
-            sleep(.5);
+        if (!handle_receive_buffers())
             continue;
-        }
         mix_buffers();
         write_lame();
         downscale_buffer();

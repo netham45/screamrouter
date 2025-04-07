@@ -246,16 +246,48 @@ void AudioProcessor::downsample() {
 }
 
 void AudioProcessor::equalize() {
+    // Pre-compute which bands need processing
+    bool active_bands[EQ_BANDS] = {false};
+    bool has_active_bands = false;
+    
     for (int filter = 0; filter < EQ_BANDS; ++filter) {
-        if (eq[filter] != 1.0f) {
-            for (int channel = 0; channel < outputChannels; ++channel) {
-                for (int pos = 0; pos < channel_buffer_pos; ++pos) {
-                    float sample = static_cast<float>(remixed_channel_buffers[channel][pos]) / INT32_MAX;
-                    sample = filters[channel][filter]->process(sample);
-                    sample = softClip(sample);
-                    remixed_channel_buffers[channel][pos] = static_cast<int32_t>(sample * INT32_MAX);
-                }
+        active_bands[filter] = (eq[filter] != 1.0f);
+        if (active_bands[filter]) {
+            has_active_bands = true;
+        }
+    }
+    
+    // Skip processing if no bands are active
+    if (!has_active_bands) {
+        return;
+    }
+    
+    // Temporary buffer for float samples
+    float float_buffer[CHUNK_SIZE * 32];
+    float processed_buffer[CHUNK_SIZE * 32];
+    
+    // Process each channel
+    for (int channel = 0; channel < outputChannels; ++channel) {
+        // Convert int32_t samples to float
+        for (int pos = 0; pos < channel_buffer_pos; ++pos) {
+            float_buffer[pos] = static_cast<float>(remixed_channel_buffers[channel][pos]) / INT32_MAX;
+        }
+        
+        // Copy input to processed buffer initially
+        memcpy(processed_buffer, float_buffer, channel_buffer_pos * sizeof(float));
+        
+        // Apply all active filters using SIMD
+        for (int filter = 0; filter < EQ_BANDS; ++filter) {
+            if (active_bands[filter]) {
+                filters[channel][filter]->processBlock(processed_buffer, processed_buffer, channel_buffer_pos);
             }
+        }
+        
+        // Apply soft clipping and convert back to int32_t
+        for (int pos = 0; pos < channel_buffer_pos; ++pos) {
+            float sample = processed_buffer[pos];
+            sample = softClip(sample);
+            remixed_channel_buffers[channel][pos] = static_cast<int32_t>(sample * INT32_MAX);
         }
     }
 }
@@ -297,11 +329,21 @@ void AudioProcessor::setupDCFilter() {
 }
 
 void AudioProcessor::removeDCOffset() {
+    // Temporary buffer for float samples
+    float float_buffer[CHUNK_SIZE * 32];
+    
     for (int channel = 0; channel < outputChannels; ++channel) {
+        // Convert int32_t samples to float
         for (int pos = 0; pos < channel_buffer_pos; ++pos) {
-            float sample = static_cast<float>(remixed_channel_buffers[channel][pos]) / INT32_MAX;
-            sample = dcFilters[channel]->process(sample);
-            remixed_channel_buffers[channel][pos] = static_cast<int32_t>(sample * INT32_MAX);
+            float_buffer[pos] = static_cast<float>(remixed_channel_buffers[channel][pos]) / INT32_MAX;
+        }
+        
+        // Process the DC filter using SIMD
+        dcFilters[channel]->processBlock(float_buffer, float_buffer, channel_buffer_pos);
+        
+        // Convert back to int32_t
+        for (int pos = 0; pos < channel_buffer_pos; ++pos) {
+            remixed_channel_buffers[channel][pos] = static_cast<int32_t>(float_buffer[pos] * INT32_MAX);
         }
     }
 }

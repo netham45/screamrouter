@@ -13,6 +13,7 @@
 #include <sstream>
 #include <climits>
 #include <mutex>
+#include <condition_variable>
 #include <cstring>
 #include "audio_processor.h"
 
@@ -39,6 +40,7 @@ std::chrono::steady_clock::time_point timeshift_last_change;
 unsigned long timeshift_buffer_pos = 0;
 float timeshift_backshift = 0;
 std::mutex timeshift_mutex;
+std::condition_variable timeshift_condition;
 
 const auto TIMESHIFT_NOREMOVE_TIME = std::chrono::minutes(5);
 
@@ -77,6 +79,7 @@ void process_args(int argc, char *argv[]) {
     if (argc <= config_argc) {
         log("Too few args");
         threads_running = false;
+        return; // Return early to prevent accessing out-of-bounds array elements
     }
     input_ip = string(argv[1]);
     for (int argi = 0; argi < config_argc; argi++)
@@ -123,7 +126,29 @@ void check_update_header() {
 }
 
 void receive_data_thread() {
+    fd_set read_fds;
+    struct timeval timeout;
+    
     while (threads_running) {
+        // Set up select with 5ms timeout
+        FD_ZERO(&read_fds);
+        FD_SET(fd_in, &read_fds);
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 5000; // 5ms timeout
+        
+        // Wait for data with timeout
+        int select_result = select(fd_in + 1, &read_fds, NULL, NULL, &timeout);
+        
+        // If select failed or timed out, continue the loop
+        if (select_result <= 0) {
+            continue;
+        }
+        
+        // Check if our fd is ready for reading
+        if (!FD_ISSET(fd_in, &read_fds)) {
+            continue;
+        }
+        
         int bytes;
         while ((bytes = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE)) != TAG_SIZE + PACKET_SIZE ||
                 (strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)) {
@@ -134,37 +159,58 @@ void receive_data_thread() {
         auto received_time = std::chrono::steady_clock::now();
         std::vector<uint8_t> new_packet(CHUNK_SIZE);
         memcpy(new_packet.data(), packet_in_buffer + TAG_SIZE + HEADER_SIZE, CHUNK_SIZE);
-        timeshift_mutex.lock();
-        timeshift_buffer.emplace_back(received_time, std::move(new_packet));
-        timeshift_mutex.unlock();
+        
+        // Critical section - add data to buffer
+        {
+            std::lock_guard<std::mutex> lock(timeshift_mutex);
+            timeshift_buffer.emplace_back(received_time, std::move(new_packet));
+            // Notify while holding the lock - this is actually the recommended pattern for condition variables
+            timeshift_condition.notify_one(); // Notify waiting threads that new data is available
+        }
     }
+}
+
+bool data_ready() {
+    return !timeshift_buffer.empty() && 
+            timeshift_buffer.size() > timeshift_buffer_pos &&
+            (timeshift_buffer.at(timeshift_buffer_pos).first + 
+            std::chrono::milliseconds(delay) + 
+            std::chrono::milliseconds((int)(timeshift_backshift*1000))) <= 
+            std::chrono::steady_clock::now();
 }
 
 void receive_data() {
     try {
-        timeshift_mutex.lock();
-        while (timeshift_buffer.empty() || timeshift_buffer.size() <= timeshift_buffer_pos || 
-               timeshift_buffer.at(timeshift_buffer_pos).first + std::chrono::milliseconds(delay) + 
-               std::chrono::milliseconds((int)(timeshift_backshift*1000)) > std::chrono::steady_clock::now()) {
-            timeshift_mutex.unlock();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            timeshift_mutex.lock();
+        std::unique_lock<std::mutex> process_lock(timeshift_mutex);
+        
+        // If no data is ready, wait for notification with a timeout
+        if (!data_ready()) {
+            timeshift_condition.wait_for(process_lock, std::chrono::seconds(1), [&]() -> bool {
+                return data_ready();
+            });
         }
-        timeshift_mutex.unlock();
+
+        if (!data_ready())
+            return;
+        
+        // Copy the data while holding the lock
+        memcpy(receive_buffer, timeshift_buffer.at(timeshift_buffer_pos++).second.data(), CHUNK_SIZE);
+
+        // Check if we need to clean up old data
+        if (!timeshift_buffer.empty() && 
+            timeshift_buffer.front().first + std::chrono::milliseconds(delay) + 
+            std::chrono::milliseconds((int)(timeshift_backshift*1000)) + 
+            std::chrono::seconds(timeshift_buffer_dur) < std::chrono::steady_clock::now()) {
+            
+            if (timeshift_last_change + TIMESHIFT_NOREMOVE_TIME < std::chrono::steady_clock::now()) {
+                timeshift_buffer.pop_front();
+                timeshift_buffer_pos--;
+            }
+        }
+        
     } catch (std::out_of_range) {
         log("Out of range 1");
         return;
-    }
-    memcpy(receive_buffer, timeshift_buffer.at(timeshift_buffer_pos++).second.data(), CHUNK_SIZE);
-    if (timeshift_buffer.front().first + std::chrono::milliseconds(delay) + 
-        std::chrono::milliseconds((int)(timeshift_backshift*1000)) + 
-        std::chrono::seconds(timeshift_buffer_dur) < std::chrono::steady_clock::now()) {
-        if (timeshift_last_change + TIMESHIFT_NOREMOVE_TIME < std::chrono::steady_clock::now()) {
-            timeshift_mutex.lock();
-            timeshift_buffer.pop_front();
-            timeshift_buffer_pos--;
-            timeshift_mutex.unlock();
-        }
     }
 }
 
@@ -198,8 +244,29 @@ void change_timeshift() {
 
 void data_input_thread() {
     char line[256];
+    fd_set read_fds;
+    struct timeval timeout;
 
     while (threads_running) {
+        // Set up select with 5ms timeout
+        FD_ZERO(&read_fds);
+        FD_SET(data_fd_in, &read_fds);
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 5000; // 5ms timeout
+        
+        // Wait for data with timeout
+        int select_result = select(data_fd_in + 1, &read_fds, NULL, NULL, &timeout);
+        
+        // If select failed or timed out, continue the loop
+        if (select_result <= 0) {
+            continue;
+        }
+        
+        // Check if our fd is ready for reading
+        if (!FD_ISSET(data_fd_in, &read_fds)) {
+            continue;
+        }
+        
         if (read(data_fd_in, line, sizeof(line)) > 0) {
             std::string input(line);
             std::istringstream iss(input);
@@ -239,7 +306,8 @@ void data_input_thread() {
                 }
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        
+        // No need for sleep here as select already provides the timeout
     }
 }
 
@@ -339,5 +407,3 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 }
-
-
