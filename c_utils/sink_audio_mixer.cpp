@@ -203,7 +203,7 @@ inline void mark_fds_active_inactive() {
     // Run a select against all active FDs with zero timeout
     struct timeval tv;
     tv.tv_sec = 0;
-    tv.tv_usec = 2000;
+    tv.tv_usec = 0;
     fd_set ready_fds = active_fds;
     int result = select(max_fd + 1, &ready_fds, NULL, NULL, &tv);
     
