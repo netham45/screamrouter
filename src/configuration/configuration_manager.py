@@ -43,6 +43,7 @@ from src.screamrouter_types.annotations import (DelayType, IPAddressType,
 from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
                                                   SinkDescription,
                                                   SourceDescription)
+                                                  
 from src.screamrouter_types.exceptions import InUseError
 from src.utils.mdns_pinger import MDNSPinger
 from src.utils.mdns_responder import MDNSResponder
@@ -53,15 +54,15 @@ class ConfigurationManager(threading.Thread):
     """Tracks configuration and loading the main receiver/sinks based off of it"""
     def __init__(self, websocket: APIWebStream,
                  plugin_manager: PluginManager,
-                 websocket_config: APIWebsocketConfig,
-                 mdns_responder: MDNSResponder,
-                 mdns_pinger: MDNSPinger):
+                 websocket_config: APIWebsocketConfig):
         """Initialize the controller"""
         super().__init__(name="Configuration Manager")
+        self.mdns_responder: MDNSResponder = MDNSResponder()
         """MDNS Responder, handles returning responses over MDNS for receivers/senders to configure to"""
-        self.mdns_responder: MDNSResponder = mdns_responder
+        self.mdns_responder.start()
+        self.mdns_pinger: MDNSPinger = MDNSPinger()
         """MDNS Responder, handles querying for receivers and senders to add entries for"""
-        self.mdns_pinger: MDNSPinger = mdns_pinger
+        self.mdns_pinger.start()
         self.sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
         self.source_descriptions:  List[SourceDescription] = []

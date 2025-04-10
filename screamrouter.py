@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 import threading
+import OpenSSL.crypto  # For reading the SSL certificate
 
 import uvicorn
 from fastapi import FastAPI
@@ -20,9 +21,8 @@ from src.configuration.configuration_manager import ConfigurationManager
 from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.utils.utils import set_process_name
-from src.utils.mdns_shared import MDNSShared
-from src.utils.mdns_responder import MDNSResponder
-from src.utils.mdns_pinger import MDNSPinger
+# Import the new manual PTR responder
+from src.utils.mdns_ptr_responder import ManualPTRResponder
 
 try:
     os.nice(-15)
@@ -44,10 +44,14 @@ def signal_handler(_signal, __):
         logger.error("Ctrl+C pressed")
         website.stop()
         try:
-            screamrouter_configuration.stop()
-            mdns_shared.stop()
-        except NameError:
-            pass
+            # Stop components that have stop methods
+            if 'screamrouter_configuration' in locals() and hasattr(screamrouter_configuration, 'stop'):
+                screamrouter_configuration.stop()
+            # Stop the manual PTR responder
+            if 'manual_ptr_responder' in locals() and hasattr(manual_ptr_responder, 'stop'):
+                manual_ptr_responder.stop()
+        except Exception as e:
+            logger.error(f"Error during signal handler cleanup: {e}")
         server.should_exit = True
         server.force_exit = True
         os.kill(os.getpid(), signal.SIGTERM)
@@ -97,20 +101,95 @@ websocket_config: APIWebsocketConfig = APIWebsocketConfig(app)
 websocket_debug: APIWebsocketDebug = APIWebsocketDebug(app)
 plugin_manager: PluginManager = PluginManager(app)
 plugin_manager.start_registered_plugins()
-# Create shared mDNS handler and services
-mdns_shared = MDNSShared()
-mdns_responder = MDNSResponder(mdns_shared)
-mdns_pinger = MDNSPinger(mdns_shared)
 
-# Connect handlers and start
-#mdns_shared.set_handlers(mdns_pinger, mdns_responder)
-#mdns_shared.start()
-mdns_pinger.start()
+# --- mDNS Setup ---
+# Extract hostname from SSL certificate
+cert_hostname = "screamrouter"  # Default fallback
+try:
+    # Read the certificate file
+    with open(constants.CERTIFICATE, 'rb') as cert_file:
+        cert_data = cert_file.read()
+    
+    # Parse the certificate
+    cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert_data)
+    
+    # Extract Subject Alternative Names (SAN)
+    san_ext = None
+    for i in range(cert.get_extension_count()):
+        ext = cert.get_extension(i)
+        if ext.get_short_name() == b'subjectAltName':
+            san_ext = str(ext)
+            break
+    
+    if san_ext:
+        # Parse the SAN extension
+        # Format is typically: "DNS:example.com, DNS:www.example.com, ..."
+        sans = [name.strip().split(':')[1] for name in san_ext.split(',') 
+                if name.strip().startswith('DNS:')]
+        if sans:
+            cert_hostname = sans[0]  # Use the first DNS name exactly as it appears
+            logger.info(f"Using hostname from SSL certificate SAN: {cert_hostname}")
+    
+    # If no SAN, try Common Name (CN)
+    if cert_hostname == "screamrouter":
+        subject = cert.get_subject()
+        if hasattr(subject, 'CN') and subject.CN:
+            cert_hostname = subject.CN  # Use CN exactly as it appears
+            logger.info(f"Using CN from SSL certificate: {cert_hostname}")
+except Exception as e:
+    logger.error(f"Error extracting hostname from certificate: {e}")
+    logger.warning("Using default hostname: screamrouter.local.")
+
+# Get the IP address of the local machine
+# This is the IP address that Uvicorn is listening on
+import socket
+local_ip = None
+try:
+    # Get the IP address that would be used to connect to an external host
+    # This avoids getting the loopback address (127.0.0.1)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Doesn't actually connect, just sets up the socket
+    s.connect(("8.8.8.8", 80))
+    local_ip = s.getsockname()[0]
+    s.close()
+    logger.info(f"Detected local IP address: {local_ip}")
+except Exception as e:
+    logger.error(f"Error detecting local IP address: {e}")
+    # Fallback: try to get all non-loopback addresses
+    try:
+        hostname = socket.gethostname()
+        ip_list = socket.gethostbyname_ex(hostname)[2]
+        # Filter out loopback addresses
+        ip_list = [ip for ip in ip_list if not ip.startswith("127.")]
+        if ip_list:
+            local_ip = ip_list[0]  # Use the first non-loopback address
+            logger.info(f"Using fallback IP address: {local_ip}")
+    except Exception as e2:
+        logger.error(f"Error in fallback IP detection: {e2}")
+
+# If we still don't have an IP, use the one specified in constants.API_HOST if it's not 0.0.0.0
+if not local_ip:
+    if constants.API_HOST and constants.API_HOST != "0.0.0.0":
+        local_ip = constants.API_HOST
+        logger.info(f"Using API_HOST as IP address: {local_ip}")
+    else:
+        # Last resort fallback - use a generic loopback address
+        # This won't work for external access but at least avoids hardcoding a specific IP
+        local_ip = "127.0.0.1"
+        logger.warning(f"Could not determine local IP, using loopback address: {local_ip}")
+        logger.warning("PTR responses will only work for local lookups!")
+
+# Start the manual PTR responder with the hostname from the certificate and detected IP
+manual_ptr_responder = ManualPTRResponder(target_ip=local_ip, target_hostname=cert_hostname)
+manual_ptr_responder.start()
+logger.info(f"Started ManualPTRResponder for IP {local_ip} -> {cert_hostname}")
+# --- End mDNS Setup ---
+
+# Configuration Manager (no longer needs mDNS responders passed)
 screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream,
                                                                         plugin_manager,
-                                                                        websocket_config,
-                                                                        mdns_responder,
-                                                                        mdns_pinger)
+                                                                        websocket_config)
+
 api_controller = APIConfiguration(app, screamrouter_configuration)
 website: APIWebsite = APIWebsite(app, screamrouter_configuration)
 equalizer: APIEqualizer = APIEqualizer(app)

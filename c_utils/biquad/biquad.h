@@ -16,6 +16,7 @@ enum {
 // Check for SSE support
 #if defined(__SSE__) || defined(_M_IX86) || defined(_M_X64)
     #define BIQUAD_USE_SIMD 0
+    //TODO: Fix or remove SIMD biquad
 #else
     #define BIQUAD_USE_SIMD 0
 #endif

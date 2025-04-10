@@ -4,6 +4,7 @@ httpx
 Jinja2
 numpy
 pydantic
+pyOpenSSL
 PyYAML
 setproctitle
 starlette

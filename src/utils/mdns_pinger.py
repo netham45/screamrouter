@@ -41,11 +41,10 @@ class ScreamListener(ServiceListener):
 
 class MDNSPinger:
     """Discovers Scream sources and sinks using mDNS"""
-    def __init__(self, shared=None, interval: float = 5.0):
+    def __init__(self, interval: float = 5.0):
         """Initialize MDNSPinger
         
         Args:
-            shared: Ignored (kept for backward compatibility)
             interval: How often to refresh services in seconds
         """
         self.interval = interval
