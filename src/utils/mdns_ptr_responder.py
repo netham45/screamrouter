@@ -91,7 +91,6 @@ class ManualPTRResponder(threading.Thread):
             while not self._should_stop.is_set():
                 try:
                     data, addr = self.sock.recvfrom(1024)
-                    logger.debug(f"Received packet from {addr}")
                     self._process_packet(data, addr)
                 except socket.timeout:
                     continue # Timeout allows checking _should_stop flag

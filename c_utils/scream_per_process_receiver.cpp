@@ -14,6 +14,8 @@
 #include <lame/lame.h>
 #include <algorithm>
 #include <string>
+#include <pthread.h>
+#include <sched.h>
 using namespace std;
 
 // Configuration variables
@@ -131,6 +133,17 @@ void send() {
 }
 
 int main(int argc, char* argv[]) {
+    // Pin to CPU core 1
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        log("Failed to set CPU affinity to core 1", true, true);
+    } else {
+        log("Successfully pinned to CPU core 1", true, true);
+    }
+
     log("Start");
     process_args(argc, argv);
 

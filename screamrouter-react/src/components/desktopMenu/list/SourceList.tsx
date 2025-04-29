@@ -39,6 +39,10 @@ interface SourceListProps {
    * Name of the selected source
    */
   selectedItem?: string | null;
+  /**
+   * Show processes?
+   */
+  showProcesses?: boolean;
 }
 
 // Type for sort direction
@@ -56,7 +60,8 @@ const SourceList: React.FC<SourceListProps> = ({
   starredSources,
   activeSource,
   actions,
-  selectedItem
+  selectedItem,
+  showProcesses=false,
 }) => {
   // Get colors from context
   //const { getDarkerColor } = useColorContext();
@@ -115,7 +120,7 @@ const SourceList: React.FC<SourceListProps> = ({
   }));
   
   // Sort the sources based on current sort field and direction
-  const sortedSources = [...updatedSources].sort((a, b) => {
+  let sortedSources = [...updatedSources].sort((a, b) => {
     if (sortField === null || sortDirection === 'none') {
       return 0; // No sorting
     }
@@ -135,6 +140,10 @@ const SourceList: React.FC<SourceListProps> = ({
     
     return sortDirection === 'asc' ? comparison : -comparison;
   });
+
+  if (!showProcesses) {
+    sortedSources = sortedSources.filter((source)=>{return !source.is_process;});
+  }
   
   return (
     <Box overflowX="auto" width="100%">

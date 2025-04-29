@@ -7,6 +7,9 @@ import asyncio
 import traceback
 import concurrent.futures
 import threading
+import uuid
+"""This manages the target state of sinks, sources, and routes
+   then runs audio controllers for each source"""
 from copy import copy, deepcopy
 from ipaddress import IPv4Address
 from multiprocessing import Process
@@ -47,6 +50,7 @@ from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
 from src.screamrouter_types.exceptions import InUseError
 from src.utils.mdns_pinger import MDNSPinger
 from src.utils.mdns_responder import MDNSResponder
+from src.utils.mdns_settings_pinger import MDNSSettingsPinger
 
 _logger = screamrouter_logger.get_logger(__name__)
 
@@ -63,6 +67,9 @@ class ConfigurationManager(threading.Thread):
         self.mdns_pinger: MDNSPinger = MDNSPinger()
         """MDNS Responder, handles querying for receivers and senders to add entries for"""
         self.mdns_pinger.start()
+        self.mdns_settings_pinger: MDNSSettingsPinger = MDNSSettingsPinger(self)
+        """MDNS Settings Pinger, handles querying for settings to sync with sources"""
+        self.mdns_settings_pinger.start()
         self.sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
         self.source_descriptions:  List[SourceDescription] = []
@@ -187,6 +194,11 @@ class ConfigurationManager(threading.Thread):
     def get_sources(self) -> List[SourceDescription]:
         """Get a list of all sources"""
         return copy(self.source_descriptions)
+    
+    def get_processes_by_ip(self, ip: IPAddressType) -> List[SourceDescription]:
+        """Get a list of all processes for a specific IP"""
+        return [source for source in self.source_descriptions 
+            if source.is_process and source.tag and source.tag.startswith(str(ip))]
 
     def add_source(self, source: SourceDescription) -> bool:
         """Add a source or source group"""
@@ -383,6 +395,20 @@ class ConfigurationManager(threading.Thread):
                 return source
         raise ValueError(f"No source found with IP {ip}")
 
+    def __get_sink_by_ip(self, ip: IPv4Address) -> SinkDescription:
+        """Get the sink description by IP address"""
+        for sink in self.sink_descriptions:
+            if str(sink.ip) == str(ip):
+                return sink
+        raise ValueError(f"No sink found with IP {ip}")
+
+    def __get_sink_by_config_id(self, config_id: str) -> SinkDescription:
+        """Get the sink description by config ID"""
+        for sink in self.sink_descriptions:
+            if str(sink.config_id) == config_id:
+                return sink
+        raise ValueError(f"No sink found with ID {config_id}")
+
     def source_previous_track(self, source_name: SourceNameType) -> bool:
         """Send a Previous Track command to the source"""
         source: SourceDescription = self.get_source_by_name(source_name)
@@ -490,6 +516,7 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("[Configuration Manager] Stopping mDNS")
         self.mdns_responder.stop()
         self.mdns_pinger.stop()
+        self.mdns_settings_pinger.stop()
         _logger.debug("[Configuration Manager] mDNS stopped")
         self.running = False
 
@@ -1050,16 +1077,70 @@ class ConfigurationManager(threading.Thread):
                 counter += 1
         except NameError:
             pass
+            
+        # Try to query settings to get config_id
+        config_id = None
+        try:
+            # Create a UDP socket for a direct query
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(1.0)  # 1 second timeout
+            
+            try:
+                # Send a query to get settings including config_id
+                query_msg = "query_audio_settings".encode('ascii')
+                sock.sendto(query_msg, (str(ip), 5353))
+                
+                # Try to receive a response
+                response, _ = sock.recvfrom(1500)
+                response_str = response.decode('utf-8', errors='ignore')
+                
+                _logger.debug("[Configuration Manager] Received settings response from source: %s", response_str)
+                
+                # Parse response - expected format is key=value pairs separated by semicolons
+                settings = {}
+                for pair in response_str.split(';'):
+                    if '=' in pair:
+                        key, value = pair.split('=', 1)
+                        settings[key.strip()] = value.strip()
+                
+                # Extract config_id if available
+                if 'id' in settings:
+                    config_id = settings['id']
+                    _logger.info("[Configuration Manager] Found config_id %s for source %s", 
+                                config_id, ip)
+            except socket.timeout:
+                _logger.debug("[Configuration Manager] No settings response from %s", ip)
+            except Exception as e:
+                _logger.debug("[Configuration Manager] Error in settings query: %s", str(e))
+            finally:
+                sock.close()
+        except Exception as e:
+            _logger.warning("[Configuration Manager] Error querying source settings: %s", str(e))
+            
+        # Check if VNC is available
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)
         try:
             sock.connect((str(ip), 5900))
             _logger.debug("[Configuration Manager] Adding source %s, VNC available", ip)
-            self.add_source(SourceDescription(name=hostname, ip=ip, vnc_ip=ip, vnc_port=5900))
+            
+            source_desc = SourceDescription(name=hostname, ip=ip, vnc_ip=ip, vnc_port=5900)
+            # Set config_id if it was found in the settings
+            if config_id:
+                source_desc.config_id = config_id
+                
+            self.add_source(source_desc)
             sock.close()
         except OSError:
             _logger.debug("[Configuration Manager] Adding source %s, VNC not available", ip)
-            self.add_source(SourceDescription(name=hostname, ip=ip))
+            
+            source_desc = SourceDescription(name=hostname, ip=ip)
+            # Set config_id if it was found in the settings
+            if config_id:
+                source_desc.config_id = config_id
+                
+            self.add_source(source_desc)
+            
         self.__process_and_apply_configuration_with_timeout()
 
     def auto_add_process_source(self, tag: str):
@@ -1082,7 +1163,7 @@ class ConfigurationManager(threading.Thread):
         source_group_search = [source for source in self.source_descriptions if source.tag == f"{hostname} All Processes"]
         source_group: SourceDescription
         if not source_group_search:
-            source_group = SourceDescription(name=f"{hostname} All Processes", tag=f"{hostname} All Processes", is_group=True)
+            source_group = SourceDescription(name=f"{hostname} All Processes", tag=f"{hostname} All Processes", ip=source.ip, is_group=True)
             self.add_source(source_group)
         else:
             source_group = source_group_search[0]
@@ -1159,6 +1240,7 @@ class ConfigurationManager(threading.Thread):
                         settings[key.strip()] = value.strip()
                 
                 # Extract settings if available
+                config_id = None
                 if settings:
                     if 'bit_depth' in settings:
                         bit_depth = int(settings['bit_depth'])
@@ -1168,6 +1250,10 @@ class ConfigurationManager(threading.Thread):
                         channels = int(settings['channels'])
                     if 'channel_layout' in settings:
                         channel_layout = settings['channel_layout']
+                    if 'id' in settings:
+                        config_id = settings['id']
+                        _logger.info("[Configuration Manager] Found config_id %s for sink %s", 
+                                    config_id, ip)
                     
                     _logger.info("[Configuration Manager] Using queried settings for sink %s: "
                                 "bit_depth=%d, sample_rate=%d, channels=%d, channel_layout=%s",
@@ -1190,15 +1276,21 @@ class ConfigurationManager(threading.Thread):
                      "bit_depth=%d, sample_rate=%d, channels=%d, channel_layout=%s",
                      ip, bit_depth, sample_rate, channels, channel_layout)
         
-        self.add_sink(SinkDescription(name=hostname,
-                                      ip=ip,
-                                      bit_depth=bit_depth,
-                                      sample_rate=sample_rate,
-                                      channels=channels,
-                                      channel_layout=channel_layout))
+        sink_desc = SinkDescription(name=hostname,
+                                   ip=ip,
+                                   bit_depth=bit_depth,
+                                   sample_rate=sample_rate,
+                                   channels=channels,
+                                   channel_layout=channel_layout)
+        
+        # Set config_id if it was found in the settings
+        if config_id:
+            sink_desc.config_id = config_id
+            
+        self.add_sink(sink_desc)
         self.__process_and_apply_configuration_with_timeout()
 
-    def check_receiver_sources(self):
+    def check_autodetected_sinks_sources(self):
         """This checks the IPs receivers have seen and adds any as sources if they don't exist"""
         self.scream_recevier.check_known_ips()
         self.scream_per_process_recevier.check_known_sources()
@@ -1207,6 +1299,7 @@ class ConfigurationManager(threading.Thread):
         known_source_tags: List[str] = [str(desc.tag) for desc in self.source_descriptions]
         known_source_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
         known_sink_ips: List[str] = [str(desc.ip) for desc in self.sink_descriptions]
+        known_sink_config_ids: List[str] = [str(desc.config_id) for desc in self.sink_descriptions]
         for ip in self.scream_recevier.known_ips:
             if not str(ip) in known_source_ips:
                 _logger.info("[Configuration Manager] Adding new source from Scream port %s", ip)
@@ -1228,6 +1321,89 @@ class ConfigurationManager(threading.Thread):
             if not str(ip) in known_sink_ips:
                 _logger.info("[Configuration Manager] Adding new sink from mDNS %s", ip)
                 self.auto_add_sink(ip)
+        # Process sink settings
+        known_source_config_ids: List[str] = [str(desc.config_id) for desc in self.source_descriptions if desc.config_id]
+        
+        for entry in self.mdns_settings_pinger.get_all_sink_settings():
+            if entry.ip in known_sink_ips:
+                sink: SinkDescription = self.__get_sink_by_ip(entry.ip)
+                if not sink.config_id:
+                    sink.config_id = entry.receiver_id
+                    _logger.info("[Configuration Manager] Tagging sink at IP %s with ID %s",
+                                 entry.ip, entry.receiver_id)
+            if entry.receiver_id in known_sink_config_ids:
+                sink: SinkDescription = self.__get_sink_by_config_id(entry.receiver_id)
+                changed: bool = False
+                if (sink.bit_depth != entry.bit_depth or
+                    sink.channel_layout != entry.channel_layout or
+                    sink.channels != entry.channels or
+                    sink.sample_rate != entry.sample_rate):
+                    changed = True
+                    if entry.bit_depth:
+                        sink.bit_depth = entry.bit_depth
+                    if entry.channel_layout:
+                        sink.channel_layout = entry.channel_layout
+                    if entry.channels:
+                        sink.channels = entry.channels
+                    if entry.sample_rate:
+                        sink.sample_rate = entry.sample_rate
+                    _logger.info("[Configuration Manager] Sink %s (%s) reports settings change",
+                                 sink.name, entry.receiver_id)
+                if changed:
+                    self.__reload_configuration()
+                    
+        # Process source settings
+        for entry in self.mdns_settings_pinger.get_all_source_settings():
+            source_changed = False
+
+            # If not found by config_id, check by IP
+            if entry.ip in known_source_ips:
+                source = self.__get_source_by_ip(entry.ip)
+                
+                # If source doesn't have a config_id, assign it
+                if not source.config_id:
+                    source.config_id = entry.source_id
+                    #source_changed = True
+                    _logger.info("[Configuration Manager] Tagging source at IP %s with ID %s",
+                                entry.ip, entry.source_id)
+                    
+            for source in [source for source in self.source_descriptions if source.is_process and
+                           source.tag[:15].strip() == str(entry.ip)]:
+                if source.config_id == entry.source_id or not source.config_id:
+                    source.config_id = entry.source_id
+                    if entry.tag and entry.tag != source.tag:
+                        source_changed = True
+                        source.tag = entry.tag
+                    if entry.vnc_ip and entry.vnc_ip != source.vnc_ip:
+                        source_changed = True
+                        source.vnc_ip = entry.vnc_ip
+                    if entry.vnc_port and entry.vnc_port != source.vnc_port:
+                        source_changed = True
+                        source.vnc_port = entry.vnc_port
+
+            # First check if we have a source with this config_id
+            if entry.source_id in known_source_config_ids:
+                for source in self.source_descriptions:
+                    if source.config_id == entry.source_id:
+                        if entry.ip and entry.ip != source.ip:
+                            source_changed = True
+                            source.ip = entry.ip
+                        if entry.tag and entry.tag != source.tag:
+                            source_changed = True
+                            source.tag = entry.tag
+                        if entry.vnc_ip and entry.vnc_ip != source.vnc_ip:
+                            source_changed = True
+                            source.vnc_ip = entry.vnc_ip
+                        if entry.vnc_port and entry.vnc_port != source.vnc_port:
+                            source_changed = True
+                            source.vnc_port = entry.vnc_port
+                        if source_changed:
+                            _logger.info("[Configuration Manager] Source %s (%s) updated from settings",
+                                        source.name, entry.source_id)
+            
+            # Reload configuration if any source was changed
+            if source_changed:
+                self.__reload_configuration()
         for tag in self.scream_per_process_recevier.known_sources:
             if not str(tag) in known_source_tags:
                 _logger.info("[Configuration Manager] Adding new per-process source %s", tag)
@@ -1268,6 +1444,6 @@ class ConfigurationManager(threading.Thread):
                     raise TimeoutError("Failed to get configuration reload condition")
                 if self.volume_eq_reload_condition.wait(timeout=.3):
                     self.__process_and_apply_volume_eq_delay_timeshift()
-                self.check_receiver_sources()
+                self.check_autodetected_sinks_sources()
             except:
                 pass

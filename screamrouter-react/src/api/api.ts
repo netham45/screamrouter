@@ -23,6 +23,8 @@ export interface Source {
   timeshift: number;
   favorite?: boolean;
   is_primary?: boolean;
+  is_process?: boolean;
+  tag?: string;
 }
 
 /**

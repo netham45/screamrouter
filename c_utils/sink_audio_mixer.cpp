@@ -14,6 +14,8 @@
 #include <emmintrin.h>
 #endif
 #include <immintrin.h>
+#include <pthread.h>
+#include <sched.h>
 #include "audio_processor.h"
 #include "dcaenc/dcaenc.h"
 #include <sys/time.h>
@@ -131,6 +133,10 @@ inline void setup_udp() { // Sets up the UDP socket for output
         setsockopt(tcp_output_fd, SOL_SOCKET, SO_SNDBUF, &newsize, sizeof(newsize));
         newsize = 1152 * 8;
         setsockopt(mp3_write_fd, SOL_SOCKET, SO_SNDBUF, &newsize, sizeof(newsize));
+        bool trew = true;
+        setsockopt(mp3_write_fd, SOL_SOCKET, SOCK_NONBLOCK, &trew, sizeof(trew));
+        int flags = fcntl(mp3_write_fd, F_GETFL, 0);
+        fcntl(mp3_write_fd, F_SETFL, flags | O_NONBLOCK);
         setsockopt (tcp_output_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         log("TCP Set Up");
     }
@@ -157,7 +163,7 @@ inline void write_lame() {
     FD_ZERO(&lame_fd);
     FD_SET(mp3_write_fd, &lame_fd);
     lame_timeout.tv_sec = 0;
-    lame_timeout.tv_usec = lame_active ? 15000 : 100;
+    lame_timeout.tv_usec = 0;
     int result = select(mp3_write_fd + 1, NULL, &lame_fd, NULL, &lame_timeout);
     // ScreamRouter will stop reading from the MP3 FD if there's no clients. Don't encode if there's no reader.
     if (result > 0 && FD_ISSET(mp3_write_fd, &lame_fd)) {
@@ -222,15 +228,13 @@ inline void mark_fds_active_inactive() {
         if (result < total_active) {
             struct timeval start_time, current_time;
             gettimeofday(&start_time, NULL);
-            
-            while (1) {
+            long elapsed_usec = 0;
+            bool all_good = false;
+            while (elapsed_usec <= 15000) {
                 // Check if 30ms have elapsed for timeout
                 gettimeofday(&current_time, NULL);
-                long elapsed_usec = (current_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                elapsed_usec = (current_time.tv_sec - start_time.tv_sec) * 1000000 + 
                                    (current_time.tv_usec - start_time.tv_usec);
-                if (elapsed_usec >15000) { // 15ms timeout
-                    break;
-                }
                 
                 // Poll with 1ms timeout
                 fd_set temp_check_fds = check_fds;
@@ -251,14 +255,16 @@ inline void mark_fds_active_inactive() {
                 
                 // If all FDs now have data, we can stop polling
                 if (FD_ISSET(0, &check_fds) == 0) {
+                    all_good = true;
                     break;
                 }
             }
-            
-            // After 20ms, mark any remaining FDs in check_fds as false in active[]
-            for (int idx = 0; idx < output_fds.size(); idx++) {
-                if (active[idx] && FD_ISSET(output_fds[idx], &check_fds)) {
-                    active[idx] = false;
+            if (!all_good) {
+                // After 20ms, mark any remaining FDs in check_fds as false in active[]
+                for (int idx = 0; idx < output_fds.size(); idx++) {
+                    if (active[idx] && FD_ISSET(output_fds[idx], &check_fds)) {
+                        active[idx] = false;
+                    }
                 }
             }
         }
@@ -409,6 +415,17 @@ void print_stacktrace(int skip = 1) {
 
 int main(int argc, char* argv[]) {
     try {
+    // Pin to CPU core 1
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        log("Failed to set CPU affinity to core 1");
+    } else {
+        log("Successfully pinned to CPU core 1");
+    }
+
     process_args(argv, argc);
     if (use_dts == 1)
     {

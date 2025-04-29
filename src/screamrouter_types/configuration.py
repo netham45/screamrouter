@@ -143,6 +143,8 @@ class SinkDescription(BaseModel):
     """Rather the sink is timesynced (Normal Scream receivers are not compatible)"""
     time_sync_delay: int = 0
     """Delay for time sync in ms"""
+    config_id: Optional[str] = None
+    """ID used by mDNS auto-configuration to sync client settings changes"""
 
     def __eq__(self, other):
         """Compares the name if a string.
@@ -212,6 +214,8 @@ class SourceDescription(BaseModel):
     """Port for VNC connections"""
     is_process: bool = False
     """Is a process and should be grouped with a source by IP"""
+    config_id: Optional[str] = None
+    """ID used by mDNS auto-configuration to sync client settings changes"""
 
     def __eq__(self, other):
         """Compares the name if a string.

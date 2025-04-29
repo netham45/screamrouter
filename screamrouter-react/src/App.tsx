@@ -16,6 +16,7 @@ import AddEditSourcePage from './components/pages/AddEditSourcePage'; // Import 
 import AddEditSinkPage from './components/pages/AddEditSinkPage'; // Import the AddEditSinkPage component
 import AddEditRoutePage from './components/pages/AddEditRoutePage'; // Import the AddEditRoutePage component
 import AddEditGroupPage from './components/pages/AddEditGroupPage'; // Import the AddEditGroupPage component
+import ProcessListPage from './components/pages/ProcessListPage'; // Import the ProcessListPage component
 import { DesktopMenu } from './components/desktopMenu'; // Import DesktopMenu
 import { ColorProvider } from './components/desktopMenu/context/ColorContext'; // Import ColorProvider
 import FullMenu from './components/FullMenu'; // Import the FullMenu component
@@ -135,6 +136,7 @@ const AppContent: React.FC = () => {
         <Route path="/edit-route" element={<AddEditRoutePage />} /> {/* Route to AddEditRoutePage component */}
         <Route path="/add-group" element={<AddEditGroupPage />} /> {/* Route to AddEditGroupPage component */}
         <Route path="/edit-group" element={<AddEditGroupPage />} /> {/* Route to AddEditGroupPage component */}
+        <Route path="/processes/:ip" element={<ProcessListPage />} /> {/* Route to ProcessListPage component with IP parameter */}
       </Routes>
       
       {showEqualizerModal && selectedItem && selectedItemType && (

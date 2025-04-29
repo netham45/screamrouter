@@ -2,7 +2,7 @@
  * Compact sink item component for DesktopMenu.
  * Optimized for display in the slide-out panel.
  */
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Tr, Td, Text, Box,
   Menu, MenuButton, MenuList, MenuItem, MenuGroup,
@@ -10,7 +10,7 @@ import {
   SliderFilledTrack, SliderThumb, Icon, HStack
 } from '@chakra-ui/react';
 import { useColorContext } from '../context/ColorContext';
-import { Sink, Route } from '../../../api/api';
+import ApiService, { Sink, Route } from '../../../api/api';
 import { DesktopMenuActions } from '../types';
 import { openEditPage } from '../../fullMenu/utils';
 import ActionButton from '../controls/ActionButton';
@@ -91,6 +91,32 @@ const SinkItem: React.FC<SinkItemProps> = ({
   listeningToSink,
   visualizingSink
 }) => {
+  // State to track if processes exist for this sink's IP
+  const [hasProcesses, setHasProcesses] = useState(false);
+  
+  // Check if processes exist for this sink's IP
+  useEffect(() => {
+    const checkForProcesses = async () => {
+      if (!sink.ip) return;
+      
+      try {
+        const response = await ApiService.getSources();
+        const allSources = Object.values(response.data);
+        
+        // Check if any sources are processes with a tag that starts with this sink's IP
+        const processesForIp = allSources.filter(source => 
+          source.is_process && source.tag && source.tag.startsWith(sink.ip)
+        );
+        
+        setHasProcesses(processesForIp.length > 0);
+      } catch (error) {
+        console.error('Error checking for processes:', error);
+      }
+    };
+    
+    checkForProcesses();
+  }, [sink.ip]);
+
   // Get colors from context
   const { getLighterColor } = useColorContext();
   const selectedBg = getLighterColor(1.25);
@@ -110,6 +136,11 @@ const SinkItem: React.FC<SinkItemProps> = ({
   const mainRoutes = routes.slice(0, 3);
   const overflowRoutes = routes.slice(3);
   const hasOverflow = overflowRoutes.length > 0;
+  
+  // Function to open process list page
+  const openProcessList = () => {
+    window.open(`/site/processes/${sink.ip}`, '_blank');
+  };
   
   return (
     <Tr 
@@ -180,6 +211,11 @@ const SinkItem: React.FC<SinkItemProps> = ({
                 >
                   Listen
                 </MenuItem>
+                {hasProcesses && (
+                  <MenuItem onClick={openProcessList}>
+                    View Processes
+                  </MenuItem>
+                )}
               </>
             )}
 

@@ -15,6 +15,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <cstring>
+#include <pthread.h>
+#include <sched.h>
 #include "audio_processor.h"
 
 using namespace std;
@@ -371,6 +373,17 @@ void monitor_buffer_levels() {
 
 int main(int argc, char *argv[]) {
     try {
+        // Pin to CPU core 1
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(1, &cpuset);
+        pthread_t current_thread = pthread_self();
+        if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+            log("Failed to set CPU affinity to core 1");
+        } else {
+            log("Successfully pinned to CPU core 1");
+        }
+
         timeshift_last_change = std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration::min());
         process_args(argc, argv);
         log("Starting source input processor " + input_ip);

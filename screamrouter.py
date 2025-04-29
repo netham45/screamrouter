@@ -21,8 +21,8 @@ from src.configuration.configuration_manager import ConfigurationManager
 from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.utils.utils import set_process_name
-# Import the new manual PTR responder
-from src.utils.mdns_ptr_responder import ManualPTRResponder
+from src.utils.mdns_ptr_responder import ManualPTRResponder # mDNS
+from src.utils.ntp_server import NTPServerProcess # NTP Server
 
 try:
     os.nice(-15)
@@ -50,6 +50,9 @@ def signal_handler(_signal, __):
             # Stop the manual PTR responder
             if 'manual_ptr_responder' in locals() and hasattr(manual_ptr_responder, 'stop'):
                 manual_ptr_responder.stop()
+            # Stop the NTP server process
+            if 'ntp_server' in locals() and hasattr(ntp_server, 'stop'):
+                ntp_server.stop()
         except Exception as e:
             logger.error(f"Error during signal handler cleanup: {e}")
         server.should_exit = True
@@ -104,7 +107,8 @@ plugin_manager.start_registered_plugins()
 
 # --- mDNS Setup ---
 # Extract hostname from SSL certificate
-cert_hostname = "screamrouter"  # Default fallback
+cert_hostname = "screamrouter.local."  # Default fallback
+cert_hostname_base = "screamrouter"    # Base hostname without .local.
 try:
     # Read the certificate file
     with open(constants.CERTIFICATE, 'rb') as cert_file:
@@ -127,14 +131,28 @@ try:
         sans = [name.strip().split(':')[1] for name in san_ext.split(',') 
                 if name.strip().startswith('DNS:')]
         if sans:
-            cert_hostname = sans[0]  # Use the first DNS name exactly as it appears
-            logger.info(f"Using hostname from SSL certificate SAN: {cert_hostname}")
+            cert_hostname_base = sans[0]  # Use the first DNS name
+            # Remove .local. if present for base hostname
+            if cert_hostname_base.endswith('.local.'):
+                cert_hostname_base = cert_hostname_base[:-7]  # Remove .local.
+            elif cert_hostname_base.endswith('.local'):
+                cert_hostname_base = cert_hostname_base[:-6]  # Remove .local
+                
+            cert_hostname = f"{cert_hostname_base}.local."
+            logger.info(f"Using hostname from SSL certificate: {cert_hostname}")
     
     # If no SAN, try Common Name (CN)
-    if cert_hostname == "screamrouter":
+    if cert_hostname == "screamrouter.local.":
         subject = cert.get_subject()
         if hasattr(subject, 'CN') and subject.CN:
-            cert_hostname = subject.CN  # Use CN exactly as it appears
+            cert_hostname_base = subject.CN
+            # Remove .local. if present for base hostname
+            if cert_hostname_base.endswith('.local.'):
+                cert_hostname_base = cert_hostname_base[:-7]  # Remove .local.
+            elif cert_hostname_base.endswith('.local'):
+                cert_hostname_base = cert_hostname_base[:-6]  # Remove .local
+                
+            cert_hostname = f"{cert_hostname_base}.local."
             logger.info(f"Using CN from SSL certificate: {cert_hostname}")
 except Exception as e:
     logger.error(f"Error extracting hostname from certificate: {e}")
@@ -184,6 +202,11 @@ manual_ptr_responder = ManualPTRResponder(target_ip=local_ip, target_hostname=ce
 manual_ptr_responder.start()
 logger.info(f"Started ManualPTRResponder for IP {local_ip} -> {cert_hostname}")
 # --- End mDNS Setup ---
+
+# --- NTP Server Setup ---
+ntp_server = NTPServerProcess()
+ntp_server.start()
+# --- End NTP Server Setup ---
 
 # Configuration Manager (no longer needs mDNS responders passed)
 screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream,
