@@ -2,45 +2,51 @@ version: 1
 disable_existing_loggers: False
 formatters:
   default:
-    # "()": uvicorn.logging.DefaultFormatter
     format: '[%(levelname)s:%(asctime)s][%(name)s] %(message)s'
   access:
-    # "()": uvicorn.logging.AccessFormatter
     format: '[%(levelname)s:%(asctime)s][%(name)s] %(message)s'
 handlers:
   default:
     formatter: default
     class: logging.StreamHandler
     stream: ext://sys.stderr
-  default2:
+  logfile:
     class: logging.FileHandler
     level: DEBUG
     formatter: default
     filename: "./logs/uvicorn.log"
     encoding: utf8
     mode: a
-  access:
-    class: logging.FileHandler
-    level: DEBUG
-    formatter: access
-    filename: "./logs/uvicorn.log"
-    encoding: utf8
-    mode: a
 loggers:
+  uvicorn:
+    level: ERROR
+    handlers: [logfile]
+    propagate: no
   uvicorn.error:
-    level: DEBUG
-    handlers:
-      - default
-      - default2
+    level: ERROR
+    handlers: [logfile]
     propagate: no
   uvicorn.access:
+    level: ERROR
+    handlers: [logfile]
+    propagate: no
+  httpcore:
     level: DEBUG
-    handlers:
-      - access
+    handlers: [logfile]
+    propagate: no
+  httpx:
+    level: DEBUG
+    handlers: [logfile]
+    propagate: no
+  websocket:
+    level: DEBUG
+    handlers: [logfile]
+    propagate: no
+  websockify:
+    level: DEBUG
+    handlers: [logfile]
     propagate: no
 root:
   level: DEBUG
-  handlers:
-    - default
-    - default2
+  handlers: [default]
   propagate: no

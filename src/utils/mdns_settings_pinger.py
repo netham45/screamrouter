@@ -393,7 +393,7 @@ class MDNSSettingsPinger:
                     self._send_queries()
                 
                 # Wait for next interval
-                logger.debug(f"Sleeping for {self.interval} seconds")
+                #logger.debug(f"Sleeping for {self.interval} seconds")
                 time.sleep(self.interval)
 
             except Exception as e:

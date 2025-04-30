@@ -38,7 +38,7 @@ class APIWebsocketConfig():
         """
         await websocket.accept()
         self._active_connections.add(websocket)
-        _logger.debug("[WebSocket Config] New client connected")
+        _logger.debug(f"[WebSocket Config] New client connected: {websocket.client.host if websocket.client else 'Unknown'}")
 
     def _disconnect(self, websocket: WebSocket) -> None:
         """Remove a websocket connection
@@ -47,7 +47,7 @@ class APIWebsocketConfig():
             websocket (WebSocket): The websocket connection to remove
         """
         self._active_connections.remove(websocket)
-        _logger.debug("[WebSocket Config] Client disconnected")
+        _logger.debug(f"[WebSocket Config] Client disconnected: {websocket.client.host if websocket.client else 'Unknown'}")
 
     async def broadcast_config_update(self, sources: List[SourceDescription], 
                                     sinks: List[SinkDescription],
@@ -74,14 +74,12 @@ class APIWebsocketConfig():
                 do_update = True
 
         for idx, sink in current_sinks.items():
-            if sink.name == "Livingroom":
-                print(f"Comparing {idx} - {sink} == {self._last_sinks.get(idx, '')}")
+        
             if self._last_sinks.get(idx, None)  != sink:
                 updates["sinks"].update({idx: sink.model_dump(mode='json')})
                 do_update = True
 
         for idx, route in current_routes.items():
-            ##print(f"Comparing {idx} - {route} == {self._last_routes.get(idx, '')}")
             if self._last_routes.get(idx, None) != route:
                 updates["routes"].update({idx: route.model_dump(mode='json')})
                 do_update = True

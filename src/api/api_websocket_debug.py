@@ -31,7 +31,7 @@ class APIWebsocketDebug():
             websockets.WebSocketClientProtocol: Connection to webpack dev server
         """
         headers = dict(websocket.headers)
-        _logger.debug("[WebSocket Debug] Forwarding headers: %s", headers)
+#        _logger.debug("[WebSocket Debug] Forwarding headers: %s", headers)
         return await websockets.connect('ws://localhost:8080/ws', extra_headers=headers)
 
     async def _proxy_messages(self, client: WebSocket, webpack: websockets.WebSocketClientProtocol):
@@ -64,7 +64,8 @@ class APIWebsocketDebug():
                         await client.send_text(msg)
 
         except Exception as exc:
-            _logger.debug("[WebSocket Debug] Connection closed: %s", str(exc))
+            pass
+            #_logger.debug("[WebSocket Debug] Connection closed: %s", str(exc))
         finally:
             # Clean up both connections
             if client in self._active_connections:
@@ -87,7 +88,8 @@ class APIWebsocketDebug():
             await self._proxy_messages(websocket, webpack)
 
         except Exception as exc:
-            _logger.error("[WebSocket Debug] Error in proxy: %s", str(exc))
+            #_logger.error("[WebSocket Debug] Error in proxy: %s", str(exc))
+            pass
         finally:
             if websocket in self._active_connections:
                 webpack = self._active_connections[websocket]
