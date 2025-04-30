@@ -329,7 +329,7 @@ inline bool handle_receive_buffers() {
             fd_set read_set;
             struct timeval timeout;
             timeout.tv_sec = 0;
-            timeout.tv_usec = 0;
+            timeout.tv_usec = 15000;
             
             for (int bytes_in = 0; running && bytes_in < CHUNK_SIZE;) {
                 FD_ZERO(&read_set);
@@ -337,7 +337,7 @@ inline bool handle_receive_buffers() {
                 
                 int ready = select(output_fds[fd_idx] + 1, &read_set, NULL, NULL, &timeout);
                 if (ready < 1) {
-                    continue;
+                    break;
                 }
                 
                 if (FD_ISSET(output_fds[fd_idx], &read_set)) {
