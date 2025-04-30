@@ -30,13 +30,19 @@ using namespace std;
 
 bool running = true; // Flag to control loop execution
 
-vector<int32_t*> receive_buffers; // Vector of pointers to receive buffers for input streams
-int32_t* mixing_buffer = new int32_t[CHUNK_SIZE / sizeof(int32_t)]; // Mixing buffer to mix received audio data
-uint8_t *mixing_buffer_uint8 = (uint8_t*)mixing_buffer;
-char output_buffer[PACKET_SIZE * 2] = {0}; // Buffer to store mixed audio data before sending over the network
-int output_buffer_pos = 0; // Position in output_buffer for storing audio data
-uint8_t mp3_buffer[CHUNK_SIZE * 8];
-int mp3_buffer_pos = 0;
+// Buffer system overview:
+// 1. receive_buffers: Array of input buffers, one per audio source. Each buffer stores CHUNK_SIZE bytes of 32-bit audio samples
+// 2. mixing_buffer: Single buffer where all active input streams are mixed together
+// 3. output_buffer: Double-buffered output storage (2x PACKET_SIZE) allowing continuous streaming
+// 4. mp3_buffer: Temporary storage for MP3 encoded data before sending
+
+vector<int32_t*> receive_buffers; // Vector of input buffers, one per audio source
+int32_t* mixing_buffer = new int32_t[CHUNK_SIZE / sizeof(int32_t)]; // Target buffer for mixed audio data
+uint8_t *mixing_buffer_uint8 = (uint8_t*)mixing_buffer; // Byte-level access to mixing buffer for downsampling
+char output_buffer[PACKET_SIZE * 2] = {0}; // Double-buffered output (2x PACKET_SIZE) for continuous streaming
+int output_buffer_pos = 0; // Current write position in output_buffer
+uint8_t mp3_buffer[CHUNK_SIZE * 8]; // Temporary storage for MP3 encoded data
+int mp3_buffer_pos = 0; // Current position in MP3 buffer
 
 lame_t lame = lame_init();
 
@@ -187,6 +193,11 @@ inline void write_lame() {
     }
 }
 
+// Synchronization mechanism for multiple input streams:
+// 1. Checks which input streams have data ready using non-blocking select()
+// 2. Waits up to 15ms for lagging streams to catch up
+// 3. Marks streams as inactive if they consistently lag behind
+// 4. Detects when inactive streams become active again
 inline void mark_fds_active_inactive() {
     fd_set check_fds;
     fd_set active_fds;
@@ -264,6 +275,7 @@ inline void mark_fds_active_inactive() {
                 for (int idx = 0; idx < output_fds.size(); idx++) {
                     if (active[idx] && FD_ISSET(output_fds[idx], &check_fds)) {
                         active[idx] = false;
+                        log("Input " + std::to_string(idx) + " inactive");
                     }
                 }
             }
@@ -294,6 +306,7 @@ inline void mark_fds_active_inactive() {
             for (int idx = 0; idx < output_fds.size(); idx++) {
                 if (!active[idx] && FD_ISSET(output_fds[idx], &temp_check_fds)) {
                     active[idx] = true;
+                    log("Input " + std::to_string(idx) + " active");
                     total_active++;
                 }
             }
@@ -301,20 +314,56 @@ inline void mark_fds_active_inactive() {
     }
 }
 
-inline bool handle_receive_buffers() {  // Receive data from input fds
+// Buffer reading mechanism:
+// 1. Uses mark_fds_active_inactive() to determine which inputs are ready
+// 2. For each active input:
+//    - Uses non-blocking select() to check for available data
+//    - Reads data in chunks until CHUNK_SIZE bytes are collected
+//    - Handles partial reads and temporary unavailability
+// 3. Sets output_active flag when data is successfully read
+inline bool handle_receive_buffers() {
     output_active = false;
     mark_fds_active_inactive();
     for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
         if (active[fd_idx]) {
-            for (int bytes_in = 0; running && bytes_in < CHUNK_SIZE;)
-                bytes_in += read(output_fds[fd_idx], receive_buffers[fd_idx] + bytes_in, CHUNK_SIZE - bytes_in);
+            fd_set read_set;
+            struct timeval timeout;
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 0;
+            
+            for (int bytes_in = 0; running && bytes_in < CHUNK_SIZE;) {
+                FD_ZERO(&read_set);
+                FD_SET(output_fds[fd_idx], &read_set);
+                
+                int ready = select(output_fds[fd_idx] + 1, &read_set, NULL, NULL, &timeout);
+                if (ready < 1) {
+                    continue;
+                }
+                
+                if (FD_ISSET(output_fds[fd_idx], &read_set)) {
+                    int bytes_read = read(output_fds[fd_idx], 
+                                        receive_buffers[fd_idx] + bytes_in, 
+                                        CHUNK_SIZE - bytes_in);
+                    if (bytes_read <= 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                        log("Read error: " + string(strerror(errno)));
+                        return false;
+                    }
+                    bytes_in += bytes_read;
+                }
+            }
             output_active = true;
         }
     }
     return output_active;
 }
 
-void mix_buffers() { // Mix all received buffers
+// Audio mixing process:
+// 1. Uses SIMD instructions when available (AVX2 or SSE2) for efficient mixing
+// 2. Adds samples from all active input streams into mixing_buffer
+// 3. Includes overflow protection in non-SIMD path
+// 4. Processing happens in 32-bit integer format for maximum dynamic range
+void mix_buffers() {
 #if defined(__AVX2__)
     for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos += 8) {
         __m256i mixing = _mm256_setzero_si256();
@@ -354,7 +403,11 @@ void mix_buffers() { // Mix all received buffers
 #endif
 }
 
-inline void downscale_buffer() { // Copies 32-bit mixing_buffer to <output_bitdepth>-bit output_buffer
+// Buffer format conversion:
+// 1. Converts 32-bit mixed samples to target bit depth (e.g., 16-bit or 24-bit)
+// 2. Writes converted data to output_buffer after header
+// 3. Maintains proper byte alignment for different output formats
+inline void downscale_buffer() {
     int output_bytedepth = output_bitdepth / 8;
     for (int input_pos = 0;input_pos < CHUNK_SIZE; input_pos++) {
         if (output_buffer_pos % output_bytedepth == 0)
@@ -377,7 +430,11 @@ inline void send_buffer() { // Sends a buffer over TCP or UDP depending on which
         sendto(udp_output_fd, output_buffer, PACKET_SIZE, 0, (struct sockaddr *)&udp_dest_addr, sizeof(udp_dest_addr));
 }
 
-inline void rotate_buffer() { // Shifts the last CHUNK_SIZE bytes in output_buffer up to the top
+// Double buffer management:
+// 1. Implements a sliding window over output_buffer
+// 2. Moves last CHUNK_SIZE bytes to start of buffer when needed
+// 3. Ensures continuous streaming without gaps between packets
+inline void rotate_buffer() {
     if (output_buffer_pos >= CHUNK_SIZE) {
         memcpy(output_buffer + HEADER_SIZE, output_buffer + PACKET_SIZE, CHUNK_SIZE);
         output_buffer_pos -= CHUNK_SIZE;

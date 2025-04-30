@@ -173,15 +173,26 @@ void receive_data_thread() {
 }
 
 bool data_ready() {
-    return !timeshift_buffer.empty() && 
-            timeshift_buffer.size() > timeshift_buffer_pos &&
-            (timeshift_buffer.at(timeshift_buffer_pos).first + 
-            std::chrono::milliseconds(delay) + 
-            std::chrono::milliseconds((int)(timeshift_backshift*1000))) <= 
-            std::chrono::steady_clock::now();
+    // Check if we have data and haven't reached the end
+    if (timeshift_buffer.empty() || timeshift_buffer.size() <= timeshift_buffer_pos) {
+        return false;
+    }
+
+    // Get current packet's scheduled play time
+    auto current_time = timeshift_buffer.at(timeshift_buffer_pos).first + 
+                       std::chrono::milliseconds(delay) + 
+                       std::chrono::milliseconds((int)(timeshift_backshift*1000));
+
+    // If we're at the last packet, don't allow playback
+    if (timeshift_buffer_pos == timeshift_buffer.size() - 1) {
+        return false;
+    }
+
+    // Otherwise check if it's time to play this packet
+    return current_time <= std::chrono::steady_clock::now();
 }
 
-void receive_data() {
+bool receive_data() {
     try {
         std::unique_lock<std::mutex> process_lock(timeshift_mutex);
         
@@ -193,7 +204,7 @@ void receive_data() {
         }
 
         if (!data_ready())
-            return;
+            return false;
         
         // Copy the data while holding the lock
         memcpy(receive_buffer, timeshift_buffer.at(timeshift_buffer_pos++).second.data(), CHUNK_SIZE);
@@ -210,9 +221,11 @@ void receive_data() {
             }
         }
         
+        return true;
+        
     } catch (std::out_of_range) {
         log("Out of range 1");
-        return;
+        return false;
     }
 }
 
@@ -393,7 +406,10 @@ int main(int argc, char *argv[]) {
         std::thread monitor_thread(monitor_buffer_levels);
 
         while (threads_running) {
-            receive_data();
+            if (!receive_data()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
             if (audioProcessor) {
                 audioProcessor_mutex.lock();
                 int processed_samples = audioProcessor->processAudio(receive_buffer, processed_buffer + process_buffer_pos);
