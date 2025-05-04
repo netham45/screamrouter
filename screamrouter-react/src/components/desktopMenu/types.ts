@@ -7,14 +7,15 @@ import { Source, Sink, Route } from '../../api/api';
  * Enum for different menu levels in the DesktopMenu.
  */
 export enum MenuLevel {
-  Main,
-  NowListening,
-  Sources,
-  Sinks,
-  Routes,
-  AllSources,
-  AllSinks,
-  AllRoutes
+  Main = 0,
+  Sources = 1,
+  Sinks = 2,
+  Routes = 3,
+  AllSources = 4,
+  AllSinks = 5,
+  AllRoutes = 6,
+  NowListening = 7,
+  RecentlyUsed = 8, // Add new enum member
 }
 
 /**

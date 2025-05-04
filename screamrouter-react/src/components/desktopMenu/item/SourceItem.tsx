@@ -15,6 +15,7 @@ import { DesktopMenuActions } from '../types';
 import { openEditPage } from '../../fullMenu/utils';
 import ActionButton from '../controls/ActionButton';
 import VolumeControl from '../controls/VolumeControl';
+import { addToRecents } from '../../../utils/recents';
 
 interface SourceItemProps {
   /**
@@ -64,7 +65,7 @@ const RouteMenuItem = ({ route, actions }: { route: Route; actions: DesktopMenuA
           }
         />
       </Icon>
-      <Text>{route.name}</Text>
+      <Text bgColor="transparent !important">{route.name}</Text>
     </HStack>
   </MenuItem>
 );
@@ -106,7 +107,7 @@ const SourceItem: React.FC<SourceItemProps> = ({
   }, [source.ip]);
 
   // Get colors from context
-  const { getLighterColor } = useColorContext();
+  const { getLighterColor, getDarkerColor } = useColorContext();
   const selectedBg = getLighterColor(1.25);
 
   // Handle right click
@@ -133,6 +134,28 @@ const SourceItem: React.FC<SourceItemProps> = ({
       id={`sources-${encodeURIComponent(source.name)}`}
       onContextMenu={handleContextMenu}
       cursor="context-menu"
+      sx={
+        {"button":{
+           "textColor": "white",
+           "backgroundColor": getDarkerColor(1.15),
+           ":nth-child(1)" : {
+            "backgroundColor": getDarkerColor(1),
+           },
+           ":hover": {
+             "textColor": getLighterColor(339),
+             "backgroundColor": getDarkerColor(.7)
+            }
+          },
+        ":hover": {
+          "textColor": getLighterColor(339),
+          "backgroundColor": getDarkerColor(.7)
+          },
+        "p.chakra-menu__group__title, div p.chakra-text": {
+          "textColor": "white",
+          "backgroundColor": getDarkerColor(1.15)
+        }
+      }
+    }
     >
       {/* Name */}
       <Td>
@@ -146,7 +169,7 @@ const SourceItem: React.FC<SourceItemProps> = ({
           <MenuButton as={Text} fontWeight="normal">
             {source.name}
           </MenuButton>
-          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden"  pr={2.5}>
+          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden"  pr={2.5} textColor={getDarkerColor(.01)} backgroundColor={getLighterColor(1.15)}>
             <Box px={3} py={2}>
               <Text fontSize="sm">
                 {activeRoutes} active route{activeRoutes !== 1 ? 's' : ''}
@@ -194,7 +217,10 @@ const SourceItem: React.FC<SourceItemProps> = ({
                     <MenuItem onClick={() => actions.controlSource(source.name, 'prevtrack')}>
                       Previous Track
                     </MenuItem>
-                    <MenuItem onClick={() => actions.controlSource(source.name, 'play')}>
+                    <MenuItem onClick={() => {
+                      actions.controlSource(source.name, 'play');
+                      addToRecents('sources', source.name);
+                    }}>
                       Play/Pause
                     </MenuItem>
                     <MenuItem onClick={() => actions.controlSource(source.name, 'nexttrack')}>
@@ -269,7 +295,10 @@ const SourceItem: React.FC<SourceItemProps> = ({
             />
             <ActionButton
               icon="play"
-              onClick={() => actions.controlSource(source.name, 'play')}
+              onClick={() => {
+                actions.controlSource(source.name, 'play');
+                addToRecents('sources', source.name);
+              }}
             />
             <ActionButton
               icon="nexttrack"

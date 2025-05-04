@@ -11,7 +11,9 @@ import { useAppContext } from '../../context/AppContext';
 import SourceList from './list/SourceList';
 import SinkList from './list/SinkList';
 import RouteList from './list/RouteList';
+import { getRecents } from '../../utils/recents';
 import { MenuLevel, DesktopMenuActions } from './types';
+import { Text, Heading } from '@chakra-ui/react';
 import { createDesktopMenuActions } from './utils';
 
 /**
@@ -76,9 +78,9 @@ const DesktopMenu: React.FC = () => {
   
   // Load starred items from localStorage - refresh when activeSource changes
   useEffect(() => {
-    const starredSourcesData = JSON.parse(localStorage.getItem('starredSources') || '[]');
-    const starredSinksData = JSON.parse(localStorage.getItem('starredSinks') || '[]');
-    const starredRoutesData = JSON.parse(localStorage.getItem('starredRoutes') || '[]');
+    const starredSourcesData: string[] = JSON.parse(localStorage.getItem('starredSources') || '[]');
+    const starredSinksData: string[] = JSON.parse(localStorage.getItem('starredSinks') || '[]');
+    const starredRoutesData: string[] = JSON.parse(localStorage.getItem('starredRoutes') || '[]');
     setStarredSources(starredSourcesData);
     setStarredSinks(starredSinksData);
     setStarredRoutes(starredRoutesData);
@@ -177,6 +179,24 @@ const DesktopMenu: React.FC = () => {
      window.open('/site/', 'FullView');
   };
   
+  const getRecentRoutes = () => {
+    const appContext = useAppContext();
+    const recentNames = getRecents('routes');
+    return (appContext.routes || []).filter(r => recentNames.includes(r.name));
+  }
+
+  const getRecentSinks = () => {
+    const appContext = useAppContext();
+    const recentNames = getRecents('sinks');
+    return (appContext.sinks || []).filter(r => recentNames.includes(r.name));
+  }
+
+  const getRecentSources = () => {
+    const appContext = useAppContext();
+    const recentNames = getRecents('sources');
+    return (appContext.sources || []).filter(r => recentNames.includes(r.name));
+  }
+
   // Function to render content based on current menu
   const renderContent = () => {
     const primarySource = sources.find(source => source.name === activeSource);
@@ -257,6 +277,42 @@ const DesktopMenu: React.FC = () => {
             actions={actions}
             selectedItem={selectedItem}
           />
+        );
+      case MenuLevel.RecentlyUsed:
+        return (
+          <Box pl={2} pt={2}>
+            <Heading size="md" mb={3}>Recently Used</Heading>
+            <Heading size="x-sm" mb={3}>Sources</Heading>
+            <SourceList
+              sources={getRecentSources()}
+              routes={routes}
+              starredSources={starredSources}
+              activeSource={activeSource}
+              actions={actions}
+              selectedItem={selectedItem}
+            />
+            
+            
+            <Heading size="x-sm" mt={5} mb={3}>Sinks</Heading>
+            <SinkList
+              routes={routes}
+              sinks={getRecentSinks()}
+              listeningToSink={listeningToSink?.name || null}
+              visualizingSink={visualizingSink?.name || null}
+              starredSinks={starredSinks}
+              actions={actions}
+              selectedItem={selectedItem}
+            />
+            
+            <Heading size="x-sm" mt={5} mb={3}>Routes</Heading>
+            <RouteList
+              routes={getRecentRoutes()}
+              starredRoutes={starredRoutes}
+              actions={actions}
+              selectedItem={selectedItem}
+            />
+            {}
+          </Box>
         );
       default: // MenuLevel.Main
         return (
@@ -509,6 +565,17 @@ const DesktopMenu: React.FC = () => {
                 size="xs"
               >
                 Full View
+              </Button>
+              <Button
+                style={{
+                  backgroundColor: currentMenu === MenuLevel.RecentlyUsed ? buttonBgActive : buttonBgInactive,
+                  color: currentMenu === MenuLevel.RecentlyUsed ? buttonTextActive : buttonTextInactive
+                }}
+                onClick={() => setCurrentMenu(MenuLevel.RecentlyUsed)}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                Recently Used
               </Button>
             </ButtonGroup>
           </HStack>

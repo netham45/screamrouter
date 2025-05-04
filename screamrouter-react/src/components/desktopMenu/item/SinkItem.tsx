@@ -15,6 +15,7 @@ import { DesktopMenuActions } from '../types';
 import { openEditPage } from '../../fullMenu/utils';
 import ActionButton from '../controls/ActionButton';
 import VolumeControl from '../controls/VolumeControl';
+import { addToRecents } from '../../../utils/recents';
 
 interface SinkItemProps {
   /**
@@ -74,7 +75,7 @@ const RouteMenuItem = ({ route, actions }: { route: Route; actions: DesktopMenuA
           }
         />
       </Icon>
-      <Text>{route.name}</Text>
+      <Text bgColor="transparent !important">{route.name}</Text>
     </HStack>
   </MenuItem>
 );
@@ -118,7 +119,7 @@ const SinkItem: React.FC<SinkItemProps> = ({
   }, [sink.ip]);
 
   // Get colors from context
-  const { getLighterColor } = useColorContext();
+  const { getLighterColor, getDarkerColor } = useColorContext();
   const selectedBg = getLighterColor(1.25);
 
   // Handle right click
@@ -148,6 +149,25 @@ const SinkItem: React.FC<SinkItemProps> = ({
       id={`sinks-${encodeURIComponent(sink.name)}`}
       onContextMenu={handleContextMenu}
       cursor="context-menu"
+      sx={
+        {"button":{
+           "textColor": "white",
+           "backgroundColor": getDarkerColor(1.15),
+           ":hover": {
+             "textColor": getLighterColor(339),
+             "backgroundColor": getDarkerColor(.7)
+            }
+          },
+        ":hover": {
+          "textColor": getLighterColor(339),
+          "backgroundColor": getDarkerColor(.7)
+          },
+        "p.chakra-menu__group__title, div p.chakra-text": {
+          "textColor": "white",
+          "backgroundColor": getDarkerColor(1.15)
+        }
+      }
+    }
     >
       {/* Name */}
       <Td>
@@ -161,7 +181,7 @@ const SinkItem: React.FC<SinkItemProps> = ({
           <MenuButton as={Text} fontWeight="normal">
             {sink.name}
           </MenuButton>
-          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden"  pr={2.5}>
+          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden"  pr={2.5} textColor={getDarkerColor(.01)} backgroundColor={getLighterColor(1.15)}>
             <Box px={3} py={2}>
               <Text fontSize="sm">
                 {activeRoutes} active route{activeRoutes !== 1 ? 's' : ''}
@@ -178,7 +198,10 @@ const SinkItem: React.FC<SinkItemProps> = ({
             >
               {isStarred ? '★ Remove from Favorites' : '☆ Add to Favorites'}
             </MenuItem>
-            <MenuItem onClick={() => actions.toggleEnabled('sinks', sink.name, !sink.enabled)}>
+            <MenuItem onClick={() => {
+              actions.toggleEnabled('sinks', sink.name, !sink.enabled);
+              addToRecents('sinks', sink.name);
+            }}>
               {sink.enabled ? 'Disable' : 'Enable'}
             </MenuItem>
             <MenuItem onClick={() => openEditPage('sinks', sink)}>
@@ -269,7 +292,10 @@ const SinkItem: React.FC<SinkItemProps> = ({
         <ActionButton
           icon={sink.enabled ? 'volume' : 'x'}
           isActive={sink.enabled}
-          onClick={() => actions.toggleEnabled('sinks', sink.name, !sink.enabled)}
+          onClick={() => {
+            actions.toggleEnabled('sinks', sink.name, !sink.enabled);
+            addToRecents('sinks', sink.name);
+          }}
         />
       </Td>
       

@@ -15,6 +15,7 @@ import { DesktopMenuActions } from '../types';
 import { openEditPage } from '../../fullMenu/utils';
 import ActionButton from '../controls/ActionButton';
 import VolumeControl from '../controls/VolumeControl';
+import { addToRecents } from '../../../utils/recents';
 
 interface RouteItemProps {
   /**
@@ -48,7 +49,7 @@ const RouteItem: React.FC<RouteItemProps> = ({
   isSelected = false
 }) => {
   // Get colors from context
-  const { getLighterColor } = useColorContext();
+  const { getLighterColor, getDarkerColor } = useColorContext();
   const selectedBg = getLighterColor(1.25);
 
   // Handle right click
@@ -62,6 +63,25 @@ const RouteItem: React.FC<RouteItemProps> = ({
       id={`routes-${encodeURIComponent(route.name)}`}
       onContextMenu={handleContextMenu}
       cursor="context-menu"
+      sx={
+        {"button":{
+           "textColor": "white",
+           "backgroundColor": getDarkerColor(1.15),
+           ":hover": {
+             "textColor": getLighterColor(339),
+             "backgroundColor": getDarkerColor(.7)
+            }
+          },
+        ":hover": {
+          "textColor": getLighterColor(339),
+          "backgroundColor": getDarkerColor(.7)
+          },
+        "p.chakra-menu__group__title, div p.chakra-text": {
+          "textColor": "white",
+          "backgroundColor": getDarkerColor(1.15)
+        }
+      }
+    }
     >
       {/* Name */}
       <Td>
@@ -75,7 +95,7 @@ const RouteItem: React.FC<RouteItemProps> = ({
           <MenuButton as={Text} fontWeight="normal">
             {route.name}
           </MenuButton>
-          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden" pr={2.5}>
+          <MenuList maxH="calc(100vh - 100px)" overflowY="auto" overflowX="hidden" pr={2.5} textColor={getDarkerColor(.01)} backgroundColor={getLighterColor(1.15)}>
             <Box px={3} py={2}>
               <Text fontSize="sm">
                 {route.source} → {route.sink}
@@ -84,14 +104,17 @@ const RouteItem: React.FC<RouteItemProps> = ({
             </Box>
 
             <MenuDivider />
-            <MenuItem 
+            <MenuItem
               onClick={() => actions.toggleStar('routes', route.name)}
               role="menuitem"
               aria-label={isStarred ? 'Remove from Favorites' : 'Add to Favorites'}
             >
               {isStarred ? '★ Remove from Favorites' : '☆ Add to Favorites'}
             </MenuItem>
-            <MenuItem onClick={() => actions.toggleEnabled('routes', route.name, !route.enabled)}>
+            <MenuItem onClick={() => {
+              actions.toggleEnabled('routes', route.name, !route.enabled);
+              addToRecents('routes', route.name);
+            }}>
               {route.enabled ? 'Disable' : 'Enable'}
             </MenuItem>
             <MenuItem onClick={() => openEditPage('routes', route)}>
@@ -123,7 +146,7 @@ const RouteItem: React.FC<RouteItemProps> = ({
                       }
                     />
                   </Icon>
-                  <Text>{route.source}</Text>
+                  <Text bgColor="transparent !important">{route.source}</Text>
                 </HStack>
               </MenuItem>
             </MenuGroup>
@@ -146,7 +169,7 @@ const RouteItem: React.FC<RouteItemProps> = ({
                       }
                     />
                   </Icon>
-                  <Text>{route.sink}</Text>
+                  <Text bgColor="transparent !important">{route.sink}</Text>
                 </HStack>
               </MenuItem>
             </MenuGroup>
@@ -177,7 +200,10 @@ const RouteItem: React.FC<RouteItemProps> = ({
         <ActionButton
           icon={route.enabled ? 'volume' : 'x'}
           isActive={route.enabled}
-          onClick={() => actions.toggleEnabled('routes', route.name, !route.enabled)}
+          onClick={() => {
+            actions.toggleEnabled('routes', route.name, !route.enabled);
+            addToRecents('routes', route.name);
+          }}
         />
       </Td>
       
