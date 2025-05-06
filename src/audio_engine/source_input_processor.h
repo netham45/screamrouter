@@ -1,0 +1,116 @@
+#ifndef SOURCE_INPUT_PROCESSOR_H
+#define SOURCE_INPUT_PROCESSOR_H
+
+#include "audio_component.h"
+#include "thread_safe_queue.h"
+#include "audio_types.h"
+#include "../c_utils/audio_processor.h" // Include the existing AudioProcessor
+
+#include <string>
+#include <vector>
+#include <deque>
+#include <chrono>
+#include <memory> // For unique_ptr, shared_ptr
+#include <mutex>
+#include <condition_variable>
+
+namespace screamrouter {
+namespace audio {
+
+// Using aliases for clarity
+using InputPacketQueue = utils::ThreadSafeQueue<TaggedAudioPacket>;
+using OutputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
+using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
+
+// Define constants based on original code/assumptions
+const size_t INPUT_CHUNK_BYTES = 1152; // Expected size of audio_data in TaggedAudioPacket
+const int DEFAULT_INPUT_BITDEPTH = 16; // Assume 16-bit input unless specified
+const int DEFAULT_INPUT_CHANNELS = 2;  // Assume stereo input unless specified
+const int DEFAULT_INPUT_SAMPLERATE = 48000; // Assume 48kHz input unless specified
+// Match the number of samples SinkAudioMixer expects in its mixing buffer (SINK_MIXING_BUFFER_SAMPLES)
+// which is 576 for the current 16-bit stereo output target.
+const size_t OUTPUT_CHUNK_SAMPLES = 576; // Total interleaved 32-bit samples expected in ProcessedAudioChunk
+
+class SourceInputProcessor : public AudioComponent {
+public:
+    SourceInputProcessor(
+        SourceProcessorConfig config,
+        std::shared_ptr<InputPacketQueue> input_queue,
+        std::shared_ptr<OutputChunkQueue> output_queue,
+        std::shared_ptr<CommandQueue> command_queue
+    );
+
+    ~SourceInputProcessor() override;
+
+    // --- AudioComponent Interface ---
+    void start() override;
+    void stop() override;
+
+    // --- Getters for Synchronization Primitives ---
+    std::mutex* get_timeshift_mutex() { return &timeshift_mutex_; }
+    std::condition_variable* get_timeshift_cv() { return &timeshift_condition_; }
+
+    // --- Getters for Configuration Info ---
+    const std::string& get_instance_id() const { return config_.instance_id; }
+    const std::string& get_source_tag() const; // Implementation in .cpp
+    const SourceProcessorConfig& get_config() const { return config_; } // Added getter for full config
+
+
+protected:
+    // --- AudioComponent Interface ---
+    void run() override; // The main thread loop - will now manage input/output threads
+
+    // --- Thread loop functions ---
+    void input_loop();
+    void output_loop();
+
+private:
+    SourceProcessorConfig config_;
+    std::shared_ptr<InputPacketQueue> input_queue_;
+    std::shared_ptr<OutputChunkQueue> output_queue_;
+    std::shared_ptr<CommandQueue> command_queue_;
+
+    // Internal State
+    std::unique_ptr<AudioProcessor> audio_processor_;
+    std::mutex audio_processor_mutex_; // Protects audio_processor_ and related settings
+
+    // Timeshift buffer (stores raw input packets)
+    std::deque<TaggedAudioPacket> timeshift_buffer_;
+    size_t timeshift_buffer_read_idx_ = 0; // Index of the next packet to read
+    std::chrono::steady_clock::time_point timeshift_target_play_time_; // Calculated target time
+    std::mutex timeshift_mutex_; // Protects timeshift buffer and related vars
+    std::condition_variable timeshift_condition_; // To wake up run loop when data arrives/is ready
+
+    // Processing buffer (holds output from AudioProcessor before pushing full chunks)
+    std::vector<int32_t> process_buffer_;
+    // size_t process_buffer_samples_ = 0; // Tracked by process_buffer_.size()
+
+    // Current settings (can be updated by commands)
+    float current_volume_;
+    std::vector<float> current_eq_;
+    int current_delay_ms_;
+    float current_timeshift_backshift_sec_; // How far back to play from 'now'
+
+    // Thread management (stop_flag_ is inherited from AudioComponent)
+    std::thread input_thread_;
+    std::thread output_thread_;
+
+    // Methods
+    void process_commands(); // Check command queue and update state (non-blocking)
+    bool get_next_input_chunk(std::vector<uint8_t>& chunk_data); // Handles timeshift logic, pulls from input_queue_
+    void update_timeshift_target_time(); // Recalculate target play time based on backshift/delay
+    // bool is_timeshift_data_ready(std::chrono::steady_clock::time_point& ready_packet_time); // Replaced by check_readiness_condition
+    bool check_readiness_condition(); // Checks if the next packet is ready based on scheduled time vs now
+    void cleanup_timeshift_buffer(); // Remove old data
+    void handle_new_input_packet(TaggedAudioPacket& packet); // Adds packet to timeshift buffer, notifies CV
+
+    // Audio processing methods
+    void initialize_audio_processor(); // Creates/updates the AudioProcessor instance
+    void process_audio_chunk(const std::vector<uint8_t>& input_chunk_data); // Calls audio_processor_->processAudio
+    void push_output_chunk_if_ready(); // Pushes a full ProcessedAudioChunk to output_queue_
+};
+
+} // namespace audio
+} // namespace screamrouter
+
+#endif // SOURCE_INPUT_PROCESSOR_H

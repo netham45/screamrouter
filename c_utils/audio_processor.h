@@ -36,10 +36,10 @@ protected:
     int32_t scaled_buffer[CHUNK_SIZE * 32];
     uint8_t *scaled_buffer_int8 = (uint8_t *)scaled_buffer;
     int32_t resampled_buffer[CHUNK_SIZE * 32];
-    int32_t channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 32];
-    int32_t remixed_channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 32];
-    int32_t merged_buffer[CHUNK_SIZE * 32];
-    int32_t processed_buffer[CHUNK_SIZE * 32]; 
+    int32_t channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 64];
+    int32_t remixed_channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 64];
+    int32_t merged_buffer[CHUNK_SIZE * 64];
+    int32_t processed_buffer[CHUNK_SIZE * 64]; 
 
     int scale_buffer_pos = 0;
     int process_buffer_pos = 0;

@@ -1,0 +1,4013 @@
+audio_processor.cpp0000644000000000000000000026400015006206411013455 0ustar  rootrootlayout_mixer.cpp0000644000000000000000000003174314774634217013030 0ustar  rootroot#include <stdexcept>
+#include <string.h>
+#define MAX_CHANNELS 8
+class layout_mixer {
+public:
+    float speaker_mix[MAX_CHANNELS][MAX_CHANNELS] = {{1}};
+    int input_channels = 0;
+    int output_channels = 0;
+    
+    // constructor to initialize the variables
+    layout_mixer(int input_ch, int output_ch) : input_channels(input_ch), output_channels(output_ch) {
+        if (input_ch > MAX_CHANNELS || output_ch > MAX_CHANNELS) {
+            throw std::invalid_argument("Number of channels cannot exceed " + std::to_string(MAX_CHANNELS));
+        }
+        build_speaker_mix_table();
+    }
+
+    void build_speaker_mix_table()
+    { // Fills out the speaker mix table speaker_mix[][] with the current configuration.
+        memset(speaker_mix, 0, sizeof(speaker_mix));
+        // speaker_mix[input channel][output channel] = gain;
+        // Ex: To map Left on Stereo to Right on Stereo at half volume you would do:
+        // speaker_mix[0][1] = .5;
+        switch (input_channels)
+        {
+        case 1: // Mono, Ch 0: Left
+            // Mono -> All
+            for (int output_channel = 0; output_channel < MAX_CHANNELS; output_channel++) // Write the left (first) speaker to every channel
+                speaker_mix[0][output_channel] = 1;
+            break;
+        case 2: // Stereo, Ch 0: Left, Ch 1: Right
+            switch (output_channels)
+            {
+            case 1:                     // Stereo -> Mono
+                speaker_mix[0][0] = .5; // Left to mono .5 vol
+                speaker_mix[1][0] = .5; // Right to mono .5 vol
+                break;
+            case 2:                    // Stereo -> Stereo
+                speaker_mix[0][0] = 1; // Left to Left
+                speaker_mix[1][1] = 1; // Right to Right
+                break;
+            case 4:
+                speaker_mix[0][0] = 1; // Left to Front Left
+                speaker_mix[1][1] = 1; // Right to Front Right
+                speaker_mix[0][2] = 1; // Left to Back Left
+                speaker_mix[1][3] = 1; // Right to Back Right
+                break;
+            case 6: // Stereo -> 5.1 Surround
+                // FL FR C LFE BL BR
+                speaker_mix[0][0] = 1;  // Left to Front Left
+                speaker_mix[0][5] = 1;  // Left to Rear Left
+                speaker_mix[1][1] = 1;  // Right to Front Right
+                speaker_mix[1][6] = 1;  // Right to Rear Right
+                speaker_mix[0][3] = .5; // Left to Center Half Vol
+                speaker_mix[1][3] = .5; // Right to Center Half Vol
+                speaker_mix[0][4] = .5; // Right to Sub Half Vol
+                speaker_mix[1][4] = .5; // Left to Sub Half Vol
+                break;
+            case 8: // Stereo -> 7.1 Surround
+                // FL FR C LFE BL BR SL SR
+                speaker_mix[0][0] = 1;  // Left to Front Left
+                speaker_mix[0][6] = 1;  // Left to Side Left
+                speaker_mix[0][4] = 1;  // Left to Rear Left
+                speaker_mix[1][1] = 1;  // Right to Front Right
+                speaker_mix[1][7] = 1;  // Right to Side Right
+                speaker_mix[1][5] = 1;  // Right to Rear Right
+                speaker_mix[0][2] = .5; // Left to Center Half Vol
+                speaker_mix[1][2] = .5; // Right to Center Half Vol
+                speaker_mix[0][3] = .5; // Right to Sub Half Vol
+                speaker_mix[1][3] = .5; // Left to Sub Half Vol
+                break;
+            }
+            break;
+        case 4:
+            switch (output_channels)
+            {
+            case 1:                      // Quad -> Mono
+                speaker_mix[0][0] = .25; // Front Left to Mono
+                speaker_mix[1][0] = .25; // Front Right to Mono
+                speaker_mix[2][0] = .25; // Rear Left to Mono
+                speaker_mix[3][0] = .25; // Rear Right to Mono
+                break;
+            case 2:                     // Quad -> Stereo
+                speaker_mix[0][0] = .5; // Front Left to Left
+                speaker_mix[1][1] = .5; // Front Right to Right
+                speaker_mix[2][0] = .5; // Rear Left to Left
+                speaker_mix[3][1] = .5; // Rear Right to Right
+                break;
+            case 4:
+                speaker_mix[0][0] = 1; // Front Left to Front Left
+                speaker_mix[1][1] = 1; // Front Right to Front Right
+                speaker_mix[2][2] = 1; // Rear Left to Rear Left
+                speaker_mix[3][3] = 1; // Rear Right to Rear Right
+                break;
+            case 6: // Quad -> 5.1 Surround
+                // FL FR C LFE BL BR
+                speaker_mix[0][0] = 1;   // Front Left to Front Left
+                speaker_mix[1][1] = 1;   // Front Right to Front Right
+                speaker_mix[0][2] = .5;  // Front Left to Center
+                speaker_mix[1][2] = .5;  // Front Right to Center
+                speaker_mix[0][3] = .25; // Front Left to LFE
+                speaker_mix[1][3] = .25; // Front Right to LFE
+                speaker_mix[2][3] = .25; // Rear Left to LFE
+                speaker_mix[3][3] = .25; // Rear Right to LFE
+                speaker_mix[2][4] = 1;   // Rear Left to Rear Left
+                speaker_mix[3][5] = 1;   // Rear Right to Rear Right
+                break;
+            case 8: // Quad -> 7.1 Surround
+                // FL FR C LFE BL BR SL SR
+                speaker_mix[0][0] = 1;   // Front Left to Front Left
+                speaker_mix[1][1] = 1;   // Front Right to Front Right
+                speaker_mix[0][2] = .5;  // Front Left to Center
+                speaker_mix[1][2] = .5;  // Front Right to Center
+                speaker_mix[0][3] = .25; // Front Left to LFE
+                speaker_mix[1][3] = .25; // Front Right to LFE
+                speaker_mix[2][3] = .25; // Rear Left to LFE
+                speaker_mix[3][3] = .25; // Rear Right to LFE
+                speaker_mix[2][4] = 1;   // Rear Left to Rear Left
+                speaker_mix[3][5] = 1;   // Rear Right to Rear Right
+                speaker_mix[0][6] = .5;  // Front Left to Side Left
+                speaker_mix[1][7] = .5;  // Front Right to Side Right
+                speaker_mix[2][6] = .5;  // Rear Left to Side Left
+                speaker_mix[3][7] = .5;  // Rear Right to Side Right
+                break;
+            }
+            break;
+        case 6:
+            switch (output_channels)
+            {
+            case 1:                     // 5.1 Surround -> Mono
+                speaker_mix[0][0] = .2; // Front Left to Mono
+                speaker_mix[1][0] = .2; // Front Right to Mono
+                speaker_mix[2][0] = .2; // Center to Mono
+                speaker_mix[4][0] = .2; // Rear Left to Mono
+                speaker_mix[5][0] = .2; // Rear Right to Mono
+                break;
+            case 2:                      // 5.1 Surround -> Stereo
+                speaker_mix[0][0] = .33; // Front Left to Left
+                speaker_mix[1][1] = .33; // Front Right to Right
+                speaker_mix[2][0] = .33; // Center to Left
+                speaker_mix[2][1] = .33; // Center to Right
+                speaker_mix[4][0] = .33; // Rear Left to Left
+                speaker_mix[5][1] = .33; // Rear Right to Right
+                break;
+            case 4:
+                speaker_mix[0][0] = .66; // Front Left to Front Left
+                speaker_mix[1][1] = .66; // Front Right to Front Right
+                speaker_mix[2][0] = .33; // Center to Front Left
+                speaker_mix[2][1] = .33; // Center to Front Right
+                speaker_mix[4][2] = 1;   // Rear Left to Rear Left
+                speaker_mix[5][3] = 1;   // Rear Right to Rear Right
+                break;
+            case 6: // 5.1 Surround -> 5.1 Surround
+                // FL FR C LFE BL BR
+                speaker_mix[0][0] = 1; // Front Left to Front Left
+                speaker_mix[1][1] = 1; // Front Right to Front Right
+                speaker_mix[2][2] = 1; // Center to Center
+                speaker_mix[3][3] = 1; // LFE to LFE
+                speaker_mix[4][4] = 1; // Rear Left to Rear Left
+                speaker_mix[5][5] = 1; // Rear Right to Rear Right
+                break;
+            case 8: // 5.1 Surround -> 7.1 Surround
+                // FL FR C LFE BL BR SL SR
+                speaker_mix[0][0] = 1;  // Front Left to Front Left
+                speaker_mix[1][1] = 1;  // Front Right to Front Right
+                speaker_mix[2][2] = 1;  // Center to Center
+                speaker_mix[3][3] = 1;  // LFE to LFE
+                speaker_mix[4][4] = 1;  // Rear Left to Rear Left
+                speaker_mix[5][5] = 1;  // Rear Right to Rear Right
+                speaker_mix[0][6] = .5; // Front Left to Side Left
+                speaker_mix[1][7] = .5; // Front Right to Side Right
+                speaker_mix[4][6] = .5; // Rear Left to Side Left
+                speaker_mix[5][7] = .5; // Rear Right to Side Right
+                break;
+            }
+            break;
+        case 8:
+            switch (output_channels)
+            {
+            case 1:                              // 7.1 Surround -> Mono
+                speaker_mix[0][0] = 1.0f / 7.0f; // Front Left to Mono
+                speaker_mix[1][0] = 1.0f / 7.0f; // Front Right to Mono
+                speaker_mix[2][0] = 1.0f / 7.0f; // Center to Mono
+                speaker_mix[4][0] = 1.0f / 7.0f; // Rear Left to Mono
+                speaker_mix[5][0] = 1.0f / 7.0f; // Rear Right to Mono
+                speaker_mix[6][0] = 1.0f / 7.0f; // Side Left to Mono
+                speaker_mix[7][0] = 1.0f / 7.0f; // Side Right to Mono
+                break;
+            case 2:                       // 7.1 Surround -> Stereo
+                speaker_mix[0][0] = .5;   // Front Left to Left
+                speaker_mix[1][1] = .5;   // Front Right to Right
+                speaker_mix[2][0] = .25;  // Center to Left
+                speaker_mix[2][1] = .25;  // Center to Right
+                speaker_mix[4][0] = .125; // Rear Left to Left
+                speaker_mix[5][1] = .125; // Rear Right to Right
+                speaker_mix[6][0] = .125; // Side Left to Left
+                speaker_mix[7][1] = .125; // Side Right to Right
+                break;
+            case 4:                      // 7.1 Surround -> Quad
+                speaker_mix[0][0] = .5;  // Front Left to Front Left
+                speaker_mix[1][1] = .5;  // Front Right to Front Right
+                speaker_mix[2][0] = .25; // Center to Front Left
+                speaker_mix[2][1] = .25; // Center to Front Right
+                speaker_mix[4][2] = .66; // Rear Left to Rear Left
+                speaker_mix[5][3] = .66; // Rear Right to Rear Right
+                speaker_mix[6][0] = .25; // Side Left to Front Left
+                speaker_mix[7][1] = .25; // Side Left to Front Right
+                speaker_mix[6][2] = .33; // Side Left to Rear Left
+                speaker_mix[7][3] = .33; // Side Left to Rear Right
+                break;
+            case 6: // 7.1 Surround -> 5.1 Surround
+                // FL FR C LFE BL BR
+                speaker_mix[0][0] = .66; // Front Left to Front Left
+                speaker_mix[1][1] = .66; // Front Right to Front Right
+                speaker_mix[2][2] = 1;   // Center to Center
+                speaker_mix[3][3] = 1;   // LFE to LFE
+                speaker_mix[4][4] = .66; // Rear Left to Rear Left
+                speaker_mix[5][5] = .66; // Rear Right to Rear Right
+                speaker_mix[6][0] = .33; // Side Left to Front Left
+                speaker_mix[7][1] = .33; // Side Right to Front Right
+                speaker_mix[6][4] = .33; // Side Left to Rear Left
+                speaker_mix[7][5] = .33; // Side Right to Rear Right
+                break;
+            case 8: // 7.1 Surround -> 7.1 Surround
+                // FL FR C LFE BL BR SL SR
+                speaker_mix[0][0] = 1; // Front Left to Front Left
+                speaker_mix[1][1] = 1; // Front Right to Front Right
+                speaker_mix[2][2] = 1; // Center to Center
+                speaker_mix[3][3] = 1; // LFE to LFE
+                speaker_mix[4][4] = 1; // Rear Left to Rear Left
+                speaker_mix[5][5] = 1; // Rear Right to Rear Right
+                speaker_mix[6][6] = 1; // Side Left to Side Left
+                speaker_mix[7][7] = 1; // Side Right to Side Right
+                break;
+            }
+            break;
+        }
+    }
+
+    void mix_speakers(int32_t** in_buffer, int32_t** remixed_out_buffer, int sample_count) {
+        for (int pos = 0; pos < sample_count; pos++)
+            for (int input_channel = 0; input_channel < input_channels; input_channel++)
+                for (int output_channel = 0; output_channel < output_channels; output_channel++)
+                        remixed_out_buffer[input_channel][output_channel] = 0;
+        for (int pos = 0; pos < sample_count; pos++)
+            for (int input_channel = 0; input_channel < input_channels; input_channel++)
+                for (int output_channel = 0; output_channel < output_channels; output_channel++)
+                    remixed_out_buffer[output_channel][pos] += in_buffer[input_channel][pos] * speaker_mix[input_channel][output_channel];
+    }
+};rtp_receiver.cpp0000644000000000000000000001360615000443333012752 0ustar  rootroot// C++ code for streaming audio data over a network using TCP/UDP protocols.
+
+#include <iostream>
+#include <vector>
+#include "string.h"
+#include <istream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <lame/lame.h>
+#include <algorithm>
+#include <string>
+#include <pthread.h>
+#include <sched.h>
+using namespace std;
+
+// Configuration variables
+#define CHUNK_SIZE 1152 // Chunk size in bytes for audio data
+#define HEADER_SIZE 5 // Size of the Scream header, which contains information about the output audio stream
+#define RTP_HEADER_SIZE 12 // Size of the Scream header, which contains information about the output audio stream
+#define PACKET_SIZE (CHUNK_SIZE + HEADER_SIZE) // Total packet size including header and chunk
+#define TAG_LENGTH 45
+#define DATA_RECEIVE_POS (TAG_LENGTH - (RTP_HEADER_SIZE - HEADER_SIZE))
+
+bool running = true; // Flag to control loop execution
+
+uint8_t buffer[TAG_LENGTH + RTP_HEADER_SIZE + CHUNK_SIZE] = {0}; // Vector of pointers to receive buffers for input streams
+
+uint8_t header[HEADER_SIZE] = {0};
+
+vector<int> output_fds; // Vector of file descriptors for audio input streams
+
+int listen_fd = 0; // fd for audio input
+
+int data_fd = 0; // fd for writing IPs to
+
+vector<string> known_ip_procs = {};
+
+// Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
+int* config_argv[] = {NULL, // Process File Name
+                      &listen_fd,
+                      &data_fd};
+int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
+
+struct sockaddr_in receive_addr;
+
+socklen_t receive_addr_len = sizeof(receive_addr);
+
+void log(const string &message, bool endl = true, bool tag = true) {
+    printf("%s %s%s", tag?"[RTP Listener]":"", message.c_str(), endl?"\n":"");
+}
+
+// Function to process fixed command line arguments like IP address and output port
+void process_args(int argc, char** argv) {
+    if (argc <= config_argc)
+        ::exit(-1);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (config_argv[argi] == 0)
+            continue;
+        else
+            *(config_argv[argi]) = atoi(argv[argi]);
+}
+
+// Function to process variable number of command line arguments representing file descriptors for input streams
+void process_fd_args(int argc, char* argv[]) {
+    for (int argi = config_argc; argi < argc; argi++) {
+        output_fds.push_back(atoi(argv[argi]));
+    }
+}
+
+void setup_header() { // Sets up the Scream header
+    int output_samplerate = 48000;
+    int output_bitdepth = 16;
+    int output_channels = 2;
+    int output_chlayout1 = 0x03;
+    int output_chlayout2 = 0x00;
+    bool output_samplerate_44100_base = (output_samplerate % 44100) == 0;
+    // cppcheck-suppress knownConditionTrueFalse
+    uint8_t output_samplerate_mult = (output_samplerate_44100_base?44100:48000) / output_samplerate;
+    header[0] = output_samplerate_mult + (output_samplerate_44100_base << 7);
+    header[1] = output_bitdepth;
+    header[2] = output_channels;
+    header[3] = output_chlayout1;
+    header[4] = output_chlayout2;
+    log("Set up Header, Rate: " + to_string(output_samplerate) + ", Bit-Depth" + to_string(output_bitdepth) + ", Channels" + to_string(output_channels));
+}
+
+bool parseHeader() {
+    // Parse RTP header (first 12 bytes of buffer)
+    /*uint8_t version = (buffer[DATA_RECEIVE_POS] >> 6) & 0x03;
+    bool padding = (buffer[DATA_RECEIVE_POS] >> 5) & 0x01;
+    bool extension = (buffer[DATA_RECEIVE_POS] >> 4) & 0x01;
+    uint8_t csrcCount = buffer[DATA_RECEIVE_POS] & 0x0F;
+    bool marker = (buffer[DATA_RECEIVE_POS + 1] >> 7) & 0x01;*/
+    uint8_t payloadType = buffer[DATA_RECEIVE_POS + 1] & 0x7F;
+    /*uint16_t sequenceNumber = (buffer[DATA_RECEIVE_POS + 2] << 8) | buffer[DATA_RECEIVE_POS + 3];
+    uint32_t timestamp = (buffer[DATA_RECEIVE_POS + 4] << 24) | (buffer[DATA_RECEIVE_POS + 5] << 16) |
+                         (buffer[DATA_RECEIVE_POS + 6] << 8) | buffer[DATA_RECEIVE_POS + 7];
+    uint32_t ssrc = (buffer[DATA_RECEIVE_POS + 8] << 24) | (buffer[DATA_RECEIVE_POS + 9] << 16) |
+                    (buffer[DATA_RECEIVE_POS + 10] << 8) | buffer[DATA_RECEIVE_POS + 11];*/
+    return payloadType == 127; // Return true if parsing was successful
+}
+
+bool receive() {
+    int bytes = recvfrom(listen_fd, buffer + DATA_RECEIVE_POS, RTP_HEADER_SIZE+CHUNK_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
+    if (bytes == -1) 
+        ::exit(-1);
+    if (bytes != RTP_HEADER_SIZE+CHUNK_SIZE)
+        return false;
+    return true;
+}
+
+void send() {
+    memset(buffer, 0, TAG_LENGTH);
+    strcpy(reinterpret_cast<char*>(buffer), inet_ntoa(receive_addr.sin_addr));
+    string ip_address = string(reinterpret_cast<char*>(buffer));
+    if (find(known_ip_procs.begin(), known_ip_procs.end(), ip_address) == known_ip_procs.end()) {
+        known_ip_procs.push_back(ip_address);
+        write(data_fd, (ip_address + "\n").c_str(), ip_address.length());
+    }
+    memcpy(buffer + TAG_LENGTH, header, HEADER_SIZE);
+    for (int fd_idx=0;fd_idx<output_fds.size();fd_idx++)
+        write(output_fds[fd_idx], buffer, PACKET_SIZE + TAG_LENGTH);
+}
+
+int main(int argc, char* argv[]) {
+    // Pin to CPU core 1
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        log("Failed to set CPU affinity to core 1", true, true);
+    } else {
+        log("Successfully pinned to CPU core 1", true, true);
+    }
+
+    process_args(argc, argv);
+
+    process_fd_args(argc, argv);
+    log("Input FDs: ", false, true);
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
+        log(to_string(output_fds[fd_idx]) + " ", false, false);
+    log("", true, false);
+    setup_header();
+
+    while (running)
+        if (receive())
+            if (parseHeader())
+                send();
+        else
+            sleep(.2);
+    return 0;
+}
+scream_per_process_receiver.cpp0000644000000000000000000001232215000443373016021 0ustar  rootroot// C++ code for streaming audio data over a network using TCP/UDP protocols.
+
+#include <iostream>
+#include <vector>
+#include "string.h"
+#include <istream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <lame/lame.h>
+#include <algorithm>
+#include <string>
+#include <pthread.h>
+#include <sched.h>
+using namespace std;
+
+// Configuration variables
+#define CHUNK_SIZE 1152 // Chunk size in bytes for audio data
+#define IP_LENGTH 15
+#define PROGRAM_TAG_LENGTH 30
+#define HEADER_SIZE 5 // Size of the Scream header, which contains information about the output audio strea
+#define PACKET_SIZE (CHUNK_SIZE + PROGRAM_TAG_LENGTH + HEADER_SIZE) // Total packet size including header and chunk
+
+bool running = true; // Flag to control loop execution
+
+uint8_t buffer[IP_LENGTH + PACKET_SIZE] = {0}; // Vector of pointers to receive buffers for input streams
+char* tag = reinterpret_cast<char*>(buffer);
+
+vector<int> output_fds; // Vector of file descriptors for audio input streams
+
+int listen_fd = 0; // fd for audio input
+
+int data_fd = 0; // fd for writing IPs to
+
+vector<string> known_ip_procs = {};
+
+// Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
+int* config_argv[] = {NULL, // Process File Name
+                      &listen_fd,
+                      &data_fd};
+
+int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
+
+struct sockaddr_in receive_addr;
+
+socklen_t receive_addr_len = sizeof(receive_addr);
+
+void log(const string &message, bool endl = true, bool tag = true) {
+    printf("%s %s%s", tag?"[Scream Per-Port Listener]":"", message.c_str(), endl?"\n":"");
+}
+
+// Function to process fixed command line arguments like IP address and output port
+void process_args(int argc, char** argv) {
+    if (argc <= config_argc)
+        ::exit(-1);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (config_argv[argi] == 0)
+            continue;
+        else
+            *(config_argv[argi]) = atoi(argv[argi]);
+}
+
+// Function to process variable number of command line arguments representing file descriptors for input streams
+void process_fd_args(int argc, char* argv[]) {
+    for (int argi = config_argc; argi < argc; argi++) {
+        output_fds.push_back(atoi(argv[argi]));
+    }
+}
+
+bool receive() {
+    int bytes = recvfrom(listen_fd, buffer + IP_LENGTH, PACKET_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
+    //printf("Packet in Bytes: %i Process: %s\n", bytes, buffer);
+    if (bytes == -1) 
+        ::exit(-1);
+    if (bytes != PACKET_SIZE)
+        return false;
+    return true;
+}
+
+void set_tag() {
+    //Format for buffer is
+    //XXX.XXX.XXX.XXXTAGTAGTAGTAGTAGTAGTAGTAGTAGTA\0DATADATA...
+    //If the IP does not fill the full size empty space is filled with spaces.
+    //The buffer has the TAG and data in it already and just needs the IP written
+    memset(tag, ' ', IP_LENGTH); // Clear with space
+    strcpy(tag, inet_ntoa(receive_addr.sin_addr)); // Write IP to start
+    tag[strlen(tag)] = ' '; // Clear null terminator
+    tag[IP_LENGTH + PROGRAM_TAG_LENGTH - 1] = 0; // Ensure it's got a null terminator at the end of the tag
+}
+
+void check_if_known() {
+   bool already_known = false;
+    for (int idx=0;idx<known_ip_procs.size();idx++) {
+        if (known_ip_procs.at(idx) == tag) {
+            already_known = true;
+            break;
+        }
+    }
+    if (!already_known) {
+        dprintf(data_fd, "%s\n", tag);
+        known_ip_procs.push_back(tag);
+    } 
+}
+
+
+void send() {
+
+    // Use select to check if sockets are ready for writing
+    fd_set write_fds;
+    struct timeval timeout;
+    
+    // Set timeout to 0 seconds, 100 microseconds (non-blocking)
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 100;
+    
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
+        // Initialize the file descriptor set
+        FD_ZERO(&write_fds);
+        FD_SET(output_fds[fd_idx], &write_fds);
+        
+        // Check if this socket is ready for writing
+        int select_result = select(output_fds[fd_idx] + 1, NULL, &write_fds, NULL, &timeout);
+        
+        // Write only if select indicates the socket is ready
+        if (select_result > 0 && FD_ISSET(output_fds[fd_idx], &write_fds)) {
+            write(output_fds[fd_idx], buffer, PACKET_SIZE + IP_LENGTH);
+        }
+    }
+}
+
+int main(int argc, char* argv[]) {
+    // Pin to CPU core 1
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        log("Failed to set CPU affinity to core 1", true, true);
+    } else {
+        log("Successfully pinned to CPU core 1", true, true);
+    }
+
+    log("Start");
+    process_args(argc, argv);
+
+    process_fd_args(argc, argv);
+    log("Input FDs: ", false, true);
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
+        log(to_string(output_fds[fd_idx]) + " ", false, false);
+    log("", true, false);
+
+    while (running)
+        if (receive())
+        {
+            set_tag();
+            check_if_known();
+            send();
+        } else {
+            sleep(.01);
+        }
+    return 0;
+}
+scream_receiver.cpp0000644000000000000000000000737215000443353013424 0ustar  rootroot// C++ code for streaming audio data over a network using TCP/UDP protocols.
+
+#include <iostream>
+#include <vector>
+#include "string.h"
+#include <istream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <lame/lame.h>
+#include <algorithm>
+#include <string>
+#include <pthread.h>
+#include <sched.h>
+using namespace std;
+
+// Configuration variables
+#define CHUNK_SIZE 1152 // Chunk size in bytes for audio data
+#define HEADER_SIZE 5 // Size of the Scream header, which contains information about the output audio stream
+#define PACKET_SIZE (CHUNK_SIZE + HEADER_SIZE) // Total packet size including header and chunk
+#define TAG_LENGTH 45
+
+bool running = true; // Flag to control loop execution
+
+uint8_t buffer[TAG_LENGTH + PACKET_SIZE] = {0}; // Vector of pointers to receive buffers for input streams
+
+vector<int> output_fds; // Vector of file descriptors for audio input streams
+
+int listen_fd = 0; // fd for audio input
+
+int data_fd = 0; // fd for writing IPs to
+
+vector<string> known_ip_procs = {};
+
+// Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
+int* config_argv[] = {NULL, // Process File Name
+                      &listen_fd,
+                      &data_fd};
+
+int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
+
+struct sockaddr_in receive_addr;
+
+socklen_t receive_addr_len = sizeof(receive_addr);
+
+void log(const string &message, bool endl = true, bool tag = true) {
+    printf("%s %s%s", tag?"[RTP Listener]":"", message.c_str(), endl?"\n":"");
+}
+
+// Function to process fixed command line arguments like IP address and output port
+void process_args(int argc, char** argv) {
+    if (argc <= config_argc)
+        ::exit(-1);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (config_argv[argi] == 0)
+            continue;
+        else
+            *(config_argv[argi]) = atoi(argv[argi]);
+}
+
+// Function to process variable number of command line arguments representing file descriptors for input streams
+void process_fd_args(int argc, char* argv[]) {
+    for (int argi = config_argc; argi < argc; argi++) {
+        output_fds.push_back(atoi(argv[argi]));
+    }
+}
+
+bool receive() {
+    int bytes = recvfrom(listen_fd, buffer + TAG_LENGTH, PACKET_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
+    if (bytes == -1) 
+        ::exit(-1);
+    if (bytes != PACKET_SIZE)
+        return false;
+    return true;
+}
+
+void send() {
+    memset(buffer, 0, TAG_LENGTH);
+    strcpy(reinterpret_cast<char*>(buffer), inet_ntoa(receive_addr.sin_addr));
+    string ip_address = string(reinterpret_cast<char*>(buffer));
+    if (find(known_ip_procs.begin(), known_ip_procs.end(), ip_address) == known_ip_procs.end()) {
+        known_ip_procs.push_back(ip_address);
+        write(data_fd, (ip_address + "\n").c_str(), ip_address.length());
+    }
+    for (int fd_idx=0;fd_idx<output_fds.size();fd_idx++)
+        write(output_fds[fd_idx], buffer, PACKET_SIZE + TAG_LENGTH);
+}
+
+int main(int argc, char* argv[]) {
+    // Pin to CPU core 1
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        log("Failed to set CPU affinity to core 1", true, true);
+    } else {
+        log("Successfully pinned to CPU core 1", true, true);
+    }
+
+    process_args(argc, argv);
+
+    process_fd_args(argc, argv);
+    log("Input FDs: ", false, true);
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
+        log(to_string(output_fds[fd_idx]) + " ", false, false);
+    log("", true, false);
+
+    while (running)
+        if (receive())
+            send();
+        else
+            sleep(.2);
+    return 0;
+}
+sink_audio_mixer.cpp0000644000000000000000000005131615006141757013625 0ustar  rootroot// C++ code for streaming audio data over a network using TCP/UDP protocols.
+
+#include <iostream>
+#include <vector>
+#include "string.h"
+#include <istream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <lame/lame.h>
+#ifdef __SSE2__
+#include <emmintrin.h>
+#endif
+#include <immintrin.h>
+#include <pthread.h>
+#include <sched.h>
+#include "audio_processor.h"
+#include "dcaenc/dcaenc.h"
+#include <sys/time.h>
+
+AudioProcessor *lameProcessor = NULL;
+using namespace std;
+
+// Configuration variables
+#define CHUNK_SIZE 1152 // Chunk size in bytes for audio data
+#define HEADER_SIZE 5 // Size of the Scream header, which contains information about the output audio stream
+#define PACKET_SIZE (CHUNK_SIZE + HEADER_SIZE) // Total packet size including header and chunk
+
+bool running = true; // Flag to control loop execution
+
+// Buffer system overview:
+// 1. receive_buffers: Array of input buffers, one per audio source. Each buffer stores CHUNK_SIZE bytes of 32-bit audio samples
+// 2. mixing_buffer: Single buffer where all active input streams are mixed together
+// 3. output_buffer: Double-buffered output storage (2x PACKET_SIZE) allowing continuous streaming
+// 4. mp3_buffer: Temporary storage for MP3 encoded data before sending
+
+vector<int32_t*> receive_buffers; // Vector of input buffers, one per audio source
+int32_t* mixing_buffer = new int32_t[CHUNK_SIZE / sizeof(int32_t)]; // Target buffer for mixed audio data
+uint8_t *mixing_buffer_uint8 = (uint8_t*)mixing_buffer; // Byte-level access to mixing buffer for downsampling
+char output_buffer[PACKET_SIZE * 2] = {0}; // Double-buffered output (2x PACKET_SIZE) for continuous streaming
+int output_buffer_pos = 0; // Current write position in output_buffer
+uint8_t mp3_buffer[CHUNK_SIZE * 8]; // Temporary storage for MP3 encoded data
+int mp3_buffer_pos = 0; // Current position in MP3 buffer
+
+lame_t lame = lame_init();
+
+struct sockaddr_in udp_dest_addr = {}; // Socket address structure for UDP socket destination
+int udp_output_fd = 0; // File descriptor for the UDP socket
+
+struct timeval receive_timeout;
+fd_set read_fds;
+
+int tcp_output_fd = 0; // File descriptor for the TCP socket
+int mp3_write_fd = 0; // File descriptor to write mp3 to
+vector<int> output_fds; // Vector of file descriptors for audio input streams
+bool active[1024] = {0}; // Vector to store whether each input stream is active or not
+bool output_active = false; // Flag to indicate if there's any data to be sent over the network
+string output_ip = ""; // IP address of the UDP socket destination
+int output_port = 0; // Port number of the UDP socket destination
+int output_bitdepth = 0; // Bit depth of the output audio stream
+int output_samplerate = 0; // Sample rate of the output audio stream
+int output_channels = 0; // Number of channels in the output audio stream
+int output_chlayout1 = 0; // Channel layout part 1 for the output audio stream
+int output_chlayout2 = 0; // Channel layout part 2 for the output audio stream
+int use_dts = 0; // Is it outputting DTS?
+dcaenc_context_s *dca_context; // DTS encoding context
+
+// Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
+int* config_argv[] = {NULL, // Process File Name
+                      NULL, // output_ip (string)
+                      &output_port,
+                      &output_bitdepth,
+                      &output_samplerate,
+                      &output_channels,
+                      &output_chlayout1,
+                      &output_chlayout2,
+                      &tcp_output_fd,
+                      &mp3_write_fd};
+int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
+
+inline void log(const string &message) {
+    printf("[Sink Output Processor %s:%i] %s\n", output_ip.c_str(), output_port, message.c_str());
+}
+
+// Function to process fixed command line arguments like IP address and output port
+inline void process_args(char* argv[], int argc) {
+    if (argc <= config_argc)
+        ::exit(-1);
+    // cppcheck-suppress ctuArrayIndex
+    output_ip = string(argv[1]);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (config_argv[argi] == 0)
+            continue;
+        else
+            *(config_argv[argi]) = atoi(argv[argi]);
+}
+
+// Function to process variable number of command line arguments representing file descriptors for input streams
+inline void process_fd_args(char* argv[], int argc) {
+    for (int argi = config_argc; argi < argc; argi++)
+        output_fds.push_back(atoi(argv[argi]));
+}
+
+inline void setup_header() { // Sets up the Scream header
+    bool output_samplerate_44100_base = (output_samplerate % 44100) == 0;
+    uint8_t output_samplerate_mult = (output_samplerate_44100_base?44100:48000) / output_samplerate;
+    output_buffer[0] = output_samplerate_mult + (output_samplerate_44100_base << 7);
+    output_buffer[1] = output_bitdepth;
+    output_buffer[2] = output_channels;
+    output_buffer[3] = output_chlayout1;
+    output_buffer[4] = output_chlayout2;
+    log("Set up Header, Rate: " + to_string(output_samplerate) + ", Bit-Depth" + to_string(output_bitdepth) + ", Channels" + to_string(output_channels));
+}
+
+inline void setup_udp() { // Sets up the UDP socket for output
+    log("UDP Set Up");
+    udp_output_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    udp_dest_addr.sin_family = AF_INET;
+    udp_dest_addr.sin_port = htons(output_port);
+    inet_pton(AF_INET, output_ip.c_str(), &udp_dest_addr.sin_addr);
+    int dscp = 63;
+    int val = dscp << 2;
+    setsockopt(udp_output_fd, IPPROTO_IP, IP_TOS, &val, sizeof(val));
+    if (tcp_output_fd > 0) {
+        setsockopt(tcp_output_fd, IPPROTO_IP, IP_TOS, &val, sizeof(val));
+        fd_set fd;
+        timeval tv;
+        FD_ZERO(&fd);
+        FD_SET(tcp_output_fd, &fd);
+        tv.tv_sec = 15;
+        tv.tv_usec = 0;
+        u_long yes = 1;
+        fcntl(tcp_output_fd, F_SETFL, fcntl(tcp_output_fd, F_GETFL, 0) | O_NONBLOCK);
+        fcntl(tcp_output_fd, F_SETFL, fcntl(tcp_output_fd, F_GETFL, 0) | O_NDELAY);
+        setsockopt(tcp_output_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+        int newsize = 1152 * 16;
+        setsockopt(tcp_output_fd, SOL_SOCKET, SO_SNDBUF, &newsize, sizeof(newsize));
+        newsize = 1152 * 8;
+        setsockopt(mp3_write_fd, SOL_SOCKET, SO_SNDBUF, &newsize, sizeof(newsize));
+        bool trew = true;
+        setsockopt(mp3_write_fd, SOL_SOCKET, SOCK_NONBLOCK, &trew, sizeof(trew));
+        int flags = fcntl(mp3_write_fd, F_GETFL, 0);
+        fcntl(mp3_write_fd, F_SETFL, flags | O_NONBLOCK);
+        setsockopt (tcp_output_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        log("TCP Set Up");
+    }
+}
+
+inline void setup_buffers() { // Sets up buffers to receive data from input fds
+    log("Buffers Set Up");
+    setbuf(stdout, NULL);
+    for (int buf_idx = 0; buf_idx < output_fds.size(); buf_idx++)
+        receive_buffers.push_back(static_cast<int32_t*>(malloc(CHUNK_SIZE)));
+}
+
+inline void setup_lame() {
+    lame_set_in_samplerate(lame, output_samplerate);
+    lame_set_VBR(lame, vbr_off);
+    lame_init_params(lame);
+}
+
+bool lame_active = true;
+struct timeval lame_timeout;
+fd_set lame_fd;
+
+inline void write_lame() {
+    FD_ZERO(&lame_fd);
+    FD_SET(mp3_write_fd, &lame_fd);
+    lame_timeout.tv_sec = 0;
+    lame_timeout.tv_usec = 0;
+    int result = select(mp3_write_fd + 1, NULL, &lame_fd, NULL, &lame_timeout);
+    // ScreamRouter will stop reading from the MP3 FD if there's no clients. Don't encode if there's no reader.
+    if (result > 0 && FD_ISSET(mp3_write_fd, &lame_fd)) {
+        if (!lame_active) {
+            lame_active = true;
+            log("MP3 Stream Active");
+        }
+        int32_t processed_buffer[CHUNK_SIZE / sizeof(uint32_t)];
+        int processed_samples = lameProcessor->processAudio(reinterpret_cast<const uint8_t*>(mixing_buffer), processed_buffer);
+
+        mp3_buffer_pos = lame_encode_buffer_interleaved_int(lame, processed_buffer, processed_samples / 2, mp3_buffer, CHUNK_SIZE * 8);
+        
+        if (mp3_buffer_pos > 0)
+            write(mp3_write_fd, mp3_buffer, mp3_buffer_pos);
+    }
+    else {
+        if (lame_active) {
+            lame_active = false;
+            log("MP3 Stream Inactive");
+        }
+    }
+}
+
+// Synchronization mechanism for multiple input streams:
+// 1. Checks which input streams have data ready using non-blocking select()
+// 2. Waits up to 15ms for lagging streams to catch up
+// 3. Marks streams as inactive if they consistently lag behind
+// 4. Detects when inactive streams become active again
+inline void mark_fds_active_inactive() {
+    fd_set check_fds;
+    fd_set active_fds;
+    FD_ZERO(&check_fds);
+    FD_ZERO(&active_fds);
+    int max_fd = 0;
+    int total_active = 0;
+    
+    // Find the max fd and set up active_fds
+    for (int idx = 0; idx < output_fds.size(); idx++) {
+        if (active[idx]) {
+            FD_SET(output_fds[idx], &active_fds);
+            if (output_fds[idx] > max_fd) {
+                max_fd = output_fds[idx];
+            }
+            total_active++;
+        }
+    }
+    
+    // Run a select against all active FDs with zero timeout
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    fd_set ready_fds = active_fds;
+    int result = select(max_fd + 1, &ready_fds, NULL, NULL, &tv);
+    
+    // If all active FDs have data, we're done with this part
+    if (result == total_active) {
+        // All active FDs have data, nothing to check
+    } else {
+        // Store all active FDs that do not have data pending in check_fds
+        for (int idx = 0; idx < output_fds.size(); idx++) {
+            if (active[idx] && !FD_ISSET(output_fds[idx], &ready_fds)) {
+                FD_SET(output_fds[idx], &check_fds);
+            }
+        }
+        
+        // If there are FDs in check_fds, poll every 1ms for up to 20ms
+        if (result < total_active) {
+            struct timeval start_time, current_time;
+            gettimeofday(&start_time, NULL);
+            long elapsed_usec = 0;
+            bool all_good = false;
+            while (elapsed_usec <= 15000) {
+                // Check if 30ms have elapsed for timeout
+                gettimeofday(&current_time, NULL);
+                elapsed_usec = (current_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                                   (current_time.tv_usec - start_time.tv_usec);
+                
+                // Poll with 1ms timeout
+                fd_set temp_check_fds = check_fds;
+                tv.tv_sec = 0;
+                tv.tv_usec = 1000; // 1ms
+                result = select(max_fd + 1, &temp_check_fds, NULL, NULL, &tv);
+                
+                if (result <= 0) {
+                    continue; // No FDs ready or error
+                }
+                
+                // Remove FDs that now have data from check_fds
+                for (int idx = 0; idx < output_fds.size(); idx++) {
+                    if (active[idx] && FD_ISSET(output_fds[idx], &temp_check_fds)) {
+                        FD_CLR(output_fds[idx], &check_fds);
+                    }
+                }
+                
+                // If all FDs now have data, we can stop polling
+                if (FD_ISSET(0, &check_fds) == 0) {
+                    all_good = true;
+                    break;
+                }
+            }
+            if (!all_good) {
+                // After 20ms, mark any remaining FDs in check_fds as false in active[]
+                for (int idx = 0; idx < output_fds.size(); idx++) {
+                    if (active[idx] && FD_ISSET(output_fds[idx], &check_fds)) {
+                        active[idx] = false;
+                        log("Input " + std::to_string(idx) + " inactive");
+                    }
+                }
+            }
+        }
+    }
+    
+    // Run a zero-ms select on all inactive FDs
+    FD_ZERO(&check_fds);
+    max_fd = 0;
+    
+    for (int idx = 0; idx < output_fds.size(); idx++) {
+        if (!active[idx]) {
+            FD_SET(output_fds[idx], &check_fds);
+            if (output_fds[idx] > max_fd) {
+                max_fd = output_fds[idx];
+            }
+        }
+    }
+    
+    if (max_fd > 0) {
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        fd_set temp_check_fds = check_fds;
+        result = select(max_fd + 1, &temp_check_fds, NULL, NULL, &tv);
+        
+        // If any inactive FDs are now active, set them to true in active[]
+        if (result > 0) {
+            for (int idx = 0; idx < output_fds.size(); idx++) {
+                if (!active[idx] && FD_ISSET(output_fds[idx], &temp_check_fds)) {
+                    active[idx] = true;
+                    log("Input " + std::to_string(idx) + " active");
+                    total_active++;
+                }
+            }
+        }
+    }
+}
+
+// Buffer reading mechanism:
+// 1. Uses mark_fds_active_inactive() to determine which inputs are ready
+// 2. For each active input:
+//    - Uses non-blocking select() to check for available data
+//    - Reads data in chunks until CHUNK_SIZE bytes are collected
+//    - Handles partial reads and temporary unavailability
+// 3. Sets output_active flag when data is successfully read
+inline bool handle_receive_buffers() {
+    output_active = false;
+    mark_fds_active_inactive();
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
+        if (active[fd_idx]) {
+            fd_set read_set;
+            struct timeval timeout;
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 15000;
+            
+            for (int bytes_in = 0; running && bytes_in < CHUNK_SIZE;) {
+                FD_ZERO(&read_set);
+                FD_SET(output_fds[fd_idx], &read_set);
+                
+                int ready = select(output_fds[fd_idx] + 1, &read_set, NULL, NULL, &timeout);
+                if (ready < 1) {
+                    break;
+                }
+                
+                if (FD_ISSET(output_fds[fd_idx], &read_set)) {
+                    int bytes_read = read(output_fds[fd_idx], 
+                                        receive_buffers[fd_idx] + bytes_in, 
+                                        CHUNK_SIZE - bytes_in);
+                    if (bytes_read <= 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                        log("Read error: " + string(strerror(errno)));
+                        return false;
+                    }
+                    bytes_in += bytes_read;
+                }
+            }
+            output_active = true;
+        }
+    }
+    return output_active;
+}
+
+// Audio mixing process:
+// 1. Uses SIMD instructions when available (AVX2 or SSE2) for efficient mixing
+// 2. Adds samples from all active input streams into mixing_buffer
+// 3. Includes overflow protection in non-SIMD path
+// 4. Processing happens in 32-bit integer format for maximum dynamic range
+void mix_buffers() {
+#if defined(__AVX2__)
+    for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos += 8) {
+        __m256i mixing = _mm256_setzero_si256();
+        for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
+            if (!active[input_buf_idx])
+                continue;
+            __m256i receive = _mm256_loadu_si256((__m256i*)&receive_buffers[input_buf_idx][buf_pos]);
+            mixing = _mm256_add_epi32(mixing, receive);
+        }
+        _mm256_storeu_si256((__m256i*)&mixing_buffer[buf_pos], mixing);
+    }
+#elif defined(__SSE2__)
+    for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos += 4) {
+        __m128i mixing = _mm_setzero_si128();
+        for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
+            if (!active[input_buf_idx])
+                continue;
+            __m128i receive = _mm_load_si128((__m128i*)&receive_buffers[input_buf_idx][buf_pos]);
+            mixing = _mm_add_epi32(mixing, receive);
+        }
+        _mm_store_si128((__m128i*)&mixing_buffer[buf_pos], mixing);
+    }
+#else
+    for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos++) {
+        mixing_buffer[buf_pos] = 0;
+        for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
+            if (!active[input_buf_idx])
+                continue;
+            mixing_buffer[buf_pos] += receive_buffers[input_buf_idx][buf_pos];
+        }
+        if (mixing_buffer[buf_pos] > INT32_MAX) {
+            mixing_buffer[buf_pos] = INT32_MAX;
+        } else if (mixing_buffer[buf_pos] < INT32_MIN) {
+            mixing_buffer[buf_pos] = INT32_MIN;
+        }
+    }
+#endif
+}
+
+// Buffer format conversion:
+// 1. Converts 32-bit mixed samples to target bit depth (e.g., 16-bit or 24-bit)
+// 2. Writes converted data to output_buffer after header
+// 3. Maintains proper byte alignment for different output formats
+inline void downscale_buffer() {
+    int output_bytedepth = output_bitdepth / 8;
+    for (int input_pos = 0;input_pos < CHUNK_SIZE; input_pos++) {
+        if (output_buffer_pos % output_bytedepth == 0)
+            input_pos += sizeof(uint32_t) - output_bytedepth;
+        output_buffer[HEADER_SIZE + output_buffer_pos++] = mixing_buffer_uint8[input_pos];
+    }
+}
+
+inline void send_buffer() { // Sends a buffer over TCP or UDP depending on which is active
+    if (tcp_output_fd) {
+        int result = send(tcp_output_fd, output_buffer + HEADER_SIZE, CHUNK_SIZE, 0);
+        if (result <= 0) {
+            if (errno != EAGAIN) { // Resource Temporary Unavailable (buffer full)
+                log("Got TCP error: " + to_string(errno) + ")");
+                //close(tcp_output_fd);
+                tcp_output_fd = 0;
+            }
+        }
+    } else
+        sendto(udp_output_fd, output_buffer, PACKET_SIZE, 0, (struct sockaddr *)&udp_dest_addr, sizeof(udp_dest_addr));
+}
+
+// Double buffer management:
+// 1. Implements a sliding window over output_buffer
+// 2. Moves last CHUNK_SIZE bytes to start of buffer when needed
+// 3. Ensures continuous streaming without gaps between packets
+inline void rotate_buffer() {
+    if (output_buffer_pos >= CHUNK_SIZE) {
+        memcpy(output_buffer + HEADER_SIZE, output_buffer + PACKET_SIZE, CHUNK_SIZE);
+        output_buffer_pos -= CHUNK_SIZE;
+    }
+}
+
+inline void dts_encode() {
+    if (use_dts == 1) {
+
+    }
+}
+
+#include <exception>
+#include <stdexcept>
+#include <cxxabi.h>
+#include <execinfo.h>
+
+void print_stacktrace(int skip = 1) {
+    void *callstack[128];
+    int frames = backtrace(callstack, 128);
+    char **strs = backtrace_symbols(callstack, frames);
+    
+    for (int i = skip; i < frames; ++i) {
+        int status;
+        char *demangled = abi::__cxa_demangle(strs[i], NULL, 0, &status);
+        if (status == 0) {
+            std::cerr << demangled << std::endl;
+            free(demangled);
+        } else {
+            std::cerr << strs[i] << std::endl;
+        }
+    }
+    free(strs);
+}
+
+int main(int argc, char* argv[]) {
+    try {
+    // Pin to CPU core 1
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        log("Failed to set CPU affinity to core 1");
+    } else {
+        log("Successfully pinned to CPU core 1");
+    }
+
+    process_args(argv, argc);
+    if (use_dts == 1)
+    {
+        if (output_channels != 6) {
+            log("DTS requires 6 channels (5.1), but only " + to_string(output_channels) + " were specified. Exiting.");
+            exit(1);
+        }
+        if (output_samplerate != 44100 && output_samplerate != 48000) {
+            log("DTS requires 44.1kHz or 48kHz but  " + to_string(output_channels) + " was specified. Exiting.");
+            exit(1);
+        }
+        dca_context = dcaenc_create(
+                        output_samplerate,
+                        DCAENC_CHANNELS_3FRONT_2REAR,
+                        1509000, // DVD bitrate
+                        DCAENC_FLAG_IEC_WRAP | DCAENC_FLAG_LFE | DCAENC_FLAG_28BIT | DCAENC_FLAG_PERFECT_QMF);
+    }
+    lameProcessor = new AudioProcessor(output_channels, 2, 32, output_samplerate, output_samplerate, 1);
+    log("Starting Ouput Mixer, sending UDP to " + output_ip +  ":" + to_string(output_port) + ", TCP Enabled: " + (tcp_output_fd > 0?"Yes":"No"));
+    process_fd_args(argv, argc);
+    log("Input FDs: ");
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
+        log(to_string(output_fds[fd_idx]));
+    setup_header();
+    setup_lame();
+    setup_udp();
+    setup_buffers();
+
+    while (running) {
+        if (!handle_receive_buffers()) {
+            sleep(.5);
+            continue;
+        }
+        mix_buffers();
+        write_lame();
+        downscale_buffer();
+        if (output_buffer_pos < CHUNK_SIZE)
+          continue;
+        send_buffer();
+        rotate_buffer();
+    }
+    } catch (const std::exception& e) {
+        std::cerr << "Caught exception: " << e.what() << std::endl;
+        std::cerr << "Stack trace:" << std::endl;
+        print_stacktrace();
+    } catch (...) {
+        std::cerr << "Caught unknown exception" << std::endl;
+        std::cerr << "Stack trace:" << std::endl;
+        print_stacktrace();
+}
+    return 0;
+}
+source_input_processor.cpp0000644000000000000000000003766415006161511015112 0ustar  rootroot#include <iostream>
+#include <vector>
+#include <string>
+#include <unistd.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <deque>
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <sstream>
+#include <climits>
+#include <mutex>
+#include <condition_variable>
+#include <cstring>
+#include <pthread.h>
+#include <sched.h>
+#include "audio_processor.h"
+
+using namespace std;
+
+#define CHUNK_SIZE 1152
+#define HEADER_SIZE 5
+#define PACKET_SIZE (CHUNK_SIZE + HEADER_SIZE)
+#define TAG_SIZE 45
+
+uint8_t packet_in_buffer[PACKET_SIZE + TAG_SIZE];
+uint8_t receive_buffer[CHUNK_SIZE];
+int32_t processed_buffer[CHUNK_SIZE * 8];
+uint8_t *processed_buffer_int8 = (uint8_t *)processed_buffer;
+
+int process_buffer_pos = 0;
+
+string input_ip = "";
+int fd_in = 0, fd_out = 0, data_fd_in = 0;
+int output_channels = 0, output_samplerate = 0, output_chlayout1 = 0, output_chlayout2 = 0;
+int delay = 0, timeshift_buffer_dur = 0;
+float volume = 1;
+std::chrono::steady_clock::time_pointtimeshift_last_change;
+unsigned long timeshift_buffer_pos = 0;
+float timeshift_backshift = 0;
+std::mutex timeshift_mutex;
+std::condition_variable timeshift_condition;
+
+const auto TIMESHIFT_NOREMOVE_TIME = std::chrono::minutes(5);
+
+std::deque<std::pair<std::chrono::steady_clock::time_point, std::vector<uint8_t>>> timeshift_buffer;
+std::atomic<bool> threads_running(true);
+
+uint8_t input_header[HEADER_SIZE] = {0};
+int input_channels = 0, input_samplerate = 0, input_bitdepth = 0, input_chlayout1 = 0, input_chlayout2 = 0;
+
+unique_ptr<AudioProcessor> audioProcessor = NULL;
+std::mutex audioProcessor_mutex;
+
+float new_eq[EQ_BANDS] = {1};
+
+int *int_args[] = {
+    NULL, &fd_in, &fd_out, &data_fd_in, &output_channels, &output_samplerate, &output_chlayout1, &output_chlayout2,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    &delay, &timeshift_buffer_dur,
+};
+
+float *float_args[] = {
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    &volume,
+    &new_eq[0], &new_eq[1], &new_eq[2], &new_eq[3], &new_eq[4], &new_eq[5], &new_eq[6], &new_eq[7], &new_eq[8], &new_eq[9],
+    &new_eq[10],&new_eq[11],&new_eq[12],&new_eq[13],&new_eq[14],&new_eq[15],&new_eq[16],&new_eq[17],
+    NULL, NULL,
+};
+
+int config_argc = sizeof(int_args) / sizeof(int *);
+
+void log(const string& message) {
+    cerr << "[Source Input Processor " << getpid() << "] " << message << endl;
+}
+
+void process_args(int argc, char *argv[]) {
+    if (argc <= config_argc) {
+        log("Too few args");
+        threads_running = false;
+        return; // Return early to prevent accessing out-of-bounds array elements
+    }
+    input_ip = string(argv[1]);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (int_args[argi] != NULL)
+            *(int_args[argi]) = atoi(argv[argi + 1]);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (float_args[argi] != NULL)
+            *(float_args[argi]) = atof(argv[argi + 1]);
+}
+
+// This function checks if the incoming packet header has changed and updates the input parameters accordingly.
+void check_update_header() {
+    // Compare the current header with the new one received in the packet buffer.
+    if (memcmp(input_header, packet_in_buffer + TAG_SIZE, HEADER_SIZE) != 0) {
+        log("Got new header");
+        // Update the input header with the new data.
+        memcpy(input_header, packet_in_buffer + TAG_SIZE, HEADER_SIZE);
+        
+        // Extract sample rate from the header and convert it to integer format.
+        input_samplerate = (input_header[0] & 0x7F) * ((input_header[0] & 0x80) ? 44100 : 48000);
+        
+        // Extract bit depth from the header and convert it to integer format.
+        input_bitdepth = input_header[1];
+        
+        // Extract number of channels from the header and convert it to integer format.
+        input_channels = input_header[2];
+        
+        // Extract channel layout from the header and convert it to integer format.
+        input_chlayout1 = input_header[3];
+        input_chlayout2 = input_header[4];
+        
+        log("Sample Rate: " + to_string(input_samplerate) + " -> " + to_string(output_samplerate));
+        log("Bit Depth: " + to_string(input_bitdepth) + " -> 32");
+        log("Channels: " + to_string(input_channels) + " -> " + to_string(output_channels));
+        
+        // Lock the audio processor mutex before updating the audio processor settings.
+        audioProcessor_mutex.lock();
+        // Create a new AudioProcessor instance with updated parameters.
+        audioProcessor = make_unique<AudioProcessor>(input_channels, output_channels, input_bitdepth, input_samplerate, output_samplerate, volume);
+        audioProcessor->setEqualizer(new_eq);
+        // Unlock the audio processor mutex after updating the settings.
+        audioProcessor_mutex.unlock();
+    }
+}
+
+void receive_data_thread() {
+    fd_set read_fds;
+    struct timeval timeout;
+    
+    while (threads_running) {
+        // Set up select with 5ms timeout
+        FD_ZERO(&read_fds);
+        FD_SET(fd_in, &read_fds);
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 5000; // 5ms timeout
+        
+        // Wait for data with timeout
+        int select_result = select(fd_in + 1, &read_fds, NULL, NULL, &timeout);
+        
+        // If select failed or timed out, continue the loop
+        if (select_result <= 0) {
+            continue;
+        }
+        
+        // Check if our fd is ready for reading
+        if (!FD_ISSET(fd_in, &read_fds)) {
+            continue;
+        }
+        
+        int bytes;
+        while ((bytes = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE)) != TAG_SIZE + PACKET_SIZE ||
+                (strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)) {
+                    if (bytes == -1)
+                        threads_running = false;
+            }
+        check_update_header();
+        auto received_time = std::chrono::steady_clock::now();
+        std::vector<uint8_t> new_packet(CHUNK_SIZE);
+        memcpy(new_packet.data(), packet_in_buffer + TAG_SIZE + HEADER_SIZE, CHUNK_SIZE);
+        
+        // Critical section - add data to buffer
+        {
+            std::lock_guard<std::mutex> lock(timeshift_mutex);
+            timeshift_buffer.emplace_back(received_time, std::move(new_packet));
+            // Notify while holding the lock - this is actually the recommended pattern for condition variables
+            timeshift_condition.notify_one(); // Notify waiting threads that new data is available
+        }
+    }
+}
+
+bool data_ready() {
+    // Check if we have data and haven't reached the end
+    if (timeshift_buffer.empty() || timeshift_buffer.size() <= timeshift_buffer_pos) {
+        return false;
+    }
+
+    // Get current packet's scheduled play time
+    auto current_time = timeshift_buffer.at(timeshift_buffer_pos).first + 
+                       std::chrono::milliseconds(delay) + 
+                       std::chrono::milliseconds((int)(timeshift_backshift*1000));
+
+    // If we're at the last packet, don't allow playback
+    if (timeshift_buffer_pos == timeshift_buffer.size() - 1) {
+        return false;
+    }
+
+    // Otherwise check if it's time to play this packet
+    return current_time <= std::chrono::steady_clock::now();
+}
+
+bool receive_data() {
+    try {
+        std::unique_lock<std::mutex> process_lock(timeshift_mutex);
+        
+        // If no data is ready, wait for notification with a timeout
+        if (!data_ready()) {
+            timeshift_condition.wait_for(process_lock, std::chrono::seconds(1), [&]() -> bool {
+                return data_ready();
+            });
+        }
+
+        if (!data_ready())
+            return false;
+        
+        // Copy the data while holding the lock
+        memcpy(receive_buffer, timeshift_buffer.at(timeshift_buffer_pos++).second.data(), CHUNK_SIZE);
+
+        // Check if we need to clean up old data
+        if (!timeshift_buffer.empty() && 
+            timeshift_buffer.front().first + std::chrono::milliseconds(delay) + 
+            std::chrono::milliseconds((int)(timeshift_backshift*1000)) + 
+            std::chrono::seconds(timeshift_buffer_dur) < std::chrono::steady_clock::now()) {
+            
+            if (timeshift_last_change + TIMESHIFT_NOREMOVE_TIME < std::chrono::steady_clock::now()) {
+                timeshift_buffer.pop_front();
+                timeshift_buffer_pos--;
+            }
+        }
+        
+        return true;
+        
+    } catch (std::out_of_range) {
+        log("Out of range 1");
+        return false;
+    }
+}
+
+void change_timeshift() {
+    if (timeshift_buffer.size() == 0) {
+        timeshift_buffer_pos = 0;
+        timeshift_backshift = 0;
+    } else {
+        timeshift_mutex.lock();
+        auto desired_time = std::chrono::steady_clock::now() - 
+                            std::chrono::milliseconds((int)(timeshift_backshift*1000)) - 
+                            std::chrono::milliseconds(delay);
+        long closest_buffer_delta = LONG_MAX;
+        
+        for (long i=0; i<timeshift_buffer.size(); i++) {
+            std::chrono::steady_clock::duration cur_delta = timeshift_buffer.at(i).first - desired_time;
+            long cur_delta_num = abs(std::chrono::duration_cast<std::chrono::milliseconds>(cur_delta).count());
+            if (cur_delta_num < closest_buffer_delta) {
+                closest_buffer_delta = cur_delta_num;
+                timeshift_buffer_pos = i;
+            }
+        }
+        
+        timeshift_backshift = std::chrono::duration_cast<std::chrono::duration<float>>(
+            std::chrono::steady_clock::now() - timeshift_buffer.at(timeshift_buffer_pos).first + 
+            std::chrono::milliseconds(delay)
+        ).count();
+        timeshift_mutex.unlock();
+    }
+}
+
+void data_input_thread() {
+    char line[256];
+    fd_set read_fds;
+    struct timeval timeout;
+
+    while (threads_running) {
+        // Set up select with 5ms timeout
+        FD_ZERO(&read_fds);
+        FD_SET(data_fd_in, &read_fds);
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 5000; // 5ms timeout
+        
+        // Wait for data with timeout
+        int select_result = select(data_fd_in + 1, &read_fds, NULL, NULL, &timeout);
+        
+        // If select failed or timed out, continue the loop
+        if (select_result <= 0) {
+            continue;
+        }
+        
+        // Check if our fd is ready for reading
+        if (!FD_ISSET(data_fd_in, &read_fds)) {
+            continue;
+        }
+        
+        if (read(data_fd_in, line, sizeof(line)) > 0) {
+            std::string input(line);
+            std::istringstream iss(input);
+            std::string command;
+
+            while (std::getline(iss, command)) {
+                std::istringstream command_stream(command);
+                std::string variable;
+                float value;
+
+                if (command_stream >> variable >> value) {
+                    if (variable[0] == 'b' && variable.length() > 1 && std::isdigit(variable[1])) {
+                        int index = std::stoi(variable.substr(1)) - 1;
+                        if (index >= 0 && index < EQ_BANDS) {
+                            new_eq[index] = value;
+                        }
+                    } else if (variable == "v") {
+                        if (!audioProcessor)
+                            continue;
+                        volume = value;
+                        audioProcessor_mutex.lock();
+                        audioProcessor->setVolume(volume);
+                        audioProcessor_mutex.unlock();
+                    } else if (variable == "t") {
+                        timeshift_backshift = value;
+                        change_timeshift();
+                    } else if (variable == "d") {
+                        delay = (int)value;
+                        change_timeshift();
+                    }
+                } else if (command == "a") {
+                    if (!audioProcessor)
+                        continue;
+                    audioProcessor_mutex.lock();
+                    audioProcessor->setEqualizer(new_eq);
+                    audioProcessor_mutex.unlock();
+                }
+            }
+        }
+        
+        // No need for sleep here as select already provides the timeout
+    }
+}
+
+void write_output_buffer() {
+    write(fd_out, processed_buffer_int8, CHUNK_SIZE);
+    for (int pos = 0; pos < sizeof(processed_buffer) - CHUNK_SIZE; pos++)
+        processed_buffer_int8[pos] = processed_buffer_int8[pos + CHUNK_SIZE];
+    process_buffer_pos -= CHUNK_SIZE / sizeof(int32_t);
+}
+
+#include <exception>
+#include <stdexcept>
+#include <cxxabi.h>
+#include <execinfo.h>
+
+void print_stacktrace() {
+    const int MAX_STACK_FRAMES = 100;
+    void* stack_traces[MAX_STACK_FRAMES];
+    int trace_size = backtrace(stack_traces, MAX_STACK_FRAMES);
+    char** stack_strings = backtrace_symbols(stack_traces, trace_size);
+
+    std::cerr << "Stack trace:" << std::endl;
+    for (int i = 0; i < trace_size; ++i) {
+        std::string stack_string(stack_strings[i]);
+        size_t pos = stack_string.find('(');
+        size_t pos2 = stack_string.find('+', pos);
+        if (pos != std::string::npos && pos2 != std::string::npos) {
+            std::string mangled_name = stack_string.substr(pos + 1, pos2 - pos - 1);
+            int status;
+            char* demangled_name = abi::__cxa_demangle(mangled_name.c_str(), nullptr, nullptr, &status);
+            if (status == 0) {
+                std::cerr << "  " << i << ": " << demangled_name << std::endl;
+                free(demangled_name);
+            } else {
+                std::cerr << "  " << i << ": " << stack_strings[i] << std::endl;
+            }
+        } else {
+            std::cerr << "  " << i << ": " << stack_strings[i] << std::endl;
+        }
+    }
+    free(stack_strings);
+}
+
+void monitor_buffer_levels() {
+        while (threads_running) {
+        
+        // Check process buffer
+        size_t process_buffer_size = process_buffer_pos * sizeof(int32_t);
+        
+        // Calculate percentages
+        double process_buffer_percentage = (double)process_buffer_size / (CHUNK_SIZE * 8) * 100;
+        
+        // Log if any buffer exceeds thresholds
+        if (process_buffer_percentage > 100) {
+            log("CRITICAL: Buffer overflow - Process: " + std::to_string(process_buffer_percentage) + "%");
+        }
+        
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+
+int main(int argc, char *argv[]) {
+    try {
+        // Pin to CPU core 1
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(1, &cpuset);
+        pthread_t current_thread = pthread_self();
+        if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+            log("Failed to set CPU affinity to core 1");
+        } else {
+            log("Successfully pinned to CPU core 1");
+        }
+
+        timeshift_last_change = std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration::min());
+        process_args(argc, argv);
+        log("Starting source input processor " + input_ip);
+
+        std::thread receive_thread(receive_data_thread);
+        std::thread data_thread(data_input_thread);
+        std::thread monitor_thread(monitor_buffer_levels);
+
+        while (threads_running) {
+            if (!receive_data()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            if (audioProcessor) {
+                audioProcessor_mutex.lock();
+                int processed_samples = audioProcessor->processAudio(receive_buffer, processed_buffer + process_buffer_pos);
+                audioProcessor_mutex.unlock();
+                process_buffer_pos += processed_samples;
+
+                while (process_buffer_pos >= CHUNK_SIZE / sizeof(int32_t))
+                    write_output_buffer();
+            }
+        }
+
+        receive_thread.join();
+        data_thread.join();
+        monitor_thread.join();
+
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "Exception caught: " << e.what() << std::endl;
+        print_stacktrace();
+        return 1;
+    } catch (...) {
+        std::cerr << "Unknown exception caught" << std::endl;
+        print_stacktrace();
+        return 1;
+    }
+}
+speaker_mix.cpp0000644000000000000000000003037614774646173012623 0ustar  rootroot#include "audio_processor.h"
+#include <emmintrin.h>
+#include <immintrin.h>
+
+
+void AudioProcessor::updateSpeakerMix() {
+    // Fills out the speaker mix table speaker_mix[][] with the current configuration.
+    memset(speaker_mix, 0, sizeof(speaker_mix));
+    // speaker_mix[input channel][output channel] = gain;
+    // Ex: To map Left on Stereo to Right on Stereo at half volume you would do:
+    // speaker_mix[0][1] = .5;
+    switch (inputChannels)
+    {
+    case 1: // Mono, Ch 0: Left
+        // Mono -> All
+        for (int output_channel = 0; output_channel < MAX_CHANNELS; output_channel++) // Write the left (first) speaker to every channel
+            speaker_mix[0][output_channel] = 1;
+        break;
+    case 2: // Stereo, Ch 0: Left, Ch 1: Right
+        switch (outputChannels)
+        {
+        case 1:                     // Stereo -> Mono
+            speaker_mix[0][0] = .5; // Left to mono .5 vol
+            speaker_mix[1][0] = .5; // Right to mono .5 vol
+            break;
+        case 2:                    // Stereo -> Stereo
+            speaker_mix[0][0] = 1; // Left to Left
+            speaker_mix[1][1] = 1; // Right to Right
+            break;
+        case 4:
+            speaker_mix[0][0] = 1; // Left to Front Left
+            speaker_mix[1][1] = 1; // Right to Front Right
+            speaker_mix[0][2] = 1; // Left to Back Left
+            speaker_mix[1][3] = 1; // Right to Back Right
+            break;
+        case 6: // Stereo -> 5.1 Surround
+            // FL FR C LFE BL BR
+            speaker_mix[0][0] = 1;  // Left to Front Left
+            speaker_mix[0][5] = 1;  // Left to Rear Left
+            speaker_mix[1][1] = 1;  // Right to Front Right
+            speaker_mix[1][6] = 1;  // Right to Rear Right
+            speaker_mix[0][3] = .5; // Left to Center Half Vol
+            speaker_mix[1][3] = .5; // Right to Center Half Vol
+            speaker_mix[0][4] = .5; // Right to Sub Half Vol
+            speaker_mix[1][4] = .5; // Left to Sub Half Vol
+            break;
+        case 8: // Stereo -> 7.1 Surround
+            // FL FR C LFE BL BR SL SR
+            speaker_mix[0][0] = 1;  // Left to Front Left
+            speaker_mix[0][6] = 1;  // Left to Side Left
+            speaker_mix[0][4] = 1;  // Left to Rear Left
+            speaker_mix[1][1] = 1;  // Right to Front Right
+            speaker_mix[1][7] = 1;  // Right to Side Right
+            speaker_mix[1][5] = 1;  // Right to Rear Right
+            speaker_mix[0][2] = .5; // Left to Center Half Vol
+            speaker_mix[1][2] = .5; // Right to Center Half Vol
+            speaker_mix[0][3] = .5; // Right to Sub Half Vol
+            speaker_mix[1][3] = .5; // Left to Sub Half Vol
+            break;
+        }
+        break;
+    case 4:
+        switch (outputChannels)
+        {
+        case 1:                      // Quad -> Mono
+            speaker_mix[0][0] = .25; // Front Left to Mono
+            speaker_mix[1][0] = .25; // Front Right to Mono
+            speaker_mix[2][0] = .25; // Rear Left to Mono
+            speaker_mix[3][0] = .25; // Rear Right to Mono
+            break;
+        case 2:                     // Quad -> Stereo
+            speaker_mix[0][0] = .5; // Front Left to Left
+            speaker_mix[1][1] = .5; // Front Right to Right
+            speaker_mix[2][0] = .5; // Rear Left to Left
+            speaker_mix[3][1] = .5; // Rear Right to Right
+            break;
+        case 4:
+            speaker_mix[0][0] = 1; // Front Left to Front Left
+            speaker_mix[1][1] = 1; // Front Right to Front Right
+            speaker_mix[2][2] = 1; // Rear Left to Rear Left
+            speaker_mix[3][3] = 1; // Rear Right to Rear Right
+            break;
+        case 6: // Quad -> 5.1 Surround
+            // FL FR C LFE BL BR
+            speaker_mix[0][0] = 1;   // Front Left to Front Left
+            speaker_mix[1][1] = 1;   // Front Right to Front Right
+            speaker_mix[0][2] = .5;  // Front Left to Center
+            speaker_mix[1][2] = .5;  // Front Right to Center
+            speaker_mix[0][3] = .25; // Front Left to LFE
+            speaker_mix[1][3] = .25; // Front Right to LFE
+            speaker_mix[2][3] = .25; // Rear Left to LFE
+            speaker_mix[3][3] = .25; // Rear Right to LFE
+            speaker_mix[2][4] = 1;   // Rear Left to Rear Left
+            speaker_mix[3][5] = 1;   // Rear Right to Rear Right
+            break;
+        case 8: // Quad -> 7.1 Surround
+            // FL FR C LFE BL BR SL SR
+            speaker_mix[0][0] = 1;   // Front Left to Front Left
+            speaker_mix[1][1] = 1;   // Front Right to Front Right
+            speaker_mix[0][2] = .5;  // Front Left to Center
+            speaker_mix[1][2] = .5;  // Front Right to Center
+            speaker_mix[0][3] = .25; // Front Left to LFE
+            speaker_mix[1][3] = .25; // Front Right to LFE
+            speaker_mix[2][3] = .25; // Rear Left to LFE
+            speaker_mix[3][3] = .25; // Rear Right to LFE
+            speaker_mix[2][4] = 1;   // Rear Left to Rear Left
+            speaker_mix[3][5] = 1;   // Rear Right to Rear Right
+            speaker_mix[0][6] = .5;  // Front Left to Side Left
+            speaker_mix[1][7] = .5;  // Front Right to Side Right
+            speaker_mix[2][6] = .5;  // Rear Left to Side Left
+            speaker_mix[3][7] = .5;  // Rear Right to Side Right
+            break;
+        }
+        break;
+    case 6:
+        switch (outputChannels)
+        {
+        case 1:                     // 5.1 Surround -> Mono
+            speaker_mix[0][0] = .2; // Front Left to Mono
+            speaker_mix[1][0] = .2; // Front Right to Mono
+            speaker_mix[2][0] = .2; // Center to Mono
+            speaker_mix[4][0] = .2; // Rear Left to Mono
+            speaker_mix[5][0] = .2; // Rear Right to Mono
+            break;
+        case 2:                      // 5.1 Surround -> Stereo
+            speaker_mix[0][0] = .33; // Front Left to Left
+            speaker_mix[1][1] = .33; // Front Right to Right
+            speaker_mix[2][0] = .33; // Center to Left
+            speaker_mix[2][1] = .33; // Center to Right
+            speaker_mix[4][0] = .33; // Rear Left to Left
+            speaker_mix[5][1] = .33; // Rear Right to Right
+            break;
+        case 4:
+            speaker_mix[0][0] = .66; // Front Left to Front Left
+            speaker_mix[1][1] = .66; // Front Right to Front Right
+            speaker_mix[2][0] = .33; // Center to Front Left
+            speaker_mix[2][1] = .33; // Center to Front Right
+            speaker_mix[4][2] = 1;   // Rear Left to Rear Left
+            speaker_mix[5][3] = 1;   // Rear Right to Rear Right
+            break;
+        case 6: // 5.1 Surround -> 5.1 Surround
+            // FL FR C LFE BL BR
+            speaker_mix[0][0] = 1; // Front Left to Front Left
+            speaker_mix[1][1] = 1; // Front Right to Front Right
+            speaker_mix[2][2] = 1; // Center to Center
+            speaker_mix[3][3] = 1; // LFE to LFE
+            speaker_mix[4][4] = 1; // Rear Left to Rear Left
+            speaker_mix[5][5] = 1; // Rear Right to Rear Right
+            break;
+        case 8: // 5.1 Surround -> 7.1 Surround
+            // FL FR C LFE BL BR SL SR
+            speaker_mix[0][0] = 1;  // Front Left to Front Left
+            speaker_mix[1][1] = 1;  // Front Right to Front Right
+            speaker_mix[2][2] = 1;  // Center to Center
+            speaker_mix[3][3] = 1;  // LFE to LFE
+            speaker_mix[4][4] = 1;  // Rear Left to Rear Left
+            speaker_mix[5][5] = 1;  // Rear Right to Rear Right
+            speaker_mix[0][6] = .5; // Front Left to Side Left
+            speaker_mix[1][7] = .5; // Front Right to Side Right
+            speaker_mix[4][6] = .5; // Rear Left to Side Left
+            speaker_mix[5][7] = .5; // Rear Right to Side Right
+            break;
+        }
+        break;
+    case 8:
+        switch (outputChannels)
+        {
+        case 1:                              // 7.1 Surround -> Mono
+            speaker_mix[0][0] = 1.0f / 7.0f; // Front Left to Mono
+            speaker_mix[1][0] = 1.0f / 7.0f; // Front Right to Mono
+            speaker_mix[2][0] = 1.0f / 7.0f; // Center to Mono
+            speaker_mix[4][0] = 1.0f / 7.0f; // Rear Left to Mono
+            speaker_mix[5][0] = 1.0f / 7.0f; // Rear Right to Mono
+            speaker_mix[6][0] = 1.0f / 7.0f; // Side Left to Mono
+            speaker_mix[7][0] = 1.0f / 7.0f; // Side Right to Mono
+            break;
+        case 2:                       // 7.1 Surround -> Stereo
+            speaker_mix[0][0] = .5;   // Front Left to Left
+            speaker_mix[1][1] = .5;   // Front Right to Right
+            speaker_mix[2][0] = .25;  // Center to Left
+            speaker_mix[2][1] = .25;  // Center to Right
+            speaker_mix[4][0] = .125; // Rear Left to Left
+            speaker_mix[5][1] = .125; // Rear Right to Right
+            speaker_mix[6][0] = .125; // Side Left to Left
+            speaker_mix[7][1] = .125; // Side Right to Right
+            break;
+        case 4:                      // 7.1 Surround -> Quad
+            speaker_mix[0][0] = .5;  // Front Left to Front Left
+            speaker_mix[1][1] = .5;  // Front Right to Front Right
+            speaker_mix[2][0] = .25; // Center to Front Left
+            speaker_mix[2][1] = .25; // Center to Front Right
+            speaker_mix[4][2] = .66; // Rear Left to Rear Left
+            speaker_mix[5][3] = .66; // Rear Right to Rear Right
+            speaker_mix[6][0] = .25; // Side Left to Front Left
+            speaker_mix[7][1] = .25; // Side Left to Front Right
+            speaker_mix[6][2] = .33; // Side Left to Rear Left
+            speaker_mix[7][3] = .33; // Side Left to Rear Right
+            break;
+        case 6: // 7.1 Surround -> 5.1 Surround
+            // FL FR C LFE BL BR
+            speaker_mix[0][0] = .66; // Front Left to Front Left
+            speaker_mix[1][1] = .66; // Front Right to Front Right
+            speaker_mix[2][2] = 1;   // Center to Center
+            speaker_mix[3][3] = 1;   // LFE to LFE
+            speaker_mix[4][4] = .66; // Rear Left to Rear Left
+            speaker_mix[5][5] = .66; // Rear Right to Rear Right
+            speaker_mix[6][0] = .33; // Side Left to Front Left
+            speaker_mix[7][1] = .33; // Side Right to Front Right
+            speaker_mix[6][4] = .33; // Side Left to Rear Left
+            speaker_mix[7][5] = .33; // Side Right to Rear Right
+            break;
+        case 8: // 7.1 Surround -> 7.1 Surround
+            // FL FR C LFE BL BR SL SR
+            speaker_mix[0][0] = 1; // Front Left to Front Left
+            speaker_mix[1][1] = 1; // Front Right to Front Right
+            speaker_mix[2][2] = 1; // Center to Center
+            speaker_mix[3][3] = 1; // LFE to LFE
+            speaker_mix[4][4] = 1; // Rear Left to Rear Left
+            speaker_mix[5][5] = 1; // Rear Right to Rear Right
+            speaker_mix[6][6] = 1; // Side Left to Side Left
+            speaker_mix[7][7] = 1; // Side Right to Side Right
+            break;
+        }
+        break;
+    }
+}
+
+void AudioProcessor::mixSpeakers() {
+    //memset(remixed_channel_buffers, 0, sizeof(remixed_channel_buffers));
+    for (int pos = 0; pos < channel_buffer_pos; pos++) {
+        for (int output_channel = 0; output_channel < outputChannels; output_channel++) {
+            float mixed_sample = 0.0f;
+            for (int input_channel = 0; input_channel < inputChannels; input_channel++) {
+                mixed_sample += static_cast<float>(channel_buffers[input_channel][pos]) 
+                                * speaker_mix[input_channel][output_channel];
+            }
+            // Apply soft clipping
+            mixed_sample = softClip(mixed_sample / INT32_MAX);
+            // Convert back to int32_t
+            remixed_channel_buffers[output_channel][pos] = static_cast<int32_t>(mixed_sample * INT32_MAX);
+        }
+    }
+}
+
+void AudioProcessor::splitBufferToChannels() {
+    for (int i = 0; i < resample_buffer_pos; i++) {
+        int channel = i % inputChannels;
+        int pos = i / inputChannels;
+        channel_buffers[channel][pos] = resampled_buffer[i];
+    }
+    channel_buffer_pos = resample_buffer_pos / inputChannels;
+}
+
+void AudioProcessor::mergeChannelsToBuffer() {
+    merged_buffer_pos = 0;
+    for (int pos = 0; pos < channel_buffer_pos; ++pos) {
+        for (int channel = 0; channel < outputChannels; ++channel) {
+            merged_buffer[merged_buffer_pos++] = remixed_channel_buffers[channel][pos];
+        }
+    }
+}
+audio_processor.h0000644000000000000000000000444314707023704013136 0ustar  rootroot#ifndef AUDIO_PROCESSOR_H
+#define AUDIO_PROCESSOR_H
+
+#include <cstdint>
+#include <cstring>
+#include <thread>
+#include <atomic>
+#include "libsamplerate/include/samplerate.h"
+
+#define MAX_CHANNELS 8
+#define EQ_BANDS 18
+#define CHUNK_SIZE 1152
+
+struct SRC_STATE_tag;
+typedef SRC_STATE_tag SRC_STATE;
+class Biquad;
+
+class AudioProcessor {
+public:
+    AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, int inputSampleRate, int outputSampleRate, float volume);
+    ~AudioProcessor();
+
+    int processAudio(const uint8_t* inputBuffer, int32_t* outputBuffer);
+    void setVolume(float newVolume);
+    void setEqualizer(const float* newEq);
+
+protected:
+    int inputChannels, outputChannels;
+    int inputSampleRate, outputSampleRate;
+    int inputBitDepth;
+    float volume;
+    float eq[EQ_BANDS];
+    float speaker_mix[MAX_CHANNELS][MAX_CHANNELS];
+
+    uint8_t receive_buffer[CHUNK_SIZE * 4];
+    int32_t scaled_buffer[CHUNK_SIZE * 32];
+    uint8_t *scaled_buffer_int8 = (uint8_t *)scaled_buffer;
+    int32_t resampled_buffer[CHUNK_SIZE * 32];
+    int32_t channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 32];
+    int32_t remixed_channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 32];
+    int32_t merged_buffer[CHUNK_SIZE * 32];
+    int32_t processed_buffer[CHUNK_SIZE * 32]; 
+
+    int scale_buffer_pos = 0;
+    int process_buffer_pos = 0;
+    int merged_buffer_pos = 0;
+    int resample_buffer_pos = 0;
+    int channel_buffer_pos = 0;
+
+    SRC_STATE* sampler;
+    SRC_STATE* downsampler;
+    float resampler_data_in[CHUNK_SIZE * MAX_CHANNELS * 8];
+    float resampler_data_out[CHUNK_SIZE * MAX_CHANNELS * 8];
+
+    Biquad* filters[MAX_CHANNELS][EQ_BANDS];
+    Biquad* dcFilters[MAX_CHANNELS];
+
+    void updateSpeakerMix();
+    void setupBiquad();
+    void initializeSampler();
+    void scaleBuffer();
+    void volumeAdjust();
+    float softClip(float sample);
+    void resample();
+    void downsample();
+    void splitBufferToChannels();
+    void mixSpeakers();
+    void equalize();
+    void mergeChannelsToBuffer();
+    void noiseShapingDither();
+    void setupDCFilter();
+    void removeDCOffset();
+    bool isProcessingRequired();
+    bool isProcessingRequiredCheck();
+    void monitorBuffers();
+
+    // Buffer monitoring thread
+    std::thread monitor_thread;
+    std::atomic<bool> monitor_running;
+};
+
+#endif // AUDIO_PROCESSOR_H
+layout_mixer.h0000644000000000000000000000000014672710230012436 0ustar  rootrootutils.h0000644000000000000000000000000014650565122011061 0ustar  rootrootlayout_mixer.cpp0000644000000000000000000003174314774634217013030 0ustar  rootroot#include <stdexcept>
+#include <string.h>
+#define MAX_CHANNELS 8
+class layout_mixer {
+public:
+    float speaker_mix[MAX_CHANNELS][MAX_CHANNELS] = {{1}};
+    int input_channels = 0;
+    int output_channels = 0;
+    
+    // constructor to initialize the variables
+    layout_mixer(int input_ch, int output_ch) : input_channels(input_ch), output_channels(output_ch) {
+        if (input_ch > MAX_CHANNELS || output_ch > MAX_CHANNELS) {
+            throw std::invalid_argument("Number of channels cannot exceed " + std::to_string(MAX_CHANNELS));
+        }
+        build_speaker_mix_table();
+    }
+
+    void build_speaker_mix_table()
+    { // Fills out the speaker mix table speaker_mix[][] with the current configuration.
+        memset(speaker_mix, 0, sizeof(speaker_mix));
+        // speaker_mix[input channel][output channel] = gain;
+        // Ex: To map Left on Stereo to Right on Stereo at half volume you would do:
+        // speaker_mix[0][1] = .5;
+        switch (input_channels)
+        {
+        case 1: // Mono, Ch 0: Left
+            // Mono -> All
+            for (int output_channel = 0; output_channel < MAX_CHANNELS; output_channel++) // Write the left (first) speaker to every channel
+                speaker_mix[0][output_channel] = 1;
+            break;
+        case 2: // Stereo, Ch 0: Left, Ch 1: Right
+            switch (output_channels)
+            {
+            case 1:                     // Stereo -> Mono
+                speaker_mix[0][0] = .5; // Left to mono .5 vol
+                speaker_mix[1][0] = .5; // Right to mono .5 vol
+                break;
+            case 2:                    // Stereo -> Stereo
+                speaker_mix[0][0] = 1; // Left to Left
+                speaker_mix[1][1] = 1; // Right to Right
+                break;
+            case 4:
+                speaker_mix[0][0] = 1; // Left to Front Left
+                speaker_mix[1][1] = 1; // Right to Front Right
+                speaker_mix[0][2] = 1; // Left to Back Left
+                speaker_mix[1][3] = 1; // Right to Back Right
+                break;
+            case 6: // Stereo -> 5.1 Surround
+                // FL FR C LFE BL BR
+                speaker_mix[0][0] = 1;  // Left to Front Left
+                speaker_mix[0][5] = 1;  // Left to Rear Left
+                speaker_mix[1][1] = 1;  // Right to Front Right
+                speaker_mix[1][6] = 1;  // Right to Rear Right
+                speaker_mix[0][3] = .5; // Left to Center Half Vol
+                speaker_mix[1][3] = .5; // Right to Center Half Vol
+                speaker_mix[0][4] = .5; // Right to Sub Half Vol
+                speaker_mix[1][4] = .5; // Left to Sub Half Vol
+                break;
+            case 8: // Stereo -> 7.1 Surround
+                // FL FR C LFE BL BR SL SR
+                speaker_mix[0][0] = 1;  // Left to Front Left
+                speaker_mix[0][6] = 1;  // Left to Side Left
+                speaker_mix[0][4] = 1;  // Left to Rear Left
+                speaker_mix[1][1] = 1;  // Right to Front Right
+                speaker_mix[1][7] = 1;  // Right to Side Right
+                speaker_mix[1][5] = 1;  // Right to Rear Right
+                speaker_mix[0][2] = .5; // Left to Center Half Vol
+                speaker_mix[1][2] = .5; // Right to Center Half Vol
+                speaker_mix[0][3] = .5; // Right to Sub Half Vol
+                speaker_mix[1][3] = .5; // Left to Sub Half Vol
+                break;
+            }
+            break;
+        case 4:
+            switch (output_channels)
+            {
+            case 1:                      // Quad -> Mono
+                speaker_mix[0][0] = .25; // Front Left to Mono
+                speaker_mix[1][0] = .25; // Front Right to Mono
+                speaker_mix[2][0] = .25; // Rear Left to Mono
+                speaker_mix[3][0] = .25; // Rear Right to Mono
+                break;
+            case 2:                     // Quad -> Stereo
+                speaker_mix[0][0] = .5; // Front Left to Left
+                speaker_mix[1][1] = .5; // Front Right to Right
+                speaker_mix[2][0] = .5; // Rear Left to Left
+                speaker_mix[3][1] = .5; // Rear Right to Right
+                break;
+            case 4:
+                speaker_mix[0][0] = 1; // Front Left to Front Left
+                speaker_mix[1][1] = 1; // Front Right to Front Right
+                speaker_mix[2][2] = 1; // Rear Left to Rear Left
+                speaker_mix[3][3] = 1; // Rear Right to Rear Right
+                break;
+            case 6: // Quad -> 5.1 Surround
+                // FL FR C LFE BL BR
+                speaker_mix[0][0] = 1;   // Front Left to Front Left
+                speaker_mix[1][1] = 1;   // Front Right to Front Right
+                speaker_mix[0][2] = .5;  // Front Left to Center
+                speaker_mix[1][2] = .5;  // Front Right to Center
+                speaker_mix[0][3] = .25; // Front Left to LFE
+                speaker_mix[1][3] = .25; // Front Right to LFE
+                speaker_mix[2][3] = .25; // Rear Left to LFE
+                speaker_mix[3][3] = .25; // Rear Right to LFE
+                speaker_mix[2][4] = 1;   // Rear Left to Rear Left
+                speaker_mix[3][5] = 1;   // Rear Right to Rear Right
+                break;
+            case 8: // Quad -> 7.1 Surround
+                // FL FR C LFE BL BR SL SR
+                speaker_mix[0][0] = 1;   // Front Left to Front Left
+                speaker_mix[1][1] = 1;   // Front Right to Front Right
+                speaker_mix[0][2] = .5;  // Front Left to Center
+                speaker_mix[1][2] = .5;  // Front Right to Center
+                speaker_mix[0][3] = .25; // Front Left to LFE
+                speaker_mix[1][3] = .25; // Front Right to LFE
+                speaker_mix[2][3] = .25; // Rear Left to LFE
+                speaker_mix[3][3] = .25; // Rear Right to LFE
+                speaker_mix[2][4] = 1;   // Rear Left to Rear Left
+                speaker_mix[3][5] = 1;   // Rear Right to Rear Right
+                speaker_mix[0][6] = .5;  // Front Left to Side Left
+                speaker_mix[1][7] = .5;  // Front Right to Side Right
+                speaker_mix[2][6] = .5;  // Rear Left to Side Left
+                speaker_mix[3][7] = .5;  // Rear Right to Side Right
+                break;
+            }
+            break;
+        case 6:
+            switch (output_channels)
+            {
+            case 1:                     // 5.1 Surround -> Mono
+                speaker_mix[0][0] = .2; // Front Left to Mono
+                speaker_mix[1][0] = .2; // Front Right to Mono
+                speaker_mix[2][0] = .2; // Center to Mono
+                speaker_mix[4][0] = .2; // Rear Left to Mono
+                speaker_mix[5][0] = .2; // Rear Right to Mono
+                break;
+            case 2:                      // 5.1 Surround -> Stereo
+                speaker_mix[0][0] = .33; // Front Left to Left
+                speaker_mix[1][1] = .33; // Front Right to Right
+                speaker_mix[2][0] = .33; // Center to Left
+                speaker_mix[2][1] = .33; // Center to Right
+                speaker_mix[4][0] = .33; // Rear Left to Left
+                speaker_mix[5][1] = .33; // Rear Right to Right
+                break;
+            case 4:
+                speaker_mix[0][0] = .66; // Front Left to Front Left
+                speaker_mix[1][1] = .66; // Front Right to Front Right
+                speaker_mix[2][0] = .33; // Center to Front Left
+                speaker_mix[2][1] = .33; // Center to Front Right
+                speaker_mix[4][2] = 1;   // Rear Left to Rear Left
+                speaker_mix[5][3] = 1;   // Rear Right to Rear Right
+                break;
+            case 6: // 5.1 Surround -> 5.1 Surround
+                // FL FR C LFE BL BR
+                speaker_mix[0][0] = 1; // Front Left to Front Left
+                speaker_mix[1][1] = 1; // Front Right to Front Right
+                speaker_mix[2][2] = 1; // Center to Center
+                speaker_mix[3][3] = 1; // LFE to LFE
+                speaker_mix[4][4] = 1; // Rear Left to Rear Left
+                speaker_mix[5][5] = 1; // Rear Right to Rear Right
+                break;
+            case 8: // 5.1 Surround -> 7.1 Surround
+                // FL FR C LFE BL BR SL SR
+                speaker_mix[0][0] = 1;  // Front Left to Front Left
+                speaker_mix[1][1] = 1;  // Front Right to Front Right
+                speaker_mix[2][2] = 1;  // Center to Center
+                speaker_mix[3][3] = 1;  // LFE to LFE
+                speaker_mix[4][4] = 1;  // Rear Left to Rear Left
+                speaker_mix[5][5] = 1;  // Rear Right to Rear Right
+                speaker_mix[0][6] = .5; // Front Left to Side Left
+                speaker_mix[1][7] = .5; // Front Right to Side Right
+                speaker_mix[4][6] = .5; // Rear Left to Side Left
+                speaker_mix[5][7] = .5; // Rear Right to Side Right
+                break;
+            }
+            break;
+        case 8:
+            switch (output_channels)
+            {
+            case 1:                              // 7.1 Surround -> Mono
+                speaker_mix[0][0] = 1.0f / 7.0f; // Front Left to Mono
+                speaker_mix[1][0] = 1.0f / 7.0f; // Front Right to Mono
+                speaker_mix[2][0] = 1.0f / 7.0f; // Center to Mono
+                speaker_mix[4][0] = 1.0f / 7.0f; // Rear Left to Mono
+                speaker_mix[5][0] = 1.0f / 7.0f; // Rear Right to Mono
+                speaker_mix[6][0] = 1.0f / 7.0f; // Side Left to Mono
+                speaker_mix[7][0] = 1.0f / 7.0f; // Side Right to Mono
+                break;
+            case 2:                       // 7.1 Surround -> Stereo
+                speaker_mix[0][0] = .5;   // Front Left to Left
+                speaker_mix[1][1] = .5;   // Front Right to Right
+                speaker_mix[2][0] = .25;  // Center to Left
+                speaker_mix[2][1] = .25;  // Center to Right
+                speaker_mix[4][0] = .125; // Rear Left to Left
+                speaker_mix[5][1] = .125; // Rear Right to Right
+                speaker_mix[6][0] = .125; // Side Left to Left
+                speaker_mix[7][1] = .125; // Side Right to Right
+                break;
+            case 4:                      // 7.1 Surround -> Quad
+                speaker_mix[0][0] = .5;  // Front Left to Front Left
+                speaker_mix[1][1] = .5;  // Front Right to Front Right
+                speaker_mix[2][0] = .25; // Center to Front Left
+                speaker_mix[2][1] = .25; // Center to Front Right
+                speaker_mix[4][2] = .66; // Rear Left to Rear Left
+                speaker_mix[5][3] = .66; // Rear Right to Rear Right
+                speaker_mix[6][0] = .25; // Side Left to Front Left
+                speaker_mix[7][1] = .25; // Side Left to Front Right
+                speaker_mix[6][2] = .33; // Side Left to Rear Left
+                speaker_mix[7][3] = .33; // Side Left to Rear Right
+                break;
+            case 6: // 7.1 Surround -> 5.1 Surround
+                // FL FR C LFE BL BR
+                speaker_mix[0][0] = .66; // Front Left to Front Left
+                speaker_mix[1][1] = .66; // Front Right to Front Right
+                speaker_mix[2][2] = 1;   // Center to Center
+                speaker_mix[3][3] = 1;   // LFE to LFE
+                speaker_mix[4][4] = .66; // Rear Left to Rear Left
+                speaker_mix[5][5] = .66; // Rear Right to Rear Right
+                speaker_mix[6][0] = .33; // Side Left to Front Left
+                speaker_mix[7][1] = .33; // Side Right to Front Right
+                speaker_mix[6][4] = .33; // Side Left to Rear Left
+                speaker_mix[7][5] = .33; // Side Right to Rear Right
+                break;
+            case 8: // 7.1 Surround -> 7.1 Surround
+                // FL FR C LFE BL BR SL SR
+                speaker_mix[0][0] = 1; // Front Left to Front Left
+                speaker_mix[1][1] = 1; // Front Right to Front Right
+                speaker_mix[2][2] = 1; // Center to Center
+                speaker_mix[3][3] = 1; // LFE to LFE
+                speaker_mix[4][4] = 1; // Rear Left to Rear Left
+                speaker_mix[5][5] = 1; // Rear Right to Rear Right
+                speaker_mix[6][6] = 1; // Side Left to Side Left
+                speaker_mix[7][7] = 1; // Side Right to Side Right
+                break;
+            }
+            break;
+        }
+    }
+
+    void mix_speakers(int32_t** in_buffer, int32_t** remixed_out_buffer, int sample_count) {
+        for (int pos = 0; pos < sample_count; pos++)
+            for (int input_channel = 0; input_channel < input_channels; input_channel++)
+                for (int output_channel = 0; output_channel < output_channels; output_channel++)
+                        remixed_out_buffer[input_channel][output_channel] = 0;
+        for (int pos = 0; pos < sample_count; pos++)
+            for (int input_channel = 0; input_channel < input_channels; input_channel++)
+                for (int output_channel = 0; output_channel < output_channels; output_channel++)
+                    remixed_out_buffer[output_channel][pos] += in_buffer[input_channel][pos] * speaker_mix[input_channel][output_channel];
+    }
+};rtp_receiver.cpp0000644000000000000000000001360615000443333012752 0ustar  rootroot// C++ code for streaming audio data over a network using TCP/UDP protocols.
+
+#include <iostream>
+#include <vector>
+#include "string.h"
+#include <istream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <lame/lame.h>
+#include <algorithm>
+#include <string>
+#include <pthread.h>
+#include <sched.h>
+using namespace std;
+
+// Configuration variables
+#define CHUNK_SIZE 1152 // Chunk size in bytes for audio data
+#define HEADER_SIZE 5 // Size of the Scream header, which contains information about the output audio stream
+#define RTP_HEADER_SIZE 12 // Size of the Scream header, which contains information about the output audio stream
+#define PACKET_SIZE (CHUNK_SIZE + HEADER_SIZE) // Total packet size including header and chunk
+#define TAG_LENGTH 45
+#define DATA_RECEIVE_POS (TAG_LENGTH - (RTP_HEADER_SIZE - HEADER_SIZE))
+
+bool running = true; // Flag to control loop execution
+
+uint8_t buffer[TAG_LENGTH + RTP_HEADER_SIZE + CHUNK_SIZE] = {0}; // Vector of pointers to receive buffers for input streams
+
+uint8_t header[HEADER_SIZE] = {0};
+
+vector<int> output_fds; // Vector of file descriptors for audio input streams
+
+int listen_fd = 0; // fd for audio input
+
+int data_fd = 0; // fd for writing IPs to
+
+vector<string> known_ip_procs = {};
+
+// Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
+int* config_argv[] = {NULL, // Process File Name
+                      &listen_fd,
+                      &data_fd};
+int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
+
+struct sockaddr_in receive_addr;
+
+socklen_t receive_addr_len = sizeof(receive_addr);
+
+void log(const string &message, bool endl = true, bool tag = true) {
+    printf("%s %s%s", tag?"[RTP Listener]":"", message.c_str(), endl?"\n":"");
+}
+
+// Function to process fixed command line arguments like IP address and output port
+void process_args(int argc, char** argv) {
+    if (argc <= config_argc)
+        ::exit(-1);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (config_argv[argi] == 0)
+            continue;
+        else
+            *(config_argv[argi]) = atoi(argv[argi]);
+}
+
+// Function to process variable number of command line arguments representing file descriptors for input streams
+void process_fd_args(int argc, char* argv[]) {
+    for (int argi = config_argc; argi < argc; argi++) {
+        output_fds.push_back(atoi(argv[argi]));
+    }
+}
+
+void setup_header() { // Sets up the Scream header
+    int output_samplerate = 48000;
+    int output_bitdepth = 16;
+    int output_channels = 2;
+    int output_chlayout1 = 0x03;
+    int output_chlayout2 = 0x00;
+    bool output_samplerate_44100_base = (output_samplerate % 44100) == 0;
+    // cppcheck-suppress knownConditionTrueFalse
+    uint8_t output_samplerate_mult = (output_samplerate_44100_base?44100:48000) / output_samplerate;
+    header[0] = output_samplerate_mult + (output_samplerate_44100_base << 7);
+    header[1] = output_bitdepth;
+    header[2] = output_channels;
+    header[3] = output_chlayout1;
+    header[4] = output_chlayout2;
+    log("Set up Header, Rate: " + to_string(output_samplerate) + ", Bit-Depth" + to_string(output_bitdepth) + ", Channels" + to_string(output_channels));
+}
+
+bool parseHeader() {
+    // Parse RTP header (first 12 bytes of buffer)
+    /*uint8_t version = (buffer[DATA_RECEIVE_POS] >> 6) & 0x03;
+    bool padding = (buffer[DATA_RECEIVE_POS] >> 5) & 0x01;
+    bool extension = (buffer[DATA_RECEIVE_POS] >> 4) & 0x01;
+    uint8_t csrcCount = buffer[DATA_RECEIVE_POS] & 0x0F;
+    bool marker = (buffer[DATA_RECEIVE_POS + 1] >> 7) & 0x01;*/
+    uint8_t payloadType = buffer[DATA_RECEIVE_POS + 1] & 0x7F;
+    /*uint16_t sequenceNumber = (buffer[DATA_RECEIVE_POS + 2] << 8) | buffer[DATA_RECEIVE_POS + 3];
+    uint32_t timestamp = (buffer[DATA_RECEIVE_POS + 4] << 24) | (buffer[DATA_RECEIVE_POS + 5] << 16) |
+                         (buffer[DATA_RECEIVE_POS + 6] << 8) | buffer[DATA_RECEIVE_POS + 7];
+    uint32_t ssrc = (buffer[DATA_RECEIVE_POS + 8] << 24) | (buffer[DATA_RECEIVE_POS + 9] << 16) |
+                    (buffer[DATA_RECEIVE_POS + 10] << 8) | buffer[DATA_RECEIVE_POS + 11];*/
+    return payloadType == 127; // Return true if parsing was successful
+}
+
+bool receive() {
+    int bytes = recvfrom(listen_fd, buffer + DATA_RECEIVE_POS, RTP_HEADER_SIZE+CHUNK_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
+    if (bytes == -1) 
+        ::exit(-1);
+    if (bytes != RTP_HEADER_SIZE+CHUNK_SIZE)
+        return false;
+    return true;
+}
+
+void send() {
+    memset(buffer, 0, TAG_LENGTH);
+    strcpy(reinterpret_cast<char*>(buffer), inet_ntoa(receive_addr.sin_addr));
+    string ip_address = string(reinterpret_cast<char*>(buffer));
+    if (find(known_ip_procs.begin(), known_ip_procs.end(), ip_address) == known_ip_procs.end()) {
+        known_ip_procs.push_back(ip_address);
+        write(data_fd, (ip_address + "\n").c_str(), ip_address.length());
+    }
+    memcpy(buffer + TAG_LENGTH, header, HEADER_SIZE);
+    for (int fd_idx=0;fd_idx<output_fds.size();fd_idx++)
+        write(output_fds[fd_idx], buffer, PACKET_SIZE + TAG_LENGTH);
+}
+
+int main(int argc, char* argv[]) {
+    // Pin to CPU core 1
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        log("Failed to set CPU affinity to core 1", true, true);
+    } else {
+        log("Successfully pinned to CPU core 1", true, true);
+    }
+
+    process_args(argc, argv);
+
+    process_fd_args(argc, argv);
+    log("Input FDs: ", false, true);
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
+        log(to_string(output_fds[fd_idx]) + " ", false, false);
+    log("", true, false);
+    setup_header();
+
+    while (running)
+        if (receive())
+            if (parseHeader())
+                send();
+        else
+            sleep(.2);
+    return 0;
+}
+scream_per_process_receiver.cpp0000644000000000000000000001232215000443373016021 0ustar  rootroot// C++ code for streaming audio data over a network using TCP/UDP protocols.
+
+#include <iostream>
+#include <vector>
+#include "string.h"
+#include <istream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <lame/lame.h>
+#include <algorithm>
+#include <string>
+#include <pthread.h>
+#include <sched.h>
+using namespace std;
+
+// Configuration variables
+#define CHUNK_SIZE 1152 // Chunk size in bytes for audio data
+#define IP_LENGTH 15
+#define PROGRAM_TAG_LENGTH 30
+#define HEADER_SIZE 5 // Size of the Scream header, which contains information about the output audio strea
+#define PACKET_SIZE (CHUNK_SIZE + PROGRAM_TAG_LENGTH + HEADER_SIZE) // Total packet size including header and chunk
+
+bool running = true; // Flag to control loop execution
+
+uint8_t buffer[IP_LENGTH + PACKET_SIZE] = {0}; // Vector of pointers to receive buffers for input streams
+char* tag = reinterpret_cast<char*>(buffer);
+
+vector<int> output_fds; // Vector of file descriptors for audio input streams
+
+int listen_fd = 0; // fd for audio input
+
+int data_fd = 0; // fd for writing IPs to
+
+vector<string> known_ip_procs = {};
+
+// Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
+int* config_argv[] = {NULL, // Process File Name
+                      &listen_fd,
+                      &data_fd};
+
+int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
+
+struct sockaddr_in receive_addr;
+
+socklen_t receive_addr_len = sizeof(receive_addr);
+
+void log(const string &message, bool endl = true, bool tag = true) {
+    printf("%s %s%s", tag?"[Scream Per-Port Listener]":"", message.c_str(), endl?"\n":"");
+}
+
+// Function to process fixed command line arguments like IP address and output port
+void process_args(int argc, char** argv) {
+    if (argc <= config_argc)
+        ::exit(-1);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (config_argv[argi] == 0)
+            continue;
+        else
+            *(config_argv[argi]) = atoi(argv[argi]);
+}
+
+// Function to process variable number of command line arguments representing file descriptors for input streams
+void process_fd_args(int argc, char* argv[]) {
+    for (int argi = config_argc; argi < argc; argi++) {
+        output_fds.push_back(atoi(argv[argi]));
+    }
+}
+
+bool receive() {
+    int bytes = recvfrom(listen_fd, buffer + IP_LENGTH, PACKET_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
+    //printf("Packet in Bytes: %i Process: %s\n", bytes, buffer);
+    if (bytes == -1) 
+        ::exit(-1);
+    if (bytes != PACKET_SIZE)
+        return false;
+    return true;
+}
+
+void set_tag() {
+    //Format for buffer is
+    //XXX.XXX.XXX.XXXTAGTAGTAGTAGTAGTAGTAGTAGTAGTA\0DATADATA...
+    //If the IP does not fill the full size empty space is filled with spaces.
+    //The buffer has the TAG and data in it already and just needs the IP written
+    memset(tag, ' ', IP_LENGTH); // Clear with space
+    strcpy(tag, inet_ntoa(receive_addr.sin_addr)); // Write IP to start
+    tag[strlen(tag)] = ' '; // Clear null terminator
+    tag[IP_LENGTH + PROGRAM_TAG_LENGTH - 1] = 0; // Ensure it's got a null terminator at the end of the tag
+}
+
+void check_if_known() {
+   bool already_known = false;
+    for (int idx=0;idx<known_ip_procs.size();idx++) {
+        if (known_ip_procs.at(idx) == tag) {
+            already_known = true;
+            break;
+        }
+    }
+    if (!already_known) {
+        dprintf(data_fd, "%s\n", tag);
+        known_ip_procs.push_back(tag);
+    } 
+}
+
+
+void send() {
+
+    // Use select to check if sockets are ready for writing
+    fd_set write_fds;
+    struct timeval timeout;
+    
+    // Set timeout to 0 seconds, 100 microseconds (non-blocking)
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 100;
+    
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
+        // Initialize the file descriptor set
+        FD_ZERO(&write_fds);
+        FD_SET(output_fds[fd_idx], &write_fds);
+        
+        // Check if this socket is ready for writing
+        int select_result = select(output_fds[fd_idx] + 1, NULL, &write_fds, NULL, &timeout);
+        
+        // Write only if select indicates the socket is ready
+        if (select_result > 0 && FD_ISSET(output_fds[fd_idx], &write_fds)) {
+            write(output_fds[fd_idx], buffer, PACKET_SIZE + IP_LENGTH);
+        }
+    }
+}
+
+int main(int argc, char* argv[]) {
+    // Pin to CPU core 1
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        log("Failed to set CPU affinity to core 1", true, true);
+    } else {
+        log("Successfully pinned to CPU core 1", true, true);
+    }
+
+    log("Start");
+    process_args(argc, argv);
+
+    process_fd_args(argc, argv);
+    log("Input FDs: ", false, true);
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
+        log(to_string(output_fds[fd_idx]) + " ", false, false);
+    log("", true, false);
+
+    while (running)
+        if (receive())
+        {
+            set_tag();
+            check_if_known();
+            send();
+        } else {
+            sleep(.01);
+        }
+    return 0;
+}
+scream_receiver.cpp0000644000000000000000000000737215000443353013424 0ustar  rootroot// C++ code for streaming audio data over a network using TCP/UDP protocols.
+
+#include <iostream>
+#include <vector>
+#include "string.h"
+#include <istream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <lame/lame.h>
+#include <algorithm>
+#include <string>
+#include <pthread.h>
+#include <sched.h>
+using namespace std;
+
+// Configuration variables
+#define CHUNK_SIZE 1152 // Chunk size in bytes for audio data
+#define HEADER_SIZE 5 // Size of the Scream header, which contains information about the output audio stream
+#define PACKET_SIZE (CHUNK_SIZE + HEADER_SIZE) // Total packet size including header and chunk
+#define TAG_LENGTH 45
+
+bool running = true; // Flag to control loop execution
+
+uint8_t buffer[TAG_LENGTH + PACKET_SIZE] = {0}; // Vector of pointers to receive buffers for input streams
+
+vector<int> output_fds; // Vector of file descriptors for audio input streams
+
+int listen_fd = 0; // fd for audio input
+
+int data_fd = 0; // fd for writing IPs to
+
+vector<string> known_ip_procs = {};
+
+// Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
+int* config_argv[] = {NULL, // Process File Name
+                      &listen_fd,
+                      &data_fd};
+
+int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
+
+struct sockaddr_in receive_addr;
+
+socklen_t receive_addr_len = sizeof(receive_addr);
+
+void log(const string &message, bool endl = true, bool tag = true) {
+    printf("%s %s%s", tag?"[RTP Listener]":"", message.c_str(), endl?"\n":"");
+}
+
+// Function to process fixed command line arguments like IP address and output port
+void process_args(int argc, char** argv) {
+    if (argc <= config_argc)
+        ::exit(-1);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (config_argv[argi] == 0)
+            continue;
+        else
+            *(config_argv[argi]) = atoi(argv[argi]);
+}
+
+// Function to process variable number of command line arguments representing file descriptors for input streams
+void process_fd_args(int argc, char* argv[]) {
+    for (int argi = config_argc; argi < argc; argi++) {
+        output_fds.push_back(atoi(argv[argi]));
+    }
+}
+
+bool receive() {
+    int bytes = recvfrom(listen_fd, buffer + TAG_LENGTH, PACKET_SIZE, 0, (struct sockaddr *) &receive_addr, &receive_addr_len);
+    if (bytes == -1) 
+        ::exit(-1);
+    if (bytes != PACKET_SIZE)
+        return false;
+    return true;
+}
+
+void send() {
+    memset(buffer, 0, TAG_LENGTH);
+    strcpy(reinterpret_cast<char*>(buffer), inet_ntoa(receive_addr.sin_addr));
+    string ip_address = string(reinterpret_cast<char*>(buffer));
+    if (find(known_ip_procs.begin(), known_ip_procs.end(), ip_address) == known_ip_procs.end()) {
+        known_ip_procs.push_back(ip_address);
+        write(data_fd, (ip_address + "\n").c_str(), ip_address.length());
+    }
+    for (int fd_idx=0;fd_idx<output_fds.size();fd_idx++)
+        write(output_fds[fd_idx], buffer, PACKET_SIZE + TAG_LENGTH);
+}
+
+int main(int argc, char* argv[]) {
+    // Pin to CPU core 1
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        log("Failed to set CPU affinity to core 1", true, true);
+    } else {
+        log("Successfully pinned to CPU core 1", true, true);
+    }
+
+    process_args(argc, argv);
+
+    process_fd_args(argc, argv);
+    log("Input FDs: ", false, true);
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
+        log(to_string(output_fds[fd_idx]) + " ", false, false);
+    log("", true, false);
+
+    while (running)
+        if (receive())
+            send();
+        else
+            sleep(.2);
+    return 0;
+}
+sink_audio_mixer.cpp0000644000000000000000000005131615006141757013625 0ustar  rootroot// C++ code for streaming audio data over a network using TCP/UDP protocols.
+
+#include <iostream>
+#include <vector>
+#include "string.h"
+#include <istream>
+#include <unistd.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <lame/lame.h>
+#ifdef __SSE2__
+#include <emmintrin.h>
+#endif
+#include <immintrin.h>
+#include <pthread.h>
+#include <sched.h>
+#include "audio_processor.h"
+#include "dcaenc/dcaenc.h"
+#include <sys/time.h>
+
+AudioProcessor *lameProcessor = NULL;
+using namespace std;
+
+// Configuration variables
+#define CHUNK_SIZE 1152 // Chunk size in bytes for audio data
+#define HEADER_SIZE 5 // Size of the Scream header, which contains information about the output audio stream
+#define PACKET_SIZE (CHUNK_SIZE + HEADER_SIZE) // Total packet size including header and chunk
+
+bool running = true; // Flag to control loop execution
+
+// Buffer system overview:
+// 1. receive_buffers: Array of input buffers, one per audio source. Each buffer stores CHUNK_SIZE bytes of 32-bit audio samples
+// 2. mixing_buffer: Single buffer where all active input streams are mixed together
+// 3. output_buffer: Double-buffered output storage (2x PACKET_SIZE) allowing continuous streaming
+// 4. mp3_buffer: Temporary storage for MP3 encoded data before sending
+
+vector<int32_t*> receive_buffers; // Vector of input buffers, one per audio source
+int32_t* mixing_buffer = new int32_t[CHUNK_SIZE / sizeof(int32_t)]; // Target buffer for mixed audio data
+uint8_t *mixing_buffer_uint8 = (uint8_t*)mixing_buffer; // Byte-level access to mixing buffer for downsampling
+char output_buffer[PACKET_SIZE * 2] = {0}; // Double-buffered output (2x PACKET_SIZE) for continuous streaming
+int output_buffer_pos = 0; // Current write position in output_buffer
+uint8_t mp3_buffer[CHUNK_SIZE * 8]; // Temporary storage for MP3 encoded data
+int mp3_buffer_pos = 0; // Current position in MP3 buffer
+
+lame_t lame = lame_init();
+
+struct sockaddr_in udp_dest_addr = {}; // Socket address structure for UDP socket destination
+int udp_output_fd = 0; // File descriptor for the UDP socket
+
+struct timeval receive_timeout;
+fd_set read_fds;
+
+int tcp_output_fd = 0; // File descriptor for the TCP socket
+int mp3_write_fd = 0; // File descriptor to write mp3 to
+vector<int> output_fds; // Vector of file descriptors for audio input streams
+bool active[1024] = {0}; // Vector to store whether each input stream is active or not
+bool output_active = false; // Flag to indicate if there's any data to be sent over the network
+string output_ip = ""; // IP address of the UDP socket destination
+int output_port = 0; // Port number of the UDP socket destination
+int output_bitdepth = 0; // Bit depth of the output audio stream
+int output_samplerate = 0; // Sample rate of the output audio stream
+int output_channels = 0; // Number of channels in the output audio stream
+int output_chlayout1 = 0; // Channel layout part 1 for the output audio stream
+int output_chlayout2 = 0; // Channel layout part 2 for the output audio stream
+int use_dts = 0; // Is it outputting DTS?
+dcaenc_context_s *dca_context; // DTS encoding context
+
+// Array to hold integers passed from command line arguments, NULL indicates an argument is ignored
+int* config_argv[] = {NULL, // Process File Name
+                      NULL, // output_ip (string)
+                      &output_port,
+                      &output_bitdepth,
+                      &output_samplerate,
+                      &output_channels,
+                      &output_chlayout1,
+                      &output_chlayout2,
+                      &tcp_output_fd,
+                      &mp3_write_fd};
+int config_argc = sizeof(config_argv) / sizeof(int*); // Number of command line arguments to process
+
+inline void log(const string &message) {
+    printf("[Sink Output Processor %s:%i] %s\n", output_ip.c_str(), output_port, message.c_str());
+}
+
+// Function to process fixed command line arguments like IP address and output port
+inline void process_args(char* argv[], int argc) {
+    if (argc <= config_argc)
+        ::exit(-1);
+    // cppcheck-suppress ctuArrayIndex
+    output_ip = string(argv[1]);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (config_argv[argi] == 0)
+            continue;
+        else
+            *(config_argv[argi]) = atoi(argv[argi]);
+}
+
+// Function to process variable number of command line arguments representing file descriptors for input streams
+inline void process_fd_args(char* argv[], int argc) {
+    for (int argi = config_argc; argi < argc; argi++)
+        output_fds.push_back(atoi(argv[argi]));
+}
+
+inline void setup_header() { // Sets up the Scream header
+    bool output_samplerate_44100_base = (output_samplerate % 44100) == 0;
+    uint8_t output_samplerate_mult = (output_samplerate_44100_base?44100:48000) / output_samplerate;
+    output_buffer[0] = output_samplerate_mult + (output_samplerate_44100_base << 7);
+    output_buffer[1] = output_bitdepth;
+    output_buffer[2] = output_channels;
+    output_buffer[3] = output_chlayout1;
+    output_buffer[4] = output_chlayout2;
+    log("Set up Header, Rate: " + to_string(output_samplerate) + ", Bit-Depth" + to_string(output_bitdepth) + ", Channels" + to_string(output_channels));
+}
+
+inline void setup_udp() { // Sets up the UDP socket for output
+    log("UDP Set Up");
+    udp_output_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    udp_dest_addr.sin_family = AF_INET;
+    udp_dest_addr.sin_port = htons(output_port);
+    inet_pton(AF_INET, output_ip.c_str(), &udp_dest_addr.sin_addr);
+    int dscp = 63;
+    int val = dscp << 2;
+    setsockopt(udp_output_fd, IPPROTO_IP, IP_TOS, &val, sizeof(val));
+    if (tcp_output_fd > 0) {
+        setsockopt(tcp_output_fd, IPPROTO_IP, IP_TOS, &val, sizeof(val));
+        fd_set fd;
+        timeval tv;
+        FD_ZERO(&fd);
+        FD_SET(tcp_output_fd, &fd);
+        tv.tv_sec = 15;
+        tv.tv_usec = 0;
+        u_long yes = 1;
+        fcntl(tcp_output_fd, F_SETFL, fcntl(tcp_output_fd, F_GETFL, 0) | O_NONBLOCK);
+        fcntl(tcp_output_fd, F_SETFL, fcntl(tcp_output_fd, F_GETFL, 0) | O_NDELAY);
+        setsockopt(tcp_output_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+        int newsize = 1152 * 16;
+        setsockopt(tcp_output_fd, SOL_SOCKET, SO_SNDBUF, &newsize, sizeof(newsize));
+        newsize = 1152 * 8;
+        setsockopt(mp3_write_fd, SOL_SOCKET, SO_SNDBUF, &newsize, sizeof(newsize));
+        bool trew = true;
+        setsockopt(mp3_write_fd, SOL_SOCKET, SOCK_NONBLOCK, &trew, sizeof(trew));
+        int flags = fcntl(mp3_write_fd, F_GETFL, 0);
+        fcntl(mp3_write_fd, F_SETFL, flags | O_NONBLOCK);
+        setsockopt (tcp_output_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        log("TCP Set Up");
+    }
+}
+
+inline void setup_buffers() { // Sets up buffers to receive data from input fds
+    log("Buffers Set Up");
+    setbuf(stdout, NULL);
+    for (int buf_idx = 0; buf_idx < output_fds.size(); buf_idx++)
+        receive_buffers.push_back(static_cast<int32_t*>(malloc(CHUNK_SIZE)));
+}
+
+inline void setup_lame() {
+    lame_set_in_samplerate(lame, output_samplerate);
+    lame_set_VBR(lame, vbr_off);
+    lame_init_params(lame);
+}
+
+bool lame_active = true;
+struct timeval lame_timeout;
+fd_set lame_fd;
+
+inline void write_lame() {
+    FD_ZERO(&lame_fd);
+    FD_SET(mp3_write_fd, &lame_fd);
+    lame_timeout.tv_sec = 0;
+    lame_timeout.tv_usec = 0;
+    int result = select(mp3_write_fd + 1, NULL, &lame_fd, NULL, &lame_timeout);
+    // ScreamRouter will stop reading from the MP3 FD if there's no clients. Don't encode if there's no reader.
+    if (result > 0 && FD_ISSET(mp3_write_fd, &lame_fd)) {
+        if (!lame_active) {
+            lame_active = true;
+            log("MP3 Stream Active");
+        }
+        int32_t processed_buffer[CHUNK_SIZE / sizeof(uint32_t)];
+        int processed_samples = lameProcessor->processAudio(reinterpret_cast<const uint8_t*>(mixing_buffer), processed_buffer);
+
+        mp3_buffer_pos = lame_encode_buffer_interleaved_int(lame, processed_buffer, processed_samples / 2, mp3_buffer, CHUNK_SIZE * 8);
+        
+        if (mp3_buffer_pos > 0)
+            write(mp3_write_fd, mp3_buffer, mp3_buffer_pos);
+    }
+    else {
+        if (lame_active) {
+            lame_active = false;
+            log("MP3 Stream Inactive");
+        }
+    }
+}
+
+// Synchronization mechanism for multiple input streams:
+// 1. Checks which input streams have data ready using non-blocking select()
+// 2. Waits up to 15ms for lagging streams to catch up
+// 3. Marks streams as inactive if they consistently lag behind
+// 4. Detects when inactive streams become active again
+inline void mark_fds_active_inactive() {
+    fd_set check_fds;
+    fd_set active_fds;
+    FD_ZERO(&check_fds);
+    FD_ZERO(&active_fds);
+    int max_fd = 0;
+    int total_active = 0;
+    
+    // Find the max fd and set up active_fds
+    for (int idx = 0; idx < output_fds.size(); idx++) {
+        if (active[idx]) {
+            FD_SET(output_fds[idx], &active_fds);
+            if (output_fds[idx] > max_fd) {
+                max_fd = output_fds[idx];
+            }
+            total_active++;
+        }
+    }
+    
+    // Run a select against all active FDs with zero timeout
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    fd_set ready_fds = active_fds;
+    int result = select(max_fd + 1, &ready_fds, NULL, NULL, &tv);
+    
+    // If all active FDs have data, we're done with this part
+    if (result == total_active) {
+        // All active FDs have data, nothing to check
+    } else {
+        // Store all active FDs that do not have data pending in check_fds
+        for (int idx = 0; idx < output_fds.size(); idx++) {
+            if (active[idx] && !FD_ISSET(output_fds[idx], &ready_fds)) {
+                FD_SET(output_fds[idx], &check_fds);
+            }
+        }
+        
+        // If there are FDs in check_fds, poll every 1ms for up to 20ms
+        if (result < total_active) {
+            struct timeval start_time, current_time;
+            gettimeofday(&start_time, NULL);
+            long elapsed_usec = 0;
+            bool all_good = false;
+            while (elapsed_usec <= 15000) {
+                // Check if 30ms have elapsed for timeout
+                gettimeofday(&current_time, NULL);
+                elapsed_usec = (current_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                                   (current_time.tv_usec - start_time.tv_usec);
+                
+                // Poll with 1ms timeout
+                fd_set temp_check_fds = check_fds;
+                tv.tv_sec = 0;
+                tv.tv_usec = 1000; // 1ms
+                result = select(max_fd + 1, &temp_check_fds, NULL, NULL, &tv);
+                
+                if (result <= 0) {
+                    continue; // No FDs ready or error
+                }
+                
+                // Remove FDs that now have data from check_fds
+                for (int idx = 0; idx < output_fds.size(); idx++) {
+                    if (active[idx] && FD_ISSET(output_fds[idx], &temp_check_fds)) {
+                        FD_CLR(output_fds[idx], &check_fds);
+                    }
+                }
+                
+                // If all FDs now have data, we can stop polling
+                if (FD_ISSET(0, &check_fds) == 0) {
+                    all_good = true;
+                    break;
+                }
+            }
+            if (!all_good) {
+                // After 20ms, mark any remaining FDs in check_fds as false in active[]
+                for (int idx = 0; idx < output_fds.size(); idx++) {
+                    if (active[idx] && FD_ISSET(output_fds[idx], &check_fds)) {
+                        active[idx] = false;
+                        log("Input " + std::to_string(idx) + " inactive");
+                    }
+                }
+            }
+        }
+    }
+    
+    // Run a zero-ms select on all inactive FDs
+    FD_ZERO(&check_fds);
+    max_fd = 0;
+    
+    for (int idx = 0; idx < output_fds.size(); idx++) {
+        if (!active[idx]) {
+            FD_SET(output_fds[idx], &check_fds);
+            if (output_fds[idx] > max_fd) {
+                max_fd = output_fds[idx];
+            }
+        }
+    }
+    
+    if (max_fd > 0) {
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        fd_set temp_check_fds = check_fds;
+        result = select(max_fd + 1, &temp_check_fds, NULL, NULL, &tv);
+        
+        // If any inactive FDs are now active, set them to true in active[]
+        if (result > 0) {
+            for (int idx = 0; idx < output_fds.size(); idx++) {
+                if (!active[idx] && FD_ISSET(output_fds[idx], &temp_check_fds)) {
+                    active[idx] = true;
+                    log("Input " + std::to_string(idx) + " active");
+                    total_active++;
+                }
+            }
+        }
+    }
+}
+
+// Buffer reading mechanism:
+// 1. Uses mark_fds_active_inactive() to determine which inputs are ready
+// 2. For each active input:
+//    - Uses non-blocking select() to check for available data
+//    - Reads data in chunks until CHUNK_SIZE bytes are collected
+//    - Handles partial reads and temporary unavailability
+// 3. Sets output_active flag when data is successfully read
+inline bool handle_receive_buffers() {
+    output_active = false;
+    mark_fds_active_inactive();
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++) {
+        if (active[fd_idx]) {
+            fd_set read_set;
+            struct timeval timeout;
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 15000;
+            
+            for (int bytes_in = 0; running && bytes_in < CHUNK_SIZE;) {
+                FD_ZERO(&read_set);
+                FD_SET(output_fds[fd_idx], &read_set);
+                
+                int ready = select(output_fds[fd_idx] + 1, &read_set, NULL, NULL, &timeout);
+                if (ready < 1) {
+                    break;
+                }
+                
+                if (FD_ISSET(output_fds[fd_idx], &read_set)) {
+                    int bytes_read = read(output_fds[fd_idx], 
+                                        receive_buffers[fd_idx] + bytes_in, 
+                                        CHUNK_SIZE - bytes_in);
+                    if (bytes_read <= 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                        log("Read error: " + string(strerror(errno)));
+                        return false;
+                    }
+                    bytes_in += bytes_read;
+                }
+            }
+            output_active = true;
+        }
+    }
+    return output_active;
+}
+
+// Audio mixing process:
+// 1. Uses SIMD instructions when available (AVX2 or SSE2) for efficient mixing
+// 2. Adds samples from all active input streams into mixing_buffer
+// 3. Includes overflow protection in non-SIMD path
+// 4. Processing happens in 32-bit integer format for maximum dynamic range
+void mix_buffers() {
+#if defined(__AVX2__)
+    for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos += 8) {
+        __m256i mixing = _mm256_setzero_si256();
+        for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
+            if (!active[input_buf_idx])
+                continue;
+            __m256i receive = _mm256_loadu_si256((__m256i*)&receive_buffers[input_buf_idx][buf_pos]);
+            mixing = _mm256_add_epi32(mixing, receive);
+        }
+        _mm256_storeu_si256((__m256i*)&mixing_buffer[buf_pos], mixing);
+    }
+#elif defined(__SSE2__)
+    for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos += 4) {
+        __m128i mixing = _mm_setzero_si128();
+        for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
+            if (!active[input_buf_idx])
+                continue;
+            __m128i receive = _mm_load_si128((__m128i*)&receive_buffers[input_buf_idx][buf_pos]);
+            mixing = _mm_add_epi32(mixing, receive);
+        }
+        _mm_store_si128((__m128i*)&mixing_buffer[buf_pos], mixing);
+    }
+#else
+    for (int buf_pos = 0; buf_pos < CHUNK_SIZE / sizeof(int32_t); buf_pos++) {
+        mixing_buffer[buf_pos] = 0;
+        for (int input_buf_idx = 0; input_buf_idx < receive_buffers.size(); input_buf_idx++) {
+            if (!active[input_buf_idx])
+                continue;
+            mixing_buffer[buf_pos] += receive_buffers[input_buf_idx][buf_pos];
+        }
+        if (mixing_buffer[buf_pos] > INT32_MAX) {
+            mixing_buffer[buf_pos] = INT32_MAX;
+        } else if (mixing_buffer[buf_pos] < INT32_MIN) {
+            mixing_buffer[buf_pos] = INT32_MIN;
+        }
+    }
+#endif
+}
+
+// Buffer format conversion:
+// 1. Converts 32-bit mixed samples to target bit depth (e.g., 16-bit or 24-bit)
+// 2. Writes converted data to output_buffer after header
+// 3. Maintains proper byte alignment for different output formats
+inline void downscale_buffer() {
+    int output_bytedepth = output_bitdepth / 8;
+    for (int input_pos = 0;input_pos < CHUNK_SIZE; input_pos++) {
+        if (output_buffer_pos % output_bytedepth == 0)
+            input_pos += sizeof(uint32_t) - output_bytedepth;
+        output_buffer[HEADER_SIZE + output_buffer_pos++] = mixing_buffer_uint8[input_pos];
+    }
+}
+
+inline void send_buffer() { // Sends a buffer over TCP or UDP depending on which is active
+    if (tcp_output_fd) {
+        int result = send(tcp_output_fd, output_buffer + HEADER_SIZE, CHUNK_SIZE, 0);
+        if (result <= 0) {
+            if (errno != EAGAIN) { // Resource Temporary Unavailable (buffer full)
+                log("Got TCP error: " + to_string(errno) + ")");
+                //close(tcp_output_fd);
+                tcp_output_fd = 0;
+            }
+        }
+    } else
+        sendto(udp_output_fd, output_buffer, PACKET_SIZE, 0, (struct sockaddr *)&udp_dest_addr, sizeof(udp_dest_addr));
+}
+
+// Double buffer management:
+// 1. Implements a sliding window over output_buffer
+// 2. Moves last CHUNK_SIZE bytes to start of buffer when needed
+// 3. Ensures continuous streaming without gaps between packets
+inline void rotate_buffer() {
+    if (output_buffer_pos >= CHUNK_SIZE) {
+        memcpy(output_buffer + HEADER_SIZE, output_buffer + PACKET_SIZE, CHUNK_SIZE);
+        output_buffer_pos -= CHUNK_SIZE;
+    }
+}
+
+inline void dts_encode() {
+    if (use_dts == 1) {
+
+    }
+}
+
+#include <exception>
+#include <stdexcept>
+#include <cxxabi.h>
+#include <execinfo.h>
+
+void print_stacktrace(int skip = 1) {
+    void *callstack[128];
+    int frames = backtrace(callstack, 128);
+    char **strs = backtrace_symbols(callstack, frames);
+    
+    for (int i = skip; i < frames; ++i) {
+        int status;
+        char *demangled = abi::__cxa_demangle(strs[i], NULL, 0, &status);
+        if (status == 0) {
+            std::cerr << demangled << std::endl;
+            free(demangled);
+        } else {
+            std::cerr << strs[i] << std::endl;
+        }
+    }
+    free(strs);
+}
+
+int main(int argc, char* argv[]) {
+    try {
+    // Pin to CPU core 1
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    pthread_t current_thread = pthread_self();
+    if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        log("Failed to set CPU affinity to core 1");
+    } else {
+        log("Successfully pinned to CPU core 1");
+    }
+
+    process_args(argv, argc);
+    if (use_dts == 1)
+    {
+        if (output_channels != 6) {
+            log("DTS requires 6 channels (5.1), but only " + to_string(output_channels) + " were specified. Exiting.");
+            exit(1);
+        }
+        if (output_samplerate != 44100 && output_samplerate != 48000) {
+            log("DTS requires 44.1kHz or 48kHz but  " + to_string(output_channels) + " was specified. Exiting.");
+            exit(1);
+        }
+        dca_context = dcaenc_create(
+                        output_samplerate,
+                        DCAENC_CHANNELS_3FRONT_2REAR,
+                        1509000, // DVD bitrate
+                        DCAENC_FLAG_IEC_WRAP | DCAENC_FLAG_LFE | DCAENC_FLAG_28BIT | DCAENC_FLAG_PERFECT_QMF);
+    }
+    lameProcessor = new AudioProcessor(output_channels, 2, 32, output_samplerate, output_samplerate, 1);
+    log("Starting Ouput Mixer, sending UDP to " + output_ip +  ":" + to_string(output_port) + ", TCP Enabled: " + (tcp_output_fd > 0?"Yes":"No"));
+    process_fd_args(argv, argc);
+    log("Input FDs: ");
+    for (int fd_idx = 0; fd_idx < output_fds.size(); fd_idx++)
+        log(to_string(output_fds[fd_idx]));
+    setup_header();
+    setup_lame();
+    setup_udp();
+    setup_buffers();
+
+    while (running) {
+        if (!handle_receive_buffers()) {
+            sleep(.5);
+            continue;
+        }
+        mix_buffers();
+        write_lame();
+        downscale_buffer();
+        if (output_buffer_pos < CHUNK_SIZE)
+          continue;
+        send_buffer();
+        rotate_buffer();
+    }
+    } catch (const std::exception& e) {
+        std::cerr << "Caught exception: " << e.what() << std::endl;
+        std::cerr << "Stack trace:" << std::endl;
+        print_stacktrace();
+    } catch (...) {
+        std::cerr << "Caught unknown exception" << std::endl;
+        std::cerr << "Stack trace:" << std::endl;
+        print_stacktrace();
+}
+    return 0;
+}
+source_input_processor.cpp0000644000000000000000000003766415006161511015112 0ustar  rootroot#include <iostream>
+#include <vector>
+#include <string>
+#include <unistd.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <deque>
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <sstream>
+#include <climits>
+#include <mutex>
+#include <condition_variable>
+#include <cstring>
+#include <pthread.h>
+#include <sched.h>
+#include "audio_processor.h"
+
+using namespace std;
+
+#define CHUNK_SIZE 1152
+#define HEADER_SIZE 5
+#define PACKET_SIZE (CHUNK_SIZE + HEADER_SIZE)
+#define TAG_SIZE 45
+
+uint8_t packet_in_buffer[PACKET_SIZE + TAG_SIZE];
+uint8_t receive_buffer[CHUNK_SIZE];
+int32_t processed_buffer[CHUNK_SIZE * 8];
+uint8_t *processed_buffer_int8 = (uint8_t *)processed_buffer;
+
+int process_buffer_pos = 0;
+
+string input_ip = "";
+int fd_in = 0, fd_out = 0, data_fd_in = 0;
+int output_channels = 0, output_samplerate = 0, output_chlayout1 = 0, output_chlayout2 = 0;
+int delay = 0, timeshift_buffer_dur = 0;
+float volume = 1;
+std::chrono::steady_clock::time_pointtimeshift_last_change;
+unsigned long timeshift_buffer_pos = 0;
+float timeshift_backshift = 0;
+std::mutex timeshift_mutex;
+std::condition_variable timeshift_condition;
+
+const auto TIMESHIFT_NOREMOVE_TIME = std::chrono::minutes(5);
+
+std::deque<std::pair<std::chrono::steady_clock::time_point, std::vector<uint8_t>>> timeshift_buffer;
+std::atomic<bool> threads_running(true);
+
+uint8_t input_header[HEADER_SIZE] = {0};
+int input_channels = 0, input_samplerate = 0, input_bitdepth = 0, input_chlayout1 = 0, input_chlayout2 = 0;
+
+unique_ptr<AudioProcessor> audioProcessor = NULL;
+std::mutex audioProcessor_mutex;
+
+float new_eq[EQ_BANDS] = {1};
+
+int *int_args[] = {
+    NULL, &fd_in, &fd_out, &data_fd_in, &output_channels, &output_samplerate, &output_chlayout1, &output_chlayout2,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    &delay, &timeshift_buffer_dur,
+};
+
+float *float_args[] = {
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    &volume,
+    &new_eq[0], &new_eq[1], &new_eq[2], &new_eq[3], &new_eq[4], &new_eq[5], &new_eq[6], &new_eq[7], &new_eq[8], &new_eq[9],
+    &new_eq[10],&new_eq[11],&new_eq[12],&new_eq[13],&new_eq[14],&new_eq[15],&new_eq[16],&new_eq[17],
+    NULL, NULL,
+};
+
+int config_argc = sizeof(int_args) / sizeof(int *);
+
+void log(const string& message) {
+    cerr << "[Source Input Processor " << getpid() << "] " << message << endl;
+}
+
+void process_args(int argc, char *argv[]) {
+    if (argc <= config_argc) {
+        log("Too few args");
+        threads_running = false;
+        return; // Return early to prevent accessing out-of-bounds array elements
+    }
+    input_ip = string(argv[1]);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (int_args[argi] != NULL)
+            *(int_args[argi]) = atoi(argv[argi + 1]);
+    for (int argi = 0; argi < config_argc; argi++)
+        if (float_args[argi] != NULL)
+            *(float_args[argi]) = atof(argv[argi + 1]);
+}
+
+// This function checks if the incoming packet header has changed and updates the input parameters accordingly.
+void check_update_header() {
+    // Compare the current header with the new one received in the packet buffer.
+    if (memcmp(input_header, packet_in_buffer + TAG_SIZE, HEADER_SIZE) != 0) {
+        log("Got new header");
+        // Update the input header with the new data.
+        memcpy(input_header, packet_in_buffer + TAG_SIZE, HEADER_SIZE);
+        
+        // Extract sample rate from the header and convert it to integer format.
+        input_samplerate = (input_header[0] & 0x7F) * ((input_header[0] & 0x80) ? 44100 : 48000);
+        
+        // Extract bit depth from the header and convert it to integer format.
+        input_bitdepth = input_header[1];
+        
+        // Extract number of channels from the header and convert it to integer format.
+        input_channels = input_header[2];
+        
+        // Extract channel layout from the header and convert it to integer format.
+        input_chlayout1 = input_header[3];
+        input_chlayout2 = input_header[4];
+        
+        log("Sample Rate: " + to_string(input_samplerate) + " -> " + to_string(output_samplerate));
+        log("Bit Depth: " + to_string(input_bitdepth) + " -> 32");
+        log("Channels: " + to_string(input_channels) + " -> " + to_string(output_channels));
+        
+        // Lock the audio processor mutex before updating the audio processor settings.
+        audioProcessor_mutex.lock();
+        // Create a new AudioProcessor instance with updated parameters.
+        audioProcessor = make_unique<AudioProcessor>(input_channels, output_channels, input_bitdepth, input_samplerate, output_samplerate, volume);
+        audioProcessor->setEqualizer(new_eq);
+        // Unlock the audio processor mutex after updating the settings.
+        audioProcessor_mutex.unlock();
+    }
+}
+
+void receive_data_thread() {
+    fd_set read_fds;
+    struct timeval timeout;
+    
+    while (threads_running) {
+        // Set up select with 5ms timeout
+        FD_ZERO(&read_fds);
+        FD_SET(fd_in, &read_fds);
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 5000; // 5ms timeout
+        
+        // Wait for data with timeout
+        int select_result = select(fd_in + 1, &read_fds, NULL, NULL, &timeout);
+        
+        // If select failed or timed out, continue the loop
+        if (select_result <= 0) {
+            continue;
+        }
+        
+        // Check if our fd is ready for reading
+        if (!FD_ISSET(fd_in, &read_fds)) {
+            continue;
+        }
+        
+        int bytes;
+        while ((bytes = read(fd_in, packet_in_buffer, TAG_SIZE + PACKET_SIZE)) != TAG_SIZE + PACKET_SIZE ||
+                (strcmp(input_ip.c_str(), reinterpret_cast<const char*>(packet_in_buffer)) != 0)) {
+                    if (bytes == -1)
+                        threads_running = false;
+            }
+        check_update_header();
+        auto received_time = std::chrono::steady_clock::now();
+        std::vector<uint8_t> new_packet(CHUNK_SIZE);
+        memcpy(new_packet.data(), packet_in_buffer + TAG_SIZE + HEADER_SIZE, CHUNK_SIZE);
+        
+        // Critical section - add data to buffer
+        {
+            std::lock_guard<std::mutex> lock(timeshift_mutex);
+            timeshift_buffer.emplace_back(received_time, std::move(new_packet));
+            // Notify while holding the lock - this is actually the recommended pattern for condition variables
+            timeshift_condition.notify_one(); // Notify waiting threads that new data is available
+        }
+    }
+}
+
+bool data_ready() {
+    // Check if we have data and haven't reached the end
+    if (timeshift_buffer.empty() || timeshift_buffer.size() <= timeshift_buffer_pos) {
+        return false;
+    }
+
+    // Get current packet's scheduled play time
+    auto current_time = timeshift_buffer.at(timeshift_buffer_pos).first + 
+                       std::chrono::milliseconds(delay) + 
+                       std::chrono::milliseconds((int)(timeshift_backshift*1000));
+
+    // If we're at the last packet, don't allow playback
+    if (timeshift_buffer_pos == timeshift_buffer.size() - 1) {
+        return false;
+    }
+
+    // Otherwise check if it's time to play this packet
+    return current_time <= std::chrono::steady_clock::now();
+}
+
+bool receive_data() {
+    try {
+        std::unique_lock<std::mutex> process_lock(timeshift_mutex);
+        
+        // If no data is ready, wait for notification with a timeout
+        if (!data_ready()) {
+            timeshift_condition.wait_for(process_lock, std::chrono::seconds(1), [&]() -> bool {
+                return data_ready();
+            });
+        }
+
+        if (!data_ready())
+            return false;
+        
+        // Copy the data while holding the lock
+        memcpy(receive_buffer, timeshift_buffer.at(timeshift_buffer_pos++).second.data(), CHUNK_SIZE);
+
+        // Check if we need to clean up old data
+        if (!timeshift_buffer.empty() && 
+            timeshift_buffer.front().first + std::chrono::milliseconds(delay) + 
+            std::chrono::milliseconds((int)(timeshift_backshift*1000)) + 
+            std::chrono::seconds(timeshift_buffer_dur) < std::chrono::steady_clock::now()) {
+            
+            if (timeshift_last_change + TIMESHIFT_NOREMOVE_TIME < std::chrono::steady_clock::now()) {
+                timeshift_buffer.pop_front();
+                timeshift_buffer_pos--;
+            }
+        }
+        
+        return true;
+        
+    } catch (std::out_of_range) {
+        log("Out of range 1");
+        return false;
+    }
+}
+
+void change_timeshift() {
+    if (timeshift_buffer.size() == 0) {
+        timeshift_buffer_pos = 0;
+        timeshift_backshift = 0;
+    } else {
+        timeshift_mutex.lock();
+        auto desired_time = std::chrono::steady_clock::now() - 
+                            std::chrono::milliseconds((int)(timeshift_backshift*1000)) - 
+                            std::chrono::milliseconds(delay);
+        long closest_buffer_delta = LONG_MAX;
+        
+        for (long i=0; i<timeshift_buffer.size(); i++) {
+            std::chrono::steady_clock::duration cur_delta = timeshift_buffer.at(i).first - desired_time;
+            long cur_delta_num = abs(std::chrono::duration_cast<std::chrono::milliseconds>(cur_delta).count());
+            if (cur_delta_num < closest_buffer_delta) {
+                closest_buffer_delta = cur_delta_num;
+                timeshift_buffer_pos = i;
+            }
+        }
+        
+        timeshift_backshift = std::chrono::duration_cast<std::chrono::duration<float>>(
+            std::chrono::steady_clock::now() - timeshift_buffer.at(timeshift_buffer_pos).first + 
+            std::chrono::milliseconds(delay)
+        ).count();
+        timeshift_mutex.unlock();
+    }
+}
+
+void data_input_thread() {
+    char line[256];
+    fd_set read_fds;
+    struct timeval timeout;
+
+    while (threads_running) {
+        // Set up select with 5ms timeout
+        FD_ZERO(&read_fds);
+        FD_SET(data_fd_in, &read_fds);
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 5000; // 5ms timeout
+        
+        // Wait for data with timeout
+        int select_result = select(data_fd_in + 1, &read_fds, NULL, NULL, &timeout);
+        
+        // If select failed or timed out, continue the loop
+        if (select_result <= 0) {
+            continue;
+        }
+        
+        // Check if our fd is ready for reading
+        if (!FD_ISSET(data_fd_in, &read_fds)) {
+            continue;
+        }
+        
+        if (read(data_fd_in, line, sizeof(line)) > 0) {
+            std::string input(line);
+            std::istringstream iss(input);
+            std::string command;
+
+            while (std::getline(iss, command)) {
+                std::istringstream command_stream(command);
+                std::string variable;
+                float value;
+
+                if (command_stream >> variable >> value) {
+                    if (variable[0] == 'b' && variable.length() > 1 && std::isdigit(variable[1])) {
+                        int index = std::stoi(variable.substr(1)) - 1;
+                        if (index >= 0 && index < EQ_BANDS) {
+                            new_eq[index] = value;
+                        }
+                    } else if (variable == "v") {
+                        if (!audioProcessor)
+                            continue;
+                        volume = value;
+                        audioProcessor_mutex.lock();
+                        audioProcessor->setVolume(volume);
+                        audioProcessor_mutex.unlock();
+                    } else if (variable == "t") {
+                        timeshift_backshift = value;
+                        change_timeshift();
+                    } else if (variable == "d") {
+                        delay = (int)value;
+                        change_timeshift();
+                    }
+                } else if (command == "a") {
+                    if (!audioProcessor)
+                        continue;
+                    audioProcessor_mutex.lock();
+                    audioProcessor->setEqualizer(new_eq);
+                    audioProcessor_mutex.unlock();
+                }
+            }
+        }
+        
+        // No need for sleep here as select already provides the timeout
+    }
+}
+
+void write_output_buffer() {
+    write(fd_out, processed_buffer_int8, CHUNK_SIZE);
+    for (int pos = 0; pos < sizeof(processed_buffer) - CHUNK_SIZE; pos++)
+        processed_buffer_int8[pos] = processed_buffer_int8[pos + CHUNK_SIZE];
+    process_buffer_pos -= CHUNK_SIZE / sizeof(int32_t);
+}
+
+#include <exception>
+#include <stdexcept>
+#include <cxxabi.h>
+#include <execinfo.h>
+
+void print_stacktrace() {
+    const int MAX_STACK_FRAMES = 100;
+    void* stack_traces[MAX_STACK_FRAMES];
+    int trace_size = backtrace(stack_traces, MAX_STACK_FRAMES);
+    char** stack_strings = backtrace_symbols(stack_traces, trace_size);
+
+    std::cerr << "Stack trace:" << std::endl;
+    for (int i = 0; i < trace_size; ++i) {
+        std::string stack_string(stack_strings[i]);
+        size_t pos = stack_string.find('(');
+        size_t pos2 = stack_string.find('+', pos);
+        if (pos != std::string::npos && pos2 != std::string::npos) {
+            std::string mangled_name = stack_string.substr(pos + 1, pos2 - pos - 1);
+            int status;
+            char* demangled_name = abi::__cxa_demangle(mangled_name.c_str(), nullptr, nullptr, &status);
+            if (status == 0) {
+                std::cerr << "  " << i << ": " << demangled_name << std::endl;
+                free(demangled_name);
+            } else {
+                std::cerr << "  " << i << ": " << stack_strings[i] << std::endl;
+            }
+        } else {
+            std::cerr << "  " << i << ": " << stack_strings[i] << std::endl;
+        }
+    }
+    free(stack_strings);
+}
+
+void monitor_buffer_levels() {
+        while (threads_running) {
+        
+        // Check process buffer
+        size_t process_buffer_size = process_buffer_pos * sizeof(int32_t);
+        
+        // Calculate percentages
+        double process_buffer_percentage = (double)process_buffer_size / (CHUNK_SIZE * 8) * 100;
+        
+        // Log if any buffer exceeds thresholds
+        if (process_buffer_percentage > 100) {
+            log("CRITICAL: Buffer overflow - Process: " + std::to_string(process_buffer_percentage) + "%");
+        }
+        
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+
+int main(int argc, char *argv[]) {
+    try {
+        // Pin to CPU core 1
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(1, &cpuset);
+        pthread_t current_thread = pthread_self();
+        if (pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset) != 0) {
+            log("Failed to set CPU affinity to core 1");
+        } else {
+            log("Successfully pinned to CPU core 1");
+        }
+
+        timeshift_last_change = std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration::min());
+        process_args(argc, argv);
+        log("Starting source input processor " + input_ip);
+
+        std::thread receive_thread(receive_data_thread);
+        std::thread data_thread(data_input_thread);
+        std::thread monitor_thread(monitor_buffer_levels);
+
+        while (threads_running) {
+            if (!receive_data()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            if (audioProcessor) {
+                audioProcessor_mutex.lock();
+                int processed_samples = audioProcessor->processAudio(receive_buffer, processed_buffer + process_buffer_pos);
+                audioProcessor_mutex.unlock();
+                process_buffer_pos += processed_samples;
+
+                while (process_buffer_pos >= CHUNK_SIZE / sizeof(int32_t))
+                    write_output_buffer();
+            }
+        }
+
+        receive_thread.join();
+        data_thread.join();
+        monitor_thread.join();
+
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "Exception caught: " << e.what() << std::endl;
+        print_stacktrace();
+        return 1;
+    } catch (...) {
+        std::cerr << "Unknown exception caught" << std::endl;
+        print_stacktrace();
+        return 1;
+    }
+}
+speaker_mix.cpp0000644000000000000000000003037614774646173012623 0ustar  rootroot#include "audio_processor.h"
+#include <emmintrin.h>
+#include <immintrin.h>
+
+
+void AudioProcessor::updateSpeakerMix() {
+    // Fills out the speaker mix table speaker_mix[][] with the current configuration.
+    memset(speaker_mix, 0, sizeof(speaker_mix));
+    // speaker_mix[input channel][output channel] = gain;
+    // Ex: To map Left on Stereo to Right on Stereo at half volume you would do:
+    // speaker_mix[0][1] = .5;
+    switch (inputChannels)
+    {
+    case 1: // Mono, Ch 0: Left
+        // Mono -> All
+        for (int output_channel = 0; output_channel < MAX_CHANNELS; output_channel++) // Write the left (first) speaker to every channel
+            speaker_mix[0][output_channel] = 1;
+        break;
+    case 2: // Stereo, Ch 0: Left, Ch 1: Right
+        switch (outputChannels)
+        {
+        case 1:                     // Stereo -> Mono
+            speaker_mix[0][0] = .5; // Left to mono .5 vol
+            speaker_mix[1][0] = .5; // Right to mono .5 vol
+            break;
+        case 2:                    // Stereo -> Stereo
+            speaker_mix[0][0] = 1; // Left to Left
+            speaker_mix[1][1] = 1; // Right to Right
+            break;
+        case 4:
+            speaker_mix[0][0] = 1; // Left to Front Left
+            speaker_mix[1][1] = 1; // Right to Front Right
+            speaker_mix[0][2] = 1; // Left to Back Left
+            speaker_mix[1][3] = 1; // Right to Back Right
+            break;
+        case 6: // Stereo -> 5.1 Surround
+            // FL FR C LFE BL BR
+            speaker_mix[0][0] = 1;  // Left to Front Left
+            speaker_mix[0][5] = 1;  // Left to Rear Left
+            speaker_mix[1][1] = 1;  // Right to Front Right
+            speaker_mix[1][6] = 1;  // Right to Rear Right
+            speaker_mix[0][3] = .5; // Left to Center Half Vol
+            speaker_mix[1][3] = .5; // Right to Center Half Vol
+            speaker_mix[0][4] = .5; // Right to Sub Half Vol
+            speaker_mix[1][4] = .5; // Left to Sub Half Vol
+            break;
+        case 8: // Stereo -> 7.1 Surround
+            // FL FR C LFE BL BR SL SR
+            speaker_mix[0][0] = 1;  // Left to Front Left
+            speaker_mix[0][6] = 1;  // Left to Side Left
+            speaker_mix[0][4] = 1;  // Left to Rear Left
+            speaker_mix[1][1] = 1;  // Right to Front Right
+            speaker_mix[1][7] = 1;  // Right to Side Right
+            speaker_mix[1][5] = 1;  // Right to Rear Right
+            speaker_mix[0][2] = .5; // Left to Center Half Vol
+            speaker_mix[1][2] = .5; // Right to Center Half Vol
+            speaker_mix[0][3] = .5; // Right to Sub Half Vol
+            speaker_mix[1][3] = .5; // Left to Sub Half Vol
+            break;
+        }
+        break;
+    case 4:
+        switch (outputChannels)
+        {
+        case 1:                      // Quad -> Mono
+            speaker_mix[0][0] = .25; // Front Left to Mono
+            speaker_mix[1][0] = .25; // Front Right to Mono
+            speaker_mix[2][0] = .25; // Rear Left to Mono
+            speaker_mix[3][0] = .25; // Rear Right to Mono
+            break;
+        case 2:                     // Quad -> Stereo
+            speaker_mix[0][0] = .5; // Front Left to Left
+            speaker_mix[1][1] = .5; // Front Right to Right
+            speaker_mix[2][0] = .5; // Rear Left to Left
+            speaker_mix[3][1] = .5; // Rear Right to Right
+            break;
+        case 4:
+            speaker_mix[0][0] = 1; // Front Left to Front Left
+            speaker_mix[1][1] = 1; // Front Right to Front Right
+            speaker_mix[2][2] = 1; // Rear Left to Rear Left
+            speaker_mix[3][3] = 1; // Rear Right to Rear Right
+            break;
+        case 6: // Quad -> 5.1 Surround
+            // FL FR C LFE BL BR
+            speaker_mix[0][0] = 1;   // Front Left to Front Left
+            speaker_mix[1][1] = 1;   // Front Right to Front Right
+            speaker_mix[0][2] = .5;  // Front Left to Center
+            speaker_mix[1][2] = .5;  // Front Right to Center
+            speaker_mix[0][3] = .25; // Front Left to LFE
+            speaker_mix[1][3] = .25; // Front Right to LFE
+            speaker_mix[2][3] = .25; // Rear Left to LFE
+            speaker_mix[3][3] = .25; // Rear Right to LFE
+            speaker_mix[2][4] = 1;   // Rear Left to Rear Left
+            speaker_mix[3][5] = 1;   // Rear Right to Rear Right
+            break;
+        case 8: // Quad -> 7.1 Surround
+            // FL FR C LFE BL BR SL SR
+            speaker_mix[0][0] = 1;   // Front Left to Front Left
+            speaker_mix[1][1] = 1;   // Front Right to Front Right
+            speaker_mix[0][2] = .5;  // Front Left to Center
+            speaker_mix[1][2] = .5;  // Front Right to Center
+            speaker_mix[0][3] = .25; // Front Left to LFE
+            speaker_mix[1][3] = .25; // Front Right to LFE
+            speaker_mix[2][3] = .25; // Rear Left to LFE
+            speaker_mix[3][3] = .25; // Rear Right to LFE
+            speaker_mix[2][4] = 1;   // Rear Left to Rear Left
+            speaker_mix[3][5] = 1;   // Rear Right to Rear Right
+            speaker_mix[0][6] = .5;  // Front Left to Side Left
+            speaker_mix[1][7] = .5;  // Front Right to Side Right
+            speaker_mix[2][6] = .5;  // Rear Left to Side Left
+            speaker_mix[3][7] = .5;  // Rear Right to Side Right
+            break;
+        }
+        break;
+    case 6:
+        switch (outputChannels)
+        {
+        case 1:                     // 5.1 Surround -> Mono
+            speaker_mix[0][0] = .2; // Front Left to Mono
+            speaker_mix[1][0] = .2; // Front Right to Mono
+            speaker_mix[2][0] = .2; // Center to Mono
+            speaker_mix[4][0] = .2; // Rear Left to Mono
+            speaker_mix[5][0] = .2; // Rear Right to Mono
+            break;
+        case 2:                      // 5.1 Surround -> Stereo
+            speaker_mix[0][0] = .33; // Front Left to Left
+            speaker_mix[1][1] = .33; // Front Right to Right
+            speaker_mix[2][0] = .33; // Center to Left
+            speaker_mix[2][1] = .33; // Center to Right
+            speaker_mix[4][0] = .33; // Rear Left to Left
+            speaker_mix[5][1] = .33; // Rear Right to Right
+            break;
+        case 4:
+            speaker_mix[0][0] = .66; // Front Left to Front Left
+            speaker_mix[1][1] = .66; // Front Right to Front Right
+            speaker_mix[2][0] = .33; // Center to Front Left
+            speaker_mix[2][1] = .33; // Center to Front Right
+            speaker_mix[4][2] = 1;   // Rear Left to Rear Left
+            speaker_mix[5][3] = 1;   // Rear Right to Rear Right
+            break;
+        case 6: // 5.1 Surround -> 5.1 Surround
+            // FL FR C LFE BL BR
+            speaker_mix[0][0] = 1; // Front Left to Front Left
+            speaker_mix[1][1] = 1; // Front Right to Front Right
+            speaker_mix[2][2] = 1; // Center to Center
+            speaker_mix[3][3] = 1; // LFE to LFE
+            speaker_mix[4][4] = 1; // Rear Left to Rear Left
+            speaker_mix[5][5] = 1; // Rear Right to Rear Right
+            break;
+        case 8: // 5.1 Surround -> 7.1 Surround
+            // FL FR C LFE BL BR SL SR
+            speaker_mix[0][0] = 1;  // Front Left to Front Left
+            speaker_mix[1][1] = 1;  // Front Right to Front Right
+            speaker_mix[2][2] = 1;  // Center to Center
+            speaker_mix[3][3] = 1;  // LFE to LFE
+            speaker_mix[4][4] = 1;  // Rear Left to Rear Left
+            speaker_mix[5][5] = 1;  // Rear Right to Rear Right
+            speaker_mix[0][6] = .5; // Front Left to Side Left
+            speaker_mix[1][7] = .5; // Front Right to Side Right
+            speaker_mix[4][6] = .5; // Rear Left to Side Left
+            speaker_mix[5][7] = .5; // Rear Right to Side Right
+            break;
+        }
+        break;
+    case 8:
+        switch (outputChannels)
+        {
+        case 1:                              // 7.1 Surround -> Mono
+            speaker_mix[0][0] = 1.0f / 7.0f; // Front Left to Mono
+            speaker_mix[1][0] = 1.0f / 7.0f; // Front Right to Mono
+            speaker_mix[2][0] = 1.0f / 7.0f; // Center to Mono
+            speaker_mix[4][0] = 1.0f / 7.0f; // Rear Left to Mono
+            speaker_mix[5][0] = 1.0f / 7.0f; // Rear Right to Mono
+            speaker_mix[6][0] = 1.0f / 7.0f; // Side Left to Mono
+            speaker_mix[7][0] = 1.0f / 7.0f; // Side Right to Mono
+            break;
+        case 2:                       // 7.1 Surround -> Stereo
+            speaker_mix[0][0] = .5;   // Front Left to Left
+            speaker_mix[1][1] = .5;   // Front Right to Right
+            speaker_mix[2][0] = .25;  // Center to Left
+            speaker_mix[2][1] = .25;  // Center to Right
+            speaker_mix[4][0] = .125; // Rear Left to Left
+            speaker_mix[5][1] = .125; // Rear Right to Right
+            speaker_mix[6][0] = .125; // Side Left to Left
+            speaker_mix[7][1] = .125; // Side Right to Right
+            break;
+        case 4:                      // 7.1 Surround -> Quad
+            speaker_mix[0][0] = .5;  // Front Left to Front Left
+            speaker_mix[1][1] = .5;  // Front Right to Front Right
+            speaker_mix[2][0] = .25; // Center to Front Left
+            speaker_mix[2][1] = .25; // Center to Front Right
+            speaker_mix[4][2] = .66; // Rear Left to Rear Left
+            speaker_mix[5][3] = .66; // Rear Right to Rear Right
+            speaker_mix[6][0] = .25; // Side Left to Front Left
+            speaker_mix[7][1] = .25; // Side Left to Front Right
+            speaker_mix[6][2] = .33; // Side Left to Rear Left
+            speaker_mix[7][3] = .33; // Side Left to Rear Right
+            break;
+        case 6: // 7.1 Surround -> 5.1 Surround
+            // FL FR C LFE BL BR
+            speaker_mix[0][0] = .66; // Front Left to Front Left
+            speaker_mix[1][1] = .66; // Front Right to Front Right
+            speaker_mix[2][2] = 1;   // Center to Center
+            speaker_mix[3][3] = 1;   // LFE to LFE
+            speaker_mix[4][4] = .66; // Rear Left to Rear Left
+            speaker_mix[5][5] = .66; // Rear Right to Rear Right
+            speaker_mix[6][0] = .33; // Side Left to Front Left
+            speaker_mix[7][1] = .33; // Side Right to Front Right
+            speaker_mix[6][4] = .33; // Side Left to Rear Left
+            speaker_mix[7][5] = .33; // Side Right to Rear Right
+            break;
+        case 8: // 7.1 Surround -> 7.1 Surround
+            // FL FR C LFE BL BR SL SR
+            speaker_mix[0][0] = 1; // Front Left to Front Left
+            speaker_mix[1][1] = 1; // Front Right to Front Right
+            speaker_mix[2][2] = 1; // Center to Center
+            speaker_mix[3][3] = 1; // LFE to LFE
+            speaker_mix[4][4] = 1; // Rear Left to Rear Left
+            speaker_mix[5][5] = 1; // Rear Right to Rear Right
+            speaker_mix[6][6] = 1; // Side Left to Side Left
+            speaker_mix[7][7] = 1; // Side Right to Side Right
+            break;
+        }
+        break;
+    }
+}
+
+void AudioProcessor::mixSpeakers() {
+    //memset(remixed_channel_buffers, 0, sizeof(remixed_channel_buffers));
+    for (int pos = 0; pos < channel_buffer_pos; pos++) {
+        for (int output_channel = 0; output_channel < outputChannels; output_channel++) {
+            float mixed_sample = 0.0f;
+            for (int input_channel = 0; input_channel < inputChannels; input_channel++) {
+                mixed_sample += static_cast<float>(channel_buffers[input_channel][pos]) 
+                                * speaker_mix[input_channel][output_channel];
+            }
+            // Apply soft clipping
+            mixed_sample = softClip(mixed_sample / INT32_MAX);
+            // Convert back to int32_t
+            remixed_channel_buffers[output_channel][pos] = static_cast<int32_t>(mixed_sample * INT32_MAX);
+        }
+    }
+}
+
+void AudioProcessor::splitBufferToChannels() {
+    for (int i = 0; i < resample_buffer_pos; i++) {
+        int channel = i % inputChannels;
+        int pos = i / inputChannels;
+        channel_buffers[channel][pos] = resampled_buffer[i];
+    }
+    channel_buffer_pos = resample_buffer_pos / inputChannels;
+}
+
+void AudioProcessor::mergeChannelsToBuffer() {
+    merged_buffer_pos = 0;
+    for (int pos = 0; pos < channel_buffer_pos; ++pos) {
+        for (int channel = 0; channel < outputChannels; ++channel) {
+            merged_buffer[merged_buffer_pos++] = remixed_channel_buffers[channel][pos];
+        }
+    }
+}
+audio_processor.h0000644000000000000000000000444314707023704013136 0ustar  rootroot#ifndef AUDIO_PROCESSOR_H
+#define AUDIO_PROCESSOR_H
+
+#include <cstdint>
+#include <cstring>
+#include <thread>
+#include <atomic>
+#include "libsamplerate/include/samplerate.h"
+
+#define MAX_CHANNELS 8
+#define EQ_BANDS 18
+#define CHUNK_SIZE 1152
+
+struct SRC_STATE_tag;
+typedef SRC_STATE_tag SRC_STATE;
+class Biquad;
+
+class AudioProcessor {
+public:
+    AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, int inputSampleRate, int outputSampleRate, float volume);
+    ~AudioProcessor();
+
+    int processAudio(const uint8_t* inputBuffer, int32_t* outputBuffer);
+    void setVolume(float newVolume);
+    void setEqualizer(const float* newEq);
+
+protected:
+    int inputChannels, outputChannels;
+    int inputSampleRate, outputSampleRate;
+    int inputBitDepth;
+    float volume;
+    float eq[EQ_BANDS];
+    float speaker_mix[MAX_CHANNELS][MAX_CHANNELS];
+
+    uint8_t receive_buffer[CHUNK_SIZE * 4];
+    int32_t scaled_buffer[CHUNK_SIZE * 32];
+    uint8_t *scaled_buffer_int8 = (uint8_t *)scaled_buffer;
+    int32_t resampled_buffer[CHUNK_SIZE * 32];
+    int32_t channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 32];
+    int32_t remixed_channel_buffers[MAX_CHANNELS][CHUNK_SIZE * 32];
+    int32_t merged_buffer[CHUNK_SIZE * 32];
+    int32_t processed_buffer[CHUNK_SIZE * 32]; 
+
+    int scale_buffer_pos = 0;
+    int process_buffer_pos = 0;
+    int merged_buffer_pos = 0;
+    int resample_buffer_pos = 0;
+    int channel_buffer_pos = 0;
+
+    SRC_STATE* sampler;
+    SRC_STATE* downsampler;
+    float resampler_data_in[CHUNK_SIZE * MAX_CHANNELS * 8];
+    float resampler_data_out[CHUNK_SIZE * MAX_CHANNELS * 8];
+
+    Biquad* filters[MAX_CHANNELS][EQ_BANDS];
+    Biquad* dcFilters[MAX_CHANNELS];
+
+    void updateSpeakerMix();
+    void setupBiquad();
+    void initializeSampler();
+    void scaleBuffer();
+    void volumeAdjust();
+    float softClip(float sample);
+    void resample();
+    void downsample();
+    void splitBufferToChannels();
+    void mixSpeakers();
+    void equalize();
+    void mergeChannelsToBuffer();
+    void noiseShapingDither();
+    void setupDCFilter();
+    void removeDCOffset();
+    bool isProcessingRequired();
+    bool isProcessingRequiredCheck();
+    void monitorBuffers();
+
+    // Buffer monitoring thread
+    std::thread monitor_thread;
+    std::atomic<bool> monitor_running;
+};
+
+#endif // AUDIO_PROCESSOR_H
+layout_mixer.h0000644000000000000000000000000014672710230012436 0ustar  rootrootutils.h0000644000000000000000000000000014650565122011061 0ustar  rootroot

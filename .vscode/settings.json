@@ -65,7 +65,9 @@
         "fstream": "cpp",
         "iomanip": "cpp",
         "mutex": "cpp",
-        "sstream": "cpp"
+        "sstream": "cpp",
+        "map": "cpp",
+        "set": "cpp"
     },
     "cmake.configureOnOpen": false,
 }

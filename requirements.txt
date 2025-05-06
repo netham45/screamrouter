@@ -13,3 +13,4 @@ websockets
 websockify
 uvicorn
 zeroconf
+pybind11>=2.6 # For C++ extension building

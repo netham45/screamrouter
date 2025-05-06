@@ -293,9 +293,11 @@ void AudioProcessor::equalize() {
 }
 
 void AudioProcessor::noiseShapingDither() {
-    const float ditherAmplitude = 1.0f / (1 << (inputBitDepth - 1));
+    // Use unsigned long long (1ULL) for the shift to avoid signed overflow for large bit depths
+    const float ditherAmplitude = (inputBitDepth > 0) ? (1.0f / (1ULL << (inputBitDepth - 1))) : 0.0f;
     const float shapingFactor = 0.25f;
     static float error = 0.0f;
+    // Use thread_local for generator and distribution if used across threads, but static should be okay here if AudioProcessor instances aren't shared improperly.
     static std::default_random_engine generator;
     std::uniform_real_distribution<float> distribution(-ditherAmplitude, ditherAmplitude);
     

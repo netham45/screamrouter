@@ -38,7 +38,7 @@ int fd_in = 0, fd_out = 0, data_fd_in = 0;
 int output_channels = 0, output_samplerate = 0, output_chlayout1 = 0, output_chlayout2 = 0;
 int delay = 0, timeshift_buffer_dur = 0;
 float volume = 1;
-std::chrono::steady_clock::time_point timeshift_last_change;
+std::chrono::steady_clock::time_pointtimeshift_last_change;
 unsigned long timeshift_buffer_pos = 0;
 float timeshift_backshift = 0;
 std::mutex timeshift_mutex;
