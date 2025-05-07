@@ -5,6 +5,7 @@
 #include <system_error> // For thread errors
 #include <atomic>       // For std::atomic_uint64_t
 #include <sstream>      // For std::stringstream
+#include <algorithm>    // For std::find
 
 // Use namespaces for clarity
 namespace screamrouter { namespace audio { using namespace utils; } }
@@ -294,14 +295,34 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     command_queues_[instance_id] = cmd_queue;
 
     // Create SourceProcessorConfig, including the instance_id and original tag
-    SourceProcessorConfig proc_config;
+    SourceProcessorConfig proc_config; // Its constructor now initializes initial_eq
     proc_config.instance_id = instance_id; // Store the unique ID
     proc_config.source_tag = validated_config.tag; // Store the original tag (IP/name)
-    proc_config.output_channels = DEFAULT_INPUT_CHANNELS;
-    proc_config.output_samplerate = DEFAULT_INPUT_SAMPLERATE;
+
+    // Validate and use the target output format specified in the input SourceConfig
+    if (validated_config.target_output_channels <= 0 || validated_config.target_output_channels > 8) { // Max 8 channels for example
+        LOG_ERROR_AM("Invalid target_output_channels (" + std::to_string(validated_config.target_output_channels) + ") for source tag " + validated_config.tag + ". Defaulting to 2.");
+        proc_config.output_channels = 2; // Fallback
+    } else {
+        proc_config.output_channels = validated_config.target_output_channels;
+    }
+
+    const std::vector<int> valid_samplerates = {8000, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 192000};
+    if (std::find(valid_samplerates.begin(), valid_samplerates.end(), validated_config.target_output_samplerate) == valid_samplerates.end()) {
+        LOG_ERROR_AM("Invalid target_output_samplerate (" + std::to_string(validated_config.target_output_samplerate) + ") for source tag " + validated_config.tag + ". Defaulting to 48000.");
+        proc_config.output_samplerate = 48000; // Fallback
+    } else {
+        proc_config.output_samplerate = validated_config.target_output_samplerate;
+    }
+    
     proc_config.initial_volume = validated_config.initial_volume;
-    proc_config.initial_eq = validated_config.initial_eq;
+    // proc_config.initial_eq is already initialized by its constructor, but AudioManager's validation logic for EQ size
+    // from validated_config.initial_eq should still apply and overwrite if necessary.
+    // The existing EQ validation logic in configure_source (which modifies validated_config.initial_eq)
+    // will ensure it's correctly sized before this assignment.
+    proc_config.initial_eq = validated_config.initial_eq; 
     proc_config.initial_delay_ms = validated_config.initial_delay_ms;
+    // proc_config.timeshift_buffer_duration_sec remains default or could be made configurable
 
     // Create and Start SourceInputProcessor
     std::unique_ptr<SourceInputProcessor> new_source;

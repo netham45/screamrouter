@@ -661,6 +661,15 @@ void SinkAudioMixer::encode_and_push_mp3() {
         return;
     }
 
+    // *** ADDED CHECK: Ensure mixing_buffer_ has 1152 bytes (288 samples) before processing ***
+    const size_t required_samples = SINK_CHUNK_SIZE_BYTES / sizeof(int32_t);
+    if (mixing_buffer_.size() < required_samples) {
+        LOG_ERROR(config_.sink_id, "MP3 Encode: Skipping processing. mixing_buffer_ size is " + std::to_string(mixing_buffer_.size()) + ", expected " + std::to_string(required_samples) + " samples (1152 bytes).");
+        return; // Do not process or encode if the buffer size is wrong
+    }
+    LOG_DEBUG(config_.sink_id, "MP3 Encode: mixing_buffer_ size check passed (" + std::to_string(mixing_buffer_.size()) + " samples). Proceeding to AudioProcessor.");
+
+
     // 1. Preprocess the mixed buffer using AudioProcessor.
     //    AudioProcessor internally processes SINK_MIXING_BUFFER_SAMPLES input frames.
     //    The output is stereo (2 channels), so the buffer needs space for SINK_MIXING_BUFFER_SAMPLES * 2 samples.

@@ -1,4 +1,5 @@
 import sys
+import pybind11 # Import pybind11
 from setuptools import setup
 
 try:
@@ -22,16 +23,17 @@ ext_modules = [
             "c_utils/layout_mixer.cpp", # Added missing source
             "c_utils/speaker_mix.cpp",  # Added missing source
             "c_utils/biquad/biquad.cpp",
+            "src/configuration/audio_engine_config_applier.cpp", # Added Config Applier source
             # Note: libsamplerate sources are NOT included here.
             # We rely on linking against a pre-built library (-lsamplerate).
         ],
         include_dirs=[
             # Directories containing header files needed by the sources
             "src/audio_engine",
+            "src/configuration", # Added Config Applier include dir
             "c_utils",
             "c_utils/biquad",
-            "c_utils/libsamplerate/include", # For samplerate.h used in audio_processor.cpp
-            # pybind11 headers are usually found automatically by Pybind11Extension
+            "c_utils/libsamplerate/include"
         ],
         library_dirs=[
             # Add paths to libraries if they are not in standard locations

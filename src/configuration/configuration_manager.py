@@ -8,6 +8,19 @@ import traceback
 import concurrent.futures
 import threading
 import uuid
+import src.screamrouter_logger.screamrouter_logger as screamrouter_logger 
+# --- C++ Engine Import ---
+try:
+    import screamrouter_audio_engine
+except ImportError as e:
+    # Log the error but allow ScreamRouter to potentially run without the C++ engine
+    # (though functionality will be severely limited or broken)
+    screamrouter_logger.get_logger(__name__).critical(
+        "Failed to import C++ audio engine module (screamrouter_audio_engine). "
+        "Ensure it's compiled correctly. Error: %s", e)
+    screamrouter_audio_engine = None
+# --- End C++ Engine Import ---
+
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
 from copy import copy, deepcopy
@@ -31,7 +44,7 @@ import src.constants.constants as constants
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
 from src.api.api_webstream import APIWebStream
 from src.api.api_websocket_config import APIWebsocketConfig
-from src.audio.audio_controller import AudioController
+# Removed: from src.audio.audio_controller import AudioController (Task 04_04)
 from src.audio.multicast_scream_receiver import MulticastScreamReceiver
 from src.audio.rtp_recevier import RTPReceiver
 from src.audio.scream_receiver import ScreamReceiver
@@ -51,8 +64,22 @@ from src.screamrouter_types.exceptions import InUseError
 from src.utils.mdns_pinger import MDNSPinger
 from src.utils.mdns_responder import MDNSResponder
 from src.utils.mdns_settings_pinger import MDNSSettingsPinger
+from typing import Optional # For type hinting Optional C++ objects
 
+# Import and initialize logger *before* the try block that might use it
 _logger = screamrouter_logger.get_logger(__name__)
+
+# --- C++ Engine Import ---
+try:
+    import screamrouter_audio_engine
+except ImportError as e:
+    # Log the error but allow ScreamRouter to potentially run without the C++ engine
+    # (though functionality will be severely limited or broken)
+    _logger.critical(
+        "Failed to import C++ audio engine module (screamrouter_audio_engine). "
+        "Ensure it's compiled correctly. Error: %s", e)
+    screamrouter_audio_engine = None
+# --- End C++ Engine Import ---
 
 class ConfigurationManager(threading.Thread):
     """Tracks configuration and loading the main receiver/sinks based off of it"""
@@ -61,6 +88,12 @@ class ConfigurationManager(threading.Thread):
                  websocket_config: APIWebsocketConfig):
         """Initialize the controller"""
         super().__init__(name="Configuration Manager")
+
+        # --- C++ Engine Members ---
+        self.cpp_audio_manager: Optional[screamrouter_audio_engine.AudioManager] = None
+        self.cpp_config_applier: Optional[screamrouter_audio_engine.AudioEngineConfigApplier] = None
+        # --- End C++ Engine Members ---
+
         self.mdns_responder: MDNSResponder = MDNSResponder()
         """MDNS Responder, handles returning responses over MDNS for receivers/senders to configure to"""
         self.mdns_responder.start()
@@ -76,8 +109,7 @@ class ConfigurationManager(threading.Thread):
         """List of Sources the controller knows of"""
         self.route_descriptions: List[RouteDescription] = []
         """List of Routes the controller knows of"""
-        self.audio_controllers: List[AudioController] = []
-        """Holds a list of active Audio Controllers"""
+        # self.audio_controllers: List[AudioController] = [] # Removed (Task 04_04)
         self.__api_webstream: APIWebStream = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
         self.active_configuration: ConfigurationSolver
@@ -108,7 +140,33 @@ class ConfigurationManager(threading.Thread):
         self.websocket_config = websocket_config
         """Websocket Config Update Notifier"""
         self.plugin_manager: PluginManager = plugin_manager
-        self.__load_config()
+
+        # --- C++ Engine Initialization ---
+        if screamrouter_audio_engine: # Check if import succeeded
+            try:
+                _logger.info("[Configuration Manager] Initializing C++ AudioManager...")
+                self.cpp_audio_manager = screamrouter_audio_engine.AudioManager()
+                
+                # Determine the RTP listen port (e.g., from constants or config)
+                # Use the correct constant name from constants.py
+                rtp_listen_port = constants.RTP_RECEIVER_PORT 
+                
+                if not self.cpp_audio_manager.initialize(rtp_listen_port):
+                    _logger.error("[Configuration Manager] Failed to initialize C++ AudioManager.")
+                    self.cpp_audio_manager = None # Ensure it's None on failure
+                else:
+                    _logger.info("[Configuration Manager] C++ AudioManager initialized successfully on port %d.", rtp_listen_port)
+                    # Only create applier if manager initialized successfully
+                    self.cpp_config_applier = screamrouter_audio_engine.AudioEngineConfigApplier(self.cpp_audio_manager)
+                    _logger.info("[Configuration Manager] C++ AudioEngineConfigApplier created.")
+
+            except Exception as e:
+                _logger.exception("[Configuration Manager] Exception during C++ engine initialization: %s", e)
+                self.cpp_audio_manager = None # Ensure it's None on error
+                self.cpp_config_applier = None
+        # --- End C++ Engine Initialization ---
+
+        self.__load_config() # Load YAML config AFTER attempting C++ engine init
 
         _logger.info("------------------------------------------------------------------------")
         _logger.info("  ScreamRouter")
@@ -161,10 +219,8 @@ class ConfigurationManager(threading.Thread):
             if route.sink == old_sink_name:
                 route.sink = changed_sink.name
 
-        if is_eq_found and is_eq_only:
-            self.__reload_volume_eq_timeshift_delay_configuration()
-        else:
-            self.__reload_configuration()
+        # Always trigger a full reload for simplicity and robustness with C++ engine
+        self.__reload_configuration()
         return True
 
     def delete_sink(self, sink_name: SinkNameType) -> bool:
@@ -232,10 +288,8 @@ class ConfigurationManager(threading.Thread):
             if route.source == old_source_name:
                 route.source = changed_source.name
 
-        if is_eq_found and is_eq_only:
-            self.__reload_volume_eq_timeshift_delay_configuration()
-        else:
-            self.__reload_configuration()
+        # Always trigger a full reload
+        self.__reload_configuration()
         return True
 
     def delete_source(self, source_name: SourceNameType) -> bool:
@@ -288,10 +342,8 @@ class ConfigurationManager(threading.Thread):
             elif field != "name":
                 is_eq_only = False
             setattr(changed_route, field, getattr(new_route, field))
-        if is_eq_found and is_eq_only:
-            self.__reload_volume_eq_timeshift_delay_configuration()
-        else:
-            self.__reload_configuration()
+        # Always trigger a full reload
+        self.__reload_configuration()
         return True
 
     def delete_route(self, route_name: RouteNameType) -> bool:
@@ -319,7 +371,7 @@ class ConfigurationManager(threading.Thread):
         """Set the equalizer for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.equalizer = equalizer
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_source_position(self, source_name: SourceNameType, new_index: int):
@@ -332,7 +384,7 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.volume = volume
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_source_timeshift(self, source_name: SourceNameType,
@@ -340,14 +392,14 @@ class ConfigurationManager(threading.Thread):
         """Set the timeshift for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.timeshift = timeshift
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_source_delay(self, source_name: SourceNameType, delay: DelayType) -> bool:
         """Set the delay for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.delay = delay
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def source_next_track(self, source_name: SourceNameType) -> bool:
@@ -429,7 +481,7 @@ class ConfigurationManager(threading.Thread):
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.equalizer = equalizer
         _logger.debug("Updating EQ for %s", sink_name)
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_sink_position(self, sink_name: SinkNameType, new_index: int):
@@ -442,7 +494,7 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.volume = volume
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_sink_timeshift(self, sink_name: SinkNameType,
@@ -450,21 +502,21 @@ class ConfigurationManager(threading.Thread):
         """Set the timeshift for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.timeshift = timeshift
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_sink_delay(self, sink_name: SinkNameType, delay: DelayType) -> bool:
         """Set the delay for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.delay = delay
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_route_equalizer(self, route_name: RouteNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.equalizer = equalizer
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_route_position(self, route_name: RouteNameType, new_index: int):
@@ -477,7 +529,7 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.volume = volume
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_route_timeshift(self, route_name: RouteNameType,
@@ -485,14 +537,14 @@ class ConfigurationManager(threading.Thread):
         """Set the timeshift for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.timeshift = timeshift
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_route_delay(self, route_name: RouteNameType, delay: DelayType) -> bool:
         """Set the delay for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.delay = delay
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def stop(self) -> bool:
@@ -500,7 +552,18 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("[Configuration Manager] Stopping webstream")
         self.__api_webstream.stop()
         _logger.debug("[Configuration Manager] Webstream stopped")
-        _logger.debug("[Configuration Manager] Stopping receiver")
+
+        # --- C++ Engine Shutdown ---
+        if self.cpp_audio_manager:
+            try:
+                _logger.info("[Configuration Manager] Shutting down C++ AudioManager...")
+                self.cpp_audio_manager.shutdown()
+                _logger.info("[Configuration Manager] C++ AudioManager shutdown complete.")
+            except Exception as e:
+                _logger.exception("[Configuration Manager] Exception during C++ AudioManager shutdown: %s", e)
+        # --- End C++ Engine Shutdown ---
+
+        _logger.debug("[Configuration Manager] Stopping Python receivers")
         self.scream_recevier.stop()
         self.multicast_scream_recevier.stop()
         self.rtp_receiver.stop()
@@ -509,10 +572,7 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("[Configuration Manager] Stopping Plugin Manager")
         self.plugin_manager.stop_registered_plugins()
         _logger.debug("[Configuration Manager] Plugin Manager Stopped")
-        _logger.debug("[Configuration Manager] Stopping audio controllers")
-        for audio_controller in self.audio_controllers:
-            audio_controller.stop()
-        _logger.debug("[Configuration Manager] Audio controllers stopped")
+        # Removed loop stopping Python AudioControllers (Task 04_04)
         _logger.debug("[Configuration Manager] Stopping mDNS")
         self.mdns_responder.stop()
         self.mdns_pinger.stop()
@@ -662,31 +722,47 @@ class ConfigurationManager(threading.Thread):
 
 
                 for sink in self.sink_descriptions:
-                    for unset_field in [field for field in sink.model_fields if
-                                        field not in sink.model_fields_set]:
-                        _logger.warning(
-                    "[Configuration Manager] Setting unset attribte %s on sink %s to default %s",
-                    unset_field, sink.name, SinkDescription.model_fields[unset_field].default)
-                        setattr(sink, unset_field,
-                                SinkDescription.model_fields[unset_field].default)
+                    for field_name, field_info in SinkDescription.model_fields.items():
+                        # Check if the field was NOT explicitly set when loading from YAML
+                        if field_name not in sink.model_fields_set:
+                            # Try getting the default value directly from the class attribute
+                            try:
+                                default_value = getattr(SinkDescription, field_name)
+                                # Check if default is not None or some other placeholder indicating no default
+                                if default_value is not None: # Adjust condition if necessary
+                                     _logger.warning(
+                                        "[Configuration Manager] Setting unset attribute %s on sink %s to default %s",
+                                        field_name, sink.name, default_value)
+                                     setattr(sink, field_name, default_value)
+                            except AttributeError:
+                                # Field might not have a default defined on the class
+                                pass 
 
                 for route in self.route_descriptions:
-                    for unset_field in [field for field in route.model_fields if
-                                         field not in route.model_fields_set]:
-                        _logger.warning(
-                    "[Configuration Manager] Setting unset attribte %s on route %s to default %s",
-                    unset_field, route.name, RouteDescription.model_fields[unset_field].default)
-                        setattr(route, unset_field,
-                                RouteDescription.model_fields[unset_field].default)
+                     for field_name, field_info in RouteDescription.model_fields.items():
+                        if field_name not in route.model_fields_set:
+                            try:
+                                default_value = getattr(RouteDescription, field_name)
+                                if default_value is not None:
+                                    _logger.warning(
+                                        "[Configuration Manager] Setting unset attribute %s on route %s to default %s",
+                                        field_name, route.name, default_value)
+                                    setattr(route, field_name, default_value)
+                            except AttributeError:
+                                pass
 
                 for source in self.source_descriptions:
-                    for unset_field in [field for field in source.model_fields if
-                                        field not in source.model_fields_set]:
-                        _logger.warning(
-                    "[Configuration Manager] Setting unset attribte %s on source %s to default %s",
-                    unset_field, source.name, SourceDescription.model_fields[unset_field].default)
-                        setattr(source, unset_field,
-                                SourceDescription.model_fields[unset_field].default)
+                    for field_name, field_info in SourceDescription.model_fields.items():
+                         if field_name not in source.model_fields_set:
+                            try:
+                                default_value = getattr(SourceDescription, field_name)
+                                if default_value is not None:
+                                    _logger.warning(
+                                        "[Configuration Manager] Setting unset attribute %s on source %s to default %s",
+                                        field_name, source.name, default_value)
+                                    setattr(source, field_name, default_value)
+                            except AttributeError:
+                                pass
 
         except FileNotFoundError:
             _logger.warning("[Configuration Manager] Configuration not found., making new config")
@@ -719,6 +795,149 @@ class ConfigurationManager(threading.Thread):
                                                                 self.sink_descriptions,
                                                                 self.route_descriptions))
         self.configuration_semaphore.release()
+
+    # --- C++ State Translation (Task 04_02) ---
+
+    def _translate_config_to_cpp_desired_state(self) -> Optional[screamrouter_audio_engine.DesiredEngineState]:
+        """Translates the current active Python configuration into the C++ DesiredEngineState struct."""
+        if not self.cpp_audio_manager or not self.cpp_config_applier or not screamrouter_audio_engine:
+            _logger.warning("[Config Translator] C++ engine components not available. Skipping translation.")
+            return None
+        
+        if not hasattr(self, 'active_configuration') or not self.active_configuration:
+             _logger.warning("[Config Translator] No active configuration solved yet. Skipping translation.")
+             return None
+
+        _logger.info("[Config Translator] Starting translation to C++ DesiredEngineState...")
+        cpp_desired_state = screamrouter_audio_engine.DesiredEngineState()
+        processed_source_paths: dict[str, screamrouter_audio_engine.AppliedSourcePathParams] = {}
+        processed_sinks_list: list[screamrouter_audio_engine.AppliedSinkParams] = [] # Temporary list for sinks
+
+        # Ensure we have the necessary C++ types available
+        try:
+            CppSinkConfig = screamrouter_audio_engine.SinkConfig
+            CppAppliedSinkParams = screamrouter_audio_engine.AppliedSinkParams
+            CppAppliedSourcePathParams = screamrouter_audio_engine.AppliedSourcePathParams
+            EQ_BANDS = screamrouter_audio_engine.EQ_BANDS # Get constant from C++ module
+        except AttributeError as e:
+            _logger.error("[Config Translator] Failed to access required C++ types/constants from module: %s", e)
+            return None
+
+        solved_config: dict[SinkDescription, List[SourceDescription]] = self.active_configuration.real_sinks_to_real_sources
+        _logger.debug("[Config Translator] Solved config keys (Sinks): %s", list(solved_config.keys())) # Log the sink keys
+
+        for py_sink_desc, py_source_desc_list in solved_config.items():
+            _logger.debug("[Config Translator] Processing Sink: %s", py_sink_desc.name)
+            
+            # A. Create C++ AppliedSinkParams
+            cpp_applied_sink = CppAppliedSinkParams()
+            cpp_applied_sink.sink_id = py_sink_desc.config_id or py_sink_desc.name # Prefer config_id if available
+
+            # B. Create and populate the nested C++ SinkConfig
+            cpp_sink_engine_config = CppSinkConfig()
+            cpp_sink_engine_config.id = cpp_applied_sink.sink_id # Use the same ID
+            cpp_sink_engine_config.output_ip = str(py_sink_desc.ip) if py_sink_desc.ip else ""
+            cpp_sink_engine_config.output_port = py_sink_desc.port if py_sink_desc.port else 0
+            cpp_sink_engine_config.bitdepth = py_sink_desc.bit_depth
+            cpp_sink_engine_config.samplerate = py_sink_desc.sample_rate
+            cpp_sink_engine_config.channels = py_sink_desc.channels
+            
+            # Handle channel layout bytes (assuming they exist on Python SinkDescription)
+            # These might need default values if not always present
+            cpp_sink_engine_config.chlayout1 = getattr(py_sink_desc, 'scream_header_chlayout1', 0x03) # Default stereo
+            cpp_sink_engine_config.chlayout2 = getattr(py_sink_desc, 'scream_header_chlayout2', 0x00)
+            
+            cpp_sink_engine_config.use_tcp = py_sink_desc.use_tcp
+
+            cpp_applied_sink.sink_engine_config = cpp_sink_engine_config
+
+            # C. Process each source connected to this sink
+            connected_path_ids_for_this_sink = []
+            for py_source_desc in py_source_desc_list:
+                _logger.debug("[Config Translator]   Processing Source Path: %s -> %s", 
+                              py_source_desc.tag or py_source_desc.name, py_sink_desc.name)
+                
+                # Use source config_id if available, otherwise tag, otherwise name
+                source_identifier = py_source_desc.config_id or py_source_desc.tag or py_source_desc.name
+                # Use sink config_id if available, otherwise name
+                sink_identifier = py_sink_desc.config_id or py_sink_desc.name
+                
+                # Create a unique path ID
+                path_id = f"{source_identifier}_to_{sink_identifier}" 
+                _logger.debug("[Config Translator]     Generated Path ID: %s", path_id)
+
+                connected_path_ids_for_this_sink.append(path_id)
+
+                # D. Create or retrieve C++ AppliedSourcePathParams
+                if path_id not in processed_source_paths:
+                    cpp_source_path = CppAppliedSourcePathParams()
+                    cpp_source_path.path_id = path_id
+                    
+                    # Prioritize IP for source_tag, fallback to tag, then empty string.
+                    # This tag is crucial for RtpReceiver packet routing.
+                    source_tag_for_cpp = str(py_source_desc.ip) if py_source_desc.ip else \
+                                         (py_source_desc.tag if py_source_desc.tag is not None else "")
+                    cpp_source_path.source_tag = source_tag_for_cpp
+                    
+                    cpp_source_path.target_sink_id = cpp_applied_sink.sink_id # Link to the sink
+                    
+                    cpp_source_path.volume = py_source_desc.volume 
+                    
+                    # Ensure EQ bands list is the correct size
+                    eq_bands = [py_source_desc.equalizer.b1,
+                                py_source_desc.equalizer.b2,
+                                py_source_desc.equalizer.b3,
+                                py_source_desc.equalizer.b4,
+                                py_source_desc.equalizer.b5,
+                                py_source_desc.equalizer.b6,
+                                py_source_desc.equalizer.b7,
+                                py_source_desc.equalizer.b8,
+                                py_source_desc.equalizer.b9,
+                                py_source_desc.equalizer.b10,
+                                py_source_desc.equalizer.b11,
+                                py_source_desc.equalizer.b12,
+                                py_source_desc.equalizer.b13,
+                                py_source_desc.equalizer.b14,
+                                py_source_desc.equalizer.b15,
+                                py_source_desc.equalizer.b16,
+                                py_source_desc.equalizer.b17,
+                                py_source_desc.equalizer.b18]
+                    if len(eq_bands) != EQ_BANDS:
+                         _logger.warning("[Config Translator]     EQ band count mismatch for source %s (%d vs %d). Using default flat EQ.", 
+                                         py_source_desc.name, len(eq_bands), EQ_BANDS)
+                         cpp_source_path.eq_values = [1.0] * EQ_BANDS # Default flat EQ (1.0)
+                    else:
+                        cpp_source_path.eq_values = eq_bands
+                        
+                    cpp_source_path.delay_ms = py_source_desc.delay
+                    cpp_source_path.timeshift_sec = py_source_desc.timeshift
+                    
+                    # Get target format from the *sink* description
+                    cpp_source_path.target_output_channels = py_sink_desc.channels
+                    cpp_source_path.target_output_samplerate = py_sink_desc.sample_rate
+                    
+                    # generated_instance_id remains empty - C++ will fill it
+                    
+                    processed_source_paths[path_id] = cpp_source_path
+                    _logger.debug("[Config Translator]     Created new AppliedSourcePathParams for path %s", path_id)
+                # else: Path already processed (e.g., multiple routes to same source/sink pair)
+
+            # E. Finalize AppliedSinkParams
+            cpp_applied_sink.connected_source_path_ids = connected_path_ids_for_this_sink
+            processed_sinks_list.append(cpp_applied_sink) # Add to temporary list
+            _logger.debug("[Config Translator]   Finished processing sink %s. Connected paths: %s", 
+                          cpp_applied_sink.sink_id, cpp_applied_sink.connected_source_path_ids)
+
+        # F. Populate the sinks and source_paths lists in DesiredEngineState AFTER the loop
+        cpp_desired_state.sinks = processed_sinks_list
+        cpp_desired_state.source_paths = list(processed_source_paths.values())
+        _logger.info("[Config Translator] Translation complete. %d sinks, %d source paths.", 
+                     len(cpp_desired_state.sinks), len(cpp_desired_state.source_paths)) # Log final counts
+
+        return cpp_desired_state
+
+    # --- End C++ State Translation ---
+
 
 # Configuration processing functions
 
@@ -781,15 +1000,8 @@ class ConfigurationManager(threading.Thread):
                     if sink not in changed_sinks:
                         changed_sinks.append(sink)
 
-        # Add sinks requesting a reload
-        for audio_controller in self.audio_controllers:
-            if audio_controller.wants_reload():
-                _logger.info("[Configuration Manager] Controller %s wants a reload",
-                             audio_controller.sink_info.name)
-                for sink in new_map.keys():
-                    if sink.name == audio_controller.sink_info.name:
-                        if sink not in changed_sinks:
-                            changed_sinks.append(sink)
+        # Removed loop checking Python AudioControllers for reload request (Task 04_04)
+        # Reload requests should be handled differently if needed for C++ engine or plugins
 
         return added_sinks, removed_sinks, changed_sinks
 
@@ -867,6 +1079,33 @@ class ConfigurationManager(threading.Thread):
         # Return what's changed
         return added_sinks, removed_sinks, changed_sinks
 
+    def __apply_cpp_engine_state(self) -> bool:
+        """Translates the active config and applies it to the C++ engine."""
+        if not self.cpp_config_applier:
+            _logger.warning("[Configuration Manager] C++ Config Applier not available. Skipping C++ engine configuration.")
+            return False # Indicate that C++ state was not applied
+
+        _logger.info("[Configuration Manager] Translating configuration for C++ engine...")
+        cpp_desired_state = self._translate_config_to_cpp_desired_state()
+
+        if cpp_desired_state:
+            try:
+                _logger.info("[Configuration Manager] Applying translated state to C++ engine...")
+                success = self.cpp_config_applier.apply_state(cpp_desired_state)
+                if success:
+                    _logger.info("[Configuration Manager] C++ engine state applied successfully.")
+                    return True
+                else:
+                    _logger.error("[Configuration Manager] C++ AudioEngineConfigApplier reported failure during apply_state.")
+                    return False
+            except Exception as e:
+                _logger.exception("[Configuration Manager] Exception calling C++ apply_state: %s", e)
+                return False
+        else:
+            _logger.error("[Configuration Manager] Failed to translate configuration to C++ DesiredEngineState.")
+            return False
+        return False # Should not be reached, but default to false
+
     def __reload_configuration(self) -> None:
         """Notifies the configuration manager to reload the configuration"""
         asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
@@ -885,134 +1124,64 @@ class ConfigurationManager(threading.Thread):
         self.reload_config = True
         _logger.debug("[Configuration Manager] Marking config for reload")
 
-    def __reload_volume_eq_timeshift_delay_configuration(self) -> None:
-        """Notifies the configuration manager to reload the volume/eq"""
-        if not self.volume_eq_reload_condition.acquire(timeout=1):
-            raise TimeoutError("Failed to get volume/eq configuration reload condition")
-        try:
-            self.volume_eq_reload_condition.notify()
-        except RuntimeError:
-            pass
-        self.volume_eq_reload_condition.release()
-        _logger.debug("[Configuration Manager] Marking volume/eq for reload")
+    # Removed __reload_volume_eq_timeshift_delay_configuration as it now just calls __reload_configuration
 
-    def __process_and_apply_volume_eq_delay_timeshift(self) -> None:
-        """Process the volume/eq/delay/timeshift configuration, apply them to all audiocontrollers"""
-        new_configuration: ConfigurationSolver = ConfigurationSolver(
-                                                        self.source_descriptions,
-                                                        self.sink_descriptions,
-                                                        self.route_descriptions)
-        new_map: dict[SinkDescription,List[SourceDescription]]
-        new_map = new_configuration.real_sinks_to_real_sources
-        for sink, sources in new_map.items():
-            for audio_controller in self.audio_controllers:
-                if audio_controller.sink_info.name == sink.name:
-                    for source in sources:
-                        audio_controller.update_volume(source.name, source.volume)
-                        audio_controller.update_equalizer(source.name, source.equalizer)
-                        audio_controller.update_delay(source.name, source.delay)
-                        audio_controller.update_timeshift(source.name, source.timeshift)
-        try:
-            self.volume_eq_reload_condition.release()
-        except:
-            pass
-
-        self.__save_config()
+    # Removed __process_and_apply_volume_eq_delay_timeshift as it's handled by full reload
 
     def __process_and_apply_configuration(self) -> None:
         """Process the configuration, get which sinks have changed and need reloaded,
            then reload them."""
         _logger.debug("[Configuration Manager] Reloading configuration")
-        # Process new config, store what's changed
+        
+        # --- Apply state to C++ Engine ---
+        # This should happen *after* solving the configuration but *before* managing Python controllers (if kept)
+        # We'll call this helper method after __process_configuration resolves the state.
+        # Note: __process_configuration updates self.active_configuration which is used by the translator.
+        
+        # Process new config, store what's changed (for Python controllers, if needed)
         added_sinks: List[SinkDescription]
         removed_sinks: List[SinkDescription]
         changed_sinks: List[SinkDescription]
-        added_sinks, removed_sinks, changed_sinks = self.__process_configuration()
-        _logger.info("[Configuration Manager] Config Reload")
-        _logger.info("[Configuration Manager] Enabled Sink Controllers: %s",
-                     [sink.name for sink in added_sinks])
-        _logger.info("[Configuration Manager] Changed Sink Controllers: %s",
-                     [sink.name for sink in changed_sinks])
-        _logger.info("[Configuration Manager] Disabled Sink Controllers: %s",
-                     [sink.name for sink in removed_sinks])
-        original_audio_controllers: List[AudioController] = copy(self.audio_controllers)
+        added_sinks, removed_sinks, changed_sinks = self.__process_configuration() # This updates self.active_configuration
 
-        _logger.debug("[Configuration Manager] Removing and re-adding changed sinks")
+        # --- Apply the solved state to the C++ Engine ---
+        self.__apply_cpp_engine_state()
+        # --- End C++ Engine Application ---
 
-        # Controllers to be reloaded
-        for sink in changed_sinks:
-            # Unload the old controller
-            _logger.debug("[Configuration Manager] Removing Audio Controller %s", sink.name)
-            for audio_controller in original_audio_controllers:
-                if audio_controller.sink_info.name == sink.name:
-                    if audio_controller in self.audio_controllers:
-                        audio_controller.stop()
-                        self.audio_controllers.remove(audio_controller)
-            # Load a new controller
-            sources: List[SourceDescription]
-            sources = self.active_configuration.real_sinks_to_real_sources[sink]
-            audio_controller = AudioController(sink, sources,
-                                               self.tcp_manager.get_fd(sink.ip),
-                                               self.__api_webstream)
-            _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
-            self.audio_controllers.append(audio_controller)
+        # --- Python AudioController Management Removed (Task 04_04) ---
+        # The C++ AudioEngineConfigApplier now handles sink/source/connection management.
+        # The logic below managing self.audio_controllers is no longer needed for the core engine.
+        # If specific plugins rely on the old Python AudioController, further refactoring is needed.
+        _logger.info("[Configuration Manager] Python AudioController management skipped (handled by C++ engine).")
 
-        _logger.debug("[Configuration Manager] Removing now unused sinks")
-
-        # Controllers to be removed
-        for sink in removed_sinks:
-            # Unload the old controller
-            _logger.debug("Removing Audio Controller %s", sink.name)
-            for audio_controller in original_audio_controllers:
-                if audio_controller.sink_info.name == sink.name:
-                    audio_controller.stop()
-                    self.audio_controllers.remove(audio_controller)
-
-        _logger.debug("[Configuration Manager] Adding new sinks")
-
-        # Controllers to be added
-        for sink in added_sinks:
-            # Load a new controller
-            sources: List[SourceDescription]
-            sources = self.active_configuration.real_sinks_to_real_sources[sink]
-            audio_controller = AudioController(sink, sources,
-                                               self.tcp_manager.get_fd(sink.ip),
-                                               self.__api_webstream)
-            _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
-            self.audio_controllers.append(audio_controller)
-
-        source_write_fds: List[int] = []
-        for audio_controller in self.audio_controllers:
-            source_write_fds.extend([source.writer_write for
-                                    source in audio_controller.sources.values()])
-
+        # Keep track of old Python receivers to stop them if necessary, but don't create new ones here.
         old_scream_recevier: ScreamReceiver = self.scream_recevier
         old_scream_per_process_recevier: ScreamPerProcessReceiver = self.scream_per_process_recevier
         old_multicast_scream_recevier: MulticastScreamReceiver = self.multicast_scream_recevier
         old_rtp_receiver: RTPReceiver = self.rtp_receiver
 
-        if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            self.scream_recevier = ScreamReceiver(source_write_fds)
-            self.scream_per_process_recevier = ScreamPerProcessReceiver(source_write_fds)
-            self.multicast_scream_recevier = MulticastScreamReceiver(source_write_fds)
-            self.rtp_receiver = RTPReceiver(source_write_fds)
-            controller_write_fds: List[int] = []
-            for audio_controller in self.audio_controllers:
-                controller_write_fds.append(audio_controller.controller_write_fd)
-            self.tcp_manager.replace_mixers(self.audio_controllers)
-
-        if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            old_scream_recevier.stop()
-            old_scream_per_process_recevier.stop()
-            old_multicast_scream_recevier.stop()
-            old_rtp_receiver.stop()
+        # TODO: Re-evaluate if Python receivers need restarting based on C++ engine changes.
+        # For now, assume C++ engine handles its own receiver (RtpReceiver) lifecycle via initialize/shutdown.
+        # If Python receivers (ScreamReceiver etc.) are still needed for other purposes, their management might need adjustment.
+        
+        # Stop old Python receivers if they were potentially affected by changes handled by C++ now?
+        # This needs careful consideration based on whether Python receivers are fully replaced.
+        # Assuming for now that the C++ RtpReceiver replaces the Python RTPReceiver.
+        # ScreamReceiver might still be needed? Let's comment out stopping for now.
+        # if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
+        #     old_scream_recevier.stop()
+        #     old_scream_per_process_recevier.stop()
+        #     old_multicast_scream_recevier.stop()
+        #     old_rtp_receiver.stop() # Assuming C++ AudioManager handles its own RTP receiver
 
         self.__save_config()
 
-        if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            _logger.debug("[Configuration Manager] Notifying plugin manager")
-            self.plugin_manager.load_registered_plugins(source_write_fds)
-            _logger.debug("[Configuration Manager] Reload done")
+        # Plugin manager reload might still be needed, but source_write_fds is no longer relevant from Python controllers
+        # TODO: Determine if plugins need notification based on C++ engine changes.
+        # if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
+        #     _logger.debug("[Configuration Manager] Notifying plugin manager (revisit trigger logic)")
+        #     # self.plugin_manager.load_registered_plugins(source_write_fds) # source_write_fds no longer exists here
+        #     _logger.debug("[Configuration Manager] Reload done")
 
         try:
             self.reload_condition.release()
@@ -1420,13 +1589,11 @@ class ConfigurationManager(threading.Thread):
                     # This will get set to true if something else wants to reload the configuration
                     # while it's already reloading
                     if self.plugin_manager.wants_reload():
-                        _logger.info("[Configuration Manager] Plugin Manager")
+                        _logger.info("[Configuration Manager] Plugin Manager requests reload.")
                         self.reload_config = True
-                    for audio_controller in self.audio_controllers:
-                        if audio_controller.wants_reload():
-                            self.reload_config = True
+                    # Removed loop checking Python AudioControllers for reload request (Task 04_04)
                     if self.tcp_manager.wants_reload:
-                        _logger.info("[Configuration Manager] TCP Manager Wants Reload")
+                        _logger.info("[Configuration Manager] TCP Manager requests reload.")
                         self.tcp_manager.wants_reload = False
                         self.reload_config = True
                     if self.reload_config:
@@ -1440,10 +1607,7 @@ class ConfigurationManager(threading.Thread):
                         self.reload_condition.release()
                     except:
                         pass
-                if not self.volume_eq_reload_condition.acquire(timeout=1):
-                    raise TimeoutError("Failed to get configuration reload condition")
-                if self.volume_eq_reload_condition.wait(timeout=.3):
-                    self.__process_and_apply_volume_eq_delay_timeshift()
+                # Removed check/call for __process_and_apply_volume_eq_delay_timeshift
                 self.check_autodetected_sinks_sources()
             except:
                 pass

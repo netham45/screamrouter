@@ -10,14 +10,14 @@
 namespace screamrouter { namespace audio { using namespace utils; } }
 using namespace screamrouter::audio;
 using namespace screamrouter::utils;
-
+ 
 // Simple logger helper (replace with a proper logger if available)
 // Updated logger macros to use instance_id from config_
-//#define LOG(msg) std::cout << "[SourceProc:" << config_.instance_id << "] " << msg << std::endl
+#define LOG(msg) std::cout << "[SourceProc:" << config_.instance_id << "] " << msg << std::endl
 //#define LOG_ERROR(msg) std::cerr << "[SourceProc Error:" << config_.instance_id << "] " << msg << std::endl
 //#define LOG_DEBUG(msg) std::cout << "[SourceProc Debug:" << config_.instance_id << "] " << msg << std::endl // For verbose logging
 
-#define LOG(msg) // Disable standard logs
+//#define LOG(msg) // Disable standard logs
 #define LOG_ERROR(msg) // Disable error logs
 #define LOG_DEBUG(msg) // Disable debug logs
 
@@ -463,18 +463,23 @@ void SourceInputProcessor::output_loop() {
                  cleanup_timeshift_buffer();
                  last_cleanup_time = now;
              }
-        } // Mutex lock released
+             
+             // --- Release lock BEFORE processing ---
+             lock.unlock(); 
+             LOG_DEBUG("OutputLoop: Mutex unlocked before processing.");
+             // ------------------------------------
+
+        } // Mutex lock scope ends (if not unlocked earlier)
 
         auto wait_end = std::chrono::steady_clock::now();
         auto wait_duration = std::chrono::duration_cast<std::chrono::milliseconds>(wait_end - loop_start_time);
-        // This logging might be confusing now due to potential timeouts, adjust as needed
-        LOG_DEBUG("OutputLoop: Wait/Check phase finished in " << wait_duration.count() << "ms. Retrieve took " << retrieve_duration.count() << "us. DataRetrieved=" << data_retrieved);
+        LOG_DEBUG("OutputLoop: Wait/Check/Retrieve phase finished in " << wait_duration.count() << "ms. Retrieve took " << retrieve_duration.count() << "us. DataRetrieved=" << data_retrieved);
 
 
-        // Process the retrieved data (outside the timeshift lock)
+        // Process the retrieved data (now definitely outside the timeshift lock)
         if (data_retrieved) {
             auto process_start = std::chrono::steady_clock::now();
-            LOG_DEBUG("OutputLoop: Processing retrieved chunk.");
+            LOG_DEBUG("OutputLoop: Processing retrieved chunk (lock released).");
             process_audio_chunk(current_input_chunk_data);
             push_output_chunk_if_ready();
             LOG_DEBUG("OutputLoop: Finished processing chunk.");

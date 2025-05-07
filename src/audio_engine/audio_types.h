@@ -5,6 +5,7 @@
 #include <string>
 #include <chrono>
 #include <cstdint> // For fixed-width integers like uint8_t, uint32_t
+#include "../c_utils/audio_processor.h" // For EQ_BANDS
 
 namespace screamrouter {
 namespace audio {
@@ -78,6 +79,11 @@ struct SourceConfig {
     std::vector<float> initial_eq; // Size EQ_BANDS expected by AudioProcessor
     int initial_delay_ms = 0;
     // Timeshift duration is often global or sink-related, managed in SourceInputProcessor config
+
+    // --- NEW FIELDS ---
+    int target_output_channels = 2;    // Target output channels for this source path
+    int target_output_samplerate = 48000; // Target output samplerate for this source path
+    // --- END NEW FIELDS ---
 };
 
 struct SinkConfig {
@@ -105,13 +111,16 @@ struct SourceProcessorConfig {
     std::string instance_id; // Unique identifier for this specific processor instance
     std::string source_tag; // Identifier (IP or user tag) - potentially shared
     // Target format (from Sink) - Needed for AudioProcessor initialization
-    int output_channels = 2;
-    int output_samplerate = 48000;
+    int output_channels = 2;         // This will be populated from SourceConfig.target_output_channels
+    int output_samplerate = 48000;   // This will be populated from SourceConfig.target_output_samplerate
     // Initial settings (from SourceConfig)
-    float initial_volume = 1;
-    std::vector<float> initial_eq = {0}; // Assuming 18 bands like current code
+    float initial_volume = 1.0f; // Corrected default to 1.0f to match typical usage
+    std::vector<float> initial_eq; // Default constructor will handle empty, or AudioManager can default
     int initial_delay_ms = 0;
     int timeshift_buffer_duration_sec = 5; // Default timeshift buffer duration
+
+    // Constructor to initialize eq_values if not done by default vector behavior
+    SourceProcessorConfig() : initial_eq(EQ_BANDS, 1.0f) {} // Ensure EQ is initialized
     // Input format hints (if needed, otherwise assume standard like 16-bit, 48kHz, 2ch)
     // int input_channels = 2;
     // int input_samplerate = 48000;

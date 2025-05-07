@@ -145,6 +145,8 @@ class SinkDescription(BaseModel):
     """Delay for time sync in ms"""
     config_id: Optional[str] = None
     """ID used by mDNS auto-configuration to sync client settings changes"""
+    use_tcp: bool = False
+    enable_mp3: bool = True
 
     def __eq__(self, other):
         """Compares the name if a string.
