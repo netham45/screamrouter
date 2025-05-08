@@ -18,8 +18,14 @@ namespace audio {
  */
 struct TaggedAudioPacket {
     std::string source_tag;                     // Identifier for the source (e.g., IP address)
-    std::vector<uint8_t> audio_data;            // Raw audio payload (PCM data chunk)
+    std::vector<uint8_t> audio_data;            // Audio payload (ALWAYS 1152 bytes of PCM)
     std::chrono::steady_clock::time_point received_time; // Timestamp for timeshifting/jitter
+    // --- Added Format Info ---
+    int channels = 0;                           // Number of audio channels in payload
+    int sample_rate = 0;                        // Sample rate of audio in payload
+    int bit_depth = 0;                          // Bit depth of audio in payload
+    uint8_t chlayout1 = 0;                      // Scream channel layout byte 1
+    uint8_t chlayout2 = 0;                      // Scream channel layout byte 2
 };
 
 /**
@@ -84,6 +90,8 @@ struct SourceConfig {
     int target_output_channels = 2;    // Target output channels for this source path
     int target_output_samplerate = 48000; // Target output samplerate for this source path
     // --- END NEW FIELDS ---
+    int protocol_type_hint = 0; // Add this line (0 for RTP_SCREAM_PAYLOAD, 1 for RAW_SCREAM_PACKET)
+    int target_receiver_port = -1; // Add this line
 };
 
 struct SinkConfig {
@@ -106,6 +114,18 @@ struct RtpReceiverConfig {
     // std::string bind_ip = "0.0.0.0"; // Optional: Interface IP to bind to
 };
 
+// Configuration for RawScreamReceiver component
+struct RawScreamReceiverConfig {
+    int listen_port = 4010; // Default port (adjust if needed)
+    // std::string bind_ip = "0.0.0.0"; // Optional: Interface IP to bind to
+};
+
+// Enum to specify the expected input data format for a SourceInputProcessor
+enum class InputProtocolType {
+    RTP_SCREAM_PAYLOAD, // Expects raw PCM audio data (RTP payload)
+    RAW_SCREAM_PACKET   // Expects full 5-byte header + PCM audio data
+};
+
 // Configuration for SourceInputProcessor component
 struct SourceProcessorConfig {
     std::string instance_id; // Unique identifier for this specific processor instance
@@ -121,6 +141,8 @@ struct SourceProcessorConfig {
 
     // Constructor to initialize eq_values if not done by default vector behavior
     SourceProcessorConfig() : initial_eq(EQ_BANDS, 1.0f) {} // Ensure EQ is initialized
+    InputProtocolType protocol_type = InputProtocolType::RTP_SCREAM_PAYLOAD; // Add this line
+    int target_receiver_port = -1; // Add this line
     // Input format hints (if needed, otherwise assume standard like 16-bit, 48kHz, 2ch)
     // int input_channels = 2;
     // int input_samplerate = 48000;

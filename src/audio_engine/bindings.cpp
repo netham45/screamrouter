@@ -27,7 +27,9 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
         .def_readwrite("tag", &SourceConfig::tag, "Unique identifier (e.g., IP address or user tag)")
         .def_readwrite("initial_volume", &SourceConfig::initial_volume, "Initial volume level (default: 1.0)")
         .def_readwrite("initial_eq", &SourceConfig::initial_eq, "Initial equalizer settings (list of floats, size EQ_BANDS)")
-        .def_readwrite("initial_delay_ms", &SourceConfig::initial_delay_ms, "Initial delay in milliseconds (default: 0)");
+        .def_readwrite("initial_delay_ms", &SourceConfig::initial_delay_ms, "Initial delay in milliseconds (default: 0)")
+        .def_readwrite("protocol_type_hint", &SourceConfig::protocol_type_hint, "Input protocol type (0=RTP_PAYLOAD, 1=RAW_PACKET)")
+        .def_readwrite("target_receiver_port", &SourceConfig::target_receiver_port, "Target receiver listen port (used for RAW_PACKET type)");
         // Add __repr__ for better debugging in Python if desired
         // .def("__repr__", [](const SourceConfig &a) {
         //     return "<SourceConfig tag='" + a.tag + "'>";
@@ -52,6 +54,16 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
         //     return "<SinkConfig id='" + a.id + "'>";
         // });
 
+    py::class_<RawScreamReceiverConfig>(m, "RawScreamReceiverConfig", "Configuration for a raw Scream receiver")
+        .def(py::init<>()) // Default constructor
+        .def_readwrite("listen_port", &RawScreamReceiverConfig::listen_port, "UDP port to listen on");
+        // Add .def_readwrite("bind_ip", ...) if that field is included
+
+    py::enum_<InputProtocolType>(m, "InputProtocolType", "Specifies the expected input packet type")
+        .value("RTP_SCREAM_PAYLOAD", InputProtocolType::RTP_SCREAM_PAYLOAD)
+        .value("RAW_SCREAM_PACKET", InputProtocolType::RAW_SCREAM_PACKET)
+        .export_values(); // Make enum values accessible as module attributes
+
     // --- Bind AudioManager Class ---
     // Expose the main C++ audio engine class to Python
 
@@ -60,7 +72,7 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
 
         // Lifecycle Methods
         .def("initialize", &AudioManager::initialize,
-             py::arg("rtp_listen_port") = 4010, // Provide default value for optional arg
+             py::arg("rtp_listen_port") = 40000, // Provide default value for optional arg
              "Initializes the audio manager, starts RTP listener and notification thread. Returns true on success.")
         .def("shutdown", &AudioManager::shutdown,
              "Stops all audio components and cleans up resources.")
@@ -84,6 +96,14 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
         .def("disconnect_source_sink", &AudioManager::disconnect_source_sink,
              py::arg("source_instance_id"), py::arg("sink_id"), // Changed arguments
              "Explicitly disconnects a source instance from a sink. Returns true on success.")
+
+        // Raw Scream Receiver Management
+        .def("add_raw_scream_receiver", &AudioManager::add_raw_scream_receiver,
+             py::arg("config"),
+             "Adds and starts a new raw Scream receiver. Returns true on success.")
+        .def("remove_raw_scream_receiver", &AudioManager::remove_raw_scream_receiver,
+             py::arg("listen_port"),
+             "Stops and removes the raw Scream receiver listening on the given port. Returns true on success.")
 
 
          // Control Methods (Updated to use instance_id)

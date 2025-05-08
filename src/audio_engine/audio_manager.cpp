@@ -1,4 +1,5 @@
 #include "audio_manager.h"
+#include "raw_scream_receiver.h" // Include the new header
 #include <iostream> // For logging
 #include <stdexcept>
 #include <utility> // For std::move
@@ -172,7 +173,80 @@ void AudioManager::shutdown() {
     // Clear notification queue pointer
     new_source_notification_queue_.reset();
 
+    // Stop all RawScreamReceivers
+    LOG_AM("Stopping Raw Scream Receivers...");
+    for (auto& pair : raw_scream_receivers_) {
+        if (pair.second) {
+            pair.second->stop();
+        }
+    }
+    raw_scream_receivers_.clear();
+    LOG_AM("Raw Scream Receivers stopped.");
+
     LOG_AM("Shutdown complete.");
+}
+
+bool AudioManager::add_raw_scream_receiver(const RawScreamReceiverConfig& config) {
+    LOG_AM("Adding raw scream receiver for port: " + std::to_string(config.listen_port));
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+
+    if (!running_) {
+        LOG_ERROR_AM("Cannot add raw scream receiver, manager is not running.");
+        return false;
+    }
+
+    if (raw_scream_receivers_.count(config.listen_port)) {
+        LOG_ERROR_AM("Raw scream receiver for port " + std::to_string(config.listen_port) + " already exists.");
+        return false;
+    }
+
+    std::unique_ptr<RawScreamReceiver> new_receiver;
+    try {
+        new_receiver = std::make_unique<RawScreamReceiver>(config, new_source_notification_queue_);
+        new_receiver->start();
+        // Basic check, might need more robust mechanism or longer sleep
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); 
+        if (!new_receiver->is_running()) {
+            throw std::runtime_error("RawScreamReceiver failed to start.");
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR_AM("Failed to create or start RawScreamReceiver for port " + std::to_string(config.listen_port) + ": " + std::string(e.what()));
+        // new_receiver is already a unique_ptr, will clean up if it was allocated before throw
+        return false;
+    }
+
+    raw_scream_receivers_[config.listen_port] = std::move(new_receiver);
+    LOG_AM("Raw scream receiver for port " + std::to_string(config.listen_port) + " added successfully.");
+    return true;
+}
+
+bool AudioManager::remove_raw_scream_receiver(int listen_port) {
+    LOG_AM("Removing raw scream receiver for port: " + std::to_string(listen_port));
+    std::unique_ptr<RawScreamReceiver> receiver_to_remove;
+
+    { // Scope for lock
+        std::lock_guard<std::mutex> lock(manager_mutex_);
+        if (!running_) {
+            LOG_ERROR_AM("Cannot remove raw scream receiver, manager is not running.");
+            return false;
+        }
+
+        auto it = raw_scream_receivers_.find(listen_port);
+        if (it == raw_scream_receivers_.end()) {
+            LOG_ERROR_AM("Raw scream receiver for port " + std::to_string(listen_port) + " not found.");
+            return false;
+        }
+
+        receiver_to_remove = std::move(it->second);
+        raw_scream_receivers_.erase(it);
+    } // Lock released
+
+    if (receiver_to_remove) {
+        receiver_to_remove->stop();
+    }
+
+    LOG_AM("Raw scream receiver for port " + std::to_string(listen_port) + " removed successfully.");
+    return true;
 }
 
 bool AudioManager::add_sink(const SinkConfig& config) {
@@ -316,13 +390,20 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     }
     
     proc_config.initial_volume = validated_config.initial_volume;
-    // proc_config.initial_eq is already initialized by its constructor, but AudioManager's validation logic for EQ size
-    // from validated_config.initial_eq should still apply and overwrite if necessary.
-    // The existing EQ validation logic in configure_source (which modifies validated_config.initial_eq)
-    // will ensure it's correctly sized before this assignment.
     proc_config.initial_eq = validated_config.initial_eq; 
     proc_config.initial_delay_ms = validated_config.initial_delay_ms;
     // proc_config.timeshift_buffer_duration_sec remains default or could be made configurable
+
+    // Determine protocol type and target receiver port from validated config
+    InputProtocolType proto_type = (validated_config.protocol_type_hint == 1) ?
+                                       InputProtocolType::RAW_SCREAM_PACKET :
+                                       InputProtocolType::RTP_SCREAM_PAYLOAD;
+    proc_config.protocol_type = proto_type;
+    proc_config.target_receiver_port = validated_config.target_receiver_port; // Copy target port
+
+    LOG_AM("Source instance " + instance_id + " configured with protocol type: " + (proto_type == InputProtocolType::RAW_SCREAM_PACKET ? "RAW_SCREAM" : "RTP_PAYLOAD") + 
+           (proto_type == InputProtocolType::RAW_SCREAM_PACKET ? ", Target Port: " + std::to_string(proc_config.target_receiver_port) : ""));
+
 
     // Create and Start SourceInputProcessor
     std::unique_ptr<SourceInputProcessor> new_source;
@@ -348,7 +429,7 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
         std::mutex* proc_mutex = new_source->get_timeshift_mutex();
         std::condition_variable* proc_cv = new_source->get_timeshift_cv();
          // Call the updated add_output_queue method with instance_id
-         rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue, proc_mutex, proc_cv);
+         rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
 
      } else {
           LOG_ERROR_AM("RtpReceiver is null, cannot add output target for instance " + instance_id);
@@ -357,8 +438,47 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
          rtp_to_source_queues_.erase(instance_id);
          source_to_sink_queues_.erase(instance_id);
          command_queues_.erase(instance_id);
+         // Clean up queues...
+         rtp_to_source_queues_.erase(instance_id);
+         source_to_sink_queues_.erase(instance_id);
+         command_queues_.erase(instance_id);
          return ""; // Return empty string on failure
      }
+
+    // --- Register with ALL active receivers ---
+    // Removed proc_mutex and proc_cv retrieval as they are no longer passed
+    int registration_count = 0;
+
+    // 1. Register with RtpReceiver
+    if (rtp_receiver_) {
+        rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue); // Corrected: Removed mutex/cv args
+        LOG_AM("Registered instance " + instance_id + " with RtpReceiver.");
+        registration_count++;
+    } else {
+        LOG_WARN_AM("RtpReceiver is null, cannot register instance " + instance_id);
+    }
+
+    // 2. Register with all RawScreamReceivers
+    if (raw_scream_receivers_.empty()) {
+         LOG_WARN_AM("No RawScreamReceivers active, cannot register instance " + instance_id);
+    } else {
+        for (auto const& [port, receiver_ptr] : raw_scream_receivers_) {
+            if (receiver_ptr) {
+                receiver_ptr->add_output_queue(proc_config.source_tag, instance_id, rtp_queue); // Removed mutex/cv args
+                LOG_AM("Registered instance " + instance_id + " with RawScreamReceiver on port " + std::to_string(port));
+                registration_count++;
+            } else {
+                 LOG_ERROR_AM("Found null RawScreamReceiver pointer for port " + std::to_string(port));
+            }
+        }
+    }
+    
+    // We might consider failing if registration_count is 0, but for now, let's allow it
+    // as receivers might be added later dynamically. The SourceInputProcessor won't get
+    // any data until registered.
+    if (registration_count == 0) {
+         LOG_WARN_AM("Source instance " + instance_id + " was not registered with ANY active receivers.");
+    }
 
      // Store the new source processor using its unique instance_id
      sources_[instance_id] = std::move(new_source);
@@ -367,11 +487,13 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     return instance_id; // Return the unique ID
 }
 
-// Refactored remove_source (was remove_source_config) to use instance_id
+// Refactored remove_source to handle different receiver types
 bool AudioManager::remove_source(const std::string& instance_id) {
     LOG_AM("Removing source instance: " + instance_id);
     std::unique_ptr<SourceInputProcessor> source_to_remove;
-    std::string source_tag_for_removal; // Need the tag for RtpReceiver and Sink removal
+    std::string source_tag_for_removal; 
+    InputProtocolType proto_type = InputProtocolType::RTP_SCREAM_PAYLOAD; // Default
+    int target_port = -1; // Default
 
     { // Scope for lock
         std::lock_guard<std::mutex> lock(manager_mutex_);
@@ -390,14 +512,12 @@ bool AudioManager::remove_source(const std::string& instance_id) {
         // Get the source tag before moving the processor
         if (it->second) {
              // TODO: Add a getter for source_tag in SourceInputProcessor if needed, or retrieve from config if stored
-             // source_tag_for_removal = it->second->get_source_tag(); // Assuming getter exists
-             // For now, we might need to iterate sources_ map if we didn't store tag elsewhere
-             // LOG_WARN_AM("Need to retrieve source_tag associated with instance_id " + instance_id + " for proper cleanup.");
-             // Let's assume we can get it from the processor config for now
-             // source_tag_for_removal = it->second->get_config().source_tag; // Hypothetical getter
-             source_tag_for_removal = it->second->get_source_tag(); // Use the actual getter
+             // Get config details needed for removal
+             const auto& proc_config = it->second->get_config();
+             source_tag_for_removal = proc_config.source_tag;
+             proto_type = proc_config.protocol_type;
+             target_port = proc_config.target_receiver_port;
         } else {
-             // Should not happen if found in map
              LOG_ERROR_AM("Found null source processor pointer for instance: " + instance_id);
              sources_.erase(it); // Remove the null entry
              return false; // Indicate failure
@@ -410,25 +530,42 @@ bool AudioManager::remove_source(const std::string& instance_id) {
         // Clean up associated queues using instance_id
         auto rtp_queue_it = rtp_to_source_queues_.find(instance_id);
         std::shared_ptr<PacketQueue> rtp_queue_ptr = (rtp_queue_it != rtp_to_source_queues_.end()) ? rtp_queue_it->second : nullptr;
-        rtp_to_source_queues_.erase(instance_id);
+        rtp_to_source_queues_.erase(instance_id); 
         source_to_sink_queues_.erase(instance_id);
         command_queues_.erase(instance_id);
         LOG_AM("Removed queues for source instance: " + instance_id);
 
-        // Tell RtpReceiver to forget about this instance's queue
-        // ** IMPORTANT: RtpReceiver needs modification. **
-        if (rtp_receiver_ && rtp_queue_ptr) {
-              // Call the updated remove_output_queue method with source_tag and instance_id
-              if (!source_tag_for_removal.empty() && source_tag_for_removal != "TEMP_TAG_NEEDS_GETTER") { // Only if we managed to get the tag
-                  rtp_receiver_->remove_output_queue(source_tag_for_removal, instance_id);
-              } else {
-                   LOG_ERROR_AM("Cannot remove instance " + instance_id + " from RtpReceiver without its source_tag.");
-              }
-         } else if (rtp_receiver_ && !rtp_queue_ptr) {
-              // This case might still occur if the rtp_queue was somehow already removed, but we proceed with other cleanup.
-              LOG_WARN_AM("Could not find RTP queue pointer for instance " + instance_id + " during removal, but proceeding with other cleanup.");
+        // --- Unregister from ALL receivers ---
+        
+        // 1. Unregister from RtpReceiver
+        if (rtp_receiver_) {
+            if (!source_tag_for_removal.empty()) {
+                rtp_receiver_->remove_output_queue(source_tag_for_removal, instance_id);
+                LOG_AM("Unregistered instance " + instance_id + " from RtpReceiver.");
+            } else {
+                LOG_ERROR_AM("Cannot remove instance " + instance_id + " from RtpReceiver without its source_tag.");
+            }
+        } else {
+             LOG_WARN_AM("RtpReceiver is null during removal of instance " + instance_id);
         }
 
+        // 2. Unregister from all RawScreamReceivers
+        if (!source_tag_for_removal.empty()) {
+             if (raw_scream_receivers_.empty()) {
+                 LOG_WARN_AM("No RawScreamReceivers active during removal of instance " + instance_id);
+             } else {
+                 for (auto const& [port, receiver_ptr] : raw_scream_receivers_) {
+                     if (receiver_ptr) {
+                         receiver_ptr->remove_output_queue(source_tag_for_removal, instance_id);
+                         LOG_AM("Unregistered instance " + instance_id + " from RawScreamReceiver on port " + std::to_string(port));
+                     } else {
+                          LOG_ERROR_AM("Found null RawScreamReceiver pointer for port " + std::to_string(port) + " during removal.");
+                     }
+                 }
+             }
+        } else {
+             LOG_ERROR_AM("Cannot remove instance " + instance_id + " from RawScreamReceivers without its source_tag.");
+        }
 
         // Tell all sinks to remove this source's input queue
         // ** IMPORTANT: SinkAudioMixer needs modification. **

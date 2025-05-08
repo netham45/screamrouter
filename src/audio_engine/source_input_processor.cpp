@@ -15,14 +15,18 @@ using namespace screamrouter::utils;
 // Updated logger macros to use instance_id from config_
 #define LOG(msg) std::cout << "[SourceProc:" << config_.instance_id << "] " << msg << std::endl
 //#define LOG_ERROR(msg) std::cerr << "[SourceProc Error:" << config_.instance_id << "] " << msg << std::endl
+//#define LOG_WARN(msg) std::cout << "[SourceProc Warn:" << config_.instance_id << "] " << msg << std::endl // Added WARN
 //#define LOG_DEBUG(msg) std::cout << "[SourceProc Debug:" << config_.instance_id << "] " << msg << std::endl // For verbose logging
 
 //#define LOG(msg) // Disable standard logs
 #define LOG_ERROR(msg) // Disable error logs
+#define LOG_WARN(msg) // Disable warn logs
 #define LOG_DEBUG(msg) // Disable debug logs
 
 // Define how often to cleanup the timeshift buffer (e.g., every second)
 const std::chrono::milliseconds TIMESIFT_CLEANUP_INTERVAL(1000);
+
+// Constants are now defined in the header file (.h)
 
 
 SourceInputProcessor::SourceInputProcessor(
@@ -37,7 +41,10 @@ SourceInputProcessor::SourceInputProcessor(
       current_volume_(config_.initial_volume), // Initialize from moved config_
       current_eq_(config_.initial_eq),
       current_delay_ms_(config_.initial_delay_ms),
-      current_timeshift_backshift_sec_(0.0f) // Start with no timeshift backshift
+      current_timeshift_backshift_sec_(0.0f), // Start with no timeshift backshift
+      m_current_ap_input_channels(0), // Initialize current format state
+      m_current_ap_input_samplerate(0),
+      m_current_ap_input_bitdepth(0)
 {
     // Use the new LOG macro which includes instance_id
     LOG("Initializing...");
@@ -53,7 +60,8 @@ SourceInputProcessor::SourceInputProcessor(
         config_.initial_eq = current_eq_; // Update config_ member
     }
 
-    initialize_audio_processor();
+    // initialize_audio_processor(); // Removed
+    audio_processor_ = nullptr; // Set audio_processor_ to nullptr initially
     LOG("Initialization complete.");
 }
 
@@ -95,29 +103,7 @@ const std::string& SourceInputProcessor::get_source_tag() const {
 
 // --- Initialization ---
 
-void SourceInputProcessor::initialize_audio_processor() {
-    LOG("Initializing AudioProcessor...");
-    std::lock_guard<std::mutex> lock(audio_processor_mutex_);
-    try {
-        // Assuming input format is fixed for now (e.g., 16-bit, 2ch, 48kHz)
-        // This might need to become dynamic based on RTP payload or config later
-        audio_processor_ = std::make_unique<AudioProcessor>(
-            DEFAULT_INPUT_CHANNELS,
-            config_.output_channels,
-            DEFAULT_INPUT_BITDEPTH,
-            DEFAULT_INPUT_SAMPLERATE,
-            config_.output_samplerate, // Use config_ member
-            current_volume_
-        );
-        // Set initial EQ
-        audio_processor_->setEqualizer(current_eq_.data());
-        LOG("AudioProcessor created.");
-    } catch (const std::exception& e) {
-        LOG_ERROR("Failed to initialize AudioProcessor: " + std::string(e.what()));
-        // Handle error appropriately, maybe rethrow or set a failed state
-        throw; // Rethrow to signal failure to AudioManager
-    }
-}
+// void SourceInputProcessor::initialize_audio_processor() { // Removed
 
 void SourceInputProcessor::start() {
      if (is_running()) {
@@ -215,30 +201,43 @@ void SourceInputProcessor::process_commands() {
                     LOG_ERROR("Unknown command type received.");
                     break;
             }
+            // Note: current_volume_, current_eq_, current_delay_ms_, current_timeshift_backshift_sec_
+            // are updated within this lock scope.
         } // Mutexes released here
 
-        // Apply updates outside the lock if possible
-        if (needs_processor_update && audio_processor_) {
-             std::lock_guard<std::mutex> lock(audio_processor_mutex_);
-             if (cmd.type == CommandType::SET_VOLUME) audio_processor_->setVolume(current_volume_);
-             if (cmd.type == CommandType::SET_EQ) audio_processor_->setEqualizer(current_eq_.data());
+        // Apply updates that require accessing audio_processor_ *while holding the lock*
+        if (needs_processor_update) {
+             std::lock_guard<std::mutex> lock(audio_processor_mutex_); // Acquire lock BEFORE checking/using audio_processor_
+             if (audio_processor_) { // Check validity *after* acquiring lock
+                 LOG_DEBUG("Applying processor update for command: " + std::to_string(static_cast<int>(cmd.type)));
+                 if (cmd.type == CommandType::SET_VOLUME) {
+                     audio_processor_->setVolume(current_volume_);
+                 } else if (cmd.type == CommandType::SET_EQ) {
+                     // Ensure current_eq_ is valid before passing .data()
+                     if (current_eq_.size() == EQ_BANDS) {
+                         audio_processor_->setEqualizer(current_eq_.data());
+                     } else {
+                          LOG_ERROR("EQ data size mismatch during apply. Skipping EQ update.");
+                     }
+                 }
+             } else {
+                  LOG_WARN("Command received but AudioProcessor is null. Cannot apply processor update.");
+             }
         }
+        
+        // Timeshift updates don't directly touch audio_processor_, only settings used by output_loop's predicate.
+        // Notifying the CV is safe outside the audio_processor_mutex_.
         if (needs_timeshift_update) {
-            // Wake up output loop in case it was waiting based on old settings
+            LOG_DEBUG("Notifying timeshift condition variable due to command.");
             timeshift_condition_.notify_one();
         }
     }
 }
 
 void SourceInputProcessor::handle_new_input_packet(TaggedAudioPacket& packet) {
+    // Size check is now deferred to check_format_and_reconfigure
     size_t received_bytes = packet.audio_data.size();
-    LOG_DEBUG("InputLoop: Received packet from tag " + packet.source_tag + ". Size=" + std::to_string(received_bytes) + " bytes. Expected=" + std::to_string(INPUT_CHUNK_BYTES) + " bytes.");
-
-    // Ensure packet data has the expected size before adding
-    if (received_bytes != INPUT_CHUNK_BYTES) {
-        LOG_ERROR("Received packet with unexpected data size: " + std::to_string(received_bytes) + ". Discarding.");
-        return;
-    }
+    LOG_DEBUG("InputLoop: Received packet from tag " + packet.source_tag + ". Size=" + std::to_string(received_bytes) + " bytes.");
 
     {
         std::lock_guard<std::mutex> lock(timeshift_mutex_);
@@ -295,35 +294,50 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
         return;
     }
     size_t input_bytes = input_chunk_data.size();
-    LOG_DEBUG("ProcessAudio: Processing chunk. Input Size=" + std::to_string(input_bytes) + " bytes. Expected=" + std::to_string(INPUT_CHUNK_BYTES) + " bytes.");
-    if (input_bytes != INPUT_CHUNK_BYTES) {
+    LOG_DEBUG("ProcessAudio: Processing chunk. Input Size=" + std::to_string(input_bytes) + " bytes. Expected=" + std::to_string(CHUNK_SIZE) + " bytes.");
+    if (input_bytes != CHUNK_SIZE) { // Use constant CHUNK_SIZE
          LOG_ERROR("process_audio_chunk called with incorrect data size: " + std::to_string(input_bytes) + ". Skipping processing.");
          return;
     }
-    // Calculate expected output samples based on input bytes, input format, and output channels
-    // Assuming 16-bit stereo input -> 1152 / (16/8) = 576 samples input
-    // Output samples = input samples * output_channels / input_channels (if no resampling)
-    // For 2ch->2ch, expect 576 output samples.
-    size_t expected_output_samples = (INPUT_CHUNK_BYTES / (DEFAULT_INPUT_BITDEPTH / 8)) * config_.output_channels / DEFAULT_INPUT_CHANNELS;
-    // Allocate a reasonably large buffer, AudioProcessor should handle its own output size.
-    // Let's allocate based on OUTPUT_CHUNK_SAMPLES which should match expected_output_samples in the common case.
-    std::vector<int32_t> processor_output_buffer(expected_output_samples * 2); // Provide some extra space
+    
+    // Allocate a temporary output buffer large enough to hold the maximum possible output
+    // from AudioProcessor::processAudio. Match the size of AudioProcessor's internal processed_buffer.
+    // Size = CHUNK_SIZE * MAX_CHANNELS * 4 = 1152 * 8 * 4 = 36864 samples
+    std::vector<int32_t> processor_output_buffer(CHUNK_SIZE * MAX_CHANNELS * 4); 
 
-    int processed_samples = 0;
+    int actual_samples_processed = 0; // Renamed variable for clarity
     { // Lock mutex for accessing AudioProcessor
         std::lock_guard<std::mutex> lock(audio_processor_mutex_);
-        processed_samples = audio_processor_->processAudio(input_chunk_data.data(), processor_output_buffer.data());
+        if (!audio_processor_) {
+             LOG_ERROR("AudioProcessor is null during process_audio_chunk call.");
+             return; // Cannot proceed without a valid processor
+        }
+        // Pass the data pointer and size (CHUNK_SIZE)
+        // processAudio now returns the actual number of samples written to processor_output_buffer.data()
+        actual_samples_processed = audio_processor_->processAudio(input_chunk_data.data(), processor_output_buffer.data());
     }
 
-    if (processed_samples > 0) {
-        // Append processed samples to the internal process_buffer_
-        process_buffer_.insert(process_buffer_.end(),
-                               processor_output_buffer.begin(),
-                               processor_output_buffer.begin() + processed_samples);
-        LOG_DEBUG("ProcessAudio: Appended " + std::to_string(processed_samples) + " samples. process_buffer_ size=" + std::to_string(process_buffer_.size()) + " samples.");
-    } else if (processed_samples < 0) {
-         LOG_ERROR("AudioProcessor::processAudio returned an error code: " + std::to_string(processed_samples));
+    if (actual_samples_processed > 0) {
+        // Ensure we don't read past the actual size of the temporary buffer, although actual_samples_processed should be <= its size.
+        size_t samples_to_insert = std::min(static_cast<size_t>(actual_samples_processed), processor_output_buffer.size());
+        
+        // Append the correctly processed samples to the internal process_buffer_
+        try {
+            process_buffer_.insert(process_buffer_.end(),
+                                   processor_output_buffer.begin(),
+                                   processor_output_buffer.begin() + samples_to_insert);
+        } catch (const std::bad_alloc& e) {
+             LOG_ERROR("Failed to insert into process_buffer_: " + std::string(e.what()));
+             // Handle allocation failure, maybe clear buffer or stop processing?
+             process_buffer_.clear(); // Example: clear buffer to prevent further issues
+             return;
+        }
+        LOG_DEBUG("ProcessAudio: Appended " + std::to_string(samples_to_insert) + " samples. process_buffer_ size=" + std::to_string(process_buffer_.size()) + " samples.");
+    } else if (actual_samples_processed < 0) {
+         // processAudio returned an error code (e.g., -1)
+         LOG_ERROR("AudioProcessor::processAudio returned an error code: " + std::to_string(actual_samples_processed));
     } else {
+         // processAudio returned 0 samples (e.g., no data processed or output buffer was null)
          LOG_DEBUG("ProcessAudio: AudioProcessor returned 0 samples.");
     }
 }
@@ -371,129 +385,205 @@ void SourceInputProcessor::input_loop() {
 
 void SourceInputProcessor::output_loop() {
     LOG("Output loop started.");
-    std::vector<uint8_t> current_input_chunk_data;
-    current_input_chunk_data.reserve(INPUT_CHUNK_BYTES);
+    // Removed: std::vector<uint8_t> current_input_chunk_data;
     auto last_cleanup_time = std::chrono::steady_clock::now();
     auto loop_start_time = std::chrono::steady_clock::now(); // Time each loop iteration
 
-    // Define a timeout for the condition variable wait
-    // Adjust this value based on expected network conditions and desired responsiveness
     const std::chrono::milliseconds wait_timeout(100); // e.g., 100ms timeout
 
     while (!stop_flag_) {
-        bool data_retrieved = false;
-        loop_start_time = std::chrono::steady_clock::now(); // Reset timer at start of loop
-        std::chrono::microseconds retrieve_duration(0); // Initialize here
+        bool packet_retrieved = false; // Renamed from data_retrieved for clarity
+        TaggedAudioPacket current_packet; // Store the full packet retrieved
+        loop_start_time = std::chrono::steady_clock::now(); 
+        std::chrono::microseconds retrieve_duration(0); 
 
         { // Scope for timeshift mutex lock
             std::unique_lock<std::mutex> lock(timeshift_mutex_);
 
             LOG_DEBUG("OutputLoop: Waiting. BufSize=" << timeshift_buffer_.size() << ", ReadIdx=" << timeshift_buffer_read_idx_);
 
-            // Wait using wait_for with a timeout
             auto predicate = [&] {
-                // Check stop flag first inside predicate
                 if (stop_flag_) return true;
-
-                auto check_start = std::chrono::steady_clock::now();
-                bool ready = check_readiness_condition();
-                auto check_end = std::chrono::steady_clock::now();
-                auto check_duration = std::chrono::duration_cast<std::chrono::microseconds>(check_end - check_start);
-                // Log readiness check inside the loop if debugging heavily
-                // LOG_DEBUG("OutputLoop: Wait predicate check took " << check_duration.count() << "us. Ready=" << ready);
-                return ready; // Return true if ready (or if stop_flag_ was set)
+                return check_readiness_condition(); 
             };
 
-            // wait_for returns false if timeout occurred before condition met
             if (!timeshift_condition_.wait_for(lock, wait_timeout, predicate)) {
-                // Timeout occurred! Condition was not met within wait_timeout.
                 if (stop_flag_) {
                     LOG_DEBUG("OutputLoop: Stop flag set during timeout wait, breaking.");
-                    break; // Exit outer loop if stopped
+                    break; 
                 }
-
-                // If not stopped, timeout means data wasn't ready in time.
-                // What to do?
-                // Option 1: Log and continue loop (will wait again). Good if temporary glitch.
-                // Option 2: Try to skip ahead? Risky, might lose sync.
-                // Option 3: Generate silence? Requires more logic.
-                // Let's log and continue for now.
                 LOG_DEBUG("OutputLoop: Wait timed out after " << wait_timeout.count() << "ms. No data ready.");
-                // We might still want to cleanup the buffer periodically even on timeouts
                   auto now = std::chrono::steady_clock::now();
                   if (now - last_cleanup_time > TIMESIFT_CLEANUP_INTERVAL) {
                      cleanup_timeshift_buffer();
                      last_cleanup_time = now;
                  }
-                continue; // Go back to the start of the while loop to wait again
+                continue; 
             }
 
-            // If wait succeeded (didn't time out and predicate is true) OR stop_flag_ became true:
-            LOG_DEBUG("OutputLoop: Woke up/Wait satisfied. StopFlag=" << stop_flag_);
-
-            // If stopped while waiting or after waking up, exit loop
             if (stop_flag_) {
                 LOG_DEBUG("OutputLoop: Stop flag set, breaking wait loop.");
                 break;
             }
 
-            // ---- If we got here, the predicate (check_readiness_condition) was true ----
+            // ---- Predicate was true ----
             auto retrieve_start = std::chrono::steady_clock::now();
-            // Data should be ready because the predicate was met
             if (timeshift_buffer_read_idx_ < timeshift_buffer_.size()) {
                  LOG_DEBUG("OutputLoop: Data ready. Retrieving packet at index " << timeshift_buffer_read_idx_);
-                 current_input_chunk_data = timeshift_buffer_[timeshift_buffer_read_idx_].audio_data;
-                 // Note: Copying data here. Could be optimized with move if TaggedAudioPacket is not needed after this.
+                 current_packet = timeshift_buffer_[timeshift_buffer_read_idx_]; // Copy packet
                  timeshift_buffer_read_idx_++;
-                 data_retrieved = true;
+                 packet_retrieved = true; 
                  LOG_DEBUG("OutputLoop: Read index advanced to " << timeshift_buffer_read_idx_);
             } else {
-                 // This case should ideally not happen if wait condition and predicate are correct
                  LOG_ERROR("Output loop woke up ready, but read index (" << timeshift_buffer_read_idx_ << ") is out of bounds for buffer size (" << timeshift_buffer_.size() << ").");
-                 // Reset read index defensively? Or just continue? Let's continue for now.
-                 continue; // Continue loop to re-evaluate state
+                 continue; 
             }
             auto retrieve_end = std::chrono::steady_clock::now();
             retrieve_duration = std::chrono::duration_cast<std::chrono::microseconds>(retrieve_end - retrieve_start);
 
-
-             // Periodically cleanup the timeshift buffer (while lock is held)
              auto now = std::chrono::steady_clock::now();
              if (now - last_cleanup_time > TIMESIFT_CLEANUP_INTERVAL) {
                  cleanup_timeshift_buffer();
                  last_cleanup_time = now;
              }
              
-             // --- Release lock BEFORE processing ---
              lock.unlock(); 
              LOG_DEBUG("OutputLoop: Mutex unlocked before processing.");
-             // ------------------------------------
 
-        } // Mutex lock scope ends (if not unlocked earlier)
+        } // End timeshift mutex lock scope
 
         auto wait_end = std::chrono::steady_clock::now();
         auto wait_duration = std::chrono::duration_cast<std::chrono::milliseconds>(wait_end - loop_start_time);
-        LOG_DEBUG("OutputLoop: Wait/Check/Retrieve phase finished in " << wait_duration.count() << "ms. Retrieve took " << retrieve_duration.count() << "us. DataRetrieved=" << data_retrieved);
+        LOG_DEBUG("OutputLoop: Wait/Check/Retrieve phase finished in " << wait_duration.count() << "ms. Retrieve took " << retrieve_duration.count() << "us. PacketRetrieved=" << packet_retrieved);
 
+        if (packet_retrieved) { // Process only if a packet was retrieved
+            const uint8_t* audio_payload_ptr = nullptr;
+            size_t audio_payload_size = 0;
+            
+            bool packet_ok_for_processing = check_format_and_reconfigure(
+                current_packet, // Pass the retrieved packet
+                &audio_payload_ptr,
+                &audio_payload_size
+            );
 
-        // Process the retrieved data (now definitely outside the timeshift lock)
-        if (data_retrieved) {
-            auto process_start = std::chrono::steady_clock::now();
-            LOG_DEBUG("OutputLoop: Processing retrieved chunk (lock released).");
-            process_audio_chunk(current_input_chunk_data);
-            push_output_chunk_if_ready();
-            LOG_DEBUG("OutputLoop: Finished processing chunk.");
-            auto process_end = std::chrono::steady_clock::now();
-            auto process_duration = std::chrono::duration_cast<std::chrono::microseconds>(process_end - process_start);
-            LOG_DEBUG("OutputLoop: Processing & Push took " << process_duration.count() << "us.");
+            if (packet_ok_for_processing && audio_processor_) { // Check audio_processor_ validity
+                if (audio_payload_ptr && audio_payload_size == CHUNK_SIZE) {
+                    // Create vector directly from pointer and size
+                    std::vector<uint8_t> chunk_data_for_processing(audio_payload_ptr, audio_payload_ptr + audio_payload_size); 
+                    auto process_start = std::chrono::steady_clock::now();
+                    LOG_DEBUG("OutputLoop: Processing retrieved chunk.");
+                    process_audio_chunk(chunk_data_for_processing);
+                    push_output_chunk_if_ready();
+                    LOG_DEBUG("OutputLoop: Finished processing chunk.");
+                    auto process_end = std::chrono::steady_clock::now();
+                    auto process_duration = std::chrono::duration_cast<std::chrono::microseconds>(process_end - process_start);
+                    LOG_DEBUG("OutputLoop: Processing & Push took " << process_duration.count() << "us.");
+                } else {
+                    LOG_ERROR("Audio payload pointer/size invalid after check_format_and_reconfigure. Size: " + std::to_string(audio_payload_size));
+                }
+            } else if (!packet_ok_for_processing) {
+                LOG_WARN("Packet discarded due to format/size issues or no audio processor.");
+            }
         } else {
-             // This branch might be reached if stopped during wait or after a timeout where we 'continue'd
-             LOG_DEBUG("OutputLoop: No data retrieved this iteration (timeout or stopped?).");
+            LOG_DEBUG("OutputLoop: No packet retrieved this iteration (timeout or stopped?).");
         }
     } // end while (!stop_flag_)
 
     LOG("Output loop exiting.");
 }
+
+
+bool SourceInputProcessor::check_format_and_reconfigure(
+    const TaggedAudioPacket& packet,
+    const uint8_t** out_audio_payload_ptr,
+    size_t* out_audio_payload_size)
+{
+    LOG_DEBUG("Entering check_format_and_reconfigure for packet from tag: " + packet.source_tag);
+    
+    // --- Use format directly from packet ---
+    int target_ap_input_channels = packet.channels;
+    int target_ap_input_samplerate = packet.sample_rate;
+    int target_ap_input_bitdepth = packet.bit_depth;
+    // Channel layout bytes (packet.chlayout1, packet.chlayout2) are available but not directly used by AudioProcessor constructor
+    const uint8_t* audio_data_start = packet.audio_data.data(); // Payload is always 1152 bytes now
+    size_t audio_data_len = packet.audio_data.size();
+
+    // --- Validate Packet Format and Size ---
+    if (audio_data_len != CHUNK_SIZE) {
+         LOG_ERROR("Incorrect audio payload size. Expected " + std::to_string(CHUNK_SIZE) + ", got " + std::to_string(audio_data_len));
+         return false;
+    }
+     if (target_ap_input_channels <= 0 || target_ap_input_channels > 8 ||
+         (target_ap_input_bitdepth != 8 && target_ap_input_bitdepth != 16 && target_ap_input_bitdepth != 24 && target_ap_input_bitdepth != 32) ||
+         target_ap_input_samplerate <= 0) {
+         LOG_ERROR("Invalid format info in packet. SR=" + std::to_string(target_ap_input_samplerate) +
+                   ", BD=" + std::to_string(target_ap_input_bitdepth) + ", CH=" + std::to_string(target_ap_input_channels));
+         return false;
+     }
+     LOG_DEBUG("Packet Format: CH=" + std::to_string(target_ap_input_channels) +
+               " SR=" + std::to_string(target_ap_input_samplerate) + " BD=" + std::to_string(target_ap_input_bitdepth));
+
+
+    // --- Check if Reconfiguration is Needed ---
+    bool needs_reconfig = !audio_processor_ ||
+                          m_current_ap_input_channels != target_ap_input_channels ||
+                          m_current_ap_input_samplerate != target_ap_input_samplerate ||
+                          m_current_ap_input_bitdepth != target_ap_input_bitdepth;
+    
+    LOG_DEBUG("Current AP Format: CH=" + std::to_string(m_current_ap_input_channels) + 
+              " SR=" + std::to_string(m_current_ap_input_samplerate) + " BD=" + std::to_string(m_current_ap_input_bitdepth));
+    LOG_DEBUG("Needs Reconfiguration Check: audio_processor_ null? " + std::string(!audio_processor_ ? "Yes" : "No") + 
+              ", CH mismatch? " + std::string(m_current_ap_input_channels != target_ap_input_channels ? "Yes" : "No") +
+              ", SR mismatch? " + std::string(m_current_ap_input_samplerate != target_ap_input_samplerate ? "Yes" : "No") +
+              ", BD mismatch? " + std::string(m_current_ap_input_bitdepth != target_ap_input_bitdepth ? "Yes" : "No"));
+    LOG_DEBUG("Result of needs_reconfig: " + std::string(needs_reconfig ? "true" : "false"));
+
+
+    if (needs_reconfig) {
+        LOG_DEBUG("Entering reconfiguration block..."); // Log entry into the block
+        // Add logging here to show the change
+        if (audio_processor_) { // Log only if it's a change, not initial creation
+             LOG_WARN("Audio format changed! Reconfiguring AudioProcessor. Old Format: CH=" + std::to_string(m_current_ap_input_channels) +
+                      " SR=" + std::to_string(m_current_ap_input_samplerate) + " BD=" + std::to_string(m_current_ap_input_bitdepth) +
+                      ". New Format: CH=" + std::to_string(target_ap_input_channels) + " SR=" + std::to_string(target_ap_input_samplerate) +
+                      " BD=" + std::to_string(target_ap_input_bitdepth));
+        } else {
+             LOG("Initializing AudioProcessor for the first time. Format: CH=" + std::to_string(target_ap_input_channels) +
+                 " SR=" + std::to_string(target_ap_input_samplerate) + " BD=" + std::to_string(target_ap_input_bitdepth));
+        }
+        
+        std::lock_guard<std::mutex> lock(audio_processor_mutex_);
+        LOG("Reconfiguring AudioProcessor: Input CH=" + std::to_string(target_ap_input_channels) +
+            " SR=" + std::to_string(target_ap_input_samplerate) +
+            " BD=" + std::to_string(target_ap_input_bitdepth) +
+            " -> Output CH=" + std::to_string(config_.output_channels) +
+            " SR=" + std::to_string(config_.output_samplerate));
+        try {
+            audio_processor_ = std::make_unique<AudioProcessor>(
+                target_ap_input_channels,
+                config_.output_channels,    // Target output format from SIP config
+                target_ap_input_bitdepth,
+                target_ap_input_samplerate,
+                config_.output_samplerate,  // Target output format from SIP config
+                current_volume_
+            );
+            audio_processor_->setEqualizer(current_eq_.data());
+            m_current_ap_input_channels = target_ap_input_channels;
+            m_current_ap_input_samplerate = target_ap_input_samplerate;
+            m_current_ap_input_bitdepth = target_ap_input_bitdepth;
+            LOG("AudioProcessor reconfigured successfully.");
+        } catch (const std::exception& e) {
+            LOG_ERROR("Failed to reconfigure AudioProcessor: " + std::string(e.what()));
+            audio_processor_.reset(); // Ensure it's null on failure
+            return false; // Reconfiguration failed
+        }
+    }
+
+    *out_audio_payload_ptr = audio_data_start;
+    *out_audio_payload_size = audio_data_len;
+    return true;
+}
+
 
 // Make sure the check_readiness_condition remains the same as it correctly
 // implements the time-based logic for this single-source processor.

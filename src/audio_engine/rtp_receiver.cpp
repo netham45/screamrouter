@@ -156,18 +156,17 @@ void RtpReceiver::stop() {
 void RtpReceiver::add_output_queue(
     const std::string& source_tag,
     const std::string& instance_id,
-    std::shared_ptr<PacketQueue> queue,
-    std::mutex* processor_mutex,
-    std::condition_variable* processor_cv)
+    std::shared_ptr<PacketQueue> queue)
+    // Removed mutex and cv parameters
 {
     std::lock_guard<std::mutex> lock(targets_mutex_);
-    if (queue && processor_mutex && processor_cv) {
+    if (queue) { // Check only queue
         // Access the inner map for the source_tag, creating it if necessary.
         // Then insert/update the target for the specific instance_id.
-        output_targets_[source_tag][instance_id] = SourceOutputTarget{queue, processor_mutex, processor_cv};
+        output_targets_[source_tag][instance_id] = SourceOutputTarget{queue}; // Store only queue
         LOG("Added/Updated output target for source_tag: " + source_tag + ", instance_id: " + instance_id);
     } else {
-        LOG_ERROR("Attempted to add output target with null queue or sync primitives for source_tag: " + source_tag + ", instance_id: " + instance_id);
+        LOG_ERROR("Attempted to add output target with null queue for source_tag: " + source_tag + ", instance_id: " + instance_id);
     }
 }
 
@@ -286,6 +285,13 @@ void RtpReceiver::run() {
                     TaggedAudioPacket base_packet;
                     base_packet.source_tag = source_tag;
                     base_packet.received_time = received_time;
+                    // --- Set Default Format for RTP ---
+                    base_packet.channels = 2; 
+                    base_packet.sample_rate = 48000;
+                    base_packet.bit_depth = 16;
+                    base_packet.chlayout1 = 0x03; // Stereo L/R default
+                    base_packet.chlayout2 = 0x00;
+                    // --- Assign Payload ---
                     base_packet.audio_data.assign(receive_buffer.data() + RTP_HEADER_SIZE,
                                                    receive_buffer.data() + bytes_received);
 
@@ -297,22 +303,7 @@ void RtpReceiver::run() {
 
                             // Push the copy to the instance's queue
                             target.queue->push(std::move(packet_copy)); // Move the copy
-
-                            // Notify the specific processor instance's condition variable
-                            if (target.processor_mutex && target.processor_cv) {
-                                // Use a try_lock here to avoid potential deadlocks if the processor
-                                // thread is holding the lock for a long time. If lock fails,
-                                // the notification might be missed, but the processor should
-                                // eventually wake up on its own timeout or next packet.
-                                std::unique_lock<std::mutex> cv_lock(*target.processor_mutex, std::try_to_lock);
-                                if (cv_lock.owns_lock()) {
-                                     target.processor_cv->notify_one();
-                                } else {
-                                     LOG_WARN("Could not acquire processor mutex for CV notification (Instance: " + instance_id + "). Processor might be busy.");
-                                }
-                            } else {
-                                LOG_ERROR("Missing mutex or CV pointer for instance: " + instance_id + " (source_tag: " + source_tag + ")");
-                            }
+                            // Removed CV notification logic
                         } else {
                              LOG_ERROR("Found null queue pointer for instance: " + instance_id + " (source_tag: " + source_tag + ")");
                         }

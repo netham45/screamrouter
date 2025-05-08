@@ -23,13 +23,16 @@ using OutputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
 
 // Define constants based on original code/assumptions
-const size_t INPUT_CHUNK_BYTES = 1152; // Expected size of audio_data in TaggedAudioPacket
+// CHUNK_SIZE is defined as a macro in c_utils/audio_processor.h
+const size_t SCREAM_HEADER_SIZE = 5; // Size of the raw scream header
+const size_t INPUT_CHUNK_BYTES = 1152; // Expected size of audio_data in TaggedAudioPacket (same as CHUNK_SIZE macro)
 const int DEFAULT_INPUT_BITDEPTH = 16; // Assume 16-bit input unless specified
 const int DEFAULT_INPUT_CHANNELS = 2;  // Assume stereo input unless specified
 const int DEFAULT_INPUT_SAMPLERATE = 48000; // Assume 48kHz input unless specified
 // Match the number of samples SinkAudioMixer expects in its mixing buffer (SINK_MIXING_BUFFER_SAMPLES)
 // which is 576 for the current 16-bit stereo output target.
 const size_t OUTPUT_CHUNK_SAMPLES = 576; // Total interleaved 32-bit samples expected in ProcessedAudioChunk
+
 
 class SourceInputProcessor : public AudioComponent {
 public:
@@ -65,6 +68,11 @@ protected:
     void output_loop();
 
 private:
+    // InputProtocolType m_protocol_type; // Removed
+    int m_current_ap_input_channels = 0;
+    int m_current_ap_input_samplerate = 0;
+    int m_current_ap_input_bitdepth = 0;
+
     SourceProcessorConfig config_;
     std::shared_ptr<InputPacketQueue> input_queue_;
     std::shared_ptr<OutputChunkQueue> output_queue_;
@@ -105,9 +113,22 @@ private:
     void handle_new_input_packet(TaggedAudioPacket& packet); // Adds packet to timeshift buffer, notifies CV
 
     // Audio processing methods
-    void initialize_audio_processor(); // Creates/updates the AudioProcessor instance
+    // void initialize_audio_processor(); // Removed
     void process_audio_chunk(const std::vector<uint8_t>& input_chunk_data); // Calls audio_processor_->processAudio
     void push_output_chunk_if_ready(); // Pushes a full ProcessedAudioChunk to output_queue_
+
+    /**
+     * @brief Checks packet format, reconfigures AudioProcessor if needed, and returns audio payload.
+     * @param packet The incoming tagged audio packet.
+     * @param out_audio_payload_ptr Pointer to store the start of the 1152-byte audio data.
+     * @param out_audio_payload_size Pointer to store the size (should be CHUNK_SIZE).
+     * @return true if successful and audio payload is valid, false otherwise (e.g., bad packet size).
+     */
+    bool check_format_and_reconfigure(
+        const TaggedAudioPacket& packet,
+        const uint8_t** out_audio_payload_ptr,
+        size_t* out_audio_payload_size
+    );
 };
 
 } // namespace audio

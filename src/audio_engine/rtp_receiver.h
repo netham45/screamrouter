@@ -35,14 +35,10 @@ using PacketQueue = utils::ThreadSafeQueue<TaggedAudioPacket>;
 // Forward declare SourceInputProcessor to avoid circular include if needed later
 // class SourceInputProcessor; // Not strictly needed if just passing pointers
 
-// Struct to hold queue and synchronization primitives for ONE source processor instance
+// Struct to hold queue for ONE source processor instance
 struct SourceOutputTarget {
     std::shared_ptr<PacketQueue> queue; // The specific queue for this processor instance
-    std::mutex* processor_mutex = nullptr; // Pointer to its timeshift_mutex_
-    std::condition_variable* processor_cv = nullptr; // Pointer to its timeshift_condition_
-
-    // Overload equality operator to find targets based on queue pointer for removal
-    // Removed equality operator based on queue pointer as instance_id is the unique key now
+    // Removed mutex and cv pointers
 };
 
 // Map: source_tag (IP) -> instance_id -> Target Info
@@ -78,9 +74,8 @@ public:
     void add_output_queue(
         const std::string& source_tag,
         const std::string& instance_id, // Added instance_id
-        std::shared_ptr<PacketQueue> queue,
-        std::mutex* processor_mutex,
-        std::condition_variable* processor_cv
+        std::shared_ptr<PacketQueue> queue
+        // Removed mutex and cv parameters
     );
 
     /**

@@ -5,6 +5,7 @@
 #include "rtp_receiver.h"
 #include "source_input_processor.h"
 #include "sink_audio_mixer.h"
+#include "raw_scream_receiver.h" // Added this line
 #include "thread_safe_queue.h"
 #include "audio_types.h"
 
@@ -105,6 +106,20 @@ public:
      */
     bool disconnect_source_sink(const std::string& source_instance_id, const std::string& sink_id);
 
+    /**
+     * @brief Adds and starts a new raw Scream receiver.
+     * @param config Configuration for the raw Scream receiver (e.g., listen port).
+     * @return true if the receiver was added successfully, false otherwise.
+     */
+    bool add_raw_scream_receiver(const RawScreamReceiverConfig& config);
+
+    /**
+     * @brief Stops and removes an existing raw Scream receiver.
+     * @param listen_port The listen port of the receiver to remove.
+     * @return true if the receiver was removed successfully, false if not found.
+     */
+    bool remove_raw_scream_receiver(int listen_port);
+
 
     // --- Control API (for Python via pybind11) ---
     /**
@@ -183,6 +198,9 @@ private:
     std::map<std::string, std::shared_ptr<ChunkQueue>> source_to_sink_queues_; // Key is Instance ID
     // Queues for Control Commands (Instance ID -> Queue Ptr)
     std::map<std::string, std::shared_ptr<CommandQueue>> command_queues_; // Key is Instance ID
+
+    // Raw Scream Receivers (Port -> Receiver Ptr) - Assuming one receiver per port
+    std::map<int, std::unique_ptr<RawScreamReceiver>> raw_scream_receivers_;
 
     // Removed source_configs_ map
 

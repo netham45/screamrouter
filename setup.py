@@ -17,12 +17,13 @@ ext_modules = [
             "src/audio_engine/bindings.cpp",
             "src/audio_engine/audio_manager.cpp",
             "src/audio_engine/rtp_receiver.cpp",
+            "src/audio_engine/raw_scream_receiver.cpp", # <-- ADDED THIS LINE
             "src/audio_engine/source_input_processor.cpp",
             "src/audio_engine/sink_audio_mixer.cpp",
-            "c_utils/audio_processor.cpp",
-            "c_utils/layout_mixer.cpp", # Added missing source
-            "c_utils/speaker_mix.cpp",  # Added missing source
-            "c_utils/biquad/biquad.cpp",
+            "src/audio_engine/audio_processor.cpp",
+            "src/audio_engine/layout_mixer.cpp", # Added missing source
+            # "src/audio_engine/speaker_mix.cpp",  # REMOVED - Definitions moved to audio_processor.cpp
+            "src/audio_engine/biquad/biquad.cpp",
             "src/configuration/audio_engine_config_applier.cpp", # Added Config Applier source
             # Note: libsamplerate sources are NOT included here.
             # We rely on linking against a pre-built library (-lsamplerate).

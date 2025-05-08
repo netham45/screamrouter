@@ -160,6 +160,21 @@ class ConfigurationManager(threading.Thread):
                     self.cpp_config_applier = screamrouter_audio_engine.AudioEngineConfigApplier(self.cpp_audio_manager)
                     _logger.info("[Configuration Manager] C++ AudioEngineConfigApplier created.")
 
+                    # --- Add Raw Scream Receivers ---
+                    ports_to_add = [4010, 16401]
+                    for port in ports_to_add:
+                        try:
+                            _logger.info("[Configuration Manager] Adding C++ RawScreamReceiver on port %d...", port)
+                            raw_config = screamrouter_audio_engine.RawScreamReceiverConfig()
+                            raw_config.listen_port = port
+                            if not self.cpp_audio_manager.add_raw_scream_receiver(raw_config):
+                                _logger.error("[Configuration Manager] Failed to add C++ RawScreamReceiver on port %d.", port)
+                            else:
+                                _logger.info("[Configuration Manager] C++ RawScreamReceiver added successfully on port %d.", port)
+                        except Exception as raw_e:
+                            _logger.exception("[Configuration Manager] Exception adding C++ RawScreamReceiver on port %d: %s", port, raw_e)
+                    # --- End Add Raw Scream Receivers ---
+
             except Exception as e:
                 _logger.exception("[Configuration Manager] Exception during C++ engine initialization: %s", e)
                 self.cpp_audio_manager = None # Ensure it's None on error
@@ -841,11 +856,39 @@ class ConfigurationManager(threading.Thread):
             cpp_sink_engine_config.bitdepth = py_sink_desc.bit_depth
             cpp_sink_engine_config.samplerate = py_sink_desc.sample_rate
             cpp_sink_engine_config.channels = py_sink_desc.channels
+
+            # Define a mapping for channel layout strings to byte values
+            channel_layout_map = {
+                "mono": (0x04, 0x00),  # FC
+                "stereo": (0x03, 0x00),  # FL, FR
+                "2.1": (0x0B, 0x00),  # FL, FR, LFE
+                "3.0": (0x07, 0x00),  # FL, FR, FC
+                "3.1": (0x0F, 0x00),  # FL, FR, FC, LFE
+                "quad": (0x33, 0x00), # FL, FR, BL, BR
+                "surround": (0x07, 0x01), # FL, FR, FC, BC (common for older surround)
+                "4.0": (0x07, 0x01), # FL, FR, FC, BC (Dolby Pro Logic)
+                "4.1": (0x0F, 0x01), # FL, FR, FC, LFE, BC
+                "5.0": (0x37, 0x00), # FL, FR, FC, BL, BR
+                "5.1": (0x3F, 0x00),  # FL, FR, FC, LFE, BL, BR (standard 5.1 with back surrounds)
+                "5.1(side)": (0x0F, 0x06), # FL, FR, FC, LFE, SL, SR (5.1 with side surrounds)
+                "6.0": (0x37, 0x01), # FL, FR, FC, BL, BR, BC
+                "6.1": (0x3F, 0x01), # FL, FR, FC, LFE, BL, BR, BC
+                "7.0": (0x37, 0x06), # FL, FR, FC, BL, BR, SL, SR
+                "7.1": (0x3F, 0x06)   # FL, FR, FC, LFE, BL, BR, SL, SR
+                # Add other layouts as needed
+            }
+
+            # Get the layout string from the Python SinkDescription
+            py_channel_layout_str = py_sink_desc.channel_layout.lower() if py_sink_desc.channel_layout else "stereo"
+
+            # Look up the byte values, defaulting to stereo if not found
+            chlayout1, chlayout2 = channel_layout_map.get(py_channel_layout_str, (0x03, 0x00))
             
-            # Handle channel layout bytes (assuming they exist on Python SinkDescription)
-            # These might need default values if not always present
-            cpp_sink_engine_config.chlayout1 = getattr(py_sink_desc, 'scream_header_chlayout1', 0x03) # Default stereo
-            cpp_sink_engine_config.chlayout2 = getattr(py_sink_desc, 'scream_header_chlayout2', 0x00)
+            _logger.debug("[Config Translator]   Sink %s: Python layout '%s' -> C++ chlayout1=0x%02X, chlayout2=0x%02X",
+                          py_sink_desc.name, py_channel_layout_str, chlayout1, chlayout2)
+
+            cpp_sink_engine_config.chlayout1 = chlayout1
+            cpp_sink_engine_config.chlayout2 = chlayout2
             
             cpp_sink_engine_config.use_tcp = py_sink_desc.use_tcp
 
