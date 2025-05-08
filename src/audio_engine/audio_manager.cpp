@@ -783,6 +783,103 @@ std::vector<uint8_t> AudioManager::get_mp3_data(const std::string& sink_id) {
     return {}; // Return empty vector if queue is null or empty
 }
 
+std::vector<uint8_t> AudioManager::get_mp3_data_by_ip(const std::string& ip_address) {
+    std::lock_guard<std::mutex> lock(manager_mutex_); // Protect access to sink_configs_
+
+    if (!running_) {
+        return {}; // Return empty vector if not running
+    }
+
+    // Iterate through sink_configs_ to find a sink with the matching output_ip
+    for (const auto& pair : sink_configs_) {
+        const SinkConfig& config = pair.second;
+        if (config.output_ip == ip_address) {
+            // Found a sink with the matching IP, now get its ID and call the original get_mp3_data
+            // The sink_id is pair.first (the key in the map) or config.id
+            // Release lock before calling another public method that might lock
+            // However, get_mp3_data also locks, so we need to be careful or refactor.
+            // For now, let's call it directly. If deadlocks occur, this needs rethinking.
+            // The current get_mp3_data implementation locks manager_mutex_ as well.
+            // To avoid recursive locking on the same mutex by the same thread (which is UB for std::mutex),
+            // we can temporarily unlock and then call, or make get_mp3_data not lock if called internally.
+            // A simpler approach for now: get_mp3_data itself will re-acquire the lock.
+            // This is fine as std::lock_guard unlocks upon exiting this scope.
+            // The risk is if get_mp3_data tries to acquire the *same* lock instance again *before* this one releases.
+            // Let's make a copy of sink_id and release the lock before calling.
+
+            std::string found_sink_id = config.id; // or pair.first
+            // Unlock not strictly needed here if get_mp3_data uses its own lock scope correctly.
+            // The main concern is if get_mp3_data also tries to lock manager_mutex_.
+            // Since get_mp3_data does lock manager_mutex_, we must release this lock first.
+            // This means we cannot hold the lock across the call to get_mp3_data.
+            // This is okay because we've found the sink_id we need.
+
+            // To safely call get_mp3_data, we must not hold manager_mutex_
+            // However, get_mp3_data itself will lock it.
+            // The simplest way is to extract the sink_id, then call get_mp3_data outside this loop,
+            // but that means only the first match is processed.
+            // If multiple sinks can have the same output_ip (which shouldn't be the case for unique sinks),
+            // this logic would only return for the first one found. Assuming output_ip is unique per configured sink.
+
+            // Let's release the lock by exiting the current scope and then call.
+            // This is not ideal as we are iterating.
+            // A better way:
+            // 1. Find the sink_id under lock.
+            // 2. Release lock.
+            // 3. Call get_mp3_data with the found sink_id.
+
+            // Find sink_id:
+            // (already done above: found_sink_id = config.id)
+
+            // To call get_mp3_data, which also locks manager_mutex_, we must not be holding it.
+            // This means we cannot call it directly from here while the loop's lock_guard is active.
+            // The solution is to find the ID, then call get_mp3_data *after* the loop and its lock.
+            // This implies we only find the *first* match. If IPs are unique, this is fine.
+
+            // Corrected approach:
+            // Store the found sink_id and break the loop.
+            // Then, after the lock is released, call get_mp3_data.
+            // This is still not quite right if get_mp3_data needs the lock for its own map lookups.
+
+            // Let's assume get_mp3_data is safe to call. The lock_guard will release.
+            // The issue is recursive locking if get_mp3_data also uses manager_mutex_.
+            // std::recursive_mutex would solve this, but let's avoid changing mutex types now.
+
+            // Simplest for now: call a helper that doesn't lock, or make get_mp3_data more granular with its locking.
+            // Given the current structure of get_mp3_data, it will try to re-lock manager_mutex_.
+            // This will lead to deadlock or UB if manager_mutex_ is not a recursive mutex.
+
+            // Let's try to find the queue directly here, similar to what get_mp3_data does, but using the found sink_id.
+            auto queue_it = mp3_output_queues_.find(found_sink_id);
+            if (queue_it != mp3_output_queues_.end()) {
+                std::shared_ptr<Mp3Queue> target_queue = queue_it->second;
+                // Now, we need to release the manager_mutex_ before calling try_pop on the queue,
+                // because try_pop might block or interact with other threads.
+                // However, the queue itself is thread-safe. The map lookup needs the lock.
+                // So, get the queue pointer under lock, then use it outside the lock.
+                // This is what get_mp3_data already does.
+
+                // The problem is calling get_mp3_data(found_sink_id) from here.
+                // Let's replicate the essential part of get_mp3_data for the found_sink_id.
+                // This avoids the recursive lock issue.
+                if (target_queue) {
+                    // We are still holding manager_mutex_ here.
+                    // The try_pop on ThreadSafeQueue is designed to be safe.
+                    EncodedMP3Data mp3_data_item;
+                    if (target_queue->try_pop(mp3_data_item)) {
+                        return mp3_data_item.mp3_data;
+                    }
+                }
+            }
+            return {}; // Found IP, but no queue or queue empty
+        }
+    }
+
+    // LOG_WARN_AM("No sink found with IP: " + ip_address); // Can be noisy
+    return {}; // IP address not found among sink configurations
+}
+
+
 // --- External Control ---
 
 bool AudioManager::set_sink_tcp_fd(const std::string& sink_id, int fd) {

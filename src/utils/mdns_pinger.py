@@ -1,9 +1,12 @@
 """mDNS pinger for discovering sources and sinks"""
-import threading
 import logging
+import threading
 import time
 from typing import Optional, Set
-from zeroconf import Zeroconf, DNSQuestion, DNSOutgoing, DNSRecord, DNSIncoming, current_time_millis, ServiceBrowser, ServiceListener, RecordUpdateListener
+
+from zeroconf import (DNSIncoming, DNSOutgoing, DNSQuestion, DNSRecord,
+                      RecordUpdateListener, ServiceBrowser, ServiceListener,
+                      Zeroconf, current_time_millis)
 
 # DNS record types and flags
 DNS_TYPE_A = 1  # A record type (IPv4 address)

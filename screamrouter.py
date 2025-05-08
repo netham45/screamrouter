@@ -17,6 +17,7 @@ from src.api.api_webstream import APIWebStream
 from src.api.api_websocket_config import APIWebsocketConfig
 from src.api.api_websocket_debug import APIWebsocketDebug
 from src.api.api_equalizer import APIEqualizer
+from screamrouter_audio_engine import AudioManager
 from src.configuration.configuration_manager import ConfigurationManager
 from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_logger.screamrouter_logger import get_logger
@@ -28,6 +29,7 @@ try:
     os.nice(-15)
 except:
     pass
+
 
 logger = get_logger(__name__)
 
@@ -99,7 +101,20 @@ set_process_name("SR Scream Router", "Scream Router Main Thread")
 if constants.DEBUG_MULTIPROCESSING:
     logger = multiprocessing.log_to_stderr()
     logger.setLevel(multiprocessing.SUBDEBUG) # type: ignore
-webstream: APIWebStream = APIWebStream(app)
+
+# Instantiate AudioManager
+audio_manager: AudioManager = AudioManager()
+# Initialize AudioManager (assuming it has an initialize method that should be called)
+# If initialize takes arguments or has specific return values to check, that would be done here.
+# For now, assuming a simple parameter-less initialize.
+# Refer to bindings.cpp: .def("initialize", &AudioManager::initialize, py::arg("rtp_listen_port") = 40000, "Initializes the audio manager...")
+if not audio_manager.initialize(): # Default RTP listen port is 40000
+    logger.error("Failed to initialize AudioManager. Exiting.")
+    sys.exit(1)
+else:
+    logger.info("AudioManager initialized successfully.")
+
+webstream: APIWebStream = APIWebStream(app, audio_manager) # Pass audio_manager
 websocket_config: APIWebsocketConfig = APIWebsocketConfig(app)
 websocket_debug: APIWebsocketDebug = APIWebsocketDebug(app)
 plugin_manager: PluginManager = PluginManager(app)
@@ -208,10 +223,10 @@ ntp_server = NTPServerProcess()
 ntp_server.start()
 # --- End NTP Server Setup ---
 
-# Configuration Manager (no longer needs mDNS responders passed)
 screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream,
                                                                         plugin_manager,
-                                                                        websocket_config)
+                                                                        websocket_config,
+                                                                        audio_manager)
 
 api_controller = APIConfiguration(app, screamrouter_configuration)
 website: APIWebsite = APIWebsite(app, screamrouter_configuration)

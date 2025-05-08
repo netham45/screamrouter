@@ -130,6 +130,12 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
             py::arg("sink_id"),
             // No need for return_value_policy::move with py::bytes wrapper
             "Retrieves a chunk of MP3 data (as bytes) from the specified sink's queue if available, otherwise returns empty bytes.")
+        .def("get_mp3_data_by_ip", [](AudioManager &self, const std::string& ip_address) -> py::bytes {
+                std::vector<uint8_t> data_vec = self.get_mp3_data_by_ip(ip_address);
+                return py::bytes(reinterpret_cast<const char*>(data_vec.data()), data_vec.size());
+            },
+            py::arg("ip_address"),
+            "Retrieves a chunk of MP3 data (as bytes) from a sink identified by its output IP address.")
 
         // External Control Methods (like setting TCP FD)
         .def("set_sink_tcp_fd", &AudioManager::set_sink_tcp_fd,

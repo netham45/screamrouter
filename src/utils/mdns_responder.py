@@ -1,10 +1,12 @@
 import logging
 import socket
 import threading
-from typing import Optional, List
+from typing import List, Optional
 
-from zeroconf import ServiceInfo, Zeroconf, IPVersion, InterfaceChoice # Import InterfaceChoice
+from zeroconf import (InterfaceChoice, IPVersion,  # Import InterfaceChoice
+                      ServiceInfo, Zeroconf)
 from zeroconf.asyncio import AsyncZeroconf
+
 # Ensure get_logger is imported if not already (assuming it's in the project structure)
 # If get_logger is defined elsewhere, adjust the import path accordingly.
 # Example: from ..screamrouter_logger.screamrouter_logger import get_logger

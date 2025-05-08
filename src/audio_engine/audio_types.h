@@ -5,7 +5,7 @@
 #include <string>
 #include <chrono>
 #include <cstdint> // For fixed-width integers like uint8_t, uint32_t
-#include "../c_utils/audio_processor.h" // For EQ_BANDS
+#include "audio_processor.h" // For EQ_BANDS
 
 namespace screamrouter {
 namespace audio {
@@ -72,7 +72,6 @@ struct NewSourceNotification {
  */
 struct EncodedMP3Data {
     std::vector<uint8_t> mp3_data; // Chunk of MP3 bytes
-    // std::string sink_id; // Optional: Could be added if consumer needs to know origin sink
 };
 
 

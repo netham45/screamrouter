@@ -1,16 +1,14 @@
 """Holds the API endpoints to serve files for html/javascript/css"""
 import mimetypes
 import multiprocessing
-from typing import List, Optional, Union
 import os
+from typing import List, Optional, Union
 
 import httpx
 import websockify
 import websockify.websocketproxy
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.templating import _TemplateResponse

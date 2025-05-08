@@ -1,8 +1,10 @@
 """API endpoints for proxying websocket connections to webpack dev server"""
 import asyncio
 from typing import Dict
-from fastapi import FastAPI, WebSocket
+
 import websockets
+from fastapi import FastAPI, WebSocket
+
 from src.screamrouter_logger.screamrouter_logger import get_logger
 
 _logger = get_logger(__name__)

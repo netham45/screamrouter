@@ -164,6 +164,15 @@ public:
     std::vector<uint8_t> get_mp3_data(const std::string& sink_id);
 
     /**
+     * @brief Retrieves a chunk of encoded MP3 data from a sink identified by its output IP address.
+     * This method will find the sink_id associated with the given IP and then call get_mp3_data(sink_id).
+     * This is a polling method (non-blocking).
+     * @param ip_address The output IP address of the sink.
+     * @return A vector of bytes containing the MP3 data, or an empty vector if no data is available, sink/queue not found, or IP not associated with any sink.
+     */
+    std::vector<uint8_t> get_mp3_data_by_ip(const std::string& ip_address);
+
+    /**
      * @brief Updates the TCP file descriptor for a specific sink.
      * Called externally when a TCP connection state changes.
      * @param sink_id Identifier of the sink.

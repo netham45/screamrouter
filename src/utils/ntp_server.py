@@ -1,12 +1,13 @@
 import multiprocessing
+import os
+import signal
 import socket
 import struct
 import time
-import signal
-import os
-from ..screamrouter_logger.screamrouter_logger import get_logger
 from multiprocessing import Process
 from threading import Thread
+
+from ..screamrouter_logger.screamrouter_logger import get_logger
 
 logger = get_logger(__name__)
 

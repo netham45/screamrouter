@@ -1,10 +1,10 @@
 """API Endpoints for managing Equalizer configurations"""
 
-from fastapi import HTTPException, FastAPI
 import yaml
+from fastapi import FastAPI, HTTPException
 
-from src.screamrouter_types.configuration import Equalizer
 from src.constants.constants import EQUALIZER_CONFIG_PATH
+from src.screamrouter_types.configuration import Equalizer
 
 
 class APIEqualizer:

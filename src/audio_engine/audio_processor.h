@@ -6,7 +6,7 @@
 #include <thread>
 #include <atomic>
 #include <vector> // Added for std::vector
-#include "libsamplerate/include/samplerate.h"
+#include "samplerate.h"
 
 #define MAX_CHANNELS 8
 #define EQ_BANDS 18

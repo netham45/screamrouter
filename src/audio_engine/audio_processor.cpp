@@ -1,6 +1,6 @@
 #include "audio_processor.h"
 #include "biquad/biquad.h"
-#include "libsamplerate/include/samplerate.h"
+#include "samplerate.h"
 #include <algorithm>
 #include <stdexcept>
 #include <cmath>

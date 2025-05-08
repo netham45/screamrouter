@@ -23,11 +23,11 @@ using namespace screamrouter::utils;
 #endif
 
 // Simple logger helper (replace with a proper logger if available)
-#define LOG(sink_id, msg) std::cout << "[SinkMixer:" << sink_id << "] " << msg << std::endl
+//#define LOG(sink_id, msg) std::cout << "[SinkMixer:" << sink_id << "] " << msg << std::endl
 //#define LOG_ERROR(sink_id, msg) std::cerr << "[SinkMixer Error:" << sink_id << "] " << msg << " (errno: " << errno << ")" << std::endl
 //#define LOG_WARN(sink_id, msg) std::cout << "[SinkMixer Warn:" << sink_id << "] " << msg << std::endl // Added WARN level
 //#define LOG_DEBUG(sink_id, msg) std::cout << "[SinkMixer Debug:" << sink_id << "] " << msg << std::endl
-//#define LOG(sink_id, msg)
+#define LOG(sink_id, msg)
 #define LOG_ERROR(sink_id, msg)
 #define LOG_WARN(sink_id, msg)
 #define LOG_DEBUG(sink_id, msg)
@@ -661,71 +661,105 @@ void SinkAudioMixer::encode_and_push_mp3() {
         return;
     }
 
-    // *** ADDED CHECK: Ensure mixing_buffer_ has 1152 bytes (288 samples) before processing ***
-    const size_t required_samples = SINK_CHUNK_SIZE_BYTES / sizeof(int32_t);
-    if (mixing_buffer_.size() < required_samples) {
-        LOG_ERROR(config_.sink_id, "MP3 Encode: Skipping processing. mixing_buffer_ size is " + std::to_string(mixing_buffer_.size()) + ", expected " + std::to_string(required_samples) + " samples (1152 bytes).");
-        return; // Do not process or encode if the buffer size is wrong
-    }
-    LOG_DEBUG(config_.sink_id, "MP3 Encode: mixing_buffer_ size check passed (" + std::to_string(mixing_buffer_.size()) + " samples). Proceeding to AudioProcessor.");
-
-
     // 1. Preprocess the mixed buffer using AudioProcessor.
-    //    AudioProcessor internally processes SINK_MIXING_BUFFER_SAMPLES input frames.
-    //    The output is stereo (2 channels), so the buffer needs space for SINK_MIXING_BUFFER_SAMPLES * 2 samples.
-    std::vector<int32_t> stereo_int32_buffer(SINK_MIXING_BUFFER_SAMPLES * 2); // Correctly sized for stereo output
+    //    lame_preprocessor_ (AudioProcessor) consumes SINK_CHUNK_SIZE_BYTES from the 32-bit mixing_buffer_ per call.
+    //    It outputs SINK_MIXING_BUFFER_SAMPLES stereo frames (32-bit).
+    
+    // Output buffer for preprocessor: SINK_MIXING_BUFFER_SAMPLES stereo frames * 2 channels * sizeof(int32_t)
+    std::vector<int32_t> stereo_int32_buffer(SINK_MIXING_BUFFER_SAMPLES * 2); // Holds 576 stereo frames = 1152 int32_t samples
 
-    // Pass the input buffer. processAudio will read CHUNK_SIZE bytes internally based on its inputBitDepth setting.
-    int processed_total_samples = lame_preprocessor_->processAudio(
-        reinterpret_cast<const uint8_t*>(mixing_buffer_.data()),
-        stereo_int32_buffer.data()
-    );
+    const size_t total_bytes_in_mixing_buffer = mixing_buffer_.size() * sizeof(int32_t); // mixing_buffer_ has SINK_MIXING_BUFFER_SAMPLES (576) int32_t samples = 2304 bytes
+    const size_t input_chunk_bytes_for_preprocessor = SINK_CHUNK_SIZE_BYTES; // 1152 bytes
 
-    if (processed_total_samples <= 0) {
-        LOG_ERROR(config_.sink_id, "AudioProcessor failed to process audio for LAME. Samples processed: " + std::to_string(processed_total_samples));
+    if (input_chunk_bytes_for_preprocessor == 0) {
+        LOG_ERROR(config_.sink_id, "MP3 Encode: input_chunk_bytes_for_preprocessor is zero. This should not happen.");
         return;
     }
-    // Assuming processAudio returns the total number of stereo samples written.
-    LOG_DEBUG(config_.sink_id, "AudioProcessor produced " + std::to_string(processed_total_samples) + " total stereo int32 samples for LAME.");
+    
+    size_t current_byte_offset = 0;
+    while (current_byte_offset + input_chunk_bytes_for_preprocessor <= total_bytes_in_mixing_buffer) {
+        // Check queue status at the beginning of processing each chunk
+        if (mp3_output_queue_->size() > 10) { // If queue is backing up
+            if (lame_active_) {
+                LOG(config_.sink_id, "MP3 output queue full, pausing encoding. Processed " + std::to_string(current_byte_offset) + " bytes out of " + std::to_string(total_bytes_in_mixing_buffer));
+                lame_active_ = false;
+            }
+            return; // Stop processing more chunks in this call
+        } else {
+            if (!lame_active_) {
+                LOG(config_.sink_id, "MP3 output queue draining, resuming encoding.");
+                lame_active_ = true;
+            }
+        }
+        // If LAME encoding was paused and queue is still full, lame_active_ will be false.
+        if (!lame_active_) {
+             LOG_DEBUG(config_.sink_id, "MP3 encoding paused, skipping chunk at offset " + std::to_string(current_byte_offset));
+             return; 
+        }
 
-    // 2. NO CONVERSION NEEDED: We will use lame_encode_buffer_interleaved_int which takes int32_t directly.
+        LOG_DEBUG(config_.sink_id, "MP3 Encode: Processing chunk from mixing_buffer_ at offset " + std::to_string(current_byte_offset) + " with size " + std::to_string(input_chunk_bytes_for_preprocessor));
+        const uint8_t* input_chunk_ptr = reinterpret_cast<const uint8_t*>(mixing_buffer_.data()) + current_byte_offset;
 
-    // 3. Encode the stereo int32_t buffer using LAME
-    // Calculate the number of frames (samples per channel).
-    // Assuming processAudio returns total stereo samples, divide by 2 for frames per channel.
-    int processed_frames_per_channel = processed_total_samples / 2;
-    LOG_DEBUG(config_.sink_id, "Processed frames per channel for LAME: " + std::to_string(processed_frames_per_channel));
+        // lame_preprocessor_->processAudio consumes input_chunk_bytes_for_preprocessor
+        // and produces SINK_MIXING_BUFFER_SAMPLES stereo frames into stereo_int32_buffer.
+        int processed_total_stereo_samples = lame_preprocessor_->processAudio(
+            input_chunk_ptr,
+            stereo_int32_buffer.data()
+        );
 
-    // Ensure the allocated MP3 buffer is large enough (LAME recommendation: 1.25 * num_samples + 7200)
-    // Use the number of frames per channel being passed to LAME.
-    size_t required_mp3_buffer_size = static_cast<size_t>(1.25 * processed_frames_per_channel + 7200);
-    if (mp3_encode_buffer_.size() < required_mp3_buffer_size) {
-         LOG_WARN(config_.sink_id, "MP3 encode buffer might be too small. Size: " + std::to_string(mp3_encode_buffer_.size()) + ", Recommended: " + std::to_string(required_mp3_buffer_size));
-         // Consider resizing or logging a more critical error if issues occur
+        if (processed_total_stereo_samples <= 0) {
+            LOG_ERROR(config_.sink_id, "AudioProcessor failed to process audio for LAME. Offset: " + std::to_string(current_byte_offset) + ". Samples processed: " + std::to_string(processed_total_stereo_samples));
+            break; // Stop processing further chunks if an error occurs
+        }
+        
+        // AudioProcessor should output SINK_MIXING_BUFFER_SAMPLES stereo frames, which is SINK_MIXING_BUFFER_SAMPLES * 2 total int32_t samples.
+        if (static_cast<size_t>(processed_total_stereo_samples) != stereo_int32_buffer.size()) {
+            LOG_WARN(config_.sink_id, "AudioProcessor output " + std::to_string(processed_total_stereo_samples) + " stereo samples, but buffer was sized for " + std::to_string(stereo_int32_buffer.size()) + ". Using actual count for LAME.");
+        }
+        LOG_DEBUG(config_.sink_id, "AudioProcessor produced " + std::to_string(processed_total_stereo_samples) + " total stereo int32 samples for LAME from offset " + std::to_string(current_byte_offset));
+
+        // 2. NO CONVERSION NEEDED: lame_encode_buffer_interleaved_int takes int32_t directly.
+
+        // 3. Encode the stereo int32_t buffer using LAME
+        // LAME expects frames per channel.
+        int processed_frames_per_channel = processed_total_stereo_samples / 2; // If 1152 samples (576 stereo frames) -> 576 frames/channel
+        LOG_DEBUG(config_.sink_id, "Processed frames per channel for LAME: " + std::to_string(processed_frames_per_channel));
+
+        size_t required_mp3_buffer_size = static_cast<size_t>(1.25 * processed_frames_per_channel + 7200);
+        if (mp3_encode_buffer_.size() < required_mp3_buffer_size) {
+            LOG_WARN(config_.sink_id, "MP3 encode buffer might be too small for " + std::to_string(processed_frames_per_channel) + " frames. Current size: " + std::to_string(mp3_encode_buffer_.size()) + ", Recommended: " + std::to_string(required_mp3_buffer_size) + ". Resizing.");
+            mp3_encode_buffer_.resize(required_mp3_buffer_size);
+        }
+        
+        // Ensure stereo_int32_buffer has enough samples for the processed frames.
+        // This check is more of a sanity check as processed_frames_per_channel is derived from processed_total_stereo_samples.
+        if (stereo_int32_buffer.size() < static_cast<size_t>(processed_total_stereo_samples)) {
+             LOG_ERROR(config_.sink_id, "Internal error: stereo_int32_buffer too small. Has: " + std::to_string(stereo_int32_buffer.size()) + ", Needs: " + std::to_string(processed_total_stereo_samples));
+             break; 
+        }
+
+        int mp3_bytes_encoded = lame_encode_buffer_interleaved_int(
+            lame_global_flags_,
+            stereo_int32_buffer.data(),
+            processed_frames_per_channel, 
+            mp3_encode_buffer_.data(),
+            static_cast<int>(mp3_encode_buffer_.size())
+        );
+
+        if (mp3_bytes_encoded < 0) {
+            LOG_ERROR(config_.sink_id, "LAME encoding failed with code: " + std::to_string(mp3_bytes_encoded) + " for chunk at offset " + std::to_string(current_byte_offset));
+            break; 
+        } else if (mp3_bytes_encoded > 0) {
+            EncodedMP3Data mp3_data;
+            mp3_data.mp3_data.assign(mp3_encode_buffer_.begin(), mp3_encode_buffer_.begin() + mp3_bytes_encoded);
+            mp3_output_queue_->push(std::move(mp3_data));
+        }
+        
+        current_byte_offset += input_chunk_bytes_for_preprocessor;
     }
-
-    // Ensure stereo_int32_buffer has enough samples for the processed frames
-    // Check if the buffer size is at least the number of samples returned by processAudio
-    if (stereo_int32_buffer.size() < static_cast<size_t>(processed_total_samples)) {
-         LOG_ERROR(config_.sink_id, "AudioProcessor output buffer size mismatch. Has: " + std::to_string(stereo_int32_buffer.size()) + ", Needs at least: " + std::to_string(processed_total_samples));
-         return; // Avoid encoding potentially corrupted data
-    }
-
-    // Use lame_encode_buffer_interleaved_int for direct int32_t input
-    int mp3_bytes_encoded = lame_encode_buffer_interleaved_int(
-        lame_global_flags_,
-        stereo_int32_buffer.data(),         // Pass the int32_t stereo buffer directly
-        processed_frames_per_channel,       // Pass the number of frames actually processed
-        mp3_encode_buffer_.data(),
-        mp3_encode_buffer_.size()           // Max size of output buffer
-    );
-
-    if (mp3_bytes_encoded < 0) {
-        LOG_ERROR(config_.sink_id, "LAME encoding failed with code: " + std::to_string(mp3_bytes_encoded));
-    } else if (mp3_bytes_encoded > 0) {
-        EncodedMP3Data mp3_data;
-        mp3_data.mp3_data.assign(mp3_encode_buffer_.begin(), mp3_encode_buffer_.begin() + mp3_bytes_encoded);
-        mp3_output_queue_->push(std::move(mp3_data));
+    
+    if (current_byte_offset < total_bytes_in_mixing_buffer) {
+        LOG_DEBUG(config_.sink_id, "MP3 Encode: " + std::to_string(total_bytes_in_mixing_buffer - current_byte_offset) + " bytes remaining in mixing_buffer_ after processing. (Not a full chunk)");
     }
 }
 

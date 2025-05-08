@@ -4,6 +4,7 @@ import multiprocessing
 import multiprocessing.managers
 import queue
 import threading
+import time  # Added import
 from subprocess import TimeoutExpired
 from typing import List, Optional
 
@@ -11,6 +12,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import StreamingResponse
 
 import src.constants.constants as constants
+from screamrouter_audio_engine import AudioManager  # Added import
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import IPAddressType
 from src.screamrouter_types.packets import WebStreamFrames
@@ -77,8 +79,9 @@ class HTTPListener(Listener):
 
 class APIWebStream(threading.Thread):
     """Holds the main websocket controller for the API that distributes messages to listeners"""
-    def __init__(self, app: FastAPI):
+    def __init__(self, app: FastAPI, audio_manager: AudioManager): # Added audio_manager parameter
         super().__init__(name="WebStream API Thread")
+        self._audio_manager: AudioManager = audio_manager # Stored audio_manager
         self._listeners: List[Listener] = []
         app.websocket("/ws/{sink_ip}/")(self.websocket_mp3_stream)
         app.get("/stream/{sink_ip}/", tags=["Stream"])(self.http_mp3_stream)
@@ -139,15 +142,42 @@ class APIWebStream(threading.Thread):
             await asyncio.sleep(1)
 
     def run(self):
-        """Waits for packets to be sent from the ffmepg outputs and forwards it to listeners"""
+        """Waits for packets to be sent from the ffmepg outputs and forwards it to listeners,
+        also polls AudioManager for MP3 data."""
         while self.running:
+            # Process packets from the internal queue (e.g., from FFmpeg outputs)
             try:
-                packet: WebStreamFrames = self.queue.get(timeout=.3)
+                packet: WebStreamFrames = self.queue.get(block=False) # Non-blocking get
                 self.process_frame(packet.sink_ip, packet.data)
-            except TimeoutError:
-                pass
             except queue.Empty:
-                pass
+                pass # Queue is empty, proceed to poll AudioManager
+
+            # Poll AudioManager for MP3 data for active sink IPs
+            # Iterate over a copy of active_ips in case it's modified by another thread (e.g., process_frame)
+            active_ips_copy = []
+            try:
+                # self.active_ips is a multiprocessing.managers.ListProxy
+                # Accessing its elements directly in a loop can be slow or problematic
+                # Convert to a regular list for iteration if issues arise,
+                # but direct iteration should be fine for reading.
+                active_ips_copy = list(self.active_ips)
+            except Exception as e: # pylint: disable=broad-except
+                logger.error("Error copying active_ips: %s", e)
+
+
+            for sink_ip in active_ips_copy:
+                try:
+                    # Use the new method that looks up by IP
+                    mp3_data: bytes = self._audio_manager.get_mp3_data_by_ip(str(sink_ip))
+                    if mp3_data:
+                        self.process_frame(sink_ip, mp3_data)
+                except Exception as e: # pylint: disable=broad-except
+                    # Catching generic Exception as various issues could occur with C++ interop
+                    # or if sink_ip is no longer valid in AudioManager.
+                    logger.error("Error getting/processing MP3 data for sink %s: %s", sink_ip, e)
+            
+            time.sleep(0.01)  # Control polling frequency, adjust as needed
+
         try:
             self.manager.shutdown()
         except OSError:

@@ -1,12 +1,14 @@
 """API endpoints for websocket configuration updates that notify clients of changes"""
 import asyncio
-from typing import Dict, List, Set
-from fastapi import FastAPI, WebSocket
 from copy import deepcopy
+from typing import Dict, List, Set
+
+from fastapi import FastAPI, WebSocket
 
 from src.screamrouter_logger.screamrouter_logger import get_logger
-from src.screamrouter_types.configuration import (RouteDescription, SinkDescription, 
-                                                SourceDescription)
+from src.screamrouter_types.configuration import (RouteDescription,
+                                                  SinkDescription,
+                                                  SourceDescription)
 
 _logger = get_logger(__name__)
 

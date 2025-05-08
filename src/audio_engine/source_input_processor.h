@@ -4,7 +4,7 @@
 #include "audio_component.h"
 #include "thread_safe_queue.h"
 #include "audio_types.h"
-#include "../c_utils/audio_processor.h" // Include the existing AudioProcessor
+#include "audio_processor.h" // Include the existing AudioProcessor
 
 #include <string>
 #include <vector>
