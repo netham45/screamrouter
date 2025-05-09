@@ -10,7 +10,6 @@ import sys
 import os
 import subprocess
 import shutil
-import platform
 from pathlib import Path
 import struct
 
@@ -38,11 +37,11 @@ DEPS_CONFIG = {
         "build_system": "autotools_or_nmake",
         # For LAME on Windows (nmake)
         "nmake_makefile_rel_path_win": "Makefile.MSVC", # Path to Makefile.MSVC relative to src_dir
-        "nmake_target_win": "",                   # User's nmake args are hardcoded below for now
-        "win_lib_search_rel_paths": [ 
+        "nmake_target_win": "",                      # User's nmake args are hardcoded below for now
+        "win_lib_search_rel_paths": [
             "output/libmp3lame-static.lib", # User's specific path from their setup.py context
         ],
-        "win_headers_rel_path": "include", # This should point to the directory containing lame.h (e.g., libmp3lame/include)
+        "win_headers_rel_path": "include",
         # For LAME on Unix (autotools)
         "unix_configure_args": ["--disable-shared", "--enable-static", "--disable-frontend"],
         "unix_make_targets": ["install"],
@@ -59,7 +58,7 @@ DEPS_CONFIG = {
         "cmake_args": [
             "-DLIBSAMPLERATE_EXAMPLES=OFF", "-DLIBSAMPLERATE_TESTS=OFF",
             "-DBUILD_SHARED_LIBS=OFF",
-            f"-DCMAKE_INSTALL_LIBDIR={DEPS_INSTALL_LIB_DIR.name}", 
+            f"-DCMAKE_INSTALL_LIBDIR={DEPS_INSTALL_LIB_DIR.name}",
         ],
         "lib_name_win": "samplerate.lib",
         "lib_name_unix_static": "libsamplerate.a",
@@ -72,7 +71,7 @@ DEPS_CONFIG = {
 class BuildExtCommand(_build_ext):
     """Custom build_ext command to build C++ dependencies from submodules."""
 
-    _msvc_env_path_info = None 
+    _msvc_env_path_info = None
 
     def _find_vcvarsall(self):
         if BuildExtCommand._msvc_env_path_info is not None:
@@ -97,14 +96,14 @@ class BuildExtCommand(_build_ext):
                 print(f"WARNING: Found VS at {vs_install_path} but vcvarsall.bat missing at {vcvarsall_path}.", file=sys.stderr)
         except (subprocess.CalledProcessError, FileNotFoundError, Exception) as e:
             print(f"WARNING: Error finding Visual Studio using vswhere.exe: {e}", file=sys.stderr)
-        
+
         print("WARNING: Failed to automatically find vcvarsall.bat.", file=sys.stderr)
         print("Please ensure you are running 'pip install .' from a Developer Command Prompt for Visual Studio.", file=sys.stderr)
         BuildExtCommand._msvc_env_path_info = False
         return False
 
     def _run_subprocess_in_msvc_env(self, command_parts, cwd, dep_name="dependency"):
-        if not sys.platform == "win32": 
+        if not sys.platform == "win32":
             subprocess.run(command_parts, cwd=cwd, check=True)
             return
 
@@ -115,7 +114,7 @@ class BuildExtCommand(_build_ext):
 
         print(f"Attempting to set up MSVC environment for {dep_name} command: {' '.join(command_parts)}")
         vcvars_info = self._find_vcvarsall()
-        if not vcvars_info: 
+        if not vcvars_info:
             raise RuntimeError(
                 f"Failed to find vcvarsall.bat. Cannot configure MSVC environment for {dep_name}.\n"
                 "Please run 'pip install .' from a Developer Command Prompt for Visual Studio."
@@ -124,7 +123,7 @@ class BuildExtCommand(_build_ext):
         vcvarsall_script = vcvars_info["vcvarsall"]
         is_64bit_python = struct.calcsize("P") * 8 == 64
         vcvars_arch = "x64" if is_64bit_python else "x86"
-        
+
         quoted_command_parts = []
         for part in command_parts:
             if ' ' in part and not (part.startswith('"') and part.endswith('"')):
@@ -133,7 +132,7 @@ class BuildExtCommand(_build_ext):
                 quoted_command_parts.append(part)
         inner_command = " ".join(quoted_command_parts)
         full_command_str = f'"{vcvarsall_script}" {vcvars_arch} && {inner_command}'
-        
+
         print(f"Executing in MSVC env ({vcvars_arch}): {full_command_str}")
         try:
             subprocess.run(full_command_str, cwd=cwd, check=True, shell=True)
@@ -175,32 +174,36 @@ class BuildExtCommand(_build_ext):
             try:
                 if config["build_system"] == "cmake":
                     cmake_build_dir = src_dir / "build_cmake"
-                    if cmake_build_dir.exists(): shutil.rmtree(cmake_build_dir) 
+                    if cmake_build_dir.exists(): shutil.rmtree(cmake_build_dir)
                     cmake_build_dir.mkdir(exist_ok=True)
 
                     configure_cmd_parts = [
                         "cmake", "-S", str(src_dir), "-B", str(cmake_build_dir),
                         f"-DCMAKE_INSTALL_PREFIX={DEPS_INSTALL_DIR}",
-                        "-DCMAKE_POLICY_DEFAULT_CMP0077=NEW", 
+                        "-DCMAKE_POLICY_DEFAULT_CMP0077=NEW",
                         "-DCMAKE_CONFIGURATION_TYPES=Release",
                     ]
                     if sys.platform == "win32":
                         configure_cmd_parts.append("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
-                    
-                    configure_cmd_parts.extend(config["cmake_args"]) 
-                    
+                    # START MODIFICATION for samplerate PIC on Linux/Unix
+                    elif sys.platform != "win32": # For samplerate (and any other CMake dep) on Unix-like
+                        configure_cmd_parts.append("-DCMAKE_POSITION_INDEPENDENT_CODE=ON")
+                    # END MODIFICATION
+
+                    configure_cmd_parts.extend(config["cmake_args"])
+
                     print(f"Running CMake configure for {name}...")
                     self._run_subprocess_in_msvc_env(configure_cmd_parts, src_dir, dep_name=f"{name} CMake configure")
-                    
+
                     build_cmd_parts = ["cmake", "--build", str(cmake_build_dir), "--config", "Release", "--target", "install", "-j", str(os.cpu_count() or 1)]
                     print(f"Running CMake build/install for {name}...")
                     self._run_subprocess_in_msvc_env(build_cmd_parts, src_dir, dep_name=f"{name} CMake build")
                     build_successful = True
 
                 elif config["build_system"] == "autotools_or_nmake":
-                    if sys.platform == "win32": 
+                    if sys.platform == "win32":
                         makefile_rel_path = config.get("nmake_makefile_rel_path_win", "Makefile.MSVC")
-                        nmake_target = config.get("nmake_target_win", "") 
+                        nmake_target = config.get("nmake_target_win", "")
                         actual_makefile_path = src_dir / makefile_rel_path
 
                         if not actual_makefile_path.is_file():
@@ -208,12 +211,11 @@ class BuildExtCommand(_build_ext):
                             print(f"Check 'nmake_makefile_rel_path_win' in DEPS_CONFIG or LAME submodule structure at '{src_dir}'.", file=sys.stderr)
                             build_successful = False
                         else:
-                            # Using user's nmake command structure from their context block
                             nmake_cmd = ["nmake", "/f", str(actual_makefile_path), nmake_target, "comp=msvc", "asm=no", "MACHINE=", "LN_OPTS=", "LN_DLL="]
                             self._run_subprocess_in_msvc_env(nmake_cmd, src_dir, dep_name=f"{name} nmake")
-                            
+
                             lib_found_and_copied = False
-                            for pattern in config["win_lib_search_rel_paths"]: 
+                            for pattern in config["win_lib_search_rel_paths"]:
                                 found_libs = list(src_dir.glob(pattern))
                                 if found_libs:
                                     found_libs.sort(key=lambda p: (len(str(p)), "x64" not in str(p).lower()))
@@ -226,8 +228,8 @@ class BuildExtCommand(_build_ext):
                             else: build_successful = True
 
                             if build_successful:
-                                src_hdr_dir = src_dir / config["win_headers_rel_path"] 
-                                if not src_hdr_dir.is_dir(): 
+                                src_hdr_dir = src_dir / config["win_headers_rel_path"]
+                                if not src_hdr_dir.is_dir():
                                     print(f"ERROR: LAME source header directory '{src_hdr_dir}' not found for copying.", file=sys.stderr)
                                     print(f"Please ensure 'win_headers_rel_path' in DEPS_CONFIG for LAME is correctly set (e.g., to 'include').")
                                     build_successful = False
@@ -236,31 +238,45 @@ class BuildExtCommand(_build_ext):
                                     if dest_hdr_dir.exists(): shutil.rmtree(dest_hdr_dir)
                                     shutil.copytree(src_hdr_dir, dest_hdr_dir, dirs_exist_ok=True)
                                     print(f"Copied LAME headers from {src_hdr_dir} to {dest_hdr_dir}")
-                    
+
                     else: # LAME autotools build (Linux/macOS)
                         if not (src_dir / "configure").exists() and (src_dir / "autogen.sh").exists():
                             print(f"Running autogen.sh for {name} in {src_dir}...")
                             subprocess.run(["sh", "./autogen.sh"], cwd=src_dir, check=True)
-                        
+
                         configure_cmd = ["./configure", f"--prefix={DEPS_INSTALL_DIR}"] + config["unix_configure_args"]
                         print(f"Running configure for {name}: {' '.join(configure_cmd)}")
-                        subprocess.run(configure_cmd, cwd=src_dir, check=True)
+
+                        # START MODIFICATION for LAME PIC on Linux/Unix
+                        current_env = os.environ.copy()
+                        if sys.platform != "win32": # Add -fPIC for Unix-like systems (LAME)
+                            cflags = current_env.get("CFLAGS", "")
+                            cxxflags = current_env.get("CXXFLAGS", "")
+                            if "-fPIC" not in cflags.split():
+                                cflags = (cflags + " -fPIC").strip()
+                            if "-fPIC" not in cxxflags.split(): # LAME is C, but good practice
+                                cxxflags = (cxxflags + " -fPIC").strip()
+                            current_env["CFLAGS"] = cflags
+                            current_env["CXXFLAGS"] = cxxflags
+                        # END MODIFICATION
+
+                        subprocess.run(configure_cmd, cwd=src_dir, check=True, env=current_env) # Use modified env
 
                         make_cmd = ["make", "-j", str(os.cpu_count() or 1)]
                         print(f"Running make for {name}: {' '.join(make_cmd)}")
-                        subprocess.run(make_cmd, cwd=src_dir, check=True)
+                        subprocess.run(make_cmd, cwd=src_dir, check=True, env=current_env) # Use modified env
 
                         make_install_cmd = ["make"] + config["unix_make_targets"]
                         print(f"Running make install for {name}: {' '.join(make_install_cmd)}")
-                        subprocess.run(make_install_cmd, cwd=src_dir, check=True)
+                        subprocess.run(make_install_cmd, cwd=src_dir, check=True, env=current_env) # Use modified env
                         build_successful = True
-                
+
                 if build_successful:
                     if not expected_lib_path.exists():
                         print(f"ERROR: Library file {expected_lib_path} for {name} NOT FOUND post-build.", file=sys.stderr); build_successful = False
                     if not expected_header_path.exists():
                         print(f"ERROR: Main header {expected_header_path} for {name} NOT FOUND post-build.", file=sys.stderr); build_successful = False
-                
+
                 if build_successful: print(f"{name} processed and verified successfully.")
                 else:
                     print(f"ERROR: Build or verification failed for {name}.", file=sys.stderr)
@@ -269,7 +285,7 @@ class BuildExtCommand(_build_ext):
             except (subprocess.CalledProcessError, FileNotFoundError, RuntimeError, Exception) as e:
                 print(f"CRITICAL ERROR processing dependency {name}: {e}", file=sys.stderr)
                 all_deps_processed_successfully = False; continue
-        
+
         if not all_deps_processed_successfully:
             print("ERROR: One or more dependencies failed to build or verify. Aborting setup.", file=sys.stderr); sys.exit(1)
 
@@ -277,7 +293,7 @@ class BuildExtCommand(_build_ext):
             if str(DEPS_INSTALL_INCLUDE_DIR) not in ext.include_dirs: ext.include_dirs.insert(0, str(DEPS_INSTALL_INCLUDE_DIR))
             if str(DEPS_INSTALL_LIB_DIR) not in ext.library_dirs: ext.library_dirs.insert(0, str(DEPS_INSTALL_LIB_DIR))
         print(f"Ensured {DEPS_INSTALL_INCLUDE_DIR} and {DEPS_INSTALL_LIB_DIR} are in extension paths.")
-        
+
         super().run()
 
 # --- Main Extension Configuration ---
@@ -299,10 +315,10 @@ main_extension_library_dirs = []
 if sys.platform == "win32":
     print("Configuring main extension for Windows (MSVC)")
     platform_extra_compile_args.extend([
-        "/std:c++17", "/O2", "/W3", "/EHsc", 
+        "/std:c++17", "/O2", "/W3", "/EHsc",
         "/D_CRT_SECURE_NO_WARNINGS", "/MP",
         "/DLAMELIB_API=", # Define LAMELIB_API to be empty for static linking against LAME
-        "/DCDECL="        # Define CDECL to be empty for static linking against LAME
+        "/DCDECL="       # Define CDECL to be empty for static linking against LAME
     ])
     main_extension_libraries.append("ws2_32")
 elif sys.platform == "darwin":
