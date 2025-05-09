@@ -1,6 +1,5 @@
 #!/usr/bin/python3
 """ScreamRouter"""
-import multiprocessing
 import os
 import signal
 import sys
@@ -98,9 +97,6 @@ app: FastAPI = FastAPI( title="ScreamRouter",
         }
     ])
 set_process_name("SR Scream Router", "Scream Router Main Thread")
-if constants.DEBUG_MULTIPROCESSING:
-    logger = multiprocessing.log_to_stderr()
-    logger.setLevel(multiprocessing.SUBDEBUG) # type: ignore
 
 # Instantiate AudioManager
 audio_manager: AudioManager = AudioManager()

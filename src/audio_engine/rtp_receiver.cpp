@@ -232,7 +232,7 @@ void RtpReceiver::remove_output_queue(const std::string& source_tag, const std::
     }
 }
 
-bool RtpReceiver::is_valid_rtp_payload(const uint8_t* buffer, ssize_t size) {
+bool RtpReceiver::is_valid_rtp_payload(const uint8_t* buffer, int size) {
     // Basic size check
     if (size < RTP_HEADER_SIZE) {
         return false;
@@ -294,8 +294,8 @@ void RtpReceiver::run() {
                 int bytes_received = recvfrom(socket_fd_, reinterpret_cast<char*>(receive_buffer.data()), static_cast<int>(receive_buffer.size()), 0,
                                                   (struct sockaddr *)&client_addr, &client_addr_len);
             #else
-                // POSIX recvfrom returns ssize_t, buffer is void*
-                ssize_t bytes_received = recvfrom(socket_fd_, receive_buffer.data(), receive_buffer.size(), 0,
+                // POSIX recvfrom returns int, buffer is void*
+                int bytes_received = recvfrom(socket_fd_, receive_buffer.data(), receive_buffer.size(), 0,
                                                   (struct sockaddr *)&client_addr, &client_addr_len);
             #endif
 

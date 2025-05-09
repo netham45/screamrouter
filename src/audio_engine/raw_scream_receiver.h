@@ -76,7 +76,7 @@ private:
     // Internal helper methods
     bool setup_socket();
     void close_socket();
-    bool is_valid_raw_scream_packet(const uint8_t* buffer, ssize_t size);
+    bool is_valid_raw_scream_packet(const uint8_t* buffer, int size);
 };
 
 } // namespace audio

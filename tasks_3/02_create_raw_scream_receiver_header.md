@@ -35,7 +35,7 @@
     *   Declare private helper methods:
         *   `bool setup_socket();`
         *   `void close_socket();`
-        *   `bool is_valid_raw_scream_packet(const uint8_t* buffer, ssize_t size);` (Checks size == 1157, maybe basic header checks if desired)
+        *   `bool is_valid_raw_scream_packet(const uint8_t* buffer, int size);` (Checks size == 1157, maybe basic header checks if desired)
 
 ```cpp
 // Example Structure (src/audio_engine/raw_scream_receiver.h)
@@ -124,7 +124,7 @@ private:
     // Internal helper methods
     bool setup_socket();
     void close_socket();
-    bool is_valid_raw_scream_packet(const uint8_t* buffer, ssize_t size);
+    bool is_valid_raw_scream_packet(const uint8_t* buffer, int size);
 };
 
 } // namespace audio

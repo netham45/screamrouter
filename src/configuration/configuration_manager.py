@@ -27,7 +27,6 @@ except ImportError as e:
    then runs audio controllers for each source"""
 from copy import copy, deepcopy
 from ipaddress import IPv4Address
-from multiprocessing import Process
 from subprocess import TimeoutExpired
 from typing import Optional  # For type hinting Optional C++ objects
 from typing import List, Tuple
@@ -785,7 +784,7 @@ class ConfigurationManager(threading.Thread):
         _logger.info("[Configuration Manager] Saving config")
         if not self.configuration_semaphore.acquire(timeout=1):
             raise TimeoutError("Failed to get configuration semaphore")
-        proc = Process(target=self.__multiprocess_save)
+        proc = threading.Thread(target=self.__multiprocess_save)
         proc.start()
         proc.join()
         asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,

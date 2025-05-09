@@ -1,8 +1,6 @@
 """This holds the base class for plugins to extend"""
 
-import fcntl
-import multiprocessing
-import multiprocessing.sharedctypes
+import threading
 import os
 import select
 import time
@@ -20,7 +18,7 @@ from src.utils.utils import close_all_pipes, close_pipe, set_process_name
 
 logger = get_logger(__name__)
 
-class ScreamRouterPlugin(multiprocessing.Process):
+class ScreamRouterPlugin(threading.Thread):
     """This class is meant to be extended by plugins.
        
        Notable available functions include:
@@ -55,7 +53,7 @@ class ScreamRouterPlugin(multiprocessing.Process):
         self.screamrouter_read_fd: int
         self.screamrouter_read_fd, self.screamrouter_write_fd = os.pipe()
         logger.info("[Plugin] queue %s", self.screamrouter_write_fd)
-        self.running = multiprocessing.Value(c_bool, True)
+        self.running = True
         self.sender: ScreamRouterPluginSender
         self.api: FastAPI
         self.temporary_sink_names_to_sources: dict[SinkNameType, List[SourceDescription]] = {}
@@ -182,7 +180,7 @@ class ScreamRouterPlugin(multiprocessing.Process):
             time.sleep(.5)
         close_all_pipes()
 
-class ScreamRouterPluginSender(multiprocessing.Process):
+class ScreamRouterPluginSender(threading.Thread):
     """Handles sending from a plugin to the ScreamRouter sources"""
 
     def __init__(self, name: str,
@@ -198,7 +196,7 @@ class ScreamRouterPluginSender(multiprocessing.Process):
         self.screamrouter_read_fd: int = screamrouter_read_fd
         """Flag if the thread should exit"""
         self.screamrouter_write_fd: int = screamrouter_write_fd
-        self.running = multiprocessing.Value(c_bool, True)
+        self.running = bool
         self.start()
 
     def stop(self):

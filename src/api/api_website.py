@@ -51,7 +51,7 @@ class APIWebsite():
         """Holds a list of websockify processes to kill"""
         self.vnc_port: int = 5900
         """Holds the current vnc port, gets incremented by one per connection"""
-        if constants.NPM_REACT_DEBUG_SITE:
+        if constants.NPM_REACT_DEBUG_SITE or True:
             self.main_api.get("/site/{path:path}", name="site2")(self.proxy_npm_devsite)
         else:
             self.main_api.get("/site/{path}", name="site")(self.serve_static_or_index)
@@ -59,7 +59,7 @@ class APIWebsite():
         self.main_api.get("/", name="site")(self.redirect_index)
 
     async def proxy_npm_devsite(self, request: Request, path: str):
-        async with httpx.AsyncClient(base_url="http://localhost:8080") as client:
+        async with httpx.AsyncClient(base_url="http://192.168.3.114:8080/") as client:
             # Construct the new URL
             if ".js" not in path and ".css" not in path and ".svg" not in path:
                 url = f"/site/"

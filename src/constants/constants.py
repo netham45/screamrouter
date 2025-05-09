@@ -29,13 +29,11 @@ LOG_ENTRIES_TO_RETAIN: int = int(os.getenv("LOG_ENTRIES_TO_RETAIN", "2"))
 """Number of previous runs to retain logs for"""
 SHOW_FFMPEG_OUTPUT: bool = os.getenv("SHOW_FFMPEG_OUTPUT", "False").lower() == "true"
 """Show ffmpeg output"""
-DEBUG_MULTIPROCESSING: bool = os.getenv("DEBUG_MULTIPROCESSING", "False").lower() == "true"
-"""Debugs Multiprocessing to stdout."""
 NPM_REACT_DEBUG_SITE: bool = os.getenv("NPM_REACT_DEBUG_SITE", "False").lower() == "true"
 """Enable to use a locally running npm dev server for the React site"""
-CERTIFICATE: str = os.getenv("CERTIFICATE", "/root/screamrouter/cert/cert.pem")
+CERTIFICATE: str = os.getenv("CERTIFICATE", "cert/cert.pem")
 """SSL Cert"""
-CERTIFICATE_KEY: str = os.getenv("CERTIFICATE_KEY", "/root/screamrouter/cert/privkey.pem")
+CERTIFICATE_KEY: str = os.getenv("CERTIFICATE_KEY", "cert/privkey.pem")
 """SSL Cert Key"""
 TIMESHIFT_DURATION: int = int(os.getenv("TIMESHIFT_DURATION", "300"))
 """Timeshift duration in seconds."""

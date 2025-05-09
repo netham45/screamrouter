@@ -38,7 +38,7 @@ RawScreamReceiver::RawScreamReceiver(
         // For now, assume it might need to be called here too, or handle potential errors.
         WSADATA wsaData;
         int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-        if (iResult != 0 && iResult != WSAEALREADYSTARTED) { // Allow already started error
+        if (iResult != 0) { // Allow already started error
             LOG_ERROR_RSR("WSAStartup failed: " + std::to_string(iResult));
             throw std::runtime_error("WSAStartup failed.");
         }
@@ -211,10 +211,10 @@ void RawScreamReceiver::remove_output_queue(const std::string& source_tag, const
     }
 }
 
-bool RawScreamReceiver::is_valid_raw_scream_packet(const uint8_t* buffer, ssize_t size) {
+bool RawScreamReceiver::is_valid_raw_scream_packet(const uint8_t* buffer, int size) {
     // buffer is unused in this implementation, but kept for signature consistency
     (void)buffer; // Mark as unused to prevent compiler warnings
-    return size == static_cast<ssize_t>(EXPECTED_RAW_PACKET_SIZE);
+    return size == static_cast<int>(EXPECTED_RAW_PACKET_SIZE);
 }
 
 void RawScreamReceiver::run() {
@@ -265,8 +265,8 @@ void RawScreamReceiver::run() {
                 int bytes_received = recvfrom(socket_fd_, reinterpret_cast<char*>(receive_buffer.data()), static_cast<int>(receive_buffer.size()), 0,
                                                   (struct sockaddr *)&client_addr, &client_addr_len);
             #else
-                // POSIX recvfrom returns ssize_t, buffer is void*
-                ssize_t bytes_received = recvfrom(socket_fd_, receive_buffer.data(), receive_buffer.size(), 0,
+                // POSIX recvfrom returns int, buffer is void*
+                int bytes_received = recvfrom(socket_fd_, receive_buffer.data(), receive_buffer.size(), 0,
                                                   (struct sockaddr *)&client_addr, &client_addr_len);
             #endif
 

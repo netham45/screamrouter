@@ -135,7 +135,7 @@ private:
      * @param size Size of the received payload.
      * @return true if the header indicates a valid Scream packet (payload type 127), false otherwise.
      */
-    bool is_valid_rtp_payload(const uint8_t* buffer, ssize_t size);
+    bool is_valid_rtp_payload(const uint8_t* buffer, int size);
 };
 
 } // namespace audio

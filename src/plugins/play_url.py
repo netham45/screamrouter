@@ -32,7 +32,8 @@ class PluginPlayURL(ScreamRouterPlugin):
 
            SIGCHILD is sent when ffmpeg ends and is used as a method for
            determing when to play back the next source."""
-        signal.signal(signal.SIGCHLD, self.sigchld_handler)
+        if "SIGCHILD" in dir(signal):
+            signal.signal(signal.SIGCHLD, self.sigchld_handler)
         self.ffmpeg_read: int
         """Descriptor for the pipe for plugin to read from ffmpeg."""
         self.ffmpeg_write: int

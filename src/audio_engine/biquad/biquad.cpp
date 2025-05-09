@@ -1,6 +1,8 @@
 #include <math.h>
 #include "biquad.h"
 
+#define PI 3.14159265358979323846
+
 Biquad::Biquad() {
     type = bq_type_lowpass;
     a0 = 1.0;
@@ -59,7 +61,7 @@ void Biquad::setBiquad(int type, double Fc, double Q, double peakGainDB) {
 void Biquad::calcBiquad(void) {
     double norm;
     double V = pow(10, fabs(peakGain) / 20.0);
-    double K = tan(M_PI * Fc);
+    double K = tan(PI * Fc);
     switch (this->type) {
         case bq_type_lowpass:
             norm = 1 / (1 + K / Q + K * K);

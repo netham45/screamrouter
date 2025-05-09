@@ -1,17 +1,18 @@
 """
 setup script for screamrouter audio engine (cross-platform)
-Attempts to download and build LAME on Windows.
-libsamplerate on Windows is expected to be pre-installed (e.g., via vcpkg).
-pthreads-win32 is NOT included as the project uses std::thread.
+Attempts to build LAME and libsamplerate from local git submodules
+on all supported platforms.
+On Windows, it tries to automatically find and use vcvarsall.bat
+to set up the MSVC build environment if not already configured.
+Project uses std::thread, so pthreads-win32 is not included.
 """
 import sys
 import os
 import subprocess
-import urllib.request
-import tarfile
-import zipfile
 import shutil
+import platform
 from pathlib import Path
+import struct
 
 from setuptools import setup
 from setuptools.command.build_ext import build_ext as _build_ext
@@ -25,292 +26,320 @@ except ImportError:
 
 # Project root directory
 PROJECT_ROOT = Path(__file__).parent.resolve()
-DEPS_BUILD_DIR = PROJECT_ROOT / "build" / "deps"
-DEPS_SRC_DIR = PROJECT_ROOT / "build" / "temp_deps_src"
+# Centralized directory for built dependencies (libs and headers)
+DEPS_INSTALL_DIR = PROJECT_ROOT / "build" / "deps"
+DEPS_INSTALL_LIB_DIR = DEPS_INSTALL_DIR / "lib"
+DEPS_INSTALL_INCLUDE_DIR = DEPS_INSTALL_DIR / "include"
 
-# --- Dependency Definitions ---
-# (Primarily for Windows auto-build)
+# --- Dependency Definitions for Building from Submodules ---
 DEPS_CONFIG = {
     "lame": {
-        "url": "https://sourceforge.net/projects/lame/files/lame/3.100/lame-3.100.tar.gz/download",
-        "filename": "lame-3.100.tar.gz",
-        "src_subdir": "lame-3.100",
-        "build_commands": [ # For Windows MSVC using nmake
-            ["nmake", "/f", "Makefile.vc", "dll"], # Adjust if you need static lib
+        "src_dir": PROJECT_ROOT / "src/audio_engine/lame",
+        "build_system": "autotools_or_nmake",
+        # For LAME on Windows (nmake)
+        "nmake_makefile_rel_path_win": "Makefile.MSVC", # Path to Makefile.MSVC relative to src_dir
+        "nmake_target_win": "",                   # User's nmake args are hardcoded below for now
+        "win_lib_search_rel_paths": [ 
+            "output/libmp3lame-static.lib", # User's specific path from their setup.py context
         ],
-        "headers_subdir": "include/lame", # Relative to src_subdir after build or in source
-        "lib_files": ["libmp3lame/lame.lib"], # Relative to src_subdir, specific to MSVC build
-                                             # Path might be ReleaseDLL/x64/libmp3lame.lib or similar
-        "output_lib_name": "lame.lib", # What the main extension expects
-        "output_header_dir_name": "lame", # Subdirectory in DEPS_BUILD_DIR/include
-        "win_only": True,
+        "win_headers_rel_path": "include", # This should point to the directory containing lame.h (e.g., libmp3lame/include)
+        # For LAME on Unix (autotools)
+        "unix_configure_args": ["--disable-shared", "--enable-static", "--disable-frontend"],
+        "unix_make_targets": ["install"],
+        # Final names in DEPS_INSTALL_DIR
+        "lib_name_win": "mp3lame.lib",
+        "lib_name_unix_static": "libmp3lame.a",
+        "header_dir_name": "lame", # Results in: build/deps/include/lame/lame.h
+        "main_header_file_rel_to_header_dir": "lame.h",
+        "link_name": "mp3lame",
     },
-    # pthreads-win32 removed as project uses std::thread
-    # libsamplerate is more complex to build from source on Windows without CMake/autotools chain.
-    # Advise manual installation via vcpkg or similar.
+    "samplerate": {
+        "src_dir": PROJECT_ROOT / "src/audio_engine/libsamplerate",
+        "build_system": "cmake",
+        "cmake_args": [
+            "-DLIBSAMPLERATE_EXAMPLES=OFF", "-DLIBSAMPLERATE_TESTS=OFF",
+            "-DBUILD_SHARED_LIBS=OFF",
+            f"-DCMAKE_INSTALL_LIBDIR={DEPS_INSTALL_LIB_DIR.name}", 
+        ],
+        "lib_name_win": "samplerate.lib",
+        "lib_name_unix_static": "libsamplerate.a",
+        "header_dir_name": "", # Results in: build/deps/include/samplerate.h
+        "main_header_file_rel_to_header_dir": "samplerate.h",
+        "link_name": "samplerate",
+    }
 }
 
 class BuildExtCommand(_build_ext):
-    """Custom build_ext command to handle C++ dependencies."""
+    """Custom build_ext command to build C++ dependencies from submodules."""
+
+    _msvc_env_path_info = None 
+
+    def _find_vcvarsall(self):
+        if BuildExtCommand._msvc_env_path_info is not None:
+            return BuildExtCommand._msvc_env_path_info
+
+        vswhere_path = Path(os.environ.get("ProgramFiles(x86)", Path("C:/Program Files (x86)"))) / "Microsoft Visual Studio/Installer/vswhere.exe"
+        if not vswhere_path.exists():
+            print("WARNING: vswhere.exe not found. Cannot automatically set up MSVC environment.", file=sys.stderr)
+            print("Please run 'pip install .' from a Developer Command Prompt for Visual Studio.", file=sys.stderr)
+            BuildExtCommand._msvc_env_path_info = False
+            return False
+        try:
+            cmd = [str(vswhere_path), "-latest", "-prerelease", "-products", "*",
+                   "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding='utf-8')
+            vs_install_path = Path(result.stdout.strip())
+            vcvarsall_path = vs_install_path / "VC/Auxiliary/Build/vcvarsall.bat"
+            if vcvarsall_path.exists():
+                BuildExtCommand._msvc_env_path_info = {"vcvarsall": str(vcvarsall_path)}
+                return BuildExtCommand._msvc_env_path_info
+            else:
+                print(f"WARNING: Found VS at {vs_install_path} but vcvarsall.bat missing at {vcvarsall_path}.", file=sys.stderr)
+        except (subprocess.CalledProcessError, FileNotFoundError, Exception) as e:
+            print(f"WARNING: Error finding Visual Studio using vswhere.exe: {e}", file=sys.stderr)
+        
+        print("WARNING: Failed to automatically find vcvarsall.bat.", file=sys.stderr)
+        print("Please ensure you are running 'pip install .' from a Developer Command Prompt for Visual Studio.", file=sys.stderr)
+        BuildExtCommand._msvc_env_path_info = False
+        return False
+
+    def _run_subprocess_in_msvc_env(self, command_parts, cwd, dep_name="dependency"):
+        if not sys.platform == "win32": 
+            subprocess.run(command_parts, cwd=cwd, check=True)
+            return
+
+        if os.environ.get("VCINSTALLDIR") and os.environ.get("VCToolsInstallDir"):
+            print(f"MSVC environment seems active for {dep_name}. Running command directly: {' '.join(command_parts)}")
+            subprocess.run(command_parts, cwd=cwd, check=True, shell=False)
+            return
+
+        print(f"Attempting to set up MSVC environment for {dep_name} command: {' '.join(command_parts)}")
+        vcvars_info = self._find_vcvarsall()
+        if not vcvars_info: 
+            raise RuntimeError(
+                f"Failed to find vcvarsall.bat. Cannot configure MSVC environment for {dep_name}.\n"
+                "Please run 'pip install .' from a Developer Command Prompt for Visual Studio."
+            )
+
+        vcvarsall_script = vcvars_info["vcvarsall"]
+        is_64bit_python = struct.calcsize("P") * 8 == 64
+        vcvars_arch = "x64" if is_64bit_python else "x86"
+        
+        quoted_command_parts = []
+        for part in command_parts:
+            if ' ' in part and not (part.startswith('"') and part.endswith('"')):
+                quoted_command_parts.append(f'"{part}"')
+            else:
+                quoted_command_parts.append(part)
+        inner_command = " ".join(quoted_command_parts)
+        full_command_str = f'"{vcvarsall_script}" {vcvars_arch} && {inner_command}'
+        
+        print(f"Executing in MSVC env ({vcvars_arch}): {full_command_str}")
+        try:
+            subprocess.run(full_command_str, cwd=cwd, check=True, shell=True)
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: Command failed while running in MSVC environment for {dep_name}.", file=sys.stderr)
+            print(f"Command was: {full_command_str}", file=sys.stderr)
+            print("Ensure Visual Studio C++ tools are correctly installed and try running from a Developer Command Prompt.", file=sys.stderr)
+            raise e
+
+    def get_expected_lib_path(self, config):
+        if sys.platform == "win32": return DEPS_INSTALL_LIB_DIR / config["lib_name_win"]
+        return DEPS_INSTALL_LIB_DIR / config["lib_name_unix_static"]
+
+    def get_expected_header_path(self, config):
+        if config["header_dir_name"]:
+            return DEPS_INSTALL_INCLUDE_DIR / config["header_dir_name"] / config["main_header_file_rel_to_header_dir"]
+        return DEPS_INSTALL_INCLUDE_DIR / config["main_header_file_rel_to_header_dir"]
 
     def run(self):
-        # Create directories for dependencies
-        DEPS_BUILD_DIR.mkdir(parents=True, exist_ok=True)
-        (DEPS_BUILD_DIR / "include").mkdir(exist_ok=True)
-        (DEPS_BUILD_DIR / "lib").mkdir(exist_ok=True)
-        DEPS_SRC_DIR.mkdir(parents=True, exist_ok=True)
+        DEPS_INSTALL_LIB_DIR.mkdir(parents=True, exist_ok=True)
+        DEPS_INSTALL_INCLUDE_DIR.mkdir(parents=True, exist_ok=True)
+        all_deps_processed_successfully = True
 
-        built_something = False
+        for name, config in DEPS_CONFIG.items():
+            print(f"--- Handling dependency: {name} ---")
+            src_dir = config["src_dir"].resolve()
+            expected_lib_path = self.get_expected_lib_path(config)
+            expected_header_path = self.get_expected_header_path(config)
 
-        if sys.platform == "win32":
-            print("Attempting to build dependencies for Windows...")
-            for name, config in DEPS_CONFIG.items():
-                if not config.get("win_only", False):
-                    continue
+            if not src_dir.exists():
+                print(f"ERROR: Source directory for {name} not found at {src_dir}.", file=sys.stderr)
+                print("Ensure git submodules are initialized ('git submodule update --init --recursive').", file=sys.stderr)
+                all_deps_processed_successfully = False; continue
 
-                print(f"--- Handling dependency: {name} ---")
-                if "note" in config: # Should not be relevant for LAME
-                    print(f"Note for {name}: {config['note']}")
+            if expected_lib_path.exists() and expected_header_path.exists():
+                print(f"{name} artifacts already found ({expected_lib_path}, {expected_header_path}). Skipping build."); continue
 
-                final_lib_path = DEPS_BUILD_DIR / "lib" / config["output_lib_name"]
-                # Crude check if already built
-                if final_lib_path.exists():
-                    print(f"{name} library already found at {final_lib_path}. Skipping build.")
-                    # Ensure this still contributes to adding dirs to extension if it exists
-                    built_something = True # Mark as "built" so dirs are added
-                    continue
+            build_successful = False
+            try:
+                if config["build_system"] == "cmake":
+                    cmake_build_dir = src_dir / "build_cmake"
+                    if cmake_build_dir.exists(): shutil.rmtree(cmake_build_dir) 
+                    cmake_build_dir.mkdir(exist_ok=True)
 
-                archive_path = DEPS_SRC_DIR / config["filename"]
-                # This is the directory name *inside* the archive, where build commands run.
-                extracted_build_root_dir = DEPS_SRC_DIR / config["src_subdir"]
-                
-                # 1. Download
-                if not archive_path.exists():
-                    print(f"Downloading {name} from {config['url']}...")
-                    try:
-                        with urllib.request.urlopen(config["url"]) as response, open(archive_path, 'wb') as out_file:
-                            shutil.copyfileobj(response, out_file)
-                        print(f"Downloaded {archive_path}")
-                    except Exception as e:
-                        print(f"Error downloading {name}: {e}", file=sys.stderr)
-                        print("Please ensure it's installed manually and headers/libs are findable.")
-                        continue
-                else:
-                    print(f"Archive {archive_path} already exists.")
-
-                # 2. Extract
-                # Check if the specific subdirectory for building already exists
-                if not extracted_build_root_dir.exists():
-                    print(f"Extracting {archive_path}...")
-                    try:
-                        if archive_path.name.endswith(".tar.gz"):
-                            with tarfile.open(archive_path, "r:gz") as tar:
-                                tar.extractall(path=DEPS_SRC_DIR)
-                        elif archive_path.name.endswith(".zip"):
-                            with zipfile.ZipFile(archive_path, "r") as zip_ref:
-                                zip_ref.extractall(path=DEPS_SRC_DIR)
-                        print(f"Extracted to {DEPS_SRC_DIR}")
-                    except Exception as e:
-                        print(f"Error extracting {name}: {e}", file=sys.stderr)
-                        # Clean up potentially partial extraction of the target build dir
-                        if extracted_build_root_dir.exists():
-                             shutil.rmtree(extracted_build_root_dir, ignore_errors=True)
-                        continue
-                else:
-                    print(f"Source directory {extracted_build_root_dir} already exists.")
-
-                # 3. Build
-                print(f"Building {name} in {extracted_build_root_dir}...")
-                build_successful = False
-                try:
-                    for cmd in config["build_commands"]:
-                        print(f"Running command: {' '.join(cmd)}")
-                        subprocess.run(cmd, cwd=extracted_build_root_dir, check=True, shell=False)
+                    configure_cmd_parts = [
+                        "cmake", "-S", str(src_dir), "-B", str(cmake_build_dir),
+                        f"-DCMAKE_INSTALL_PREFIX={DEPS_INSTALL_DIR}",
+                        "-DCMAKE_POLICY_DEFAULT_CMP0077=NEW", 
+                        "-DCMAKE_CONFIGURATION_TYPES=Release",
+                    ]
+                    if sys.platform == "win32":
+                        configure_cmd_parts.append("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
+                    
+                    configure_cmd_parts.extend(config["cmake_args"]) 
+                    
+                    print(f"Running CMake configure for {name}...")
+                    self._run_subprocess_in_msvc_env(configure_cmd_parts, src_dir, dep_name=f"{name} CMake configure")
+                    
+                    build_cmd_parts = ["cmake", "--build", str(cmake_build_dir), "--config", "Release", "--target", "install", "-j", str(os.cpu_count() or 1)]
+                    print(f"Running CMake build/install for {name}...")
+                    self._run_subprocess_in_msvc_env(build_cmd_parts, src_dir, dep_name=f"{name} CMake build")
                     build_successful = True
-                    print(f"{name} built successfully.")
-                    built_something = True
-                except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                    print(f"Error building {name}: {e}", file=sys.stderr)
-                    print(f"Ensure build tools (like nmake for MSVC) are in PATH and MSVC environment is set up.")
-                    print(f"If build fails, please install {name} manually and ensure headers/libs are findable.")
-                    continue
 
-                # 4. Copy headers and libs
-                if build_successful:
-                    try:
-                        # Copy library files
-                        # The lib_files path is relative to extracted_build_root_dir
-                        # LAME's nmake build might place output in subdirectories like ReleaseDLL/x64
-                        # The glob needs to search within extracted_build_root_dir
-                        lib_copied_successfully = False
-                        for lib_file_pattern_in_src_subdir in config["lib_files"]:
-                            # Search for the lib file, as its exact path might vary (e.g. ReleaseDLL/x64/lame.lib)
-                            # The pattern in config["lib_files"] should be relative to extracted_build_root_dir
-                            # Example: "libmp3lame/ReleaseDLL/x64/lame.lib" or "libmp3lame/lame.lib"
-                            # For LAME, the Makefile.vc often creates a 'libmp3lame' subdir with the .lib
-                            # Let's assume config["lib_files"] is like ["libmp3lame/lame.lib"] and Makefile.vc puts it there
-                            # Or it could be more complex like ["ReleaseDLL/x64/libmp3lame.lib"]
-                            
-                            # Correct globbing within the extracted source directory
-                            found_libs = list(extracted_build_root_dir.glob(f"**/{lib_file_pattern_in_src_subdir.split('/')[-1]}"))
-                            
-                            # A more direct approach if lib_files is specific enough:
-                            # src_lib_path = extracted_build_root_dir / lib_file_pattern_in_src_subdir
-                            # if src_lib_path.exists():
-                            #    found_libs = [src_lib_path]
-                            # else:
-                            #    found_libs = [] # Fallback to glob if direct path fails
+                elif config["build_system"] == "autotools_or_nmake":
+                    if sys.platform == "win32": 
+                        makefile_rel_path = config.get("nmake_makefile_rel_path_win", "Makefile.MSVC")
+                        nmake_target = config.get("nmake_target_win", "") 
+                        actual_makefile_path = src_dir / makefile_rel_path
 
-                            if not found_libs:
-                                print(f"Warning: Library file pattern '{lib_file_pattern_in_src_subdir}' not found directly or via glob in {extracted_build_root_dir} for {name}", file=sys.stderr)
-                                print(f"Please check the LAME Makefile.vc output structure and adjust 'lib_files' in DEPS_CONFIG.", file=sys.stderr)
-                                continue
-                            
-                            src_lib_path = found_libs[0] # Take the first match from glob
-                            dest_lib_path = DEPS_BUILD_DIR / "lib" / config["output_lib_name"]
-                            shutil.copy2(src_lib_path, dest_lib_path)
-                            print(f"Copied {src_lib_path} to {dest_lib_path}")
-                            lib_copied_successfully = True
-                            break # Copied one, that's enough for this lib name
-
-                        if not lib_copied_successfully:
-                             print(f"ERROR: Could not copy library for {name}. Please check build output and DEPS_CONFIG.", file=sys.stderr)
-                             built_something = False # Mark as not successfully "built" for our purposes
-                             continue
-
-
-                        # Copy headers
-                        # headers_subdir is relative to extracted_build_root_dir
-                        header_src_actual_dir = extracted_build_root_dir / config["headers_subdir"]
-                        dest_header_dir = DEPS_BUILD_DIR / "include" / config["output_header_dir_name"]
-                        
-                        if not header_src_actual_dir.exists():
-                            print(f"Warning: Header source directory {header_src_actual_dir} not found for {name}.", file=sys.stderr)
+                        if not actual_makefile_path.is_file():
+                            print(f"ERROR: LAME Makefile '{actual_makefile_path}' not found for {name}.", file=sys.stderr)
+                            print(f"Check 'nmake_makefile_rel_path_win' in DEPS_CONFIG or LAME submodule structure at '{src_dir}'.", file=sys.stderr)
+                            build_successful = False
                         else:
-                            if dest_header_dir.exists():
-                                shutil.rmtree(dest_header_dir) # Clean up old headers
-                            shutil.copytree(header_src_actual_dir, dest_header_dir, dirs_exist_ok=True)
-                            print(f"Copied headers from {header_src_actual_dir} to {dest_header_dir}")
+                            # Using user's nmake command structure from their context block
+                            nmake_cmd = ["nmake", "/f", str(actual_makefile_path), nmake_target, "comp=msvc", "asm=no", "MACHINE=", "LN_OPTS=", "LN_DLL="]
+                            self._run_subprocess_in_msvc_env(nmake_cmd, src_dir, dep_name=f"{name} nmake")
+                            
+                            lib_found_and_copied = False
+                            for pattern in config["win_lib_search_rel_paths"]: 
+                                found_libs = list(src_dir.glob(pattern))
+                                if found_libs:
+                                    found_libs.sort(key=lambda p: (len(str(p)), "x64" not in str(p).lower()))
+                                    shutil.copy2(found_libs[0], DEPS_INSTALL_LIB_DIR / config["lib_name_win"])
+                                    print(f"Copied {found_libs[0]} to {DEPS_INSTALL_LIB_DIR / config['lib_name_win']}")
+                                    lib_found_and_copied = True; break
+                            if not lib_found_and_copied:
+                                print(f"ERROR: LAME library {config['lib_name_win']} not found in {src_dir} via patterns after nmake.", file=sys.stderr)
+                                build_successful = False
+                            else: build_successful = True
 
-                    except Exception as e:
-                        print(f"Error copying files for {name}: {e}", file=sys.stderr)
-                        built_something = False # Mark as not successfully "built"
-            
-            if built_something: # If any dependency was successfully built/found and copied
-                 # Add the deps directory to the extension's include and library dirs
-                for ext in self.extensions:
-                    # Prepend to give priority, or append if that's preferred.
-                    # Ensure these are not added multiple times if build_ext runs more than once.
-                    if str(DEPS_BUILD_DIR / "include") not in ext.include_dirs:
-                        ext.include_dirs.insert(0, str(DEPS_BUILD_DIR / "include"))
-                    if str(DEPS_BUILD_DIR / "lib") not in ext.library_dirs:
-                        ext.library_dirs.insert(0, str(DEPS_BUILD_DIR / "lib"))
-                print(f"Ensured {DEPS_BUILD_DIR / 'include'} is in include_dirs")
-                print(f"Ensured {DEPS_BUILD_DIR / 'lib'} is in library_dirs")
+                            if build_successful:
+                                src_hdr_dir = src_dir / config["win_headers_rel_path"] 
+                                if not src_hdr_dir.is_dir(): 
+                                    print(f"ERROR: LAME source header directory '{src_hdr_dir}' not found for copying.", file=sys.stderr)
+                                    print(f"Please ensure 'win_headers_rel_path' in DEPS_CONFIG for LAME is correctly set (e.g., to 'include').")
+                                    build_successful = False
+                                else:
+                                    dest_hdr_dir = DEPS_INSTALL_INCLUDE_DIR / config["header_dir_name"]
+                                    if dest_hdr_dir.exists(): shutil.rmtree(dest_hdr_dir)
+                                    shutil.copytree(src_hdr_dir, dest_hdr_dir, dirs_exist_ok=True)
+                                    print(f"Copied LAME headers from {src_hdr_dir} to {dest_hdr_dir}")
+                    
+                    else: # LAME autotools build (Linux/macOS)
+                        if not (src_dir / "configure").exists() and (src_dir / "autogen.sh").exists():
+                            print(f"Running autogen.sh for {name} in {src_dir}...")
+                            subprocess.run(["sh", "./autogen.sh"], cwd=src_dir, check=True)
+                        
+                        configure_cmd = ["./configure", f"--prefix={DEPS_INSTALL_DIR}"] + config["unix_configure_args"]
+                        print(f"Running configure for {name}: {' '.join(configure_cmd)}")
+                        subprocess.run(configure_cmd, cwd=src_dir, check=True)
 
+                        make_cmd = ["make", "-j", str(os.cpu_count() or 1)]
+                        print(f"Running make for {name}: {' '.join(make_cmd)}")
+                        subprocess.run(make_cmd, cwd=src_dir, check=True)
+
+                        make_install_cmd = ["make"] + config["unix_make_targets"]
+                        print(f"Running make install for {name}: {' '.join(make_install_cmd)}")
+                        subprocess.run(make_install_cmd, cwd=src_dir, check=True)
+                        build_successful = True
+                
+                if build_successful:
+                    if not expected_lib_path.exists():
+                        print(f"ERROR: Library file {expected_lib_path} for {name} NOT FOUND post-build.", file=sys.stderr); build_successful = False
+                    if not expected_header_path.exists():
+                        print(f"ERROR: Main header {expected_header_path} for {name} NOT FOUND post-build.", file=sys.stderr); build_successful = False
+                
+                if build_successful: print(f"{name} processed and verified successfully.")
+                else:
+                    print(f"ERROR: Build or verification failed for {name}.", file=sys.stderr)
+                    all_deps_processed_successfully = False
+
+            except (subprocess.CalledProcessError, FileNotFoundError, RuntimeError, Exception) as e:
+                print(f"CRITICAL ERROR processing dependency {name}: {e}", file=sys.stderr)
+                all_deps_processed_successfully = False; continue
+        
+        if not all_deps_processed_successfully:
+            print("ERROR: One or more dependencies failed to build or verify. Aborting setup.", file=sys.stderr); sys.exit(1)
+
+        for ext in self.extensions:
+            if str(DEPS_INSTALL_INCLUDE_DIR) not in ext.include_dirs: ext.include_dirs.insert(0, str(DEPS_INSTALL_INCLUDE_DIR))
+            if str(DEPS_INSTALL_LIB_DIR) not in ext.library_dirs: ext.library_dirs.insert(0, str(DEPS_INSTALL_LIB_DIR))
+        print(f"Ensured {DEPS_INSTALL_INCLUDE_DIR} and {DEPS_INSTALL_LIB_DIR} are in extension paths.")
+        
         super().run()
 
-
-# Common source files for the C++ extension
+# --- Main Extension Configuration ---
 source_files = [
-    "src/audio_engine/bindings.cpp",
-    "src/audio_engine/audio_manager.cpp",
-    "src/audio_engine/rtp_receiver.cpp",
-    "src/audio_engine/raw_scream_receiver.cpp",
-    "src/audio_engine/source_input_processor.cpp",
-    "src/audio_engine/sink_audio_mixer.cpp",
-    "src/audio_engine/audio_processor.cpp",
-    "src/audio_engine/layout_mixer.cpp",
-    "src/audio_engine/biquad/biquad.cpp",
-    "src/configuration/audio_engine_config_applier.cpp",
+    "src/audio_engine/bindings.cpp", "src/audio_engine/audio_manager.cpp",
+    "src/audio_engine/rtp_receiver.cpp", "src/audio_engine/raw_scream_receiver.cpp",
+    "src/audio_engine/source_input_processor.cpp", "src/audio_engine/sink_audio_mixer.cpp",
+    "src/audio_engine/audio_processor.cpp", "src/audio_engine/layout_mixer.cpp",
+    "src/audio_engine/biquad/biquad.cpp", "src/configuration/audio_engine_config_applier.cpp",
 ]
-
-# Common include directories (relative to the project root)
-common_include_dirs = [
-    str(PROJECT_ROOT / "src/audio_engine"),
-    str(PROJECT_ROOT / "src/configuration"),
+main_extension_include_dirs = [
+    str(PROJECT_ROOT / "src/audio_engine"), str(PROJECT_ROOT / "src/configuration"),
 ]
-
-# --- Platform-specific configurations ---
 platform_extra_compile_args = []
 platform_extra_link_args = []
-platform_libraries = []
-# These will be populated by BuildExtCommand with DEPS_BUILD_DIR if deps are built
-platform_library_dirs = []
-platform_include_dirs = []
+main_extension_libraries = [DEPS_CONFIG["lame"]["link_name"], DEPS_CONFIG["samplerate"]["link_name"]]
+main_extension_library_dirs = []
 
 if sys.platform == "win32":
-    print("Configuring for Windows (MSVC)")
-    platform_extra_compile_args = [
-        "/std:c++17", "/O2", "/W3", "/EHsc", "/D_CRT_SECURE_NO_WARNINGS",
-    ]
-    platform_libraries = [
-        "lame",        # Will try to use lame.lib (built or pre-existing from DEPS_BUILD_DIR)
-        "samplerate",  # Assumes samplerate.lib is available (e.g., via vcpkg or manual path)
-        "ws2_32",      # Windows Sockets API, often needed for networking
-    ]
-    print("Windows specific: For libsamplerate, please ensure it's installed (e.g., via vcpkg) and its .lib/.h files are discoverable by the linker/compiler.")
-    print("If LAME build fails, install it manually and ensure .lib/.h files are discoverable.")
-    # Example manual paths for libsamplerate if not found automatically:
-    # platform_include_dirs.append("C:/path/to/manual/samplerate/include")
-    # platform_library_dirs.append("C:/path/to/manual/samplerate/lib")
-
+    print("Configuring main extension for Windows (MSVC)")
+    platform_extra_compile_args.extend([
+        "/std:c++17", "/O2", "/W3", "/EHsc", 
+        "/D_CRT_SECURE_NO_WARNINGS", "/MP",
+        "/DLAMELIB_API=", # Define LAMELIB_API to be empty for static linking against LAME
+        "/DCDECL="        # Define CDECL to be empty for static linking against LAME
+    ])
+    main_extension_libraries.append("ws2_32")
 elif sys.platform == "darwin":
-    print("Configuring for macOS (Clang)")
-    platform_extra_compile_args = [
-        "-std=c++17", "-O2", "-Wall", "-fPIC",
-        "-stdlib=libc++", "-mmacosx-version-min=10.14", # Adjust min macOS version as needed
-    ]
-    platform_libraries = ["mp3lame", "samplerate"] # No pthread needed here either if std::thread is used
-    platform_library_dirs = ["/usr/local/lib", "/opt/homebrew/lib"] # Common Homebrew paths
-    platform_include_dirs = ["/usr/local/include", "/opt/homebrew/include"]
+    print("Configuring main extension for macOS (Clang)")
+    platform_extra_compile_args.extend(["-std=c++17", "-O2", "-Wall", "-fPIC", "-stdlib=libc++", "-mmacosx-version-min=10.14"])
+else:
+    print(f"Configuring main extension for Linux/Unix-like system ({sys.platform})")
+    platform_extra_compile_args.extend(["-std=c++17", "-O2", "-Wall", "-fPIC"])
 
-else:  # Assuming Linux or other Unix-like (GCC/Clang)
-    print(f"Configuring for Linux/Unix-like system ({sys.platform})")
-    platform_extra_compile_args = ["-std=c++17", "-O2", "-Wall", "-fPIC"]
-    platform_libraries = ["mp3lame", "samplerate"] # No pthread needed
-    platform_library_dirs = ["/usr/lib64", "/usr/lib", "/usr/local/lib"]
-
-
-# Define the C++ extension module
 ext_modules = [
-    Pybind11Extension(
-        "screamrouter_audio_engine",
+    Pybind11Extension("screamrouter_audio_engine",
         sources=sorted([str(PROJECT_ROOT / f) for f in source_files]),
-        # common_include_dirs will be supplemented by DEPS_BUILD_DIR/include via BuildExtCommand
-        include_dirs=common_include_dirs + platform_include_dirs,
-        # common_library_dirs will be supplemented by DEPS_BUILD_DIR/lib via BuildExtCommand
-        library_dirs=platform_library_dirs,
-        libraries=platform_libraries,
+        include_dirs=main_extension_include_dirs,
+        library_dirs=main_extension_library_dirs,
+        libraries=main_extension_libraries,
         extra_compile_args=platform_extra_compile_args,
         extra_link_args=platform_extra_link_args,
         language='c++',
-        cxx_std=17 # pybind11 uses this to set the C++ standard
-    ),
+        cxx_std=17)
 ]
 
-# Setup script configuration
 setup(
     name="screamrouter_audio_engine",
-    version="0.1.3", # Incremented version
+    version="0.2.1", # Incremented version
     author="Cline",
-    description="C++ audio engine extension for ScreamRouter (cross-platform, LAME build for Win)",
-    long_description=(PROJECT_ROOT / "README.md").read_text() if (PROJECT_ROOT / "README.md").exists() else \
-                     "Provides core audio processing (RTP, mixing, effects) as a C++ extension. "
-                     "This version attempts to build LAME on Windows and expects libsamplerate to be pre-installed. Uses std::thread.",
+    description="C++ audio engine for ScreamRouter (builds LAME & libsamplerate from submodules, auto MSVC env setup)",
+    long_description=(PROJECT_ROOT / "README.md").read_text(encoding="utf-8") if (PROJECT_ROOT / "README.md").exists() else \
+                     "Builds LAME & libsamplerate from submodules. Tries to auto-setup MSVC env on Windows.",
     long_description_content_type="text/markdown",
     ext_modules=ext_modules,
-    cmdclass={"build_ext": BuildExtCommand}, # Use our custom build_ext
+    cmdclass={"build_ext": BuildExtCommand},
     zip_safe=False,
     python_requires=">=3.7",
     classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Intended Audience :: Developers",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: C++",
-        "Operating System :: Microsoft :: Windows",
-        "Operating System :: MacOS :: MacOS X",
-        "Operating System :: POSIX :: Linux",
-        "Topic :: Multimedia :: Sound/Audio",
+        "Development Status :: 3 - Alpha", "Intended Audience :: Developers",
+        "Programming Language :: Python :: 3", "Programming Language :: C++",
+        "Operating System :: Microsoft :: Windows", "Operating System :: MacOS :: MacOS X",
+        "Operating System :: POSIX :: Linux", "Topic :: Multimedia :: Sound/Audio",
     ],
 )

@@ -1,7 +1,5 @@
 """Holds the web stream queue and API endpoints, manages serving MP3s."""
 import asyncio
-import multiprocessing
-import multiprocessing.managers
 import queue
 import threading
 import time  # Added import
@@ -86,10 +84,8 @@ class APIWebStream(threading.Thread):
         app.websocket("/ws/{sink_ip}/")(self.websocket_mp3_stream)
         app.get("/stream/{sink_ip}/", tags=["Stream"])(self.http_mp3_stream)
         logger.info("[WebStream] MP3 Web Stream Available")
-        self.queue: multiprocessing.Queue = multiprocessing.Queue()
-        self.manager = multiprocessing.Manager()
-        self.active_ips = self.manager.list()
-        self.update_ip = self.manager.Event()
+        self.queue: queue.Queue = queue.Queue
+        self.active_ips = []
         self.running: bool = True
         """Ends all websocket and MP3 streams when set to False"""
         self.start()
@@ -128,7 +124,6 @@ class APIWebStream(threading.Thread):
         await listener.open()
         self._listeners.append(listener)
         self.active_ips.append(sink_ip)
-        self.update_ip.set()
         return StreamingResponse(listener.get_queue(), media_type="audio/mpeg")
 
     async def websocket_mp3_stream(self, websocket: WebSocket, sink_ip: IPAddressType):
@@ -137,7 +132,6 @@ class APIWebStream(threading.Thread):
         await listener.open()
         self._listeners.append(listener)
         self.active_ips.append(sink_ip)
-        self.update_ip.set()
         while self.running:  # Keep the connection open until something external closes it.
             await asyncio.sleep(1)
 

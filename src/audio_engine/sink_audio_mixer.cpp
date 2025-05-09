@@ -56,7 +56,7 @@ SinkAudioMixer::SinkAudioMixer(
         // WSAStartup might have already been called by RtpReceiver if both exist.
         WSADATA wsaData;
         int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-        if (iResult != 0 && iResult != WSAEALREADYSTARTED) {
+        if (iResult != 0) {
             LOG_ERROR(config_.sink_id, "WSAStartup failed: " + std::to_string(iResult));
             throw std::runtime_error("WSAStartup failed.");
         }
@@ -609,7 +609,7 @@ void SinkAudioMixer::send_network_buffer(size_t length) {
                                         sizeof(udp_dest_addr_));
         #else
             // POSIX sendto uses const void* buffer and size_t length
-            ssize_t sent_bytes = sendto(udp_socket_fd_,
+            int sent_bytes = sendto(udp_socket_fd_,
                                         output_network_buffer_.data(),
                                         length,
                                         0, // Flags

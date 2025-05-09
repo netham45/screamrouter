@@ -1,6 +1,6 @@
 """This plugin implements an API endpoint to play a URL back over a Sink."""
 
-import multiprocessing
+import threading
 import os
 import select
 import signal
@@ -34,7 +34,8 @@ class PluginPlayURLMultiple(ScreamRouterPlugin):
 
            SIGCHILD is sent when ffmpeg ends and is used as a method for
            determing when to play back the next source."""
-        signal.signal(signal.SIGCHLD, self.sigchld_handler)
+        if "SIGCHILD" in dir(signal):
+            signal.signal(signal.SIGCHLD, self.sigchld_handler)
         self.tag = "PlayURLMultiple"
         """Plugin tag. Source tags are derived from this."""
         self.counter: int = 0
@@ -43,7 +44,6 @@ class PluginPlayURLMultiple(ScreamRouterPlugin):
         """Holds a list of playing URLs"""
         self.__mainpid = os.getpid()
         """Holds the main pid so the sigchild interrupt doesn't run on child processes"""
-        self.write_lock = multiprocessing.Lock()
         #self.start()
         # Start the run loop in a new process. any variables to be available to run()
         # need to be delcared before this.
@@ -94,7 +94,7 @@ class PluginPlayURLMultiple(ScreamRouterPlugin):
                                   self.screamrouter_write_fd))
         self.counter = self.counter + 1
 
-class PluginPlayURLInstance(multiprocessing.Process):
+class PluginPlayURLInstance(threading.Thread):
     """Manages an instance of ffmpeg"""
     def __init__(self, plugin: PluginPlayURLMultiple,
                  sink_name: SinkNameType,
@@ -118,7 +118,7 @@ class PluginPlayURLInstance(multiprocessing.Process):
            prepended to data packets"""
         self.ffmpeg: Optional[subprocess.Popen] = None
         """Holds the ffmpeg process."""
-        self.running = multiprocessing.Value(c_bool, True)
+        self.running = True
         """Rather this instance of URL playback is running"""
         self.screamrouter_write_fd: int = screamrouter_write_fd
         """Queue to write back to ScreamRouter"""
