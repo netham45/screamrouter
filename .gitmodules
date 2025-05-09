@@ -16,3 +16,6 @@
 [submodule "src/audio_engine/lame"]
 	path = src/audio_engine/lame
 	url = https://github.com/netham45/lame
+[submodule "src/audio_engine/r8brain-free-src"]
+	path = src/audio_engine/r8brain-free-src
+	url = https://github.com/avaneev/r8brain-free-src
