@@ -6,15 +6,20 @@
 #include <thread>
 #include <atomic>
 #include <vector> // Added for std::vector
-#include "samplerate.h"
+// #include "samplerate.h" // Removed libsamplerate include
+
+// r8brain includes moved here, before class definition
+#include "r8brain-free-src/r8bconf.h"
+#include "r8brain-free-src/CDSPResampler.h"
 
 #define MAX_CHANNELS 8
 #define EQ_BANDS 18
 #define CHUNK_SIZE 1152
 
-struct SRC_STATE_tag;
-typedef SRC_STATE_tag SRC_STATE;
+// struct SRC_STATE_tag; // No longer needed
+// typedef SRC_STATE_tag SRC_STATE; // No longer needed
 class Biquad;
+
 
 class AudioProcessor {
 public:
@@ -48,10 +53,17 @@ protected:
     size_t resample_buffer_pos = 0; // Changed to size_t
     size_t channel_buffer_pos = 0;  // Changed to size_t
 
-    SRC_STATE* sampler;
-    SRC_STATE* downsampler;
-    std::vector<float> resampler_data_in;
-    std::vector<float> resampler_data_out;
+    // libsamplerate members removed
+    // SRC_STATE* sampler;
+    // SRC_STATE* downsampler;
+    // std::vector<float> resampler_data_in;
+    // std::vector<float> resampler_data_out;
+
+    // r8brain members added
+    std::vector<r8b::CDSPResampler24*> upsamplers; // Removed r8brain:: namespace
+    std::vector<r8b::CDSPResampler24*> downsamplers; // Removed r8brain:: namespace
+    std::vector<std::vector<double>> r8brain_upsampler_in_buf;
+    std::vector<std::vector<double>> r8brain_downsampler_in_buf;
 
     Biquad* filters[MAX_CHANNELS][EQ_BANDS];
     Biquad* dcFilters[MAX_CHANNELS];

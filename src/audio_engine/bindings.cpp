@@ -59,9 +59,14 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
         .def_readwrite("listen_port", &RawScreamReceiverConfig::listen_port, "UDP port to listen on");
         // Add .def_readwrite("bind_ip", ...) if that field is included
 
+    py::class_<PerProcessScreamReceiverConfig>(m, "PerProcessScreamReceiverConfig", "Configuration for a per-process Scream receiver")
+        .def(py::init<>())
+        .def_readwrite("listen_port", &PerProcessScreamReceiverConfig::listen_port, "UDP port to listen on for per-process receiver");
+
     py::enum_<InputProtocolType>(m, "InputProtocolType", "Specifies the expected input packet type")
         .value("RTP_SCREAM_PAYLOAD", InputProtocolType::RTP_SCREAM_PAYLOAD)
         .value("RAW_SCREAM_PACKET", InputProtocolType::RAW_SCREAM_PACKET)
+        .value("PER_PROCESS_SCREAM_PACKET", InputProtocolType::PER_PROCESS_SCREAM_PACKET) // Added new type
         .export_values(); // Make enum values accessible as module attributes
 
     // --- Bind AudioManager Class ---
@@ -104,6 +109,12 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
         .def("remove_raw_scream_receiver", &AudioManager::remove_raw_scream_receiver,
              py::arg("listen_port"),
              "Stops and removes the raw Scream receiver listening on the given port. Returns true on success.")
+        .def("add_per_process_scream_receiver", &AudioManager::add_per_process_scream_receiver,
+             py::arg("config"),
+             "Adds and starts a new per-process Scream receiver. Returns true on success.")
+        .def("remove_per_process_scream_receiver", &AudioManager::remove_per_process_scream_receiver,
+             py::arg("listen_port"),
+             "Stops and removes the per-process Scream receiver. Returns true on success.")
 
 
          // Control Methods (Updated to use instance_id)
@@ -135,7 +146,17 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
                 return py::bytes(reinterpret_cast<const char*>(data_vec.data()), data_vec.size());
             },
             py::arg("ip_address"),
-            "Retrieves a chunk of MP3 data (as bytes) from a sink identified by its output IP address.");
+            "Retrieves a chunk of MP3 data (as bytes) from a sink identified by its output IP address.")
+        
+        // Receiver Info Methods
+        .def("get_rtp_receiver_seen_tags", &AudioManager::get_rtp_receiver_seen_tags,
+             "Retrieves the list of seen source tags from the main RTP receiver.")
+        .def("get_raw_scream_receiver_seen_tags", &AudioManager::get_raw_scream_receiver_seen_tags,
+             py::arg("listen_port"),
+             "Retrieves the list of seen source tags from a specific Raw Scream receiver.")
+        .def("get_per_process_scream_receiver_seen_tags", &AudioManager::get_per_process_scream_receiver_seen_tags,
+             py::arg("listen_port"),
+             "Retrieves the list of seen source tags from a specific Per-Process Scream receiver.");
 
         // External Control Methods (like setting TCP FD)
         // Removed .def("set_sink_tcp_fd", ...)

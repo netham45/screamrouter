@@ -105,7 +105,6 @@ class ConfigurationManager(threading.Thread):
         """List of Sources the controller knows of"""
         self.route_descriptions: List[RouteDescription] = []
         """List of Routes the controller knows of"""
-        # self.audio_controllers: List[AudioController] = [] # Removed (Task 04_04)
         self.__api_webstream: APIWebStream = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
         self.active_configuration: ConfigurationSolver
@@ -157,6 +156,17 @@ class ConfigurationManager(threading.Thread):
                     except Exception as raw_e: # pylint: disable=broad-except
                         _logger.exception("[Configuration Manager] Exception adding C++ RawScreamReceiver on port %d: %s", port, raw_e)
                 # --- End Add Raw Scream Receivers ---
+
+                try:
+                    _logger.info("[Configuration Manager] Adding C++ PerProcessScreamReceiver on port %d...", 16402)
+                    per_process_config = screamrouter_audio_engine.PerProcessScreamReceiverConfig()
+                    per_process_config.listen_port = 16402
+                    if not self.cpp_audio_manager.add_per_process_scream_receiver(per_process_config):
+                        _logger.error("[Configuration Manager] Failed to add C++ PerProcessScreamReceiver on port %d.", 16402)
+                    else:
+                        _logger.info("[Configuration Manager] C++ PerProcessScreamReceiver added successfully on port %d.", 16402)
+                except Exception as raw_e: # pylint: disable=broad-except
+                    _logger.exception("[Configuration Manager] Exception adding C++ PerProcessScreamReceiver on port %d: %s", 16402, raw_e)
 
             except Exception as e: # pylint: disable=broad-except
                 _logger.exception("[Configuration Manager] Exception during C++ engine setup with provided AudioManager: %s", e)
@@ -568,7 +578,6 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("[Configuration Manager] Stopping Plugin Manager")
         self.plugin_manager.stop_registered_plugins()
         _logger.debug("[Configuration Manager] Plugin Manager Stopped")
-        # Removed loop stopping Python AudioControllers (Task 04_04)
         _logger.debug("[Configuration Manager] Stopping mDNS")
         self.mdns_responder.stop()
         self.mdns_pinger.stop()
@@ -1022,8 +1031,6 @@ class ConfigurationManager(threading.Thread):
                     if sink not in changed_sinks:
                         changed_sinks.append(sink)
 
-        # Removed loop checking Python AudioControllers for reload request (Task 04_04)
-        # Reload requests should be handled differently if needed for C++ engine or plugins
 
         return added_sinks, removed_sinks, changed_sinks
 
@@ -1155,50 +1162,9 @@ class ConfigurationManager(threading.Thread):
            then reload them."""
         _logger.debug("[Configuration Manager] Reloading configuration")
         
-        # --- Apply state to C++ Engine ---
-        # This should happen *after* solving the configuration but *before* managing Python controllers (if kept)
-        # We'll call this helper method after __process_configuration resolves the state.
-        # Note: __process_configuration updates self.active_configuration which is used by the translator.
-        
-        # Process new config, store what's changed (for Python controllers, if needed)
-        added_sinks: List[SinkDescription]
-        removed_sinks: List[SinkDescription]
-        changed_sinks: List[SinkDescription]
-        added_sinks, removed_sinks, changed_sinks = self.__process_configuration() # This updates self.active_configuration
-
-        # --- Apply the solved state to the C++ Engine ---
         self.__apply_cpp_engine_state()
-        # --- End C++ Engine Application ---
-
-        # --- Python AudioController Management Removed (Task 04_04) ---
-        # The C++ AudioEngineConfigApplier now handles sink/source/connection management.
-        # The logic below managing self.audio_controllers is no longer needed for the core engine.
-        # If specific plugins rely on the old Python AudioController, further refactoring is needed.
-        _logger.info("[Configuration Manager] Python AudioController management skipped (handled by C++ engine).")
-
-
-        # TODO: Re-evaluate if Python receivers need restarting based on C++ engine changes.
-        # For now, assume C++ engine handles its own receiver (RtpReceiver) lifecycle via initialize/shutdown.
-        # If Python receivers (ScreamReceiver etc.) are still needed for other purposes, their management might need adjustment.
-        
-        # Stop old Python receivers if they were potentially affected by changes handled by C++ now?
-        # This needs careful consideration based on whether Python receivers are fully replaced.
-        # Assuming for now that the C++ RtpReceiver replaces the Python RTPReceiver.
-        # ScreamReceiver might still be needed? Let's comment out stopping for now.
-        # if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-        #     old_scream_recevier.stop()
-        #     old_scream_per_process_recevier.stop()
-        #     old_multicast_scream_recevier.stop()
-        #     old_rtp_receiver.stop() # Assuming C++ AudioManager handles its own RTP receiver
 
         self.__save_config()
-
-        # Plugin manager reload might still be needed, but source_write_fds is no longer relevant from Python controllers
-        # TODO: Determine if plugins need notification based on C++ engine changes.
-        # if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-        #     _logger.debug("[Configuration Manager] Notifying plugin manager (revisit trigger logic)")
-        #     # self.plugin_manager.load_registered_plugins(source_write_fds) # source_write_fds no longer exists here
-        #     _logger.debug("[Configuration Manager] Reload done")
 
         try:
             self.reload_condition.release()
@@ -1482,31 +1448,61 @@ class ConfigurationManager(threading.Thread):
         #self.scream_per_process_recevier.check_known_sources()
         #self.multicast_scream_recevier.check_known_ips()
         #self.rtp_receiver.check_known_ips()
-        known_source_tags: List[str] = [str(desc.tag) for desc in self.source_descriptions]
-        known_source_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
-        known_sink_ips: List[str] = [str(desc.ip) for desc in self.sink_descriptions]
-        known_sink_config_ids: List[str] = [str(desc.config_id) for desc in self.sink_descriptions]
-        #for ip in self.scream_recevier.known_ips:
-        #    if not str(ip) in known_source_ips:
-        #        _logger.info("[Configuration Manager] Adding new source from Scream port %s", ip)
-        #        self.auto_add_source(ip)
-        #for ip in self.multicast_scream_recevier.known_ips:
-        #    if not str(ip) in known_source_ips:
-        #        _logger.info(
-        #           "[Configuration Manager] Adding new source from Multicast Scream port %s", ip)
-        #        self.auto_add_source(ip)
-        #for ip in self.rtp_receiver.known_ips:
-        #    if not str(ip) in known_source_ips:
-        #        _logger.info("[Configuration Manager] Adding new source from RTP port %s", ip)
-        #        self.auto_add_source(ip)
-        #for ip in self.mdns_pinger.get_source_ips():
-        #    if not str(ip) in known_source_ips:
-        #        _logger.info("[Configuration Manager] Adding new source from mDNS %s", ip)
-        #        self.auto_add_source(ip)
-        #for ip in self.mdns_pinger.get_sink_ips():
-        #    if not str(ip) in known_sink_ips:
-        #       _logger.info("[Configuration Manager] Adding new sink from mDNS %s", ip)
-        #        self.auto_add_sink(ip)
+        known_source_tags: List[str] = [str(desc.tag) for desc in self.source_descriptions if desc.tag is not None]
+        known_source_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions if desc.ip is not None]
+        known_sink_ips: List[str] = [str(desc.ip) for desc in self.sink_descriptions if desc.ip is not None]
+        known_sink_config_ids: List[str] = [str(desc.config_id) for desc in self.sink_descriptions if desc.config_id is not None]
+        
+        # --- C++ Engine Based Auto Source Detection ---
+        if self.cpp_audio_manager and screamrouter_audio_engine:
+            # RTP Receiver (IP-based sources)
+            try:
+                rtp_seen_tags = self.cpp_audio_manager.get_rtp_receiver_seen_tags()
+                for ip_str in rtp_seen_tags:
+                    if ip_str and ip_str not in known_source_ips: # Check if ip_str is not empty
+                        _logger.info("[Configuration Manager] Auto-adding new source from C++ RTP Receiver: %s", ip_str)
+                        self.auto_add_source(IPAddressType(ip_str))
+                        known_source_ips.append(ip_str) 
+            except Exception as e:
+                _logger.error("[Configuration Manager] Error getting seen tags from C++ RTP Receiver: %s", e)
+
+            # Raw Scream Receivers (IP-based sources)
+            # Using ports configured in __init__
+            raw_receiver_ports = [4010, 16401] 
+            for port in raw_receiver_ports:
+                try:
+                    raw_seen_tags = self.cpp_audio_manager.get_raw_scream_receiver_seen_tags(port)
+                    for ip_str in raw_seen_tags:
+                        if ip_str and ip_str not in known_source_ips:
+                            _logger.info("[Configuration Manager] Auto-adding new source from C++ Raw Scream Receiver (port %d): %s", port, ip_str)
+                            self.auto_add_source(IPAddressType(ip_str))
+                            known_source_ips.append(ip_str)
+                except Exception as e:
+                    _logger.error("[Configuration Manager] Error getting seen tags from C++ Raw Scream Receiver (port %d): %s", port, e)
+
+            # Per-Process Scream Receiver (Tag-based sources)
+            per_process_receiver_port = 16402 # Port configured in __init__
+            try:
+                per_process_seen_tags = self.cpp_audio_manager.get_per_process_scream_receiver_seen_tags(per_process_receiver_port)
+                for tag_str in per_process_seen_tags:
+                    if tag_str and tag_str not in known_source_tags:
+                        _logger.info("[Configuration Manager] Auto-adding new source from C++ Per-Process Receiver (port %d): %s", per_process_receiver_port, tag_str)
+                        self.auto_add_process_source(tag_str) # Use auto_add_process_source for these tags
+                        known_source_tags.append(tag_str)
+            except Exception as e:
+                _logger.error("[Configuration Manager] Error getting seen tags from C++ Per-Process Receiver (port %d): %s", per_process_receiver_port, e)
+        # --- End C++ Engine Based Auto Source Detection ---
+        
+        # mDNS pinger for sources
+        for ip in self.mdns_pinger.get_source_ips():
+            if not str(ip) in known_source_ips:
+                _logger.info("[Configuration Manager] Adding new source from mDNS %s", ip)
+                self.auto_add_source(ip)
+        # mDNS pinger for sinks
+        for ip in self.mdns_pinger.get_sink_ips():
+            if not str(ip) in known_sink_ips:
+                _logger.info("[Configuration Manager] Adding new sink from mDNS %s", ip)
+                self.auto_add_sink(ip)
         # Process sink settings
         known_source_config_ids: List[str] = [str(desc.config_id) for desc in self.source_descriptions if desc.config_id]
         
@@ -1608,11 +1604,6 @@ class ConfigurationManager(threading.Thread):
                     if self.plugin_manager.wants_reload():
                         _logger.info("[Configuration Manager] Plugin Manager requests reload.")
                         self.reload_config = True
-                    # Removed loop checking Python AudioControllers for reload request (Task 04_04)
-                    #if self.tcp_manager.wants_reload:
-                    #    _logger.info("[Configuration Manager] TCP Manager requests reload.")
-                    #    self.tcp_manager.wants_reload = False
-                    #    self.reload_config = True
                     if self.reload_config:
                         self.reload_config = False
                         _logger.info("[Configuration Manager] Reloading the configuration")

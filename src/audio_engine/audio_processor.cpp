@@ -1,6 +1,8 @@
 #include "audio_processor.h"
 #include "biquad/biquad.h"
-#include "samplerate.h"
+#include "r8brain-free-src/r8bconf.h"
+#include "r8brain-free-src/r8bbase.h"       
+#include "r8brain-free-src/CDSPResampler.h" 
 #include <algorithm>
 #include <stdexcept>
 #include <cmath>
@@ -12,7 +14,7 @@
 #include <new> // Include for std::bad_alloc
 
 #define CHUNK_SIZE 1152
-#define OVERSAMPLING_FACTOR 2
+#define OVERSAMPLING_FACTOR 1
 
 AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, int inputSampleRate, int outputSampleRate, float volume)
     : inputChannels(inputChannels), outputChannels(outputChannels), inputBitDepth(inputBitDepth),
@@ -24,11 +26,18 @@ AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputB
       remixed_channel_buffers(MAX_CHANNELS, std::vector<int32_t>(CHUNK_SIZE * 8 * OVERSAMPLING_FACTOR)), // Larger for resampling
       merged_buffer(CHUNK_SIZE * MAX_CHANNELS * 4 * OVERSAMPLING_FACTOR), // Larger for resampling
       processed_buffer(CHUNK_SIZE * MAX_CHANNELS * 4), // Final output size related
-      resampler_data_in(CHUNK_SIZE * MAX_CHANNELS * 8), // Float buffers for libsamplerate
-      resampler_data_out(CHUNK_SIZE * MAX_CHANNELS * 8 * OVERSAMPLING_FACTOR * 2), // Generous output float buffer
-      sampler(nullptr), downsampler(nullptr), // Initialize sampler/downsampler to nullptr
+      // Removed resampler_data_in and resampler_data_out (float buffers for libsamplerate)
+      // sampler(nullptr), downsampler(nullptr) replaced by r8brain vectors
       isProcessingRequiredCache(false), isProcessingRequiredCacheSet(false) // Initialize cache flags
+      // Add new r8brain member variables
+      // upsamplers and downsamplers will be initialized in the constructor body or initializer list if default constructible
+      // r8brain_upsampler_in_buf and r8brain_downsampler_in_buf will be initialized in constructor body
 {
+    // Initialize r8brain resampler vectors (they are default constructible)
+    // upsamplers; // Default construction
+    // downsamplers; // Default construction
+    // r8brain_upsampler_in_buf; // Default construction
+    // r8brain_downsampler_in_buf; // Default construction
     // Initialize filter pointers to nullptr before use
     for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
         for (int band = 0; band < EQ_BANDS; ++band) {
@@ -60,8 +69,15 @@ AudioProcessor::~AudioProcessor() {
         monitor_thread.join();
     }
 
-    if (sampler) src_delete(sampler);
-    if (downsampler) src_delete(downsampler);
+    // Clean up r8brain resamplers
+    for (auto ptr : upsamplers) {
+        delete ptr;
+    }
+    upsamplers.clear();
+    for (auto ptr : downsamplers) {
+        delete ptr;
+    }
+    downsamplers.clear();
      
     for (int channel = 0; channel < MAX_CHANNELS; channel++) {
         for (int i = 0; i < EQ_BANDS; i++) {
@@ -101,40 +117,31 @@ int AudioProcessor::processAudio(const uint8_t* inputBuffer, int32_t* outputBuff
     // --- End Pipeline ---
 
     // Determine samples to copy based on actual samples processed and available
-    size_t samples_available = process_buffer_pos; // Use the count from the last processing step
-    size_t samples_to_copy = 0;
-    
-    // Calculate the theoretical number of samples for one output chunk based on the *original* input chunk size
-    int samples_per_input_chunk = (inputBitDepth > 0) ? (CHUNK_SIZE / (inputBitDepth / 8)) : 0;
-    int input_frames = (inputChannels > 0) ? (samples_per_input_chunk / inputChannels) : 0;
-    int expected_output_samples_per_chunk = (outputChannels > 0) ? (input_frames * outputChannels) : 0;
+    size_t samples_available = process_buffer_pos; // This is the actual number of samples at outputSampleRate
 
-    if (outputBuffer && expected_output_samples_per_chunk > 0) {
-        samples_to_copy = std::min(samples_available, static_cast<size_t>(expected_output_samples_per_chunk));
-
-        if (samples_to_copy > processed_buffer.size()) {
-            std::cerr << "Error: samples_to_copy (" << samples_to_copy 
-                      << ") exceeds internal processed_buffer size (" << processed_buffer.size() 
-                      << ") in processAudio final copy." << std::endl;
-            samples_to_copy = 0; // Prevent overflow
-        }
-
-        if (samples_to_copy > 0) {
-            memcpy(outputBuffer, processed_buffer.data(), samples_to_copy * sizeof(int32_t));
-        }
-
-        // Zero-pad if fewer samples were available than expected for a full chunk
-        if (samples_to_copy < static_cast<size_t>(expected_output_samples_per_chunk)) {
-             // Ensure outputBuffer is large enough for padding
-             // This assumes caller allocated enough space for expected_output_samples_per_chunk
-             memset(outputBuffer + samples_to_copy, 0, (expected_output_samples_per_chunk - samples_to_copy) * sizeof(int32_t));
-        }
-        // Return the number of samples corresponding to a full output chunk, even if padded
-        return expected_output_samples_per_chunk; 
-    } else {
-        // If outputBuffer is null or expected samples is zero, return 0
-        return 0;
+    if (outputBuffer == nullptr) {
+        std::cerr << "Error: outputBuffer is null in processAudio." << std::endl;
+        return 0; 
     }
+
+    // We will copy all available samples. The caller must ensure outputBuffer is large enough.
+    size_t samples_to_write = samples_available;
+
+    if (samples_to_write > 0) {
+        // Sanity check: ensure we don't read past the end of processed_buffer.
+        // This should ideally not happen if process_buffer_pos is correctly managed by preceding stages.
+        if (samples_to_write > processed_buffer.size()) {
+             std::cerr << "Error: samples_available (" << samples_to_write
+                       << ") exceeds internal processed_buffer size (" << processed_buffer.size()
+                       << ") in processAudio final copy. Capping write size." << std::endl;
+             samples_to_write = processed_buffer.size(); // Cap to prevent buffer overflow on read
+        }
+        memcpy(outputBuffer, processed_buffer.data(), samples_to_write * sizeof(int32_t));
+    }
+    
+    // Return the actual number of int32_t samples written to outputBuffer.
+    // If samples_to_write is 0 (e.g., due to an error or no data), memcpy is skipped and 0 is returned.
+    return static_cast<int>(samples_to_write);
 }
 
 
@@ -188,17 +195,116 @@ void AudioProcessor::setupBiquad() {
 }
 
 void AudioProcessor::initializeSampler() {
-    int error = 0;
-    if (sampler) { src_delete(sampler); sampler = nullptr; }
-    if (downsampler) { src_delete(downsampler); downsampler = nullptr; }
-
-    if (inputChannels > 0) { 
-        sampler = src_new(SRC_SINC_BEST_QUALITY, inputChannels, &error); 
-        if (!sampler) { std::cerr << "Error creating sampler: " << src_strerror(error) << std::endl; }
+    // Clean up existing r8brain resamplers
+    for (auto ptr : upsamplers) {
+        delete ptr;
     }
-    if (outputChannels > 0) { 
-        downsampler = src_new(SRC_SINC_BEST_QUALITY, outputChannels, &error); 
-        if (!downsampler) { std::cerr << "Error creating downsampler: " << src_strerror(error) << std::endl; }
+    upsamplers.clear();
+    for (auto ptr : downsamplers) {
+        delete ptr;
+    }
+    downsamplers.clear();
+
+    if (inputSampleRate <= 0 || outputSampleRate <= 0) {
+        std::cerr << "Error: Invalid input or output sample rate for r8brain initialization." << std::endl;
+        return;
+    }
+
+    // Initialize upsamplers
+    if (inputChannels > 0) {
+        int max_frames_per_channel_in = 0;
+        if (inputBitDepth > 0 && inputChannels > 0) { // Ensure inputBitDepth and inputChannels are positive
+             max_frames_per_channel_in = (CHUNK_SIZE / (inputBitDepth / 8)) / inputChannels;
+        }
+        if (max_frames_per_channel_in <= 0) { // Default to a reasonable capacity if calculation fails
+            max_frames_per_channel_in = 2048; // Default capacity
+            std::cerr << "Warning: Could not determine max_frames_per_channel_in, defaulting to " << max_frames_per_channel_in << std::endl;
+        }
+
+        upsamplers.reserve(inputChannels);
+        r8brain_upsampler_in_buf.resize(inputChannels);
+        for (int i = 0; i < inputChannels; ++i) {
+            try {
+                upsamplers.push_back(new r8b::CDSPResampler24(
+                    static_cast<double>(inputSampleRate),
+                    static_cast<double>(outputSampleRate * OVERSAMPLING_FACTOR),
+                    max_frames_per_channel_in
+                ));
+                r8brain_upsampler_in_buf[i].resize(max_frames_per_channel_in);
+            } catch (const std::bad_alloc& e) {
+                std::cerr << "Error allocating r8brain upsampler or buffer for channel " << i << ": " << e.what() << std::endl;
+                // Clean up already allocated resamplers in case of partial failure
+                for (auto ptr : upsamplers) delete ptr;
+                upsamplers.clear();
+                r8brain_upsampler_in_buf.clear();
+                return;
+            }  catch (const std::exception& e) { // Changed to std::exception
+                std::cerr << "Standard exception during upsampler creation for channel " << i << ": " << e.what() << std::endl;
+                for (auto ptr : upsamplers) delete ptr;
+                upsamplers.clear();
+                r8brain_upsampler_in_buf.clear();
+                return;
+            } catch (...) {
+                std::cerr << "Unknown exception during upsampler creation for channel " << i << std::endl;
+                for (auto ptr : upsamplers) delete ptr;
+                upsamplers.clear();
+                r8brain_upsampler_in_buf.clear();
+                return;
+            }
+        }
+    }
+
+    // Initialize downsamplers
+    if (outputChannels > 0) {
+        // Estimate max frames after upsampling. This is a rough guide for buffer capacity.
+        // A more precise calculation would involve the resampling ratio.
+        // Using a generous estimate based on existing buffer sizes.
+        int max_frames_per_channel_out_oversampled = (CHUNK_SIZE * MAX_CHANNELS * 4 * OVERSAMPLING_FACTOR) / outputChannels;
+         if (max_frames_per_channel_out_oversampled <= 0) { // Default to a reasonable capacity
+            max_frames_per_channel_out_oversampled = 2048 * OVERSAMPLING_FACTOR * 2; // Default capacity, considering oversampling
+            std::cerr << "Warning: Could not determine max_frames_per_channel_out_oversampled, defaulting to " << max_frames_per_channel_out_oversampled << std::endl;
+        }
+
+        downsamplers.reserve(outputChannels);
+        r8brain_downsampler_in_buf.resize(outputChannels);
+        for (int i = 0; i < outputChannels; ++i) {
+            try {
+                downsamplers.push_back(new r8b::CDSPResampler24( // Removed r8brain::
+                    static_cast<double>(outputSampleRate * OVERSAMPLING_FACTOR),
+                    static_cast<double>(outputSampleRate),
+                    max_frames_per_channel_out_oversampled
+                ));
+                r8brain_downsampler_in_buf[i].resize(max_frames_per_channel_out_oversampled);
+            } catch (const std::bad_alloc& e) {
+                std::cerr << "Error allocating r8brain downsampler or buffer for channel " << i << ": " << e.what() << std::endl;
+                for (auto ptr : downsamplers) delete ptr;
+                downsamplers.clear();
+                r8brain_downsampler_in_buf.clear();
+                // Also clean up upsamplers if downsampler allocation fails mid-way
+                for (auto ptr : upsamplers) delete ptr;
+                upsamplers.clear();
+                r8brain_upsampler_in_buf.clear();
+                return;
+            } catch (const std::exception& e) { // Changed to std::exception
+                std::cerr << "Standard exception during downsampler creation for channel " << i << ": " << e.what() << std::endl;
+                for (auto ptr : downsamplers) delete ptr;
+                downsamplers.clear();
+                r8brain_downsampler_in_buf.clear();
+                for (auto ptr : upsamplers) delete ptr;
+                upsamplers.clear();
+                r8brain_upsampler_in_buf.clear();
+                return;
+            } catch (...) {
+                std::cerr << "Unknown exception during downsampler creation for channel " << i << std::endl;
+                for (auto ptr : downsamplers) delete ptr;
+                downsamplers.clear();
+                r8brain_downsampler_in_buf.clear();
+                for (auto ptr : upsamplers) delete ptr;
+                upsamplers.clear();
+                r8brain_upsampler_in_buf.clear();
+                return;
+            }
+        }
     }
 }
 
@@ -304,53 +410,89 @@ void AudioProcessor::resample() {
     }
 
     // Proceed with resampling
-    if (!sampler || inputChannels <= 0 || inputSampleRate <= 0 || outputSampleRate <= 0) {
-         std::cerr << "Error: Sampler not initialized or invalid channels/rate for resampling." << std::endl;
+    if (upsamplers.empty() || inputChannels <= 0 || inputSampleRate <= 0 || outputSampleRate <= 0) {
+         std::cerr << "Error: Upsamplers not initialized or invalid channels/rate for resampling." << std::endl;
          resample_buffer_pos = 0; return;
     }
 
-    long datalen_frames = scale_buffer_pos / inputChannels;
-    size_t datalen_samples = datalen_frames * inputChannels;
+    if (scale_buffer_pos == 0) {
+        resample_buffer_pos = 0;
+        return;
+    }
+    
+    size_t num_input_frames = scale_buffer_pos / inputChannels;
+    if (num_input_frames == 0) { resample_buffer_pos = 0; return; }
 
-    if (datalen_frames == 0) { resample_buffer_pos = 0; return; }
-    if (datalen_samples > scaled_buffer.size() || datalen_samples > resampler_data_in.capacity()) {
-         std::cerr << "Error: Not enough data/capacity in source buffers for resampling." << std::endl;
-         resample_buffer_pos = 0; return;
+    // De-interleave and convert to double for r8brain
+    for (int ch = 0; ch < inputChannels; ++ch) {
+        if (r8brain_upsampler_in_buf[ch].size() < num_input_frames) {
+            try {
+                r8brain_upsampler_in_buf[ch].resize(num_input_frames);
+            } catch (const std::bad_alloc& e) {
+                std::cerr << "Error resizing r8brain_upsampler_in_buf for channel " << ch << ": " << e.what() << std::endl;
+                resample_buffer_pos = 0; return;
+            }
+        }
+        for (size_t frame = 0; frame < num_input_frames; ++frame) {
+            if ((frame * inputChannels + ch) < scaled_buffer.size()) {
+                 r8brain_upsampler_in_buf[ch][frame] = static_cast<double>(scaled_buffer[frame * inputChannels + ch]) / 2147483647.0; // INT32_MAX
+            } else {
+                std::cerr << "Error: Out of bounds access in resample data preparation." << std::endl;
+                resample_buffer_pos = 0; return;
+            }
+        }
     }
-     if (resampler_data_in.size() < datalen_samples) {
-         try { resampler_data_in.resize(datalen_samples); } 
-         catch (const std::bad_alloc& e) { std::cerr << "Error resizing resampler_data_in: " << e.what() << std::endl; resample_buffer_pos = 0; return; }
-     }
+    
+    std::vector<double*> r8brain_output_ptrs(inputChannels);
+    int output_frames_generated = 0; 
 
-    src_int_to_float_array(scaled_buffer.data(), resampler_data_in.data(), datalen_samples);
-    
-    SRC_DATA sampler_config = {0};
-    sampler_config.data_in = resampler_data_in.data();
-    sampler_config.data_out = resampler_data_out.data();
-    sampler_config.src_ratio = static_cast<double>(outputSampleRate * OVERSAMPLING_FACTOR) / inputSampleRate;
-    sampler_config.input_frames = datalen_frames;
-    sampler_config.output_frames = resampler_data_out.capacity() / inputChannels; 
-    
-    int error = src_process(sampler, &sampler_config);
-    if (error != 0) {
-        std::cerr << "Error in src_process (sampler): " << src_strerror(error) << std::endl; 
-        resample_buffer_pos = 0; return;
+    for (int ch = 0; ch < inputChannels; ++ch) {
+        if (ch < upsamplers.size() && upsamplers[ch] != nullptr) {
+            try {
+                // The third argument to process is a reference to a double*, 
+                // r8brain will set this pointer to its internal buffer.
+                output_frames_generated = upsamplers[ch]->process(r8brain_upsampler_in_buf[ch].data(), num_input_frames, r8brain_output_ptrs[ch]);
+                if (output_frames_generated < 0) { // r8brain might return negative on error
+                    std::cerr << "r8brain upsampling error on channel " << ch << ". Code: " << output_frames_generated << std::endl;
+                    resample_buffer_pos = 0; return;
+                }
+            } catch (const std::exception& e) { // Changed to std::exception
+                std::cerr << "Standard exception during upsampling on channel " << ch << ": " << e.what() << std::endl;
+                resample_buffer_pos = 0; return;
+            } catch (...) {
+                std::cerr << "Unknown exception during upsampling on channel " << ch << std::endl;
+                resample_buffer_pos = 0; return;
+            }
+        } else {
+            std::cerr << "Error: Upsampler for channel " << ch << " is null or out of bounds." << std::endl;
+            resample_buffer_pos = 0; return;
+        }
     }
     
-    size_t frames_gen = sampler_config.output_frames_gen;
-    size_t samples_gen = frames_gen * inputChannels;
-
-    if (samples_gen > resampled_buffer.capacity()) {
-         std::cerr << "Error: Not enough capacity in resampled_buffer for generated samples. Required: " << samples_gen << ", Capacity: " << resampled_buffer.capacity() << std::endl;
-         resample_buffer_pos = 0; return; 
-    }
-    if (resampled_buffer.size() < samples_gen) {
-         try { resampled_buffer.resize(samples_gen); } 
-         catch (const std::bad_alloc& e) { std::cerr << "Error resizing resampled_buffer: " << e.what() << std::endl; resample_buffer_pos = 0; return; }
+    size_t total_output_samples = static_cast<size_t>(output_frames_generated) * inputChannels;
+    if (resampled_buffer.size() < total_output_samples) {
+        try {
+            resampled_buffer.resize(total_output_samples);
+        } catch (const std::bad_alloc& e) {
+            std::cerr << "Error resizing resampled_buffer: " << e.what() << std::endl;
+            resample_buffer_pos = 0; return;
+        }
     }
     
-    src_float_to_int_array(resampler_data_out.data(), resampled_buffer.data(), samples_gen);
-    resample_buffer_pos = samples_gen;
+    // Interleave and convert back to int32_t
+    for (int frame = 0; frame < output_frames_generated; ++frame) {
+        for (int ch = 0; ch < inputChannels; ++ch) {
+            if (r8brain_output_ptrs[ch] != nullptr) {
+                double sample_double = r8brain_output_ptrs[ch][frame];
+                sample_double = std::max(-1.0, std::min(1.0, sample_double)); // Clipping
+                resampled_buffer[frame * inputChannels + ch] = static_cast<int32_t>(sample_double * 2147483647.0);
+            } else {
+                 std::cerr << "Error: r8brain output pointer for channel " << ch << " is null after processing." << std::endl;
+                 resample_buffer_pos = 0; return;
+            }
+        }
+    }
+    resample_buffer_pos = total_output_samples;
 }
 
 
@@ -376,53 +518,87 @@ void AudioProcessor::downsample() {
      }
 
     // Proceed with downsampling
-    if (!downsampler || outputChannels <= 0 || outputSampleRate <= 0) {
-         std::cerr << "Error: Downsampler not initialized or invalid channels/rate for downsampling." << std::endl;
+    if (downsamplers.empty() || outputChannels <= 0 || outputSampleRate <= 0) {
+         std::cerr << "Error: Downsamplers not initialized or invalid channels/rate for downsampling." << std::endl;
          process_buffer_pos = 0; return;
     }
 
-    long datalen_frames = merged_buffer_pos / outputChannels;
-    size_t datalen_samples = datalen_frames * outputChannels;
-
-    if (datalen_frames == 0) { process_buffer_pos = 0; return; }
-    if (datalen_samples > merged_buffer.size() || datalen_samples > resampler_data_in.capacity()) {
-         std::cerr << "Error: Not enough data/capacity in source buffers for downsampling." << std::endl;
-         process_buffer_pos = 0; return;
-    }
-     if (resampler_data_in.size() < datalen_samples) {
-         try { resampler_data_in.resize(datalen_samples); } 
-         catch (const std::bad_alloc& e) { std::cerr << "Error resizing resampler_data_in: " << e.what() << std::endl; process_buffer_pos = 0; return; }
-     }
-
-    src_int_to_float_array(merged_buffer.data(), resampler_data_in.data(), datalen_samples);
-    
-    SRC_DATA downsampler_config = {0};
-    downsampler_config.data_in = resampler_data_in.data();
-    downsampler_config.data_out = resampler_data_out.data();
-    downsampler_config.src_ratio = static_cast<double>(outputSampleRate) / (outputSampleRate * OVERSAMPLING_FACTOR); 
-    downsampler_config.input_frames = datalen_frames;
-    downsampler_config.output_frames = resampler_data_out.capacity() / outputChannels; 
-
-    int error = src_process(downsampler, &downsampler_config);
-    if (error != 0) {
-        std::cerr << "Error in src_process (downsampler): " << src_strerror(error) << std::endl; 
-        process_buffer_pos = 0; return;
-    }
-    
-    size_t frames_gen = downsampler_config.output_frames_gen;
-    size_t samples_gen = frames_gen * outputChannels;
-
-    if (samples_gen > processed_buffer.capacity()) {
-         std::cerr << "Error: Not enough capacity in processed_buffer for generated samples. Required: " << samples_gen << ", Capacity: " << processed_buffer.capacity() << std::endl;
-         process_buffer_pos = 0; return; 
-    }
-    if (processed_buffer.size() < samples_gen) {
-         try { processed_buffer.resize(samples_gen); } 
-         catch (const std::bad_alloc& e) { std::cerr << "Error resizing processed_buffer: " << e.what() << std::endl; process_buffer_pos = 0; return; }
+    if (merged_buffer_pos == 0) {
+        process_buffer_pos = 0;
+        return;
     }
 
-    src_float_to_int_array(resampler_data_out.data(), processed_buffer.data(), samples_gen);
-    process_buffer_pos = samples_gen;
+    size_t num_input_frames_for_downsample = merged_buffer_pos / outputChannels;
+    if (num_input_frames_for_downsample == 0) { process_buffer_pos = 0; return; }
+
+    // De-interleave and convert to double for r8brain
+    for (int ch = 0; ch < outputChannels; ++ch) {
+        if (r8brain_downsampler_in_buf[ch].size() < num_input_frames_for_downsample) {
+            try {
+                r8brain_downsampler_in_buf[ch].resize(num_input_frames_for_downsample);
+            } catch (const std::bad_alloc& e) {
+                std::cerr << "Error resizing r8brain_downsampler_in_buf for channel " << ch << ": " << e.what() << std::endl;
+                process_buffer_pos = 0; return;
+            }
+        }
+        for (size_t frame = 0; frame < num_input_frames_for_downsample; ++frame) {
+            if ((frame * outputChannels + ch) < merged_buffer.size()) {
+                r8brain_downsampler_in_buf[ch][frame] = static_cast<double>(merged_buffer[frame * outputChannels + ch]) / 2147483647.0; // INT32_MAX
+            } else {
+                std::cerr << "Error: Out of bounds access in downsample data preparation." << std::endl;
+                process_buffer_pos = 0; return;
+            }
+        }
+    }
+
+    std::vector<double*> r8brain_output_ptrs_down(outputChannels);
+    int final_output_frames_generated = 0;
+
+    for (int ch = 0; ch < outputChannels; ++ch) {
+        if (ch < downsamplers.size() && downsamplers[ch] != nullptr) {
+            try {
+                final_output_frames_generated = downsamplers[ch]->process(r8brain_downsampler_in_buf[ch].data(), num_input_frames_for_downsample, r8brain_output_ptrs_down[ch]);
+                 if (final_output_frames_generated < 0) { // r8brain might return negative on error
+                    std::cerr << "r8brain downsampling error on channel " << ch << ". Code: " << final_output_frames_generated << std::endl;
+                    process_buffer_pos = 0; return;
+                }
+            } catch (const std::exception& e) { // Changed to std::exception
+                std::cerr << "Standard exception during downsampling on channel " << ch << ": " << e.what() << std::endl;
+                process_buffer_pos = 0; return;
+            } catch (...) {
+                std::cerr << "Unknown exception during downsampling on channel " << ch << std::endl;
+                process_buffer_pos = 0; return;
+            }
+        } else {
+            std::cerr << "Error: Downsampler for channel " << ch << " is null or out of bounds." << std::endl;
+            process_buffer_pos = 0; return;
+        }
+    }
+
+    size_t total_final_output_samples = static_cast<size_t>(final_output_frames_generated) * outputChannels;
+    if (processed_buffer.size() < total_final_output_samples) {
+        try {
+            processed_buffer.resize(total_final_output_samples);
+        } catch (const std::bad_alloc& e) {
+            std::cerr << "Error resizing processed_buffer for downsampling: " << e.what() << std::endl;
+            process_buffer_pos = 0; return;
+        }
+    }
+
+    // Interleave and convert back to int32_t
+    for (int frame = 0; frame < final_output_frames_generated; ++frame) {
+        for (int ch = 0; ch < outputChannels; ++ch) {
+             if (r8brain_output_ptrs_down[ch] != nullptr) {
+                double sample_double = r8brain_output_ptrs_down[ch][frame];
+                sample_double = std::max(-1.0, std::min(1.0, sample_double)); // Clipping
+                processed_buffer[frame * outputChannels + ch] = static_cast<int32_t>(sample_double * 2147483647.0);
+            } else {
+                 std::cerr << "Error: r8brain output pointer for channel " << ch << " is null after downsampling." << std::endl;
+                 process_buffer_pos = 0; return;
+            }
+        }
+    }
+    process_buffer_pos = total_final_output_samples;
 }
 
 

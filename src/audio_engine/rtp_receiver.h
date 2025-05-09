@@ -108,6 +108,8 @@ public:
      */
     void remove_output_queue(const std::string& source_tag, const std::string& instance_id); // Changed signature
 
+    std::vector<std::string> get_seen_tags(); // Added
+
 protected:
     // --- AudioComponent Interface ---
     void run() override; // The main thread loop
@@ -125,6 +127,9 @@ private:
     // Keep track of known source tags to avoid spamming notifications
     std::set<std::string> known_source_tags_;
     std::mutex known_tags_mutex_; // Protects access to known_source_tags_
+
+    std::vector<std::string> seen_tags_; // Added
+    std::mutex seen_tags_mutex_;      // Added
 
     // Internal helper methods
     bool setup_socket();

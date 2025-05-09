@@ -5,7 +5,8 @@
 #include "rtp_receiver.h"
 #include "source_input_processor.h"
 #include "sink_audio_mixer.h"
-#include "raw_scream_receiver.h" // Added this line
+#include "raw_scream_receiver.h"
+#include "per_process_scream_receiver.h" // Added this line
 #include "thread_safe_queue.h"
 #include "audio_types.h"
 
@@ -120,6 +121,20 @@ public:
      */
     bool remove_raw_scream_receiver(int listen_port);
 
+    /**
+     * @brief Adds and starts a new per-process Scream receiver.
+     * @param config Configuration for the per-process Scream receiver (e.g., listen port).
+     * @return true if the receiver was added successfully, false otherwise.
+     */
+    bool add_per_process_scream_receiver(const PerProcessScreamReceiverConfig& config);
+
+    /**
+     * @brief Stops and removes an existing per-process Scream receiver.
+     * @param listen_port The listen port of the receiver to remove.
+     * @return true if the receiver was removed successfully, false if not found.
+     */
+    bool remove_per_process_scream_receiver(int listen_port);
+
 
     // --- Control API (for Python via pybind11) ---
     /**
@@ -172,6 +187,28 @@ public:
      */
     std::vector<uint8_t> get_mp3_data_by_ip(const std::string& ip_address);
 
+    // --- Receiver Info API ---
+    /**
+     * @brief Retrieves the list of seen source tags from the main RTP receiver.
+     * @return A vector of strings, where each string is a source tag (typically IP address).
+     */
+    std::vector<std::string> get_rtp_receiver_seen_tags();
+
+    /**
+     * @brief Retrieves the list of seen source tags from a specific Raw Scream receiver.
+     * @param listen_port The port of the Raw Scream receiver.
+     * @return A vector of strings (source tags), or an empty vector if the receiver is not found.
+     */
+    std::vector<std::string> get_raw_scream_receiver_seen_tags(int listen_port);
+
+    /**
+     * @brief Retrieves the list of seen source tags from a specific Per-Process Scream receiver.
+     * @param listen_port The port of the Per-Process Scream receiver.
+     * @return A vector of strings (composite source tags), or an empty vector if the receiver is not found.
+     */
+    std::vector<std::string> get_per_process_scream_receiver_seen_tags(int listen_port);
+
+
     // Removed set_sink_tcp_fd
 
 private:
@@ -202,6 +239,8 @@ private:
 
     // Raw Scream Receivers (Port -> Receiver Ptr) - Assuming one receiver per port
     std::map<int, std::unique_ptr<RawScreamReceiver>> raw_scream_receivers_;
+    // Per-Process Scream Receivers (Port -> Receiver Ptr)
+    std::map<int, std::unique_ptr<PerProcessScreamReceiver>> per_process_scream_receivers_;
 
     // Removed source_configs_ map
 

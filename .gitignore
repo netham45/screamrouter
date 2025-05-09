@@ -19,3 +19,5 @@ tasks/**
 **/*.so
 **/*.mp3
 **/*.tar.gz
+c_utils/**
+**/*.swp

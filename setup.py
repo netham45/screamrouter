@@ -51,21 +51,8 @@ DEPS_CONFIG = {
         "header_dir_name": "lame", # Results in: build/deps/include/lame/lame.h
         "main_header_file_rel_to_header_dir": "lame.h",
         "link_name": "mp3lame",
-    },
-    "samplerate": {
-        "src_dir": PROJECT_ROOT / "src/audio_engine/libsamplerate",
-        "build_system": "cmake",
-        "cmake_args": [
-            "-DLIBSAMPLERATE_EXAMPLES=OFF", "-DLIBSAMPLERATE_TESTS=OFF",
-            "-DBUILD_SHARED_LIBS=OFF",
-            f"-DCMAKE_INSTALL_LIBDIR={DEPS_INSTALL_LIB_DIR.name}",
-        ],
-        "lib_name_win": "samplerate.lib",
-        "lib_name_unix_static": "libsamplerate.a",
-        "header_dir_name": "", # Results in: build/deps/include/samplerate.h
-        "main_header_file_rel_to_header_dir": "samplerate.h",
-        "link_name": "samplerate",
     }
+    # "samplerate" dependency removed as r8brain is used directly
 }
 
 class BuildExtCommand(_build_ext):
@@ -104,9 +91,28 @@ class BuildExtCommand(_build_ext):
 
     def _run_subprocess_in_msvc_env(self, command_parts, cwd, dep_name="dependency"):
         if not sys.platform == "win32":
-            subprocess.run(command_parts, cwd=cwd, check=True)
+            # For Unix-like systems, ensure CFLAGS and CXXFLAGS include -fPIC in the environment.
+            # This is crucial for building static libraries (like libsamplerate.a or libmp3lame.a)
+            # that will be linked into a shared object extension.
+            current_env = os.environ.copy()
+            cflags = current_env.get("CFLAGS", "")
+            cxxflags = current_env.get("CXXFLAGS", "")
+
+            if "-fPIC" not in cflags.split():
+                cflags = (cflags + " -fPIC").strip()
+            if "-fPIC" not in cxxflags.split(): # Also for C++ parts of dependencies
+                cxxflags = (cxxflags + " -fPIC").strip()
+            
+            current_env["CFLAGS"] = cflags
+            current_env["CXXFLAGS"] = cxxflags
+            
+            # For debugging build issues, it can be helpful to see the exact flags used.
+            # print(f"INFO: Running for {dep_name} on Unix with effective CFLAGS='{cflags}' CXXFLAGS='{cxxflags}'")
+            # print(f"Executing command: {' '.join(command_parts)}")
+            subprocess.run(command_parts, cwd=cwd, check=True, env=current_env)
             return
 
+        # MSVC specific environment setup for Windows
         if os.environ.get("VCINSTALLDIR") and os.environ.get("VCToolsInstallDir"):
             print(f"MSVC environment seems active for {dep_name}. Running command directly: {' '.join(command_parts)}")
             subprocess.run(command_parts, cwd=cwd, check=True, shell=False)
@@ -185,11 +191,15 @@ class BuildExtCommand(_build_ext):
                     ]
                     if sys.platform == "win32":
                         configure_cmd_parts.append("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
-                    # START MODIFICATION for samplerate PIC on Linux/Unix
-                    elif sys.platform != "win32": # For samplerate (and any other CMake dep) on Unix-like
+                    else: # Non-Windows (Linux, macOS)
+                        # Ensure Position Independent Code (PIC) for shared library compatibility.
+                        # This is the standard CMake way to request PIC.
+                        # The actual -fPIC flag will be enforced via CFLAGS/CXXFLAGS in the environment
+                        # by our modified _run_subprocess_in_msvc_env method.
                         configure_cmd_parts.append("-DCMAKE_POSITION_INDEPENDENT_CODE=ON")
-                    # END MODIFICATION
-
+                    
+                    # Add dependency-specific CMake args from DEPS_CONFIG
+                    # config["cmake_args"] is guaranteed to exist for "samplerate" based on DEPS_CONFIG structure.
                     configure_cmd_parts.extend(config["cmake_args"])
 
                     print(f"Running CMake configure for {name}...")
@@ -299,17 +309,19 @@ class BuildExtCommand(_build_ext):
 # --- Main Extension Configuration ---
 source_files = [
     "src/audio_engine/bindings.cpp", "src/audio_engine/audio_manager.cpp",
-    "src/audio_engine/rtp_receiver.cpp", "src/audio_engine/raw_scream_receiver.cpp",
+    "src/audio_engine/rtp_receiver.cpp", "src/audio_engine/raw_scream_receiver.cpp", "src/audio_engine/per_process_scream_receiver.cpp",
     "src/audio_engine/source_input_processor.cpp", "src/audio_engine/sink_audio_mixer.cpp",
     "src/audio_engine/audio_processor.cpp", "src/audio_engine/layout_mixer.cpp",
     "src/audio_engine/biquad/biquad.cpp", "src/configuration/audio_engine_config_applier.cpp",
+    "src/audio_engine/r8brain-free-src/r8bbase.cpp", "src/audio_engine/r8brain-free-src/pffft.cpp", 
 ]
 main_extension_include_dirs = [
     str(PROJECT_ROOT / "src/audio_engine"), str(PROJECT_ROOT / "src/configuration"),
+    str(PROJECT_ROOT / "src/audio_engine/r8brain-free-src"),
 ]
 platform_extra_compile_args = []
 platform_extra_link_args = []
-main_extension_libraries = [DEPS_CONFIG["lame"]["link_name"], DEPS_CONFIG["samplerate"]["link_name"]]
+main_extension_libraries = [DEPS_CONFIG["lame"]["link_name"]]
 main_extension_library_dirs = []
 
 if sys.platform == "win32":

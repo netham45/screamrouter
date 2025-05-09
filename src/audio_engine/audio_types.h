@@ -89,7 +89,7 @@ struct SourceConfig {
     int target_output_channels = 2;    // Target output channels for this source path
     int target_output_samplerate = 48000; // Target output samplerate for this source path
     // --- END NEW FIELDS ---
-    int protocol_type_hint = 0; // Add this line (0 for RTP_SCREAM_PAYLOAD, 1 for RAW_SCREAM_PACKET)
+    int protocol_type_hint = 0; // 0 for RTP_SCREAM_PAYLOAD, 1 for RAW_SCREAM_PACKET, 2 for PER_PROCESS_SCREAM_PACKET
     int target_receiver_port = -1; // Add this line
 };
 
@@ -119,10 +119,17 @@ struct RawScreamReceiverConfig {
     // std::string bind_ip = "0.0.0.0"; // Optional: Interface IP to bind to
 };
 
+// Configuration for PerProcessScreamReceiver component
+struct PerProcessScreamReceiverConfig {
+    int listen_port = 16402; // Port for this receiver
+    // Add other config options if needed, e.g., interface_ip
+};
+
 // Enum to specify the expected input data format for a SourceInputProcessor
 enum class InputProtocolType {
-    RTP_SCREAM_PAYLOAD, // Expects raw PCM audio data (RTP payload)
-    RAW_SCREAM_PACKET   // Expects full 5-byte header + PCM audio data
+    RTP_SCREAM_PAYLOAD,       // Expects raw PCM audio data (RTP payload)
+    RAW_SCREAM_PACKET,        // Expects full 5-byte header + PCM audio data
+    PER_PROCESS_SCREAM_PACKET // Expects Program Tag + 5-byte header + PCM audio data
 };
 
 // Configuration for SourceInputProcessor component

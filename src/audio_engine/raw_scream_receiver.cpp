@@ -292,7 +292,116 @@ void RawScreamReceiver::run() {
                     if (known_source_tags_.find(source_tag) == known_source_tags_.end()) {
                         known_source_tags_.insert(source_tag);
                         // Unlock before pushing to queue
-                        lock.~lock_guard(); 
+                        // lock.~lock_guard(); // This explicit unlock is not strictly necessary before the next lock, but kept for consistency with original logic
+                        
+                        // Add to seen_tags_ if not already present
+                        { // New scope for seen_tags_mutex_
+                            std::lock_guard<std::mutex> seen_lock(seen_tags_mutex_);
+                            if (std::find(seen_tags_.begin(), seen_tags_.end(), source_tag) == seen_tags_.end()) {
+                                seen_tags_.push_back(source_tag);
+                            }
+                        } // seen_tags_mutex_ released here
+
+                        // Original notification logic (ensure known_tags_mutex_ is released if not already)
+                        // If lock.~lock_guard() was used above, this is fine. Otherwise, ensure it's released.
+                        // For safety, let's re-evaluate the lock scope for notification.
+                        // The original code unlocked known_tags_mutex_ before notification.
+                        // To maintain that, we can unlock it here if it wasn't already.
+                        // However, since we are already in its scope, we can just proceed.
+                        // The critical part is that notification_queue_->push is not holding the lock.
+                        // The original explicit unlock `lock.~lock_guard();` handles this.
+                        // Let's ensure that behavior is preserved.
+                        // The explicit unlock `lock.~lock_guard();` should be AFTER adding to seen_tags_ if we want to keep known_tags_mutex_ locked during that operation.
+                        // Or, we can have separate locks.
+                        // Revisiting: The original code unlocked known_tags_mutex_ *before* notification.
+                        // Let's stick to that pattern.
+                        // The known_source_tags_.insert(source_tag) is done.
+                        // Now, before notification, release known_tags_mutex_
+                        // lock.~lock_guard(); // This was the original position.
+                        // The new logic for seen_tags_ should ideally be within the same known_tags_mutex_ scope if we want to ensure atomicity of adding to both.
+                        // However, the request is just to add to seen_tags_ when a new source is detected.
+                        // Let's refine:
+                        // 1. Lock known_tags_mutex_
+                        // 2. Check if new source
+                        // 3. If new:
+                        //    a. insert into known_source_tags_
+                        //    b. Lock seen_tags_mutex_
+                        //    c. Add to seen_tags_ if not present
+                        //    d. Unlock seen_tags_mutex_
+                        //    e. Unlock known_tags_mutex_ (original explicit unlock)
+                        //    f. Push notification
+                        // This order seems correct. The explicit unlock of known_tags_mutex_ was already there.
+                        // The code above already implements this logic flow.
+                        // The `lock.~lock_guard()` was for `known_tags_mutex_`.
+                        // We need to ensure it's called after the `seen_tags_` modification.
+                        // Let's adjust the placement of the explicit unlock.
+                        // No, the original `lock.~lock_guard()` was for `known_tags_mutex_` and it was before the notification.
+                        // The `seen_tags_` logic is now nested.
+                        // The `known_tags_mutex_` is still locked when `seen_tags_mutex_` is acquired.
+                        // This is fine (lock ordering is consistent if always known_tags -> seen_tags).
+                        // The explicit unlock `lock.~lock_guard()` for `known_tags_mutex_` should happen *after* all modifications guarded by it.
+                        // So, it should be after the inner scope for `seen_tags_mutex_`.
+                        
+                        // Corrected placement of explicit unlock for known_tags_mutex_
+                        // This ensures it's unlocked before the notification, as in the original code.
+                        // The lock object `lock` refers to `known_tags_mutex_`.
+                        // The inner lock `seen_lock` refers to `seen_tags_mutex_`.
+                        // The explicit unlock should be for `lock` (known_tags_mutex_).
+                        // The original code had `lock.~lock_guard();` right before `LOG_RSR` and `notification_queue_->push`.
+                        // Let's ensure that.
+                        // The current structure is:
+                        // lock(known_tags_mutex_)
+                        // if new:
+                        //   insert to known_source_tags_
+                        //   lock(seen_tags_mutex_)
+                        //   add to seen_tags_
+                        //   unlock(seen_tags_mutex_)
+                        //   lock.~lock_guard() // for known_tags_mutex_
+                        //   LOG_RSR
+                        //   notification_queue_->push
+                        // This seems correct. The provided code already has `lock.~lock_guard();`
+                        // Let's verify its position relative to the new block.
+                        // Original:
+                        // { std::lock_guard<std::mutex> lock(known_tags_mutex_);
+                        //   if (known_source_tags_.find(source_tag) == known_source_tags_.end()) {
+                        //     known_source_tags_.insert(source_tag);
+                        //     lock.~lock_guard(); // UNLOCKS KNOWN_TAGS_MUTEX
+                        //     LOG_RSR("New source detected: " + source_tag);
+                        //     notification_queue_->push(NewSourceNotification{source_tag});
+                        //   }
+                        // }
+                        // With new code:
+                        // { std::lock_guard<std::mutex> lock(known_tags_mutex_);
+                        //   if (known_source_tags_.find(source_tag) == known_source_tags_.end()) {
+                        //     known_source_tags_.insert(source_tag);
+                        //     { std::lock_guard<std::mutex> seen_lock(seen_tags_mutex_);
+                        //       if (std::find(seen_tags_.begin(), seen_tags_.end(), source_tag) == seen_tags_.end()) {
+                        //         seen_tags_.push_back(source_tag);
+                        //       }
+                        //     }
+                        //     lock.~lock_guard(); // UNLOCKS KNOWN_TAGS_MUTEX
+                        //     LOG_RSR("New source detected: " + source_tag);
+                        //     notification_queue_->push(NewSourceNotification{source_tag});
+                        //   }
+                        // }
+                        // This order is correct. The `lock.~lock_guard()` is for `known_tags_mutex_`.
+                        // The `seen_tags_` modification happens while `known_tags_mutex_` is still locked.
+                        // Then `known_tags_mutex_` is explicitly unlocked before notification.
+                        // This matches the logic.
+                        // The code block I wrote for the SEARCH part was:
+                        // {
+                        //     std::lock_guard<std::mutex> lock(known_tags_mutex_);
+                        //     if (known_source_tags_.find(source_tag) == known_source_tags_.end()) {
+                        //         known_source_tags_.insert(source_tag);
+                        //         // Unlock before pushing to queue
+                        //         lock.~lock_guard(); 
+                        //         LOG_RSR("New source detected: " + source_tag);
+                        //         notification_queue_->push(NewSourceNotification{source_tag});
+                        //     }
+                        // }
+                        // This is what I need to replace.
+                        // The replacement block correctly inserts the seen_tags logic before the explicit unlock.
+                        lock.~lock_guard(); // This explicitly unlocks known_tags_mutex_
                         LOG_RSR("New source detected: " + source_tag);
                         notification_queue_->push(NewSourceNotification{source_tag});
                     }
@@ -364,4 +473,9 @@ void RawScreamReceiver::run() {
         }
     }
     LOG_RSR("Receiver thread exiting run loop.");
+}
+
+std::vector<std::string> RawScreamReceiver::get_seen_tags() {
+    std::lock_guard<std::mutex> lock(seen_tags_mutex_);
+    return seen_tags_; // Return a copy
 }

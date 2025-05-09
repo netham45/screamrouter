@@ -318,6 +318,15 @@ void RtpReceiver::run() {
                     std::lock_guard<std::mutex> lock(known_tags_mutex_);
                     if (known_source_tags_.find(source_tag) == known_source_tags_.end()) {
                         known_source_tags_.insert(source_tag);
+
+                        // Add to seen_tags_ if not already present
+                        { // New scope for seen_tags_mutex_
+                            std::lock_guard<std::mutex> seen_lock(seen_tags_mutex_);
+                            if (std::find(seen_tags_.begin(), seen_tags_.end(), source_tag) == seen_tags_.end()) {
+                                seen_tags_.push_back(source_tag);
+                            }
+                        } // seen_tags_mutex_ released here
+                        
                         // Unlock before pushing to queue to avoid holding lock while potentially blocking
                         lock.~lock_guard(); // Explicitly unlock before pushing
                         LOG("New source detected: " + source_tag);
@@ -381,4 +390,9 @@ void RtpReceiver::run() {
     } // End while loop
 
     LOG("Receiver thread exiting run loop.");
+}
+
+std::vector<std::string> RtpReceiver::get_seen_tags() {
+    std::lock_guard<std::mutex> lock(seen_tags_mutex_);
+    return seen_tags_; // Return a copy
 }

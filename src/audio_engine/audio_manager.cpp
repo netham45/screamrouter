@@ -1,5 +1,6 @@
 #include "audio_manager.h"
-#include "raw_scream_receiver.h" // Include the new header
+#include "raw_scream_receiver.h"
+#include "per_process_scream_receiver.h" // Include the new header
 #include <iostream> // For logging
 #include <stdexcept>
 #include <utility> // For std::move
@@ -183,6 +184,16 @@ void AudioManager::shutdown() {
     raw_scream_receivers_.clear();
     LOG_AM("Raw Scream Receivers stopped.");
 
+    // Stop all PerProcessScreamReceivers
+    LOG_AM("Stopping Per-Process Scream Receivers...");
+    for (auto& pair : per_process_scream_receivers_) {
+        if (pair.second) {
+            pair.second->stop();
+        }
+    }
+    per_process_scream_receivers_.clear();
+    LOG_AM("Per-Process Scream Receivers stopped.");
+
     LOG_AM("Shutdown complete.");
 }
 
@@ -246,6 +257,67 @@ bool AudioManager::remove_raw_scream_receiver(int listen_port) {
     }
 
     LOG_AM("Raw scream receiver for port " + std::to_string(listen_port) + " removed successfully.");
+    return true;
+}
+
+bool AudioManager::add_per_process_scream_receiver(const PerProcessScreamReceiverConfig& config) {
+    LOG_AM("Adding per-process scream receiver for port: " + std::to_string(config.listen_port));
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+
+    if (!running_) {
+        LOG_ERROR_AM("Cannot add per-process scream receiver, manager is not running.");
+        return false;
+    }
+
+    if (per_process_scream_receivers_.count(config.listen_port)) {
+        LOG_ERROR_AM("Per-process scream receiver for port " + std::to_string(config.listen_port) + " already exists.");
+        return false;
+    }
+
+    std::unique_ptr<PerProcessScreamReceiver> new_receiver;
+    try {
+        new_receiver = std::make_unique<PerProcessScreamReceiver>(config, new_source_notification_queue_);
+        new_receiver->start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); 
+        if (!new_receiver->is_running()) {
+            throw std::runtime_error("PerProcessScreamReceiver failed to start.");
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR_AM("Failed to create or start PerProcessScreamReceiver for port " + std::to_string(config.listen_port) + ": " + std::string(e.what()));
+        return false;
+    }
+
+    per_process_scream_receivers_[config.listen_port] = std::move(new_receiver);
+    LOG_AM("Per-process scream receiver for port " + std::to_string(config.listen_port) + " added successfully.");
+    return true;
+}
+
+bool AudioManager::remove_per_process_scream_receiver(int listen_port) {
+    LOG_AM("Removing per-process scream receiver for port: " + std::to_string(listen_port));
+    std::unique_ptr<PerProcessScreamReceiver> receiver_to_remove;
+
+    { // Scope for lock
+        std::lock_guard<std::mutex> lock(manager_mutex_);
+        if (!running_) {
+            LOG_ERROR_AM("Cannot remove per-process scream receiver, manager is not running.");
+            return false;
+        }
+
+        auto it = per_process_scream_receivers_.find(listen_port);
+        if (it == per_process_scream_receivers_.end()) {
+            LOG_ERROR_AM("Per-process scream receiver for port " + std::to_string(listen_port) + " not found.");
+            return false;
+        }
+
+        receiver_to_remove = std::move(it->second);
+        per_process_scream_receivers_.erase(it);
+    } // Lock released
+
+    if (receiver_to_remove) {
+        receiver_to_remove->stop();
+    }
+
+    LOG_AM("Per-process scream receiver for port " + std::to_string(listen_port) + " removed successfully.");
     return true;
 }
 
@@ -395,14 +467,28 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     // proc_config.timeshift_buffer_duration_sec remains default or could be made configurable
 
     // Determine protocol type and target receiver port from validated config
-    InputProtocolType proto_type = (validated_config.protocol_type_hint == 1) ?
-                                       InputProtocolType::RAW_SCREAM_PACKET :
-                                       InputProtocolType::RTP_SCREAM_PAYLOAD;
-    proc_config.protocol_type = proto_type;
+    // These fields are primarily for the SourceInputProcessor's internal configuration
+    // and for the remove_source logic if it needs to unregister from a specific receiver.
+    // For add_output_queue, we now register with ALL receivers.
+    if (validated_config.protocol_type_hint == 0) {
+        proc_config.protocol_type = InputProtocolType::RTP_SCREAM_PAYLOAD;
+    } else if (validated_config.protocol_type_hint == 1) {
+        proc_config.protocol_type = InputProtocolType::RAW_SCREAM_PACKET;
+    } else if (validated_config.protocol_type_hint == 2) {
+        proc_config.protocol_type = InputProtocolType::PER_PROCESS_SCREAM_PACKET;
+    } else {
+        LOG_WARN_AM("Unknown protocol_type_hint: " + std::to_string(validated_config.protocol_type_hint) + ". Defaulting to RTP_SCREAM_PAYLOAD.");
+        proc_config.protocol_type = InputProtocolType::RTP_SCREAM_PAYLOAD; // Default
+    }
     proc_config.target_receiver_port = validated_config.target_receiver_port; // Copy target port
 
-    LOG_AM("Source instance " + instance_id + " configured with protocol type: " + (proto_type == InputProtocolType::RAW_SCREAM_PACKET ? "RAW_SCREAM" : "RTP_PAYLOAD") + 
-           (proto_type == InputProtocolType::RAW_SCREAM_PACKET ? ", Target Port: " + std::to_string(proc_config.target_receiver_port) : ""));
+    std::string protocol_str = "UNKNOWN";
+    if (proc_config.protocol_type == InputProtocolType::RTP_SCREAM_PAYLOAD) protocol_str = "RTP_SCREAM_PAYLOAD";
+    else if (proc_config.protocol_type == InputProtocolType::RAW_SCREAM_PACKET) protocol_str = "RAW_SCREAM_PACKET";
+    else if (proc_config.protocol_type == InputProtocolType::PER_PROCESS_SCREAM_PACKET) protocol_str = "PER_PROCESS_SCREAM_PACKET";
+
+    LOG_AM("Source instance " + instance_id + " configured with protocol type: " + protocol_str +
+           (proc_config.target_receiver_port != -1 ? ", Target Port: " + std::to_string(proc_config.target_receiver_port) : ""));
 
 
     // Create and Start SourceInputProcessor
@@ -445,42 +531,52 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
          return ""; // Return empty string on failure
      }
 
-    // --- Register with ALL active receivers ---
-    // Removed proc_mutex and proc_cv retrieval as they are no longer passed
+    // --- Register SourceInputProcessor's queue with ALL active receivers ---
+    LOG_AM("Registering source instance " + instance_id + " (tag: [" + proc_config.source_tag + "]) with all active receivers.");
     int registration_count = 0;
 
     // 1. Register with RtpReceiver
     if (rtp_receiver_) {
-        rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue); // Corrected: Removed mutex/cv args
-        LOG_AM("Registered instance " + instance_id + " with RtpReceiver.");
+        rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
+        LOG_AM("  Registered instance " + instance_id + " with RtpReceiver.");
         registration_count++;
     } else {
-        LOG_WARN_AM("RtpReceiver is null, cannot register instance " + instance_id);
+        LOG_WARN_AM("  RtpReceiver is null. Cannot register instance " + instance_id + ".");
     }
 
     // 2. Register with all RawScreamReceivers
     if (raw_scream_receivers_.empty()) {
-         LOG_WARN_AM("No RawScreamReceivers active, cannot register instance " + instance_id);
-    } else {
-        for (auto const& [port, receiver_ptr] : raw_scream_receivers_) {
-            if (receiver_ptr) {
-                receiver_ptr->add_output_queue(proc_config.source_tag, instance_id, rtp_queue); // Removed mutex/cv args
-                LOG_AM("Registered instance " + instance_id + " with RawScreamReceiver on port " + std::to_string(port));
-                registration_count++;
-            } else {
-                 LOG_ERROR_AM("Found null RawScreamReceiver pointer for port " + std::to_string(port));
-            }
+        LOG_AM("  No RawScreamReceivers active to register with.");
+    }
+    for (auto const& [port, receiver_ptr] : raw_scream_receivers_) {
+        if (receiver_ptr) {
+            receiver_ptr->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
+            LOG_AM("  Registered instance " + instance_id + " with RawScreamReceiver on port " + std::to_string(port) + ".");
+            registration_count++;
         }
     }
-    
-    // We might consider failing if registration_count is 0, but for now, let's allow it
-    // as receivers might be added later dynamically. The SourceInputProcessor won't get
-    // any data until registered.
-    if (registration_count == 0) {
-         LOG_WARN_AM("Source instance " + instance_id + " was not registered with ANY active receivers.");
+
+    // 3. Register with all PerProcessScreamReceivers
+    if (per_process_scream_receivers_.empty()) {
+        LOG_AM("  No PerProcessScreamReceivers active to register with.");
+    }
+    for (auto const& [port, receiver_ptr] : per_process_scream_receivers_) {
+        if (receiver_ptr) {
+            // The proc_config.source_tag (which is the original config.tag, e.g., "192.168.3.164  firefox.exe")
+            // is used here. PerProcessScreamReceiver's add_output_queue will store this.
+            // Its run() method generates the composite_source_tag (e.g. "192.168.3.164  firefox.exe")
+            // and uses that for lookup. These must match.
+            receiver_ptr->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
+            LOG_AM("  Registered instance " + instance_id + " (tag: " + proc_config.source_tag + ") with PerProcessScreamReceiver on port " + std::to_string(port) + ".");
+            registration_count++;
+        }
     }
 
-     // Store the new source processor using its unique instance_id
+    if (registration_count == 0) {
+         LOG_WARN_AM("Warning: Source instance " + instance_id + " (tag: " + proc_config.source_tag + ") was not registered with ANY active receivers. It will not receive packets.");
+    }
+
+    // Store the new source processor using its unique instance_id
      sources_[instance_id] = std::move(new_source);
 
     LOG_AM("Source instance " + instance_id + " (tag: " + config.tag + ") configured and started successfully.");
@@ -535,36 +631,42 @@ bool AudioManager::remove_source(const std::string& instance_id) {
         command_queues_.erase(instance_id);
         LOG_AM("Removed queues for source instance: " + instance_id);
 
-        // --- Unregister from ALL receivers ---
-        
-        // 1. Unregister from RtpReceiver
-        if (rtp_receiver_) {
-            if (!source_tag_for_removal.empty()) {
-                rtp_receiver_->remove_output_queue(source_tag_for_removal, instance_id);
-                LOG_AM("Unregistered instance " + instance_id + " from RtpReceiver.");
-            } else {
-                LOG_ERROR_AM("Cannot remove instance " + instance_id + " from RtpReceiver without its source_tag.");
+        // --- Unregister from appropriate receivers ---
+        if (!source_tag_for_removal.empty()) {
+            if (proto_type == InputProtocolType::RTP_SCREAM_PAYLOAD) {
+                if (rtp_receiver_) {
+                    rtp_receiver_->remove_output_queue(source_tag_for_removal, instance_id);
+                    LOG_AM("Unregistered instance " + instance_id + " (tag: " + source_tag_for_removal + ") from RtpReceiver.");
+                } else {
+                    LOG_WARN_AM("RtpReceiver is null during removal of instance " + instance_id + " for RTP_SCREAM_PAYLOAD.");
+                }
+            } else if (proto_type == InputProtocolType::RAW_SCREAM_PACKET) {
+                if (target_port != -1) {
+                    auto it = raw_scream_receivers_.find(target_port);
+                    if (it != raw_scream_receivers_.end() && it->second) {
+                        it->second->remove_output_queue(source_tag_for_removal, instance_id);
+                        LOG_AM("Unregistered instance " + instance_id + " (tag: " + source_tag_for_removal + ") from RawScreamReceiver on port " + std::to_string(target_port));
+                    } else {
+                        LOG_WARN_AM("RawScreamReceiver not found on port " + std::to_string(target_port) + " during removal of instance " + instance_id);
+                    }
+                } else {
+                    LOG_WARN_AM("Target port unknown for instance " + instance_id + " (RAW_SCREAM_PACKET), cannot unregister specific RawScreamReceiver.");
+                }
+            } else if (proto_type == InputProtocolType::PER_PROCESS_SCREAM_PACKET) {
+                if (target_port != -1) {
+                    auto it = per_process_scream_receivers_.find(target_port);
+                    if (it != per_process_scream_receivers_.end() && it->second) {
+                        it->second->remove_output_queue(source_tag_for_removal, instance_id);
+                        LOG_AM("Unregistered instance " + instance_id + " (tag: " + source_tag_for_removal + ") from PerProcessScreamReceiver on port " + std::to_string(target_port));
+                    } else {
+                        LOG_WARN_AM("PerProcessScreamReceiver not found on port " + std::to_string(target_port) + " during removal of instance " + instance_id);
+                    }
+                } else {
+                    LOG_WARN_AM("Target port unknown for instance " + instance_id + " (PER_PROCESS_SCREAM_PACKET), cannot unregister specific PerProcessScreamReceiver.");
+                }
             }
         } else {
-             LOG_WARN_AM("RtpReceiver is null during removal of instance " + instance_id);
-        }
-
-        // 2. Unregister from all RawScreamReceivers
-        if (!source_tag_for_removal.empty()) {
-             if (raw_scream_receivers_.empty()) {
-                 LOG_WARN_AM("No RawScreamReceivers active during removal of instance " + instance_id);
-             } else {
-                 for (auto const& [port, receiver_ptr] : raw_scream_receivers_) {
-                     if (receiver_ptr) {
-                         receiver_ptr->remove_output_queue(source_tag_for_removal, instance_id);
-                         LOG_AM("Unregistered instance " + instance_id + " from RawScreamReceiver on port " + std::to_string(port));
-                     } else {
-                          LOG_ERROR_AM("Found null RawScreamReceiver pointer for port " + std::to_string(port) + " during removal.");
-                     }
-                 }
-             }
-        } else {
-             LOG_ERROR_AM("Cannot remove instance " + instance_id + " from RawScreamReceivers without its source_tag.");
+            LOG_ERROR_AM("Source tag for removal is empty for instance " + instance_id + ". Cannot unregister from receivers.");
         }
 
         // Tell all sinks to remove this source's input queue
@@ -794,74 +896,9 @@ std::vector<uint8_t> AudioManager::get_mp3_data_by_ip(const std::string& ip_addr
     for (const auto& pair : sink_configs_) {
         const SinkConfig& config = pair.second;
         if (config.output_ip == ip_address) {
-            // Found a sink with the matching IP, now get its ID and call the original get_mp3_data
-            // The sink_id is pair.first (the key in the map) or config.id
-            // Release lock before calling another public method that might lock
-            // However, get_mp3_data also locks, so we need to be careful or refactor.
-            // For now, let's call it directly. If deadlocks occur, this needs rethinking.
-            // The current get_mp3_data implementation locks manager_mutex_ as well.
-            // To avoid recursive locking on the same mutex by the same thread (which is UB for std::mutex),
-            // we can temporarily unlock and then call, or make get_mp3_data not lock if called internally.
-            // A simpler approach for now: get_mp3_data itself will re-acquire the lock.
-            // This is fine as std::lock_guard unlocks upon exiting this scope.
-            // The risk is if get_mp3_data tries to acquire the *same* lock instance again *before* this one releases.
-            // Let's make a copy of sink_id and release the lock before calling.
-
-            std::string found_sink_id = config.id; // or pair.first
-            // Unlock not strictly needed here if get_mp3_data uses its own lock scope correctly.
-            // The main concern is if get_mp3_data also tries to lock manager_mutex_.
-            // Since get_mp3_data does lock manager_mutex_, we must release this lock first.
-            // This means we cannot hold the lock across the call to get_mp3_data.
-            // This is okay because we've found the sink_id we need.
-
-            // To safely call get_mp3_data, we must not hold manager_mutex_
-            // However, get_mp3_data itself will lock it.
-            // The simplest way is to extract the sink_id, then call get_mp3_data outside this loop,
-            // but that means only the first match is processed.
-            // If multiple sinks can have the same output_ip (which shouldn't be the case for unique sinks),
-            // this logic would only return for the first one found. Assuming output_ip is unique per configured sink.
-
-            // Let's release the lock by exiting the current scope and then call.
-            // This is not ideal as we are iterating.
-            // A better way:
-            // 1. Find the sink_id under lock.
-            // 2. Release lock.
-            // 3. Call get_mp3_data with the found sink_id.
-
-            // Find sink_id:
-            // (already done above: found_sink_id = config.id)
-
-            // To call get_mp3_data, which also locks manager_mutex_, we must not be holding it.
-            // This means we cannot call it directly from here while the loop's lock_guard is active.
-            // The solution is to find the ID, then call get_mp3_data *after* the loop and its lock.
-            // This implies we only find the *first* match. If IPs are unique, this is fine.
-
-            // Corrected approach:
-            // Store the found sink_id and break the loop.
-            // Then, after the lock is released, call get_mp3_data.
-            // This is still not quite right if get_mp3_data needs the lock for its own map lookups.
-
-            // Let's assume get_mp3_data is safe to call. The lock_guard will release.
-            // The issue is recursive locking if get_mp3_data also uses manager_mutex_.
-            // std::recursive_mutex would solve this, but let's avoid changing mutex types now.
-
-            // Simplest for now: call a helper that doesn't lock, or make get_mp3_data more granular with its locking.
-            // Given the current structure of get_mp3_data, it will try to re-lock manager_mutex_.
-            // This will lead to deadlock or UB if manager_mutex_ is not a recursive mutex.
-
-            // Let's try to find the queue directly here, similar to what get_mp3_data does, but using the found sink_id.
-            auto queue_it = mp3_output_queues_.find(found_sink_id);
+            auto queue_it = mp3_output_queues_.find(config.id); // Use config.id instead of undefined found_sink_id
             if (queue_it != mp3_output_queues_.end()) {
                 std::shared_ptr<Mp3Queue> target_queue = queue_it->second;
-                // Now, we need to release the manager_mutex_ before calling try_pop on the queue,
-                // because try_pop might block or interact with other threads.
-                // However, the queue itself is thread-safe. The map lookup needs the lock.
-                // So, get the queue pointer under lock, then use it outside the lock.
-                // This is what get_mp3_data already does.
-
-                // The problem is calling get_mp3_data(found_sink_id) from here.
-                // Let's replicate the essential part of get_mp3_data for the found_sink_id.
-                // This avoids the recursive lock issue.
                 if (target_queue) {
                     // We are still holding manager_mutex_ here.
                     // The try_pop on ThreadSafeQueue is designed to be safe.
@@ -882,3 +919,32 @@ std::vector<uint8_t> AudioManager::get_mp3_data_by_ip(const std::string& ip_addr
 
 // --- External Control ---
 // Removed AudioManager::set_sink_tcp_fd
+
+// --- Receiver Info API Implementations ---
+std::vector<std::string> AudioManager::get_rtp_receiver_seen_tags() {
+    std::lock_guard<std::mutex> lock(manager_mutex_); // Ensure thread safety if rtp_receiver_ could be modified
+    if (rtp_receiver_) {
+        return rtp_receiver_->get_seen_tags();
+    }
+    return {}; // Return empty vector if receiver doesn't exist
+}
+
+std::vector<std::string> AudioManager::get_raw_scream_receiver_seen_tags(int listen_port) {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+    auto it = raw_scream_receivers_.find(listen_port);
+    if (it != raw_scream_receivers_.end() && it->second) {
+        return it->second->get_seen_tags();
+    }
+    LOG_WARN_AM("RawScreamReceiver not found for port: " + std::to_string(listen_port) + " when calling get_raw_scream_receiver_seen_tags.");
+    return {}; // Return empty vector if receiver not found
+}
+
+std::vector<std::string> AudioManager::get_per_process_scream_receiver_seen_tags(int listen_port) {
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+    auto it = per_process_scream_receivers_.find(listen_port);
+    if (it != per_process_scream_receivers_.end() && it->second) {
+        return it->second->get_seen_tags();
+    }
+    LOG_WARN_AM("PerProcessScreamReceiver not found for port: " + std::to_string(listen_port) + " when calling get_per_process_scream_receiver_seen_tags.");
+    return {}; // Return empty vector if receiver not found
+}
