@@ -13,3 +13,6 @@
 [submodule "src/audio_engine/libsamplerate"]
 	path = src/audio_engine/libsamplerate
 	url = https://github.com/libsndfile/libsamplerate
+[submodule "src/audio_engine/lame"]
+	path = src/audio_engine/lame
+	url = https://github.com/netham45/lame
