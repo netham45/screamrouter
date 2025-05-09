@@ -14,16 +14,18 @@
 #include <condition_variable>
 #include <set>
 
-// Socket related includes
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <poll.h>
 
 namespace screamrouter {
 namespace audio {
+
+// Define socket types inside the namespace
+#ifdef _WIN32
+    using socket_t = SOCKET;
+    #define INVALID_SOCKET_VALUE INVALID_SOCKET
+#else // POSIX
+    using socket_t = int;
+    #define INVALID_SOCKET_VALUE -1
+#endif
 
 // Using aliases from audio_types.h or RtpReceiver.h if applicable
 using NotificationQueue = utils::ThreadSafeQueue<NewSourceNotification>;
@@ -40,7 +42,7 @@ public:
         std::shared_ptr<NotificationQueue> notification_queue
     );
 
-    ~RawScreamReceiver() override;
+    ~RawScreamReceiver() noexcept; // Added noexcept
 
     // --- AudioComponent Interface ---
     void start() override;
@@ -62,7 +64,7 @@ protected:
 
 private:
     RawScreamReceiverConfig config_;
-    int socket_fd_ = -1;
+    socket_t socket_fd_; // Use cross-platform type, initialize in constructor
     std::shared_ptr<NotificationQueue> notification_queue_;
 
     OutputTargetMap output_targets_;

@@ -42,8 +42,8 @@ SinkAudioMixer::SinkAudioMixer(
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue)
     : config_(config),
       mp3_output_queue_(mp3_output_queue), // Store the shared_ptr (can be null)
-      udp_socket_fd_(-1),
-      tcp_socket_fd_(-1),
+      udp_socket_fd_(INVALID_SOCKET_VALUE), // Initialize with platform-specific invalid value
+      // tcp_socket_fd_(-1), // Removed
       lame_global_flags_(nullptr),
       lame_preprocessor_(nullptr), // Initialize the new member
       // Fix mixing buffer size to be constant based on SINK_MIXING_BUFFER_SAMPLES
@@ -52,6 +52,15 @@ SinkAudioMixer::SinkAudioMixer(
       output_network_buffer_(SINK_PACKET_SIZE_BYTES * 2, 0),
       mp3_encode_buffer_(SINK_MP3_BUFFER_SIZE) // Allocate MP3 buffer
  {
+    #ifdef _WIN32
+        // WSAStartup might have already been called by RtpReceiver if both exist.
+        WSADATA wsaData;
+        int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (iResult != 0 && iResult != WSAEALREADYSTARTED) {
+            LOG_ERROR(config_.sink_id, "WSAStartup failed: " + std::to_string(iResult));
+            throw std::runtime_error("WSAStartup failed.");
+        }
+    #endif
     LOG(config_.sink_id, "Initializing...");
 
     // Validate config
@@ -98,7 +107,11 @@ SinkAudioMixer::~SinkAudioMixer() {
         component_thread_.join();
     }
     close_networking();
-    //close_lame();
+    //close_lame(); // LAME cleanup should happen here if initialized
+
+    #ifdef _WIN32
+        // WSACleanup(); // Managed globally ideally
+    #endif
 }
 
 void SinkAudioMixer::build_scream_header() {
@@ -173,28 +186,37 @@ void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
 bool SinkAudioMixer::setup_networking() {
     LOG(config_.sink_id, "Setting up networking...");
     // UDP Setup
-    udp_socket_fd_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (udp_socket_fd_ < 0) {
+    udp_socket_fd_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // socket() is generally cross-platform
+    if (udp_socket_fd_ == INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
         LOG_ERROR(config_.sink_id, "Failed to create UDP socket");
         return false;
     }
 
     // Set DSCP/TOS value (Best Effort is default, EF for Expedited Forwarding is 46)
-    int dscp = 46; // EF PHB for low latency audio
-    int tos_value = dscp << 2;
-    if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_TOS, &tos_value, sizeof(tos_value)) < 0) {
-        LOG_ERROR(config_.sink_id, "Failed to set UDP socket TOS/DSCP");
-        // Non-fatal, continue anyway
-    }
+    // IP_TOS might require different handling or privileges on Windows.
+    #ifdef _WIN32
+        //DWORD tos_value_dword = static_cast<DWORD>(tos_value); // Example if DWORD needed
+        //if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_TOS, reinterpret_cast<const char*>(&tos_value_dword), sizeof(tos_value_dword)) < 0) {
+        // For now, skip TOS setting on Windows for simplicity, requires more investigation
+        LOG_WARN(config_.sink_id, "Skipping TOS/DSCP setting on Windows.");
+    #else // POSIX
+        int dscp = 46; // EF PHB for low latency audio
+        int tos_value = dscp << 2;
+        if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_TOS, &tos_value, sizeof(tos_value)) < 0) {
+            LOG_ERROR(config_.sink_id, "Failed to set UDP socket TOS/DSCP");
+            // Non-fatal, continue anyway
+        }
+    #endif
 
     // Prepare UDP destination address
     memset(&udp_dest_addr_, 0, sizeof(udp_dest_addr_));
     udp_dest_addr_.sin_family = AF_INET;
     udp_dest_addr_.sin_port = htons(config_.output_port);
+    // Use inet_pton for cross-platform compatibility (preferred over inet_addr)
     if (inet_pton(AF_INET, config_.output_ip.c_str(), &udp_dest_addr_.sin_addr) <= 0) {
-        LOG_ERROR(config_.sink_id, "Invalid UDP destination IP address: " + config_.output_ip);
-        close(udp_socket_fd_);
-        udp_socket_fd_ = -1;
+        LOG_ERROR(config_.sink_id, "Invalid UDP destination IP address (inet_pton failed): " + config_.output_ip);
+        _close_socket(udp_socket_fd_); // Use corrected macro
+        udp_socket_fd_ = INVALID_SOCKET_VALUE;
         return false;
     }
 
@@ -205,12 +227,12 @@ bool SinkAudioMixer::setup_networking() {
 }
 
 void SinkAudioMixer::close_networking() {
-    if (udp_socket_fd_ != -1) {
-        LOG(config_.sink_id, "Closing UDP socket fd " + std::to_string(udp_socket_fd_));
-        close(udp_socket_fd_);
-        udp_socket_fd_ = -1;
+    if (udp_socket_fd_ != INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
+        LOG(config_.sink_id, "Closing UDP socket"); // Simplified log
+        _close_socket(udp_socket_fd_); // Use corrected macro
+        udp_socket_fd_ = INVALID_SOCKET_VALUE; // Set to platform-specific invalid value
     }
-    // Don't close tcp_socket_fd_ here, as it's managed externally
+    // Don't close tcp_socket_fd_ here, as it's managed externally // This comment is now misleading
 }
 
 void SinkAudioMixer::start() {
@@ -282,17 +304,7 @@ void SinkAudioMixer::stop() {
     //close_lame();
 }
 
-void SinkAudioMixer::set_tcp_fd(int fd) {
-    // This function might be called from a different thread (e.g., network management thread)
-    // No lock needed if tcp_socket_fd_ is atomic, but it's just an int here.
-    // Assuming this is called infrequently and potential race condition is acceptable,
-    // or that external synchronization is handled by the caller.
-    // For robustness, a mutex could be added if concurrent calls are expected.
-    if (fd != tcp_socket_fd_) {
-        LOG(config_.sink_id, "Setting TCP FD to " + std::to_string(fd));
-        tcp_socket_fd_ = fd;
-    }
-}
+// Removed SinkAudioMixer::set_tcp_fd
 
 bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_timeout */) {
     // This function replicates the logic of mark_fds_active_inactive and
@@ -584,17 +596,30 @@ void SinkAudioMixer::send_network_buffer(size_t length) {
     LOG_DEBUG(config_.sink_id, "SendNet: Header (" + std::to_string(SINK_HEADER_SIZE) + " bytes) copied to buffer start.");
 
     // Send via UDP
-    if (udp_socket_fd_ != -1) {
+    if (udp_socket_fd_ != INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
         LOG_DEBUG(config_.sink_id, "SendNet: Sending " + std::to_string(length) + " bytes via UDP to " + config_.output_ip + ":" + std::to_string(config_.output_port));
         // Send from the beginning of the buffer, including the header
-        ssize_t sent_bytes = sendto(udp_socket_fd_,
-                                    output_network_buffer_.data(),
-                                    length, // Send the full packet length (header + payload)
-                                    0, // Flags
-                                    (struct sockaddr *)&udp_dest_addr_,
-                                    sizeof(udp_dest_addr_));
+        #ifdef _WIN32
+            // Windows sendto uses char* buffer and int length
+            int sent_bytes = sendto(udp_socket_fd_,
+                                        reinterpret_cast<const char*>(output_network_buffer_.data()),
+                                        static_cast<int>(length),
+                                        0, // Flags
+                                        (struct sockaddr *)&udp_dest_addr_,
+                                        sizeof(udp_dest_addr_));
+        #else
+            // POSIX sendto uses const void* buffer and size_t length
+            ssize_t sent_bytes = sendto(udp_socket_fd_,
+                                        output_network_buffer_.data(),
+                                        length,
+                                        0, // Flags
+                                        (struct sockaddr *)&udp_dest_addr_,
+                                        sizeof(udp_dest_addr_));
+        #endif
+
         if (sent_bytes < 0) {
             // EAGAIN or EWOULDBLOCK might be acceptable if non-blocking, but UDP usually doesn't block here.
+            // Check specific Windows errors like WSAEWOULDBLOCK if needed.
             LOG_ERROR(config_.sink_id, "SendNet: UDP sendto failed");
         } else if (static_cast<size_t>(sent_bytes) != length) {
              LOG_ERROR(config_.sink_id, "SendNet: UDP sendto sent partial data: " + std::to_string(sent_bytes) + "/" + std::to_string(length));
@@ -606,31 +631,7 @@ void SinkAudioMixer::send_network_buffer(size_t length) {
     }
 
     // Send via TCP (if connected)
-    if (tcp_socket_fd_ != -1) {
-        LOG_DEBUG(config_.sink_id, "SendNet: Sending " + std::to_string(length) + " bytes via TCP (fd=" + std::to_string(tcp_socket_fd_) + ").");
-        // Send from the beginning of the buffer, including the header
-        ssize_t sent_bytes = send(tcp_socket_fd_,
-                                  output_network_buffer_.data(),
-                                  length, // Send the full packet length (header + payload)
-                                  MSG_NOSIGNAL); // Prevent SIGPIPE if connection closed
-        if (sent_bytes < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                 LOG_WARN(config_.sink_id, "SendNet: TCP send would block (EAGAIN/EWOULDBLOCK). Data dropped for TCP.");
-            } else {
-                LOG_ERROR(config_.sink_id, "SendNet: TCP send failed");
-                // Consider closing or signaling error for this TCP connection
-                // set_tcp_fd(-1); // Example: Mark TCP as disconnected
-            }
-            // If EAGAIN/EWOULDBLOCK, buffer is full, data is dropped for TCP in this model
-        } else if (static_cast<size_t>(sent_bytes) != length) {
-             LOG_ERROR(config_.sink_id, "SendNet: TCP send sent partial data: " + std::to_string(sent_bytes) + "/" + std::to_string(length));
-             // Handle partial send if necessary (e.g., retry)
-        } else {
-             LOG_DEBUG(config_.sink_id, "SendNet: TCP send successful (" + std::to_string(sent_bytes) + " bytes).");
-        }
-    } else {
-         LOG_DEBUG(config_.sink_id, "SendNet: TCP socket not valid (fd=" + std::to_string(tcp_socket_fd_) + "), skipping TCP send.");
-    }
+    // TCP sending logic removed
 }
 
 

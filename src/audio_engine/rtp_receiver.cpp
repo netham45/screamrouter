@@ -1,4 +1,4 @@
- #include "rtp_receiver.h"
+#include "rtp_receiver.h"
 #include <iostream> // For logging/debugging
 #include <vector>
 #include <cstring> // For memcpy, memset
@@ -31,7 +31,7 @@ long number = 0;
 
 // Simple logger helper (replace with a proper logger if available)
 #define LOG(msg) std::cout << "[RtpReceiver] " << msg << std::endl
-#define LOG_ERROR(msg) std::cerr << "[RtpReceiver Error] " << msg << " (errno: " << errno << ")" << std::endl
+#define LOG_ERROR(msg) std::cerr << "[RtpReceiver Error] " << msg << " (errno: " << GET_LAST_SOCK_ERROR << ")" << std::endl // Use macro
 #define LOG_WARN(msg) std::cout << "[RtpReceiver Warn] " << msg << std::endl // Define WARN
 
 RtpReceiver::RtpReceiver(
@@ -39,8 +39,16 @@ RtpReceiver::RtpReceiver(
     std::shared_ptr<NotificationQueue> notification_queue)
     : config_(config),
       notification_queue_(notification_queue),
-      socket_fd_(-1)
+      socket_fd_(INVALID_SOCKET_VALUE) // Initialize with platform-specific invalid value
 {
+    #ifdef _WIN32
+        WSADATA wsaData;
+        int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (iResult != 0) {
+            LOG_ERROR("WSAStartup failed: " + std::to_string(iResult));
+            throw std::runtime_error("WSAStartup failed.");
+        }
+    #endif
     if (!notification_queue_) {
         throw std::runtime_error("RtpReceiver requires a valid notification queue.");
     }
@@ -56,25 +64,45 @@ RtpReceiver::~RtpReceiver() {
     // Join should happen in stop(), but double-check just in case stop wasn't called correctly
     if (component_thread_.joinable()) {
         LOG("Warning: Joining thread in destructor, stop() might not have been called properly.");
-        component_thread_.join();
+        try {
+             component_thread_.join();
+        } catch (const std::system_error& e) {
+             LOG_ERROR("Error joining thread in destructor: " + std::string(e.what()));
+        }
     }
-    close_socket(); // Ensure socket is closed
+    close_socket(); // Ensure socket is closed using macro
+
+    #ifdef _WIN32
+        WSACleanup();
+    #endif
 }
 
 bool RtpReceiver::setup_socket() {
-    socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-    if (socket_fd_ < 0) {
+    socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0); // socket() is generally cross-platform
+    if (socket_fd_ == INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
         LOG_ERROR("Failed to create socket");
         return false;
     }
 
-    // Set socket options (e.g., reuse address)
-    int reuse = 1;
-    if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-        LOG_ERROR("Failed to set SO_REUSEADDR");
-        close_socket();
-        return false;
-    }
+    // Set socket options (e.g., reuse address) - SO_REUSEADDR might behave differently on Windows
+    #ifdef _WIN32
+        // On Windows, SO_REUSEADDR allows binding to a port in TIME_WAIT state,
+        // but SO_EXCLUSIVEADDRUSE might be needed to prevent other sockets from binding.
+        // For simplicity, we'll keep SO_REUSEADDR for now.
+        char reuse = 1; // Use char for Windows setsockopt bool
+        if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+            LOG_ERROR("Failed to set SO_REUSEADDR");
+            close_socket(); // Use macro
+            return false;
+        }
+    #else // POSIX
+        int reuse = 1;
+        if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+            LOG_ERROR("Failed to set SO_REUSEADDR");
+            close_socket(); // Use macro
+            return false;
+        }
+    #endif
 
     // Prepare address structure
     struct sockaddr_in server_addr;
@@ -86,7 +114,7 @@ bool RtpReceiver::setup_socket() {
     // Bind the socket
     if (bind(socket_fd_, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         LOG_ERROR("Failed to bind socket to port " + std::to_string(config_.listen_port));
-        close_socket();
+        close_socket(); // Use macro
         return false;
     }
 
@@ -95,10 +123,15 @@ bool RtpReceiver::setup_socket() {
 }
 
 void RtpReceiver::close_socket() {
-    if (socket_fd_ != -1) {
-        LOG("Closing socket fd " + std::to_string(socket_fd_));
-        close(socket_fd_);
-        socket_fd_ = -1;
+    if (socket_fd_ != INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
+        LOG("Closing socket"); // Simplified log message
+        // Use the macro directly, assuming it resolves correctly based on header definition
+        #ifdef _WIN32
+            closesocket(socket_fd_);
+        #else
+            close(socket_fd_);
+        #endif
+        socket_fd_ = INVALID_SOCKET_VALUE; // Set to platform-specific invalid value
     }
 }
 
@@ -213,7 +246,12 @@ void RtpReceiver::run() {
     LOG("Receiver thread entering run loop.");
     std::vector<uint8_t> receive_buffer(RECEIVE_BUFFER_SIZE);
     struct sockaddr_in client_addr;
-    socklen_t client_addr_len = sizeof(client_addr);
+    #ifdef _WIN32
+        int client_addr_len = sizeof(client_addr); // Windows uses int for socklen_t equivalent
+    #else
+        socklen_t client_addr_len = sizeof(client_addr);
+    #endif
+
 
     struct pollfd fds[1];
     fds[0].fd = socket_fd_;
@@ -221,11 +259,21 @@ void RtpReceiver::run() {
 
     while (!stop_flag_) {
         // Use poll for non-blocking check with timeout
-        int poll_ret = poll(fds, 1, POLL_TIMEOUT_MS);
+        #ifdef _WIN32
+            int poll_ret = WSAPoll(fds, 1, POLL_TIMEOUT_MS);
+        #else
+            int poll_ret = poll(fds, 1, POLL_TIMEOUT_MS);
+        #endif
+
 
         if (poll_ret < 0) {
             // Error in poll (ignore EINTR, handle others)
-            if (errno != EINTR && !stop_flag_) { // Don't log error if we are stopping anyway
+            #ifndef _WIN32 // EINTR is POSIX specific
+                if (errno == EINTR) {
+                    continue; // Interrupted by signal, just retry
+                }
+            #endif
+            if (!stop_flag_) { // Don't log error if we are stopping anyway
                  LOG_ERROR("poll() failed");
             }
             if (!stop_flag_) { // Avoid busy-looping on error if not stopping
@@ -241,8 +289,16 @@ void RtpReceiver::run() {
 
         // Check if data is available on the socket
         if (fds[0].revents & POLLIN) {
-            ssize_t bytes_received = recvfrom(socket_fd_, receive_buffer.data(), receive_buffer.size(), 0,
-                                              (struct sockaddr *)&client_addr, &client_addr_len);
+            #ifdef _WIN32
+                // Windows recvfrom returns int, buffer is char*
+                int bytes_received = recvfrom(socket_fd_, reinterpret_cast<char*>(receive_buffer.data()), static_cast<int>(receive_buffer.size()), 0,
+                                                  (struct sockaddr *)&client_addr, &client_addr_len);
+            #else
+                // POSIX recvfrom returns ssize_t, buffer is void*
+                ssize_t bytes_received = recvfrom(socket_fd_, receive_buffer.data(), receive_buffer.size(), 0,
+                                                  (struct sockaddr *)&client_addr, &client_addr_len);
+            #endif
+
 
             if (bytes_received < 0) {
                 // Error receiving data (ignore if caused by stop())
@@ -253,8 +309,8 @@ void RtpReceiver::run() {
             }
 
             // Process received packet
-            if (bytes_received == EXPECTED_PAYLOAD_SIZE && is_valid_rtp_payload(receive_buffer.data(), bytes_received)) {
-                std::string source_tag = inet_ntoa(client_addr.sin_addr);
+            if (static_cast<size_t>(bytes_received) == EXPECTED_PAYLOAD_SIZE && is_valid_rtp_payload(receive_buffer.data(), bytes_received)) {
+                std::string source_tag = inet_ntoa(client_addr.sin_addr); // inet_ntoa is generally available but deprecated, consider inet_ntop
                 auto received_time = std::chrono::steady_clock::now();
 
                 // Check if source is new
@@ -312,7 +368,9 @@ void RtpReceiver::run() {
                      // LOG("No output targets registered for source_tag: " + source_tag); // Can be noisy
                  }
             } else {
-                 LOG("Received invalid or unexpected size packet (" + std::to_string(bytes_received) + " bytes) from " + std::string(inet_ntoa(client_addr.sin_addr)));
+                 // Get sender IP again for the log message
+                 std::string sender_ip_for_log = inet_ntoa(client_addr.sin_addr);
+                 LOG("Received invalid or unexpected size packet (" + std::to_string(bytes_received) + " bytes) from " + sender_ip_for_log);
             }
         } else if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
              // Socket error occurred

@@ -102,7 +102,6 @@ bool compare_sink_configs(const audio::SinkConfig& a, const audio::SinkConfig& b
            a.channels == b.channels &&
            a.chlayout1 == b.chlayout1 &&
            a.chlayout2 == b.chlayout2 &&
-           a.use_tcp == b.use_tcp &&
            a.enable_mp3 == b.enable_mp3; // Include any other relevant fields
 }
 

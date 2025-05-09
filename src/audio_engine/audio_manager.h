@@ -172,15 +172,7 @@ public:
      */
     std::vector<uint8_t> get_mp3_data_by_ip(const std::string& ip_address);
 
-    /**
-     * @brief Updates the TCP file descriptor for a specific sink.
-     * Called externally when a TCP connection state changes.
-     * @param sink_id Identifier of the sink.
-     * @param fd The new file descriptor (-1 if disconnected).
-     * @return true if the sink was found, false otherwise.
-     */
-    bool set_sink_tcp_fd(const std::string& sink_id, int fd);
-
+    // Removed set_sink_tcp_fd
 
 private:
     // --- Internal State ---

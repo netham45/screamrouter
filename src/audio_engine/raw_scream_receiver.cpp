@@ -22,7 +22,7 @@ const int RAW_POLL_TIMEOUT_MS = 100;   // Check for stop flag every 100ms
 
 // Simple logger helper (replace with a proper logger if available)
 #define LOG_RSR(msg) std::cout << "[RawScreamReceiver] " << msg << std::endl
-#define LOG_ERROR_RSR(msg) std::cerr << "[RawScreamReceiver Error] " << msg << " (errno: " << errno << ")" << std::endl
+#define LOG_ERROR_RSR(msg) std::cerr << "[RawScreamReceiver Error] " << msg << " (errno: " << GET_LAST_SOCK_ERROR << ")" << std::endl // Use macro
 #define LOG_WARN_RSR(msg) std::cout << "[RawScreamReceiver Warn] " << msg << std::endl
 
 RawScreamReceiver::RawScreamReceiver(
@@ -30,8 +30,19 @@ RawScreamReceiver::RawScreamReceiver(
     std::shared_ptr<NotificationQueue> notification_queue)
     : config_(config),
       notification_queue_(notification_queue),
-      socket_fd_(-1)
+      socket_fd_(INVALID_SOCKET_VALUE) // Initialize with platform-specific invalid value
 {
+    #ifdef _WIN32
+        // WSAStartup might have already been called by RtpReceiver if both exist.
+        // A more robust solution would use a static counter or flag.
+        // For now, assume it might need to be called here too, or handle potential errors.
+        WSADATA wsaData;
+        int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (iResult != 0 && iResult != WSAEALREADYSTARTED) { // Allow already started error
+            LOG_ERROR_RSR("WSAStartup failed: " + std::to_string(iResult));
+            throw std::runtime_error("WSAStartup failed.");
+        }
+    #endif
     if (!notification_queue_) {
         throw std::runtime_error("RawScreamReceiver requires a valid notification queue.");
     }
@@ -53,23 +64,40 @@ RawScreamReceiver::~RawScreamReceiver() {
             LOG_ERROR_RSR("Error joining thread in destructor: " + std::string(e.what()));
         }
     }
-    close_socket(); // Ensure socket is closed
+    close_socket(); // Ensure socket is closed using macro
     LOG_RSR("Destroyed.");
+
+    #ifdef _WIN32
+        // WSACleanup might be called prematurely if other components still need Winsock.
+        // A static counter approach is better for managing WSAStartup/Cleanup.
+        // For now, call it, but be aware of potential issues in multi-instance scenarios.
+        // WSACleanup(); // Commenting out cleanup here, should be managed globally
+    #endif
 }
 
 bool RawScreamReceiver::setup_socket() {
-    socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-    if (socket_fd_ < 0) {
+    socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0); // socket() is generally cross-platform
+    if (socket_fd_ == INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
         LOG_ERROR_RSR("Failed to create socket");
         return false;
     }
 
-    int reuse = 1;
-    if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-        LOG_ERROR_RSR("Failed to set SO_REUSEADDR");
-        close_socket();
-        return false;
-    }
+    // Set socket options (e.g., reuse address)
+    #ifdef _WIN32
+        char reuse = 1; // Use char for Windows setsockopt bool
+        if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+            LOG_ERROR_RSR("Failed to set SO_REUSEADDR");
+            close_socket(); // Use macro
+            return false;
+        }
+    #else // POSIX
+        int reuse = 1;
+        if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+            LOG_ERROR_RSR("Failed to set SO_REUSEADDR");
+            close_socket(); // Use macro
+            return false;
+        }
+    #endif
 
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
@@ -79,7 +107,7 @@ bool RawScreamReceiver::setup_socket() {
 
     if (bind(socket_fd_, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         LOG_ERROR_RSR("Failed to bind socket to port " + std::to_string(config_.listen_port));
-        close_socket();
+        close_socket(); // Use macro
         return false;
     }
 
@@ -88,10 +116,15 @@ bool RawScreamReceiver::setup_socket() {
 }
 
 void RawScreamReceiver::close_socket() {
-    if (socket_fd_ != -1) {
-        LOG_RSR("Closing socket fd " + std::to_string(socket_fd_));
-        close(socket_fd_);
-        socket_fd_ = -1;
+    if (socket_fd_ != INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
+        LOG_RSR("Closing socket"); // Simplified log message
+        // Use the macro directly, assuming it resolves correctly based on header definition
+        #ifdef _WIN32
+            closesocket(socket_fd_);
+        #else
+            close(socket_fd_);
+        #endif
+        socket_fd_ = INVALID_SOCKET_VALUE; // Set to platform-specific invalid value
     }
 }
 
@@ -188,17 +221,32 @@ void RawScreamReceiver::run() {
     LOG_RSR("Receiver thread entering run loop.");
     std::vector<uint8_t> receive_buffer(RAW_RECEIVE_BUFFER_SIZE);
     struct sockaddr_in client_addr;
-    socklen_t client_addr_len = sizeof(client_addr);
+    #ifdef _WIN32
+        int client_addr_len = sizeof(client_addr); // Windows uses int for socklen_t equivalent
+    #else
+        socklen_t client_addr_len = sizeof(client_addr);
+    #endif
+
 
     struct pollfd fds[1];
     fds[0].fd = socket_fd_;
     fds[0].events = POLLIN;
 
     while (!stop_flag_) {
-        int poll_ret = poll(fds, 1, RAW_POLL_TIMEOUT_MS);
+        #ifdef _WIN32
+            int poll_ret = WSAPoll(fds, 1, RAW_POLL_TIMEOUT_MS);
+        #else
+            int poll_ret = poll(fds, 1, RAW_POLL_TIMEOUT_MS);
+        #endif
+
 
         if (poll_ret < 0) {
-            if (errno != EINTR && !stop_flag_) {
+            #ifndef _WIN32 // EINTR is POSIX specific
+                if (errno == EINTR) {
+                    continue; // Interrupted by signal, just retry
+                }
+            #endif
+            if (!stop_flag_) {
                  LOG_ERROR_RSR("poll() failed");
             }
             if (!stop_flag_) {
@@ -212,8 +260,16 @@ void RawScreamReceiver::run() {
         }
 
         if (fds[0].revents & POLLIN) {
-            ssize_t bytes_received = recvfrom(socket_fd_, receive_buffer.data(), receive_buffer.size(), 0,
-                                              (struct sockaddr *)&client_addr, &client_addr_len);
+            #ifdef _WIN32
+                // Windows recvfrom returns int, buffer is char*
+                int bytes_received = recvfrom(socket_fd_, reinterpret_cast<char*>(receive_buffer.data()), static_cast<int>(receive_buffer.size()), 0,
+                                                  (struct sockaddr *)&client_addr, &client_addr_len);
+            #else
+                // POSIX recvfrom returns ssize_t, buffer is void*
+                ssize_t bytes_received = recvfrom(socket_fd_, receive_buffer.data(), receive_buffer.size(), 0,
+                                                  (struct sockaddr *)&client_addr, &client_addr_len);
+            #endif
+
 
             if (bytes_received < 0) {
                 if (!stop_flag_) {
@@ -298,11 +354,13 @@ void RawScreamReceiver::run() {
                     // LOG_RSR("No output targets registered for source_tag: " + source_tag); // Can be noisy
                 }
             } else {
-                 LOG_WARN_RSR("Received invalid or unexpected size packet (" + std::to_string(bytes_received) + " bytes) from " + std::string(inet_ntoa(client_addr.sin_addr)) + ". Expected " + std::to_string(EXPECTED_RAW_PACKET_SIZE) + " bytes.");
+                 // Get sender IP again for the log message
+                 std::string sender_ip_for_log = inet_ntoa(client_addr.sin_addr);
+                 LOG_WARN_RSR("Received invalid or unexpected size packet (" + std::to_string(bytes_received) + " bytes) from " + sender_ip_for_log + ". Expected " + std::to_string(EXPECTED_RAW_PACKET_SIZE) + " bytes.");
             }
         } else if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
              LOG_ERROR_RSR("Socket error detected by poll()");
-             break; 
+             break;
         }
     }
     LOG_RSR("Receiver thread exiting run loop.");

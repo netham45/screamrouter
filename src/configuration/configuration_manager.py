@@ -872,8 +872,6 @@ class ConfigurationManager(threading.Thread):
             cpp_sink_engine_config.chlayout1 = chlayout1
             cpp_sink_engine_config.chlayout2 = chlayout2
             
-            cpp_sink_engine_config.use_tcp = py_sink_desc.use_tcp
-
             cpp_applied_sink.sink_engine_config = cpp_sink_engine_config
 
             # C. Process each source connected to this sink

@@ -7,3 +7,9 @@
 [submodule "c_utils/dcaenc"]
 	path = c_utils/dcaenc
 	url = https://github.com/darealshinji/dcaenc.git
+[submodule "src/audio_engine/libmp3lame"]
+	path = src/audio_engine/libmp3lame
+	url = https://github.com/netham45/libmp3lame
+[submodule "src/audio_engine/libsamplerate"]
+	path = src/audio_engine/libsamplerate
+	url = https://github.com/libsndfile/libsamplerate

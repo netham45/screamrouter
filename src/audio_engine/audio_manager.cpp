@@ -278,7 +278,7 @@ bool AudioManager::add_sink(const SinkConfig& config) {
     mixer_config.output_channels = config.channels;
     mixer_config.output_chlayout1 = config.chlayout1;
     mixer_config.output_chlayout2 = config.chlayout2;
-    mixer_config.use_tcp = config.use_tcp;
+    // mixer_config.use_tcp = config.use_tcp; // Removed
 
     // 3. Create and Start SinkAudioMixer
     std::unique_ptr<SinkAudioMixer> new_sink;
@@ -881,19 +881,4 @@ std::vector<uint8_t> AudioManager::get_mp3_data_by_ip(const std::string& ip_addr
 
 
 // --- External Control ---
-
-bool AudioManager::set_sink_tcp_fd(const std::string& sink_id, int fd) {
-     std::lock_guard<std::mutex> lock(manager_mutex_);
-     if (!running_) return false;
-
-     auto it = sinks_.find(sink_id);
-     if (it == sinks_.end()) {
-         LOG_ERROR_AM("Sink not found for setting TCP FD: " + sink_id);
-         return false;
-     }
-     if (it->second) {
-         it->second->set_tcp_fd(fd);
-         return true;
-     }
-     return false; // Should not happen if found in map
-}
+// Removed AudioManager::set_sink_tcp_fd

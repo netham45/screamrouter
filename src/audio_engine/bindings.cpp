@@ -46,8 +46,8 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
         .def_readwrite("samplerate", &SinkConfig::samplerate, "Output sample rate (e.g., 48000)")
         .def_readwrite("channels", &SinkConfig::channels, "Output channel count (e.g., 2)")
         .def_readwrite("chlayout1", &SinkConfig::chlayout1, "Scream header channel layout byte 1")
-        .def_readwrite("chlayout2", &SinkConfig::chlayout2, "Scream header channel layout byte 2")
-        .def_readwrite("use_tcp", &SinkConfig::use_tcp, "Whether this sink uses TCP output (managed externally)");
+        .def_readwrite("chlayout2", &SinkConfig::chlayout2, "Scream header channel layout byte 2"); // Semicolon moved here
+        // .def_readwrite("use_tcp", &SinkConfig::use_tcp, "Whether this sink uses TCP output (managed externally)"); // Removed
         // Removed .def_readwrite("enable_mp3", ...) as MP3 queue is now always created internally
         // Add __repr__
         // .def("__repr__", [](const SinkConfig &a) {
@@ -135,12 +135,10 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
                 return py::bytes(reinterpret_cast<const char*>(data_vec.data()), data_vec.size());
             },
             py::arg("ip_address"),
-            "Retrieves a chunk of MP3 data (as bytes) from a sink identified by its output IP address.")
+            "Retrieves a chunk of MP3 data (as bytes) from a sink identified by its output IP address.");
 
         // External Control Methods (like setting TCP FD)
-        .def("set_sink_tcp_fd", &AudioManager::set_sink_tcp_fd,
-             py::arg("sink_id"), py::arg("fd"),
-             "Updates the externally managed TCP file descriptor for a sink.");
+        // Removed .def("set_sink_tcp_fd", ...)
 
     // --- Bind New Configuration Structs (Task 03_01) ---
 

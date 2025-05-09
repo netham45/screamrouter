@@ -1,15 +1,43 @@
 #ifndef RTP_RECEIVER_H
 #define RTP_RECEIVER_H
 
+// Include standard headers first
+#include <string>
+#include <vector>
+#include <map> // Include map early
+#include <memory>
+#include <mutex>
+#include <condition_variable>
+#include <set>
+
+// Define platform-specific socket types and macros
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #pragma comment(lib, "Ws2_32.lib")
+    using socket_t = SOCKET;
+    #define INVALID_SOCKET_VALUE INVALID_SOCKET
+    #define poll WSAPoll
+    #define GET_LAST_SOCK_ERROR WSAGetLastError()
+#else // POSIX
+    #include <sys/types.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+    #include <poll.h>
+    #include <errno.h>
+    using socket_t = int;
+    #define INVALID_SOCKET_VALUE -1
+    #define GET_LAST_SOCK_ERROR errno
+#endif
+
 #include "audio_component.h"
 #include "thread_safe_queue.h"
 #include "audio_types.h"
 
-#include <string>
-#include <vector>
-#include <map>
-#include <memory> // For shared_ptr
-#include <mutex>
+// Other includes seem fine here now
+
 #include <condition_variable>
 #include <set> // For known source tags
 #include <vector> // For vector of output targets
@@ -17,16 +45,10 @@
 // Forward declaration
 namespace screamrouter { namespace utils { template <typename T> class ThreadSafeQueue; } }
 
-// Socket related includes
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h> // For sockaddr_in
-#include <arpa/inet.h>  // For inet_ntoa
-#include <unistd.h>     // For close
-#include <poll.h>       // For poll
 
 namespace screamrouter {
 namespace audio {
+
 
 // Using alias for clarity
 using NotificationQueue = utils::ThreadSafeQueue<NewSourceNotification>;
@@ -52,7 +74,7 @@ public:
         std::shared_ptr<NotificationQueue> notification_queue
     );
 
-    ~RtpReceiver() override;
+    ~RtpReceiver() noexcept; // Added noexcept, removed override
 
     // --- AudioComponent Interface ---
     void start() override;
@@ -92,7 +114,7 @@ protected:
 
 private:
     RtpReceiverConfig config_;
-    int socket_fd_ = -1;
+    socket_t socket_fd_; // Use cross-platform type alias, initialize in constructor
     std::shared_ptr<NotificationQueue> notification_queue_;
 
     // Map: source_tag (IP) -> instance_id -> Target Info

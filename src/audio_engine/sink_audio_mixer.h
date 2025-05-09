@@ -1,6 +1,30 @@
 #ifndef SINK_AUDIO_MIXER_H
 #define SINK_AUDIO_MIXER_H
 
+// Define platform-specific socket types and macros FIRST
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #pragma comment(lib, "Ws2_32.lib")
+    using socket_t = SOCKET;
+    #define INVALID_SOCKET_VALUE INVALID_SOCKET
+    #define _close_socket closesocket // Use the corrected macro name
+    #define poll WSAPoll
+    #define GET_LAST_SOCK_ERROR WSAGetLastError()
+#else // POSIX
+    #include <sys/types.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+    #include <poll.h>
+    #include <errno.h>
+    using socket_t = int;
+    #define INVALID_SOCKET_VALUE -1
+    #define _close_socket close // Use the corrected macro name
+    #define GET_LAST_SOCK_ERROR errno
+#endif
+
 #include "audio_component.h"
 #include "thread_safe_queue.h"
 #include "audio_types.h"
@@ -13,13 +37,6 @@
 #include <condition_variable>
 #include <lame/lame.h> // For LAME MP3 encoding
 
-// Socket related includes
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h> // For sockaddr_in
-#include <arpa/inet.h>  // For inet_pton, inet_ntoa
-#include <unistd.h>     // For close
-#include <poll.h>       // For poll
 
 // Forward declare AudioProcessor
 class AudioProcessor;
@@ -77,7 +94,7 @@ public:
      *        Assumes external management of the TCP connection itself.
      * @param fd The new TCP socket file descriptor, or -1 if disconnected.
      */
-    void set_tcp_fd(int fd);
+    // void set_tcp_fd(int fd); // Removed
 
 protected:
     // --- AudioComponent Interface ---
@@ -106,8 +123,8 @@ private:
     const std::chrono::milliseconds GRACE_PERIOD_POLL_INTERVAL{1};
 
     // Network state
-    int udp_socket_fd_ = -1;
-    int tcp_socket_fd_ = -1; // Managed externally via set_tcp_fd()
+    socket_t udp_socket_fd_; // Use cross-platform type, initialize in constructor
+    // int tcp_socket_fd_ = -1; // Removed
     struct sockaddr_in udp_dest_addr_; // Store the actual struct, not pointer
 
     // Mixing buffer (32-bit)

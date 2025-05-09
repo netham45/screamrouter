@@ -102,7 +102,7 @@ struct SinkConfig {
     int channels = 2;
     uint8_t chlayout1 = 0x03; // Default Stereo L/R
     uint8_t chlayout2 = 0x00;
-    bool use_tcp = false;
+    // bool use_tcp = false; // Removed
     bool enable_mp3 = false; // Flag to enable MP3 output queue
     // int mp3_bitrate = 192; // Example MP3 setting if needed here
 };
@@ -158,7 +158,7 @@ struct SinkMixerConfig {
     int output_channels;
     uint8_t output_chlayout1;
     uint8_t output_chlayout2;
-    bool use_tcp;
+    // bool use_tcp; // Removed
     // MP3 Encoding settings (if applicable)
     // bool enable_mp3_output; // Determined by whether mp3_output_queue is provided
     // int mp3_bitrate = 192; // Example setting for LAME
