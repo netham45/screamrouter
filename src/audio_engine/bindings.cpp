@@ -156,7 +156,41 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
              "Retrieves the list of seen source tags from a specific Raw Scream receiver.")
         .def("get_per_process_scream_receiver_seen_tags", &AudioManager::get_per_process_scream_receiver_seen_tags,
              py::arg("listen_port"),
-             "Retrieves the list of seen source tags from a specific Per-Process Scream receiver.");
+             "Retrieves the list of seen source tags from a specific Per-Process Scream receiver.")
+
+        // Method for plugins to write audio packets directly
+        .def("write_plugin_packet",
+             [](AudioManager &self,
+                const std::string& source_instance_id,
+                py::bytes audio_payload_bytes, // Explicitly expect py::bytes from Python
+                int channels,
+                int sample_rate,
+                int bit_depth,
+                uint8_t chlayout1,
+                uint8_t chlayout2) -> bool {
+                 // Convert py::bytes to std::vector<uint8_t>
+                 py::buffer_info info = py::buffer(audio_payload_bytes).request();
+                 const uint8_t* ptr = static_cast<const uint8_t*>(info.ptr);
+                 std::vector<uint8_t> audio_payload_vec(ptr, ptr + info.size);
+                 
+                 return self.write_plugin_packet(
+                     source_instance_id,
+                     audio_payload_vec, // Pass the std::vector<uint8_t>
+                     channels,
+                     sample_rate,
+                     bit_depth,
+                     chlayout1,
+                     chlayout2
+                 );
+             },
+             py::arg("source_instance_id"),
+             py::arg("audio_payload"), 
+             py::arg("channels"),
+             py::arg("sample_rate"),
+             py::arg("bit_depth"),
+             py::arg("chlayout1"),
+             py::arg("chlayout2"),
+             "Allows a plugin to inject a pre-formed audio packet (as bytes) into a SourceInputProcessor instance. Returns true on success.");
 
         // External Control Methods (like setting TCP FD)
         // Removed .def("set_sink_tcp_fd", ...)

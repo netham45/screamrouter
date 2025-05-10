@@ -58,6 +58,30 @@ public:
     const std::string& get_source_tag() const; // Implementation in .cpp
     const SourceProcessorConfig& get_config() const { return config_; } // Added getter for full config
 
+    // --- Plugin Data Injection ---
+    /**
+     * @brief Injects a pre-formed audio packet directly into the processing pipeline.
+     * This is intended for use by plugins or other internal mechanisms that generate audio
+     * data matching the expected format (e.g., 1152 bytes of PCM).
+     * The packet will be added to the timeshift buffer and processed like other inputs.
+     *
+     * @param source_tag The tag identifying the source of this packet.
+     * @param audio_payload The raw audio data (e.g., 1152 bytes of PCM).
+     * @param channels Number of audio channels.
+     * @param sample_rate Sample rate in Hz.
+     * @param bit_depth Bit depth (e.g., 16, 24, 32).
+     * @param chlayout1 Scream channel layout byte 1.
+     * @param chlayout2 Scream channel layout byte 2.
+     */
+    void inject_plugin_packet(
+        const std::string& source_tag,
+        const std::vector<uint8_t>& audio_payload,
+        int channels,
+        int sample_rate,
+        int bit_depth,
+        uint8_t chlayout1,
+        uint8_t chlayout2
+    );
 
 protected:
     // --- AudioComponent Interface ---

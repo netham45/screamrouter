@@ -84,7 +84,7 @@ class APIWebStream(threading.Thread):
         app.websocket("/ws/{sink_ip}/")(self.websocket_mp3_stream)
         app.get("/stream/{sink_ip}/", tags=["Stream"])(self.http_mp3_stream)
         logger.info("[WebStream] MP3 Web Stream Available")
-        self.queue: queue.Queue = queue.Queue
+        self._queue: queue.Queue = queue.Queue()
         self.active_ips = []
         self.running: bool = True
         """Ends all websocket and MP3 streams when set to False"""
@@ -102,10 +102,6 @@ class APIWebStream(threading.Thread):
                 self.join(5)
             except TimeoutExpired:
                 logger.warning("Webstream failed to close")
-        try:
-            self.manager.shutdown()
-        except OSError:
-            pass
 
     def process_frame(self, sink_ip: IPAddressType, data: bytes) -> None:
         """Callback for sinks to have data sent out to websockets"""
@@ -141,7 +137,7 @@ class APIWebStream(threading.Thread):
         while self.running:
             # Process packets from the internal queue (e.g., from FFmpeg outputs)
             try:
-                packet: WebStreamFrames = self.queue.get(block=False) # Non-blocking get
+                packet: WebStreamFrames = self._queue.get_nowait() # Non-blocking get
                 self.process_frame(packet.sink_ip, packet.data)
             except queue.Empty:
                 pass # Queue is empty, proceed to poll AudioManager
@@ -169,10 +165,5 @@ class APIWebStream(threading.Thread):
                     # Catching generic Exception as various issues could occur with C++ interop
                     # or if sink_ip is no longer valid in AudioManager.
                     logger.error("Error getting/processing MP3 data for sink %s: %s", sink_ip, e)
-            
-            time.sleep(0.01)  # Control polling frequency, adjust as needed
 
-        try:
-            self.manager.shutdown()
-        except OSError:
-            pass
+            time.sleep(0.01)  # Control polling frequency, adjust as needed

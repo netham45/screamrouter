@@ -408,11 +408,9 @@ bool AudioManager::remove_sink(const std::string& sink_id) {
 
 // Refactored configure_source to use instance_id
 std::string AudioManager::configure_source(const SourceConfig& config) {
-    LOG_AM("Configuring source instance with tag: " + config.tag);
     std::lock_guard<std::mutex> lock(manager_mutex_);
 
     if (!running_) {
-        LOG_ERROR_AM("Cannot configure source, manager is not running.");
         return ""; // Return empty string on failure
     }
 
@@ -423,10 +421,8 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     // Validate EQ size from the input config
     SourceConfig validated_config = config; // Make a copy
     if (!validated_config.initial_eq.empty() && validated_config.initial_eq.size() != EQ_BANDS) {
-        LOG_ERROR_AM("Invalid initial EQ size for source tag " + validated_config.tag + ". Expected " + std::to_string(EQ_BANDS) + ", got " + std::to_string(validated_config.initial_eq.size()) + ". Resetting to flat.");
         validated_config.initial_eq.assign(EQ_BANDS, 1.0f);
     } else if (validated_config.initial_eq.empty()) {
-         LOG_AM("No initial EQ provided for source tag " + validated_config.tag + ". Setting to flat.");
          validated_config.initial_eq.assign(EQ_BANDS, 1.0f);
     }
 
@@ -447,7 +443,6 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
 
     // Validate and use the target output format specified in the input SourceConfig
     if (validated_config.target_output_channels <= 0 || validated_config.target_output_channels > 8) { // Max 8 channels for example
-        LOG_ERROR_AM("Invalid target_output_channels (" + std::to_string(validated_config.target_output_channels) + ") for source tag " + validated_config.tag + ". Defaulting to 2.");
         proc_config.output_channels = 2; // Fallback
     } else {
         proc_config.output_channels = validated_config.target_output_channels;
@@ -455,7 +450,6 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
 
     const std::vector<int> valid_samplerates = {8000, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 192000};
     if (std::find(valid_samplerates.begin(), valid_samplerates.end(), validated_config.target_output_samplerate) == valid_samplerates.end()) {
-        LOG_ERROR_AM("Invalid target_output_samplerate (" + std::to_string(validated_config.target_output_samplerate) + ") for source tag " + validated_config.tag + ". Defaulting to 48000.");
         proc_config.output_samplerate = 48000; // Fallback
     } else {
         proc_config.output_samplerate = validated_config.target_output_samplerate;
@@ -519,7 +513,6 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
 
      } else {
           LOG_ERROR_AM("RtpReceiver is null, cannot add output target for instance " + instance_id);
-         new_source->stop(); // Stop the newly created source processor
          // Clean up queues...
          rtp_to_source_queues_.erase(instance_id);
          source_to_sink_queues_.erase(instance_id);
@@ -532,7 +525,6 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
      }
 
     // --- Register SourceInputProcessor's queue with ALL active receivers ---
-    LOG_AM("Registering source instance " + instance_id + " (tag: [" + proc_config.source_tag + "]) with all active receivers.");
     int registration_count = 0;
 
     // 1. Register with RtpReceiver
@@ -576,7 +568,6 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
          LOG_WARN_AM("Warning: Source instance " + instance_id + " (tag: " + proc_config.source_tag + ") was not registered with ANY active receivers. It will not receive packets.");
     }
 
-    // Store the new source processor using its unique instance_id
      sources_[instance_id] = std::move(new_source);
 
     LOG_AM("Source instance " + instance_id + " (tag: " + config.tag + ") configured and started successfully.");
@@ -585,7 +576,6 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
 
 // Refactored remove_source to handle different receiver types
 bool AudioManager::remove_source(const std::string& instance_id) {
-    LOG_AM("Removing source instance: " + instance_id);
     std::unique_ptr<SourceInputProcessor> source_to_remove;
     std::string source_tag_for_removal; 
     InputProtocolType proto_type = InputProtocolType::RTP_SCREAM_PAYLOAD; // Default
@@ -594,7 +584,6 @@ bool AudioManager::remove_source(const std::string& instance_id) {
     { // Scope for lock
         std::lock_guard<std::mutex> lock(manager_mutex_);
         if (!running_) {
-             LOG_ERROR_AM("Cannot remove source instance, manager is not running.");
              return false;
         }
 
@@ -605,7 +594,6 @@ bool AudioManager::remove_source(const std::string& instance_id) {
             return false;
         }
 
-        // Get the source tag before moving the processor
         if (it->second) {
              // TODO: Add a getter for source_tag in SourceInputProcessor if needed, or retrieve from config if stored
              // Get config details needed for removal
@@ -614,7 +602,6 @@ bool AudioManager::remove_source(const std::string& instance_id) {
              proto_type = proc_config.protocol_type;
              target_port = proc_config.target_receiver_port;
         } else {
-             LOG_ERROR_AM("Found null source processor pointer for instance: " + instance_id);
              sources_.erase(it); // Remove the null entry
              return false; // Indicate failure
         }
@@ -629,7 +616,6 @@ bool AudioManager::remove_source(const std::string& instance_id) {
         rtp_to_source_queues_.erase(instance_id); 
         source_to_sink_queues_.erase(instance_id);
         command_queues_.erase(instance_id);
-        LOG_AM("Removed queues for source instance: " + instance_id);
 
         // --- Unregister from appropriate receivers ---
         if (!source_tag_for_removal.empty()) {
@@ -669,11 +655,9 @@ bool AudioManager::remove_source(const std::string& instance_id) {
             LOG_ERROR_AM("Source tag for removal is empty for instance " + instance_id + ". Cannot unregister from receivers.");
         }
 
-        // Tell all sinks to remove this source's input queue
         // ** IMPORTANT: SinkAudioMixer needs modification. **
         // SinkAudioMixer::remove_input_queue currently uses source_tag.
         // It should ideally use instance_id, or we need the source_tag here.
-        LOG_AM("Disconnecting source instance " + instance_id + " from existing sinks...");
         for (auto& sink_pair : sinks_) {
             if (sink_pair.second) {
                 sink_pair.second->remove_input_queue(instance_id); // Use instance_id now
@@ -683,7 +667,6 @@ bool AudioManager::remove_source(const std::string& instance_id) {
 
     // Stop the processor outside the lock
     if (source_to_remove) {
-        LOG_AM("Stopping source processor instance: " + instance_id);
         source_to_remove->stop();
         LOG_AM("Source processor instance " + instance_id + " stopped and removed.");
         return true; // Successfully found and stopped
@@ -712,14 +695,12 @@ void AudioManager::process_notifications() {
 
         // TODO: Implement proper packet fan-out based on source_tag if RtpReceiver pushes packets here.
         // For now, this thread might just log the notification.
-        LOG_AM("Received notification for source tag: " + notification.source_tag + ". No action taken (processor creation is explicit).");
     }
     LOG_AM("Notification processing thread finished.");
 }
 
 // handle_new_source is now just informational, processor creation is explicit via configure_source
 void AudioManager::handle_new_source(const std::string& source_tag) {
-    // This function is called when the RtpReceiver detects a packet from a source IP (tag).
     // It no longer creates processors automatically.
     // It could potentially be used to trigger logic if packets arrive for an *unknown* tag,
     // but currently, it does nothing significant.
@@ -737,7 +718,6 @@ bool AudioManager::send_command_to_source(const std::string& instance_id, const 
 
         auto it = command_queues_.find(instance_id);
         if (it == command_queues_.end()) {
-            LOG_ERROR_AM("Command queue not found for source instance: " + instance_id);
             return false;
         }
         target_queue = it->second;
@@ -752,11 +732,9 @@ bool AudioManager::send_command_to_source(const std::string& instance_id, const 
 
 // Refactored connect_source_sink to use instance_id
 bool AudioManager::connect_source_sink(const std::string& source_instance_id, const std::string& sink_id) {
-    LOG_AM("Connecting source instance " + source_instance_id + " to sink " + sink_id);
     std::lock_guard<std::mutex> lock(manager_mutex_);
 
     if (!running_) {
-        LOG_ERROR_AM("Cannot connect source/sink, manager is not running.");
         return false;
     }
 
@@ -767,14 +745,12 @@ bool AudioManager::connect_source_sink(const std::string& source_instance_id, co
         return false;
     }
 
-    // Find the source's output queue using its instance_id
     auto queue_it = source_to_sink_queues_.find(source_instance_id);
     if (queue_it == source_to_sink_queues_.end() || !queue_it->second) {
         LOG_ERROR_AM("Source output queue not found for instance ID: " + source_instance_id);
         return false;
     }
 
-    // Find the source processor to get its original tag
     auto source_it = sources_.find(source_instance_id);
      if (source_it == sources_.end() || !source_it->second) {
          LOG_ERROR_AM("Source processor instance not found for ID: " + source_instance_id);
@@ -784,7 +760,6 @@ bool AudioManager::connect_source_sink(const std::string& source_instance_id, co
      // LOG_WARN_AM("Need getter for source_tag in SourceInputProcessor for connect_source_sink");
 
 
-    // Connect the source's output queue to the sink's input using instance_id
     sink_it->second->add_input_queue(source_instance_id, queue_it->second); // Use instance_id now
     LOG_AM("Connection successful: Source instance " + source_instance_id + " -> Sink " + sink_id);
     return true;
@@ -792,11 +767,9 @@ bool AudioManager::connect_source_sink(const std::string& source_instance_id, co
 
 // Refactored disconnect_source_sink to use instance_id
 bool AudioManager::disconnect_source_sink(const std::string& source_instance_id, const std::string& sink_id) {
-    LOG_AM("Disconnecting source instance " + source_instance_id + " from sink " + sink_id);
     std::lock_guard<std::mutex> lock(manager_mutex_);
 
     if (!running_) {
-        LOG_ERROR_AM("Cannot disconnect source/sink, manager is not running.");
         return false;
     }
 
@@ -807,7 +780,6 @@ bool AudioManager::disconnect_source_sink(const std::string& source_instance_id,
         return false;
     }
 
-     // Find the source processor to get its original tag
      auto source_it = sources_.find(source_instance_id);
      if (source_it == sources_.end() || !source_it->second) {
          // Source instance doesn't exist, maybe already removed. Consider this success?
@@ -818,7 +790,6 @@ bool AudioManager::disconnect_source_sink(const std::string& source_instance_id,
      // LOG_WARN_AM("Need getter for source_tag in SourceInputProcessor for disconnect_source_sink");
 
 
-    // Tell the sink to remove the input queue associated with the source instance_id
     sink_it->second->remove_input_queue(source_instance_id); // Use instance_id now
     LOG_AM("Disconnection successful: Source instance " + source_instance_id + " -x Sink " + sink_id);
     return true;
@@ -837,7 +808,6 @@ bool AudioManager::update_source_volume(const std::string& instance_id, float vo
 
 bool AudioManager::update_source_equalizer(const std::string& instance_id, const std::vector<float>& eq_values) {
      if (eq_values.size() != EQ_BANDS) {
-         LOG_ERROR_AM("update_source_equalizer: Invalid EQ size (" + std::to_string(eq_values.size()) + ") for source instance " + instance_id);
          return false;
      }
     ControlCommand cmd;
@@ -919,6 +889,65 @@ std::vector<uint8_t> AudioManager::get_mp3_data_by_ip(const std::string& ip_addr
 
 // --- External Control ---
 // Removed AudioManager::set_sink_tcp_fd
+
+bool AudioManager::write_plugin_packet(
+    const std::string& source_instance_tag,
+    const std::vector<uint8_t>& audio_payload,
+    int channels,
+    int sample_rate,
+    int bit_depth,
+    uint8_t chlayout1,
+    uint8_t chlayout2)
+{
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+
+    if (!running_) {
+        LOG_ERROR_AM("AudioManager not running. Cannot write plugin packet.");
+        return false;
+    }
+
+    // Find the SourceInputProcessor by its original tag (passed as source_instance_tag parameter)
+    SourceInputProcessor* target_processor_ptr = nullptr;
+    std::string found_instance_id; // To store the instance_id if found
+
+    // Iterate over the sources map to find a processor whose configured tag matches source_instance_tag
+    for (const auto& pair : sources_) {
+        if (pair.second) { // Check if the unique_ptr is valid
+            const auto& proc_config = pair.second->get_config(); // Get the processor's configuration
+            if (proc_config.source_tag == source_instance_tag) { // Compare with the provided tag (parameter)
+                target_processor_ptr = pair.second.get(); // Get raw pointer to the processor
+                found_instance_id = pair.first;           // Store its unique instance_id (map key)
+                break;                                    // Found, exit loop
+            }
+        }
+    }
+
+    if (!target_processor_ptr) {
+        LOG_ERROR_AM("SourceInputProcessor instance not found for tag: " + source_instance_tag);
+        return false;
+    }
+
+    // The SourceInputProcessor::inject_plugin_packet itself is responsible for
+    // validating payload size and other parameters.
+    // It's also responsible for logging its own success/failure.
+    // The first argument to inject_plugin_packet is 'source_tag'. For plugin-originated data,
+    // this should be the unique instance_id of the processor to ensure correct internal handling
+    // and consistency with how other parts of the system might identify packet origins.
+    target_processor_ptr->inject_plugin_packet(
+        found_instance_id, // Use the found instance_id as the packet's source_tag
+        audio_payload,
+        channels,
+        sample_rate,
+        bit_depth,
+        chlayout1,
+        chlayout2
+    );
+
+    // Assuming inject_plugin_packet is synchronous and doesn't return a status,
+    // we return true if the call was made. Error handling within inject_plugin_packet
+    // will log issues.
+    return true;
+}
 
 // --- Receiver Info API Implementations ---
 std::vector<std::string> AudioManager::get_rtp_receiver_seen_tags() {

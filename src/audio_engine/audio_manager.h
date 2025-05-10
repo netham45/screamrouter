@@ -18,6 +18,8 @@
 #include <thread>
 #include <atomic>
 
+#include <pybind11/pybind11.h> // For pybind11 core types like py::bytes
+
 namespace screamrouter {
 namespace audio {
 
@@ -208,6 +210,29 @@ public:
      */
     std::vector<std::string> get_per_process_scream_receiver_seen_tags(int listen_port);
 
+    /**
+     * @brief Allows external components (e.g., Python plugins) to inject pre-formed audio packets
+     * directly into a specific SourceInputProcessor instance.
+     *
+     * @param source_instance_id The unique ID of the target SourceInputProcessor.
+     * @param audio_payload The raw audio data (e.g., 1152 bytes of PCM).
+     * @param channels Number of audio channels.
+     * @param sample_rate Sample rate in Hz.
+     * @param bit_depth Bit depth (e.g., 16, 24, 32).
+     * @param chlayout1 Scream channel layout byte 1.
+     * @param chlayout2 Scream channel layout byte 2.
+     * @return true if the packet was successfully passed to the SourceInputProcessor, false otherwise
+     *         (e.g., source_instance_id not found, or processor not ready).
+     */
+    bool write_plugin_packet(
+        const std::string& source_instance_tag,
+        const std::vector<uint8_t>& audio_payload,
+        int channels,
+        int sample_rate,
+        int bit_depth,
+        uint8_t chlayout1,
+        uint8_t chlayout2
+    );
 
     // Removed set_sink_tcp_fd
 

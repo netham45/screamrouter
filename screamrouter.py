@@ -113,7 +113,7 @@ else:
 webstream: APIWebStream = APIWebStream(app, audio_manager) # Pass audio_manager
 websocket_config: APIWebsocketConfig = APIWebsocketConfig(app)
 websocket_debug: APIWebsocketDebug = APIWebsocketDebug(app)
-plugin_manager: PluginManager = PluginManager(app)
+plugin_manager: PluginManager = PluginManager(app, audio_manager_instance=audio_manager)
 plugin_manager.start_registered_plugins()
 
 # --- mDNS Setup ---

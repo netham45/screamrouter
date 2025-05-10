@@ -101,6 +101,48 @@ const std::string& SourceInputProcessor::get_source_tag() const {
     return config_.source_tag;
 }
 
+// --- Plugin Data Injection ---
+void SourceInputProcessor::inject_plugin_packet(
+    const std::string& source_tag,
+    const std::vector<uint8_t>& audio_payload,
+    int channels,
+    int sample_rate,
+    int bit_depth,
+    uint8_t chlayout1,
+    uint8_t chlayout2)
+{
+    if (stop_flag_) {
+        LOG_WARN("inject_plugin_packet called while stopping or stopped. Packet ignored.");
+        return;
+    }
+
+    if (audio_payload.size() != INPUT_CHUNK_BYTES) {
+        LOG_ERROR("inject_plugin_packet: Invalid audio_payload size. Expected " +
+                  std::to_string(INPUT_CHUNK_BYTES) + ", got " + std::to_string(audio_payload.size()) +
+                  ". Packet ignored.");
+        return;
+    }
+
+    LOG_DEBUG("Injecting plugin packet from tag: " + source_tag +
+              ", CH=" + std::to_string(channels) +
+              ", SR=" + std::to_string(sample_rate) +
+              ", BD=" + std::to_string(bit_depth));
+
+    TaggedAudioPacket packet;
+    packet.source_tag = source_tag; // Or could use config_.instance_id if that's more appropriate
+    packet.received_time = std::chrono::steady_clock::now();
+    packet.sample_rate = sample_rate;
+    packet.bit_depth = bit_depth;
+    packet.channels = channels;
+    packet.chlayout1 = chlayout1;
+    packet.chlayout2 = chlayout2;
+    packet.audio_data = audio_payload; // Copies the data
+
+    // Use the existing mechanism to add to timeshift buffer and notify
+    handle_new_input_packet(packet);
+}
+
+
 // --- Initialization ---
 
 // void SourceInputProcessor::initialize_audio_processor() { // Removed

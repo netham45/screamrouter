@@ -21,3 +21,4 @@ tasks/**
 **/*.tar.gz
 c_utils/**
 **/*.swp
+**/*.egg

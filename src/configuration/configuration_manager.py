@@ -1114,6 +1114,8 @@ class ConfigurationManager(threading.Thread):
             _logger.warning("[Configuration Manager] C++ Config Applier not available. Skipping C++ engine configuration.")
             return False # Indicate that C++ state was not applied
 
+        self.__process_configuration() # This updates self.active_configuration
+
         _logger.info("[Configuration Manager] Translating configuration for C++ engine...")
         cpp_desired_state = self._translate_config_to_cpp_desired_state()
 

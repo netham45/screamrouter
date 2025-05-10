@@ -14,10 +14,10 @@ from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.constants import constants
 from src.plugin_manager.screamrouter_plugin import ScreamRouterPlugin
 from src.screamrouter_logger.screamrouter_logger import get_logger
-from src.screamrouter_types.annotations import SinkNameType, VolumeType
+from src.screamrouter_types.annotations import SinkNameType, VolumeType # BitDepthType, SampleRateType, ChannelsType, ChannelLayoutType
 from src.screamrouter_types.configuration import SourceDescription
 from src.utils.utils import close_all_pipes
-
+import time
 logger = get_logger(__name__)
 
 class PlayURLClass(BaseModel):
@@ -44,20 +44,26 @@ class PluginPlayURLMultiple(ScreamRouterPlugin):
         """Holds a list of playing URLs"""
         self.__mainpid = os.getpid()
         """Holds the main pid so the sigchild interrupt doesn't run on child processes"""
-        #self.start()
-        # Start the run loop in a new process. any variables to be available to run()
-        # need to be delcared before this.
+        self.plugin_instance_tag_base = "PlayURLMultiInstance" # Base for unique instance IDs
+        
+        # self.start() # Thread is started by PluginManager after plugin_start is called
 
     def start_plugin(self):
         """This is called when the plugin is started. API endpoints should
             be added here. Any other startup tasks can be performed too."""
+        # Ensure the plugin's base tag for instance ID generation is set
+        self.tag = self.plugin_instance_tag_base # Used by add_temporary_source
+
         self.api.post("/sinks/{sink_name}/play/{volume}",
                           tags=["Play URL"])(self.play_url)
+        
+        # This plugin itself doesn't have a run() loop, its instances do.
+        # So no super().start() here for the main plugin thread.
 
     def stop_plugin(self):
         """This is called when the plugin is stopped. You may perform shutdown
            tasks here."""
-        logger.info("Stopping plugin %s", self.name)
+        logger.info(f"Stopping plugin {self.name}")
         for instance in self.playing_instances:
             instance.stop()
 
@@ -84,48 +90,79 @@ class PluginPlayURLMultiple(ScreamRouterPlugin):
 
     def play_url(self, url: PlayURLClass, sink_name: SinkNameType, volume: VolumeType):
         """Plays a URL now even if others are playing"""
-        logger.info("[Plugin PlayURLMultiple] Playing Entry: %s, %s, %s", sink_name, url, volume)
-        self.playing_instances.append(
-            PluginPlayURLInstance(self,
-                                  sink_name,
-                                  url.url,
-                                  volume,
-                                  f"{self.tag}{self.counter}",
-                                  self.screamrouter_write_fd))
-        self.counter = self.counter + 1
+        logger.info(f"[Plugin PlayURLMultiple] Playing Entry: {sink_name}, {url.url}, {volume}")
+
+        # Create a temporary source and get its unique instance_id
+        source_desc = SourceDescription() # Default description
+        # add_temporary_source will generate a unique tag (instance_id) like "PlayURLMultiInstance_X"
+        # and set it on source_desc.tag. This returned tag is the source_instance_id.
+        source_instance_id = self.add_temporary_source(sink_name, source_desc)
+
+        if not source_instance_id:
+            logger.error(f"[Plugin PlayURLMultiple] Failed to add temporary source for {url.url}. Cannot play.")
+            return
+
+        logger.info(f"[Plugin PlayURLMultiple] Created source_instance_id: {source_instance_id} for {url.url}")
+        
+        instance = PluginPlayURLInstance(
+            plugin=self,
+            sink_name=sink_name, # Still needed for context, though source is now identified by instance_id
+            url=url.url,
+            volume=volume,
+            source_instance_id=source_instance_id # Pass the unique ID
+            # screamrouter_write_fd is removed
+        )
+        self.playing_instances.append(instance)
+        # self.counter = self.counter + 1 # Counter is managed by ScreamRouterPlugin base for temporary sources
 
 class PluginPlayURLInstance(threading.Thread):
     """Manages an instance of ffmpeg"""
     def __init__(self, plugin: PluginPlayURLMultiple,
-                 sink_name: SinkNameType,
+                 sink_name: SinkNameType, # Keep for context if needed, not for source ID
                  url: str,
                  volume: VolumeType,
-                 tag: str,
-                 screamrouter_write_fd: int):
+                 source_instance_id: str): # Changed tag to source_instance_id
         """Plays a URL."""
-        super().__init__()
+        super().__init__(name=f"PlayURLInstance-{source_instance_id}")
+        self.plugin = plugin
+        """Holds the plugin to call to add/remove sources"""
         self.url = url
         """Holds the URL to play back"""
-        self.tag = tag
-        """Holds the tag to put on packets to send in"""
+        self.source_instance_id = source_instance_id # This is the unique ID for this playback instance
+        """Holds the source_instance_id to put on packets to send in"""
+        
         self.fifo_read: int
         """Descriptor for the pipe for plugin to read from ffmpeg."""
         self.fifo_write: int
         """Descriptor for the pipe for ffmpeg to write to plugin."""
         self.fifo_read, self.fifo_write = os.pipe()
-        self.stream_info: ScreamHeader = create_stream_info(32, 48000, 2, "stereo")
-        """This holds the bytes from a generated Scream Header so they can be
-           prepended to data packets"""
+
+        # Default stream info, can be overridden if ffmpeg provides different actuals
+        _default_bit_depth = 16 # Assuming s16le output from ffmpeg
+        _default_sample_rate = 48000
+        _default_channels = 2
+        _default_channel_layout_str = "stereo"
+        self.stream_info: ScreamHeader = create_stream_info(
+            _default_bit_depth, _default_sample_rate, _default_channels, _default_channel_layout_str
+        )
+        # Store these for easy access for write_data
+        self.current_bit_depth = _default_bit_depth
+        self.current_sample_rate = _default_sample_rate
+        self.current_channels = _default_channels
+        # Correctly access channel layout bytes as per user feedback
+        self.current_chlayout1 = self.stream_info.channel_layout[0]
+        self.current_chlayout2 = self.stream_info.channel_layout[1]
+        
         self.ffmpeg: Optional[subprocess.Popen] = None
         """Holds the ffmpeg process."""
-        self.running = True
+        self.running_flag = c_bool(True) # For thread loop control
         """Rather this instance of URL playback is running"""
-        self.screamrouter_write_fd: int = screamrouter_write_fd
-        """Queue to write back to ScreamRouter"""
-        self.plugin = plugin
-        """Holds the plugin to call to add/remove sources"""
-        self.plugin.add_temporary_source(sink_name, SourceDescription(tag=self.tag))
-        self.start()
+        # self.screamrouter_write_fd: int = screamrouter_write_fd # Removed
+        
+        # The temporary source was already added by the main plugin before creating this instance.
+        # self.plugin.add_temporary_source(sink_name, SourceDescription(tag=self.source_instance_id)) # This is now done in play_url
+        
+        self.start() # Start the thread for this instance
         self.run_ffmpeg(url, volume)
 
     def run_ffmpeg(self, url: str, volume: VolumeType):
@@ -135,11 +172,21 @@ class PluginPlayURLInstance(threading.Thread):
         ffmpeg_command_parts.extend(["-re",
                                      "-i", url])
         ffmpeg_command_parts.extend(["-af", f"volume={volume}"])
-        ffmpeg_command_parts.extend(["-f", f"s{self.stream_info.bit_depth}le",
-                                     "-ac", f"{self.stream_info.channels}",
-                                     "-ar", f"{self.stream_info.sample_rate}",
+        # Output format should match what inject_plugin_packet expects for raw PCM
+        # For example, 16-bit signed little-endian PCM
+        self.current_bit_depth = 16 # Example: s16le
+        self.current_sample_rate = 48000
+        self.current_channels = 2
+        # Re-create stream_info to get correct chlayout bytes if format changes
+        temp_stream_info = create_stream_info(self.current_bit_depth, self.current_sample_rate, self.current_channels, "stereo")
+        self.current_chlayout1 = temp_stream_info.channel_layout[0]
+        self.current_chlayout2 = temp_stream_info.channel_layout[1]
+
+        ffmpeg_command_parts.extend(["-f", f"s{self.current_bit_depth}le",
+                                     "-ac", f"{self.current_channels}",
+                                     "-ar", f"{self.current_sample_rate}",
                                     f"pipe:{self.fifo_write}"])
-        logger.debug("[PlayURL] ffmpeg command line: %s", ffmpeg_command_parts)
+        logger.debug(f"[PlayURLInstance {self.source_instance_id}] ffmpeg command line: {ffmpeg_command_parts}")
 
         # None means output to stdout, stderr as normal
         #output: Optional[int] = None if constants.SHOW_FFMPEG_OUTPUT else subprocess.DEVNULL
@@ -155,18 +202,36 @@ class PluginPlayURLInstance(threading.Thread):
 
     def stop(self):
         """Stops playback"""
-        if not self.ffmpeg is None:
+        if self.ffmpeg and self.ffmpeg.poll() is None: # Check if ffmpeg is running
+            logger.info(f"[PlayURLInstance {self.source_instance_id}] Killing ffmpeg process.")
             self.ffmpeg.kill()
-            self.ffmpeg.wait()
-        self.running.value = c_bool(False)
-        os.write(self.fifo_write, bytes([0] * (constants.PACKET_SIZE + constants.TAG_MAX_LENGTH)))
-        if constants.KILL_AT_CLOSE:
-            self.kill()
-        if constants.WAIT_FOR_CLOSES:
             try:
-                self.join(5)
+                self.ffmpeg.wait(timeout=2) # Wait for a short period
             except subprocess.TimeoutExpired:
-                logger.warning("Play URL Multiple failed to close")
+                logger.warning(f"[PlayURLInstance {self.source_instance_id}] ffmpeg did not terminate gracefully after kill.")
+        
+        self.running_flag.value = False # Signal the run loop to stop
+        
+        # Write a small amount of data to unblock select in run() if it's waiting
+        try:
+            os.write(self.fifo_write, b'\0') 
+        except OSError: # Pipe might already be closed
+            pass
+
+        # Thread joining logic (moved from ScreamRouterPlugin base, as each instance is a thread)
+        if self.is_alive():
+            if constants.WAIT_FOR_CLOSES:
+                try:
+                    self.join(5) # Wait for thread to finish
+                    if self.is_alive():
+                        logger.warning(f"PlayURLInstance {self.source_instance_id} thread failed to close after 5 seconds.")
+                except RuntimeError: # join() raises RuntimeError on timeout
+                    logger.warning(f"PlayURLInstance {self.source_instance_id} thread failed to close (timeout on join).")
+            else: # If not waiting, just log if it's still alive (it might exit quickly)
+                if self.is_alive():
+                     logger.info(f"PlayURLInstance {self.source_instance_id} thread stop initiated, not waiting for join.")
+        
+        # Close pipes after attempting to stop/join thread
         try:
             os.close(self.fifo_read)
         except OSError:
@@ -178,36 +243,78 @@ class PluginPlayURLInstance(threading.Thread):
 
     def check_ffmpeg_done(self) -> bool:
         """Checks if ffmpeg is done"""
-        logger.debug("[Plugin PlayURL Multiple %s] Checking if done", self.tag)
+        # logger.debug(f"[PlayURLInstance {self.source_instance_id}] Checking if ffmpeg is done.")
         if self.ffmpeg is None:
-            logger.debug("[Plugin PlayURL Multiple %s] Haven't started", self.tag)
-            return False
-        if not self.ffmpeg.poll() is None:
-            logger.debug("[Plugin PlayURL Multiple %s] Done", self.tag)
-            self.plugin.remove_temporary_source(self.tag)
-            self.stop()
+            # logger.debug(f"[PlayURLInstance {self.source_instance_id}] ffmpeg hasn't started yet.")
+            return False # Not started, so not done
+        
+        if self.ffmpeg.poll() is not None: # poll() returns exit code if done, None otherwise
+            logger.info(f"[PlayURLInstance {self.source_instance_id}] ffmpeg process has ended.")
+            # The main plugin (PluginPlayURLMultiple) is responsible for removing the temporary source
+            # by calling self.plugin.remove_temporary_source(self.source_instance_id)
+            # This method (check_ffmpeg_done) is called by the main plugin.
+            # self.stop() # Call stop to clean up this instance's resources (thread, pipes)
             return True
-        logger.debug("[Plugin PlayURL Multiple %s] Not done", self.tag)
+        # logger.debug(f"[PlayURLInstance {self.source_instance_id}] ffmpeg is still running.")
         return False
 
     def run(self):
-        """This is ran in a new process and must send packets to the host over the queue.
-           The multiprocessing variable self.running should be monitored to see if the
-           process should end."""
-        super().run()
-        logger.info("[Plugin] PlayURL started, %s Tag %s ", os.getpid(), self.tag)
+        """This is ran in a new thread and sends packets to the host via the plugin's write_data."""
+        # super().run() # Base ScreamRouterPlugin.run() is a simple sleep loop, not needed here.
+        logger.info(f"[PlayURLInstance {self.source_instance_id}] Thread started (PID: {os.getpid()}).")
 
-        # While the plugin is running check if there's any data available from ffmpeg and
-        # write it to ScreamRouter if so.
-        while self.running.value:
-            ready = select.select([self.fifo_read], [], [], .3)
-            if ready[0]:
-                data = self.stream_info.header + os.read(self.fifo_read, constants.PACKET_DATA_SIZE)
-                if self.plugin.write_lock.acquire(timeout=1):
-                    self.plugin.write_data(self.tag, data)
-                    self.plugin.write_lock.release()
+        try:
+            while self.running_flag.value:
+                if self.ffmpeg is None or self.ffmpeg.poll() is not None:
+                    # ffmpeg not running or has ended
+                    time.sleep(0.1)
+                    if self.ffmpeg and self.ffmpeg.poll() is not None: # If it just ended, break loop
+                        logger.info(f"[PlayURLInstance {self.source_instance_id}] ffmpeg ended, exiting run loop.")
+                        break
+                    continue
+
+                ready = select.select([self.fifo_read], [], [], 0.1) # Short timeout
+                if ready[0]:
+                    pcm_data = os.read(self.fifo_read, constants.PACKET_DATA_SIZE)
+                    if not pcm_data:  # EOF
+                        logger.info(f"[PlayURLInstance {self.source_instance_id}] ffmpeg sent EOF.")
+                        break # Exit loop on EOF
+
+                    if len(pcm_data) == constants.PACKET_DATA_SIZE:
+                        # Use self.plugin.write_data which now calls the C++ engine
+                        self.plugin.write_data(
+                            source_instance_id=self.source_instance_id,
+                            pcm_data=pcm_data,
+                            channels=self.current_channels,
+                            sample_rate=self.current_sample_rate,
+                            bit_depth=self.current_bit_depth,
+                            chlayout1=self.current_chlayout1,
+                            chlayout2=self.current_chlayout2
+                        )
+                    elif len(pcm_data) > 0:
+                        logger.warning(f"[PlayURLInstance {self.source_instance_id}] Received partial packet from ffmpeg: {len(pcm_data)} bytes. Discarding.")
                 else:
-                    logger.debug("[Plugin PlayURL Multiple] Couldn't get pipe")
-                    break
-        logger.debug("[Plugin PlayURL Multiple] Stopping")
-        close_all_pipes()
+                    # No data, check if ffmpeg has ended
+                    if self.ffmpeg and self.ffmpeg.poll() is not None:
+                        logger.info(f"[PlayURLInstance {self.source_instance_id}] ffmpeg process ended while polling.")
+                        break # Exit loop
+        except Exception as e:
+            logger.error(f"[PlayURLInstance {self.source_instance_id}] Error in run loop: {e}", exc_info=True)
+        finally:
+            logger.info(f"[PlayURLInstance {self.source_instance_id}] Thread stopping (PID: {os.getpid()}).")
+            # Ensure ffmpeg is cleaned up if it was running
+            if self.ffmpeg and self.ffmpeg.poll() is None:
+                logger.info(f"[PlayURLInstance {self.source_instance_id}] Killing ffmpeg in finally block.")
+                self.ffmpeg.kill()
+                self.ffmpeg.wait()
+            # Close pipes specific to this instance
+            try:
+                os.close(self.fifo_read)
+            except OSError:
+                pass
+            try:
+                os.close(self.fifo_write)
+            except OSError:
+                pass
+            # The main plugin will call remove_temporary_source when check_ffmpeg_done indicates it's finished.
+            # And it will also call self.stop() on the instance.
