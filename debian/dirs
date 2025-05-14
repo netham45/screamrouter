@@ -1,6 +1,5 @@
 usr/share/screamrouter
 usr/share/screamrouter/venv
-usr/share/screamrouter/c_utils/bin
 usr/share/screamrouter/site
 usr/share/screamrouter/logs
 etc/screamrouter
