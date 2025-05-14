@@ -63,6 +63,7 @@ popd
 # React build output is in ./site/
 
 # Build Python C++ extension in place
+pip install -r pybind11>=2.6
 python3 setup.py build_ext --inplace
 # The .so file is now inside the src/ directory structure
 
