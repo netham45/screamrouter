@@ -15,6 +15,10 @@ site/**/*.js
 site/**/*.html
 site/**/*.txt
 !src/site/**/robots.txt
+**/node_modules/
+**/*.obj
+**/*.exe
+**/*.lib
 tasks/**
 **/*.so
 **/*.mp3
@@ -22,3 +26,4 @@ tasks/**
 c_utils/**
 **/*.swp
 **/*.egg
+**/*.egg*
