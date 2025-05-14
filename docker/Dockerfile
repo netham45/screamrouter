@@ -38,8 +38,7 @@ COPY setup.py ./
 COPY pyproject.toml ./
 COPY README.md ./
 COPY src/ ./src/
-# Ensure LAME submodule is available
-RUN git submodule update --init --recursive src/audio_engine/
+
 
 # Install Python dependencies and build the project
 RUN pip install --no-cache-dir -r requirements.txt .
