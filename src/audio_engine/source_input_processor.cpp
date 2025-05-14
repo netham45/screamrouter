@@ -6,6 +6,13 @@
 #include <cmath>     // For std::chrono durations
 #include <thread>    // For sleep_for
 
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+
 // Use namespaces for clarity
 namespace screamrouter { namespace audio { using namespace utils; } }
 using namespace screamrouter::audio;
