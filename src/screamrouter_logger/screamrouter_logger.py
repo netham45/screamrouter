@@ -28,7 +28,10 @@ if constants.LOG_TO_FILE:
     all_rotating_handler.setLevel(logging.INFO)
     all_rotating_handler.setFormatter(FORMATTER)
     MAIN_LOGGER.addHandler(all_rotating_handler)
-    all_rotating_handler.doRollover()
+    try:
+        all_rotating_handler.doRollover()
+    except:
+        pass
 
 def get_logger(name: str) -> logging.Logger:
     """Creates a pre-configured logger"""
@@ -49,5 +52,8 @@ def get_logger(name: str) -> logging.Logger:
 
 
         logger.addHandler(rotating_handler)
-        rotating_handler.doRollover()
+        try:
+            rotating_handler.doRollover()
+        except:
+            pass
     return logger

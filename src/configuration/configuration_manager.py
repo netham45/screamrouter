@@ -1,20 +1,35 @@
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
+import asyncio
+import concurrent.futures
 import os
 import socket
 import sys
-import asyncio
-import traceback
-import concurrent.futures
 import threading
+import traceback
 import uuid
+
+import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
+
+# --- C++ Engine Import ---
+try:
+    import screamrouter_audio_engine
+except ImportError as e:
+    # Log the error but allow ScreamRouter to potentially run without the C++ engine
+    # (though functionality will be severely limited or broken)
+    screamrouter_logger.get_logger(__name__).critical(
+        "Failed to import C++ audio engine module (screamrouter_audio_engine). "
+        "Ensure it's compiled correctly. Error: %s", e)
+    screamrouter_audio_engine = None
+# --- End C++ Engine Import ---
+
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
 from copy import copy, deepcopy
 from ipaddress import IPv4Address
-from multiprocessing import Process
 from subprocess import TimeoutExpired
-from typing import List, Optional, Tuple
+from typing import Optional  # For type hinting Optional C++ objects
+from typing import List, Tuple
 
 import dns.nameserver
 import dns.rdtypes
@@ -25,18 +40,12 @@ import dns.rrset
 import fastapi
 import yaml
 from fastapi import Request
-from zeroconf import Zeroconf, ServiceInfo
+from zeroconf import ServiceInfo, Zeroconf
 
 import src.constants.constants as constants
 import src.screamrouter_logger.screamrouter_logger as screamrouter_logger
-from src.api.api_webstream import APIWebStream
 from src.api.api_websocket_config import APIWebsocketConfig
-from src.audio.audio_controller import AudioController
-from src.audio.multicast_scream_receiver import MulticastScreamReceiver
-from src.audio.rtp_recevier import RTPReceiver
-from src.audio.scream_receiver import ScreamReceiver
-from src.audio.scream_per_process_receiver import ScreamPerProcessReceiver
-from src.audio.tcp_manager import TCPManager
+from src.api.api_webstream import APIWebStream
 from src.configuration.configuration_solver import ConfigurationSolver
 from src.plugin_manager.plugin_manager import PluginManager
 from src.screamrouter_types.annotations import (DelayType, IPAddressType,
@@ -45,22 +54,42 @@ from src.screamrouter_types.annotations import (DelayType, IPAddressType,
                                                 VolumeType)
 from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
                                                   SinkDescription,
-                                                  SourceDescription)
-                                                  
+                                                  SourceDescription, SpeakerLayout)
 from src.screamrouter_types.exceptions import InUseError
 from src.utils.mdns_pinger import MDNSPinger
 from src.utils.mdns_responder import MDNSResponder
 from src.utils.mdns_settings_pinger import MDNSSettingsPinger
 
+# Import and initialize logger *before* the try block that might use it
 _logger = screamrouter_logger.get_logger(__name__)
+
+# --- C++ Engine Import ---
+try:
+    import screamrouter_audio_engine
+except ImportError as e:
+    # Log the error but allow ScreamRouter to potentially run without the C++ engine
+    # (though functionality will be severely limited or broken)
+    _logger.critical(
+        "Failed to import C++ audio engine module (screamrouter_audio_engine). "
+        "Ensure it's compiled correctly. Error: %s", e)
+    screamrouter_audio_engine = None
+# --- End C++ Engine Import ---
 
 class ConfigurationManager(threading.Thread):
     """Tracks configuration and loading the main receiver/sinks based off of it"""
     def __init__(self, websocket: APIWebStream,
                  plugin_manager: PluginManager,
-                 websocket_config: APIWebsocketConfig):
+                 websocket_config: APIWebsocketConfig,
+                 audio_manager: screamrouter_audio_engine.AudioManager): # Added audio_manager parameter
         """Initialize the controller"""
         super().__init__(name="Configuration Manager")
+
+        # --- C++ Engine Members ---
+        # Use the AudioManager instance passed from the main script
+        self.cpp_audio_manager: Optional[screamrouter_audio_engine.AudioManager] = audio_manager
+        self.cpp_config_applier: Optional[screamrouter_audio_engine.AudioEngineConfigApplier] = None
+        # --- End C++ Engine Members ---
+
         self.mdns_responder: MDNSResponder = MDNSResponder()
         """MDNS Responder, handles returning responses over MDNS for receivers/senders to configure to"""
         self.mdns_responder.start()
@@ -76,8 +105,6 @@ class ConfigurationManager(threading.Thread):
         """List of Sources the controller knows of"""
         self.route_descriptions: List[RouteDescription] = []
         """List of Routes the controller knows of"""
-        self.audio_controllers: List[AudioController] = []
-        """Holds a list of active Audio Controllers"""
         self.__api_webstream: APIWebStream = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
         self.active_configuration: ConfigurationSolver
@@ -92,15 +119,6 @@ class ConfigurationManager(threading.Thread):
         """Condition to indicate the Configuration Manager needs to apply volume and eq"""
         self.running: bool = True
         """Rather the thread is running or not"""
-        self.scream_recevier: ScreamReceiver = ScreamReceiver([])
-        """Holds the thread that receives UDP packets from Scream"""
-        self.scream_per_process_recevier: ScreamPerProcessReceiver = ScreamPerProcessReceiver([])
-        """Holds the thread that receives per-process UDP packets from Scream"""
-        self.multicast_scream_recevier: MulticastScreamReceiver = MulticastScreamReceiver([])
-        """Holds the thread that receives UDP packets from Multicast Scream Streams"""
-        self.rtp_receiver: RTPReceiver = RTPReceiver([])
-        """Holds the thread that receives UDP packets from an RTP source"""
-        self.tcp_manager: TCPManager = TCPManager([])
         self.reload_config: bool = False
         """Set to true to reload the config. Used so config
            changes during another config reload still trigger
@@ -108,7 +126,57 @@ class ConfigurationManager(threading.Thread):
         self.websocket_config = websocket_config
         """Websocket Config Update Notifier"""
         self.plugin_manager: PluginManager = plugin_manager
-        self.__load_config()
+
+        # --- C++ Engine Initialization (using the passed AudioManager) ---
+        if self.cpp_audio_manager and screamrouter_audio_engine: # Check if AudioManager was provided and import succeeded
+            # The AudioManager instance is already initialized by the main script.
+            # We just need to create the ConfigApplier if the AudioManager is valid.
+            try:
+                _logger.info("[Configuration Manager] Using provided C++ AudioManager instance.")
+                # Ensure the provided AudioManager is not None (already checked by `if self.cpp_audio_manager`)
+                # and that it's likely initialized (though we can't directly check its initialized state from here easily
+                # without adding a specific method to AudioManager). We assume it is.
+                
+                self.cpp_config_applier = screamrouter_audio_engine.AudioEngineConfigApplier(self.cpp_audio_manager)
+                _logger.info("[Configuration Manager] C++ AudioEngineConfigApplier created using provided AudioManager.")
+
+                # --- Add Raw Scream Receivers (using the provided and initialized AudioManager) ---
+                # This logic can remain if ConfigurationManager is responsible for adding these
+                # specific raw receivers during its setup, using the shared AudioManager.
+                ports_to_add = [4010, 16401] # Example ports
+                for port in ports_to_add:
+                    try:
+                        _logger.info("[Configuration Manager] Adding C++ RawScreamReceiver on port %d...", port)
+                        raw_config = screamrouter_audio_engine.RawScreamReceiverConfig()
+                        raw_config.listen_port = port
+                        if not self.cpp_audio_manager.add_raw_scream_receiver(raw_config):
+                            _logger.error("[Configuration Manager] Failed to add C++ RawScreamReceiver on port %d.", port)
+                        else:
+                            _logger.info("[Configuration Manager] C++ RawScreamReceiver added successfully on port %d.", port)
+                    except Exception as raw_e: # pylint: disable=broad-except
+                        _logger.exception("[Configuration Manager] Exception adding C++ RawScreamReceiver on port %d: %s", port, raw_e)
+                # --- End Add Raw Scream Receivers ---
+
+                try:
+                    _logger.info("[Configuration Manager] Adding C++ PerProcessScreamReceiver on port %d...", 16402)
+                    per_process_config = screamrouter_audio_engine.PerProcessScreamReceiverConfig()
+                    per_process_config.listen_port = 16402
+                    if not self.cpp_audio_manager.add_per_process_scream_receiver(per_process_config):
+                        _logger.error("[Configuration Manager] Failed to add C++ PerProcessScreamReceiver on port %d.", 16402)
+                    else:
+                        _logger.info("[Configuration Manager] C++ PerProcessScreamReceiver added successfully on port %d.", 16402)
+                except Exception as raw_e: # pylint: disable=broad-except
+                    _logger.exception("[Configuration Manager] Exception adding C++ PerProcessScreamReceiver on port %d: %s", 16402, raw_e)
+
+            except Exception as e: # pylint: disable=broad-except
+                _logger.exception("[Configuration Manager] Exception during C++ engine setup with provided AudioManager: %s", e)
+                # self.cpp_audio_manager remains as passed, but applier might be None
+                self.cpp_config_applier = None
+        elif not self.cpp_audio_manager:
+            _logger.warning("[Configuration Manager] No C++ AudioManager instance provided. C++ engine features will be disabled.")
+        # --- End C++ Engine Initialization ---
+
+        self.__load_config() # Load YAML config
 
         _logger.info("------------------------------------------------------------------------")
         _logger.info("  ScreamRouter")
@@ -161,10 +229,8 @@ class ConfigurationManager(threading.Thread):
             if route.sink == old_sink_name:
                 route.sink = changed_sink.name
 
-        if is_eq_found and is_eq_only:
-            self.__reload_volume_eq_timeshift_delay_configuration()
-        else:
-            self.__reload_configuration()
+        # Always trigger a full reload for simplicity and robustness with C++ engine
+        self.__reload_configuration()
         return True
 
     def delete_sink(self, sink_name: SinkNameType) -> bool:
@@ -232,10 +298,8 @@ class ConfigurationManager(threading.Thread):
             if route.source == old_source_name:
                 route.source = changed_source.name
 
-        if is_eq_found and is_eq_only:
-            self.__reload_volume_eq_timeshift_delay_configuration()
-        else:
-            self.__reload_configuration()
+        # Always trigger a full reload
+        self.__reload_configuration()
         return True
 
     def delete_source(self, source_name: SourceNameType) -> bool:
@@ -288,10 +352,8 @@ class ConfigurationManager(threading.Thread):
             elif field != "name":
                 is_eq_only = False
             setattr(changed_route, field, getattr(new_route, field))
-        if is_eq_found and is_eq_only:
-            self.__reload_volume_eq_timeshift_delay_configuration()
-        else:
-            self.__reload_configuration()
+        # Always trigger a full reload
+        self.__reload_configuration()
         return True
 
     def delete_route(self, route_name: RouteNameType) -> bool:
@@ -319,7 +381,7 @@ class ConfigurationManager(threading.Thread):
         """Set the equalizer for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.equalizer = equalizer
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_source_position(self, source_name: SourceNameType, new_index: int):
@@ -332,7 +394,7 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.volume = volume
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_source_timeshift(self, source_name: SourceNameType,
@@ -340,14 +402,14 @@ class ConfigurationManager(threading.Thread):
         """Set the timeshift for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.timeshift = timeshift
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_source_delay(self, source_name: SourceNameType, delay: DelayType) -> bool:
         """Set the delay for a source or source group"""
         source: SourceDescription = self.get_source_by_name(source_name)
         source.delay = delay
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def source_next_track(self, source_name: SourceNameType) -> bool:
@@ -429,7 +491,7 @@ class ConfigurationManager(threading.Thread):
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.equalizer = equalizer
         _logger.debug("Updating EQ for %s", sink_name)
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_sink_position(self, sink_name: SinkNameType, new_index: int):
@@ -442,7 +504,7 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.volume = volume
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_sink_timeshift(self, sink_name: SinkNameType,
@@ -450,21 +512,21 @@ class ConfigurationManager(threading.Thread):
         """Set the timeshift for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.timeshift = timeshift
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_sink_delay(self, sink_name: SinkNameType, delay: DelayType) -> bool:
         """Set the delay for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.delay = delay
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_route_equalizer(self, route_name: RouteNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.equalizer = equalizer
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_route_position(self, route_name: RouteNameType, new_index: int):
@@ -477,7 +539,7 @@ class ConfigurationManager(threading.Thread):
         """Set the volume for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.volume = volume
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_route_timeshift(self, route_name: RouteNameType,
@@ -485,14 +547,14 @@ class ConfigurationManager(threading.Thread):
         """Set the timeshift for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.timeshift = timeshift
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def update_route_delay(self, route_name: RouteNameType, delay: DelayType) -> bool:
         """Set the delay for a route"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.delay = delay
-        self.__reload_volume_eq_timeshift_delay_configuration()
+        self.__reload_configuration() # Trigger full reload
         return True
 
     def stop(self) -> bool:
@@ -500,19 +562,22 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("[Configuration Manager] Stopping webstream")
         self.__api_webstream.stop()
         _logger.debug("[Configuration Manager] Webstream stopped")
-        _logger.debug("[Configuration Manager] Stopping receiver")
-        self.scream_recevier.stop()
-        self.multicast_scream_recevier.stop()
-        self.rtp_receiver.stop()
-        self.tcp_manager.stop()
+
+        # --- C++ Engine Shutdown ---
+        if self.cpp_audio_manager:
+            try:
+                _logger.info("[Configuration Manager] Shutting down C++ AudioManager...")
+                self.cpp_audio_manager.shutdown()
+                _logger.info("[Configuration Manager] C++ AudioManager shutdown complete.")
+            except Exception as e:
+                _logger.exception("[Configuration Manager] Exception during C++ AudioManager shutdown: %s", e)
+        # --- End C++ Engine Shutdown ---
+
+        _logger.debug("[Configuration Manager] Stopping Python receivers")
         _logger.debug("[Configuration Manager] Receiver stopped")
         _logger.debug("[Configuration Manager] Stopping Plugin Manager")
         self.plugin_manager.stop_registered_plugins()
         _logger.debug("[Configuration Manager] Plugin Manager Stopped")
-        _logger.debug("[Configuration Manager] Stopping audio controllers")
-        for audio_controller in self.audio_controllers:
-            audio_controller.stop()
-        _logger.debug("[Configuration Manager] Audio controllers stopped")
         _logger.debug("[Configuration Manager] Stopping mDNS")
         self.mdns_responder.stop()
         self.mdns_pinger.stop()
@@ -653,47 +718,139 @@ class ConfigurationManager(threading.Thread):
 
     def __load_config(self) -> None:
         """Loads the config"""
+        self.sink_descriptions = []
+        self.source_descriptions = []
+        self.route_descriptions = []
         try:
             with open("config.yaml", "r", encoding="UTF-8") as f:
                 savedata: dict = yaml.unsafe_load(f)
-                self.sink_descriptions = savedata["sinks"]
-                self.source_descriptions = savedata["sources"]
-                self.route_descriptions = savedata["routes"]
 
+                raw_sinks = savedata.get("sinks", [])
+                for item_data in raw_sinks:
+                    try:
+                        if isinstance(item_data, dict):
+                            # Migrate old speaker_layout to speaker_layouts
+                            if "speaker_layout" in item_data and "speaker_layouts" not in item_data:
+                                old_layout_data = item_data.pop("speaker_layout")
+                                default_input_key = 2
+                                migrated_layout = SpeakerLayout(**old_layout_data) if isinstance(old_layout_data, dict) else \
+                                                  (old_layout_data if isinstance(old_layout_data, SpeakerLayout) else SpeakerLayout())
+                                item_data["speaker_layouts"] = {default_input_key: migrated_layout}
+                                _logger.info(f"Migrated old 'speaker_layout' to 'speaker_layouts' for sink '{item_data.get('name', 'Unknown')}' using default key {default_input_key}.")
 
-                for sink in self.sink_descriptions:
-                    for unset_field in [field for field in sink.model_fields if
-                                        field not in sink.model_fields_set]:
-                        _logger.warning(
-                    "[Configuration Manager] Setting unset attribte %s on sink %s to default %s",
-                    unset_field, sink.name, SinkDescription.model_fields[unset_field].default)
-                        setattr(sink, unset_field,
-                                SinkDescription.model_fields[unset_field].default)
+                            # Correct string keys from YAML to int keys for speaker_layouts
+                            if "speaker_layouts" in item_data and isinstance(item_data["speaker_layouts"], dict):
+                                corrected_layouts = {}
+                                for key_str, layout_data_dict in item_data["speaker_layouts"].items():
+                                    try:
+                                        key_int = int(key_str)
+                                        parsed_layout = SpeakerLayout(**layout_data_dict) if isinstance(layout_data_dict, dict) else \
+                                                        (layout_data_dict if isinstance(layout_data_dict, SpeakerLayout) else SpeakerLayout())
+                                        corrected_layouts[key_int] = parsed_layout
+                                    except ValueError:
+                                        _logger.warning(f"Could not convert speaker_layouts key '{key_str}' to int for sink '{item_data.get('name', 'Unknown')}'. Skipping.")
+                                    except Exception as e_sl_parse:
+                                        _logger.error(f"Failed to parse SpeakerLayout data for key '{key_str}' in sink '{item_data.get('name', 'Unknown')}': {e_sl_parse}. Skipping.")
+                                item_data["speaker_layouts"] = corrected_layouts
+                            self.sink_descriptions.append(SinkDescription(**item_data))
+                        elif isinstance(item_data, SinkDescription):
+                            self.sink_descriptions.append(SinkDescription(**item_data.model_dump()))
+                        else:
+                            _logger.warning(f"Skipping unexpected sink data type: {type(item_data)} for data: {item_data}")
+                    except Exception as e:
+                        _logger.error(f"Failed to parse sink data: {item_data}. Error: {e}")
+                
+                raw_sources = savedata.get("sources", [])
+                for item_data in raw_sources:
+                    try:
+                        if isinstance(item_data, dict):
+                            # Migrate old speaker_layout to speaker_layouts
+                            if "speaker_layout" in item_data and "speaker_layouts" not in item_data:
+                                old_layout_data = item_data.pop("speaker_layout")
+                                default_input_key = 2
+                                migrated_layout = SpeakerLayout(**old_layout_data) if isinstance(old_layout_data, dict) else \
+                                                  (old_layout_data if isinstance(old_layout_data, SpeakerLayout) else SpeakerLayout())
+                                item_data["speaker_layouts"] = {default_input_key: migrated_layout}
+                                _logger.info(f"Migrated old 'speaker_layout' to 'speaker_layouts' for source '{item_data.get('name', 'Unknown')}' using default key {default_input_key}.")
 
-                for route in self.route_descriptions:
-                    for unset_field in [field for field in route.model_fields if
-                                         field not in route.model_fields_set]:
-                        _logger.warning(
-                    "[Configuration Manager] Setting unset attribte %s on route %s to default %s",
-                    unset_field, route.name, RouteDescription.model_fields[unset_field].default)
-                        setattr(route, unset_field,
-                                RouteDescription.model_fields[unset_field].default)
+                            # Correct string keys from YAML to int keys for speaker_layouts
+                            if "speaker_layouts" in item_data and isinstance(item_data["speaker_layouts"], dict):
+                                corrected_layouts = {}
+                                for key_str, layout_data_dict in item_data["speaker_layouts"].items():
+                                    try:
+                                        key_int = int(key_str)
+                                        parsed_layout = SpeakerLayout(**layout_data_dict) if isinstance(layout_data_dict, dict) else \
+                                                        (layout_data_dict if isinstance(layout_data_dict, SpeakerLayout) else SpeakerLayout())
+                                        corrected_layouts[key_int] = parsed_layout
+                                    except ValueError:
+                                        _logger.warning(f"Could not convert speaker_layouts key '{key_str}' to int for source '{item_data.get('name', 'Unknown')}'. Skipping.")
+                                    except Exception as e_sl_parse:
+                                        _logger.error(f"Failed to parse SpeakerLayout data for key '{key_str}' in source '{item_data.get('name', 'Unknown')}': {e_sl_parse}. Skipping.")
+                                item_data["speaker_layouts"] = corrected_layouts
+                            self.source_descriptions.append(SourceDescription(**item_data))
+                        elif isinstance(item_data, SourceDescription):
+                            self.source_descriptions.append(SourceDescription(**item_data.model_dump()))
+                        else:
+                            _logger.warning(f"Skipping unexpected source data type: {type(item_data)} for data: {item_data}")
+                    except Exception as e:
+                        _logger.error(f"Failed to parse source data: {item_data}. Error: {e}")
 
-                for source in self.source_descriptions:
-                    for unset_field in [field for field in source.model_fields if
-                                        field not in source.model_fields_set]:
-                        _logger.warning(
-                    "[Configuration Manager] Setting unset attribte %s on source %s to default %s",
-                    unset_field, source.name, SourceDescription.model_fields[unset_field].default)
-                        setattr(source, unset_field,
-                                SourceDescription.model_fields[unset_field].default)
+                raw_routes = savedata.get("routes", [])
+                for item_data in raw_routes:
+                    try:
+                        if isinstance(item_data, dict):
+                            # Migrate old speaker_layout to speaker_layouts
+                            if "speaker_layout" in item_data and "speaker_layouts" not in item_data:
+                                old_layout_data = item_data.pop("speaker_layout")
+                                default_input_key = 2
+                                migrated_layout = SpeakerLayout(**old_layout_data) if isinstance(old_layout_data, dict) else \
+                                                  (old_layout_data if isinstance(old_layout_data, SpeakerLayout) else SpeakerLayout())
+                                item_data["speaker_layouts"] = {default_input_key: migrated_layout}
+                                _logger.info(f"Migrated old 'speaker_layout' to 'speaker_layouts' for route '{item_data.get('name', 'Unknown')}' using default key {default_input_key}.")
+
+                            # Correct string keys from YAML to int keys for speaker_layouts
+                            if "speaker_layouts" in item_data and isinstance(item_data["speaker_layouts"], dict):
+                                corrected_layouts = {}
+                                for key_str, layout_data_dict in item_data["speaker_layouts"].items():
+                                    try:
+                                        key_int = int(key_str)
+                                        parsed_layout = SpeakerLayout(**layout_data_dict) if isinstance(layout_data_dict, dict) else \
+                                                        (layout_data_dict if isinstance(layout_data_dict, SpeakerLayout) else SpeakerLayout())
+                                        corrected_layouts[key_int] = parsed_layout
+                                    except ValueError:
+                                        _logger.warning(f"Could not convert speaker_layouts key '{key_str}' to int for route '{item_data.get('name', 'Unknown')}'. Skipping.")
+                                    except Exception as e_sl_parse:
+                                        _logger.error(f"Failed to parse SpeakerLayout data for key '{key_str}' in route '{item_data.get('name', 'Unknown')}': {e_sl_parse}. Skipping.")
+                                item_data["speaker_layouts"] = corrected_layouts
+                            self.route_descriptions.append(RouteDescription(**item_data))
+                        elif isinstance(item_data, RouteDescription):
+                            self.route_descriptions.append(RouteDescription(**item_data.model_dump()))
+                        else:
+                            _logger.warning(f"Skipping unexpected route data type: {type(item_data)} for data: {item_data}")
+                    except Exception as e:
+                        _logger.error(f"Failed to parse route data: {item_data}. Error: {e}")
+                
+                # The Pydantic models now have default_factory=dict for speaker_layouts,
+                # so the old check loop for None speaker_layout is no longer needed.
 
         except FileNotFoundError:
-            _logger.warning("[Configuration Manager] Configuration not found., making new config")
+            _logger.warning("[Configuration Manager] Configuration not found., making new config. Initializing with empty lists.")
+            self.sink_descriptions = []
+            self.source_descriptions = []
+            self.route_descriptions = []
         except KeyError as exc:
             _logger.error("[Configuration Manager] Configuration key %s missing, exiting.", exc)
-            raise exc
-            #sys.exit(-1)
+            # Initialize with empty lists to prevent further errors down the line if a key is missing
+            self.sink_descriptions = []
+            self.source_descriptions = []
+            self.route_descriptions = []
+            raise exc # Re-raise after logging and setting defaults
+        except Exception as e: # Catch any other unexpected errors during loading/parsing
+            _logger.exception("[Configuration Manager] An unexpected error occurred during config loading: %s. Initializing with empty lists.", e)
+            self.sink_descriptions = []
+            self.source_descriptions = []
+            self.route_descriptions = []
+
 
         asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
                                                                 self.sink_descriptions,
@@ -712,13 +869,223 @@ class ConfigurationManager(threading.Thread):
         _logger.info("[Configuration Manager] Saving config")
         if not self.configuration_semaphore.acquire(timeout=1):
             raise TimeoutError("Failed to get configuration semaphore")
-        proc = Process(target=self.__multiprocess_save)
+        proc = threading.Thread(target=self.__multiprocess_save)
         proc.start()
         proc.join()
         asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
                                                                 self.sink_descriptions,
                                                                 self.route_descriptions))
         self.configuration_semaphore.release()
+
+    # --- C++ State Translation (Task 04_02) ---
+
+    def _translate_config_to_cpp_desired_state(self) -> Optional[screamrouter_audio_engine.DesiredEngineState]:
+        """Translates the current active Python configuration into the C++ DesiredEngineState struct."""
+        if not self.cpp_audio_manager or not self.cpp_config_applier or not screamrouter_audio_engine:
+            _logger.warning("[Config Translator] C++ engine components not available. Skipping translation.")
+            return None
+        
+        if not hasattr(self, 'active_configuration') or not self.active_configuration:
+             _logger.warning("[Config Translator] No active configuration solved yet. Skipping translation.")
+             return None
+
+        _logger.info("[Config Translator] Starting translation to C++ DesiredEngineState...")
+        cpp_desired_state = screamrouter_audio_engine.DesiredEngineState()
+        processed_source_paths: dict[str, screamrouter_audio_engine.AppliedSourcePathParams] = {}
+        processed_sinks_list: list[screamrouter_audio_engine.AppliedSinkParams] = [] # Temporary list for sinks
+
+        # Ensure we have the necessary C++ types available
+        try:
+            CppSinkConfig = screamrouter_audio_engine.SinkConfig
+            CppAppliedSinkParams = screamrouter_audio_engine.AppliedSinkParams
+            CppAppliedSourcePathParams = screamrouter_audio_engine.AppliedSourcePathParams
+            EQ_BANDS = screamrouter_audio_engine.EQ_BANDS # Get constant from C++ module
+        except AttributeError as e:
+            _logger.error("[Config Translator] Failed to access required C++ types/constants from module: %s", e)
+            return None
+
+        solved_config: dict[SinkDescription, List[SourceDescription]] = self.active_configuration.real_sinks_to_real_sources
+        _logger.debug("[Config Translator] Solved config keys (Sinks): %s", list(solved_config.keys())) # Log the sink keys
+
+        for py_sink_desc, py_source_desc_list in solved_config.items():
+            _logger.debug("[Config Translator] Processing Sink: %s", py_sink_desc.name)
+            
+            # A. Create C++ AppliedSinkParams
+            cpp_applied_sink = CppAppliedSinkParams()
+            cpp_applied_sink.sink_id = py_sink_desc.config_id or py_sink_desc.name # Prefer config_id if available
+
+            # B. Create and populate the nested C++ SinkConfig
+            cpp_sink_engine_config = CppSinkConfig()
+            cpp_sink_engine_config.id = cpp_applied_sink.sink_id # Use the same ID
+            cpp_sink_engine_config.output_ip = str(py_sink_desc.ip) if py_sink_desc.ip else ""
+            cpp_sink_engine_config.output_port = py_sink_desc.port if py_sink_desc.port else 0
+            cpp_sink_engine_config.bitdepth = py_sink_desc.bit_depth
+            cpp_sink_engine_config.samplerate = py_sink_desc.sample_rate
+            cpp_sink_engine_config.channels = py_sink_desc.channels
+
+            # Define a mapping for channel layout strings to byte values
+            channel_layout_map = {
+                "mono": (0x04, 0x00),  # FC
+                "stereo": (0x03, 0x00),  # FL, FR
+                "2.1": (0x0B, 0x00),  # FL, FR, LFE
+                "3.0": (0x07, 0x00),  # FL, FR, FC
+                "3.1": (0x0F, 0x00),  # FL, FR, FC, LFE
+                "quad": (0x33, 0x00), # FL, FR, BL, BR
+                "surround": (0x07, 0x01), # FL, FR, FC, BC (common for older surround)
+                "4.0": (0x07, 0x01), # FL, FR, FC, BC (Dolby Pro Logic)
+                "4.1": (0x0F, 0x01), # FL, FR, FC, LFE, BC
+                "5.0": (0x37, 0x00), # FL, FR, FC, BL, BR
+                "5.1": (0x3F, 0x00),  # FL, FR, FC, LFE, BL, BR (standard 5.1 with back surrounds)
+                "5.1(side)": (0x0F, 0x06), # FL, FR, FC, LFE, SL, SR (5.1 with side surrounds)
+                "6.0": (0x37, 0x01), # FL, FR, FC, BL, BR, BC
+                "6.1": (0x3F, 0x01), # FL, FR, FC, LFE, BL, BR, BC
+                "7.0": (0x37, 0x06), # FL, FR, FC, BL, BR, SL, SR
+                "7.1": (0x3F, 0x06)   # FL, FR, FC, LFE, BL, BR, SL, SR
+                # Add other layouts as needed
+            }
+
+            # Get the layout string from the Python SinkDescription
+            py_channel_layout_str = py_sink_desc.channel_layout.lower() if py_sink_desc.channel_layout else "stereo"
+
+            # Look up the byte values, defaulting to stereo if not found
+            chlayout1, chlayout2 = channel_layout_map.get(py_channel_layout_str, (0x03, 0x00))
+            
+            _logger.debug("[Config Translator]   Sink %s: Python layout '%s' -> C++ chlayout1=0x%02X, chlayout2=0x%02X",
+                          py_sink_desc.name, py_channel_layout_str, chlayout1, chlayout2)
+
+            cpp_sink_engine_config.chlayout1 = chlayout1
+            cpp_sink_engine_config.chlayout2 = chlayout2
+            
+            cpp_applied_sink.sink_engine_config = cpp_sink_engine_config
+
+            # C. Process each source connected to this sink
+            connected_path_ids_for_this_sink = []
+            for py_source_desc in py_source_desc_list:
+                _logger.debug("[Config Translator]   Processing Source Path: %s -> %s", 
+                              py_source_desc.tag or py_source_desc.name, py_sink_desc.name)
+                
+                # Use source config_id if available, otherwise tag, otherwise name
+                source_identifier = py_source_desc.config_id or py_source_desc.tag or py_source_desc.name
+                # Use sink config_id if available, otherwise name
+                sink_identifier = py_sink_desc.config_id or py_sink_desc.name
+                
+                # Create a unique path ID
+                path_id = f"{source_identifier}_to_{sink_identifier}" 
+                _logger.debug("[Config Translator]     Generated Path ID: %s", path_id)
+
+                connected_path_ids_for_this_sink.append(path_id)
+
+                # D. Create or retrieve C++ AppliedSourcePathParams
+                if path_id not in processed_source_paths:
+                    cpp_source_path = CppAppliedSourcePathParams()
+                    cpp_source_path.path_id = path_id
+                    
+                    # Prioritize IP for source_tag, fallback to tag, then empty string.
+                    # This tag is crucial for RtpReceiver packet routing.
+                    source_tag_for_cpp = str(py_source_desc.ip) if py_source_desc.ip else \
+                                         (py_source_desc.tag if py_source_desc.tag is not None else "")
+                    cpp_source_path.source_tag = source_tag_for_cpp
+                    
+                    cpp_source_path.target_sink_id = cpp_applied_sink.sink_id # Link to the sink
+                    
+                    cpp_source_path.volume = py_source_desc.volume 
+                    
+                    # Ensure EQ bands list is the correct size
+                    eq_bands = [py_source_desc.equalizer.b1,
+                                py_source_desc.equalizer.b2,
+                                py_source_desc.equalizer.b3,
+                                py_source_desc.equalizer.b4,
+                                py_source_desc.equalizer.b5,
+                                py_source_desc.equalizer.b6,
+                                py_source_desc.equalizer.b7,
+                                py_source_desc.equalizer.b8,
+                                py_source_desc.equalizer.b9,
+                                py_source_desc.equalizer.b10,
+                                py_source_desc.equalizer.b11,
+                                py_source_desc.equalizer.b12,
+                                py_source_desc.equalizer.b13,
+                                py_source_desc.equalizer.b14,
+                                py_source_desc.equalizer.b15,
+                                py_source_desc.equalizer.b16,
+                                py_source_desc.equalizer.b17,
+                                py_source_desc.equalizer.b18]
+                    if len(eq_bands) != EQ_BANDS:
+                         _logger.warning("[Config Translator]     EQ band count mismatch for source %s (%d vs %d). Using default flat EQ.", 
+                                         py_source_desc.name, len(eq_bands), EQ_BANDS)
+                         cpp_source_path.eq_values = [1.0] * EQ_BANDS # Default flat EQ (1.0)
+                    else:
+                        cpp_source_path.eq_values = eq_bands
+                        
+                    cpp_source_path.delay_ms = py_source_desc.delay
+                    cpp_source_path.timeshift_sec = py_source_desc.timeshift
+                    
+                    # --- Populate Speaker Layouts for C++ ---
+                    # py_source_desc now carries the speaker_layouts dictionary.
+                    # This dictionary needs to be passed to C++.
+                    # We assume cpp_source_path will have a member like 'speaker_layouts_map'
+                    # that can accept a Dict[int, Dict[str, Union[bool, List[List[float]]]]]
+                    # which Pybind11 can convert to std::map<int, CppSpeakerLayoutStruct>.
+                    
+                    # Ensure py_source_desc has speaker_layouts (it should due to Pydantic defaults)
+                    if hasattr(py_source_desc, 'speaker_layouts') and isinstance(py_source_desc.speaker_layouts, dict):
+                        cpp_layouts_map = {}
+                        for key, layout_obj in py_source_desc.speaker_layouts.items():
+                            if isinstance(layout_obj, SpeakerLayout): # Ensure it's the Python Pydantic model
+                                try:
+                                    # Create an instance of the C++ CppSpeakerLayout type
+                                    cpp_speaker_layout_instance = screamrouter_audio_engine.CppSpeakerLayout()
+                                    cpp_speaker_layout_instance.auto_mode = layout_obj.auto_mode
+                                    # Ensure matrix is correctly formatted if necessary, though direct assignment
+                                    # of List[List[float]] should work if bindings are set up for it.
+                                    cpp_speaker_layout_instance.matrix = layout_obj.matrix 
+                                    cpp_layouts_map[key] = cpp_speaker_layout_instance
+                                except Exception as e_cpp_create:
+                                    _logger.error(f"[Config Translator]     Path {path_id}: Failed to create CppSpeakerLayout for key {key}. Error: {e_cpp_create}. Skipping.")
+                                    continue # Skip this layout if creation fails
+                            else:
+                                _logger.warning(f"[Config Translator]     Path {path_id}: Invalid SpeakerLayout object type for key {key} in speaker_layouts (type: {type(layout_obj)}). Skipping.")
+                        
+                        cpp_source_path.speaker_layouts_map = cpp_layouts_map 
+                        _logger.debug(f"[Config Translator]     Path {path_id}: Populated speaker_layouts_map with {len(cpp_layouts_map)} entries.")
+                        
+                        # Remove old singular layout attributes if they exist on cpp_source_path,
+                        # or ensure they are not used if C++ side is updated.
+                        # For now, we assume the C++ side will prefer speaker_layouts_map.
+                        # If cpp_source_path still has use_auto_speaker_mix and speaker_mix_matrix,
+                        # they might need to be handled or cleared if no longer primary.
+                        # Example: del cpp_source_path.use_auto_speaker_mix (if possible and safe)
+                        # For now, we just set the new map.
+                    else:
+                        _logger.warning(f"[Config Translator]     Path {path_id}: py_source_desc missing or has invalid speaker_layouts. Sending empty map.")
+                        cpp_source_path.speaker_layouts_map = {} # Send empty map
+                    # --- End Populate Speaker Layouts for C++ ---
+
+                    # Get target format from the *sink* description
+                    cpp_source_path.target_output_channels = py_sink_desc.channels
+                    cpp_source_path.target_output_samplerate = py_sink_desc.sample_rate
+                    
+                    # generated_instance_id remains empty - C++ will fill it
+                    
+                    processed_source_paths[path_id] = cpp_source_path
+                    _logger.debug("[Config Translator]     Created new AppliedSourcePathParams for path %s", path_id)
+                # else: Path already processed (e.g., multiple routes to same source/sink pair)
+
+            # E. Finalize AppliedSinkParams
+            cpp_applied_sink.connected_source_path_ids = connected_path_ids_for_this_sink
+            processed_sinks_list.append(cpp_applied_sink) # Add to temporary list
+            _logger.debug("[Config Translator]   Finished processing sink %s. Connected paths: %s", 
+                          cpp_applied_sink.sink_id, cpp_applied_sink.connected_source_path_ids)
+
+        # F. Populate the sinks and source_paths lists in DesiredEngineState AFTER the loop
+        cpp_desired_state.sinks = processed_sinks_list
+        cpp_desired_state.source_paths = list(processed_source_paths.values())
+        _logger.info("[Config Translator] Translation complete. %d sinks, %d source paths.", 
+                     len(cpp_desired_state.sinks), len(cpp_desired_state.source_paths)) # Log final counts
+
+        return cpp_desired_state
+
+    # --- End C++ State Translation ---
+
 
 # Configuration processing functions
 
@@ -781,15 +1148,6 @@ class ConfigurationManager(threading.Thread):
                     if sink not in changed_sinks:
                         changed_sinks.append(sink)
 
-        # Add sinks requesting a reload
-        for audio_controller in self.audio_controllers:
-            if audio_controller.wants_reload():
-                _logger.info("[Configuration Manager] Controller %s wants a reload",
-                             audio_controller.sink_info.name)
-                for sink in new_map.keys():
-                    if sink.name == audio_controller.sink_info.name:
-                        if sink not in changed_sinks:
-                            changed_sinks.append(sink)
 
         return added_sinks, removed_sinks, changed_sinks
 
@@ -867,6 +1225,35 @@ class ConfigurationManager(threading.Thread):
         # Return what's changed
         return added_sinks, removed_sinks, changed_sinks
 
+    def __apply_cpp_engine_state(self) -> bool:
+        """Translates the active config and applies it to the C++ engine."""
+        if not self.cpp_config_applier:
+            _logger.warning("[Configuration Manager] C++ Config Applier not available. Skipping C++ engine configuration.")
+            return False # Indicate that C++ state was not applied
+
+        self.__process_configuration() # This updates self.active_configuration
+
+        _logger.info("[Configuration Manager] Translating configuration for C++ engine...")
+        cpp_desired_state = self._translate_config_to_cpp_desired_state()
+
+        if cpp_desired_state:
+            try:
+                _logger.info("[Configuration Manager] Applying translated state to C++ engine...")
+                success = self.cpp_config_applier.apply_state(cpp_desired_state)
+                if success:
+                    _logger.info("[Configuration Manager] C++ engine state applied successfully.")
+                    return True
+                else:
+                    _logger.error("[Configuration Manager] C++ AudioEngineConfigApplier reported failure during apply_state.")
+                    return False
+            except Exception as e:
+                _logger.exception("[Configuration Manager] Exception calling C++ apply_state: %s", e)
+                return False
+        else:
+            _logger.error("[Configuration Manager] Failed to translate configuration to C++ DesiredEngineState.")
+            return False
+        return False # Should not be reached, but default to false
+
     def __reload_configuration(self) -> None:
         """Notifies the configuration manager to reload the configuration"""
         asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
@@ -885,134 +1272,18 @@ class ConfigurationManager(threading.Thread):
         self.reload_config = True
         _logger.debug("[Configuration Manager] Marking config for reload")
 
-    def __reload_volume_eq_timeshift_delay_configuration(self) -> None:
-        """Notifies the configuration manager to reload the volume/eq"""
-        if not self.volume_eq_reload_condition.acquire(timeout=1):
-            raise TimeoutError("Failed to get volume/eq configuration reload condition")
-        try:
-            self.volume_eq_reload_condition.notify()
-        except RuntimeError:
-            pass
-        self.volume_eq_reload_condition.release()
-        _logger.debug("[Configuration Manager] Marking volume/eq for reload")
+    # Removed __reload_volume_eq_timeshift_delay_configuration as it now just calls __reload_configuration
 
-    def __process_and_apply_volume_eq_delay_timeshift(self) -> None:
-        """Process the volume/eq/delay/timeshift configuration, apply them to all audiocontrollers"""
-        new_configuration: ConfigurationSolver = ConfigurationSolver(
-                                                        self.source_descriptions,
-                                                        self.sink_descriptions,
-                                                        self.route_descriptions)
-        new_map: dict[SinkDescription,List[SourceDescription]]
-        new_map = new_configuration.real_sinks_to_real_sources
-        for sink, sources in new_map.items():
-            for audio_controller in self.audio_controllers:
-                if audio_controller.sink_info.name == sink.name:
-                    for source in sources:
-                        audio_controller.update_volume(source.name, source.volume)
-                        audio_controller.update_equalizer(source.name, source.equalizer)
-                        audio_controller.update_delay(source.name, source.delay)
-                        audio_controller.update_timeshift(source.name, source.timeshift)
-        try:
-            self.volume_eq_reload_condition.release()
-        except:
-            pass
-
-        self.__save_config()
+    # Removed __process_and_apply_volume_eq_delay_timeshift as it's handled by full reload
 
     def __process_and_apply_configuration(self) -> None:
         """Process the configuration, get which sinks have changed and need reloaded,
            then reload them."""
         _logger.debug("[Configuration Manager] Reloading configuration")
-        # Process new config, store what's changed
-        added_sinks: List[SinkDescription]
-        removed_sinks: List[SinkDescription]
-        changed_sinks: List[SinkDescription]
-        added_sinks, removed_sinks, changed_sinks = self.__process_configuration()
-        _logger.info("[Configuration Manager] Config Reload")
-        _logger.info("[Configuration Manager] Enabled Sink Controllers: %s",
-                     [sink.name for sink in added_sinks])
-        _logger.info("[Configuration Manager] Changed Sink Controllers: %s",
-                     [sink.name for sink in changed_sinks])
-        _logger.info("[Configuration Manager] Disabled Sink Controllers: %s",
-                     [sink.name for sink in removed_sinks])
-        original_audio_controllers: List[AudioController] = copy(self.audio_controllers)
-
-        _logger.debug("[Configuration Manager] Removing and re-adding changed sinks")
-
-        # Controllers to be reloaded
-        for sink in changed_sinks:
-            # Unload the old controller
-            _logger.debug("[Configuration Manager] Removing Audio Controller %s", sink.name)
-            for audio_controller in original_audio_controllers:
-                if audio_controller.sink_info.name == sink.name:
-                    if audio_controller in self.audio_controllers:
-                        audio_controller.stop()
-                        self.audio_controllers.remove(audio_controller)
-            # Load a new controller
-            sources: List[SourceDescription]
-            sources = self.active_configuration.real_sinks_to_real_sources[sink]
-            audio_controller = AudioController(sink, sources,
-                                               self.tcp_manager.get_fd(sink.ip),
-                                               self.__api_webstream)
-            _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
-            self.audio_controllers.append(audio_controller)
-
-        _logger.debug("[Configuration Manager] Removing now unused sinks")
-
-        # Controllers to be removed
-        for sink in removed_sinks:
-            # Unload the old controller
-            _logger.debug("Removing Audio Controller %s", sink.name)
-            for audio_controller in original_audio_controllers:
-                if audio_controller.sink_info.name == sink.name:
-                    audio_controller.stop()
-                    self.audio_controllers.remove(audio_controller)
-
-        _logger.debug("[Configuration Manager] Adding new sinks")
-
-        # Controllers to be added
-        for sink in added_sinks:
-            # Load a new controller
-            sources: List[SourceDescription]
-            sources = self.active_configuration.real_sinks_to_real_sources[sink]
-            audio_controller = AudioController(sink, sources,
-                                               self.tcp_manager.get_fd(sink.ip),
-                                               self.__api_webstream)
-            _logger.debug("[Configuration Manager] Adding Audio Controller %s", sink.name)
-            self.audio_controllers.append(audio_controller)
-
-        source_write_fds: List[int] = []
-        for audio_controller in self.audio_controllers:
-            source_write_fds.extend([source.writer_write for
-                                    source in audio_controller.sources.values()])
-
-        old_scream_recevier: ScreamReceiver = self.scream_recevier
-        old_scream_per_process_recevier: ScreamPerProcessReceiver = self.scream_per_process_recevier
-        old_multicast_scream_recevier: MulticastScreamReceiver = self.multicast_scream_recevier
-        old_rtp_receiver: RTPReceiver = self.rtp_receiver
-
-        if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            self.scream_recevier = ScreamReceiver(source_write_fds)
-            self.scream_per_process_recevier = ScreamPerProcessReceiver(source_write_fds)
-            self.multicast_scream_recevier = MulticastScreamReceiver(source_write_fds)
-            self.rtp_receiver = RTPReceiver(source_write_fds)
-            controller_write_fds: List[int] = []
-            for audio_controller in self.audio_controllers:
-                controller_write_fds.append(audio_controller.controller_write_fd)
-            self.tcp_manager.replace_mixers(self.audio_controllers)
-
-        if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            old_scream_recevier.stop()
-            old_scream_per_process_recevier.stop()
-            old_multicast_scream_recevier.stop()
-            old_rtp_receiver.stop()
+        
+        self.__apply_cpp_engine_state()
 
         self.__save_config()
-
-        if len(changed_sinks) > 0 or len(removed_sinks) > 0 or len(added_sinks) > 0:
-            _logger.debug("[Configuration Manager] Notifying plugin manager")
-            self.plugin_manager.load_registered_plugins(source_write_fds)
-            _logger.debug("[Configuration Manager] Reload done")
 
         try:
             self.reload_condition.release()
@@ -1292,31 +1563,61 @@ class ConfigurationManager(threading.Thread):
 
     def check_autodetected_sinks_sources(self):
         """This checks the IPs receivers have seen and adds any as sources if they don't exist"""
-        self.scream_recevier.check_known_ips()
-        self.scream_per_process_recevier.check_known_sources()
-        self.multicast_scream_recevier.check_known_ips()
-        self.rtp_receiver.check_known_ips()
-        known_source_tags: List[str] = [str(desc.tag) for desc in self.source_descriptions]
-        known_source_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions]
-        known_sink_ips: List[str] = [str(desc.ip) for desc in self.sink_descriptions]
-        known_sink_config_ids: List[str] = [str(desc.config_id) for desc in self.sink_descriptions]
-        for ip in self.scream_recevier.known_ips:
-            if not str(ip) in known_source_ips:
-                _logger.info("[Configuration Manager] Adding new source from Scream port %s", ip)
-                self.auto_add_source(ip)
-        for ip in self.multicast_scream_recevier.known_ips:
-            if not str(ip) in known_source_ips:
-                _logger.info(
-                    "[Configuration Manager] Adding new source from Multicast Scream port %s", ip)
-                self.auto_add_source(ip)
-        for ip in self.rtp_receiver.known_ips:
-            if not str(ip) in known_source_ips:
-                _logger.info("[Configuration Manager] Adding new source from RTP port %s", ip)
-                self.auto_add_source(ip)
+        #self.scream_recevier.check_known_ips()
+        #self.scream_per_process_recevier.check_known_sources()
+        #self.multicast_scream_recevier.check_known_ips()
+        #self.rtp_receiver.check_known_ips()
+        known_source_tags: List[str] = [str(desc.tag) for desc in self.source_descriptions if desc.tag is not None]
+        known_source_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions if desc.ip is not None]
+        known_sink_ips: List[str] = [str(desc.ip) for desc in self.sink_descriptions if desc.ip is not None]
+        known_sink_config_ids: List[str] = [str(desc.config_id) for desc in self.sink_descriptions if desc.config_id is not None]
+        
+        # --- C++ Engine Based Auto Source Detection ---
+        if self.cpp_audio_manager and screamrouter_audio_engine:
+            # RTP Receiver (IP-based sources)
+            try:
+                rtp_seen_tags = self.cpp_audio_manager.get_rtp_receiver_seen_tags()
+                for ip_str in rtp_seen_tags:
+                    if ip_str and ip_str not in known_source_ips: # Check if ip_str is not empty
+                        _logger.info("[Configuration Manager] Auto-adding new source from C++ RTP Receiver: %s", ip_str)
+                        self.auto_add_source(IPAddressType(ip_str))
+                        known_source_ips.append(ip_str) 
+            except Exception as e:
+                _logger.error("[Configuration Manager] Error getting seen tags from C++ RTP Receiver: %s", e)
+
+            # Raw Scream Receivers (IP-based sources)
+            # Using ports configured in __init__
+            raw_receiver_ports = [4010, 16401] 
+            for port in raw_receiver_ports:
+                try:
+                    raw_seen_tags = self.cpp_audio_manager.get_raw_scream_receiver_seen_tags(port)
+                    for ip_str in raw_seen_tags:
+                        if ip_str and ip_str not in known_source_ips:
+                            _logger.info("[Configuration Manager] Auto-adding new source from C++ Raw Scream Receiver (port %d): %s", port, ip_str)
+                            self.auto_add_source(IPAddressType(ip_str))
+                            known_source_ips.append(ip_str)
+                except Exception as e:
+                    _logger.error("[Configuration Manager] Error getting seen tags from C++ Raw Scream Receiver (port %d): %s", port, e)
+
+            # Per-Process Scream Receiver (Tag-based sources)
+            per_process_receiver_port = 16402 # Port configured in __init__
+            try:
+                per_process_seen_tags = self.cpp_audio_manager.get_per_process_scream_receiver_seen_tags(per_process_receiver_port)
+                for tag_str in per_process_seen_tags:
+                    if tag_str and tag_str not in known_source_tags:
+                        _logger.info("[Configuration Manager] Auto-adding new source from C++ Per-Process Receiver (port %d): %s", per_process_receiver_port, tag_str)
+                        self.auto_add_process_source(tag_str) # Use auto_add_process_source for these tags
+                        known_source_tags.append(tag_str)
+            except Exception as e:
+                _logger.error("[Configuration Manager] Error getting seen tags from C++ Per-Process Receiver (port %d): %s", per_process_receiver_port, e)
+        # --- End C++ Engine Based Auto Source Detection ---
+        
+        # mDNS pinger for sources
         for ip in self.mdns_pinger.get_source_ips():
             if not str(ip) in known_source_ips:
                 _logger.info("[Configuration Manager] Adding new source from mDNS %s", ip)
                 self.auto_add_source(ip)
+        # mDNS pinger for sinks
         for ip in self.mdns_pinger.get_sink_ips():
             if not str(ip) in known_sink_ips:
                 _logger.info("[Configuration Manager] Adding new sink from mDNS %s", ip)
@@ -1404,10 +1705,10 @@ class ConfigurationManager(threading.Thread):
             # Reload configuration if any source was changed
             if source_changed:
                 self.__reload_configuration()
-        for tag in self.scream_per_process_recevier.known_sources:
-            if not str(tag) in known_source_tags:
-                _logger.info("[Configuration Manager] Adding new per-process source %s", tag)
-                self.auto_add_process_source(tag)
+        #for tag in self.scream_per_process_recevier.known_sources:
+        #    if not str(tag) in known_source_tags:
+        #        _logger.info("[Configuration Manager] Adding new per-process source %s", tag)
+        #        self.auto_add_process_source(tag)
         
     def run(self):
         """Monitors for the reload condition to be set and reloads the config when it is set"""
@@ -1420,14 +1721,7 @@ class ConfigurationManager(threading.Thread):
                     # This will get set to true if something else wants to reload the configuration
                     # while it's already reloading
                     if self.plugin_manager.wants_reload():
-                        _logger.info("[Configuration Manager] Plugin Manager")
-                        self.reload_config = True
-                    for audio_controller in self.audio_controllers:
-                        if audio_controller.wants_reload():
-                            self.reload_config = True
-                    if self.tcp_manager.wants_reload:
-                        _logger.info("[Configuration Manager] TCP Manager Wants Reload")
-                        self.tcp_manager.wants_reload = False
+                        _logger.info("[Configuration Manager] Plugin Manager requests reload.")
                         self.reload_config = True
                     if self.reload_config:
                         self.reload_config = False
@@ -1440,10 +1734,38 @@ class ConfigurationManager(threading.Thread):
                         self.reload_condition.release()
                     except:
                         pass
-                if not self.volume_eq_reload_condition.acquire(timeout=1):
-                    raise TimeoutError("Failed to get configuration reload condition")
-                if self.volume_eq_reload_condition.wait(timeout=.3):
-                    self.__process_and_apply_volume_eq_delay_timeshift()
+                # Removed check/call for __process_and_apply_volume_eq_delay_timeshift
                 self.check_autodetected_sinks_sources()
             except:
                 pass
+
+    def update_source_speaker_layout(self, source_name: SourceNameType, input_channel_key: int, speaker_layout_for_key: SpeakerLayout) -> bool:
+        """Set the speaker layout for a specific input channel key on a source or source group"""
+        source: SourceDescription = self.get_source_by_name(source_name)
+        # Ensure speaker_layouts dict exists (Pydantic default_factory should handle this)
+        if source.speaker_layouts is None: # Should ideally not happen
+            source.speaker_layouts = {}
+        source.speaker_layouts[input_channel_key] = speaker_layout_for_key
+        _logger.info(f"Updating SpeakerLayout for source {source_name}, input key {input_channel_key}. Auto mode: {speaker_layout_for_key.auto_mode}")
+        self.__reload_configuration() # Trigger full reload
+        return True
+
+    def update_sink_speaker_layout(self, sink_name: SinkNameType, input_channel_key: int, speaker_layout_for_key: SpeakerLayout) -> bool:
+        """Set the speaker layout for a specific input channel key on a sink or sink group"""
+        sink: SinkDescription = self.get_sink_by_name(sink_name)
+        if sink.speaker_layouts is None: # Should ideally not happen
+            sink.speaker_layouts = {}
+        sink.speaker_layouts[input_channel_key] = speaker_layout_for_key
+        _logger.info(f"Updating SpeakerLayout for sink {sink_name}, input key {input_channel_key}. Auto mode: {speaker_layout_for_key.auto_mode}")
+        self.__reload_configuration() # Trigger full reload
+        return True
+
+    def update_route_speaker_layout(self, route_name: RouteNameType, input_channel_key: int, speaker_layout_for_key: SpeakerLayout) -> bool:
+        """Set the speaker layout for a specific input channel key on a route"""
+        route: RouteDescription = self.get_route_by_name(route_name)
+        if route.speaker_layouts is None: # Should ideally not happen
+            route.speaker_layouts = {}
+        route.speaker_layouts[input_channel_key] = speaker_layout_for_key
+        _logger.info(f"Updating SpeakerLayout for route {route_name}, input key {input_channel_key}. Auto mode: {speaker_layout_for_key.auto_mode}")
+        self.__reload_configuration() # Trigger full reload
+        return True

@@ -4,6 +4,7 @@ import os
 import select
 import signal
 import subprocess
+import time
 from typing import List, Optional, Tuple
 
 from pydantic import BaseModel
@@ -32,7 +33,8 @@ class PluginPlayURL(ScreamRouterPlugin):
 
            SIGCHILD is sent when ffmpeg ends and is used as a method for
            determing when to play back the next source."""
-        signal.signal(signal.SIGCHLD, self.sigchld_handler)
+        if "SIGCHILD" in dir(signal):
+            signal.signal(signal.SIGCHLD, self.sigchld_handler)
         self.ffmpeg_read: int
         """Descriptor for the pipe for plugin to read from ffmpeg."""
         self.ffmpeg_write: int
@@ -40,22 +42,50 @@ class PluginPlayURL(ScreamRouterPlugin):
         self.ffmpeg_read, self.ffmpeg_write = os.pipe()
         self.ffmpeg: Optional[subprocess.Popen] = None
         """Holds the ffmpeg process."""
-        self.tag = "PlayURL"
+        self.plugin_instance_tag_base = "PlayURLInstance" # Base for unique instance IDs
         """Plugin tag. Source tags are derived from this."""
-        self.stream_info: ScreamHeader = create_stream_info(32, 48000, 2, "stereo")
+        self.current_source_instance_id: Optional[str] = None
+
+        # Default stream info, can be overridden if ffmpeg provides different actuals
+        # For ScreamHeader, chlayout1 and chlayout2 are derived from channels.
+        # Let's assume create_stream_info handles this.
+        # The ScreamHeader object itself is less important now than its constituent parts.
+        _default_bit_depth = 32 # Example, ffmpeg output might be s16le or s32le
+        _default_sample_rate = 48000
+        _default_channels = 2
+        _default_channel_layout_str = "stereo" # For create_stream_info
+
+        self.stream_info: ScreamHeader = create_stream_info(
+            _default_bit_depth, _default_sample_rate, _default_channels, _default_channel_layout_str
+        )
+        # Store these for easy access for write_data
+        self.current_bit_depth = _default_bit_depth
+        self.current_sample_rate = _default_sample_rate
+        self.current_channels = _default_channels
+        self.current_chlayout1 = self.stream_info.channel_layout[0]
+        self.current_chlayout2 = self.stream_info.channel_layout[1]
+
         """This holds the bytes from a generated Scream Header so they can be
            prepended to data packets"""
         self.queued_url_list: List[Tuple[SinkNameType, str, VolumeType]] = []
         """This holds a list of URLs to play"""
-        self.start()
-        # Start the run loop in a new process. any variables to be available to run()
-        # need to be delcared before this.
+        
+        # self.start() # Thread is started by PluginManager after plugin_start is called
 
     def start_plugin(self):
         """This is called when the plugin is started. API endpoints should
             be added here. Any other startup tasks can be performed too."""
+        # Ensure the plugin's base tag for instance ID generation is set
+        self.tag = self.plugin_instance_tag_base # Used by add_temporary_source
+        
         self.api.post("/sinks/{sink_name}/play_one/{volume}",
                           tags=["Play URL"])(self.queue_url)
+        
+        # Start the plugin's own processing thread if it has a run() method
+        if hasattr(self, 'run') and callable(getattr(self, 'run')):
+            if not self.is_alive():
+                 logger.info(f"Starting thread for plugin {self.name}")
+                 super().start() # Calls threading.Thread.start()
 
     def stop_plugin(self):
         """This is called when the plugin is stopped. You may perform shutdown
@@ -95,6 +125,9 @@ class PluginPlayURL(ScreamRouterPlugin):
         else:
             if not self.ffmpeg.poll() is None:  # If ffmpeg has ran but ended
                 self.ffmpeg.wait()  # Clear ffmpeg from process list
+                if self.current_source_instance_id:
+                    self.remove_temporary_source(self.current_source_instance_id)
+                    self.current_source_instance_id = None
                 play_next = True
 
         if play_next:
@@ -103,9 +136,26 @@ class PluginPlayURL(ScreamRouterPlugin):
                 url: str
                 volume: VolumeType
                 sink_name, url, volume = self.queued_url_list.pop()
-                self.remove_temporary_source(self.tag)  # Remove any old source we may have
-                self.add_temporary_source(sink_name, SourceDescription())
+                
+                # Create a new temporary source and get its unique instance_id
+                # The tag passed to SourceDescription is used by C++ to create the SourceInputProcessor instance.
+                # self.add_temporary_source now returns this instance_id.
+                source_desc = SourceDescription() # Create a default one
+                # The tag in SourceDescription is used by C++ to create the SourceInputProcessor instance.
+                # The add_temporary_source method in ScreamRouterPlugin now generates a unique tag (instance_id)
+                # and sets it on source_desc.tag. This returned tag is what we need.
+                self.current_source_instance_id = self.add_temporary_source(sink_name, source_desc)
+                
+                if not self.current_source_instance_id:
+                    logger.error(f"[Plugin PlayURL] Failed to add temporary source for {url}. Cannot play.")
+                    self.play_next_url() # Try next if any
+                    return
+
+                logger.info(f"[Plugin PlayURL] Playing {url} with source_instance_id: {self.current_source_instance_id}")
                 self.run_ffmpeg(url, volume)
+            else:
+                logger.info("[Plugin PlayURL] Queue is empty.")
+
 
     def queue_url(self, url: PlayURLClass, sink_name: SinkNameType, volume: VolumeType):
         """Adds a URL to a queue to be played sequentially"""
@@ -123,9 +173,23 @@ class PluginPlayURL(ScreamRouterPlugin):
         ffmpeg_command_parts.extend(["-re",
                                      "-i", url])
         ffmpeg_command_parts.extend(["-af", f"volume={volume}"])
-        ffmpeg_command_parts.extend(["-f", f"s{self.stream_info.bit_depth}le",
-                                     "-ac", f"{self.stream_info.channels}",
-                                     "-ar", f"{self.stream_info.sample_rate}",
+        # Output format should match what inject_plugin_packet expects for raw PCM
+        # For example, 16-bit signed little-endian PCM
+        # Update self.current_format based on this if needed.
+        # For now, assume ffmpeg outputs s16le, 48kHz, stereo as per typical Scream use.
+        # If ffmpeg outputs something else, these values need to be dynamically set.
+        self.current_bit_depth = 16 # Example: s16le
+        self.current_sample_rate = 48000
+        self.current_channels = 2
+        # Re-create stream_info to get correct chlayout bytes if format changes
+        # Or, ideally, parse them from ffmpeg's output if possible, or have fixed output format.
+        temp_stream_info = create_stream_info(self.current_bit_depth, self.current_sample_rate, self.current_channels, "stereo")
+        self.current_chlayout1 = self.stream_info.channel_layout[0]
+        self.current_chlayout2 = self.stream_info.channel_layout[1]
+
+        ffmpeg_command_parts.extend(["-f", f"s{self.current_bit_depth}le", # e.g., s16le for 16-bit
+                                     "-ac", f"{self.current_channels}",
+                                     "-ar", f"{self.current_sample_rate}",
                                     f"pipe:{self.ffmpeg_write}"])
         logger.debug("[PlayURL] ffmpeg command line: %s", ffmpeg_command_parts)
 
@@ -149,11 +213,45 @@ class PluginPlayURL(ScreamRouterPlugin):
 
         # While the plugin is running check if there's any data available from ffmpeg and
         # write it to ScreamRouter if so.
-        while self.running.value:
-            ready = select.select([self.ffmpeg_read], [], [], .3)
+        while self.running_flag.value: # Use the c_bool flag from base class
+            if not self.current_source_instance_id or self.ffmpeg is None or self.ffmpeg.poll() is not None:
+                # Not currently playing anything, or ffmpeg ended
+                time.sleep(0.1)
+                continue
+
+            ready = select.select([self.ffmpeg_read], [], [], 0.1) # Short timeout
             if ready[0]:
-                data = self.stream_info.header + os.read(self.ffmpeg_read,
-                                                    constants.PACKET_DATA_SIZE)
-                self.write_data(self.tag, data)
-        logger.debug("[Plugin PlayURL] Stopping")
-        close_all_pipes()
+                # Read raw PCM data from ffmpeg
+                pcm_data = os.read(self.ffmpeg_read, constants.PACKET_DATA_SIZE)
+                if not pcm_data: # EOF
+                    logger.info(f"[Plugin PlayURL] ffmpeg for {self.current_source_instance_id} sent EOF.")
+                    self.play_next_url() # Try to play next
+                    continue
+
+                if len(pcm_data) == constants.PACKET_DATA_SIZE:
+                    self.write_data(
+                        source_instance_id=self.current_source_instance_id,
+                        pcm_data=pcm_data,
+                        channels=self.current_channels,
+                        sample_rate=self.current_sample_rate,
+                        bit_depth=self.current_bit_depth,
+                        chlayout1=self.current_chlayout1,
+                        chlayout2=self.current_chlayout2
+                    )
+                elif len(pcm_data) > 0:
+                     logger.warning(f"[Plugin PlayURL] Received partial packet from ffmpeg for {self.current_source_instance_id}: {len(pcm_data)} bytes. Discarding.")
+            else:
+                # No data from ffmpeg, check if it has ended
+                if self.ffmpeg and self.ffmpeg.poll() is not None:
+                    logger.info(f"[Plugin PlayURL] ffmpeg process for {self.current_source_instance_id} ended.")
+                    self.play_next_url() # Try to play next
+                    
+        logger.debug(f"[Plugin PlayURL {self.name}] Thread stopping")
+        # Ensure ffmpeg is cleaned up if plugin stops while playing
+        if self.ffmpeg and self.ffmpeg.poll() is None:
+            logger.info(f"[Plugin PlayURL {self.name}] Killing ffmpeg process on stop.")
+            self.ffmpeg.kill()
+            self.ffmpeg.wait()
+        if self.current_source_instance_id:
+            self.remove_temporary_source(self.current_source_instance_id)
+        # close_all_pipes() # This is too broad, manage specific pipes (ffmpeg_read/write) in stop_plugin

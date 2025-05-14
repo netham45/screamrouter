@@ -202,6 +202,11 @@ const SourceItem: React.FC<SourceItemProps> = ({
             <MenuItem onClick={() => actions.showEqualizer(true, 'sources', source)}>
               Equalize
             </MenuItem>
+            {/* --- New MenuItem for Speaker Layout --- */}
+            <MenuItem onClick={() => actions.showSpeakerLayoutPage('sources', source)}>
+              Speaker Layout
+            </MenuItem>
+            {/* --- End New MenuItem --- */}
             <MenuItem onClick={() => actions.confirmDelete('sources', source.name)}>
               Delete
             </MenuItem>
@@ -267,9 +272,9 @@ const SourceItem: React.FC<SourceItemProps> = ({
                 min={-60}
                 max={0}
                 step={1}
-                value={source.timeshift || 0}
+                value={-source.timeshift || 0}
                 maxW="95%"
-                onChange={(val) => actions.updateTimeshift('sources', source.name, val)}
+                onChange={(val) => actions.updateTimeshift('sources', source.name, -val)}
               >
                 <SliderTrack>
                   <SliderFilledTrack />

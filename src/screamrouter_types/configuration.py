@@ -1,9 +1,9 @@
 """Contains models used by the configuration manager"""
 
-from copy import copy
-from typing import List, Literal, Optional, Union
+from copy import copy, deepcopy
+from typing import Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 import src.screamrouter_types.annotations as annotations
 
@@ -78,28 +78,123 @@ class Equalizer(BaseModel):
         return hash(hashstr)
 
     def __mul__(self, other):
-        other_eq: Equalizer = copy(other)
-        other_eq.b1 = other_eq.b1 * self.b1
-        other_eq.b2 = other_eq.b2 * self.b2
-        other_eq.b3 = other_eq.b3 * self.b3
-        other_eq.b4 = other_eq.b4 * self.b4
-        other_eq.b5 = other_eq.b5 * self.b5
-        other_eq.b6 = other_eq.b6 * self.b6
-        other_eq.b7 = other_eq.b7 * self.b7
-        other_eq.b8 = other_eq.b8 * self.b8
-        other_eq.b9 = other_eq.b9 * self.b9
-        other_eq.b10 = other_eq.b10 * self.b10
-        other_eq.b11 = other_eq.b11 * self.b11
-        other_eq.b12 = other_eq.b12 * self.b12
-        other_eq.b13 = other_eq.b13 * self.b13
-        other_eq.b14 = other_eq.b14 * self.b14
-        other_eq.b15 = other_eq.b15 * self.b15
-        other_eq.b16 = other_eq.b16 * self.b16
-        other_eq.b17 = other_eq.b17 * self.b17
-        other_eq.b18 = other_eq.b18 * self.b18
-        return other_eq
+        if not isinstance(other, Equalizer):
+            return NotImplemented
+        
+        new_eq = Equalizer()
+        new_eq.b1 = self.b1 * other.b1
+        new_eq.b2 = self.b2 * other.b2
+        new_eq.b3 = self.b3 * other.b3
+        new_eq.b4 = self.b4 * other.b4
+        new_eq.b5 = self.b5 * other.b5
+        new_eq.b6 = self.b6 * other.b6
+        new_eq.b7 = self.b7 * other.b7
+        new_eq.b8 = self.b8 * other.b8
+        new_eq.b9 = self.b9 * other.b9
+        new_eq.b10 = self.b10 * other.b10
+        new_eq.b11 = self.b11 * other.b11
+        new_eq.b12 = self.b12 * other.b12
+        new_eq.b13 = self.b13 * other.b13
+        new_eq.b14 = self.b14 * other.b14
+        new_eq.b15 = self.b15 * other.b15
+        new_eq.b16 = self.b16 * other.b16
+        new_eq.b17 = self.b17 * other.b17
+        new_eq.b18 = self.b18 * other.b18
+        return new_eq
 
     __rmul__ = __mul__
+
+
+class SpeakerLayout(BaseModel):
+    """Holds data for a speaker layout configuration."""
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
+
+    auto_mode: bool = True
+    """If true, the speaker mix is automatically determined based on input/output channels.
+       If false, the custom matrix is used."""
+
+    matrix: List[List[float]] = [[(1.0 if i == j else 0.0) for j in range(8)] for i in range(8)]
+    """An 8x8 matrix defining gain from input channel (row) to output channel (column).
+       Values typically range from 0.0 to 1.0."""
+
+    def __eq__(self, other):
+        if isinstance(other, type(self)):
+            return self.auto_mode == other.auto_mode and self.matrix == other.matrix
+        return False
+
+    def __hash__(self):
+        # Convert matrix to a tuple of tuples to make it hashable
+        matrix_tuple = tuple(tuple(row) for row in self.matrix)
+        return hash((self.auto_mode, matrix_tuple))
+
+    def __mul__(self, other):
+        """
+        Multiplies two SpeakerLayout objects.
+        - If both are manual: matrices are multiplied element-wise. Result is manual.
+        - If one is manual and one is auto: the manual layout wins. Result is manual.
+        - If both are auto: the result is auto (with a default identity matrix).
+        """
+        if not isinstance(other, SpeakerLayout):
+            return NotImplemented
+
+        new_layout = SpeakerLayout()
+
+        if not self.auto_mode and not other.auto_mode:
+            # Both are manual: element-wise matrix multiplication
+            # Both are manual: Perform standard matrix multiplication C = self.matrix * other.matrix
+            new_layout.auto_mode = False
+            # Initialize new_matrix with zeros
+            new_matrix = [[0.0 for _ in range(8)] for _ in range(8)]
+            
+            # Assuming self.matrix and other.matrix are 8x8
+            # If not, this needs more robust handling or validation upstream
+            # Pydantic default ensures they are 8x8 if not provided, or they come from config
+            
+            # Standard matrix multiplication: C[i][j] = sum(A[i][k] * B[k][j])
+            # Here, A is self.matrix, B is other.matrix
+            for i in range(8): # Row of the result matrix C (and self.matrix A)
+                for j in range(8): # Column of the result matrix C (and other.matrix B)
+                    current_sum = 0.0
+                    for k in range(8): # Inner dimension for dot product
+                        val_self = self.matrix[i][k] if i < len(self.matrix) and k < len(self.matrix[i]) else 0.0
+                        val_other = other.matrix[k][j] if k < len(other.matrix) and j < len(other.matrix[k]) else 0.0
+                        # If a matrix is smaller than 8x8, this defaults to 0.0 for out-of-bounds,
+                        # which is generally okay for matrix multiplication if padding with zeros is intended.
+                        # However, Pydantic default should ensure 8x8.
+                        current_sum += val_self * val_other
+                    new_matrix[i][j] = current_sum
+            new_layout.matrix = new_matrix
+        elif not self.auto_mode and other.auto_mode:
+            # Self is manual, other is auto (effectively identity): self (manual) wins
+            new_layout.auto_mode = False
+            new_layout.matrix = deepcopy(self.matrix)
+        elif self.auto_mode and not other.auto_mode:
+            # Self is auto, other is manual: other (manual) wins
+            new_layout.auto_mode = False
+            new_layout.matrix = deepcopy(other.matrix)
+        else:  # Both are auto_mode = True
+            new_layout.auto_mode = True
+            # new_layout.matrix remains default identity from SpeakerLayout() constructor
+        
+        return new_layout
+
+    __rmul__ = __mul__
+
+
+class AudioManagerConfig(BaseModel):
+    """
+    Configuration for the AudioManager.
+    """
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
+
+    global_timeshift_buffer_duration_sec: int = 300
+    """Global timeshift buffer duration in seconds for the TimeshiftManager."""
+    # Add other AudioManager specific configurations here if needed in the future.
+
 
 class SinkDescription(BaseModel):
     """
@@ -133,18 +228,20 @@ class SinkDescription(BaseModel):
     """Sink Channel Layout, Endpoint Only"""
     delay: annotations.DelayType = 0
     """Delay in ms, Endpoint and Group"""
-    equalizer: Equalizer = Equalizer(b1=1, b2=1, b3=1, b4=1, b5=1, b6=1,
-                                     b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
-                                     b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
+    equalizer: Equalizer = Field(default_factory=Equalizer)
     """Audio Equalizer"""
     timeshift: annotations.TimeshiftType = 0
     """Timeshift backwards in seconds"""
+    speaker_layouts: Dict[int, SpeakerLayout] = Field(default_factory=dict)
+    """Speaker Layouts keyed by input channel count"""
     time_sync: bool = False
     """Rather the sink is timesynced (Normal Scream receivers are not compatible)"""
     time_sync_delay: int = 0
     """Delay for time sync in ms"""
     config_id: Optional[str] = None
     """ID used by mDNS auto-configuration to sync client settings changes"""
+    use_tcp: bool = False
+    enable_mp3: bool = True
 
     def __eq__(self, other):
         """Compares the name if a string.
@@ -169,14 +266,28 @@ class SinkDescription(BaseModel):
 
     def __hash__(self):
         """Returns a hash"""
-        hashstr: str = ""
-        for field_name, field_info in self.model_fields.items():
-            try:
-                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
-            except AttributeError:
-                setattr(self, field_name, field_info.default)
-                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
-        return hash(hashstr)
+        values_to_hash = []
+        for field_name in sorted(self.model_fields.keys()): # Sort keys for consistent hash
+            if field_name == "speaker_layouts":
+                # Convert dict to a hashable representation (tuple of sorted items)
+                # SpeakerLayout itself must be hashable
+                layouts_hashable_items = []
+                # Ensure speaker_layouts is initialized (Pydantic default_factory should handle this)
+                layouts_dict = getattr(self, field_name, {}) 
+                for k, v in sorted(layouts_dict.items()):
+                    layouts_hashable_items.append((k, v))
+                values_to_hash.append(tuple(layouts_hashable_items))
+            elif field_name == "group_members":
+                # Convert list to a sorted tuple to make it hashable
+                members_list = getattr(self, field_name, [])
+                values_to_hash.append(tuple(sorted(members_list)))
+            else:
+                try:
+                    values_to_hash.append(getattr(self, field_name))
+                except AttributeError:
+                    # Handle cases where a field might not be set, using its default
+                    values_to_hash.append(self.model_fields[field_name].default)
+        return hash(tuple(values_to_hash))
 
 class SourceDescription(BaseModel):
     """
@@ -192,6 +303,8 @@ class SourceDescription(BaseModel):
     """Source IP, Endpoint Only"""
     tag: Optional[str] = None
     """Tag if no IP is specified"""
+    channels: Optional[int] = None # Added for Task 13
+    """Source Channel Count, Endpoint Only. If None, typically assumed to be 2."""
     is_group: bool = False
     """Source Is Group"""
     enabled: bool = True
@@ -202,12 +315,12 @@ class SourceDescription(BaseModel):
     """Holds the volume for the source  (0.0-1.0), Endpoint and Group"""
     delay: annotations.DelayType = 0
     """Delay in ms, Endpoint and Group"""
-    equalizer: Equalizer = Equalizer(b1=1, b2=1, b3=1, b4=1, b5=1, b6=1,
-                                     b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
-                                     b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
+    equalizer: Equalizer = Field(default_factory=Equalizer)
     """Audio Equalizer"""
     timeshift: annotations.TimeshiftType = 0
     """Timeshift backwards in seconds"""
+    speaker_layouts: Dict[int, SpeakerLayout] = Field(default_factory=dict)
+    """Speaker Layouts keyed by input channel count"""
     vnc_ip: Union[annotations.IPAddressType, Literal[""]] = ""
     """IP Address for VNC connections"""
     vnc_port: Union[annotations.PortType, Literal[""]] = ""
@@ -240,14 +353,25 @@ class SourceDescription(BaseModel):
 
     def __hash__(self):
         """Returns a hash"""
-        hashstr: str = ""
-        for field_name, field_info in self.model_fields.items():
-            try:
-                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
-            except AttributeError:
-                setattr(self, field_name, field_info.default)
-                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
-        return hash(hashstr)
+        values_to_hash = []
+        for field_name in sorted(self.model_fields.keys()): # Sort keys for consistent hash
+            if field_name == "speaker_layouts":
+                # Convert dict to a hashable representation (tuple of sorted items)
+                layouts_hashable_items = []
+                layouts_dict = getattr(self, field_name, {})
+                for k, v in sorted(layouts_dict.items()):
+                    layouts_hashable_items.append((k, v))
+                values_to_hash.append(tuple(layouts_hashable_items))
+            elif field_name == "group_members":
+                # Convert list to a sorted tuple to make it hashable
+                members_list = getattr(self, field_name, [])
+                values_to_hash.append(tuple(sorted(members_list)))
+            else:
+                try:
+                    values_to_hash.append(getattr(self, field_name))
+                except AttributeError:
+                    values_to_hash.append(self.model_fields[field_name].default)
+        return hash(tuple(values_to_hash))
 
 
 class RouteDescription(BaseModel):
@@ -270,12 +394,12 @@ class RouteDescription(BaseModel):
     """Route volume (0.0-1.0)"""
     delay: annotations.DelayType = 0
     """Delay in ms"""
-    equalizer: Equalizer = Equalizer(b1=1, b2=1, b3=1, b4=1, b5=1, b6=1,
-                                     b7=1, b8=1, b9=1, b10=1, b11=1, b12=1,
-                                     b13=1, b14=1, b15=1, b16=1, b17=1, b18=1)
+    equalizer: Equalizer = Field(default_factory=Equalizer)
     """Audio Equalizer"""
     timeshift: annotations.TimeshiftType = 0
     """Timeshift backwards in seconds"""
+    speaker_layouts: Dict[int, SpeakerLayout] = Field(default_factory=dict)
+    """Speaker Layouts keyed by input channel count"""
 
     def __eq__(self, other):
         """Compares the name if a string.
@@ -300,11 +424,18 @@ class RouteDescription(BaseModel):
 
     def __hash__(self):
         """Returns a hash"""
-        hashstr: str = ""
-        for field_name, field_info in self.model_fields.items():
-            try:
-                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
-            except AttributeError:
-                setattr(self, field_name, field_info.default)
-                hashstr = hashstr + f"{field_name}:{getattr(self, field_name)}"
-        return hash(hashstr)
+        values_to_hash = []
+        for field_name in sorted(self.model_fields.keys()): # Sort keys for consistent hash
+            if field_name == "speaker_layouts":
+                # Convert dict to a hashable representation (tuple of sorted items)
+                layouts_hashable_items = []
+                layouts_dict = getattr(self, field_name, {})
+                for k, v in sorted(layouts_dict.items()):
+                    layouts_hashable_items.append((k, v))
+                values_to_hash.append(tuple(layouts_hashable_items))
+            else:
+                try:
+                    values_to_hash.append(getattr(self, field_name))
+                except AttributeError:
+                    values_to_hash.append(self.model_fields[field_name].default)
+        return hash(tuple(values_to_hash))

@@ -40,6 +40,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Remove Windows bins in r8brain
+        run: |
+          find -type f -name *.dll -delete
+          find -type f -name *.exe -delete
+          find -type f -name *.lib -delete
           
       - name: Configure Git
         run: git config --global --add safe.directory /__w/screamrouter/screamrouter

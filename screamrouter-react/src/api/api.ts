@@ -9,6 +9,14 @@ import axios from 'axios';
 /**
  * Interface for Source object
  */
+
+// --- New SpeakerLayout Interface ---
+export interface SpeakerLayout {
+  auto_mode: boolean;
+  matrix: number[][]; // Expects an 8x8 matrix
+}
+// --- End New SpeakerLayout Interface ---
+
 export interface Source {
   name: string;
   ip: string;
@@ -25,6 +33,8 @@ export interface Source {
   is_primary?: boolean;
   is_process?: boolean;
   tag?: string;
+  channels?: number; // Added for Source
+  speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
 }
 
 /**
@@ -48,6 +58,7 @@ export interface Sink {
   time_sync: boolean;
   time_sync_delay: number;
   favorite?: boolean;
+  speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
 }
 
 /**
@@ -63,6 +74,7 @@ export interface Route {
   delay: number;
   timeshift: number;
   favorite?: boolean;
+  speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
 }
 
 /**
@@ -266,7 +278,21 @@ const ApiService = {
   // New method to update equalizer based on type and name
   updateEqualizer: (type: 'sources' | 'sinks' | 'routes', name: string, equalizer: Equalizer) => {
     return axios.post(`/equalizers/${type}/${name}`, equalizer);
+  },
+
+  // --- Speaker Layout Update Methods ---
+  updateSourceSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
+      return axios.post(`/api/sources/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout);
+  },
+
+  updateSinkSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
+      return axios.post(`/api/sinks/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout);
+  },
+
+  updateRouteSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
+      return axios.post(`/api/routes/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout);
   }
+  // --- End Speaker Layout Update Methods ---
 };
 
 export default ApiService;

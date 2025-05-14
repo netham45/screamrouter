@@ -16,3 +16,9 @@ site/**/*.html
 site/**/*.txt
 !src/site/**/robots.txt
 tasks/**
+**/*.so
+**/*.mp3
+**/*.tar.gz
+c_utils/**
+**/*.swp
+**/*.egg

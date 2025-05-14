@@ -12,14 +12,18 @@ logger = get_logger(__name__)
 def set_process_name(shortname: str = "", fullname: str = "") -> None:
     """Sets the process name so it can be viewed under top.
        Short name is limited to 14 chars."""
+    return # Disabled for now
     shortname = f"SR{shortname[:14]}"
     logger.debug("Setting process name for pid %s to: short: %s long %s",
                  os.getpid(), shortname, fullname)
     if len(fullname) > 2:
         setproctitle.setproctitle(f"ScreamRouter ({os.getpid()}): {fullname}")
     if len(shortname) > 0:
-        with open('/proc/self/comm', 'w', encoding="ascii") as f:
-            f.write(shortname)
+        try:
+            with open('/proc/self/comm', 'w', encoding="ascii") as f:
+                f.write(shortname)
+        except FileNotFoundError:
+            pass
 
 def close_pipe(fd: int)  -> None:
     """Closes a pipe, ignores oserror"""

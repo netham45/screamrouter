@@ -1,4 +1,5 @@
 #include <stdexcept>
+#include <string>
 #include <string.h>
 #define MAX_CHANNELS 8
 class layout_mixer {

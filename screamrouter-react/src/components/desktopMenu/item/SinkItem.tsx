@@ -210,6 +210,11 @@ const SinkItem: React.FC<SinkItemProps> = ({
             <MenuItem onClick={() => actions.showEqualizer(true, 'sinks', sink)}>
               Equalize
             </MenuItem>
+            {/* --- New MenuItem for Speaker Layout --- */}
+            <MenuItem onClick={() => actions.showSpeakerLayoutPage('sinks', sink)}>
+              Speaker Layout
+            </MenuItem>
+            {/* --- End New MenuItem --- */}
             <MenuItem onClick={() => actions.confirmDelete('sinks', sink.name)}>
               Delete
             </MenuItem>
@@ -273,9 +278,9 @@ const SinkItem: React.FC<SinkItemProps> = ({
                 min={-60}
                 max={0}
                 step={1}
-                value={sink.timeshift || 0}
+                value={-sink.timeshift || 0}
                 maxW="95%"
-                onChange={(val) => actions.updateTimeshift('sinks', sink.name, val)}
+                onChange={(val) => actions.updateTimeshift('sinks', sink.name, -val)}
               >
                 <SliderTrack>
                   <SliderFilledTrack />

@@ -1,12 +1,12 @@
-import multiprocessing
+import os
+import signal
 import socket
 import struct
+import threading
 import time
-import signal
-import os
-from ..screamrouter_logger.screamrouter_logger import get_logger
-from multiprocessing import Process
 from threading import Thread
+
+from ..screamrouter_logger.screamrouter_logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -23,7 +23,7 @@ class NTPServerProcess(Thread):
         self._server_socket = None
 
     def run(self):
-        """The function run by the multiprocessing process."""
+        """The function run by the thread process."""
         logger.info(f"Starting NTP server process (PID: {os.getpid()}) on port {NTP_PORT}")
         try:
             self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

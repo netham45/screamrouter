@@ -1,9 +1,9 @@
 [submodule "site/noVNC"]
 	path = site/noVNC
 	url = https://github.com/novnc/noVNC.git
-[submodule "c_utils/libsamplerate"]
-	path = c_utils/libsamplerate
-	url = https://github.com/libsndfile/libsamplerate.git
-[submodule "c_utils/dcaenc"]
-	path = c_utils/dcaenc
-	url = https://github.com/darealshinji/dcaenc.git
+[submodule "src/audio_engine/lame"]
+	path = src/audio_engine/lame
+	url = https://github.com/netham45/lame
+[submodule "src/audio_engine/r8brain-free-src"]
+	path = src/audio_engine/r8brain-free-src
+	url = https://github.com/avaneev/r8brain-free-src

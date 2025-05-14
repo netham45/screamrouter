@@ -1,10 +1,12 @@
 """mDNS pinger for discovering and syncing settings"""
-import threading
-import logging
-import time
 import json
-from typing import Optional, Dict, Any, List
-from zeroconf import Zeroconf, DNSQuestion, DNSOutgoing, DNSIncoming, current_time_millis, DNSRecord, RecordUpdateListener
+import logging
+import threading
+import time
+from typing import Any, Dict, List, Optional
+
+from zeroconf import (DNSIncoming, DNSOutgoing, DNSQuestion, DNSRecord,
+                      RecordUpdateListener, Zeroconf, current_time_millis)
 
 from src.screamrouter_types.annotations import IPAddressType
 

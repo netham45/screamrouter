@@ -1,5 +1,5 @@
 """ScreamRouter Plugin Manager"""
-from typing import List
+from typing import Any, List  # Added Any for audio_manager_instance
 
 from fastapi import FastAPI
 
@@ -10,6 +10,14 @@ from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import SinkNameType
 from src.screamrouter_types.configuration import SourceDescription
 
+# Attempt to import the C++ audio engine; this might fail if not compiled/installed
+try:
+    from screamrouter_audio_engine import AudioManager  # type: ignore
+except ImportError:
+    AudioManager = None # type: ignore
+    get_logger(__name__).warning("PluginManager: Failed to import screamrouter_audio_engine. Plugins requiring it may not function correctly.")
+
+
 logger = get_logger(__name__)
 
 class PluginManager:
@@ -17,9 +25,17 @@ class PluginManager:
        Start/Stop = ScreamRouter starting/stopping
        load/unload = load/unload for configuration changes"""
 
-    def __init__(self, api: FastAPI):
+    def __init__(self, api: FastAPI, audio_manager_instance: Any = None): # Added audio_manager_instance
         """Initialize the Plugin Manager"""
         self.api: FastAPI = api
+        self.audio_manager_instance: Any = audio_manager_instance # Store the instance
+        if not self.audio_manager_instance and AudioManager:
+            logger.warning("PluginManager initialized without an AudioManager instance, but the module is available. "
+                           "Plugins might attempt to use a global/fallback which is not ideal.")
+        elif not AudioManager:
+            logger.error("PluginManager: AudioManager (screamrouter_audio_engine) not available. "
+                         "Plugins relying on direct C++ calls will fail.")
+
         self.plugin_list: List[ScreamRouterPlugin] = []
         self.register_plugin(PluginPlayURL())
         self.register_plugin(PluginPlayURLMultiple())
@@ -32,7 +48,8 @@ class PluginManager:
     def start_registered_plugins(self):
         """Plugins are started when ScreamRouter is started"""
         for plugin in self.plugin_list:
-            plugin.plugin_start(self.api)
+            # Pass the AudioManager instance to the plugin's start method
+            plugin.plugin_start(self.api, self.audio_manager_instance)
 
     def stop_registered_plugins(self):
         """Plugins are stopped when ScreamRouter is stopped"""
