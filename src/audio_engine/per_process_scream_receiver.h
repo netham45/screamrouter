@@ -4,7 +4,25 @@
 #include "audio_component.h"
 #include "thread_safe_queue.h"
 #include "audio_types.h" // For PerProcessScreamReceiverConfig, NewSourceNotification, TaggedAudioPacket
-#include "rtp_receiver.h"    // For OutputTargetMap, SourceOutputTarget
+// #include "rtp_receiver.h" // No longer needed for OutputTargetMap
+#include "timeshift_manager.h" // Added for TimeshiftManager
+
+// Platform-specific socket includes
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #pragma comment(lib, "Ws2_32.lib")
+    #define GET_LAST_SOCK_ERROR_PPSR WSAGetLastError() // Specific macro
+#else // POSIX
+    #include <sys/types.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h> // For close
+    #include <poll.h>   // For poll
+    #include <errno.h>
+    #define GET_LAST_SOCK_ERROR_PPSR errno // Specific macro
+#endif
 
 #include <string>
 #include <vector>
@@ -22,23 +40,25 @@ namespace audio {
 // Define socket types inside the namespace (consistent with RawScreamReceiver)
 #ifdef _WIN32
     using socket_t = SOCKET;
-    #define INVALID_SOCKET_VALUE_PPSR INVALID_SOCKET // Use a distinct macro to avoid redefinition if headers are combined
+    // INVALID_SOCKET is defined in winsock2.h
+    // #define INVALID_SOCKET_VALUE_PPSR INVALID_SOCKET // Redundant
 #else // POSIX
     using socket_t = int;
-    #define INVALID_SOCKET_VALUE_PPSR -1
+    #define INVALID_SOCKET_VALUE_PPSR -1 // Keep this for POSIX
 #endif
 
 // Using aliases from audio_types.h or RtpReceiver.h if applicable
 using NotificationQueue = utils::ThreadSafeQueue<NewSourceNotification>;
 using PacketQueue = utils::ThreadSafeQueue<TaggedAudioPacket>;
 
-// OutputTargetMap and SourceOutputTarget are included from rtp_receiver.h
+// OutputTargetMap and SourceOutputTarget are no longer used here.
 
 class PerProcessScreamReceiver : public AudioComponent {
 public:
     PerProcessScreamReceiver(
         PerProcessScreamReceiverConfig config,
-        std::shared_ptr<NotificationQueue> notification_queue
+        std::shared_ptr<NotificationQueue> notification_queue,
+        TimeshiftManager* timeshift_manager // Added TimeshiftManager
     );
 
     ~PerProcessScreamReceiver() noexcept;
@@ -47,14 +67,7 @@ public:
     void start() override;
     void stop() override;
 
-    // --- PerProcessScreamReceiver Specific ---
-    void add_output_queue(
-        const std::string& source_tag, // Composite tag: IP_ProgramTag
-        const std::string& instance_id,
-        std::shared_ptr<PacketQueue> queue
-    );
-
-    void remove_output_queue(const std::string& source_tag, const std::string& instance_id);
+    // add_output_queue and remove_output_queue are removed
 
     std::vector<std::string> get_seen_tags(); // Added
 
@@ -66,9 +79,9 @@ private:
     PerProcessScreamReceiverConfig config_;
     socket_t socket_fd_;
     std::shared_ptr<NotificationQueue> notification_queue_;
+    TimeshiftManager* timeshift_manager_; // Added TimeshiftManager pointer
 
-    OutputTargetMap output_targets_; // Maps composite_source_tag to map of instance_id to target queue
-    std::mutex targets_mutex_;
+    // OutputTargetMap and targets_mutex_ are removed
 
     std::set<std::string> known_source_tags_; // Stores composite_source_tag
     std::mutex known_tags_mutex_;

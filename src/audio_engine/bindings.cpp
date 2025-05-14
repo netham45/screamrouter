@@ -10,7 +10,7 @@
 namespace py = pybind11;
 // Import the C++ namespaces to shorten type names
 using namespace screamrouter::audio;
-using namespace screamrouter::config; // Add config namespace
+// using namespace screamrouter::config; // Add config namespace - Removed for explicit qualification
 
 // Define the Python module using the PYBIND11_MODULE macro
 // The first argument is the name of the Python module as it will be imported (e.g., `import screamrouter_audio_engine`)
@@ -77,8 +77,9 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
 
         // Lifecycle Methods
         .def("initialize", &AudioManager::initialize,
-             py::arg("rtp_listen_port") = 40000, // Provide default value for optional arg
-             "Initializes the audio manager, starts RTP listener and notification thread. Returns true on success.")
+             py::arg("rtp_listen_port") = 40000,
+             py::arg("global_timeshift_buffer_duration_sec") = 300, // Added new argument
+             "Initializes the audio manager, including TimeshiftManager. Returns true on success.")
         .def("shutdown", &AudioManager::shutdown,
              "Stops all audio components and cleans up resources.")
 
@@ -130,6 +131,15 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
         .def("update_source_timeshift", &AudioManager::update_source_timeshift,
              py::arg("instance_id"), py::arg("timeshift_sec"),
              "Updates the timeshift playback offset (in seconds) for a specific source instance.")
+        // .def("update_source_speaker_mix", &AudioManager::update_source_speaker_mix, // Old binding
+        //      py::arg("instance_id"), py::arg("matrix"), py::arg("use_auto"),
+        //      "Updates the speaker mix for a specific source instance.")
+        .def("update_source_speaker_layout_for_key", &AudioManager::update_source_speaker_layout_for_key,
+             py::arg("instance_id"), py::arg("input_channel_key"), py::arg("layout"),
+             "Updates the speaker layout for a specific input channel key.")
+        .def("update_source_speaker_layouts_map", &AudioManager::update_source_speaker_layouts_map,
+             py::arg("instance_id"), py::arg("layouts_map"),
+             "Updates the entire speaker layouts map for a source instance.")
 
         // Data Retrieval Methods
         .def("get_mp3_data", [](AudioManager &self, const std::string& sink_id) -> py::bytes {
@@ -197,38 +207,62 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
 
     // --- Bind New Configuration Structs (Task 03_01) ---
 
-    py::class_<AppliedSourcePathParams>(m, "AppliedSourcePathParams", "Parameters for a specific source-to-sink audio path")
+    // --- Bind CppSpeakerLayout Struct ---
+    // CppSpeakerLayout is now in screamrouter::audio namespace
+    py::class_<screamrouter::audio::CppSpeakerLayout>(m, "CppSpeakerLayout", "C++ structure for speaker layout configuration")
+        .def(py::init<>()) // Default constructor
+        .def_readwrite("auto_mode", &screamrouter::audio::CppSpeakerLayout::auto_mode, "True for auto mix, false for custom matrix")
+        .def_readwrite("matrix", &screamrouter::audio::CppSpeakerLayout::matrix, "8x8 speaker mix matrix");
+    // --- End Bind CppSpeakerLayout Struct ---
+
+    // Bind ControlCommand (ensure this is done after CppSpeakerLayout as it uses it)
+    py::class_<ControlCommand>(m, "ControlCommand", "Command structure for SourceInputProcessor")
+        .def(py::init<>())
+        .def_readwrite("type", &ControlCommand::type)
+        .def_readwrite("float_value", &ControlCommand::float_value)
+        .def_readwrite("int_value", &ControlCommand::int_value)
+        .def_readwrite("eq_values", &ControlCommand::eq_values)
+        // New members for SET_SPEAKER_MIX (Task 17.12)
+        .def_readwrite("input_channel_key", &ControlCommand::input_channel_key)
+        .def_readwrite("speaker_layout_for_key", &ControlCommand::speaker_layout_for_key);
+        // Old speaker_mix_matrix and use_auto_speaker_mix are removed from ControlCommand struct
+
+    py::class_<screamrouter::config::AppliedSourcePathParams>(m, "AppliedSourcePathParams", "Parameters for a specific source-to-sink audio path")
         .def(py::init<>()) // Bind default constructor (initializes eq_values)
-        .def_readwrite("path_id", &AppliedSourcePathParams::path_id, "Unique ID for this path (e.g., source_tag_to_sink_id)")
-        .def_readwrite("source_tag", &AppliedSourcePathParams::source_tag, "Original source identifier (e.g., IP address)")
-        .def_readwrite("target_sink_id", &AppliedSourcePathParams::target_sink_id, "ID of the target sink for this path")
-        .def_readwrite("volume", &AppliedSourcePathParams::volume, "Volume for this path")
-        .def_readwrite("eq_values", &AppliedSourcePathParams::eq_values, "Equalizer settings for this path (list/vector of floats)")
-        .def_readwrite("delay_ms", &AppliedSourcePathParams::delay_ms, "Delay in milliseconds for this path")
-        .def_readwrite("timeshift_sec", &AppliedSourcePathParams::timeshift_sec, "Timeshift in seconds for this path")
-        .def_readwrite("target_output_channels", &AppliedSourcePathParams::target_output_channels, "Required output channels for the target sink")
-        .def_readwrite("target_output_samplerate", &AppliedSourcePathParams::target_output_samplerate, "Required output sample rate for the target sink")
-        .def_readwrite("generated_instance_id", &AppliedSourcePathParams::generated_instance_id, "(Read-only from Python perspective) Instance ID generated by C++"); 
+        .def_readwrite("path_id", &screamrouter::config::AppliedSourcePathParams::path_id, "Unique ID for this path (e.g., source_tag_to_sink_id)")
+        .def_readwrite("source_tag", &screamrouter::config::AppliedSourcePathParams::source_tag, "Original source identifier (e.g., IP address)")
+        .def_readwrite("target_sink_id", &screamrouter::config::AppliedSourcePathParams::target_sink_id, "ID of the target sink for this path")
+        .def_readwrite("volume", &screamrouter::config::AppliedSourcePathParams::volume, "Volume for this path")
+        .def_readwrite("eq_values", &screamrouter::config::AppliedSourcePathParams::eq_values, "Equalizer settings for this path (list/vector of floats)")
+        .def_readwrite("delay_ms", &screamrouter::config::AppliedSourcePathParams::delay_ms, "Delay in milliseconds for this path")
+        .def_readwrite("timeshift_sec", &screamrouter::config::AppliedSourcePathParams::timeshift_sec, "Timeshift in seconds for this path")
+        .def_readwrite("target_output_channels", &screamrouter::config::AppliedSourcePathParams::target_output_channels, "Required output channels for the target sink")
+        .def_readwrite("target_output_samplerate", &screamrouter::config::AppliedSourcePathParams::target_output_samplerate, "Required output sample rate for the target sink")
+        .def_readwrite("generated_instance_id", &screamrouter::config::AppliedSourcePathParams::generated_instance_id, "(Read-only from Python perspective) Instance ID generated by C++")
+        // .def_readwrite("speaker_mix_matrix", &screamrouter::config::AppliedSourcePathParams::speaker_mix_matrix, "Speaker mix matrix for this path") // Old
+        // .def_readwrite("use_auto_speaker_mix", &screamrouter::config::AppliedSourcePathParams::use_auto_speaker_mix, "Whether to use auto speaker mix for this path") // Old
+        .def_readwrite("speaker_layouts_map", &screamrouter::config::AppliedSourcePathParams::speaker_layouts_map, "Map of input channel counts to CppSpeakerLayout objects");
 
-    py::class_<AppliedSinkParams>(m, "AppliedSinkParams", "Parameters for a configured sink")
+
+    py::class_<screamrouter::config::AppliedSinkParams>(m, "AppliedSinkParams", "Parameters for a configured sink")
         .def(py::init<>()) // Bind default constructor
-        .def_readwrite("sink_id", &AppliedSinkParams::sink_id, "Unique identifier for the sink")
+        .def_readwrite("sink_id", &screamrouter::config::AppliedSinkParams::sink_id, "Unique identifier for the sink")
         // Bind the nested C++ SinkConfig. Python will need to create/populate this C++ struct instance.
-        .def_readwrite("sink_engine_config", &AppliedSinkParams::sink_engine_config, "C++ SinkConfig parameters for AudioManager") 
-        .def_readwrite("connected_source_path_ids", &AppliedSinkParams::connected_source_path_ids, "List of path_ids connected to this sink");
+        .def_readwrite("sink_engine_config", &screamrouter::config::AppliedSinkParams::sink_engine_config, "C++ SinkConfig parameters for AudioManager") 
+        .def_readwrite("connected_source_path_ids", &screamrouter::config::AppliedSinkParams::connected_source_path_ids, "List of path_ids connected to this sink");
 
-    py::class_<DesiredEngineState>(m, "DesiredEngineState", "Represents the complete desired state of the audio engine")
+    py::class_<screamrouter::config::DesiredEngineState>(m, "DesiredEngineState", "Represents the complete desired state of the audio engine")
         .def(py::init<>()) // Bind default constructor
-        .def_readwrite("source_paths", &DesiredEngineState::source_paths, "List of all desired AppliedSourcePathParams")
-        .def_readwrite("sinks", &DesiredEngineState::sinks, "List of all desired AppliedSinkParams");
+        .def_readwrite("source_paths", &screamrouter::config::DesiredEngineState::source_paths, "List of all desired AppliedSourcePathParams")
+        .def_readwrite("sinks", &screamrouter::config::DesiredEngineState::sinks, "List of all desired AppliedSinkParams");
 
     // --- Bind AudioEngineConfigApplier Class (Task 03_02) ---
-    py::class_<AudioEngineConfigApplier>(m, "AudioEngineConfigApplier", "Applies desired configuration state to the C++ AudioManager")
-        .def(py::init<AudioManager&>(), 
+    py::class_<screamrouter::config::AudioEngineConfigApplier>(m, "AudioEngineConfigApplier", "Applies desired configuration state to the C++ AudioManager")
+        .def(py::init<AudioManager&>(),
              py::arg("audio_manager"), 
              "Constructor, takes an AudioManager instance")
         
-        .def("apply_state", &AudioEngineConfigApplier::apply_state,
+        .def("apply_state", &screamrouter::config::AudioEngineConfigApplier::apply_state,
              py::arg("desired_state"), 
              "Applies the provided DesiredEngineState to the AudioManager, returns true on success (basic check).");
 

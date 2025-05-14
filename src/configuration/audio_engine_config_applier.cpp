@@ -262,6 +262,31 @@ bool compare_applied_source_path_params(const AppliedSourcePathParams& a, const 
     bool volume_equal = std::abs(a.volume - b.volume) < epsilon;
     bool timeshift_equal = std::abs(a.timeshift_sec - b.timeshift_sec) < epsilon;
 
+    // Compare speaker_layouts_map
+    // This requires comparing maps of CppSpeakerLayout objects.
+    // CppSpeakerLayout itself needs an equality operator or a comparison function.
+    // For now, a simple size check and element-wise comparison if CppSpeakerLayout is comparable.
+    // Assuming CppSpeakerLayout has an operator== defined or can be compared field by field.
+    bool layouts_equal = true;
+    if (a.speaker_layouts_map.size() != b.speaker_layouts_map.size()) {
+        layouts_equal = false;
+    } else {
+        for (const auto& pair_a : a.speaker_layouts_map) {
+            auto it_b = b.speaker_layouts_map.find(pair_a.first);
+            if (it_b == b.speaker_layouts_map.end()) {
+                layouts_equal = false; // Key missing in b
+                break;
+            }
+            // Assuming CppSpeakerLayout has operator==
+            // If not, this needs to be:
+            // if (!(pair_a.second.auto_mode == it_b->second.auto_mode && pair_a.second.matrix == it_b->second.matrix))
+            if (!(pair_a.second == it_b->second)) { 
+                layouts_equal = false; // Layouts for the same key differ
+                break;
+            }
+        }
+    }
+
     return a.source_tag == b.source_tag &&
            a.target_sink_id == b.target_sink_id && 
            volume_equal &&
@@ -269,7 +294,8 @@ bool compare_applied_source_path_params(const AppliedSourcePathParams& a, const 
            a.delay_ms == b.delay_ms &&
            timeshift_equal &&
            a.target_output_channels == b.target_output_channels &&
-           a.target_output_samplerate == b.target_output_samplerate;
+           a.target_output_samplerate == b.target_output_samplerate &&
+           layouts_equal; // Added speaker_layouts_map comparison
 }
 
 void AudioEngineConfigApplier::reconcile_source_paths(
@@ -372,6 +398,19 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
     } else {
         LOG_APPLIER("    Successfully configured source for path_id: " + path_param_to_add.path_id + ", got instance_id: " + instance_id);
         path_param_to_add.generated_instance_id = instance_id; // Store the generated ID
+        
+        // --- New: Apply Speaker Layouts Map for newly added source ---
+        LOG_APPLIER("    Applying initial speaker_layouts_map for new source instance " + instance_id);
+        // This assumes AudioManager will have a method to pass the map to the SourceInputProcessor
+        // The CppSpeakerLayout struct is defined in audio_engine_config_types.h
+        // The path_param_to_add.speaker_layouts_map is std::map<int, CppSpeakerLayout>
+        if (!audio_manager_.update_source_speaker_layouts_map(instance_id, path_param_to_add.speaker_layouts_map)) {
+            LOG_APPLIER_ERROR("    AudioManager failed to apply initial speaker_layouts_map for instance " + instance_id);
+        } else {
+            LOG_APPLIER("    Initial speaker_layouts_map applied for instance " + instance_id);
+        }
+        // --- End New ---
+
         // The caller (apply_state) is responsible for adding this to active_source_paths_ map
         return true;
     }
@@ -450,11 +489,23 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
         // Timeshift
         if(audio_manager_.update_source_timeshift(instance_id, desired_path_param.timeshift_sec)) updated = true;
 
+        // --- New: Update Speaker Layouts Map via AudioManager ---
+        LOG_APPLIER("    Applying speaker_layouts_map update for instance " + instance_id);
+        if (!audio_manager_.update_source_speaker_layouts_map(instance_id, desired_path_param.speaker_layouts_map)) {
+            LOG_APPLIER_ERROR("    AudioManager failed to apply speaker_layouts_map update for instance " + instance_id);
+        } else {
+            updated = true; // Mark as updated if speaker layouts map was successfully sent
+            LOG_APPLIER("    Speaker_layouts_map update sent for instance " + instance_id);
+        }
+        // --- End New ---
+
         // Update the internal state to reflect the desired parameters
         if (updated) {
              // Logged above now
         } else {
-             LOG_APPLIER_ERROR("    AudioManager failed to apply ANY parameter updates for path " + path_id);
+             // This log might be misleading if only speaker_mix failed but others succeeded.
+             // However, if all specific updates log their own failures, this can be a general summary.
+             LOG_APPLIER_ERROR("    AudioManager failed to apply some parameter updates for path " + path_id);
         }
         // Update internal state, preserving the generated instance ID
         std::string preserved_instance_id = current_path_state.params.generated_instance_id; // Save the ID

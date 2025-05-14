@@ -36,11 +36,19 @@ long number = 0;
 
 RtpReceiver::RtpReceiver(
     RtpReceiverConfig config,
-    std::shared_ptr<NotificationQueue> notification_queue)
+    std::shared_ptr<NotificationQueue> notification_queue,
+    TimeshiftManager* timeshift_manager) // Added timeshift_manager
     : config_(config),
       notification_queue_(notification_queue),
+      timeshift_manager_(timeshift_manager), // Initialize timeshift_manager_
       socket_fd_(INVALID_SOCKET_VALUE) // Initialize with platform-specific invalid value
 {
+    if (!timeshift_manager_) {
+        LOG_ERROR("TimeshiftManager pointer is null. RtpReceiver cannot function.");
+        // Consider throwing an exception or setting an error state
+        // For now, just log and continue, but it will likely crash if used.
+        // throw std::runtime_error("TimeshiftManager is null in RtpReceiver constructor.");
+    }
     #ifdef _WIN32
         WSADATA wsaData;
         int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -185,52 +193,7 @@ void RtpReceiver::stop() {
     }
 }
 
-// Updated add_output_queue to handle instance_id
-void RtpReceiver::add_output_queue(
-    const std::string& source_tag,
-    const std::string& instance_id,
-    std::shared_ptr<PacketQueue> queue)
-    // Removed mutex and cv parameters
-{
-    std::lock_guard<std::mutex> lock(targets_mutex_);
-    if (queue) { // Check only queue
-        // Access the inner map for the source_tag, creating it if necessary.
-        // Then insert/update the target for the specific instance_id.
-        output_targets_[source_tag][instance_id] = SourceOutputTarget{queue}; // Store only queue
-        LOG("Added/Updated output target for source_tag: " + source_tag + ", instance_id: " + instance_id);
-    } else {
-        LOG_ERROR("Attempted to add output target with null queue for source_tag: " + source_tag + ", instance_id: " + instance_id);
-    }
-}
-
-// Updated remove_output_queue to handle instance_id
-void RtpReceiver::remove_output_queue(const std::string& source_tag, const std::string& instance_id) {
-    std::lock_guard<std::mutex> lock(targets_mutex_);
-    auto tag_it = output_targets_.find(source_tag);
-    if (tag_it != output_targets_.end()) {
-        // Found the map for the source_tag, now find the instance_id within it
-        auto& instance_map = tag_it->second;
-        auto instance_it = instance_map.find(instance_id);
-
-        if (instance_it != instance_map.end()) {
-            // Found the specific instance, remove it
-            instance_map.erase(instance_it);
-            LOG("Removed output target for source_tag: " + source_tag + ", instance_id: " + instance_id);
-
-            // If the inner map for this source_tag is now empty, remove the source_tag entry itself
-            if (instance_map.empty()) {
-                output_targets_.erase(tag_it);
-                LOG("Removed source tag entry as no targets remain: " + source_tag);
-            }
-        } else {
-            // Instance ID not found within the source tag's map
-            LOG("Attempted to remove target for instance_id " + instance_id + " under source_tag " + source_tag + ", but instance_id was not found.");
-        }
-    } else {
-        // Source tag not found in the outer map
-        LOG("Attempted to remove target for non-existent source tag: " + source_tag);
-    }
-}
+// add_output_queue and remove_output_queue are removed.
 
 bool RtpReceiver::is_valid_rtp_payload(const uint8_t* buffer, int size) {
     // Basic size check
@@ -334,48 +297,26 @@ void RtpReceiver::run() {
                     }
                 } // known_tags_mutex_ released here
 
-                // Find the map of instance targets for this source_tag
-                std::map<std::string, SourceOutputTarget> instance_targets_copy; // Copy target info to avoid holding lock
-                { // Scope for targets_mutex_ lock
-                    std::lock_guard<std::mutex> lock(targets_mutex_);
-                    auto tag_it = output_targets_.find(source_tag);
-                    if (tag_it != output_targets_.end()) {
-                        instance_targets_copy = tag_it->second; // Copy the inner map of instance targets
-                    }
-                } // targets_mutex_ released here
+                // Create the TaggedAudioPacket
+                TaggedAudioPacket packet;
+                packet.source_tag = source_tag;
+                packet.received_time = received_time;
+                // --- Set Default Format for RTP ---
+                packet.channels = 2; 
+                packet.sample_rate = 48000;
+                packet.bit_depth = 16;
+                packet.chlayout1 = 0x03; // Stereo L/R default
+                packet.chlayout2 = 0x00;
+                // --- Assign Payload ---
+                packet.audio_data.assign(receive_buffer.data() + RTP_HEADER_SIZE,
+                                               receive_buffer.data() + bytes_received);
 
-                // If instance targets were found for this source_tag, fan out the packet
-                if (!instance_targets_copy.empty()) {
-                    // Create the base packet data once
-                    TaggedAudioPacket base_packet;
-                    base_packet.source_tag = source_tag;
-                    base_packet.received_time = received_time;
-                    // --- Set Default Format for RTP ---
-                    base_packet.channels = 2; 
-                    base_packet.sample_rate = 48000;
-                    base_packet.bit_depth = 16;
-                    base_packet.chlayout1 = 0x03; // Stereo L/R default
-                    base_packet.chlayout2 = 0x00;
-                    // --- Assign Payload ---
-                    base_packet.audio_data.assign(receive_buffer.data() + RTP_HEADER_SIZE,
-                                                   receive_buffer.data() + bytes_received);
-
-                    // Iterate through the copied instance targets and push a copy of the packet to each queue
-                    for (const auto& [instance_id, target] : instance_targets_copy) {
-                        if (target.queue) { // Check if queue pointer is valid
-                            // Create a copy of the packet for this specific queue
-                            TaggedAudioPacket packet_copy = base_packet; // Make a copy
-
-                            // Push the copy to the instance's queue
-                            target.queue->push(std::move(packet_copy)); // Move the copy
-                            // Removed CV notification logic
-                        } else {
-                             LOG_ERROR("Found null queue pointer for instance: " + instance_id + " (source_tag: " + source_tag + ")");
-                        }
-                    }
+                // Send packet to TimeshiftManager
+                if (timeshift_manager_) {
+                    timeshift_manager_->add_packet(std::move(packet));
                 } else {
-                     // LOG("No output targets registered for source_tag: " + source_tag); // Can be noisy
-                 }
+                    LOG_ERROR("TimeshiftManager is null. Cannot add packet.");
+                }
             } else {
                  // Get sender IP again for the log message
                  std::string sender_ip_for_log = inet_ntoa(client_addr.sin_addr);

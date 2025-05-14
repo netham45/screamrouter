@@ -123,6 +123,11 @@ const RouteItem: React.FC<RouteItemProps> = ({
             <MenuItem onClick={() => actions.showEqualizer(true, 'routes', route)}>
               Equalize
             </MenuItem>
+            {/* --- New MenuItem for Speaker Layout --- */}
+            <MenuItem onClick={() => actions.showSpeakerLayoutPage('routes', route)}>
+              Speaker Layout
+            </MenuItem>
+            {/* --- End New MenuItem --- */}
             <MenuItem onClick={() => actions.confirmDelete('routes', route.name)}>
               Delete
             </MenuItem>
@@ -181,9 +186,9 @@ const RouteItem: React.FC<RouteItemProps> = ({
                 min={-60}
                 max={0}
                 step={1}
-                value={route.timeshift || 0}
+                value={-route.timeshift || 0}
                 maxW="95%"
-                onChange={(val) => actions.updateTimeshift('routes', route.name, val)}
+                onChange={(val) => actions.updateTimeshift('routes', route.name, -val)}
               >
                 <SliderTrack>
                   <SliderFilledTrack />

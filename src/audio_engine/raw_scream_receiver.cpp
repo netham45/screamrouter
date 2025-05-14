@@ -22,16 +22,22 @@ const int RAW_POLL_TIMEOUT_MS = 100;   // Check for stop flag every 100ms
 
 // Simple logger helper (replace with a proper logger if available)
 #define LOG_RSR(msg) std::cout << "[RawScreamReceiver] " << msg << std::endl
-#define LOG_ERROR_RSR(msg) std::cerr << "[RawScreamReceiver Error] " << msg << " (errno: " << GET_LAST_SOCK_ERROR << ")" << std::endl // Use macro
+#define LOG_ERROR_RSR(msg) std::cerr << "[RawScreamReceiver Error] " << msg << " (errno: " << GET_LAST_SOCK_ERROR_RAW << ")" << std::endl // Use macro
 #define LOG_WARN_RSR(msg) std::cout << "[RawScreamReceiver Warn] " << msg << std::endl
 
 RawScreamReceiver::RawScreamReceiver(
     RawScreamReceiverConfig config,
-    std::shared_ptr<NotificationQueue> notification_queue)
+    std::shared_ptr<NotificationQueue> notification_queue,
+    TimeshiftManager* timeshift_manager) // Added timeshift_manager
     : config_(config),
       notification_queue_(notification_queue),
+      timeshift_manager_(timeshift_manager), // Initialize timeshift_manager_
       socket_fd_(INVALID_SOCKET_VALUE) // Initialize with platform-specific invalid value
 {
+    if (!timeshift_manager_) {
+        LOG_ERROR_RSR("TimeshiftManager pointer is null. RawScreamReceiver cannot function.");
+        // Consider throwing an exception or setting an error state
+    }
     #ifdef _WIN32
         // WSAStartup might have already been called by RtpReceiver if both exist.
         // A more robust solution would use a static counter or flag.
@@ -174,42 +180,7 @@ void RawScreamReceiver::stop() {
     }
 }
 
-void RawScreamReceiver::add_output_queue(
-    const std::string& source_tag,
-    const std::string& instance_id,
-    std::shared_ptr<PacketQueue> queue)
-    // Removed mutex and cv parameters
-{
-    std::lock_guard<std::mutex> lock(targets_mutex_);
-    if (queue) { // Check only queue
-        output_targets_[source_tag][instance_id] = SourceOutputTarget{queue}; // Store only queue
-        LOG_RSR("Added/Updated output target for source_tag: " + source_tag + ", instance_id: " + instance_id);
-    } else {
-        LOG_ERROR_RSR("Attempted to add output target with null queue for source_tag: " + source_tag + ", instance_id: " + instance_id);
-    }
-}
-
-void RawScreamReceiver::remove_output_queue(const std::string& source_tag, const std::string& instance_id) {
-    std::lock_guard<std::mutex> lock(targets_mutex_);
-    auto tag_it = output_targets_.find(source_tag);
-    if (tag_it != output_targets_.end()) {
-        auto& instance_map = tag_it->second;
-        auto instance_it = instance_map.find(instance_id);
-
-        if (instance_it != instance_map.end()) {
-            instance_map.erase(instance_it);
-            LOG_RSR("Removed output target for source_tag: " + source_tag + ", instance_id: " + instance_id);
-            if (instance_map.empty()) {
-                output_targets_.erase(tag_it);
-                LOG_RSR("Removed source tag entry as no targets remain: " + source_tag);
-            }
-        } else {
-            LOG_WARN_RSR("Attempted to remove target for instance_id " + instance_id + " under source_tag " + source_tag + ", but instance_id was not found.");
-        }
-    } else {
-        LOG_WARN_RSR("Attempted to remove target for non-existent source tag: " + source_tag);
-    }
-}
+// add_output_queue and remove_output_queue are removed.
 
 bool RawScreamReceiver::is_valid_raw_scream_packet(const uint8_t* buffer, int size) {
     // buffer is unused in this implementation, but kept for signature consistency
@@ -407,60 +378,42 @@ void RawScreamReceiver::run() {
                     }
                 }
 
-                std::map<std::string, SourceOutputTarget> instance_targets_copy;
-                {
-                    std::lock_guard<std::mutex> lock(targets_mutex_);
-                    auto tag_it = output_targets_.find(source_tag);
-                    if (tag_it != output_targets_.end()) {
-                        instance_targets_copy = tag_it->second;
-                    }
+                TaggedAudioPacket packet;
+                packet.source_tag = source_tag;
+                packet.received_time = received_time;
+
+                // --- Parse Header and Set Format ---
+                const uint8_t* header = receive_buffer.data();
+                bool is_44100_base = (header[0] >> 7) & 0x01;
+                uint8_t samplerate_divisor = header[0] & 0x7F;
+                if (samplerate_divisor == 0) samplerate_divisor = 1; 
+
+                packet.sample_rate = (is_44100_base ? 44100 : 48000) / samplerate_divisor;
+                packet.bit_depth = static_cast<int>(header[1]);
+                packet.channels = static_cast<int>(header[2]);
+                packet.chlayout1 = header[3]; 
+                packet.chlayout2 = header[4];
+                // --- Assign Payload Only ---
+                // Ensure we only copy the 1152 bytes after the header
+                packet.audio_data.assign(receive_buffer.data() + SCREAM_HEADER_SIZE_CONST,
+                                               receive_buffer.data() + bytes_received); 
+
+                // Basic validation after parsing
+                if (packet.channels <= 0 || packet.channels > 8 ||
+                    (packet.bit_depth != 8 && packet.bit_depth != 16 && packet.bit_depth != 24 && packet.bit_depth != 32) ||
+                    packet.sample_rate <= 0 ||
+                    packet.audio_data.size() != CHUNK_SIZE_CONST) { // Validate payload size
+                    LOG_ERROR_RSR("Parsed invalid format or payload size from packet. SR=" + std::to_string(packet.sample_rate) +
+                                  ", BD=" + std::to_string(packet.bit_depth) + ", CH=" + std::to_string(packet.channels) + 
+                                  ", PayloadSize=" + std::to_string(packet.audio_data.size()));
+                    // Skip pushing this packet if format is invalid
+                    continue; 
                 }
 
-                if (!instance_targets_copy.empty()) {
-                    TaggedAudioPacket base_packet;
-                    base_packet.source_tag = source_tag;
-                    base_packet.received_time = received_time;
-
-                    // --- Parse Header and Set Format ---
-                    const uint8_t* header = receive_buffer.data();
-                    bool is_44100_base = (header[0] >> 7) & 0x01;
-                    uint8_t samplerate_divisor = header[0] & 0x7F;
-                    if (samplerate_divisor == 0) samplerate_divisor = 1; 
-
-                    base_packet.sample_rate = (is_44100_base ? 44100 : 48000) / samplerate_divisor;
-                    base_packet.bit_depth = static_cast<int>(header[1]);
-                    base_packet.channels = static_cast<int>(header[2]);
-                    base_packet.chlayout1 = header[3]; 
-                    base_packet.chlayout2 = header[4];
-                    // --- Assign Payload Only ---
-                    // Ensure we only copy the 1152 bytes after the header
-                    base_packet.audio_data.assign(receive_buffer.data() + SCREAM_HEADER_SIZE_CONST,
-                                                   receive_buffer.data() + bytes_received); 
-
-                    // Basic validation after parsing
-                    if (base_packet.channels <= 0 || base_packet.channels > 8 ||
-                        (base_packet.bit_depth != 8 && base_packet.bit_depth != 16 && base_packet.bit_depth != 24 && base_packet.bit_depth != 32) ||
-                        base_packet.sample_rate <= 0 ||
-                        base_packet.audio_data.size() != CHUNK_SIZE_CONST) { // Validate payload size
-                        LOG_ERROR_RSR("Parsed invalid format or payload size from packet. SR=" + std::to_string(base_packet.sample_rate) +
-                                      ", BD=" + std::to_string(base_packet.bit_depth) + ", CH=" + std::to_string(base_packet.channels) + 
-                                      ", PayloadSize=" + std::to_string(base_packet.audio_data.size()));
-                        // Skip pushing this packet if format is invalid
-                        continue; 
-                    }
-
-
-                    for (const auto& [instance_id, target] : instance_targets_copy) {
-                        if (target.queue) {
-                            TaggedAudioPacket packet_copy = base_packet;
-                            target.queue->push(std::move(packet_copy));
-                            // Removed CV notification logic
-                        } else {
-                             LOG_ERROR_RSR("Found null queue pointer for instance: " + instance_id);
-                        }
-                    }
+                if (timeshift_manager_) {
+                    timeshift_manager_->add_packet(std::move(packet));
                 } else {
-                    // LOG_RSR("No output targets registered for source_tag: " + source_tag); // Can be noisy
+                    LOG_ERROR_RSR("TimeshiftManager is null. Cannot add packet.");
                 }
             } else {
                  // Get sender IP again for the log message

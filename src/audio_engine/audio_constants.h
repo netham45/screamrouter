@@ -1,0 +1,7 @@
+#ifndef AUDIO_CONSTANTS_H
+#define AUDIO_CONSTANTS_H
+
+#define MAX_CHANNELS 8
+#define EQ_BANDS 18
+
+#endif // AUDIO_CONSTANTS_H

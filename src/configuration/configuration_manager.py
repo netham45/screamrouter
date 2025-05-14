@@ -54,7 +54,7 @@ from src.screamrouter_types.annotations import (DelayType, IPAddressType,
                                                 VolumeType)
 from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
                                                   SinkDescription,
-                                                  SourceDescription)
+                                                  SourceDescription, SpeakerLayout)
 from src.screamrouter_types.exceptions import InUseError
 from src.utils.mdns_pinger import MDNSPinger
 from src.utils.mdns_responder import MDNSResponder
@@ -718,63 +718,139 @@ class ConfigurationManager(threading.Thread):
 
     def __load_config(self) -> None:
         """Loads the config"""
+        self.sink_descriptions = []
+        self.source_descriptions = []
+        self.route_descriptions = []
         try:
             with open("config.yaml", "r", encoding="UTF-8") as f:
                 savedata: dict = yaml.unsafe_load(f)
-                self.sink_descriptions = savedata["sinks"]
-                self.source_descriptions = savedata["sources"]
-                self.route_descriptions = savedata["routes"]
 
+                raw_sinks = savedata.get("sinks", [])
+                for item_data in raw_sinks:
+                    try:
+                        if isinstance(item_data, dict):
+                            # Migrate old speaker_layout to speaker_layouts
+                            if "speaker_layout" in item_data and "speaker_layouts" not in item_data:
+                                old_layout_data = item_data.pop("speaker_layout")
+                                default_input_key = 2
+                                migrated_layout = SpeakerLayout(**old_layout_data) if isinstance(old_layout_data, dict) else \
+                                                  (old_layout_data if isinstance(old_layout_data, SpeakerLayout) else SpeakerLayout())
+                                item_data["speaker_layouts"] = {default_input_key: migrated_layout}
+                                _logger.info(f"Migrated old 'speaker_layout' to 'speaker_layouts' for sink '{item_data.get('name', 'Unknown')}' using default key {default_input_key}.")
 
-                for sink in self.sink_descriptions:
-                    for field_name, field_info in SinkDescription.model_fields.items():
-                        # Check if the field was NOT explicitly set when loading from YAML
-                        if field_name not in sink.model_fields_set:
-                            # Try getting the default value directly from the class attribute
-                            try:
-                                default_value = getattr(SinkDescription, field_name)
-                                # Check if default is not None or some other placeholder indicating no default
-                                if default_value is not None: # Adjust condition if necessary
-                                     _logger.warning(
-                                        "[Configuration Manager] Setting unset attribute %s on sink %s to default %s",
-                                        field_name, sink.name, default_value)
-                                     setattr(sink, field_name, default_value)
-                            except AttributeError:
-                                # Field might not have a default defined on the class
-                                pass 
+                            # Correct string keys from YAML to int keys for speaker_layouts
+                            if "speaker_layouts" in item_data and isinstance(item_data["speaker_layouts"], dict):
+                                corrected_layouts = {}
+                                for key_str, layout_data_dict in item_data["speaker_layouts"].items():
+                                    try:
+                                        key_int = int(key_str)
+                                        parsed_layout = SpeakerLayout(**layout_data_dict) if isinstance(layout_data_dict, dict) else \
+                                                        (layout_data_dict if isinstance(layout_data_dict, SpeakerLayout) else SpeakerLayout())
+                                        corrected_layouts[key_int] = parsed_layout
+                                    except ValueError:
+                                        _logger.warning(f"Could not convert speaker_layouts key '{key_str}' to int for sink '{item_data.get('name', 'Unknown')}'. Skipping.")
+                                    except Exception as e_sl_parse:
+                                        _logger.error(f"Failed to parse SpeakerLayout data for key '{key_str}' in sink '{item_data.get('name', 'Unknown')}': {e_sl_parse}. Skipping.")
+                                item_data["speaker_layouts"] = corrected_layouts
+                            self.sink_descriptions.append(SinkDescription(**item_data))
+                        elif isinstance(item_data, SinkDescription):
+                            self.sink_descriptions.append(SinkDescription(**item_data.model_dump()))
+                        else:
+                            _logger.warning(f"Skipping unexpected sink data type: {type(item_data)} for data: {item_data}")
+                    except Exception as e:
+                        _logger.error(f"Failed to parse sink data: {item_data}. Error: {e}")
+                
+                raw_sources = savedata.get("sources", [])
+                for item_data in raw_sources:
+                    try:
+                        if isinstance(item_data, dict):
+                            # Migrate old speaker_layout to speaker_layouts
+                            if "speaker_layout" in item_data and "speaker_layouts" not in item_data:
+                                old_layout_data = item_data.pop("speaker_layout")
+                                default_input_key = 2
+                                migrated_layout = SpeakerLayout(**old_layout_data) if isinstance(old_layout_data, dict) else \
+                                                  (old_layout_data if isinstance(old_layout_data, SpeakerLayout) else SpeakerLayout())
+                                item_data["speaker_layouts"] = {default_input_key: migrated_layout}
+                                _logger.info(f"Migrated old 'speaker_layout' to 'speaker_layouts' for source '{item_data.get('name', 'Unknown')}' using default key {default_input_key}.")
 
-                for route in self.route_descriptions:
-                     for field_name, field_info in RouteDescription.model_fields.items():
-                        if field_name not in route.model_fields_set:
-                            try:
-                                default_value = getattr(RouteDescription, field_name)
-                                if default_value is not None:
-                                    _logger.warning(
-                                        "[Configuration Manager] Setting unset attribute %s on route %s to default %s",
-                                        field_name, route.name, default_value)
-                                    setattr(route, field_name, default_value)
-                            except AttributeError:
-                                pass
+                            # Correct string keys from YAML to int keys for speaker_layouts
+                            if "speaker_layouts" in item_data and isinstance(item_data["speaker_layouts"], dict):
+                                corrected_layouts = {}
+                                for key_str, layout_data_dict in item_data["speaker_layouts"].items():
+                                    try:
+                                        key_int = int(key_str)
+                                        parsed_layout = SpeakerLayout(**layout_data_dict) if isinstance(layout_data_dict, dict) else \
+                                                        (layout_data_dict if isinstance(layout_data_dict, SpeakerLayout) else SpeakerLayout())
+                                        corrected_layouts[key_int] = parsed_layout
+                                    except ValueError:
+                                        _logger.warning(f"Could not convert speaker_layouts key '{key_str}' to int for source '{item_data.get('name', 'Unknown')}'. Skipping.")
+                                    except Exception as e_sl_parse:
+                                        _logger.error(f"Failed to parse SpeakerLayout data for key '{key_str}' in source '{item_data.get('name', 'Unknown')}': {e_sl_parse}. Skipping.")
+                                item_data["speaker_layouts"] = corrected_layouts
+                            self.source_descriptions.append(SourceDescription(**item_data))
+                        elif isinstance(item_data, SourceDescription):
+                            self.source_descriptions.append(SourceDescription(**item_data.model_dump()))
+                        else:
+                            _logger.warning(f"Skipping unexpected source data type: {type(item_data)} for data: {item_data}")
+                    except Exception as e:
+                        _logger.error(f"Failed to parse source data: {item_data}. Error: {e}")
 
-                for source in self.source_descriptions:
-                    for field_name, field_info in SourceDescription.model_fields.items():
-                         if field_name not in source.model_fields_set:
-                            try:
-                                default_value = getattr(SourceDescription, field_name)
-                                if default_value is not None:
-                                    _logger.warning(
-                                        "[Configuration Manager] Setting unset attribute %s on source %s to default %s",
-                                        field_name, source.name, default_value)
-                                    setattr(source, field_name, default_value)
-                            except AttributeError:
-                                pass
+                raw_routes = savedata.get("routes", [])
+                for item_data in raw_routes:
+                    try:
+                        if isinstance(item_data, dict):
+                            # Migrate old speaker_layout to speaker_layouts
+                            if "speaker_layout" in item_data and "speaker_layouts" not in item_data:
+                                old_layout_data = item_data.pop("speaker_layout")
+                                default_input_key = 2
+                                migrated_layout = SpeakerLayout(**old_layout_data) if isinstance(old_layout_data, dict) else \
+                                                  (old_layout_data if isinstance(old_layout_data, SpeakerLayout) else SpeakerLayout())
+                                item_data["speaker_layouts"] = {default_input_key: migrated_layout}
+                                _logger.info(f"Migrated old 'speaker_layout' to 'speaker_layouts' for route '{item_data.get('name', 'Unknown')}' using default key {default_input_key}.")
+
+                            # Correct string keys from YAML to int keys for speaker_layouts
+                            if "speaker_layouts" in item_data and isinstance(item_data["speaker_layouts"], dict):
+                                corrected_layouts = {}
+                                for key_str, layout_data_dict in item_data["speaker_layouts"].items():
+                                    try:
+                                        key_int = int(key_str)
+                                        parsed_layout = SpeakerLayout(**layout_data_dict) if isinstance(layout_data_dict, dict) else \
+                                                        (layout_data_dict if isinstance(layout_data_dict, SpeakerLayout) else SpeakerLayout())
+                                        corrected_layouts[key_int] = parsed_layout
+                                    except ValueError:
+                                        _logger.warning(f"Could not convert speaker_layouts key '{key_str}' to int for route '{item_data.get('name', 'Unknown')}'. Skipping.")
+                                    except Exception as e_sl_parse:
+                                        _logger.error(f"Failed to parse SpeakerLayout data for key '{key_str}' in route '{item_data.get('name', 'Unknown')}': {e_sl_parse}. Skipping.")
+                                item_data["speaker_layouts"] = corrected_layouts
+                            self.route_descriptions.append(RouteDescription(**item_data))
+                        elif isinstance(item_data, RouteDescription):
+                            self.route_descriptions.append(RouteDescription(**item_data.model_dump()))
+                        else:
+                            _logger.warning(f"Skipping unexpected route data type: {type(item_data)} for data: {item_data}")
+                    except Exception as e:
+                        _logger.error(f"Failed to parse route data: {item_data}. Error: {e}")
+                
+                # The Pydantic models now have default_factory=dict for speaker_layouts,
+                # so the old check loop for None speaker_layout is no longer needed.
 
         except FileNotFoundError:
-            _logger.warning("[Configuration Manager] Configuration not found., making new config")
+            _logger.warning("[Configuration Manager] Configuration not found., making new config. Initializing with empty lists.")
+            self.sink_descriptions = []
+            self.source_descriptions = []
+            self.route_descriptions = []
         except KeyError as exc:
             _logger.error("[Configuration Manager] Configuration key %s missing, exiting.", exc)
-            raise exc
-            #sys.exit(-1)
+            # Initialize with empty lists to prevent further errors down the line if a key is missing
+            self.sink_descriptions = []
+            self.source_descriptions = []
+            self.route_descriptions = []
+            raise exc # Re-raise after logging and setting defaults
+        except Exception as e: # Catch any other unexpected errors during loading/parsing
+            _logger.exception("[Configuration Manager] An unexpected error occurred during config loading: %s. Initializing with empty lists.", e)
+            self.sink_descriptions = []
+            self.source_descriptions = []
+            self.route_descriptions = []
+
 
         asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
                                                                 self.sink_descriptions,
@@ -943,6 +1019,47 @@ class ConfigurationManager(threading.Thread):
                     cpp_source_path.delay_ms = py_source_desc.delay
                     cpp_source_path.timeshift_sec = py_source_desc.timeshift
                     
+                    # --- Populate Speaker Layouts for C++ ---
+                    # py_source_desc now carries the speaker_layouts dictionary.
+                    # This dictionary needs to be passed to C++.
+                    # We assume cpp_source_path will have a member like 'speaker_layouts_map'
+                    # that can accept a Dict[int, Dict[str, Union[bool, List[List[float]]]]]
+                    # which Pybind11 can convert to std::map<int, CppSpeakerLayoutStruct>.
+                    
+                    # Ensure py_source_desc has speaker_layouts (it should due to Pydantic defaults)
+                    if hasattr(py_source_desc, 'speaker_layouts') and isinstance(py_source_desc.speaker_layouts, dict):
+                        cpp_layouts_map = {}
+                        for key, layout_obj in py_source_desc.speaker_layouts.items():
+                            if isinstance(layout_obj, SpeakerLayout): # Ensure it's the Python Pydantic model
+                                try:
+                                    # Create an instance of the C++ CppSpeakerLayout type
+                                    cpp_speaker_layout_instance = screamrouter_audio_engine.CppSpeakerLayout()
+                                    cpp_speaker_layout_instance.auto_mode = layout_obj.auto_mode
+                                    # Ensure matrix is correctly formatted if necessary, though direct assignment
+                                    # of List[List[float]] should work if bindings are set up for it.
+                                    cpp_speaker_layout_instance.matrix = layout_obj.matrix 
+                                    cpp_layouts_map[key] = cpp_speaker_layout_instance
+                                except Exception as e_cpp_create:
+                                    _logger.error(f"[Config Translator]     Path {path_id}: Failed to create CppSpeakerLayout for key {key}. Error: {e_cpp_create}. Skipping.")
+                                    continue # Skip this layout if creation fails
+                            else:
+                                _logger.warning(f"[Config Translator]     Path {path_id}: Invalid SpeakerLayout object type for key {key} in speaker_layouts (type: {type(layout_obj)}). Skipping.")
+                        
+                        cpp_source_path.speaker_layouts_map = cpp_layouts_map 
+                        _logger.debug(f"[Config Translator]     Path {path_id}: Populated speaker_layouts_map with {len(cpp_layouts_map)} entries.")
+                        
+                        # Remove old singular layout attributes if they exist on cpp_source_path,
+                        # or ensure they are not used if C++ side is updated.
+                        # For now, we assume the C++ side will prefer speaker_layouts_map.
+                        # If cpp_source_path still has use_auto_speaker_mix and speaker_mix_matrix,
+                        # they might need to be handled or cleared if no longer primary.
+                        # Example: del cpp_source_path.use_auto_speaker_mix (if possible and safe)
+                        # For now, we just set the new map.
+                    else:
+                        _logger.warning(f"[Config Translator]     Path {path_id}: py_source_desc missing or has invalid speaker_layouts. Sending empty map.")
+                        cpp_source_path.speaker_layouts_map = {} # Send empty map
+                    # --- End Populate Speaker Layouts for C++ ---
+
                     # Get target format from the *sink* description
                     cpp_source_path.target_output_channels = py_sink_desc.channels
                     cpp_source_path.target_output_samplerate = py_sink_desc.sample_rate
@@ -1621,3 +1738,34 @@ class ConfigurationManager(threading.Thread):
                 self.check_autodetected_sinks_sources()
             except:
                 pass
+
+    def update_source_speaker_layout(self, source_name: SourceNameType, input_channel_key: int, speaker_layout_for_key: SpeakerLayout) -> bool:
+        """Set the speaker layout for a specific input channel key on a source or source group"""
+        source: SourceDescription = self.get_source_by_name(source_name)
+        # Ensure speaker_layouts dict exists (Pydantic default_factory should handle this)
+        if source.speaker_layouts is None: # Should ideally not happen
+            source.speaker_layouts = {}
+        source.speaker_layouts[input_channel_key] = speaker_layout_for_key
+        _logger.info(f"Updating SpeakerLayout for source {source_name}, input key {input_channel_key}. Auto mode: {speaker_layout_for_key.auto_mode}")
+        self.__reload_configuration() # Trigger full reload
+        return True
+
+    def update_sink_speaker_layout(self, sink_name: SinkNameType, input_channel_key: int, speaker_layout_for_key: SpeakerLayout) -> bool:
+        """Set the speaker layout for a specific input channel key on a sink or sink group"""
+        sink: SinkDescription = self.get_sink_by_name(sink_name)
+        if sink.speaker_layouts is None: # Should ideally not happen
+            sink.speaker_layouts = {}
+        sink.speaker_layouts[input_channel_key] = speaker_layout_for_key
+        _logger.info(f"Updating SpeakerLayout for sink {sink_name}, input key {input_channel_key}. Auto mode: {speaker_layout_for_key.auto_mode}")
+        self.__reload_configuration() # Trigger full reload
+        return True
+
+    def update_route_speaker_layout(self, route_name: RouteNameType, input_channel_key: int, speaker_layout_for_key: SpeakerLayout) -> bool:
+        """Set the speaker layout for a specific input channel key on a route"""
+        route: RouteDescription = self.get_route_by_name(route_name)
+        if route.speaker_layouts is None: # Should ideally not happen
+            route.speaker_layouts = {}
+        route.speaker_layouts[input_channel_key] = speaker_layout_for_key
+        _logger.info(f"Updating SpeakerLayout for route {route_name}, input key {input_channel_key}. Auto mode: {speaker_layout_for_key.auto_mode}")
+        self.__reload_configuration() # Trigger full reload
+        return True

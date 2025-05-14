@@ -67,7 +67,16 @@
         "mutex": "cpp",
         "sstream": "cpp",
         "map": "cpp",
-        "set": "cpp"
+        "set": "cpp",
+        "strstream": "cpp",
+        "forward_list": "cpp",
+        "list": "cpp",
+        "unordered_set": "cpp",
+        "optional": "cpp",
+        "typeindex": "cpp",
+        "valarray": "cpp",
+        "variant": "cpp",
     },
     "cmake.configureOnOpen": false,
+    "c-cpp-flylint.cppcheck.extraArgs": ["--force", "--std=c++17", "--enable=all"],
 }

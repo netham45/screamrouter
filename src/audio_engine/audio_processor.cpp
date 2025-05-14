@@ -12,15 +12,21 @@
 #include <chrono>
 #include <thread>
 #include <new> // Include for std::bad_alloc
+#include <sstream> // For logging matrix
+#include <iomanip> // For std::fixed and std::setprecision
 
 #define CHUNK_SIZE 1152
 #define OVERSAMPLING_FACTOR 1
 
-AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, int inputSampleRate, int outputSampleRate, float volume)
+AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, 
+                               int inputSampleRate, int outputSampleRate, float volume,
+                               const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config) // Changed to audio namespace
     : inputChannels(inputChannels), outputChannels(outputChannels), inputBitDepth(inputBitDepth),
-      inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate), volume(volume), monitor_running(true),
-      receive_buffer(CHUNK_SIZE * 4), // Initialize vectors with reasonable starting sizes
-      scaled_buffer(CHUNK_SIZE * 8),  // Adjusted initial sizes based on potential usage
+      inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate), volume(volume),
+      speaker_layouts_config_(initial_layouts_config), // Initialize the map
+      monitor_running(true),
+      receive_buffer(CHUNK_SIZE * 4), 
+      scaled_buffer(CHUNK_SIZE * 8),  
       resampled_buffer(CHUNK_SIZE * MAX_CHANNELS * 4 * OVERSAMPLING_FACTOR), // Larger for resampling
       channel_buffers(MAX_CHANNELS, std::vector<int32_t>(CHUNK_SIZE * 8 * OVERSAMPLING_FACTOR)), // Larger for resampling
       remixed_channel_buffers(MAX_CHANNELS, std::vector<int32_t>(CHUNK_SIZE * 8 * OVERSAMPLING_FACTOR)), // Larger for resampling
@@ -29,10 +35,32 @@ AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputB
       // Removed resampler_data_in and resampler_data_out (float buffers for libsamplerate)
       // sampler(nullptr), downsampler(nullptr) replaced by r8brain vectors
       isProcessingRequiredCache(false), isProcessingRequiredCacheSet(false) // Initialize cache flags
-      // Add new r8brain member variables
-      // upsamplers and downsamplers will be initialized in the constructor body or initializer list if default constructible
-      // r8brain_upsampler_in_buf and r8brain_downsampler_in_buf will be initialized in constructor body
+    // Add new r8brain member variables
+    // upsamplers and downsamplers will be initialized in the constructor body or initializer list if default constructible
+    // r8brain_upsampler_in_buf and r8brain_downsampler_in_buf will be initialized in constructor body
 {
+    std::cout << "[AudioProc] Constructor: inputChannels=" << inputChannels 
+              << ", outputChannels=" << outputChannels 
+              << ", inputSampleRate=" << inputSampleRate 
+              << ", outputSampleRate=" << outputSampleRate << std::endl;
+    std::cout << "[AudioProc] Constructor: Initial speaker_layouts_config_ has " 
+              << initial_layouts_config.size() << " entries." << std::endl;
+    for (const auto& pair : initial_layouts_config) {
+        std::cout << "[AudioProc]   Layout for " << pair.first << "ch input: auto_mode=" 
+                  << (pair.second.auto_mode ? "true" : "false") << std::endl;
+        if (!pair.second.auto_mode) {
+            std::cout << "[AudioProc]     Matrix:" << std::endl;
+            for (const auto& row : pair.second.matrix) {
+                std::ostringstream oss_row;
+                oss_row << "[AudioProc]       ";
+                for (float val : row) {
+                    oss_row << std::fixed << std::setprecision(2) << val << " ";
+                }
+                std::cout << oss_row.str() << std::endl;
+            }
+        }
+    }
+
     // Initialize r8brain resampler vectors (they are default constructible)
     // upsamplers; // Default construction
     // downsamplers; // Default construction
@@ -47,10 +75,11 @@ AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputB
     }
     
     std::fill(eq, eq + EQ_BANDS, 1.0f); 
-    updateSpeakerMix(); // Call the restored function
+    // calculateAndApplyAutoSpeakerMix(); // Old call, select_active_speaker_mix will handle initial setup
     setupBiquad();
-    initializeSampler();
+    initializeSampler(); // This might need adjustment if it depends on speaker_mix being set prior
     setupDCFilter();
+    select_active_speaker_mix(); // Call to select initial mix
 
     // Initialize position trackers
     scale_buffer_pos = 0;
@@ -659,8 +688,43 @@ void AudioProcessor::splitBufferToChannels() {
     }
 }
 
+void AudioProcessor::applyCustomSpeakerMix(const std::vector<std::vector<float>>& custom_matrix) {
+    std::cout << "[AudioProc] applyCustomSpeakerMix called." << std::endl;
+    // Clear the existing speaker_mix
+    memset(speaker_mix, 0, sizeof(speaker_mix));
 
-void AudioProcessor::updateSpeakerMix() {
+    // Assuming custom_matrix is 8x8 and speaker_mix is MAX_CHANNELS x MAX_CHANNELS (where MAX_CHANNELS is 8)
+    std::cout << "[AudioProc]   Applying custom matrix to internal speaker_mix[][]:" << std::endl;
+    for (int i = 0; i < MAX_CHANNELS; ++i) {
+        std::ostringstream oss_row;
+        oss_row << "[AudioProc]     Row " << i << ": ";
+        if (static_cast<size_t>(i) < custom_matrix.size()) { // Check row bounds for custom_matrix
+            for (int j = 0; j < MAX_CHANNELS; ++j) {
+                if (static_cast<size_t>(j) < custom_matrix[i].size()) { // Check column bounds for custom_matrix
+                    if (i < MAX_CHANNELS && j < MAX_CHANNELS) { // Check bounds for speaker_mix
+                         speaker_mix[i][j] = custom_matrix[i][j];
+                         oss_row << std::fixed << std::setprecision(2) << speaker_mix[i][j] << " ";
+                    }
+                } else {
+                    // Handle case where custom_matrix[i] is smaller than MAX_CHANNELS (pad with 0, already done by memset)
+                    oss_row << "0.00(pad) ";
+                }
+            }
+        } else {
+            // Handle case where custom_matrix has fewer rows than MAX_CHANNELS (pad with 0, already done by memset)
+             for (int j = 0; j < MAX_CHANNELS; ++j) oss_row << "0.00(pad) ";
+        }
+        std::cout << oss_row.str() << std::endl;
+    }
+    // After applying, we might need to re-evaluate if processing is required,
+    // so clear the cache.
+    isProcessingRequiredCacheSet = false;
+}
+
+// void AudioProcessor::updateSpeakerMix() {
+void AudioProcessor::calculateAndApplyAutoSpeakerMix() { // Renamed
+    std::cout << "[AudioProc] calculateAndApplyAutoSpeakerMix called for inputChannels=" << inputChannels 
+              << ", outputChannels=" << outputChannels << "." << std::endl;
     // Fills out the speaker mix table speaker_mix[][] with the current configuration.
     memset(speaker_mix, 0, sizeof(speaker_mix));
     // speaker_mix[input channel][output channel] = gain;
@@ -880,11 +944,101 @@ void AudioProcessor::updateSpeakerMix() {
          for(int i = 0; i < min_ch_default; ++i) {
              speaker_mix[i][i] = 1.0f;
          }
-         std::cerr << "Warning: Unsupported input channel count (" << inputChannels << ") in updateSpeakerMix. Using basic identity mapping." << std::endl;
+         std::cerr << "Warning: Unsupported input channel count (" << inputChannels << ") in calculateAndApplyAutoSpeakerMix. Using basic identity mapping." << std::endl;
          break;
     }
+    // isProcessingRequiredCacheSet = false; // select_active_speaker_mix will handle this
 }
 
+// --- New/Updated Methods for Speaker Layouts ---
+
+void AudioProcessor::update_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& new_layouts_config) { // Changed to audio namespace
+    std::cout << "[AudioProc] update_speaker_layouts_config called. Received " 
+              << new_layouts_config.size() << " layout entries." << std::endl;
+    for (const auto& pair : new_layouts_config) {
+        std::cout << "[AudioProc]   New layout for " << pair.first << "ch input: auto_mode=" 
+                  << (pair.second.auto_mode ? "true" : "false") << std::endl;
+        if (!pair.second.auto_mode) {
+            std::cout << "[AudioProc]     Matrix:" << std::endl;
+            for (const auto& row : pair.second.matrix) {
+                std::ostringstream oss_row;
+                oss_row << "[AudioProc]       ";
+                for (float val : row) {
+                    oss_row << std::fixed << std::setprecision(2) << val << " ";
+                }
+                std::cout << oss_row.str() << std::endl;
+            }
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(speaker_layouts_config_mutex_);
+    speaker_layouts_config_ = new_layouts_config;
+    // After updating the config, re-select the active mix by calling the _locked version
+    select_active_speaker_mix_locked(); 
+    // select_active_speaker_mix_locked will call isProcessingRequiredCacheSet = false;
+}
+
+// Public method that acquires the lock
+void AudioProcessor::select_active_speaker_mix() {
+    std::cout << "[AudioProc] select_active_speaker_mix called for current inputChannels=" << this->inputChannels << "." << std::endl;
+    std::lock_guard<std::mutex> lock(speaker_layouts_config_mutex_); // Protect read access to map
+    select_active_speaker_mix_locked();
+}
+
+// Private method that assumes the lock is already held
+void AudioProcessor::select_active_speaker_mix_locked() {
+    std::cout << "[AudioProc] select_active_speaker_mix_locked called for current inputChannels=" << this->inputChannels << "." << std::endl;
+    // No lock acquisition here, as it's assumed to be held by the caller
+    
+    auto it = speaker_layouts_config_.find(this->inputChannels);
+    bool specific_layout_applied = false;
+
+    if (it != speaker_layouts_config_.end()) {
+        const screamrouter::audio::CppSpeakerLayout& layout_for_current_input = it->second; // Changed to audio namespace
+        std::cout << "[AudioProc]   Found layout for " << this->inputChannels << "ch input. auto_mode=" 
+                  << (layout_for_current_input.auto_mode ? "true" : "false") << "." << std::endl;
+        if (layout_for_current_input.auto_mode) {
+            std::cout << "[AudioProc]   Using AUTO speaker mix for " << this->inputChannels << " input channels." << std::endl;
+            calculateAndApplyAutoSpeakerMix(); // This method sets the internal speaker_mix[][]
+        } else {
+            std::cout << "[AudioProc]   Using CUSTOM speaker matrix for " << this->inputChannels << " input channels." << std::endl;
+            std::cout << "[AudioProc]     Provided Matrix from config:" << std::endl;
+            for (const auto& row : layout_for_current_input.matrix) {
+                std::ostringstream oss_row;
+                oss_row << "[AudioProc]       ";
+                for (float val : row) {
+                    oss_row << std::fixed << std::setprecision(2) << val << " ";
+                }
+                std::cout << oss_row.str() << std::endl;
+            }
+            // Validate matrix dimensions before applying
+            if (layout_for_current_input.matrix.size() == MAX_CHANNELS &&
+                !layout_for_current_input.matrix.empty() &&
+                layout_for_current_input.matrix[0].size() == MAX_CHANNELS) {
+                applyCustomSpeakerMix(layout_for_current_input.matrix); // This method sets speaker_mix[][]
+            } else {
+                std::cerr << "[AudioProc] Error: Custom matrix for " << this->inputChannels
+                          << " input channels has invalid dimensions (" 
+                          << layout_for_current_input.matrix.size() << "x" 
+                          << (layout_for_current_input.matrix.empty() ? 0 : layout_for_current_input.matrix[0].size())
+                          << "). Falling back to auto mix." << std::endl;
+                calculateAndApplyAutoSpeakerMix();
+            }
+        }
+        specific_layout_applied = true;
+    }
+
+    if (!specific_layout_applied) {
+        std::cout << "[AudioProc]   No specific layout found for " << this->inputChannels
+                  << " input channels in speaker_layouts_config_. Defaulting to AUTO mix." << std::endl;
+        calculateAndApplyAutoSpeakerMix(); // Default if no entry for current inputChannels
+    }
+    
+    isProcessingRequiredCacheSet = false; // The effective mix might have changed, so invalidate cache
+}
+
+// --- End New/Updated Methods ---
+// void AudioProcessor::mixSpeakers() { // Original line before potential extra brace
 void AudioProcessor::mixSpeakers() {
     for (size_t oc = 0; oc < static_cast<size_t>(outputChannels); ++oc) {
         if (oc >= remixed_channel_buffers.size()) continue;

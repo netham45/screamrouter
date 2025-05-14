@@ -107,9 +107,19 @@ export const createDesktopMenuActions = (
       }
     },
     
-    updateTimeshift: async (type: 'sources', name: string, value: number) => {
+    updateTimeshift: async (type: 'sources' | 'sinks' | 'routes', name: string, value: number) => {
       try {
-        await ApiService.updateSourceTimeshift(name, value);
+        switch (type) {
+          case 'sources':
+            await ApiService.updateSourceTimeshift(name, value);
+            break;
+          case 'sinks':
+            await ApiService.updateSinkTimeshift(name, value);
+            break;
+          case 'routes':
+            await ApiService.updateRouteTimeshift(name, value);
+            break;
+        }
       } catch (error) {
         console.error(`Error updating ${type} timeshift:`, error);
         setError(`Error updating ${type} timeshift`);

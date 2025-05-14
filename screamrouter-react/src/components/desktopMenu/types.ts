@@ -86,4 +86,9 @@ export interface DesktopMenuActions {
    * Show confirmation dialog before deleting an item.
    */
   confirmDelete: (type: 'sources' | 'sinks' | 'routes', name: string) => void;
+
+  /**
+   * Show speaker layout page for an item in a new window.
+   */
+  showSpeakerLayoutPage: (type: 'sources' | 'sinks' | 'routes', item: Source | Sink | Route) => void;
 }

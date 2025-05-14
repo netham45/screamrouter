@@ -85,7 +85,8 @@ SinkAudioMixer::SinkAudioMixer(
             32,                         // inputBitDepth (mixing_buffer_ is int32_t)
             config_.output_samplerate,  // inputSampleRate
             config_.output_samplerate,  // outputSampleRate
-            1.0f                        // volume
+            1.0f,                       // volume
+            std::map<int, CppSpeakerLayout>() // initial_layouts_config
         );
         if (!lame_preprocessor_) {
              LOG_ERROR(config_.sink_id, "Failed to create AudioProcessor for LAME preprocessing.");

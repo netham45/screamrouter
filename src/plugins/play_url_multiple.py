@@ -1,10 +1,11 @@
 """This plugin implements an API endpoint to play a URL back over a Sink."""
 
-import threading
 import os
 import select
 import signal
 import subprocess
+import threading
+import time
 from ctypes import c_bool
 from typing import List, Optional
 
@@ -14,10 +15,11 @@ from src.audio.scream_header_parser import ScreamHeader, create_stream_info
 from src.constants import constants
 from src.plugin_manager.screamrouter_plugin import ScreamRouterPlugin
 from src.screamrouter_logger.screamrouter_logger import get_logger
-from src.screamrouter_types.annotations import SinkNameType, VolumeType # BitDepthType, SampleRateType, ChannelsType, ChannelLayoutType
+from src.screamrouter_types.annotations import (  # BitDepthType, SampleRateType, ChannelsType, ChannelLayoutType
+    SinkNameType, VolumeType)
 from src.screamrouter_types.configuration import SourceDescription
 from src.utils.utils import close_all_pipes
-import time
+
 logger = get_logger(__name__)
 
 class PlayURLClass(BaseModel):

@@ -313,7 +313,8 @@ source_files = [
     "src/audio_engine/source_input_processor.cpp", "src/audio_engine/sink_audio_mixer.cpp",
     "src/audio_engine/audio_processor.cpp", "src/audio_engine/layout_mixer.cpp",
     "src/audio_engine/biquad/biquad.cpp", "src/configuration/audio_engine_config_applier.cpp",
-    "src/audio_engine/r8brain-free-src/r8bbase.cpp", "src/audio_engine/r8brain-free-src/pffft.cpp", 
+    "src/audio_engine/r8brain-free-src/r8bbase.cpp", "src/audio_engine/r8brain-free-src/pffft.cpp",
+    "src/audio_engine/timeshift_manager.cpp",
 ]
 main_extension_include_dirs = [
     str(PROJECT_ROOT / "src/audio_engine"), str(PROJECT_ROOT / "src/configuration"),

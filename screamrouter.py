@@ -9,6 +9,39 @@ import OpenSSL.crypto  # For reading the SSL certificate
 import uvicorn
 from fastapi import FastAPI
 
+from src.screamrouter_logger.screamrouter_logger import get_logger # Ensure this is here for logger
+
+logger = get_logger(__name__) # Moved logger initialization up
+
+# Attempt to import AudioManager, build if necessary
+try:
+    from screamrouter_audio_engine import AudioManager
+except ImportError:
+    logger.warning("Failed to import screamrouter_audio_engine. Attempting to build...")
+    import subprocess
+    try:
+        # Ensure setup.py is executable or use python3 to run it
+        build_command = [sys.executable, "setup.py", "build_ext", "--inplace"]
+        process = subprocess.Popen(build_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = process.communicate()
+        if process.returncode == 0:
+            logger.info("Successfully built screamrouter_audio_engine. stdout:\n%s", stdout.decode())
+            # Try importing again
+            from screamrouter_audio_engine import AudioManager
+        else:
+            logger.error("Failed to build screamrouter_audio_engine. Error code: %s", process.returncode)
+            if stdout:
+                logger.error("Build stdout:\n%s", stdout.decode())
+            if stderr:
+                logger.error("Build stderr:\n%s", stderr.decode())
+            sys.exit(1)
+    except FileNotFoundError:
+        logger.error("setup.py not found. Cannot build screamrouter_audio_engine.")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during build: {e}")
+        sys.exit(1)
+
 import src.constants.constants as constants
 from src.api.api_configuration import APIConfiguration
 from src.api.api_website import APIWebsite
@@ -16,10 +49,11 @@ from src.api.api_webstream import APIWebStream
 from src.api.api_websocket_config import APIWebsocketConfig
 from src.api.api_websocket_debug import APIWebsocketDebug
 from src.api.api_equalizer import APIEqualizer
-from screamrouter_audio_engine import AudioManager
+
+from src.screamrouter_types.configuration import AudioManagerConfig
 from src.configuration.configuration_manager import ConfigurationManager
 from src.plugin_manager.plugin_manager import PluginManager
-from src.screamrouter_logger.screamrouter_logger import get_logger
+# from src.screamrouter_logger.screamrouter_logger import get_logger # Moved up
 from src.utils.utils import set_process_name
 from src.utils.mdns_ptr_responder import ManualPTRResponder # mDNS
 from src.utils.ntp_server import NTPServerProcess # NTP Server
@@ -30,7 +64,7 @@ except:
     pass
 
 
-logger = get_logger(__name__)
+# logger = get_logger(__name__) # Moved up
 
 threading.current_thread().name = "ScreamRouter Main Thread"
 main_pid: int = os.getpid()
@@ -100,15 +134,28 @@ set_process_name("SR Scream Router", "Scream Router Main Thread")
 
 # Instantiate AudioManager
 audio_manager: AudioManager = AudioManager()
-# Initialize AudioManager (assuming it has an initialize method that should be called)
-# If initialize takes arguments or has specific return values to check, that would be done here.
-# For now, assuming a simple parameter-less initialize.
-# Refer to bindings.cpp: .def("initialize", &AudioManager::initialize, py::arg("rtp_listen_port") = 40000, "Initializes the audio manager...")
-if not audio_manager.initialize(): # Default RTP listen port is 40000
-    logger.error("Failed to initialize AudioManager. Exiting.")
+
+# Get configuration for AudioManager
+py_audio_manager_config = AudioManagerConfig()
+global_buffer_duration = py_audio_manager_config.global_timeshift_buffer_duration_sec
+# Default rtp_listen_port, as per previous comment in code.
+# This should ideally be a constant or more formally configured if it needs to change.
+default_rtp_port = 40000
+
+# Initialize AudioManager
+# Refer to bindings.cpp for exact signature. This call assumes bindings will be updated for:
+# py::arg("rtp_listen_port"), py::arg("global_timeshift_buffer_duration_sec")
+if not audio_manager.initialize(rtp_listen_port=default_rtp_port, global_timeshift_buffer_duration_sec=global_buffer_duration):
+    logger.error(
+        "Failed to initialize AudioManager with rtp_listen_port=%s and global_timeshift_buffer_duration_sec=%s. Exiting.",
+        default_rtp_port, global_buffer_duration
+    )
     sys.exit(1)
 else:
-    logger.info("AudioManager initialized successfully.")
+    logger.info(
+        "AudioManager initialized successfully with rtp_listen_port=%s and global_timeshift_buffer_duration_sec=%s seconds.",
+        default_rtp_port, global_buffer_duration
+    )
 
 webstream: APIWebStream = APIWebStream(app, audio_manager) # Pass audio_manager
 websocket_config: APIWebsocketConfig = APIWebsocketConfig(app)

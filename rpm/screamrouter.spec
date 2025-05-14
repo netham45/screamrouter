@@ -10,6 +10,7 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  python3-devel
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-pip
+BuildRequires:  git
 BuildRequires:  nodejs
 BuildRequires:  npm
 BuildRequires:  gcc
@@ -35,9 +36,9 @@ Requires:       lame-libs
 Requires:       openssl
 
 %description
-ScreamRouter is a versatile audio routing and management system with a 
+ScreamRouter is a versatile audio routing and management system with a
 Python frontend/configuration layer and C++ backend, designed for
-network audio streaming. It supports Scream and RTP audio sources, 
+network audio streaming. It supports Scream and RTP audio sources,
 along with Scream receivers and web-based MP3 streamers.
 
 Features include:
@@ -47,42 +48,50 @@ Features include:
 * System Management
 
 %prep
-%autosetup -n %{name}-%{version}
+%autosetup -n %{name}-%{version} -S git
 
 %build
-# Build C utilities
-cd c_utils
-./build.sh
-cd ..
+# Initialize submodules (for LAME, etc., used by setup.py)
+git submodule update --init --recursive src/audio_engine/
 
 # Build React site
-cd screamrouter-react
+pushd screamrouter-react
 npm install
-npm install --save-dev copy-webpack-plugin
-npm run build
-cd ..
+# Assuming copy-webpack-plugin is in devDependencies of package.json
+npm run build 
+popd
+# React build output is in ./site/
+
+# Build Python C++ extension in place
+python3 setup.py build_ext --inplace
+# The .so file is now inside the src/ directory structure
 
 %install
 rm -rf $RPM_BUILD_ROOT
 
 # Create directories
-mkdir -p %{buildroot}%{_datadir}/%{name}
 mkdir -p %{buildroot}%{_datadir}/%{name}/venv
-mkdir -p %{buildroot}%{_datadir}/%{name}/c_utils/bin
 mkdir -p %{buildroot}%{_datadir}/%{name}/site
 mkdir -p %{buildroot}%{_datadir}/%{name}/logs
-mkdir -p %{buildroot}%{_sysconfdir}/%{name}
 mkdir -p %{buildroot}%{_sysconfdir}/%{name}/cert
 mkdir -p %{buildroot}%{_localstatedir}/log/%{name}
 
-# Copy files
-cp -r screamrouter.py %{buildroot}%{_datadir}/%{name}/
-cp -r requirements.txt %{buildroot}%{_datadir}/%{name}/
-cp -r uvicorn_log_config.yaml %{buildroot}%{_datadir}/%{name}/
-cp -r site/ %{buildroot}%{_datadir}/%{name}/
-cp -r src/ %{buildroot}%{_datadir}/%{name}/
-cp -r c_utils/bin/* %{buildroot}%{_datadir}/%{name}/c_utils/bin/
-cp -r images/ %{buildroot}%{_datadir}/%{name}/
+# Copy application files
+# Copy main script, requirements, config
+cp screamrouter.py %{buildroot}%{_datadir}/%{name}/
+cp requirements.txt %{buildroot}%{_datadir}/%{name}/
+cp uvicorn_log_config.yaml %{buildroot}%{_datadir}/%{name}/
+cp setup.py pyproject.toml README.md %{buildroot}%{_datadir}/%{name}/
+
+
+# Copy src directory (which now includes the compiled .so extension)
+cp -r src %{buildroot}%{_datadir}/%{name}/
+
+# Copy the built React site
+cp -r site %{buildroot}%{_datadir}/%{name}/
+
+# Copy images
+cp -r images %{buildroot}%{_datadir}/%{name}/
 
 # Install systemd service
 install -D -m 644 rpm/screamrouter.service %{buildroot}%{_unitdir}/screamrouter.service
@@ -91,9 +100,15 @@ install -D -m 644 rpm/screamrouter.service %{buildroot}%{_unitdir}/screamrouter.
 # Create virtual environment
 python3 -m venv %{_datadir}/%{name}/venv
 
-# Activate virtual environment and install Python requirements
-%{_datadir}/%{name}/venv/bin/pip install --upgrade pip
-%{_datadir}/%{name}/venv/bin/pip install -r %{_datadir}/%{name}/requirements.txt
+# Activate virtual environment and install Python requirements and the project itself
+pushd %{_datadir}/%{name}
+./venv/bin/pip install --upgrade pip
+./venv/bin/pip install -r requirements.txt
+# Install the project (screamrouter_audio_engine) into the venv
+# This will use the already built .so file from the src directory
+# because setup.py will find it due to 'build_ext --inplace'
+./venv/bin/pip install .
+popd
 
 # Generate SSL certificates if they don't exist
 if [ ! -f %{_sysconfdir}/%{name}/cert/cert.pem ] || [ ! -f %{_sysconfdir}/%{name}/cert/privkey.pem ]; then

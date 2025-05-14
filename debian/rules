@@ -10,29 +10,38 @@ override_dh_auto_clean:
 	rm -rf build/ *.egg-info
 
 override_dh_auto_build:
-	# Build C utilities
-	cd c_utils && ./build.sh
+	# Initialize submodules
+	git submodule update --init --recursive src/audio_engine/
 	# Build React site
 	cd screamrouter-react && \
 	npm install && \
-	npm install --save-dev copy-webpack-plugin && \
 	npm run build
+	# React build output is in ./site/
+	# Build Python C++ extension in place
+	python3 setup.py build_ext --inplace
+	# The .so file is now inside the src/ directory structure
 
 override_dh_auto_install:
 	# Create directories
 	mkdir -p debian/screamrouter/etc/screamrouter/cert
 	mkdir -p debian/screamrouter/usr/share/screamrouter/site
-	mkdir -p debian/screamrouter/usr/share/screamrouter/src
-	mkdir -p debian/screamrouter/usr/share/screamrouter/c_utils/bin
+	# src will be copied entirely
+	# mkdir -p debian/screamrouter/usr/share/screamrouter/src
 	mkdir -p debian/screamrouter/usr/share/screamrouter/images
+	mkdir -p debian/screamrouter/var/log/screamrouter
 	
-	# Copy files manually
-	cp -r screamrouter.py debian/screamrouter/usr/share/screamrouter/
-	cp -r requirements.txt debian/screamrouter/usr/share/screamrouter/
-	cp -r uvicorn_log_config.yaml debian/screamrouter/usr/share/screamrouter/
-	cp -r src/ debian/screamrouter/usr/share/screamrouter/
-	cp -r c_utils/bin/* debian/screamrouter/usr/share/screamrouter/c_utils/bin/
-	cp -r images/ debian/screamrouter/usr/share/screamrouter/
+	# Copy application files
+	cp screamrouter.py debian/screamrouter/usr/share/screamrouter/
+	cp requirements.txt debian/screamrouter/usr/share/screamrouter/
+	cp uvicorn_log_config.yaml debian/screamrouter/usr/share/screamrouter/
+	cp setup.py pyproject.toml README.md debian/screamrouter/usr/share/screamrouter/
+
+	# Copy src directory (which now includes the compiled .so extension)
+	cp -r src/ debian/screamrouter/usr/share/screamrouter/src/
+
+	# Copy images
+	cp -r images/ debian/screamrouter/usr/share/screamrouter/images/
+	# Copy the built React site
 	cp -r site/* debian/screamrouter/usr/share/screamrouter/site/
 	
 	# Certificate generation is handled in postinst

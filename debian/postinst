@@ -9,6 +9,9 @@ case "$1" in
         # Activate virtual environment and install Python requirements
         /usr/share/screamrouter/venv/bin/pip install --upgrade pip
         /usr/share/screamrouter/venv/bin/pip install -r /usr/share/screamrouter/requirements.txt
+        # Install the project itself (screamrouter_audio_engine) into the venv
+        # This will use the setup.py and the already built .so file from the src directory
+        /usr/share/screamrouter/venv/bin/pip install /usr/share/screamrouter/
 
         # Create directory for logs if it doesn't exist
         mkdir -p /var/log/screamrouter

@@ -7,6 +7,7 @@
 #include "sink_audio_mixer.h"
 #include "raw_scream_receiver.h"
 #include "per_process_scream_receiver.h" // Added this line
+#include "timeshift_manager.h" // Added for TimeshiftManager
 #include "thread_safe_queue.h"
 #include "audio_types.h"
 
@@ -18,7 +19,7 @@
 #include <thread>
 #include <atomic>
 
-#include <pybind11/pybind11.h> // For pybind11 core types like py::bytes
+// #include <pybind11/pybind11.h> // For pybind11 core types like py::bytes // Temporarily commented out for linter diagnosis
 
 namespace screamrouter {
 namespace audio {
@@ -48,11 +49,12 @@ public:
 
     // --- Lifecycle Management ---
     /**
-     * @brief Initializes the audio manager, starts the RTP receiver and notification processing.
+     * @brief Initializes the audio manager, starts the RTP receiver, TimeshiftManager, and notification processing.
      * @param rtp_listen_port The UDP port for the RTP receiver to listen on.
-     * @return true on success, false on failure (e.g., RTP receiver failed to start).
+     * @param global_timeshift_buffer_duration_sec The maximum duration for the global timeshift buffer in seconds.
+     * @return true on success, false on failure (e.g., component failed to start).
      */
-    bool initialize(int rtp_listen_port = 4010);
+    bool initialize(int rtp_listen_port = 4010, int global_timeshift_buffer_duration_sec = 300);
 
     /**
      * @brief Shuts down the audio manager, stopping all components and threads gracefully.
@@ -171,6 +173,33 @@ public:
      */
     bool update_source_timeshift(const std::string& instance_id, float timeshift_sec);
 
+    /**
+     * @brief Updates the speaker mix configuration for a specific source processor instance.
+     * @param instance_id Identifier of the source processor instance.
+     * @param matrix The 8x8 speaker mix matrix.
+     * @param use_auto True to use automatic mixing, false to use the provided matrix.
+     * @return true if the command was sent successfully, false otherwise.
+     */
+    // bool update_source_speaker_mix(const std::string& instance_id, const std::vector<std::vector<float>>& matrix, bool use_auto); // Old version
+    
+    /**
+     * @brief Updates the speaker layout for a specific input channel key for a source processor instance.
+     * @param instance_id Identifier of the source processor instance.
+     * @param input_channel_key The input channel count key for which this layout applies.
+     * @param layout The CppSpeakerLayout object.
+     * @return true if the command was sent successfully, false otherwise.
+     */
+    bool update_source_speaker_layout_for_key(const std::string& instance_id, int input_channel_key, const screamrouter::audio::CppSpeakerLayout& layout);
+
+    /**
+     * @brief Updates the entire speaker layouts map for a specific source processor instance.
+     * @param instance_id Identifier of the source processor instance.
+     * @param layouts_map The map of input channel keys to CppSpeakerLayout objects.
+     * @return true if all commands were sent successfully, false otherwise.
+     */
+    bool update_source_speaker_layouts_map(const std::string& instance_id, const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map);
+
+
     // --- Data Retrieval API (for Python via pybind11) ---
     /**
      * @brief Retrieves a chunk of encoded MP3 data from a specific sink's output queue.
@@ -234,12 +263,25 @@ public:
         uint8_t chlayout2
     );
 
+    void inject_plugin_packet_globally(
+        const std::string& source_tag, // This tag will be used by TimeshiftManager for filtering
+        const std::vector<uint8_t>& audio_payload,
+        int channels,
+        int sample_rate,
+        int bit_depth,
+        uint8_t chlayout1,
+        uint8_t chlayout2
+    );
+
     // Removed set_sink_tcp_fd
 
 private:
     // --- Internal State ---
     std::atomic<bool> running_{false};
     std::mutex manager_mutex_; // Protects access to internal maps/vectors
+
+    // Timeshift Manager (only one)
+    std::unique_ptr<TimeshiftManager> timeshift_manager_;
 
     // RTP Receiver (only one)
     std::unique_ptr<RtpReceiver> rtp_receiver_;

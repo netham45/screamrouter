@@ -8,9 +8,9 @@ from typing import List, Optional
 
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import StreamingResponse
+from screamrouter_audio_engine import AudioManager  # Added import
 
 import src.constants.constants as constants
-from screamrouter_audio_engine import AudioManager  # Added import
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import IPAddressType
 from src.screamrouter_types.packets import WebStreamFrames

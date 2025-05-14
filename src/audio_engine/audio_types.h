@@ -5,10 +5,52 @@
 #include <string>
 #include <chrono>
 #include <cstdint> // For fixed-width integers like uint8_t, uint32_t
-#include "audio_processor.h" // For EQ_BANDS
+// #include "audio_processor.h" // For EQ_BANDS - No longer needed here if defines are moved
+#include "audio_constants.h" // Include the new constants file
+// #include "../configuration/audio_engine_config_types.h" // For CppSpeakerLayout - No longer needed, CppSpeakerLayout moved here
+
+// MAX_CHANNELS and EQ_BANDS are now in audio_constants.h
+// CHUNK_SIZE is still in audio_processor.h as it's more specific to its processing logic
 
 namespace screamrouter {
+
+// Forward declare config namespace for CppSpeakerLayout if it's kept there,
+// but we are moving CppSpeakerLayout into the audio namespace for simplicity here.
+// namespace config { struct CppSpeakerLayout; }
+
 namespace audio {
+
+// --- CppSpeakerLayout Struct Definition (Moved from audio_engine_config_types.h) ---
+// This struct is used by ControlCommand in this file, and by AppliedSourcePathParams in audio_engine_config_types.h
+// For AppliedSourcePathParams to use it, it will need to refer to screamrouter::audio::CppSpeakerLayout
+// or audio_engine_config_types.h will need to include audio_types.h (which it does).
+struct CppSpeakerLayout {
+    bool auto_mode = true;
+    std::vector<std::vector<float>> matrix;
+
+    CppSpeakerLayout() : auto_mode(true) {
+        matrix.assign(MAX_CHANNELS, std::vector<float>(MAX_CHANNELS, 0.0f));
+        for (int i = 0; i < MAX_CHANNELS; ++i) {
+            if (i < MAX_CHANNELS) { 
+                matrix[i][i] = 1.0f; 
+            }
+        }
+    }
+
+    // Equality operator
+    bool operator==(const CppSpeakerLayout& other) const {
+        if (auto_mode != other.auto_mode) {
+            return false;
+        }
+        // If both are in auto_mode, they are equal regardless of matrix content (as matrix is default/ignored)
+        if (auto_mode) {
+            return true; 
+        }
+        // If not in auto_mode, compare matrices
+        return matrix == other.matrix;
+    }
+};
+// --- End CppSpeakerLayout Struct Definition ---
 
 // --- Data Structures for Inter-Thread Communication ---
 
@@ -45,7 +87,9 @@ enum class CommandType {
     SET_VOLUME,
     SET_EQ,
     SET_DELAY,
-    SET_TIMESHIFT // Controls the 'backshift' amount
+    SET_TIMESHIFT, // Controls the 'backshift' amount
+    // --- New Command Type ---
+    SET_SPEAKER_MIX
 };
 
 /**
@@ -54,9 +98,25 @@ enum class CommandType {
 struct ControlCommand {
     CommandType type;
     // Using separate members for simplicity over std::variant for now
-    float float_value = 0.0f;         // For volume, timeshift
-    int int_value = 0;                // For delay_ms
+    float float_value;         // For volume, timeshift - Initialized in constructor
+    int int_value;             // For delay_ms - Initialized in constructor
     std::vector<float> eq_values;     // For EQ bands (size should match AudioProcessor expectation, e.g., 18)
+
+    // --- Updated Speaker Layout Command Members ---
+    int input_channel_key;                                  // NEW: Specifies which input channel config this layout is for
+    CppSpeakerLayout speaker_layout_for_key; // NEW: The actual layout for that key (now in this namespace)
+    // Old members removed:
+    // std::vector<std::vector<float>> speaker_mix_matrix; 
+    // bool use_auto_speaker_mix;                         
+
+    // Default constructor
+    ControlCommand() : type(CommandType::SET_VOLUME), float_value(0.0f), int_value(0), input_channel_key(0) {
+        // eq_values will be default constructed (empty)
+        // speaker_layout_for_key will be default constructed (auto_mode=true, identity matrix)
+    }
+
+    // Consider adding specific constructors or static factory methods for each command type
+    // e.g., static ControlCommand CreateSetSpeakerLayoutCommand(int key, const screamrouter::config::CppSpeakerLayout& layout);
 };
 
 /**
@@ -83,6 +143,7 @@ struct SourceConfig {
     float initial_volume = 1.0f;
     std::vector<float> initial_eq; // Size EQ_BANDS expected by AudioProcessor
     int initial_delay_ms = 0;
+    float initial_timeshift_sec = 0.0f; // Added for TimeshiftManager integration
     // Timeshift duration is often global or sink-related, managed in SourceInputProcessor config
 
     // --- NEW FIELDS ---
@@ -143,16 +204,43 @@ struct SourceProcessorConfig {
     float initial_volume = 1.0f; // Corrected default to 1.0f to match typical usage
     std::vector<float> initial_eq; // Default constructor will handle empty, or AudioManager can default
     int initial_delay_ms = 0;
+    float initial_timeshift_sec = 0.0f; // Added for TimeshiftManager integration
     int timeshift_buffer_duration_sec = 5; // Default timeshift buffer duration
 
+    // --- New Speaker Mix Members ---
+    std::vector<std::vector<float>> speaker_mix_matrix; // For custom 8x8 matrix
+    bool use_auto_speaker_mix;                         // True to use existing dynamic logic
+
     // Constructor to initialize eq_values if not done by default vector behavior
-    SourceProcessorConfig() : initial_eq(EQ_BANDS, 1.0f) {} // Ensure EQ is initialized
+    // Consider adding a default constructor or ensuring initialization elsewhere
+    SourceProcessorConfig() : // output_channels, output_samplerate, initial_volume, initial_delay_ms, initial_timeshift_sec
+                              // are already initialized by class member defaults.
+                              // The task example re-initializes them here for explicitness.
+                              output_channels(2), output_samplerate(48000),
+                              initial_volume(1.0f), initial_delay_ms(0), initial_timeshift_sec(0.0f),
+                              use_auto_speaker_mix(true) {
+        initial_eq.assign(EQ_BANDS, 1.0f); // Default flat EQ
+        // Initialize speaker_mix_matrix to an 8x8 identity matrix
+        speaker_mix_matrix.resize(MAX_CHANNELS, std::vector<float>(MAX_CHANNELS, 0.0f));
+        for (size_t i = 0; i < MAX_CHANNELS; ++i) { // Changed int to size_t
+            if (i < speaker_mix_matrix.size() && i < speaker_mix_matrix[i].size()) { // Basic bounds check
+                speaker_mix_matrix[i][i] = 1.0f;
+            }
+        }
+    }
     InputProtocolType protocol_type = InputProtocolType::RTP_SCREAM_PAYLOAD; // Add this line
     int target_receiver_port = -1; // Add this line
     // Input format hints (if needed, otherwise assume standard like 16-bit, 48kHz, 2ch)
     // int input_channels = 2;
     // int input_samplerate = 48000;
     // int input_bitdepth = 16;
+};
+
+// Configuration for AudioManager (C++ specific settings)
+struct AudioManagerConfigCpp {
+    int rtp_listen_port = 4010; // Default from current AudioManager::initialize
+    int global_timeshift_buffer_duration_sec = 300; // Default 5 minutes
+    // Add other C++ specific AudioManager settings here if needed
 };
 
 // Configuration for SinkAudioMixer component

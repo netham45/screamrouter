@@ -13,6 +13,8 @@
 #include <memory> // For unique_ptr, shared_ptr
 #include <mutex>
 #include <condition_variable>
+#include <map> // For std::map
+// #include "../configuration/audio_engine_config_types.h" // CppSpeakerLayout is now in audio_types.h (included above)
 
 namespace screamrouter {
 namespace audio {
@@ -43,45 +45,23 @@ public:
         std::shared_ptr<CommandQueue> command_queue
     );
 
-    ~SourceInputProcessor() override;
+    ~SourceInputProcessor() noexcept override; // Added noexcept
 
     // --- AudioComponent Interface ---
     void start() override;
     void stop() override;
 
-    // --- Getters for Synchronization Primitives ---
-    std::mutex* get_timeshift_mutex() { return &timeshift_mutex_; }
-    std::condition_variable* get_timeshift_cv() { return &timeshift_condition_; }
+    // --- Configuration & Control ---
+    void set_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map); // Changed to audio namespace
 
     // --- Getters for Configuration Info ---
     const std::string& get_instance_id() const { return config_.instance_id; }
     const std::string& get_source_tag() const; // Implementation in .cpp
     const SourceProcessorConfig& get_config() const { return config_; } // Added getter for full config
+    std::shared_ptr<InputPacketQueue> get_input_queue() const { return input_queue_; } // Ensure this exists
 
-    // --- Plugin Data Injection ---
-    /**
-     * @brief Injects a pre-formed audio packet directly into the processing pipeline.
-     * This is intended for use by plugins or other internal mechanisms that generate audio
-     * data matching the expected format (e.g., 1152 bytes of PCM).
-     * The packet will be added to the timeshift buffer and processed like other inputs.
-     *
-     * @param source_tag The tag identifying the source of this packet.
-     * @param audio_payload The raw audio data (e.g., 1152 bytes of PCM).
-     * @param channels Number of audio channels.
-     * @param sample_rate Sample rate in Hz.
-     * @param bit_depth Bit depth (e.g., 16, 24, 32).
-     * @param chlayout1 Scream channel layout byte 1.
-     * @param chlayout2 Scream channel layout byte 2.
-     */
-    void inject_plugin_packet(
-        const std::string& source_tag,
-        const std::vector<uint8_t>& audio_payload,
-        int channels,
-        int sample_rate,
-        int bit_depth,
-        uint8_t chlayout1,
-        uint8_t chlayout2
-    );
+    // Plugin Data Injection method is removed from SourceInputProcessor
+    // void inject_plugin_packet(...); // Removed
 
 protected:
     // --- AudioComponent Interface ---
@@ -106,12 +86,12 @@ private:
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::mutex audio_processor_mutex_; // Protects audio_processor_ and related settings
 
-    // Timeshift buffer (stores raw input packets)
-    std::deque<TaggedAudioPacket> timeshift_buffer_;
-    size_t timeshift_buffer_read_idx_ = 0; // Index of the next packet to read
-    std::chrono::steady_clock::time_point timeshift_target_play_time_; // Calculated target time
-    std::mutex timeshift_mutex_; // Protects timeshift buffer and related vars
-    std::condition_variable timeshift_condition_; // To wake up run loop when data arrives/is ready
+    // Timeshift buffer and related members are removed
+    // std::deque<TaggedAudioPacket> timeshift_buffer_;
+    // size_t timeshift_buffer_read_idx_ = 0;
+    // std::chrono::steady_clock::time_point timeshift_target_play_time_;
+    // std::mutex timeshift_mutex_;
+    // std::condition_variable timeshift_condition_;
 
     // Processing buffer (holds output from AudioProcessor before pushing full chunks)
     std::vector<int32_t> process_buffer_;
@@ -120,21 +100,33 @@ private:
     // Current settings (can be updated by commands)
     float current_volume_;
     std::vector<float> current_eq_;
-    int current_delay_ms_;
-    float current_timeshift_backshift_sec_; // How far back to play from 'now'
+    int current_delay_ms_; 
+    // current_timeshift_backshift_sec_ is removed as direct controller,
+    // but SIP still needs to know its configured timeshift to report to AudioManager for TimeshiftManager.
+    // This might be stored in config_ or as a member updated by commands.
+    // For now, assume it's read from config_ or a similar member if needed for reporting.
+    // The actual timeshifting is done by TimeshiftManager.
+    float current_timeshift_backshift_sec_config_; // To store the configured value for reporting
+
+    // --- New Speaker Layouts Map Member Variables ---
+    std::map<int, screamrouter::audio::CppSpeakerLayout> current_speaker_layouts_map_; // Changed to audio namespace
+    std::mutex speaker_layouts_mutex_; // To protect access to current_speaker_layouts_map_
+    // Old members removed:
+    // std::vector<std::vector<float>> current_speaker_mix_matrix_;
+    // bool current_use_auto_speaker_mix_;
 
     // Thread management (stop_flag_ is inherited from AudioComponent)
-    std::thread input_thread_;
-    std::thread output_thread_;
+    std::thread input_thread_; // This thread will now run the main processing loop
+    // std::thread output_thread_; // output_thread_ is removed
 
     // Methods
     void process_commands(); // Check command queue and update state (non-blocking)
-    bool get_next_input_chunk(std::vector<uint8_t>& chunk_data); // Handles timeshift logic, pulls from input_queue_
-    void update_timeshift_target_time(); // Recalculate target play time based on backshift/delay
-    // bool is_timeshift_data_ready(std::chrono::steady_clock::time_point& ready_packet_time); // Replaced by check_readiness_condition
-    bool check_readiness_condition(); // Checks if the next packet is ready based on scheduled time vs now
-    void cleanup_timeshift_buffer(); // Remove old data
-    void handle_new_input_packet(TaggedAudioPacket& packet); // Adds packet to timeshift buffer, notifies CV
+    // Timeshift-specific methods are removed:
+    // bool get_next_input_chunk(std::vector<uint8_t>& chunk_data);
+    // void update_timeshift_target_time();
+    // bool check_readiness_condition();
+    // void cleanup_timeshift_buffer();
+    // void handle_new_input_packet(TaggedAudioPacket& packet);
 
     // Audio processing methods
     // void initialize_audio_processor(); // Removed

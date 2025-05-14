@@ -15,12 +15,16 @@ using namespace screamrouter::audio;
 using namespace screamrouter::utils;
 
 // Simple logger helper (replace with a proper logger if available)
-#define LOG_AM(msg) std::cout << "[AudioManager] " << msg << std::endl
-#define LOG_ERROR_AM(msg) std::cerr << "[AudioManager Error] " << msg << std::endl
-#define LOG_WARN_AM(msg) std::cout << "[AudioManager Warn] " << msg << std::endl // Define WARN
+#define LOG_AM(msg) //std::cout << "[AudioManager] " << msg << std::endl
+#define LOG_ERROR_AM(msg) //std::cerr << "[AudioManager Error] " << msg << std::endl
+#define LOG_WARN_AM(msg) //std::cout << "[AudioManager Warn] " << msg << std::endl // Define WARN
 
 // Static counter for generating unique instance IDs
 static std::atomic<uint64_t> instance_id_counter{0};
+ 
+// Default duration for the TimeshiftManager's global buffer if not configured otherwise
+// This constant is now superseded by the parameter in initialize(), but kept for reference or other potential uses.
+const std::chrono::seconds DEFAULT_GLOBAL_TIMESHIFT_BUFFER_DURATION(300);
 
 AudioManager::AudioManager() : running_(false) {
     LOG_AM("Created.");
@@ -58,8 +62,9 @@ AudioManager::~AudioManager() {
     LOG_AM("Destroyed.");
 }
 
-bool AudioManager::initialize(int rtp_listen_port) {
-    LOG_AM("Initializing...");
+bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_duration_sec) {
+    LOG_AM("Initializing with rtp_listen_port: " + std::to_string(rtp_listen_port) +
+           ", timeshift_buffer_duration: " + std::to_string(global_timeshift_buffer_duration_sec) + "s");
     std::lock_guard<std::mutex> lock(manager_mutex_); // Protect shared state during init
 
     if (running_) {
@@ -67,14 +72,24 @@ bool AudioManager::initialize(int rtp_listen_port) {
         return true;
     }
 
-    // 1. Create Notification Queue
+    // 1. Create and Start TimeshiftManager
+    try {
+        timeshift_manager_ = std::make_unique<TimeshiftManager>(std::chrono::seconds(global_timeshift_buffer_duration_sec));
+        timeshift_manager_->start();
+        LOG_AM("TimeshiftManager started with buffer duration: " + std::to_string(global_timeshift_buffer_duration_sec) + "s.");
+    } catch (const std::exception& e) {
+        LOG_ERROR_AM("Failed to initialize TimeshiftManager: " + std::string(e.what()));
+        return false;
+    }
+
+    // 2. Create Notification Queue
     new_source_notification_queue_ = std::make_shared<NotificationQueue>();
 
-    // 2. Create and Start RTP Receiver
+    // 3. Create and Start RTP Receiver
     try {
         RtpReceiverConfig rtp_config;
         rtp_config.listen_port = rtp_listen_port;
-        rtp_receiver_ = std::make_unique<RtpReceiver>(rtp_config, new_source_notification_queue_);
+        rtp_receiver_ = std::make_unique<RtpReceiver>(rtp_config, new_source_notification_queue_, timeshift_manager_.get());
         rtp_receiver_->start(); // This internally creates the socket and thread
         // Check if start was successful (basic check, might need more robust mechanism)
         std::this_thread::sleep_for(std::chrono::milliseconds(100)); // Increased sleep
@@ -95,6 +110,8 @@ bool AudioManager::initialize(int rtp_listen_port) {
         LOG_ERROR_AM("Failed to start notification thread: " + std::string(e.what()));
         if(rtp_receiver_) rtp_receiver_->stop(); // Stop the receiver if notification thread failed
         rtp_receiver_.reset();
+        if(timeshift_manager_) timeshift_manager_->stop(); // Stop TimeshiftManager if subsequent steps fail
+        timeshift_manager_.reset();
         new_source_notification_queue_.reset();
         return false;
     }
@@ -133,6 +150,14 @@ void AudioManager::shutdown() {
 
     // Now acquire lock again to stop components safely
     std::lock_guard<std::mutex> lock(manager_mutex_);
+
+    // Stop TimeshiftManager first, as other components might depend on it or its state
+    if (timeshift_manager_) {
+        LOG_AM("Stopping TimeshiftManager...");
+        timeshift_manager_->stop();
+        timeshift_manager_.reset();
+        LOG_AM("TimeshiftManager stopped.");
+    }
 
     // Stop RTP Receiver
     if (rtp_receiver_) {
@@ -213,7 +238,7 @@ bool AudioManager::add_raw_scream_receiver(const RawScreamReceiverConfig& config
 
     std::unique_ptr<RawScreamReceiver> new_receiver;
     try {
-        new_receiver = std::make_unique<RawScreamReceiver>(config, new_source_notification_queue_);
+        new_receiver = std::make_unique<RawScreamReceiver>(config, new_source_notification_queue_, timeshift_manager_.get());
         new_receiver->start();
         // Basic check, might need more robust mechanism or longer sleep
         std::this_thread::sleep_for(std::chrono::milliseconds(100)); 
@@ -276,7 +301,7 @@ bool AudioManager::add_per_process_scream_receiver(const PerProcessScreamReceive
 
     std::unique_ptr<PerProcessScreamReceiver> new_receiver;
     try {
-        new_receiver = std::make_unique<PerProcessScreamReceiver>(config, new_source_notification_queue_);
+        new_receiver = std::make_unique<PerProcessScreamReceiver>(config, new_source_notification_queue_, timeshift_manager_.get());
         new_receiver->start();
         std::this_thread::sleep_for(std::chrono::milliseconds(100)); 
         if (!new_receiver->is_running()) {
@@ -458,6 +483,7 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     proc_config.initial_volume = validated_config.initial_volume;
     proc_config.initial_eq = validated_config.initial_eq; 
     proc_config.initial_delay_ms = validated_config.initial_delay_ms;
+    proc_config.initial_timeshift_sec = validated_config.initial_timeshift_sec; // Added from SourceConfig
     // proc_config.timeshift_buffer_duration_sec remains default or could be made configurable
 
     // Determine protocol type and target receiver port from validated config
@@ -503,28 +529,23 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
         return ""; // Return empty string on failure
     }
 
-    // Register input queue with RtpReceiver
-    // ** IMPORTANT: RtpReceiver needs modification to handle mapping source_tag (IP) to potentially multiple instance queues. **
-    if (rtp_receiver_) {
-        std::mutex* proc_mutex = new_source->get_timeshift_mutex();
-        std::condition_variable* proc_cv = new_source->get_timeshift_cv();
-         // Call the updated add_output_queue method with instance_id
-         rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
-
-     } else {
-          LOG_ERROR_AM("RtpReceiver is null, cannot add output target for instance " + instance_id);
-         // Clean up queues...
-         rtp_to_source_queues_.erase(instance_id);
-         source_to_sink_queues_.erase(instance_id);
-         command_queues_.erase(instance_id);
-         // Clean up queues...
-         rtp_to_source_queues_.erase(instance_id);
-         source_to_sink_queues_.erase(instance_id);
-         command_queues_.erase(instance_id);
-         return ""; // Return empty string on failure
-     }
+    // Register input queue with RtpReceiver - This logic is now superseded by TimeshiftManager
+    // The SIP's input queue (rtp_queue) is given to TimeshiftManager.
+    // Receivers send to TimeshiftManager, which then routes to the correct SIP's rtp_queue.
+    // So, direct registration of SIP queues with individual receivers is no longer needed.
+    // if (rtp_receiver_) {
+    //     // std::mutex* proc_mutex = new_source->get_timeshift_mutex(); // Removed
+    //     // std::condition_variable* proc_cv = new_source->get_timeshift_cv(); // Removed
+    //      rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue); // Removed
+    //  } else {
+    //       LOG_ERROR_AM("RtpReceiver is null, cannot add output target for instance " + instance_id);
+    // ... (cleanup logic for failure)
+    //  }
 
     // --- Register SourceInputProcessor's queue with ALL active receivers ---
+    // This entire block is no longer needed as TimeshiftManager handles packet distribution.
+    // Receivers will send all packets to TimeshiftManager.
+    /*
     int registration_count = 0;
 
     // 1. Register with RtpReceiver
@@ -554,10 +575,6 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     }
     for (auto const& [port, receiver_ptr] : per_process_scream_receivers_) {
         if (receiver_ptr) {
-            // The proc_config.source_tag (which is the original config.tag, e.g., "192.168.3.164  firefox.exe")
-            // is used here. PerProcessScreamReceiver's add_output_queue will store this.
-            // Its run() method generates the composite_source_tag (e.g. "192.168.3.164  firefox.exe")
-            // and uses that for lookup. These must match.
             receiver_ptr->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
             LOG_AM("  Registered instance " + instance_id + " (tag: " + proc_config.source_tag + ") with PerProcessScreamReceiver on port " + std::to_string(port) + ".");
             registration_count++;
@@ -567,8 +584,39 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     if (registration_count == 0) {
          LOG_WARN_AM("Warning: Source instance " + instance_id + " (tag: " + proc_config.source_tag + ") was not registered with ANY active receivers. It will not receive packets.");
     }
+    */
+    // Ensure TimeshiftManager is available
+    if (!timeshift_manager_) {
+        LOG_ERROR_AM("TimeshiftManager is null. Cannot configure source instance " + instance_id);
+        // Clean up already created resources for this failed source
+        rtp_to_source_queues_.erase(instance_id);
+        source_to_sink_queues_.erase(instance_id);
+        command_queues_.erase(instance_id);
+        if(new_source) new_source->stop(); // Stop the processor if it was started
+        return ""; // Return empty string on failure
+    }
 
-     sources_[instance_id] = std::move(new_source);
+    // Register with TimeshiftManager
+    if (new_source) { // new_source should be valid if we reached here
+        timeshift_manager_->register_processor(
+            instance_id,
+            proc_config.source_tag,
+            rtp_queue, // This is the input queue for the SourceInputProcessor
+            proc_config.initial_delay_ms,
+            proc_config.initial_timeshift_sec
+        );
+        LOG_AM("  Registered instance " + instance_id + " with TimeshiftManager.");
+    } else {
+        LOG_ERROR_AM("TimeshiftManager or new_source is null. Cannot register with TimeshiftManager for instance " + instance_id);
+        // Cleanup if registration fails
+        rtp_to_source_queues_.erase(instance_id);
+        source_to_sink_queues_.erase(instance_id);
+        command_queues_.erase(instance_id);
+        if(new_source) new_source->stop(); // Stop the processor if it was started
+        return ""; // Failure
+    }
+
+    sources_[instance_id] = std::move(new_source);
 
     LOG_AM("Source instance " + instance_id + " (tag: " + config.tag + ") configured and started successfully.");
     return instance_id; // Return the unique ID
@@ -595,8 +643,6 @@ bool AudioManager::remove_source(const std::string& instance_id) {
         }
 
         if (it->second) {
-             // TODO: Add a getter for source_tag in SourceInputProcessor if needed, or retrieve from config if stored
-             // Get config details needed for removal
              const auto& proc_config = it->second->get_config();
              source_tag_for_removal = proc_config.source_tag;
              proto_type = proc_config.protocol_type;
@@ -619,48 +665,21 @@ bool AudioManager::remove_source(const std::string& instance_id) {
 
         // --- Unregister from appropriate receivers ---
         if (!source_tag_for_removal.empty()) {
-            if (proto_type == InputProtocolType::RTP_SCREAM_PAYLOAD) {
-                if (rtp_receiver_) {
-                    rtp_receiver_->remove_output_queue(source_tag_for_removal, instance_id);
-                    LOG_AM("Unregistered instance " + instance_id + " (tag: " + source_tag_for_removal + ") from RtpReceiver.");
-                } else {
-                    LOG_WARN_AM("RtpReceiver is null during removal of instance " + instance_id + " for RTP_SCREAM_PAYLOAD.");
-                }
-            } else if (proto_type == InputProtocolType::RAW_SCREAM_PACKET) {
-                if (target_port != -1) {
-                    auto it = raw_scream_receivers_.find(target_port);
-                    if (it != raw_scream_receivers_.end() && it->second) {
-                        it->second->remove_output_queue(source_tag_for_removal, instance_id);
-                        LOG_AM("Unregistered instance " + instance_id + " (tag: " + source_tag_for_removal + ") from RawScreamReceiver on port " + std::to_string(target_port));
-                    } else {
-                        LOG_WARN_AM("RawScreamReceiver not found on port " + std::to_string(target_port) + " during removal of instance " + instance_id);
-                    }
-                } else {
-                    LOG_WARN_AM("Target port unknown for instance " + instance_id + " (RAW_SCREAM_PACKET), cannot unregister specific RawScreamReceiver.");
-                }
-            } else if (proto_type == InputProtocolType::PER_PROCESS_SCREAM_PACKET) {
-                if (target_port != -1) {
-                    auto it = per_process_scream_receivers_.find(target_port);
-                    if (it != per_process_scream_receivers_.end() && it->second) {
-                        it->second->remove_output_queue(source_tag_for_removal, instance_id);
-                        LOG_AM("Unregistered instance " + instance_id + " (tag: " + source_tag_for_removal + ") from PerProcessScreamReceiver on port " + std::to_string(target_port));
-                    } else {
-                        LOG_WARN_AM("PerProcessScreamReceiver not found on port " + std::to_string(target_port) + " during removal of instance " + instance_id);
-                    }
-                } else {
-                    LOG_WARN_AM("Target port unknown for instance " + instance_id + " (PER_PROCESS_SCREAM_PACKET), cannot unregister specific PerProcessScreamReceiver.");
-                }
+            // Unregister from TimeshiftManager
+            if (timeshift_manager_) {
+                timeshift_manager_->unregister_processor(instance_id, source_tag_for_removal);
+                LOG_AM("Unregistered instance " + instance_id + " (tag: " + source_tag_for_removal + ") from TimeshiftManager.");
+            } else {
+                LOG_WARN_AM("TimeshiftManager is null during removal of instance " + instance_id + ". Cannot unregister.");
             }
+            // Calls to specific receiver remove_output_queue are no longer needed.
         } else {
-            LOG_ERROR_AM("Source tag for removal is empty for instance " + instance_id + ". Cannot unregister from receivers.");
+            LOG_ERROR_AM("Source tag for removal is empty for instance " + instance_id + ". Cannot unregister from TimeshiftManager.");
         }
 
-        // ** IMPORTANT: SinkAudioMixer needs modification. **
-        // SinkAudioMixer::remove_input_queue currently uses source_tag.
-        // It should ideally use instance_id, or we need the source_tag here.
         for (auto& sink_pair : sinks_) {
             if (sink_pair.second) {
-                sink_pair.second->remove_input_queue(instance_id); // Use instance_id now
+                sink_pair.second->remove_input_queue(instance_id);
             }
         }
     } // Mutex lock released
@@ -817,18 +836,83 @@ bool AudioManager::update_source_equalizer(const std::string& instance_id, const
 }
 
 bool AudioManager::update_source_delay(const std::string& instance_id, int delay_ms) {
+    // First, send command to SIP if it still needs to know its own delay for some reason
+    // (though TimeshiftManager now controls actual timing)
     ControlCommand cmd;
     cmd.type = CommandType::SET_DELAY;
     cmd.int_value = delay_ms;
-    return send_command_to_source(instance_id, cmd);
+    bool cmd_sent = send_command_to_source(instance_id, cmd);
+
+    // Then, update TimeshiftManager
+    if (timeshift_manager_) {
+        timeshift_manager_->update_processor_delay(instance_id, delay_ms);
+        LOG_AM("Updated delay in TimeshiftManager for instance " + instance_id + " to " + std::to_string(delay_ms) + "ms.");
+    } else {
+        LOG_ERROR_AM("TimeshiftManager is null. Cannot update processor delay for instance " + instance_id);
+        return false; // Indicate failure if TimeshiftManager update fails
+    }
+    return cmd_sent; // Return status of command to SIP (or true if only TSM matters)
 }
 
 bool AudioManager::update_source_timeshift(const std::string& instance_id, float timeshift_sec) {
+    // First, send command to SIP if it still needs to know its own timeshift
     ControlCommand cmd;
     cmd.type = CommandType::SET_TIMESHIFT;
     cmd.float_value = timeshift_sec;
+    bool cmd_sent = send_command_to_source(instance_id, cmd);
+
+    // Then, update TimeshiftManager
+    if (timeshift_manager_) {
+        timeshift_manager_->update_processor_timeshift(instance_id, timeshift_sec);
+        LOG_AM("Updated timeshift in TimeshiftManager for instance " + instance_id + " to " + std::to_string(timeshift_sec) + "s.");
+    } else {
+        LOG_ERROR_AM("TimeshiftManager is null. Cannot update processor timeshift for instance " + instance_id);
+        return false; // Indicate failure
+    }
+    return cmd_sent; // Return status of command to SIP
+}
+
+// Updated method to set speaker layout for a specific key
+bool AudioManager::update_source_speaker_layout_for_key(const std::string& instance_id, int input_channel_key, const screamrouter::audio::CppSpeakerLayout& layout) {
+    ControlCommand cmd;
+    cmd.type = CommandType::SET_SPEAKER_MIX; // This command type now handles per-key layout updates
+    cmd.input_channel_key = input_channel_key;
+    cmd.speaker_layout_for_key = layout; // CppSpeakerLayout is now part of ControlCommand
+
+    LOG_AM("Sending SET_SPEAKER_MIX command to instance_id: " + instance_id + 
+           " for key: " + std::to_string(input_channel_key) + 
+           " (Auto: " + (layout.auto_mode ? "true" : "false") + ")");
     return send_command_to_source(instance_id, cmd);
 }
+
+// New method to update the entire speaker layouts map
+bool AudioManager::update_source_speaker_layouts_map(const std::string& instance_id, const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map) {
+    // This method is called by AudioEngineConfigApplier.
+    // It should inform the SourceInputProcessor about the entire new map.
+    // SourceInputProcessor will have a method like set_speaker_layouts_config.
+    // We need to find the SourceInputProcessor and call that method.
+    // This is NOT done via ControlCommand, but a direct method call if possible,
+    // or a new CommandType if direct call is not feasible (e.g. threading).
+    // For now, let's assume SourceInputProcessor has set_speaker_layouts_config
+    // and AudioManager can call it.
+
+    std::lock_guard<std::mutex> lock(manager_mutex_); // Protects sources_ map
+    if (!running_) return false;
+
+    auto source_it = sources_.find(instance_id);
+    if (source_it != sources_.end() && source_it->second) {
+        // Assuming SourceInputProcessor has a method:
+        // void set_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map);
+        // This method was added to SourceInputProcessor in Task 17.10.1
+        source_it->second->set_speaker_layouts_config(layouts_map);
+        LOG_AM("Updated speaker_layouts_map directly on SourceInputProcessor instance: " + instance_id);
+        return true;
+    } else {
+        LOG_ERROR_AM("SourceInputProcessor instance not found for speaker_layouts_map update: " + instance_id);
+        return false;
+    }
+}
+
 
 // --- Data Retrieval API Implementation ---
 
@@ -927,14 +1011,11 @@ bool AudioManager::write_plugin_packet(
         return false;
     }
 
-    // The SourceInputProcessor::inject_plugin_packet itself is responsible for
-    // validating payload size and other parameters.
-    // It's also responsible for logging its own success/failure.
-    // The first argument to inject_plugin_packet is 'source_tag'. For plugin-originated data,
-    // this should be the unique instance_id of the processor to ensure correct internal handling
-    // and consistency with how other parts of the system might identify packet origins.
-    target_processor_ptr->inject_plugin_packet(
-        found_instance_id, // Use the found instance_id as the packet's source_tag
+    // Call the global injection method instead.
+    // The 'source_instance_tag' passed to write_plugin_packet is the 'source_tag'
+    // that TimeshiftManager will use for filtering.
+    this->inject_plugin_packet_globally(
+        source_instance_tag, // This is the original source_tag the plugin wants to inject for
         audio_payload,
         channels,
         sample_rate,
@@ -943,10 +1024,8 @@ bool AudioManager::write_plugin_packet(
         chlayout2
     );
 
-    // Assuming inject_plugin_packet is synchronous and doesn't return a status,
-    // we return true if the call was made. Error handling within inject_plugin_packet
-    // will log issues.
-    return true;
+    // inject_plugin_packet_globally handles its own logging.
+    return true; // Assume success if the call is made.
 }
 
 // --- Receiver Info API Implementations ---
@@ -966,6 +1045,48 @@ std::vector<std::string> AudioManager::get_raw_scream_receiver_seen_tags(int lis
     }
     LOG_WARN_AM("RawScreamReceiver not found for port: " + std::to_string(listen_port) + " when calling get_raw_scream_receiver_seen_tags.");
     return {}; // Return empty vector if receiver not found
+}
+
+void AudioManager::inject_plugin_packet_globally(
+    const std::string& source_tag,
+    const std::vector<uint8_t>& audio_payload,
+    int channels,
+    int sample_rate,
+    int bit_depth,
+    uint8_t chlayout1,
+    uint8_t chlayout2)
+{
+    // Scope for lock, though timeshift_manager_->add_packet should be thread-safe internally
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+
+    if (!running_ || !timeshift_manager_) {
+        LOG_WARN_AM("AudioManager not running or TimeshiftManager not available. Plugin packet ignored for source_tag: " + source_tag);
+        return;
+    }
+
+    // INPUT_CHUNK_BYTES should be available from source_input_processor.h (included via audio_manager.h)
+    // If not, it needs to be defined or included appropriately.
+    // For now, assuming it's accessible. If it causes a build error, source_input_processor.h might need direct include here.
+    // Let's assume it's defined in audio_types.h or source_input_processor.h which is included.
+    // A quick check of source_input_processor.h shows: const size_t INPUT_CHUNK_BYTES = 1152;
+    if (audio_payload.size() != INPUT_CHUNK_BYTES) {
+         LOG_ERROR_AM("Plugin packet payload incorrect size for source_tag: " + source_tag +
+                      ". Expected " + std::to_string(INPUT_CHUNK_BYTES) + ", got " + std::to_string(audio_payload.size()));
+         return;
+    }
+
+    TaggedAudioPacket packet;
+    packet.source_tag = source_tag;
+    packet.received_time = std::chrono::steady_clock::now();
+    packet.sample_rate = sample_rate;
+    packet.bit_depth = bit_depth;
+    packet.channels = channels;
+    packet.chlayout1 = chlayout1;
+    packet.chlayout2 = chlayout2;
+    packet.audio_data = audio_payload; // Copies the data
+
+    timeshift_manager_->add_packet(std::move(packet));
+    LOG_AM("Plugin packet injected globally via TimeshiftManager for source_tag: " + source_tag);
 }
 
 std::vector<std::string> AudioManager::get_per_process_scream_receiver_seen_tags(int listen_port) {

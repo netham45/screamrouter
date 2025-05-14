@@ -1,5 +1,5 @@
 """ScreamRouter Plugin Manager"""
-from typing import List, Any # Added Any for audio_manager_instance
+from typing import Any, List  # Added Any for audio_manager_instance
 
 from fastapi import FastAPI
 
@@ -12,7 +12,7 @@ from src.screamrouter_types.configuration import SourceDescription
 
 # Attempt to import the C++ audio engine; this might fail if not compiled/installed
 try:
-    from screamrouter_audio_engine import AudioManager # type: ignore
+    from screamrouter_audio_engine import AudioManager  # type: ignore
 except ImportError:
     AudioManager = None # type: ignore
     get_logger(__name__).warning("PluginManager: Failed to import screamrouter_audio_engine. Plugins requiring it may not function correctly.")

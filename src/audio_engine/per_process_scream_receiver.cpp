@@ -23,7 +23,7 @@ const int PER_PROCESS_POLL_TIMEOUT_MS = 100;   // Check for stop flag every 100m
 
 // Simple logger helper
 //#define LOG_PPSR(msg) std::cout << "[PerProcessScreamReceiver] " << msg << std::endl
-//#define LOG_ERROR_PPSR(msg) std::cerr << "[PerProcessScreamReceiver Error] " << msg << " (errno: " << GET_LAST_SOCK_ERROR << ")" << std::endl
+//#define LOG_ERROR_PPSR(msg) std::cerr << "[PerProcessScreamReceiver Error] " << msg << " (errno: " << GET_LAST_SOCK_ERROR_PPSR << ")" << std::endl
 //#define LOG_WARN_PPSR(msg) std::cout << "[PerProcessScreamReceiver Warn] " << msg << std::endl
 #define LOG_PPSR(msg)
 #define LOG_ERROR_PPSR(msg)
@@ -31,11 +31,17 @@ const int PER_PROCESS_POLL_TIMEOUT_MS = 100;   // Check for stop flag every 100m
 
 PerProcessScreamReceiver::PerProcessScreamReceiver(
     PerProcessScreamReceiverConfig config,
-    std::shared_ptr<NotificationQueue> notification_queue)
+    std::shared_ptr<NotificationQueue> notification_queue,
+    TimeshiftManager* timeshift_manager) // Added timeshift_manager
     : config_(config),
       notification_queue_(notification_queue),
+      timeshift_manager_(timeshift_manager), // Initialize timeshift_manager_
       socket_fd_(INVALID_SOCKET_VALUE_PPSR)
 {
+    if (!timeshift_manager_) {
+        LOG_ERROR_PPSR("TimeshiftManager pointer is null. PerProcessScreamReceiver cannot function.");
+        // Consider throwing an exception or setting an error state
+    }
     #ifdef _WIN32
         WSADATA wsaData;
         int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -167,41 +173,7 @@ void PerProcessScreamReceiver::stop() {
     }
 }
 
-void PerProcessScreamReceiver::add_output_queue(
-    const std::string& source_tag, // Composite: IP_ProgramTag
-    const std::string& instance_id,
-    std::shared_ptr<PacketQueue> queue)
-{
-    std::lock_guard<std::mutex> lock(targets_mutex_);
-    if (queue) {
-        output_targets_[source_tag][instance_id] = SourceOutputTarget{queue};
-        LOG_PPSR("Added/Updated output target for source_tag: " + source_tag + ", instance_id: " + instance_id);
-    } else {
-        LOG_ERROR_PPSR("Attempted to add output target with null queue for source_tag: " + source_tag + ", instance_id: " + instance_id);
-    }
-}
-
-void PerProcessScreamReceiver::remove_output_queue(const std::string& source_tag, const std::string& instance_id) {
-    std::lock_guard<std::mutex> lock(targets_mutex_);
-    auto tag_it = output_targets_.find(source_tag);
-    if (tag_it != output_targets_.end()) {
-        auto& instance_map = tag_it->second;
-        auto instance_it = instance_map.find(instance_id);
-
-        if (instance_it != instance_map.end()) {
-            instance_map.erase(instance_it);
-            LOG_PPSR("Removed output target for source_tag: " + source_tag + ", instance_id: " + instance_id);
-            if (instance_map.empty()) {
-                output_targets_.erase(tag_it);
-                LOG_PPSR("Removed source tag entry as no targets remain: " + source_tag);
-            }
-        } else {
-            LOG_WARN_PPSR("Attempted to remove target for instance_id " + instance_id + " under source_tag " + source_tag + ", but instance_id was not found.");
-        }
-    } else {
-        LOG_WARN_PPSR("Attempted to remove target for non-existent source tag: " + source_tag);
-    }
-}
+// add_output_queue and remove_output_queue are removed.
 
 bool PerProcessScreamReceiver::is_valid_per_process_scream_packet(const uint8_t* buffer, int size) {
     (void)buffer; // Mark as unused if not checking content here
@@ -298,64 +270,47 @@ void PerProcessScreamReceiver::run() {
                     }
                 }
 
-                std::map<std::string, SourceOutputTarget> instance_targets_copy;
-                {
-                    std::lock_guard<std::mutex> lock(targets_mutex_);
-                    auto tag_it = output_targets_.find(composite_source_tag);
-                    if (tag_it != output_targets_.end()) {
-                        instance_targets_copy = tag_it->second;
-                    }
+                TaggedAudioPacket packet;
+                packet.source_tag = composite_source_tag; // Use composite tag
+                packet.received_time = received_time;
+
+                // --- Parse Header and Set Format ---
+                // Header starts after the program tag
+                const uint8_t* header = receive_buffer.data() + PROGRAM_TAG_SIZE_CONST;
+                bool is_44100_base = (header[0] >> 7) & 0x01;
+                uint8_t samplerate_divisor = header[0] & 0x7F;
+                if (samplerate_divisor == 0) samplerate_divisor = 1;
+
+                packet.sample_rate = (is_44100_base ? 44100 : 48000) / samplerate_divisor;
+                packet.bit_depth = static_cast<int>(header[1]);
+                packet.channels = static_cast<int>(header[2]);
+                packet.chlayout1 = header[3];
+                packet.chlayout2 = header[4];
+
+                LOG_PPSR("Parsed Header for " + composite_source_tag + ": SR=" + std::to_string(packet.sample_rate) +
+                         ", BD=" + std::to_string(packet.bit_depth) + ", CH=" + std::to_string(packet.channels) +
+                         ", Layout=" + std::to_string(packet.chlayout1) + "/" + std::to_string(packet.chlayout2));
+
+                // --- Assign Payload Only ---
+                // Audio data starts after program tag and header
+                const uint8_t* audio_payload_start = receive_buffer.data() + PROGRAM_TAG_SIZE_CONST + SCREAM_HEADER_SIZE_CONST_PPSR;
+                packet.audio_data.assign(audio_payload_start, audio_payload_start + CHUNK_SIZE_CONST_PPSR);
+
+                // Basic validation after parsing
+                if (packet.channels <= 0 || packet.channels > 8 ||
+                    (packet.bit_depth != 8 && packet.bit_depth != 16 && packet.bit_depth != 24 && packet.bit_depth != 32) ||
+                    packet.sample_rate <= 0 ||
+                    packet.audio_data.size() != CHUNK_SIZE_CONST_PPSR) {
+                    LOG_ERROR_PPSR("Parsed invalid format or payload size from packet. SR=" + std::to_string(packet.sample_rate) +
+                                  ", BD=" + std::to_string(packet.bit_depth) + ", CH=" + std::to_string(packet.channels) +
+                                  ", PayloadSize=" + std::to_string(packet.audio_data.size()));
+                    continue;
                 }
 
-                if (!instance_targets_copy.empty()) {
-                    TaggedAudioPacket base_packet;
-                    base_packet.source_tag = composite_source_tag; // Use composite tag
-                    base_packet.received_time = received_time;
-
-                    // --- Parse Header and Set Format ---
-                    // Header starts after the program tag
-                    const uint8_t* header = receive_buffer.data() + PROGRAM_TAG_SIZE_CONST;
-                    bool is_44100_base = (header[0] >> 7) & 0x01;
-                    uint8_t samplerate_divisor = header[0] & 0x7F;
-                    if (samplerate_divisor == 0) samplerate_divisor = 1;
-
-                    base_packet.sample_rate = (is_44100_base ? 44100 : 48000) / samplerate_divisor;
-                    base_packet.bit_depth = static_cast<int>(header[1]);
-                    base_packet.channels = static_cast<int>(header[2]);
-                    base_packet.chlayout1 = header[3];
-                    base_packet.chlayout2 = header[4];
-
-                    LOG_PPSR("Parsed Header for " + composite_source_tag + ": SR=" + std::to_string(base_packet.sample_rate) +
-                             ", BD=" + std::to_string(base_packet.bit_depth) + ", CH=" + std::to_string(base_packet.channels) +
-                             ", Layout=" + std::to_string(base_packet.chlayout1) + "/" + std::to_string(base_packet.chlayout2));
-
-                    // --- Assign Payload Only ---
-                    // Audio data starts after program tag and header
-                    const uint8_t* audio_payload_start = receive_buffer.data() + PROGRAM_TAG_SIZE_CONST + SCREAM_HEADER_SIZE_CONST_PPSR;
-                    base_packet.audio_data.assign(audio_payload_start, audio_payload_start + CHUNK_SIZE_CONST_PPSR);
-
-                    // Basic validation after parsing
-                    if (base_packet.channels <= 0 || base_packet.channels > 8 ||
-                        (base_packet.bit_depth != 8 && base_packet.bit_depth != 16 && base_packet.bit_depth != 24 && base_packet.bit_depth != 32) ||
-                        base_packet.sample_rate <= 0 ||
-                        base_packet.audio_data.size() != CHUNK_SIZE_CONST_PPSR) {
-                        LOG_ERROR_PPSR("Parsed invalid format or payload size from packet. SR=" + std::to_string(base_packet.sample_rate) +
-                                      ", BD=" + std::to_string(base_packet.bit_depth) + ", CH=" + std::to_string(base_packet.channels) +
-                                      ", PayloadSize=" + std::to_string(base_packet.audio_data.size()));
-                        continue;
-                    }
-
-                    for (const auto& [instance_id, target] : instance_targets_copy) {
-                        if (target.queue) {
-                            TaggedAudioPacket packet_copy = base_packet;
-                            target.queue->push(std::move(packet_copy));
-                            LOG_PPSR("Pushed packet from " + composite_source_tag + " to queue for instance_id: " + instance_id);
-                        } else {
-                             LOG_ERROR_PPSR("Found null queue pointer for instance: " + instance_id);
-                        }
-                    }
+                if (timeshift_manager_) {
+                    timeshift_manager_->add_packet(std::move(packet));
                 } else {
-                    LOG_WARN_PPSR("No output targets registered for source_tag: " + composite_source_tag + ". Packet from " + sender_ip + " will be dropped.");
+                    LOG_ERROR_PPSR("TimeshiftManager is null. Cannot add packet.");
                 }
             } else {
                  std::string sender_ip_for_log = inet_ntoa(client_addr.sin_addr); // Already available as sender_ip

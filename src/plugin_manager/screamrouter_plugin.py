@@ -1,12 +1,13 @@
 """This holds the base class for plugins to extend"""
 
-import threading
 import os
+import threading
 # import select # No longer needed for pipe reading
 import time
 from ctypes import c_bool
 from subprocess import TimeoutExpired
-from typing import List, Any # Added Any for audio_manager_instance placeholder
+from typing import (Any,  # Added Any for audio_manager_instance placeholder
+                    List)
 
 from fastapi import FastAPI
 
@@ -14,11 +15,12 @@ import src.constants.constants as constants
 from src.screamrouter_logger.screamrouter_logger import get_logger
 from src.screamrouter_types.annotations import SinkNameType
 from src.screamrouter_types.configuration import SourceDescription
-from src.utils.utils import close_all_pipes, set_process_name # close_pipe no longer needed for plugin pipes
+from src.utils.utils import (  # close_pipe no longer needed for plugin pipes
+    close_all_pipes, set_process_name)
 
 # Attempt to import the C++ audio engine; this might fail if not compiled/installed
 try:
-    from screamrouter_audio_engine import AudioManager # type: ignore
+    from screamrouter_audio_engine import AudioManager  # type: ignore
 except ImportError:
     AudioManager = None
     get_logger(__name__).warning("Failed to import screamrouter_audio_engine. Plugin data writing will be non-functional.")

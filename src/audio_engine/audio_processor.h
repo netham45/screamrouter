@@ -6,14 +6,15 @@
 #include <thread>
 #include <atomic>
 #include <vector> // Added for std::vector
-// #include "samplerate.h" // Removed libsamplerate include
+#include <map>    // Added for std::map
+#include <mutex>  // Added for std::mutex
+#include "../configuration/audio_engine_config_types.h" // For CppSpeakerLayout
 
 // r8brain includes moved here, before class definition
 #include "r8brain-free-src/r8bconf.h"
 #include "r8brain-free-src/CDSPResampler.h"
 
-#define MAX_CHANNELS 8
-#define EQ_BANDS 18
+// MAX_CHANNELS and EQ_BANDS moved to audio_types.h
 #define CHUNK_SIZE 1152
 
 // struct SRC_STATE_tag; // No longer needed
@@ -23,14 +24,28 @@ class Biquad;
 
 class AudioProcessor {
 public:
-    AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, int inputSampleRate, int outputSampleRate, float volume);
+    AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, 
+                   int inputSampleRate, int outputSampleRate, float volume,
+                   const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config); // Changed to audio namespace
     ~AudioProcessor();
 
     int processAudio(const uint8_t* inputBuffer, int32_t* outputBuffer);
     void setVolume(float newVolume);
     void setEqualizer(const float* newEq);
+    
+    // --- Speaker Layout Configuration Method ---
+    void update_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& new_layouts_config); // Changed to audio namespace
 
-protected:
+    // --- Old Speaker Mix Methods (still used by select_active_speaker_mix) ---
+    void applyCustomSpeakerMix(const std::vector<std::vector<float>>& custom_matrix);
+    void calculateAndApplyAutoSpeakerMix();
+
+private: // Changed from protected to private for better encapsulation
+    // --- New Speaker Layouts Map ---
+    std::map<int, screamrouter::audio::CppSpeakerLayout> speaker_layouts_config_; // Changed to audio namespace
+    std::mutex speaker_layouts_config_mutex_; // To protect access to speaker_layouts_config_
+
+    // --- Core Audio Parameters ---
     int inputChannels, outputChannels;
     int inputSampleRate, outputSampleRate;
     int inputBitDepth;
@@ -68,7 +83,8 @@ protected:
     Biquad* filters[MAX_CHANNELS][EQ_BANDS];
     Biquad* dcFilters[MAX_CHANNELS];
 
-    void updateSpeakerMix();
+    // void updateSpeakerMix(); // This line will be removed or commented out if calculateAndApplyAutoSpeakerMix replaces it
+    // calculateAndApplyAutoSpeakerMix is now public
     void setupBiquad();
     void initializeSampler();
     void scaleBuffer();
@@ -94,6 +110,10 @@ protected:
     // Cache for isProcessingRequired result
     bool isProcessingRequiredCache = false;
     bool isProcessingRequiredCacheSet = false;
+
+    // --- Private Helper Methods ---
+    void select_active_speaker_mix(); 
+    void select_active_speaker_mix_locked(); // New private method, assumes lock is held
 };
 
 #endif // AUDIO_PROCESSOR_H

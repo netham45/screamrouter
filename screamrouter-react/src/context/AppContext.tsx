@@ -179,6 +179,11 @@ interface AppContextType {
    * @param name - The name of the item to navigate to.
    */
   navigateToItem: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string) => void;
+  /**
+   * Fetches all data (sources, sinks, routes) from the API and updates the state.
+   * Optional, as it might not be used by all components.
+   */
+  refreshAppContext?: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -701,7 +706,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       editItem,
       selectedItem,
       selectedItemType,
-      navigateToItem
+      navigateToItem,
+      refreshAppContext: fetchInitialData, // Provide fetchInitialData as refreshAppContext
     }}>
       {children}
     </AppContext.Provider>

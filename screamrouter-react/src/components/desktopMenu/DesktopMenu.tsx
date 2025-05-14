@@ -5,15 +5,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Flex, ButtonGroup, Button, Alert, AlertIcon, HStack } from '@chakra-ui/react';
 import ConfirmationDialog from '../dialogs/ConfirmationDialog';
-import ApiService from '../../api/api';
+import ApiService, { Source, Sink, Route } from '../../api/api'; // Ensure SpeakerLayout and item types are imported
 import { colorContextInstance } from './context/ColorContext';
 import { useAppContext } from '../../context/AppContext';
+// SpeakerLayoutPage is now opened in a new window, so direct import/use here is removed.
 import SourceList from './list/SourceList';
 import SinkList from './list/SinkList';
 import RouteList from './list/RouteList';
 import { getRecents } from '../../utils/recents';
 import { MenuLevel, DesktopMenuActions } from './types';
-import { Text, Heading } from '@chakra-ui/react';
+import { Heading } from '@chakra-ui/react'; // Removed Text
 import { createDesktopMenuActions } from './utils';
 
 /**
@@ -55,7 +56,7 @@ const DesktopMenu: React.FC = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteItemType, setDeleteItemType] = useState<'sources' | 'sinks' | 'routes' | null>(null);
   const [deleteItemName, setDeleteItemName] = useState<string | null>(null);
-  
+
   // Reference to content area for scrolling
   const contentRef = React.useRef<HTMLDivElement>(null);
   
@@ -172,7 +173,30 @@ const DesktopMenu: React.FC = () => {
     (name: string | null) => onListenToSink(name ? sinks.find(s => s.name === name) || null : null),
     (name: string | null) => onVisualizeSink(name ? sinks.find(s => s.name === name) || null : null),
     navigateToItem
-  ), [onToggleActiveSource, onTranscribeSink, onListenToSink, onVisualizeSink, sinks]);
+    // openDeleteDialog and showSpeakerLayoutPage will be assigned to actions object later
+  ), [onToggleActiveSource, onTranscribeSink, onListenToSink, onVisualizeSink, sinks, navigateToItem]);
+  
+  const showSpeakerLayoutPage = (type: 'sources' | 'sinks' | 'routes', item: Source | Sink | Route) => {
+    try {
+      const encodedName = encodeURIComponent(item.name);
+      const url = `/site/speaker-layout-standalone?type=${type}&name=${encodedName}`;
+      
+      const windowFeatures = 'width=650,height=750,menubar=no,toolbar=no,location=no,resizable=yes,scrollbars=yes,status=no';
+      const newWindow = window.open(url, '_blank', windowFeatures);
+
+      if (newWindow) {
+        newWindow.focus();
+      } else {
+        setError('Failed to open new window. Please check your browser pop-up blocker settings.');
+      }
+    } catch (e) {
+      console.error("Error opening speaker layout window:", e);
+      setError('Could not open speaker layout page. See console for details.');
+    }
+  };
+
+  // Add the actual showSpeakerLayoutPage to the actions object after its definition
+  actions.showSpeakerLayoutPage = showSpeakerLayoutPage;
   
   // Function to open the full interface
   const openFullInterface = () => {
@@ -383,6 +407,7 @@ const DesktopMenu: React.FC = () => {
   
   // Override the confirmDelete action with our local implementation
   actions.confirmDelete = openDeleteDialog;
+  // The showSpeakerLayoutPage is now correctly part of actions object above
   
   return (
     <Flex direction="column" height="950px" maxHeight="950px" justifyContent="flex-end" alignContent="flex-end">
@@ -394,6 +419,9 @@ const DesktopMenu: React.FC = () => {
         title="Delete Item"
         message={`Are you sure you want to delete ${deleteItemName}? This action cannot be undone.`}
       />
+
+      {/* Speaker Layout Page is now opened in a new window */}
+
       <Box
         onClick={handleDesktopMenuClick}
         style={{
