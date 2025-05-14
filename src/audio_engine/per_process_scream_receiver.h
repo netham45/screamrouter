@@ -41,9 +41,11 @@ namespace audio {
 #ifdef _WIN32
     using socket_t = SOCKET;
     // INVALID_SOCKET is defined in winsock2.h
-    // #define INVALID_SOCKET_VALUE_PPSR INVALID_SOCKET // Redundant
+    #define INVALID_SOCKET_VALUE_PPSR INVALID_SOCKET
+    #define INVALID_SOCKET_VALUE INVALID_SOCKET
 #else // POSIX
     using socket_t = int;
+    #define INVALID_SOCKET_VALUE INVALID_SOCKET
     #define INVALID_SOCKET_VALUE_PPSR -1 // Keep this for POSIX
 #endif
 
