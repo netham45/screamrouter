@@ -28,6 +28,24 @@ BuildRequires:  glibc-headers
 BuildRequires:  pkgconfig
 %define debug_package %{nil}
 
+# Custom __os_install_post to prevent stripping of Windows DLLs/LIBs
+# Moves the r8brain-free-src/DLL directory temporarily, runs standard brp scripts, then moves it back.
+%global __os_install_post \
+  mkdir -p %{buildroot}/.tmp_nostrip_files/DLL_parent && \
+  (mv %{buildroot}%{_datadir}/%{name}/src/audio_engine/r8brain-free-src/DLL %{buildroot}/.tmp_nostrip_files/DLL_parent/DLL 2>/dev/null || echo "Info: r8brain DLLs not found at %{buildroot}%{_datadir}/%{name}/src/audio_engine/r8brain-free-src/DLL, or already moved. Skipping pre-strip move.") && \
+  \
+  %{_rpmconfigdir}/brp-compress && \
+  %{_rpmconfigdir}/brp-strip %{__strip} && \
+  %{_rpmconfigdir}/brp-strip-comment-note %{__strip} %{__strip_ld} && \
+  %{_rpmconfigdir}/brp-strip-static-archive %{__strip} && \
+  \
+  (mkdir -p %{buildroot}%{_datadir}/%{name}/src/audio_engine/r8brain-free-src && \
+  mv %{buildroot}/.tmp_nostrip_files/DLL_parent/DLL %{buildroot}%{_datadir}/%{name}/src/audio_engine/r8brain-free-src/DLL 2>/dev/null || echo "Info: Failed to move r8brain DLLs back from temp location, or target already exists.") && \
+  rm -rf %{buildroot}/.tmp_nostrip_files && \
+  \
+  %{_rpmconfigdir}/brp-python-bytecompile "" 1 && \
+  %{_rpmconfigdir}/brp-python-hardlink
+
 Requires:       python3
 Requires:       python3-pip
 Requires:       python3-virtualenv
