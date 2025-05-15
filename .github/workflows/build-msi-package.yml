@@ -212,14 +212,14 @@ jobs:
       - name: Compile WiX Project (candle.exe)
         shell: cmd
         run: |
-          candle.exe -ext WixUtilExtension -arch x64 ScreamRouter.wxs AppComponents.wxs PythonRuntimeComponents.wxs PythonEmbedComponents.wxs
+          candle.exe -ext WixUtilExtension -ext WixUIExtension -arch x64 ScreamRouter.wxs AppComponents.wxs PythonRuntimeComponents.wxs PythonEmbedComponents.wxs
           echo WiX project compiled.
 
       - name: Link WiX Project (light.exe)
         shell: pwsh
         run: |
           $msiName = "screamrouter-${{ env.APP_VERSION }}-win-x64.msi"
-          light.exe -ext WixUtilExtension -out $msiName ScreamRouter.wixobj AppComponents.wixobj PythonRuntimeComponents.wixobj PythonEmbedComponents.wixobj -pdbout ScreamRouter.wixpdb
+          light.exe -ext WixUtilExtension -ext WixUIExtension -out $msiName ScreamRouter.wixobj AppComponents.wixobj PythonRuntimeComponents.wixobj PythonEmbedComponents.wixobj -pdbout ScreamRouter.wixpdb
           echo "MSI_NAME=$msiName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "MSI linked: $msiName"
 
