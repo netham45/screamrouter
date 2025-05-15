@@ -95,6 +95,7 @@ jobs:
       - name: Copy React Frontend to Staging
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force -Path "${{ env.STAGING_PATH }}\site"
           Copy-Item -Path ./site/* -Destination "${{ env.STAGING_PATH }}\site" -Recurse -Force
           Write-Host "React frontend copied to staging."
 
