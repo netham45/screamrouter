@@ -95,7 +95,7 @@ jobs:
       - name: Copy React Frontend to Staging
         shell: pwsh
         run: |
-          Copy-Item -Path ./screamrouter-react/build/* -Destination "${{ env.STAGING_PATH }}\site" -Recurse -Force
+          Copy-Item -Path ./site/* -Destination "${{ env.STAGING_PATH }}\site" -Recurse -Force
           Write-Host "React frontend copied to staging."
 
       - name: Copy Other Application Files to Staging
