@@ -16,7 +16,7 @@
     <xsl:template match="wix:Directory[@Name='__pycache__']"/>
 
     <!-- Remove all Component elements whose File child has a Source ending with .pyc inside a __pycache__ directory -->
-    <xsl:template match="wix:Component[contains(wix:File/@Source, '__pycache__') and ends-with(wix:File/@Source, '.pyc')]"/>
+    <xsl:template match="wix:Component[contains(wix:File/@Source, '__pycache__') and substring(wix:File/@Source, string-length(wix:File/@Source) - string-length('.pyc') + 1) = '.pyc']"/>
 
     <!-- Remove specific .dist-info files that might cause issues or are not needed -->
     <xsl:template match="wix:Component[wix:File/@Name='INSTALLER' and contains(wix:File/@Source, '.dist-info')]" />
