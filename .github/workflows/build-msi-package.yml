@@ -204,10 +204,10 @@ jobs:
       - name: Harvest Application Files with WiX heat.exe
         shell: pwsh
         run: |
-          heat.exe dir "${{ env.STAGING_PATH }}/app" -dr APPDIR -cg AppComponents -gg -sreg -scom -sfrag -out AppComponents.wxs
-          heat.exe dir "${{ env.STAGING_PATH }}/python_runtime" -dr PYTHON_RUNTIME_DIR -cg PythonRuntimeComponents -gg -sreg -scom -sfrag -out PythonRuntimeComponents.wxs
-          heat.exe dir "${{ env.STAGING_PATH }}/python_embed" -dr PYTHON_EMBED_DIR -cg PythonEmbedComponents -gg -sreg -scom -sfrag -out PythonEmbedComponents.wxs
-          Write-Host "WiX fragment files generated."
+          heat.exe dir "${{ env.STAGING_PATH }}/app" -dr APPDIR -cg AppComponents -gg -sreg -scom -sfrag -t HeatFilter.xsl -out AppComponents.wxs
+          heat.exe dir "${{ env.STAGING_PATH }}/python_runtime" -dr PYTHON_RUNTIME_DIR -cg PythonRuntimeComponents -gg -sreg -scom -sfrag -t HeatFilter.xsl -out PythonRuntimeComponents.wxs
+          heat.exe dir "${{ env.STAGING_PATH }}/python_embed" -dr PYTHON_EMBED_DIR -cg PythonEmbedComponents -gg -sreg -scom -sfrag -t HeatFilter.xsl -out PythonEmbedComponents.wxs
+          Write-Host "WiX fragment files generated with filtering."
 
       - name: Compile WiX Project (candle.exe)
         shell: cmd
