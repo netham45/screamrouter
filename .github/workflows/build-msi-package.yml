@@ -35,13 +35,18 @@ jobs:
         id: get_version
         shell: pwsh
         run: |
+          $rawVersion = ""
           if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
-            $versionValue = "${{ github.ref }}".Substring("refs/tags/v".Length)
+            $rawVersion = "${{ github.ref }}".Substring("refs/tags/v".Length) # e.g., 1.2.3
+            $wixVersion = "$rawVersion.0" # WiX needs 4 segments, e.g., 1.2.3.0
           } else {
-            $versionValue = "0.0.0-${{ env.SHORT_SHA }}"
+            $rawVersion = "0.0.0-${{ env.SHORT_SHA }}"
+            $wixVersion = "0.0.0.0" # Default for non-tag builds
           }
-          echo "APP_VERSION=$versionValue" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Application version set to: $versionValue"
+          echo "APP_VERSION=$rawVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "WIX_APP_VERSION=$wixVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Raw Application version set to: $rawVersion"
+          Write-Host "WiX Application version set to: $wixVersion"
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
@@ -125,15 +130,24 @@ jobs:
       - name: Create WiX Project File (ScreamRouter.wxs)
         shell: pwsh
         run: |
+          $productGuid = (New-Guid).Guid
+          $shortcutGuid = (New-Guid).Guid
+          # TODO: Update Manufacturer to your actual company/developer name if "ScreamRouter Project" is not suitable.
+          $manufacturer = "ScreamRouter Project"
+
+          Write-Host "Using Product UpgradeCode: $productGuid"
+          Write-Host "Using Shortcut Component Guid: $shortcutGuid"
+          Write-Host "Using Manufacturer: $manufacturer"
+          Write-Host "Using WiX Version: ${{ env.WIX_APP_VERSION }}"
+          Write-Host "Using Display Name Version: ${{ env.APP_VERSION }}"
+
           $wxsContent = @"
           <?xml version='1.0' encoding='UTF-8'?>
           <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'
                xmlns:util='http://schemas.microsoft.com/wix/UtilExtension'>
 
-            <!-- TODO: Replace YOUR-GUID-HERE-PRODUCT with a new persistent GUID (e.g., New-Guid | Select-Object -ExpandProperty Guid) -->
-            <!-- TODO: Update Manufacturer to your actual company/developer name -->
-            <Product Id='*' Name='ScreamRouter ${{ env.APP_VERSION }}' Language='1033' Version='${{ env.APP_VERSION }}'
-                     Manufacturer='Your Company Name' UpgradeCode='YOUR-GUID-HERE-PRODUCT'>
+            <Product Id='*' Name='ScreamRouter ${{ env.APP_VERSION }}' Language='1033' Version='${{ env.WIX_APP_VERSION }}'
+                     Manufacturer='$manufacturer' UpgradeCode='$productGuid'>
 
               <Package InstallerVersion='301' Compressed='yes' InstallScope='perUser' Platform='x64' />
               <MediaTemplate EmbedCab='yes' />
@@ -177,8 +191,7 @@ jobs:
               </ComponentGroup>
 
               <DirectoryRef Id="ApplicationProgramsFolder">
-                <!-- TODO: Replace YOUR-GUID-HERE-SHORTCUTS with a new persistent GUID -->
-                <Component Id="ApplicationShortcuts" Guid="YOUR-GUID-HERE-SHORTCUTS">
+                <Component Id="ApplicationShortcuts" Guid="$shortcutGuid">
                   <Shortcut Id="ApplicationStartMenuShortcut"
                             Name="ScreamRouter"
                             Description="Launch ScreamRouter"
@@ -186,7 +199,7 @@ jobs:
                             Arguments="[APPDIR]screamrouter.py"
                             WorkingDirectory="APPDIR"/>
                   <RemoveFolder Id="CleanupApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall"/>
-                  <RegistryValue Root="HKCU" Key="Software\YourCompany\ScreamRouter" Name="installed" Type="integer" Value="1" KeyPath="yes"/>
+                  <RegistryValue Root="HKCU" Key="Software\$manufacturer\ScreamRouter" Name="installed" Type="integer" Value="1" KeyPath="yes"/>
                 </Component>
               </DirectoryRef>
 
