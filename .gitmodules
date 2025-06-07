@@ -7,3 +7,12 @@
 [submodule "src/audio_engine/r8brain-free-src"]
 	path = src/audio_engine/r8brain-free-src
 	url = https://github.com/avaneev/r8brain-free-src
+[submodule "src/audio_engine/libdatachannel"]
+	path = src/audio_engine/libdatachannel
+	url = https://github.com/paullouisageneau/libdatachannel
+[submodule "src/audio_engine/ortp"]
+	path = src/audio_engine/ortp
+	url = https://github.com/BelledonneCommunications/ortp
+[submodule "src/audio_engine/bcunit"]
+	path = src/audio_engine/bcunit
+	url = https://github.com/BelledonneCommunications/bcunit

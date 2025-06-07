@@ -6,11 +6,13 @@
 // audio_types.h is included by audio_manager.h
 #include "audio_engine_config_types.h" // Include new config types
 #include "audio_engine_config_applier.h" // Include the applier class header
+#include "cpp_logger.h" // For C++ logging
 
 namespace py = pybind11;
 // Import the C++ namespaces to shorten type names
 using namespace screamrouter::audio;
 // using namespace screamrouter::config; // Add config namespace - Removed for explicit qualification
+using namespace screamrouter::audio::logging; // For LogLevel
 
 // Define the Python module using the PYBIND11_MODULE macro
 // The first argument is the name of the Python module as it will be imported (e.g., `import screamrouter_audio_engine`)
@@ -38,7 +40,6 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
 
     py::class_<SinkConfig>(m, "SinkConfig", "Configuration for an audio sink")
         .def(py::init<>()) // Bind the default constructor
-        // Bind member variables as read-write properties
         .def_readwrite("id", &SinkConfig::id, "Unique identifier for this sink instance")
         .def_readwrite("output_ip", &SinkConfig::output_ip, "Destination IP address for UDP output")
         .def_readwrite("output_port", &SinkConfig::output_port, "Destination port for UDP output")
@@ -263,9 +264,39 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
              "Constructor, takes an AudioManager instance")
         
         .def("apply_state", &screamrouter::config::AudioEngineConfigApplier::apply_state,
-             py::arg("desired_state"), 
+             py::arg("desired_state"),
              "Applies the provided DesiredEngineState to the AudioManager, returns true on success (basic check).");
 
+    // --- Bind C++ Logger ---
+    py::enum_<LogLevel>(m, "LogLevel_CPP") // Suffix with _CPP to avoid potential name clash if Python has LogLevel
+        .value("DEBUG", LogLevel::DEBUG)
+        .value("INFO", LogLevel::INFO)
+        .value("WARNING", LogLevel::WARNING)
+        .value("ERROR", LogLevel::ERROR)
+        .export_values();
+
+    // m.def("set_cpp_log_callback", ...); // Removed old callback registration
+
+    m.def("get_cpp_log_messages", [](int timeout_ms) {
+        std::vector<std::tuple<screamrouter::audio::logging::LogLevel, std::string, std::string, int>> entries_tuples;
+        std::vector<screamrouter::audio::logging::LogEntry> cpp_entries;
+            
+        // Release GIL while C++ function blocks
+        {
+            py::gil_scoped_release release_gil; // Release GIL
+            cpp_entries = screamrouter::audio::logging::retrieve_log_entries(timeout_ms);
+            // GIL is re-acquired automatically when release_gil goes out of scope
+        }
+
+        for (const auto& entry : cpp_entries) {
+            entries_tuples.emplace_back(entry.level, entry.message, entry.filename, entry.line_number);
+        }
+        return entries_tuples; // pybind11 converts this to Python list of tuples
+    }, py::arg("timeout_ms") = 100, // Default timeout if Python doesn't specify
+       "Retrieves buffered C++ log messages, blocking until messages are available or timeout occurs (in ms). Returns a list of (level, message, filename, line) tuples.");
+
+    m.def("shutdown_cpp_logger", &screamrouter::audio::logging::shutdown_cpp_logger,
+          "Signals the C++ logger to prepare for shutdown, unblocking any waiting log retrieval calls.");
 
     // Define constants if needed (e.g., EQ_BANDS)
     m.attr("EQ_BANDS") = py::int_(EQ_BANDS); // Ensure EQ_BANDS is accessible (likely via audio_processor.h included in audio_types.h)

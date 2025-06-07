@@ -1,7 +1,8 @@
 #include "network_audio_receiver.h"
 #include "timeshift_manager.h" // Ensure full definition is available
 #include "thread_safe_queue.h" // For full definition of ThreadSafeQueue
-#include <iostream>      // For logging
+#include "cpp_logger.h"       // For new C++ logger
+#include <iostream>      // For logging (cpp_logger fallback)
 #include <vector>
 #include <cstring>       // For memset
 #include <stdexcept>     // For runtime_error
@@ -76,15 +77,15 @@ void NetworkAudioReceiver::decrement_winsock_users() {
 #endif
 
 void NetworkAudioReceiver::log_message(const std::string& msg) {
-    std::cout << logger_prefix_ << " " << msg << std::endl;
+    LOG_CPP_INFO("%s %s", logger_prefix_.c_str(), msg.c_str());
 }
 
 void NetworkAudioReceiver::log_error(const std::string& msg) {
-    std::cerr << logger_prefix_ << " Error: " << msg << " (errno: " << NAR_GET_LAST_SOCK_ERROR << ")" << std::endl;
+    LOG_CPP_ERROR("%s Error: %s (errno: %d)", logger_prefix_.c_str(), msg.c_str(), NAR_GET_LAST_SOCK_ERROR);
 }
 
 void NetworkAudioReceiver::log_warning(const std::string& msg) {
-    std::cout << logger_prefix_ << " Warn: " << msg << std::endl;
+    LOG_CPP_WARNING("%s Warn: %s", logger_prefix_.c_str(), msg.c_str());
 }
 
 bool NetworkAudioReceiver::setup_socket() {

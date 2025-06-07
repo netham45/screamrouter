@@ -1,5 +1,6 @@
 #include "source_input_processor.h"
-#include <iostream> // For logging
+#include "cpp_logger.h" // For new C++ logger
+#include <iostream> // For logging (cpp_logger fallback)
 #include <stdexcept>
 #include <cstring> // For memcpy
 #include <algorithm> // For std::min, std::max
@@ -18,17 +19,8 @@ namespace screamrouter { namespace audio { using namespace utils; } }
 using namespace screamrouter::audio;
 using namespace screamrouter::utils;
  
-// Simple logger helper (replace with a proper logger if available)
-// Updated logger macros to use instance_id from config_
-#define LOG(msg) std::cout << "[SourceProc:" << config_.instance_id << "] " << msg << std::endl
-//#define LOG_ERROR(msg) std::cerr << "[SourceProc Error:" << config_.instance_id << "] " << msg << std::endl
-//#define LOG_WARN(msg) std::cout << "[SourceProc Warn:" << config_.instance_id << "] " << msg << std::endl // Added WARN
-//#define LOG_DEBUG(msg) std::cout << "[SourceProc Debug:" << config_.instance_id << "] " << msg << std::endl // For verbose logging
-
-//#define LOG(msg) // Disable standard logs
-#define LOG_ERROR(msg) // Disable error logs
-#define LOG_WARN(msg) // Disable warn logs
-#define LOG_DEBUG(msg) // Disable debug logs
+// Old logger macros are removed. New macros (LOG_CPP_INFO, etc.) are in cpp_logger.h
+// The instance_id from config_ will be manually prepended in the new log calls.
 
 // Define how often to cleanup the timeshift buffer (e.g., every second)
 const std::chrono::milliseconds TIMESIFT_CLEANUP_INTERVAL(1000);
@@ -63,42 +55,42 @@ SourceInputProcessor::SourceInputProcessor(
     // For now, it starts empty.
 
     // Use the new LOG macro which includes instance_id
-    LOG("Initializing...");
+    LOG_CPP_INFO("[SourceProc:%s] Initializing...", config_.instance_id.c_str());
     if (!input_queue_ || !output_queue_ || !command_queue_) {
         // Log before throwing
-        LOG_ERROR("Initialization failed: Requires valid input, output, and command queues.");
+        LOG_CPP_ERROR("[SourceProc:%s] Initialization failed: Requires valid input, output, and command queues.", config_.instance_id.c_str());
         throw std::runtime_error("SourceInputProcessor requires valid input, output, and command queues.");
     }
     // Ensure EQ vector has the correct size if provided, otherwise initialize default
     if (current_eq_.size() != EQ_BANDS) {
-        LOG("Warning: Initial EQ size mismatch (" + std::to_string(current_eq_.size()) + " vs " + std::to_string(EQ_BANDS) + "). Resetting to default (flat).");
+        LOG_CPP_WARNING("[SourceProc:%s] Initial EQ size mismatch (%zu vs %d). Resetting to default (flat).", config_.instance_id.c_str(), current_eq_.size(), EQ_BANDS);
         current_eq_.assign(EQ_BANDS, 1.0f);
         config_.initial_eq = current_eq_; // Update config_ member
     }
 
     // initialize_audio_processor(); // Removed
     audio_processor_ = nullptr; // Set audio_processor_ to nullptr initially
-    LOG("Initialization complete.");
+    LOG_CPP_INFO("[SourceProc:%s] Initialization complete.", config_.instance_id.c_str());
 }
 
 SourceInputProcessor::~SourceInputProcessor() {
-    LOG("Destroying...");
+    LOG_CPP_INFO("[SourceProc:%s] Destroying...", config_.instance_id.c_str());
     if (!stop_flag_) {
-        LOG("Destructor called while still running. Stopping...");
+        LOG_CPP_INFO("[SourceProc:%s] Destructor called while still running. Stopping...", config_.instance_id.c_str());
         stop(); // Ensure stop logic is triggered if not already stopped
     }
     // Join input_thread_ here (output_thread_ is removed)
     if (input_thread_.joinable()) {
-        LOG("Joining input thread in destructor...");
+        LOG_CPP_INFO("[SourceProc:%s] Joining input thread in destructor...", config_.instance_id.c_str());
         try {
             input_thread_.join();
-            LOG("Input thread joined.");
+            LOG_CPP_INFO("[SourceProc:%s] Input thread joined.", config_.instance_id.c_str());
         } catch (const std::system_error& e) {
-            LOG_ERROR("Error joining input thread in destructor: " + std::string(e.what()));
+            LOG_CPP_ERROR("[SourceProc:%s] Error joining input thread in destructor: %s", config_.instance_id.c_str(), e.what());
         }
     }
     // timeshift_condition_ is removed, so no notification cleanup needed.
-    LOG("Destructor finished.");
+    LOG_CPP_INFO("[SourceProc:%s] Destructor finished.", config_.instance_id.c_str());
 }
 
 // --- Getters ---
@@ -118,13 +110,13 @@ const std::string& SourceInputProcessor::get_source_tag() const {
 void SourceInputProcessor::set_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map) { // Changed to audio namespace
     std::lock_guard<std::mutex> lock(speaker_layouts_mutex_); // Protect map access
     current_speaker_layouts_map_ = layouts_map;
-    LOG_DEBUG("Received " + std::to_string(layouts_map.size()) + " speaker layouts.");
+    LOG_CPP_DEBUG("[SourceProc:%s] Received %zu speaker layouts.", config_.instance_id.c_str(), layouts_map.size());
 
     std::lock_guard<std::mutex> ap_lock(audio_processor_mutex_); // Protect audio_processor_ access
     if (audio_processor_) {
         // AudioProcessor needs a method to accept this map (will be added in Task 17.11)
         audio_processor_->update_speaker_layouts_config(current_speaker_layouts_map_);
-        LOG_DEBUG("Updated AudioProcessor with new speaker layouts.");
+        LOG_CPP_DEBUG("[SourceProc:%s] Updated AudioProcessor with new speaker layouts.", config_.instance_id.c_str());
     }
 }
 
@@ -132,10 +124,10 @@ void SourceInputProcessor::set_speaker_layouts_config(const std::map<int, scream
 
 void SourceInputProcessor::start() {
      if (is_running()) {
-        LOG("Already running.");
+        LOG_CPP_INFO("[SourceProc:%s] Already running.", config_.instance_id.c_str());
         return;
     }
-    LOG("Starting...");
+    LOG_CPP_INFO("[SourceProc:%s] Starting...", config_.instance_id.c_str());
     // Reset state specific to this component
     // timeshift_buffer_read_idx_ = 0; // Removed
     process_buffer_.clear();
@@ -145,9 +137,9 @@ void SourceInputProcessor::start() {
         // Only launch the main component thread here.
         // run() will launch the worker threads.
         component_thread_ = std::thread(&SourceInputProcessor::run, this);
-        LOG("Component thread launched (will start workers).");
+        LOG_CPP_INFO("[SourceProc:%s] Component thread launched (will start workers).", config_.instance_id.c_str());
     } catch (const std::system_error& e) {
-        LOG_ERROR("Failed to start component thread: " + std::string(e.what()));
+        LOG_CPP_ERROR("[SourceProc:%s] Failed to start component thread: %s", config_.instance_id.c_str(), e.what());
         stop_flag_ = true; // Ensure stopped state if launch fails
         // timeshift_condition_ is removed
         if(input_queue_) input_queue_->stop(); // Ensure queues are stopped
@@ -160,10 +152,10 @@ void SourceInputProcessor::start() {
 
 void SourceInputProcessor::stop() {
     if (stop_flag_) {
-        LOG("Already stopped or stopping.");
+        LOG_CPP_INFO("[SourceProc:%s] Already stopped or stopping.", config_.instance_id.c_str());
         return;
     }
-    LOG("Stopping...");
+    LOG_CPP_INFO("[SourceProc:%s] Stopping...", config_.instance_id.c_str());
 
     // Set the stop flag FIRST (used by loops)
     stop_flag_ = true; // Set the atomic flag
@@ -177,12 +169,12 @@ void SourceInputProcessor::stop() {
     if (component_thread_.joinable()) {
         try {
             component_thread_.join();
-            LOG("Component thread joined.");
+            LOG_CPP_INFO("[SourceProc:%s] Component thread joined.", config_.instance_id.c_str());
         } catch (const std::system_error& e) {
-            LOG_ERROR("Error joining component thread: " + std::string(e.what()));
+            LOG_CPP_ERROR("[SourceProc:%s] Error joining component thread: %s", config_.instance_id.c_str(), e.what());
         }
     } else {
-         LOG("Component thread was not joinable in stop().");
+         LOG_CPP_INFO("[SourceProc:%s] Component thread was not joinable in stop().", config_.instance_id.c_str());
     }
     // Joining of input/output threads happens in run() or destructor.
 }
@@ -192,7 +184,7 @@ void SourceInputProcessor::process_commands() {
     ControlCommand cmd;
     // Use try_pop for non-blocking check. Loop while queue is valid and not stopped.
     while (command_queue_ && !command_queue_->is_stopped() && command_queue_->try_pop(cmd)) {
-        LOG_DEBUG("Processing command: " + std::to_string(static_cast<int>(cmd.type)));
+        LOG_CPP_DEBUG("[SourceProc:%s] Processing command: %d", config_.instance_id.c_str(), static_cast<int>(cmd.type));
         bool needs_processor_settings_update = false; // Renamed for clarity
         // bool needs_timeshift_update = false; // Removed
 
@@ -210,20 +202,20 @@ void SourceInputProcessor::process_commands() {
                         current_eq_ = cmd.eq_values;
                         needs_processor_settings_update = true;
                     } else {
-                        LOG_ERROR("Invalid EQ size in command: " + std::to_string(cmd.eq_values.size()));
+                        LOG_CPP_ERROR("[SourceProc:%s] Invalid EQ size in command: %zu", config_.instance_id.c_str(), cmd.eq_values.size());
                     }
                     break;
                 case CommandType::SET_DELAY:
                     current_delay_ms_ = cmd.int_value;
                     // Notify AudioManager to update TimeshiftManager
                     // This requires a callback or similar mechanism to AudioManager, not implemented here.
-                    LOG_DEBUG("SET_DELAY command processed. New delay: " + std::to_string(current_delay_ms_) + "ms. AudioManager should be notified.");
+                    LOG_CPP_DEBUG("[SourceProc:%s] SET_DELAY command processed. New delay: %dms. AudioManager should be notified.", config_.instance_id.c_str(), current_delay_ms_);
                     // needs_timeshift_update = true; // Removed
                     break;
                 case CommandType::SET_TIMESHIFT:
                     current_timeshift_backshift_sec_config_ = cmd.float_value;
                     // Notify AudioManager to update TimeshiftManager
-                    LOG_DEBUG("SET_TIMESHIFT command processed. New timeshift: " + std::to_string(current_timeshift_backshift_sec_config_) + "s. AudioManager should be notified.");
+                    LOG_CPP_DEBUG("[SourceProc:%s] SET_TIMESHIFT command processed. New timeshift: %.2fs. AudioManager should be notified.", config_.instance_id.c_str(), current_timeshift_backshift_sec_config_);
                     // needs_timeshift_update = true; // Removed
                     break;
                 // --- New Case for SET_SPEAKER_MIX ---
@@ -235,16 +227,16 @@ void SourceInputProcessor::process_commands() {
                     { // New scope for layout_lock
                         std::lock_guard<std::mutex> layout_lock(speaker_layouts_mutex_);
                         current_speaker_layouts_map_[cmd.input_channel_key] = cmd.speaker_layout_for_key;
-                        LOG_DEBUG("SET_SPEAKER_MIX command processed for key: " + std::to_string(cmd.input_channel_key) +
-                                  ". Auto mode: " + std::string(cmd.speaker_layout_for_key.auto_mode ? "true" : "false"));
+                        LOG_CPP_DEBUG("[SourceProc:%s] SET_SPEAKER_MIX command processed for key: %d. Auto mode: %s",
+                                      config_.instance_id.c_str(), cmd.input_channel_key, (cmd.speaker_layout_for_key.auto_mode ? "true" : "false"));
                     } // layout_lock released
                     // Signal that audio_processor_ needs its entire map updated
                     // This will be handled by needs_processor_settings_update logic below,
                     // which will call audio_processor_->update_speaker_layouts_config()
-                    needs_processor_settings_update = true; 
+                    needs_processor_settings_update = true;
                     break;
                 default:
-                    LOG_ERROR("Unknown command type received.");
+                    LOG_CPP_ERROR("[SourceProc:%s] Unknown command type received.", config_.instance_id.c_str());
                     break;
             }
         } // audio_processor_mutex_ released here
@@ -252,16 +244,16 @@ void SourceInputProcessor::process_commands() {
         if (needs_processor_settings_update) {
              std::lock_guard<std::mutex> lock(audio_processor_mutex_);
              if (audio_processor_) {
-                 LOG_DEBUG("Applying processor update for command: " + std::to_string(static_cast<int>(cmd.type)));
+                 LOG_CPP_DEBUG("[SourceProc:%s] Applying processor update for command: %d", config_.instance_id.c_str(), static_cast<int>(cmd.type));
                  if (cmd.type == CommandType::SET_VOLUME) {
                      audio_processor_->setVolume(current_volume_);
                  } else if (cmd.type == CommandType::SET_EQ) {
                      if (current_eq_.size() == EQ_BANDS) {
                          audio_processor_->setEqualizer(current_eq_.data());
                      } else {
-                          LOG_ERROR("EQ data size mismatch during apply. Skipping EQ update.");
+                          LOG_CPP_ERROR("[SourceProc:%s] EQ data size mismatch during apply. Skipping EQ update.", config_.instance_id.c_str());
                      }
-                 } 
+                 }
                  // For SET_SPEAKER_MIX, we update the entire map on the AudioProcessor
                  // This is because the command modified one entry in our local map,
                  // and AudioProcessor needs the full context.
@@ -269,10 +261,10 @@ void SourceInputProcessor::process_commands() {
                  if (cmd.type == CommandType::SET_SPEAKER_MIX) { // Could also be part of a general update
                     std::lock_guard<std::mutex> layout_lock(speaker_layouts_mutex_); // Lock for reading current_speaker_layouts_map_
                     audio_processor_->update_speaker_layouts_config(current_speaker_layouts_map_);
-                    LOG_DEBUG("Applied updated speaker_layouts_map to AudioProcessor due to SET_SPEAKER_MIX command.");
+                    LOG_CPP_DEBUG("[SourceProc:%s] Applied updated speaker_layouts_map to AudioProcessor due to SET_SPEAKER_MIX command.", config_.instance_id.c_str());
                  }
              } else {
-                  LOG_WARN("Command received but AudioProcessor is null. Cannot apply processor update.");
+                  LOG_CPP_WARNING("[SourceProc:%s] Command received but AudioProcessor is null. Cannot apply processor update.", config_.instance_id.c_str());
              }
         }
         // timeshift_condition_.notify_one(); // Removed
@@ -283,26 +275,26 @@ void SourceInputProcessor::process_commands() {
 
 void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input_chunk_data) {
     if (!audio_processor_) {
-        LOG_ERROR("AudioProcessor not initialized. Cannot process chunk.");
+        LOG_CPP_ERROR("[SourceProc:%s] AudioProcessor not initialized. Cannot process chunk.", config_.instance_id.c_str());
         return;
     }
     size_t input_bytes = input_chunk_data.size();
-    LOG_DEBUG("ProcessAudio: Processing chunk. Input Size=" + std::to_string(input_bytes) + " bytes. Expected=" + std::to_string(CHUNK_SIZE) + " bytes.");
+    LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Processing chunk. Input Size=%zu bytes. Expected=%zu bytes.", config_.instance_id.c_str(), input_bytes, static_cast<size_t>(CHUNK_SIZE));
     if (input_bytes != CHUNK_SIZE) { // Use constant CHUNK_SIZE
-         LOG_ERROR("process_audio_chunk called with incorrect data size: " + std::to_string(input_bytes) + ". Skipping processing.");
+         LOG_CPP_ERROR("[SourceProc:%s] process_audio_chunk called with incorrect data size: %zu. Skipping processing.", config_.instance_id.c_str(), input_bytes);
          return;
     }
     
     // Allocate a temporary output buffer large enough to hold the maximum possible output
     // from AudioProcessor::processAudio. Match the size of AudioProcessor's internal processed_buffer.
     // Size = CHUNK_SIZE * MAX_CHANNELS * 4 = 1152 * 8 * 4 = 36864 samples
-    std::vector<int32_t> processor_output_buffer(CHUNK_SIZE * MAX_CHANNELS * 4); 
+    std::vector<int32_t> processor_output_buffer(CHUNK_SIZE * MAX_CHANNELS * 4);
 
     int actual_samples_processed = 0; // Renamed variable for clarity
     { // Lock mutex for accessing AudioProcessor
         std::lock_guard<std::mutex> lock(audio_processor_mutex_);
         if (!audio_processor_) {
-             LOG_ERROR("AudioProcessor is null during process_audio_chunk call.");
+             LOG_CPP_ERROR("[SourceProc:%s] AudioProcessor is null during process_audio_chunk call.", config_.instance_id.c_str());
              return; // Cannot proceed without a valid processor
         }
         // Pass the data pointer and size (CHUNK_SIZE)
@@ -320,18 +312,18 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
                                    processor_output_buffer.begin(),
                                    processor_output_buffer.begin() + samples_to_insert);
         } catch (const std::bad_alloc& e) {
-             LOG_ERROR("Failed to insert into process_buffer_: " + std::string(e.what()));
+             LOG_CPP_ERROR("[SourceProc:%s] Failed to insert into process_buffer_: %s", config_.instance_id.c_str(), e.what());
              // Handle allocation failure, maybe clear buffer or stop processing?
              process_buffer_.clear(); // Example: clear buffer to prevent further issues
              return;
         }
-        LOG_DEBUG("ProcessAudio: Appended " + std::to_string(samples_to_insert) + " samples. process_buffer_ size=" + std::to_string(process_buffer_.size()) + " samples.");
+        LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Appended %zu samples. process_buffer_ size=%zu samples.", config_.instance_id.c_str(), samples_to_insert, process_buffer_.size());
     } else if (actual_samples_processed < 0) {
          // processAudio returned an error code (e.g., -1)
-         LOG_ERROR("AudioProcessor::processAudio returned an error code: " + std::to_string(actual_samples_processed));
+         LOG_CPP_ERROR("[SourceProc:%s] AudioProcessor::processAudio returned an error code: %d", config_.instance_id.c_str(), actual_samples_processed);
     } else {
          // processAudio returned 0 samples (e.g., no data processed or output buffer was null)
-         LOG_DEBUG("ProcessAudio: AudioProcessor returned 0 samples.");
+         LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: AudioProcessor returned 0 samples.", config_.instance_id.c_str());
     }
 }
 
@@ -340,7 +332,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
     size_t required_samples = OUTPUT_CHUNK_SAMPLES; // Should be 576 for 16-bit stereo sink target
     size_t current_buffer_size = process_buffer_.size();
 
-    LOG_DEBUG("PushOutput: Checking buffer. Current=" + std::to_string(current_buffer_size) + " samples. Required=" + std::to_string(required_samples) + " samples.");
+    LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Checking buffer. Current=%zu samples. Required=%zu samples.", config_.instance_id.c_str(), current_buffer_size, required_samples);
 
     while (output_queue_ && current_buffer_size >= required_samples) { // Check queue pointer
         ProcessedAudioChunk output_chunk;
@@ -349,9 +341,9 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          size_t pushed_samples = output_chunk.audio_data.size();
 
          // Push to the output queue
-         LOG_DEBUG("PushOutput: Pushing chunk with " + std::to_string(pushed_samples) + " samples (Expected=" + std::to_string(required_samples) + ") to Sink queue.");
+         LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Pushing chunk with %zu samples (Expected=%zu) to Sink queue.", config_.instance_id.c_str(), pushed_samples, required_samples);
          if (pushed_samples != required_samples) {
-             LOG_ERROR("PushOutput: Mismatch between pushed samples (" + std::to_string(pushed_samples) + ") and required samples (" + std::to_string(required_samples) + ").");
+             LOG_CPP_ERROR("[SourceProc:%s] PushOutput: Mismatch between pushed samples (%zu) and required samples (%zu).", config_.instance_id.c_str(), pushed_samples, required_samples);
          }
          output_queue_->push(std::move(output_chunk));
 
@@ -359,18 +351,18 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
         process_buffer_.erase(process_buffer_.begin(), process_buffer_.begin() + required_samples);
         current_buffer_size = process_buffer_.size(); // Update size after erasing
 
-        LOG_DEBUG("PushOutput: Pushed chunk. Remaining process_buffer_ size=" + std::to_string(current_buffer_size) + " samples.");
+        LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Pushed chunk. Remaining process_buffer_ size=%zu samples.", config_.instance_id.c_str(), current_buffer_size);
     }
 }
 
 // --- New/Modified Thread Loops ---
 
 void SourceInputProcessor::input_loop() {
-    LOG("Input loop started.");
+    LOG_CPP_INFO("[SourceProc:%s] Input loop started.", config_.instance_id.c_str());
     TaggedAudioPacket new_packet;
     // Loop exits when pop returns false (queue stopped and empty) or stop_flag_ is set
     // This loop now receives packets already timed by TimeshiftManager.
-    LOG("Input loop started (receives timed packets).");
+    LOG_CPP_INFO("[SourceProc:%s] Input loop started (receives timed packets).", config_.instance_id.c_str());
     TaggedAudioPacket timed_packet;
     while (!stop_flag_ && input_queue_ && input_queue_->pop(timed_packet)) {
         // Packet is already timed correctly by TimeshiftManager.
@@ -379,7 +371,7 @@ void SourceInputProcessor::input_loop() {
         size_t audio_payload_size = 0;
         
         bool packet_ok_for_processing = check_format_and_reconfigure(
-            timed_packet, 
+            timed_packet,
             &audio_payload_ptr,
             &audio_payload_size
         );
@@ -390,13 +382,13 @@ void SourceInputProcessor::input_loop() {
                 process_audio_chunk(chunk_data_for_processing);
                 push_output_chunk_if_ready();
             } else {
-                LOG_ERROR("Audio payload invalid after check_format_and_reconfigure. Size: " + std::to_string(audio_payload_size));
+                LOG_CPP_ERROR("[SourceProc:%s] Audio payload invalid after check_format_and_reconfigure. Size: %zu", config_.instance_id.c_str(), audio_payload_size);
             }
         } else if (!packet_ok_for_processing) {
-            LOG_WARN("Packet discarded by input_loop due to format/size issues or no audio processor.");
+            LOG_CPP_WARNING("[SourceProc:%s] Packet discarded by input_loop due to format/size issues or no audio processor.", config_.instance_id.c_str());
         }
     }
-    LOG("Input loop exiting. StopFlag=" + std::to_string(stop_flag_.load()));
+    LOG_CPP_INFO("[SourceProc:%s] Input loop exiting. StopFlag=%d", config_.instance_id.c_str(), stop_flag_.load());
 }
 
 // output_loop() is removed entirely.
@@ -406,7 +398,7 @@ bool SourceInputProcessor::check_format_and_reconfigure(
     const uint8_t** out_audio_payload_ptr,
     size_t* out_audio_payload_size)
 {
-    LOG_DEBUG("Entering check_format_and_reconfigure for packet from tag: " + packet.source_tag);
+    LOG_CPP_DEBUG("[SourceProc:%s] Entering check_format_and_reconfigure for packet from tag: %s", config_.instance_id.c_str(), packet.source_tag.c_str());
     
     // --- Use format directly from packet ---
     int target_ap_input_channels = packet.channels;
@@ -418,18 +410,18 @@ bool SourceInputProcessor::check_format_and_reconfigure(
 
     // --- Validate Packet Format and Size ---
     if (audio_data_len != CHUNK_SIZE) {
-         LOG_ERROR("Incorrect audio payload size. Expected " + std::to_string(CHUNK_SIZE) + ", got " + std::to_string(audio_data_len));
+         LOG_CPP_ERROR("[SourceProc:%s] Incorrect audio payload size. Expected %zu, got %zu", config_.instance_id.c_str(), static_cast<size_t>(CHUNK_SIZE), audio_data_len);
          return false;
     }
      if (target_ap_input_channels <= 0 || target_ap_input_channels > 8 ||
          (target_ap_input_bitdepth != 8 && target_ap_input_bitdepth != 16 && target_ap_input_bitdepth != 24 && target_ap_input_bitdepth != 32) ||
          target_ap_input_samplerate <= 0) {
-         LOG_ERROR("Invalid format info in packet. SR=" + std::to_string(target_ap_input_samplerate) +
-                   ", BD=" + std::to_string(target_ap_input_bitdepth) + ", CH=" + std::to_string(target_ap_input_channels));
+         LOG_CPP_ERROR("[SourceProc:%s] Invalid format info in packet. SR=%d, BD=%d, CH=%d",
+                       config_.instance_id.c_str(), target_ap_input_samplerate, target_ap_input_bitdepth, target_ap_input_channels);
          return false;
      }
-     LOG_DEBUG("Packet Format: CH=" + std::to_string(target_ap_input_channels) +
-               " SR=" + std::to_string(target_ap_input_samplerate) + " BD=" + std::to_string(target_ap_input_bitdepth));
+     LOG_CPP_DEBUG("[SourceProc:%s] Packet Format: CH=%d SR=%d BD=%d",
+                   config_.instance_id.c_str(), target_ap_input_channels, target_ap_input_samplerate, target_ap_input_bitdepth);
 
 
     // --- Check if Reconfiguration is Needed ---
@@ -437,37 +429,36 @@ bool SourceInputProcessor::check_format_and_reconfigure(
                           m_current_ap_input_channels != target_ap_input_channels ||
                           m_current_ap_input_samplerate != target_ap_input_samplerate ||
                           m_current_ap_input_bitdepth != target_ap_input_bitdepth;
-    
-    LOG_DEBUG("Current AP Format: CH=" + std::to_string(m_current_ap_input_channels) + 
-              " SR=" + std::to_string(m_current_ap_input_samplerate) + " BD=" + std::to_string(m_current_ap_input_bitdepth));
-    LOG_DEBUG("Needs Reconfiguration Check: audio_processor_ null? " + std::string(!audio_processor_ ? "Yes" : "No") + 
-              ", CH mismatch? " + std::string(m_current_ap_input_channels != target_ap_input_channels ? "Yes" : "No") +
-              ", SR mismatch? " + std::string(m_current_ap_input_samplerate != target_ap_input_samplerate ? "Yes" : "No") +
-              ", BD mismatch? " + std::string(m_current_ap_input_bitdepth != target_ap_input_bitdepth ? "Yes" : "No"));
-    LOG_DEBUG("Result of needs_reconfig: " + std::string(needs_reconfig ? "true" : "false"));
+   
+   LOG_CPP_DEBUG("[SourceProc:%s] Current AP Format: CH=%d SR=%d BD=%d",
+                 config_.instance_id.c_str(), m_current_ap_input_channels, m_current_ap_input_samplerate, m_current_ap_input_bitdepth);
+   LOG_CPP_DEBUG("[SourceProc:%s] Needs Reconfiguration Check: audio_processor_ null? %s, CH mismatch? %s, SR mismatch? %s, BD mismatch? %s",
+                 config_.instance_id.c_str(),
+                 (!audio_processor_ ? "Yes" : "No"),
+                 (m_current_ap_input_channels != target_ap_input_channels ? "Yes" : "No"),
+                 (m_current_ap_input_samplerate != target_ap_input_samplerate ? "Yes" : "No"),
+                 (m_current_ap_input_bitdepth != target_ap_input_bitdepth ? "Yes" : "No"));
+   LOG_CPP_DEBUG("[SourceProc:%s] Result of needs_reconfig: %s", config_.instance_id.c_str(), (needs_reconfig ? "true" : "false"));
 
 
-    if (needs_reconfig) {
-        LOG_DEBUG("Entering reconfiguration block..."); // Log entry into the block
-        // Add logging here to show the change
-        if (audio_processor_) { // Log only if it's a change, not initial creation
-             LOG_WARN("Audio format changed! Reconfiguring AudioProcessor. Old Format: CH=" + std::to_string(m_current_ap_input_channels) +
-                      " SR=" + std::to_string(m_current_ap_input_samplerate) + " BD=" + std::to_string(m_current_ap_input_bitdepth) +
-                      ". New Format: CH=" + std::to_string(target_ap_input_channels) + " SR=" + std::to_string(target_ap_input_samplerate) +
-                      " BD=" + std::to_string(target_ap_input_bitdepth));
-        } else {
-             LOG("Initializing AudioProcessor for the first time. Format: CH=" + std::to_string(target_ap_input_channels) +
-                 " SR=" + std::to_string(target_ap_input_samplerate) + " BD=" + std::to_string(target_ap_input_bitdepth));
-        }
-        
-        std::lock_guard<std::mutex> lock(audio_processor_mutex_);
-        // Lock speaker_layouts_mutex_ before accessing current_speaker_layouts_map_
-        std::lock_guard<std::mutex> layout_lock(speaker_layouts_mutex_);
-        LOG("Reconfiguring AudioProcessor: Input CH=" + std::to_string(target_ap_input_channels) +
-            " SR=" + std::to_string(target_ap_input_samplerate) +
-            " BD=" + std::to_string(target_ap_input_bitdepth) +
-            " -> Output CH=" + std::to_string(config_.output_channels) +
-            " SR=" + std::to_string(config_.output_samplerate));
+   if (needs_reconfig) {
+       LOG_CPP_DEBUG("[SourceProc:%s] Entering reconfiguration block...", config_.instance_id.c_str()); // Log entry into the block
+       // Add logging here to show the change
+       if (audio_processor_) { // Log only if it's a change, not initial creation
+            LOG_CPP_WARNING("[SourceProc:%s] Audio format changed! Reconfiguring AudioProcessor. Old Format: CH=%d SR=%d BD=%d. New Format: CH=%d SR=%d BD=%d",
+                            config_.instance_id.c_str(), m_current_ap_input_channels, m_current_ap_input_samplerate, m_current_ap_input_bitdepth,
+                            target_ap_input_channels, target_ap_input_samplerate, target_ap_input_bitdepth);
+       } else {
+            LOG_CPP_INFO("[SourceProc:%s] Initializing AudioProcessor for the first time. Format: CH=%d SR=%d BD=%d",
+                         config_.instance_id.c_str(), target_ap_input_channels, target_ap_input_samplerate, target_ap_input_bitdepth);
+       }
+       
+       std::lock_guard<std::mutex> lock(audio_processor_mutex_);
+       // Lock speaker_layouts_mutex_ before accessing current_speaker_layouts_map_
+       std::lock_guard<std::mutex> layout_lock(speaker_layouts_mutex_);
+       LOG_CPP_INFO("[SourceProc:%s] Reconfiguring AudioProcessor: Input CH=%d SR=%d BD=%d -> Output CH=%d SR=%d",
+                    config_.instance_id.c_str(), target_ap_input_channels, target_ap_input_samplerate, target_ap_input_bitdepth,
+                    config_.output_channels, config_.output_samplerate);
         try {
             audio_processor_ = std::make_unique<AudioProcessor>(
                 target_ap_input_channels,
@@ -508,9 +499,9 @@ bool SourceInputProcessor::check_format_and_reconfigure(
             m_current_ap_input_channels = target_ap_input_channels;
             m_current_ap_input_samplerate = target_ap_input_samplerate;
             m_current_ap_input_bitdepth = target_ap_input_bitdepth;
-            LOG("AudioProcessor reconfigured successfully.");
+            LOG_CPP_INFO("[SourceProc:%s] AudioProcessor reconfigured successfully.", config_.instance_id.c_str());
         } catch (const std::exception& e) {
-            LOG_ERROR("Failed to reconfigure AudioProcessor: " + std::string(e.what()));
+            LOG_CPP_ERROR("[SourceProc:%s] Failed to reconfigure AudioProcessor: %s", config_.instance_id.c_str(), e.what());
             audio_processor_.reset(); // Ensure it's null on failure
             return false; // Reconfiguration failed
         }
@@ -523,15 +514,15 @@ bool SourceInputProcessor::check_format_and_reconfigure(
 
 // run() is executed by component_thread_. It now starts only input_thread_ and processes commands.
 void SourceInputProcessor::run() {
-     LOG("Component run() started.");
+     LOG_CPP_INFO("[SourceProc:%s] Component run() started.", config_.instance_id.c_str());
 
      // Launch input_thread_ (which now contains the main processing logic)
      try {
         input_thread_ = std::thread(&SourceInputProcessor::input_loop, this);
-        LOG("Input thread launched by run().");
+        LOG_CPP_INFO("[SourceProc:%s] Input thread launched by run().", config_.instance_id.c_str());
         // output_thread_ is removed
      } catch (const std::system_error& e) {
-         LOG_ERROR("Failed to start input_thread_ from run(): " + std::string(e.what()));
+         LOG_CPP_ERROR("[SourceProc:%s] Failed to start input_thread_ from run(): %s", config_.instance_id.c_str(), e.what());
          stop_flag_ = true; // Signal stop if thread failed to launch
          // timeshift_condition_ is removed
          if(input_queue_) input_queue_->stop();
@@ -540,27 +531,27 @@ void SourceInputProcessor::run() {
      }
 
      // Command processing loop
-     LOG("Starting command processing loop.");
+     LOG_CPP_INFO("[SourceProc:%s] Starting command processing loop.", config_.instance_id.c_str());
      while (!stop_flag_) {
          process_commands(); // Check for commands
 
          // Sleep briefly to prevent busy-waiting when no commands are pending
          std::this_thread::sleep_for(std::chrono::milliseconds(20)); // Or use command_queue_->wait_for_data() if available
      }
-     LOG("Command processing loop finished (stop signaled).");
+     LOG_CPP_INFO("[SourceProc:%s] Command processing loop finished (stop signaled).", config_.instance_id.c_str());
 
      // --- Cleanup after stop_flag_ is set ---
      // Ensure input_thread_ is signaled (already done in stop()) and join it here.
-     LOG("Joining input_thread_ in run()...");
+     LOG_CPP_INFO("[SourceProc:%s] Joining input_thread_ in run()...", config_.instance_id.c_str());
      if (input_thread_.joinable()) {
          try {
              input_thread_.join();
-             LOG("Input thread joined in run().");
+             LOG_CPP_INFO("[SourceProc:%s] Input thread joined in run().", config_.instance_id.c_str());
          } catch (const std::system_error& e) {
-             LOG_ERROR("Error joining input thread in run(): " + std::string(e.what()));
+             LOG_CPP_ERROR("[SourceProc:%s] Error joining input thread in run(): %s", config_.instance_id.c_str(), e.what());
          }
      }
      // output_thread_ joining is removed.
 
-     LOG("Component run() exiting.");
+     LOG_CPP_INFO("[SourceProc:%s] Component run() exiting.", config_.instance_id.c_str());
 }

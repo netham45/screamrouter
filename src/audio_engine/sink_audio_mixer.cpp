@@ -1,5 +1,6 @@
 #include "sink_audio_mixer.h"
-#include <iostream> // For logging
+#include "cpp_logger.h" // For new C++ logger
+#include <iostream> // For logging (cpp_logger fallback)
 #include <stdexcept>
 #include <cstring> // For memcpy, memset
 #include <vector>
@@ -22,15 +23,8 @@ using namespace screamrouter::utils;
 #include <immintrin.h>
 #endif
 
-// Simple logger helper (replace with a proper logger if available)
-//#define LOG(sink_id, msg) std::cout << "[SinkMixer:" << sink_id << "] " << msg << std::endl
-//#define LOG_ERROR(sink_id, msg) std::cerr << "[SinkMixer Error:" << sink_id << "] " << msg << " (errno: " << errno << ")" << std::endl
-//#define LOG_WARN(sink_id, msg) std::cout << "[SinkMixer Warn:" << sink_id << "] " << msg << std::endl // Added WARN level
-//#define LOG_DEBUG(sink_id, msg) std::cout << "[SinkMixer Debug:" << sink_id << "] " << msg << std::endl
-#define LOG(sink_id, msg)
-#define LOG_ERROR(sink_id, msg)
-#define LOG_WARN(sink_id, msg)
-#define LOG_DEBUG(sink_id, msg)
+// Old logger macros are removed. New macros (LOG_CPP_INFO, etc.) are in cpp_logger.h
+// The sink_id from config_ will be manually prepended in the new log calls.
 
 // Define how long to wait for input data before mixing silence/last known data
 const std::chrono::milliseconds INPUT_WAIT_TIMEOUT(20); // e.g., 20ms
@@ -57,19 +51,19 @@ SinkAudioMixer::SinkAudioMixer(
         WSADATA wsaData;
         int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
         if (iResult != 0) {
-            LOG_ERROR(config_.sink_id, "WSAStartup failed: " + std::to_string(iResult));
+            LOG_CPP_ERROR("[SinkMixer:%s] WSAStartup failed: %d", config_.sink_id.c_str(), iResult);
             throw std::runtime_error("WSAStartup failed.");
         }
     #endif
-    LOG(config_.sink_id, "Initializing...");
+    LOG_CPP_INFO("[SinkMixer:%s] Initializing...", config_.sink_id.c_str());
 
     // Validate config
     if (config_.output_bitdepth != 8 && config_.output_bitdepth != 16 && config_.output_bitdepth != 24 && config_.output_bitdepth != 32) {
-         LOG_ERROR(config_.sink_id, "Unsupported output bit depth: " + std::to_string(config_.output_bitdepth) + ". Defaulting to 16.");
+         LOG_CPP_ERROR("[SinkMixer:%s] Unsupported output bit depth: %d. Defaulting to 16.", config_.sink_id.c_str(), config_.output_bitdepth);
          config_.output_bitdepth = 16;
     }
     if (config_.output_channels <= 0 || config_.output_channels > 8) { // Assuming max 8 channels based on old code
-         LOG_ERROR(config_.sink_id, "Invalid output channels: " + std::to_string(config_.output_channels) + ". Defaulting to 2.");
+         LOG_CPP_ERROR("[SinkMixer:%s] Invalid output channels: %d. Defaulting to 2.", config_.sink_id.c_str(), config_.output_channels);
          config_.output_channels = 2;
     }
 
@@ -89,14 +83,14 @@ SinkAudioMixer::SinkAudioMixer(
             std::map<int, CppSpeakerLayout>() // initial_layouts_config
         );
         if (!lame_preprocessor_) {
-             LOG_ERROR(config_.sink_id, "Failed to create AudioProcessor for LAME preprocessing.");
+             LOG_CPP_ERROR("[SinkMixer:%s] Failed to create AudioProcessor for LAME preprocessing.", config_.sink_id.c_str());
         } else {
-             LOG(config_.sink_id, "Created AudioProcessor for LAME preprocessing.");
+             LOG_CPP_INFO("[SinkMixer:%s] Created AudioProcessor for LAME preprocessing.", config_.sink_id.c_str());
         }
         initialize_lame();
     }
 
-    LOG(config_.sink_id, "Initialization complete.");
+    LOG_CPP_INFO("[SinkMixer:%s] Initialization complete.", config_.sink_id.c_str());
 }
 
 SinkAudioMixer::~SinkAudioMixer() {
@@ -104,7 +98,7 @@ SinkAudioMixer::~SinkAudioMixer() {
         stop();
     }
     if (component_thread_.joinable()) {
-        LOG(config_.sink_id, "Warning: Joining thread in destructor, stop() might not have been called properly.");
+        LOG_CPP_WARNING("[SinkMixer:%s] Warning: Joining thread in destructor, stop() might not have been called properly.", config_.sink_id.c_str());
         component_thread_.join();
     }
     close_networking();
@@ -126,18 +120,17 @@ void SinkAudioMixer::build_scream_header() {
     scream_header_[2] = static_cast<uint8_t>(config_.output_channels);
     scream_header_[3] = config_.output_chlayout1;
     scream_header_[4] = config_.output_chlayout2;
-    LOG(config_.sink_id, "Built Scream header for Rate: " + std::to_string(config_.output_samplerate) +
-                         ", Depth: " + std::to_string(config_.output_bitdepth) +
-                         ", Channels: " + std::to_string(config_.output_channels));
+    LOG_CPP_INFO("[SinkMixer:%s] Built Scream header for Rate: %d, Depth: %d, Channels: %d",
+                 config_.sink_id.c_str(), config_.output_samplerate, config_.output_bitdepth, config_.output_channels);
 }
 
 void SinkAudioMixer::initialize_lame() {
     if (!mp3_output_queue_) return; // Don't initialize if not enabled
 
-    LOG(config_.sink_id, "Initializing LAME MP3 encoder...");
+    LOG_CPP_INFO("[SinkMixer:%s] Initializing LAME MP3 encoder...", config_.sink_id.c_str());
     lame_global_flags_ = lame_init();
     if (!lame_global_flags_) {
-        LOG_ERROR(config_.sink_id, "lame_init() failed.");
+        LOG_CPP_ERROR("[SinkMixer:%s] lame_init() failed.", config_.sink_id.c_str());
         return;
     }
 
@@ -147,19 +140,19 @@ void SinkAudioMixer::initialize_lame() {
 
     int ret = lame_init_params(lame_global_flags_);
     if (ret < 0) {
-        LOG_ERROR(config_.sink_id, "lame_init_params() failed with code: " + std::to_string(ret));
+        LOG_CPP_ERROR("[SinkMixer:%s] lame_init_params() failed with code: %d", config_.sink_id.c_str(), ret);
         lame_close(lame_global_flags_);
         lame_global_flags_ = nullptr;
         return; // Return early if params init failed
     }
     lame_active_ = true; // Assume active initially
-    LOG(config_.sink_id, "LAME initialized successfully.");
+    LOG_CPP_INFO("[SinkMixer:%s] LAME initialized successfully.", config_.sink_id.c_str());
 }
 
 // Updated to use instance_id
 void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared_ptr<InputChunkQueue> queue) {
     if (!queue) {
-        LOG_ERROR(config_.sink_id, "Attempted to add null input queue for instance: " + instance_id);
+        LOG_CPP_ERROR("[SinkMixer:%s] Attempted to add null input queue for instance: %s", config_.sink_id.c_str(), instance_id.c_str());
         return;
     }
     {
@@ -168,7 +161,7 @@ void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared
         input_active_state_[instance_id] = false; // Start as inactive
         // Initialize buffer for this source instance (e.g., with silence)
         source_buffers_[instance_id].audio_data.assign(SINK_MIXING_BUFFER_SAMPLES, 0); // Size is total samples, not channels * samples
-        LOG(config_.sink_id, "Added input queue for source instance: " + instance_id);
+        LOG_CPP_INFO("[SinkMixer:%s] Added input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
     input_cv_.notify_one(); // Notify run loop in case it was waiting with no sources
 }
@@ -180,16 +173,16 @@ void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
         input_queues_.erase(instance_id);
         input_active_state_.erase(instance_id);
         source_buffers_.erase(instance_id);
-        LOG(config_.sink_id, "Removed input queue for source instance: " + instance_id);
+        LOG_CPP_INFO("[SinkMixer:%s] Removed input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
 }
 
 bool SinkAudioMixer::setup_networking() {
-    LOG(config_.sink_id, "Setting up networking...");
+    LOG_CPP_INFO("[SinkMixer:%s] Setting up networking...", config_.sink_id.c_str());
     // UDP Setup
     udp_socket_fd_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // socket() is generally cross-platform
     if (udp_socket_fd_ == INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
-        LOG_ERROR(config_.sink_id, "Failed to create UDP socket");
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to create UDP socket", config_.sink_id.c_str());
         return false;
     }
 
@@ -199,12 +192,12 @@ bool SinkAudioMixer::setup_networking() {
         //DWORD tos_value_dword = static_cast<DWORD>(tos_value); // Example if DWORD needed
         //if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_TOS, reinterpret_cast<const char*>(&tos_value_dword), sizeof(tos_value_dword)) < 0) {
         // For now, skip TOS setting on Windows for simplicity, requires more investigation
-        LOG_WARN(config_.sink_id, "Skipping TOS/DSCP setting on Windows.");
+        LOG_CPP_WARNING("[SinkMixer:%s] Skipping TOS/DSCP setting on Windows.", config_.sink_id.c_str());
     #else // POSIX
         int dscp = 46; // EF PHB for low latency audio
         int tos_value = dscp << 2;
         if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_TOS, &tos_value, sizeof(tos_value)) < 0) {
-            LOG_ERROR(config_.sink_id, "Failed to set UDP socket TOS/DSCP");
+            LOG_CPP_ERROR("[SinkMixer:%s] Failed to set UDP socket TOS/DSCP", config_.sink_id.c_str());
             // Non-fatal, continue anyway
         }
     #endif
@@ -215,7 +208,7 @@ bool SinkAudioMixer::setup_networking() {
     udp_dest_addr_.sin_port = htons(config_.output_port);
     // Use inet_pton for cross-platform compatibility (preferred over inet_addr)
     if (inet_pton(AF_INET, config_.output_ip.c_str(), &udp_dest_addr_.sin_addr) <= 0) {
-        LOG_ERROR(config_.sink_id, "Invalid UDP destination IP address (inet_pton failed): " + config_.output_ip);
+        LOG_CPP_ERROR("[SinkMixer:%s] Invalid UDP destination IP address (inet_pton failed): %s", config_.sink_id.c_str(), config_.output_ip.c_str());
         _close_socket(udp_socket_fd_); // Use corrected macro
         udp_socket_fd_ = INVALID_SOCKET_VALUE;
         return false;
@@ -223,13 +216,13 @@ bool SinkAudioMixer::setup_networking() {
 
     // TCP setup is handled externally via set_tcp_fd()
 
-    LOG(config_.sink_id, "Networking setup complete (UDP target: " + config_.output_ip + ":" + std::to_string(config_.output_port) + ")");
+    LOG_CPP_INFO("[SinkMixer:%s] Networking setup complete (UDP target: %s:%d)", config_.sink_id.c_str(), config_.output_ip.c_str(), config_.output_port);
     return true;
 }
 
 void SinkAudioMixer::close_networking() {
     if (udp_socket_fd_ != INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
-        LOG(config_.sink_id, "Closing UDP socket"); // Simplified log
+        LOG_CPP_INFO("[SinkMixer:%s] Closing UDP socket", config_.sink_id.c_str()); // Simplified log
         _close_socket(udp_socket_fd_); // Use corrected macro
         udp_socket_fd_ = INVALID_SOCKET_VALUE; // Set to platform-specific invalid value
     }
@@ -238,24 +231,24 @@ void SinkAudioMixer::close_networking() {
 
 void SinkAudioMixer::start() {
     if (is_running()) {
-        LOG(config_.sink_id, "Already running.");
+        LOG_CPP_INFO("[SinkMixer:%s] Already running.", config_.sink_id.c_str());
         return;
     }
-    LOG(config_.sink_id, "Starting...");
+    LOG_CPP_INFO("[SinkMixer:%s] Starting...", config_.sink_id.c_str());
     stop_flag_ = false;
     output_buffer_write_pos_ = 0; // Reset write position
 
     if (!setup_networking()) {
-        LOG_ERROR(config_.sink_id, "Networking setup failed. Cannot start mixer thread.");
+        LOG_CPP_ERROR("[SinkMixer:%s] Networking setup failed. Cannot start mixer thread.", config_.sink_id.c_str());
         return;
     }
 
     // Launch the thread
     try {
         component_thread_ = std::thread(&SinkAudioMixer::run, this);
-        LOG(config_.sink_id, "Thread started.");
+        LOG_CPP_INFO("[SinkMixer:%s] Thread started.", config_.sink_id.c_str());
     } catch (const std::system_error& e) {
-        LOG_ERROR(config_.sink_id, "Failed to start thread: " + std::string(e.what()));
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to start thread: %s", config_.sink_id.c_str(), e.what());
         close_networking();
         //close_lame();
         throw;
@@ -264,10 +257,10 @@ void SinkAudioMixer::start() {
 
 void SinkAudioMixer::stop() {
      if (stop_flag_) {
-        LOG(config_.sink_id, "Already stopped or stopping.");
+        LOG_CPP_INFO("[SinkMixer:%s] Already stopped or stopping.", config_.sink_id.c_str());
         return;
     }
-    LOG(config_.sink_id, "Stopping...");
+    LOG_CPP_INFO("[SinkMixer:%s] Stopping...", config_.sink_id.c_str());
     stop_flag_ = true;
 
     // Notify condition variables to wake up waiting threads
@@ -275,29 +268,29 @@ void SinkAudioMixer::stop() {
 
     // Flush LAME buffer before joining thread
     if (mp3_output_queue_ && lame_global_flags_) {
-        LOG(config_.sink_id, "Flushing LAME buffer...");
+        LOG_CPP_INFO("[SinkMixer:%s] Flushing LAME buffer...", config_.sink_id.c_str());
         int flush_bytes = lame_encode_flush(lame_global_flags_, mp3_encode_buffer_.data(), mp3_encode_buffer_.size());
         if (flush_bytes < 0) {
-            LOG_ERROR(config_.sink_id, "LAME flush failed with code: " + std::to_string(flush_bytes));
+            LOG_CPP_ERROR("[SinkMixer:%s] LAME flush failed with code: %d", config_.sink_id.c_str(), flush_bytes);
         } else if (flush_bytes > 0) {
-            LOG(config_.sink_id, "LAME flushed " + std::to_string(flush_bytes) + " bytes.");
+            LOG_CPP_INFO("[SinkMixer:%s] LAME flushed %d bytes.", config_.sink_id.c_str(), flush_bytes);
             EncodedMP3Data mp3_data;
             mp3_data.mp3_data.assign(mp3_encode_buffer_.begin(), mp3_encode_buffer_.begin() + flush_bytes);
             mp3_output_queue_->push(std::move(mp3_data));
         } else {
-             LOG(config_.sink_id, "LAME flush produced 0 bytes.");
+             LOG_CPP_INFO("[SinkMixer:%s] LAME flush produced 0 bytes.", config_.sink_id.c_str());
         }
     }
 
     if (component_thread_.joinable()) {
          try {
             component_thread_.join();
-            LOG(config_.sink_id, "Thread joined.");
+            LOG_CPP_INFO("[SinkMixer:%s] Thread joined.", config_.sink_id.c_str());
         } catch (const std::system_error& e) {
-            LOG_ERROR(config_.sink_id, "Error joining thread: " + std::string(e.what()));
+            LOG_CPP_ERROR("[SinkMixer:%s] Error joining thread: %s", config_.sink_id.c_str(), e.what());
         }
     } else {
-         LOG(config_.sink_id, "Thread was not joinable.");
+         LOG_CPP_INFO("[SinkMixer:%s] Thread was not joinable.", config_.sink_id.c_str());
     }
 
     // Cleanup resources after thread has stopped
@@ -322,7 +315,7 @@ bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_t
 
     // --- Step 1: Initial Check (like first part of mark_fds_active_inactive) ---
     // Check all sources we *expect* to be active first, plus check inactive ones becoming active.
-    LOG_DEBUG(config_.sink_id, "WaitForData: Initial non-blocking check...");
+    LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Initial non-blocking check...", config_.sink_id.c_str());
     // Use instance_id as the key/loop variable
     for (auto const& [instance_id, queue_ptr] : input_queues_) {
         ProcessedAudioChunk chunk;
@@ -331,16 +324,16 @@ bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_t
 
         if (queue_ptr->try_pop(chunk)) { // Data is immediately available
              if (chunk.audio_data.size() != SINK_MIXING_BUFFER_SAMPLES) {
-                 LOG_ERROR(config_.sink_id, "WaitForData: Received chunk from instance " + instance_id + " with unexpected sample count: " + std::to_string(chunk.audio_data.size()) + ". Discarding.");
+                 LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.", config_.sink_id.c_str(), instance_id.c_str(), chunk.audio_data.size());
                  ready_this_cycle[instance_id] = false; // Not ready with valid data
                  // Don't mark active if data is invalid
              } else {
-                 LOG_DEBUG(config_.sink_id, "WaitForData: Pop SUCCESS (Initial) for instance " << instance_id);
+                 LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Pop SUCCESS (Initial) for instance %s", config_.sink_id.c_str(), instance_id.c_str());
                  source_buffers_[instance_id] = std::move(chunk); // Store valid chunk using instance_id
                  ready_this_cycle[instance_id] = true;
                  data_actually_popped_this_cycle = true;
                  if (!previously_active) {
-                     LOG(config_.sink_id, "Input instance " + instance_id + " became active");
+                     LOG_CPP_INFO("[SinkMixer:%s] Input instance %s became active", config_.sink_id.c_str(), instance_id.c_str());
                  }
                  input_active_state_[instance_id] = true; // Mark/confirm as active using instance_id
              }
@@ -348,7 +341,7 @@ bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_t
             ready_this_cycle[instance_id] = false;
             if (previously_active) {
                 // This source *was* active, but doesn't have data right now. Add to lagging list.
-                LOG_DEBUG(config_.sink_id, "WaitForData: Pop FAILED (Initial) for ACTIVE instance " << instance_id << ". Adding to grace period check.");
+                LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Pop FAILED (Initial) for ACTIVE instance %s. Adding to grace period check.", config_.sink_id.c_str(), instance_id.c_str());
                 lagging_active_sources.push_back(instance_id); // Add instance_id to lagging list
             } else {
                  // Source was inactive and still has no data. Keep it inactive.
@@ -359,7 +352,7 @@ bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_t
 
     // --- Step 2 & 3: Grace Period for Lagging Active Sources ---
     if (!lagging_active_sources.empty()) {
-        LOG_DEBUG(config_.sink_id, "WaitForData: Entering grace period check for " << lagging_active_sources.size() << " sources.");
+        LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Entering grace period check for %zu sources.", config_.sink_id.c_str(), lagging_active_sources.size());
         auto grace_period_start = std::chrono::steady_clock::now();
         long elapsed_us = 0;
 
@@ -379,10 +372,10 @@ bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_t
                 ProcessedAudioChunk chunk;
                 if (queue_it->second->try_pop(chunk)) {
                     if (chunk.audio_data.size() != SINK_MIXING_BUFFER_SAMPLES) {
-                         LOG_ERROR(config_.sink_id, "WaitForData: Received chunk (Grace Period) from instance " + instance_id + " with unexpected sample count: " + std::to_string(chunk.audio_data.size()) + ". Discarding.");
+                         LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk (Grace Period) from instance %s with unexpected sample count: %zu. Discarding.", config_.sink_id.c_str(), instance_id.c_str(), chunk.audio_data.size());
                          // Still remove from lagging list, but don't mark ready
                     } else {
-                        LOG_DEBUG(config_.sink_id, "WaitForData: Pop SUCCESS (Grace Period) for instance " << instance_id);
+                        LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Pop SUCCESS (Grace Period) for instance %s", config_.sink_id.c_str(), instance_id.c_str());
                         source_buffers_[instance_id] = std::move(chunk); // Use instance_id
                         ready_this_cycle[instance_id] = true;
                         data_actually_popped_this_cycle = true;
@@ -397,15 +390,15 @@ bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_t
 
         // --- Step 3 Continued: Mark remaining lagged sources as inactive ---
         if (!lagging_active_sources.empty()) {
-            LOG_DEBUG(config_.sink_id, "WaitForData: Grace period ended. " << lagging_active_sources.size() << " instances still lagging.");
+            LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Grace period ended. %zu instances still lagging.", config_.sink_id.c_str(), lagging_active_sources.size());
             for (const auto& instance_id : lagging_active_sources) { // Use instance_id
                 if (input_active_state_.count(instance_id) && input_active_state_[instance_id]) {
-                     LOG(config_.sink_id, "Input instance " + instance_id + " timed out grace period, marking inactive.");
+                     LOG_CPP_INFO("[SinkMixer:%s] Input instance %s timed out grace period, marking inactive.", config_.sink_id.c_str(), instance_id.c_str());
                      input_active_state_[instance_id] = false; // Mark as definitively inactive using instance_id
                 }
             }
         } else {
-             LOG_DEBUG(config_.sink_id, "WaitForData: Grace period ended. All lagging sources caught up.");
+             LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Grace period ended. All lagging sources caught up.", config_.sink_id.c_str());
         }
     } // End grace period check
 
@@ -443,7 +436,7 @@ void SinkAudioMixer::mix_buffers() {
 
     // The total number of samples to mix is fixed by the mixing_buffer_ size
     size_t total_samples_to_mix = mixing_buffer_.size(); // Should be SINK_MIXING_BUFFER_SAMPLES (e.g., 576)
-    LOG_DEBUG(config_.sink_id, "MixBuffers: Starting mix. Target samples=" + std::to_string(total_samples_to_mix) + " (Mixing buffer size).");
+    LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Starting mix. Target samples=%zu (Mixing buffer size).", config_.sink_id.c_str(), total_samples_to_mix);
 
 
     for (auto const& [instance_id, is_active] : input_active_state_) { // Iterate through all potential sources using instance_id
@@ -452,23 +445,23 @@ void SinkAudioMixer::mix_buffers() {
             // Check if the source buffer actually exists in the map (should always exist if active)
             auto buf_it = source_buffers_.find(instance_id); // Find buffer by instance_id
             if (buf_it == source_buffers_.end()) {
-                 LOG_ERROR(config_.sink_id, "Mixing error: Source buffer not found for active instance " + instance_id);
+                 LOG_CPP_ERROR("[SinkMixer:%s] Mixing error: Source buffer not found for active instance %s", config_.sink_id.c_str(), instance_id.c_str());
                  continue; // Skip this source
             }
             const auto& source_data = buf_it->second.audio_data; // Use iterator
 
             size_t samples_in_source = source_data.size(); // Get actual sample count from the stored chunk
-            LOG_DEBUG(config_.sink_id, "MixBuffers: Mixing instance " + instance_id + ". Source samples=" + std::to_string(samples_in_source) + ". Expected=" + std::to_string(total_samples_to_mix) + ".");
+            LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Mixing instance %s. Source samples=%zu. Expected=%zu.", config_.sink_id.c_str(), instance_id.c_str(), samples_in_source, total_samples_to_mix);
 
             // *** Check source data size against the fixed mixing buffer size ***
             // This check is redundant if wait_for_source_data correctly discards invalid chunks, but kept for safety.
             if (samples_in_source != total_samples_to_mix) {
-                 LOG_ERROR(config_.sink_id, "MixBuffers: Source buffer for instance " + instance_id + " size mismatch! Expected " + std::to_string(total_samples_to_mix) + ", got " + std::to_string(samples_in_source) + ". Skipping source.");
+                 LOG_CPP_ERROR("[SinkMixer:%s] MixBuffers: Source buffer for instance %s size mismatch! Expected %zu, got %zu. Skipping source.", config_.sink_id.c_str(), instance_id.c_str(), total_samples_to_mix, samples_in_source);
                  continue; // Skip this source
             }
 
             // Now we expect samples_in_source == total_samples_to_mix
-            LOG_DEBUG(config_.sink_id, "MixBuffers: Accumulating " + std::to_string(total_samples_to_mix) + " samples from instance " + instance_id);
+            LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Accumulating %zu samples from instance %s", config_.sink_id.c_str(), total_samples_to_mix, instance_id.c_str());
 
             // *** Iterate over the entire mixing buffer size ***
             for (size_t i = 0; i < total_samples_to_mix; ++i) {
@@ -486,7 +479,7 @@ void SinkAudioMixer::mix_buffers() {
             }
         } // end if(is_active)
     } // end for loop over sources
-    LOG_DEBUG(config_.sink_id, "MixBuffers: Mix complete. Mixed " + std::to_string(active_source_count) + " active sources into mixing_buffer_ (" + std::to_string(total_samples_to_mix) + " samples).");
+    LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Mix complete. Mixed %zu active sources into mixing_buffer_ (%zu samples).", config_.sink_id.c_str(), active_source_count, total_samples_to_mix);
 }
 
 
@@ -499,7 +492,8 @@ void SinkAudioMixer::downscale_buffer() {
 
     // Calculate the total number of bytes this conversion *should* produce
     size_t expected_bytes_to_write = samples_to_convert * output_byte_depth; // e.g., 576 samples * 2 bytes/sample = 1152 bytes for 16-bit stereo
-    LOG_DEBUG(config_.sink_id, "Downscale: Converting " + std::to_string(samples_to_convert) + " samples (int32) to " + std::to_string(config_.output_bitdepth) + "-bit. Expected output bytes=" + std::to_string(expected_bytes_to_write) + ".");
+    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale: Converting %zu samples (int32) to %d-bit. Expected output bytes=%zu.",
+                  config_.sink_id.c_str(), samples_to_convert, config_.output_bitdepth, expected_bytes_to_write);
 
 
     // Ensure we don't write past the end of the output buffer's allocated space
@@ -508,15 +502,17 @@ void SinkAudioMixer::downscale_buffer() {
     size_t available_space = output_network_buffer_.size() - SINK_HEADER_SIZE - output_buffer_write_pos_;
 
     if (expected_bytes_to_write > available_space) {
-        LOG_ERROR(config_.sink_id, "Downscale buffer overflow detected! Available space=" + std::to_string(available_space) + ", needed=" + std::to_string(expected_bytes_to_write) + ". WritePos=" + std::to_string(output_buffer_write_pos_) + ". BufferSize=" + std::to_string(output_network_buffer_.size()));
+        LOG_CPP_ERROR("[SinkMixer:%s] Downscale buffer overflow detected! Available space=%zu, needed=%zu. WritePos=%zu. BufferSize=%zu",
+                      config_.sink_id.c_str(), available_space, expected_bytes_to_write, output_buffer_write_pos_, output_network_buffer_.size());
         // Limit the operation to prevent overflow, but data will be lost/corrupted.
         // Calculate how many full samples can fit in the available space.
         size_t max_samples_possible = available_space / output_byte_depth;
         samples_to_convert = max_samples_possible; // Limit samples
         expected_bytes_to_write = samples_to_convert * output_byte_depth; // Adjust expected bytes accordingly
-        LOG_ERROR(config_.sink_id, "Downscale: Limiting conversion to " + std::to_string(samples_to_convert) + " samples (" + std::to_string(expected_bytes_to_write) + " bytes) due to space limit.");
+        LOG_CPP_ERROR("[SinkMixer:%s] Downscale: Limiting conversion to %zu samples (%zu bytes) due to space limit.",
+                      config_.sink_id.c_str(), samples_to_convert, expected_bytes_to_write);
         if (samples_to_convert == 0) {
-             LOG_ERROR(config_.sink_id, "Downscale buffer has no space left. available=" + std::to_string(available_space));
+             LOG_CPP_ERROR("[SinkMixer:%s] Downscale buffer has no space left. available=%zu", config_.sink_id.c_str(), available_space);
              return; // Nothing can be written
         }
     }
@@ -557,48 +553,139 @@ void SinkAudioMixer::downscale_buffer() {
     }
     // Calculate bytes actually written based on pointer difference
     size_t bytes_written = write_ptr - write_ptr_start;
-    LOG_DEBUG(config_.sink_id, "Downscale: Conversion loop finished. Bytes written=" + std::to_string(bytes_written) + ". Expected=" + std::to_string(expected_bytes_to_write) + ".");
+    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale: Conversion loop finished. Bytes written=%zu. Expected=%zu.",
+                  config_.sink_id.c_str(), bytes_written, expected_bytes_to_write);
     if (bytes_written != expected_bytes_to_write) {
-         LOG_ERROR(config_.sink_id, "Downscale: Mismatch between bytes written (" + std::to_string(bytes_written) + ") and expected bytes (" + std::to_string(expected_bytes_to_write) + ").");
+         LOG_CPP_ERROR("[SinkMixer:%s] Downscale: Mismatch between bytes written (%zu) and expected bytes (%zu).",
+                       config_.sink_id.c_str(), bytes_written, expected_bytes_to_write);
     }
 
     // Update the write position in the output_network_buffer_
     output_buffer_write_pos_ += bytes_written;
-    LOG_DEBUG(config_.sink_id, "Downscale complete. output_buffer_write_pos_=" + std::to_string(output_buffer_write_pos_));
+    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale complete. output_buffer_write_pos_=%zu", config_.sink_id.c_str(), output_buffer_write_pos_);
 }
 
 
 void SinkAudioMixer::send_network_buffer(size_t length) {
     // This function sends a complete network packet of the specified length.
     // The length should typically be SINK_PACKET_SIZE_BYTES (header + payload).
-    LOG_DEBUG(config_.sink_id, "SendNet: Preparing to send buffer. Requested length=" + std::to_string(length) + " bytes. Expected packet size=" + std::to_string(SINK_PACKET_SIZE_BYTES) + " bytes.");
+    LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Preparing to send buffer. Requested length=%zu bytes. Expected packet size=%zu bytes.",
+                  config_.sink_id.c_str(), length, static_cast<size_t>(SINK_PACKET_SIZE_BYTES));
     if (length == 0) {
-        LOG_ERROR(config_.sink_id, "SendNet: Attempted to send network buffer with length 0.");
+        LOG_CPP_ERROR("[SinkMixer:%s] SendNet: Attempted to send network buffer with length 0.", config_.sink_id.c_str());
         return;
     }
     // Ensure length includes header and doesn't exceed buffer capacity
     if (length < SINK_HEADER_SIZE) {
-         LOG_ERROR(config_.sink_id, "SendNet: Attempted to send network buffer with length " + std::to_string(length) + " < header size " + std::to_string(SINK_HEADER_SIZE));
+         LOG_CPP_ERROR("[SinkMixer:%s] SendNet: Attempted to send network buffer with length %zu < header size %zu",
+                       config_.sink_id.c_str(), length, static_cast<size_t>(SINK_HEADER_SIZE));
          return; // Invalid length
     }
      // Check against expected packet size (SINK_PACKET_SIZE_BYTES = 1157)
      if (length != SINK_PACKET_SIZE_BYTES) {
-         LOG_WARN(config_.sink_id, "SendNet: Sending packet with length " + std::to_string(length) + " which differs from expected SINK_PACKET_SIZE_BYTES (" + std::to_string(SINK_PACKET_SIZE_BYTES) + ").");
+         LOG_CPP_WARNING("[SinkMixer:%s] SendNet: Sending packet with length %zu which differs from expected SINK_PACKET_SIZE_BYTES (%zu).",
+                         config_.sink_id.c_str(), length, static_cast<size_t>(SINK_PACKET_SIZE_BYTES));
      }
     // Ensure length doesn't exceed the *total* allocated buffer size (double buffer)
     if (length > output_network_buffer_.size()) {
-         LOG_ERROR(config_.sink_id, "SendNet: Attempted to send network buffer with length " + std::to_string(length) + " > total buffer size " + std::to_string(output_network_buffer_.size()));
+         LOG_CPP_ERROR("[SinkMixer:%s] SendNet: Attempted to send network buffer with length %zu > total buffer size %zu",
+                       config_.sink_id.c_str(), length, output_network_buffer_.size());
          length = output_network_buffer_.size(); // Prevent overflow, but indicates an issue elsewhere
-         LOG_ERROR(config_.sink_id, "SendNet: Clamping send length to buffer size: " + std::to_string(length));
+         LOG_CPP_ERROR("[SinkMixer:%s] SendNet: Clamping send length to buffer size: %zu", config_.sink_id.c_str(), length);
     }
 
     // Add the pre-built Scream header to the start of the buffer *before* sending
     memcpy(output_network_buffer_.data(), scream_header_, SINK_HEADER_SIZE); // Copy header to the very beginning
-    LOG_DEBUG(config_.sink_id, "SendNet: Header (" + std::to_string(SINK_HEADER_SIZE) + " bytes) copied to buffer start.");
+    LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Header (%zu bytes) copied to buffer start.", config_.sink_id.c_str(), static_cast<size_t>(SINK_HEADER_SIZE));
+
+    // ---- START SILENCE CHECK ----
+    // For every packet it sends out, it samples five even points across the output packet's audio payload.
+    // If all sampled points are zero, it does not send the packet.
+    bool all_samples_zero = true;
+    if (length > SINK_HEADER_SIZE) { // Only check if there's an audio payload
+        const uint8_t* payload_ptr = output_network_buffer_.data() + SINK_HEADER_SIZE;
+        size_t payload_size_bytes = length - SINK_HEADER_SIZE;
+        size_t bytes_per_sample = config_.output_bitdepth / 8;
+
+        // Ensure parameters are valid for checking samples
+        if (bytes_per_sample > 0 && payload_size_bytes > 0 && (payload_size_bytes % bytes_per_sample == 0)) {
+            size_t num_payload_samples = payload_size_bytes / bytes_per_sample;
+
+            if (num_payload_samples >= 1) { // Must have at least one sample to check
+                size_t indices_to_check[5];
+                indices_to_check[0] = 0; // First sample
+                
+                if (num_payload_samples > 1) { // For num_payload_samples = 1, all indices will be 0.
+                    indices_to_check[1] = static_cast<size_t>(std::floor(1.0 * (num_payload_samples - 1) / 4.0));
+                    indices_to_check[2] = static_cast<size_t>(std::floor(2.0 * (num_payload_samples - 1) / 4.0));
+                    indices_to_check[3] = static_cast<size_t>(std::floor(3.0 * (num_payload_samples - 1) / 4.0));
+                    indices_to_check[4] = num_payload_samples - 1; // Last sample
+                } else { // num_payload_samples == 1
+                    indices_to_check[1] = 0;
+                    indices_to_check[2] = 0;
+                    indices_to_check[3] = 0;
+                    indices_to_check[4] = 0;
+                }
+                
+                LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Silence check on %zu samples. Indices: %zu,%zu,%zu,%zu,%zu",
+                              config_.sink_id.c_str(), num_payload_samples, indices_to_check[0], indices_to_check[1],
+                              indices_to_check[2], indices_to_check[3], indices_to_check[4]);
+
+                for (int i = 0; i < 5; ++i) {
+                    size_t sample_idx = indices_to_check[i];
+                    // sample_idx is confirmed to be < num_payload_samples by construction if num_payload_samples >=1
+
+                    const uint8_t* current_sample_ptr = payload_ptr + (sample_idx * bytes_per_sample);
+                    bool current_sample_is_zero = true;
+                    for (size_t byte_k = 0; byte_k < bytes_per_sample; ++byte_k) {
+                        if (current_sample_ptr[byte_k] < 1024) {
+                            current_sample_is_zero = false;
+                            break;
+                        }
+                    }
+                    if (!current_sample_is_zero) {
+                        all_samples_zero = false; // If one sample point is not zero, the packet is not silent
+                        break;
+                    }
+                }
+            } else {
+                // This case implies num_payload_samples is 0, but payload_size_bytes > 0.
+                // This means payload_size_bytes < bytes_per_sample.
+                // No full samples to check, so it's effectively silent for this check.
+                LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Not enough data for a single sample in payload for silence check. Payload bytes: %zu, bytes/sample: %zu. Considered silent.",
+                              config_.sink_id.c_str(), payload_size_bytes, bytes_per_sample);
+                // all_samples_zero remains true.
+            }
+        } else {
+            // This 'else' covers:
+            // 1. bytes_per_sample == 0 (should not happen due to constructor validation)
+            // 2. payload_size_bytes == 0 (already handled by outer 'if (length > SINK_HEADER_SIZE)', so all_samples_zero is true)
+            // 3. payload_size_bytes > 0 BUT (payload_size_bytes % bytes_per_sample != 0) -> malformed packet for this check.
+            if (payload_size_bytes > 0 && (bytes_per_sample == 0 || (payload_size_bytes % bytes_per_sample != 0) ) ) {
+                LOG_CPP_WARNING("[SinkMixer:%s] SendNet: Cannot perform silence check due to invalid sample/payload parameters (e.g., non-integer samples or zero bytes_per_sample). Payload bytes: %zu. Sending packet.",
+                                config_.sink_id.c_str(), payload_size_bytes);
+                all_samples_zero = false; // Force send if payload exists but check is problematic
+            }
+            // If payload_size_bytes is 0, all_samples_zero remains true (correct for empty payload).
+        }
+    } else {
+        // No payload (length == SINK_HEADER_SIZE), effectively silent.
+        LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: No payload to check for silence. Packet considered silent.", config_.sink_id.c_str());
+        // all_samples_zero is already true.
+    }
+
+    if (all_samples_zero) {
+        LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Packet identified as silent (either no payload or 5-point sample check passed). Skipping send.", config_.sink_id.c_str());
+        // The run loop will effectively discard this chunk from output_network_buffer_
+        // because it adjusts output_buffer_write_pos_ regardless of whether sendto was called.
+        return; // Do not send the packet
+    }
+    // ---- END SILENCE CHECK ----
 
     // Send via UDP
     if (udp_socket_fd_ != INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
-        LOG_DEBUG(config_.sink_id, "SendNet: Sending " + std::to_string(length) + " bytes via UDP to " + config_.output_ip + ":" + std::to_string(config_.output_port));
+        LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Sending %zu bytes via UDP to %s:%d",
+                      config_.sink_id.c_str(), length, config_.output_ip.c_str(), config_.output_port);
         // Send from the beginning of the buffer, including the header
         #ifdef _WIN32
             // Windows sendto uses char* buffer and int length
@@ -621,14 +708,14 @@ void SinkAudioMixer::send_network_buffer(size_t length) {
         if (sent_bytes < 0) {
             // EAGAIN or EWOULDBLOCK might be acceptable if non-blocking, but UDP usually doesn't block here.
             // Check specific Windows errors like WSAEWOULDBLOCK if needed.
-            LOG_ERROR(config_.sink_id, "SendNet: UDP sendto failed");
+            LOG_CPP_ERROR("[SinkMixer:%s] SendNet: UDP sendto failed", config_.sink_id.c_str());
         } else if (static_cast<size_t>(sent_bytes) != length) {
-             LOG_ERROR(config_.sink_id, "SendNet: UDP sendto sent partial data: " + std::to_string(sent_bytes) + "/" + std::to_string(length));
+             LOG_CPP_ERROR("[SinkMixer:%s] SendNet: UDP sendto sent partial data: %d/%zu", config_.sink_id.c_str(), sent_bytes, length);
         } else {
-             LOG_DEBUG(config_.sink_id, "SendNet: UDP send successful (" + std::to_string(sent_bytes) + " bytes).");
+             LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: UDP send successful (%d bytes).", config_.sink_id.c_str(), sent_bytes);
         }
     } else {
-         LOG_DEBUG(config_.sink_id, "SendNet: UDP socket not valid, skipping UDP send.");
+         LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: UDP socket not valid, skipping UDP send.", config_.sink_id.c_str());
     }
 
     // Send via TCP (if connected)
@@ -647,13 +734,13 @@ void SinkAudioMixer::encode_and_push_mp3() {
     // This approximates the old select() check on the write FD.
     if (mp3_output_queue_->size() > 10) { // If queue is backing up, assume inactive consumer
         if (lame_active_) {
-            LOG(config_.sink_id, "MP3 output queue full, pausing encoding.");
+            LOG_CPP_INFO("[SinkMixer:%s] MP3 output queue full, pausing encoding.", config_.sink_id.c_str());
             lame_active_ = false;
         }
         return; // Don't encode if consumer likely inactive
     } else {
          if (!lame_active_) {
-             LOG(config_.sink_id, "MP3 output queue draining, resuming encoding.");
+             LOG_CPP_INFO("[SinkMixer:%s] MP3 output queue draining, resuming encoding.", config_.sink_id.c_str());
              lame_active_ = true;
          }
     }
@@ -674,7 +761,7 @@ void SinkAudioMixer::encode_and_push_mp3() {
     const size_t input_chunk_bytes_for_preprocessor = SINK_CHUNK_SIZE_BYTES; // 1152 bytes
 
     if (input_chunk_bytes_for_preprocessor == 0) {
-        LOG_ERROR(config_.sink_id, "MP3 Encode: input_chunk_bytes_for_preprocessor is zero. This should not happen.");
+        LOG_CPP_ERROR("[SinkMixer:%s] MP3 Encode: input_chunk_bytes_for_preprocessor is zero. This should not happen.", config_.sink_id.c_str());
         return;
     }
     
@@ -683,23 +770,25 @@ void SinkAudioMixer::encode_and_push_mp3() {
         // Check queue status at the beginning of processing each chunk
         if (mp3_output_queue_->size() > 10) { // If queue is backing up
             if (lame_active_) {
-                LOG(config_.sink_id, "MP3 output queue full, pausing encoding. Processed " + std::to_string(current_byte_offset) + " bytes out of " + std::to_string(total_bytes_in_mixing_buffer));
+                LOG_CPP_INFO("[SinkMixer:%s] MP3 output queue full, pausing encoding. Processed %zu bytes out of %zu",
+                             config_.sink_id.c_str(), current_byte_offset, total_bytes_in_mixing_buffer);
                 lame_active_ = false;
             }
             return; // Stop processing more chunks in this call
         } else {
             if (!lame_active_) {
-                LOG(config_.sink_id, "MP3 output queue draining, resuming encoding.");
+                LOG_CPP_INFO("[SinkMixer:%s] MP3 output queue draining, resuming encoding.", config_.sink_id.c_str());
                 lame_active_ = true;
             }
         }
         // If LAME encoding was paused and queue is still full, lame_active_ will be false.
         if (!lame_active_) {
-             LOG_DEBUG(config_.sink_id, "MP3 encoding paused, skipping chunk at offset " + std::to_string(current_byte_offset));
-             return; 
+             LOG_CPP_DEBUG("[SinkMixer:%s] MP3 encoding paused, skipping chunk at offset %zu", config_.sink_id.c_str(), current_byte_offset);
+             return;
         }
 
-        LOG_DEBUG(config_.sink_id, "MP3 Encode: Processing chunk from mixing_buffer_ at offset " + std::to_string(current_byte_offset) + " with size " + std::to_string(input_chunk_bytes_for_preprocessor));
+        LOG_CPP_DEBUG("[SinkMixer:%s] MP3 Encode: Processing chunk from mixing_buffer_ at offset %zu with size %zu",
+                      config_.sink_id.c_str(), current_byte_offset, input_chunk_bytes_for_preprocessor);
         const uint8_t* input_chunk_ptr = reinterpret_cast<const uint8_t*>(mixing_buffer_.data()) + current_byte_offset;
 
         // lame_preprocessor_->processAudio consumes input_chunk_bytes_for_preprocessor
@@ -710,47 +799,53 @@ void SinkAudioMixer::encode_and_push_mp3() {
         );
 
         if (processed_total_stereo_samples <= 0) {
-            LOG_ERROR(config_.sink_id, "AudioProcessor failed to process audio for LAME. Offset: " + std::to_string(current_byte_offset) + ". Samples processed: " + std::to_string(processed_total_stereo_samples));
+            LOG_CPP_ERROR("[SinkMixer:%s] AudioProcessor failed to process audio for LAME. Offset: %zu. Samples processed: %d",
+                          config_.sink_id.c_str(), current_byte_offset, processed_total_stereo_samples);
             break; // Stop processing further chunks if an error occurs
         }
         
         // AudioProcessor should output SINK_MIXING_BUFFER_SAMPLES stereo frames, which is SINK_MIXING_BUFFER_SAMPLES * 2 total int32_t samples.
         if (static_cast<size_t>(processed_total_stereo_samples) != stereo_int32_buffer.size()) {
-            LOG_WARN(config_.sink_id, "AudioProcessor output " + std::to_string(processed_total_stereo_samples) + " stereo samples, but buffer was sized for " + std::to_string(stereo_int32_buffer.size()) + ". Using actual count for LAME.");
+            LOG_CPP_WARNING("[SinkMixer:%s] AudioProcessor output %d stereo samples, but buffer was sized for %zu. Using actual count for LAME.",
+                            config_.sink_id.c_str(), processed_total_stereo_samples, stereo_int32_buffer.size());
         }
-        LOG_DEBUG(config_.sink_id, "AudioProcessor produced " + std::to_string(processed_total_stereo_samples) + " total stereo int32 samples for LAME from offset " + std::to_string(current_byte_offset));
+        LOG_CPP_DEBUG("[SinkMixer:%s] AudioProcessor produced %d total stereo int32 samples for LAME from offset %zu",
+                      config_.sink_id.c_str(), processed_total_stereo_samples, current_byte_offset);
 
         // 2. NO CONVERSION NEEDED: lame_encode_buffer_interleaved_int takes int32_t directly.
 
         // 3. Encode the stereo int32_t buffer using LAME
         // LAME expects frames per channel.
         int processed_frames_per_channel = processed_total_stereo_samples / 2; // If 1152 samples (576 stereo frames) -> 576 frames/channel
-        LOG_DEBUG(config_.sink_id, "Processed frames per channel for LAME: " + std::to_string(processed_frames_per_channel));
+        LOG_CPP_DEBUG("[SinkMixer:%s] Processed frames per channel for LAME: %d", config_.sink_id.c_str(), processed_frames_per_channel);
 
         size_t required_mp3_buffer_size = static_cast<size_t>(1.25 * processed_frames_per_channel + 7200);
         if (mp3_encode_buffer_.size() < required_mp3_buffer_size) {
-            LOG_WARN(config_.sink_id, "MP3 encode buffer might be too small for " + std::to_string(processed_frames_per_channel) + " frames. Current size: " + std::to_string(mp3_encode_buffer_.size()) + ", Recommended: " + std::to_string(required_mp3_buffer_size) + ". Resizing.");
+            LOG_CPP_WARNING("[SinkMixer:%s] MP3 encode buffer might be too small for %d frames. Current size: %zu, Recommended: %zu. Resizing.",
+                            config_.sink_id.c_str(), processed_frames_per_channel, mp3_encode_buffer_.size(), required_mp3_buffer_size);
             mp3_encode_buffer_.resize(required_mp3_buffer_size);
         }
         
         // Ensure stereo_int32_buffer has enough samples for the processed frames.
         // This check is more of a sanity check as processed_frames_per_channel is derived from processed_total_stereo_samples.
         if (stereo_int32_buffer.size() < static_cast<size_t>(processed_total_stereo_samples)) {
-             LOG_ERROR(config_.sink_id, "Internal error: stereo_int32_buffer too small. Has: " + std::to_string(stereo_int32_buffer.size()) + ", Needs: " + std::to_string(processed_total_stereo_samples));
-             break; 
+             LOG_CPP_ERROR("[SinkMixer:%s] Internal error: stereo_int32_buffer too small. Has: %zu, Needs: %d",
+                           config_.sink_id.c_str(), stereo_int32_buffer.size(), processed_total_stereo_samples);
+             break;
         }
 
         int mp3_bytes_encoded = lame_encode_buffer_interleaved_int(
             lame_global_flags_,
             stereo_int32_buffer.data(),
-            processed_frames_per_channel, 
+            processed_frames_per_channel,
             mp3_encode_buffer_.data(),
             static_cast<int>(mp3_encode_buffer_.size())
         );
 
         if (mp3_bytes_encoded < 0) {
-            LOG_ERROR(config_.sink_id, "LAME encoding failed with code: " + std::to_string(mp3_bytes_encoded) + " for chunk at offset " + std::to_string(current_byte_offset));
-            break; 
+            LOG_CPP_ERROR("[SinkMixer:%s] LAME encoding failed with code: %d for chunk at offset %zu",
+                          config_.sink_id.c_str(), mp3_bytes_encoded, current_byte_offset);
+            break;
         } else if (mp3_bytes_encoded > 0) {
             EncodedMP3Data mp3_data;
             mp3_data.mp3_data.assign(mp3_encode_buffer_.begin(), mp3_encode_buffer_.begin() + mp3_bytes_encoded);
@@ -761,23 +856,24 @@ void SinkAudioMixer::encode_and_push_mp3() {
     }
     
     if (current_byte_offset < total_bytes_in_mixing_buffer) {
-        LOG_DEBUG(config_.sink_id, "MP3 Encode: " + std::to_string(total_bytes_in_mixing_buffer - current_byte_offset) + " bytes remaining in mixing_buffer_ after processing. (Not a full chunk)");
+        LOG_CPP_DEBUG("[SinkMixer:%s] MP3 Encode: %zu bytes remaining in mixing_buffer_ after processing. (Not a full chunk)",
+                      config_.sink_id.c_str(), total_bytes_in_mixing_buffer - current_byte_offset);
     }
 }
 
 
 void SinkAudioMixer::run() {
-    LOG(config_.sink_id, "Entering run loop.");
+    LOG_CPP_INFO("[SinkMixer:%s] Entering run loop.", config_.sink_id.c_str());
 
-    LOG_DEBUG(config_.sink_id, "RunLoop: Starting iteration.");
+    LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Starting iteration.", config_.sink_id.c_str());
     while (!stop_flag_) {
         // 1. Wait for and retrieve data from source queues
-        LOG_DEBUG(config_.sink_id, "RunLoop: Waiting for source data...");
+        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Waiting for source data...", config_.sink_id.c_str());
         bool data_available = wait_for_source_data(INPUT_WAIT_TIMEOUT);
-        LOG_DEBUG(config_.sink_id, "RunLoop: Wait finished. Data available: " << data_available);
+        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Wait finished. Data available: %s", config_.sink_id.c_str(), (data_available ? "true" : "false"));
 
         if (stop_flag_) {
-             LOG_DEBUG(config_.sink_id, "RunLoop: Stop flag checked after wait, breaking.");
+             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Stop flag checked after wait, breaking.", config_.sink_id.c_str());
              break; // Check flag again after potentially waiting
         }
 
@@ -785,35 +881,36 @@ void SinkAudioMixer::run() {
         std::unique_lock<std::mutex> lock(queues_mutex_);
 
         if (data_available || !input_queues_.empty()) { // Mix even if no new data, using last known buffer state
-            LOG_DEBUG(config_.sink_id, "RunLoop: Data available or queues not empty, proceeding to mix.");
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Data available or queues not empty, proceeding to mix.", config_.sink_id.c_str());
             // 2. Mix data from active source buffers
-            LOG_DEBUG(config_.sink_id, "RunLoop: Mixing buffers...");
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing buffers...", config_.sink_id.c_str());
             mix_buffers();
-            LOG_DEBUG(config_.sink_id, "RunLoop: Mixing complete.");
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing complete.", config_.sink_id.c_str());
 
             // Unlock queues mutex before potentially long operations
             lock.unlock();
-            LOG_DEBUG(config_.sink_id, "RunLoop: Queues mutex unlocked.");
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Queues mutex unlocked.", config_.sink_id.c_str());
 
             // 3. Encode to MP3 (if enabled)
             encode_and_push_mp3();
 
             // 4. Downscale mixed buffer to network format
-            LOG_DEBUG(config_.sink_id, "RunLoop: Downscaling buffer...");
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Downscaling buffer...", config_.sink_id.c_str());
             downscale_buffer(); // Appends to output_network_buffer_
-            LOG_DEBUG(config_.sink_id, "RunLoop: Downscaling complete. WritePos=" << output_buffer_write_pos_);
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Downscaling complete. WritePos=%zu", config_.sink_id.c_str(), output_buffer_write_pos_);
 
             // 5. Send network data if a full packet's worth of *payload* bytes has been accumulated
             // We check against SINK_CHUNK_SIZE_BYTES (1152) because that's the payload size we accumulate via downscale_buffer
             if (output_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
-                LOG_DEBUG(config_.sink_id, "RunLoop: Output buffer ready to send. WritePos=" << output_buffer_write_pos_ << " bytes. ChunkSizeBytes=" << SINK_CHUNK_SIZE_BYTES << " bytes.");
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Output buffer ready to send. WritePos=%zu bytes. ChunkSizeBytes=%zu bytes.",
+                              config_.sink_id.c_str(), output_buffer_write_pos_, static_cast<size_t>(SINK_CHUNK_SIZE_BYTES));
                 // Send the first packet (from start of double buffer), total size includes header
                 send_network_buffer(SINK_PACKET_SIZE_BYTES); // Send 1157 bytes (header + 1152 payload)
-                LOG_DEBUG(config_.sink_id, "RunLoop: Network buffer sent (size=" << SINK_PACKET_SIZE_BYTES << ").");
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Network buffer sent (size=%zu).", config_.sink_id.c_str(), static_cast<size_t>(SINK_PACKET_SIZE_BYTES));
 
                 // Shift the remaining data (if any) from the second half of the buffer to the beginning (after header space)
                 size_t bytes_remaining_after_send = output_buffer_write_pos_ - SINK_CHUNK_SIZE_BYTES;
-                LOG_DEBUG(config_.sink_id, "RunLoop: Rotating output buffer... Shifting " << bytes_remaining_after_send << " bytes from second half to start.");
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Rotating output buffer... Shifting %zu bytes from second half to start.", config_.sink_id.c_str(), bytes_remaining_after_send);
                 if (bytes_remaining_after_send > 0) {
                     // Use memmove for potentially overlapping regions.
                     // Source: Start of the data *after* the first sent chunk (at index SINK_PACKET_SIZE_BYTES)
@@ -823,23 +920,24 @@ void SinkAudioMixer::run() {
                            output_network_buffer_.data() + SINK_PACKET_SIZE_BYTES, // Src
                            bytes_remaining_after_send);                            // Len
                 }
-                LOG_DEBUG(config_.sink_id, "RunLoop: Output buffer rotated.");
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Output buffer rotated.", config_.sink_id.c_str());
 
                 // Adjust write position to reflect the remaining data
                 output_buffer_write_pos_ = bytes_remaining_after_send; // New write pos is the number of bytes shifted
-                LOG_DEBUG(config_.sink_id, "RunLoop: Adjusted write pos to " << output_buffer_write_pos_);
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Adjusted write pos to %zu", config_.sink_id.c_str(), output_buffer_write_pos_);
             } else {
-                 LOG_DEBUG(config_.sink_id, "RunLoop: Output buffer not full enough yet for payload. WritePos=" << output_buffer_write_pos_ << " bytes. Need=" << SINK_CHUNK_SIZE_BYTES << " bytes.");
+                 LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Output buffer not full enough yet for payload. WritePos=%zu bytes. Need=%zu bytes.",
+                               config_.sink_id.c_str(), output_buffer_write_pos_, static_cast<size_t>(SINK_CHUNK_SIZE_BYTES));
             }
         } else {
             // No input queues connected or no data available from wait_for_source_data
-            LOG_DEBUG(config_.sink_id, "RunLoop: No data available and input queues empty. Sleeping briefly.");
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No data available and input queues empty. Sleeping briefly.", config_.sink_id.c_str());
             lock.unlock();
             // Add a small sleep to prevent busy-waiting if there are truly no inputs or no data
             std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Sleep 10ms
         }
-        LOG_DEBUG(config_.sink_id, "RunLoop: End of iteration.");
+        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: End of iteration.", config_.sink_id.c_str());
     } // End while loop
 
-    LOG(config_.sink_id, "Exiting run loop.");
+    LOG_CPP_INFO("[SinkMixer:%s] Exiting run loop.", config_.sink_id.c_str());
 }

@@ -1,7 +1,8 @@
 #include "audio_manager.h"
 #include "raw_scream_receiver.h"
 #include "per_process_scream_receiver.h" // Include the new header
-#include <iostream> // For logging
+#include "cpp_logger.h" // For new C++ logger
+#include <iostream> // For logging (cpp_logger fallback)
 #include <stdexcept>
 #include <utility> // For std::move
 #include <system_error> // For thread errors
@@ -14,10 +15,7 @@ namespace screamrouter { namespace audio { using namespace utils; } }
 using namespace screamrouter::audio;
 using namespace screamrouter::utils;
 
-// Simple logger helper (replace with a proper logger if available)
-#define LOG_AM(msg) //std::cout << "[AudioManager] " << msg << std::endl
-#define LOG_ERROR_AM(msg) //std::cerr << "[AudioManager Error] " << msg << std::endl
-#define LOG_WARN_AM(msg) //std::cout << "[AudioManager Warn] " << msg << std::endl // Define WARN
+// Old logger macros are removed. New macros (LOG_CPP_INFO, etc.) are in cpp_logger.h
 
 // Static counter for generating unique instance IDs
 static std::atomic<uint64_t> instance_id_counter{0};
@@ -27,7 +25,7 @@ static std::atomic<uint64_t> instance_id_counter{0};
 const std::chrono::seconds DEFAULT_GLOBAL_TIMESHIFT_BUFFER_DURATION(300);
 
 AudioManager::AudioManager() : running_(false) {
-    LOG_AM("Created.");
+    LOG_CPP_INFO("Created.");
 }
 
 // Helper function to generate unique IDs
@@ -44,31 +42,30 @@ std::string AudioManager::generate_unique_instance_id(const std::string& base_ta
 }
 
 AudioManager::~AudioManager() {
-    LOG_AM("Destroying...");
+    LOG_CPP_INFO("Destroying...");
     if (running_) {
         shutdown(); // Ensure shutdown is called if not done explicitly
     }
     // Ensure notification thread is joined if it was started
     if (notification_thread_.joinable()) {
-         LOG_ERROR_AM("Notification thread still joinable in destructor! Shutdown might have failed.");
+         LOG_CPP_ERROR("Notification thread still joinable in destructor! Shutdown might have failed.");
          // Attempt to signal stop again just in case
          if (new_source_notification_queue_) new_source_notification_queue_->stop();
          try {
              notification_thread_.join();
          } catch (const std::system_error& e) {
-             LOG_ERROR_AM("Error joining notification thread in destructor: " + std::string(e.what()));
+             LOG_CPP_ERROR("Error joining notification thread in destructor: %s", e.what());
          }
     }
-    LOG_AM("Destroyed.");
+    LOG_CPP_INFO("Destroyed.");
 }
 
 bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_duration_sec) {
-    LOG_AM("Initializing with rtp_listen_port: " + std::to_string(rtp_listen_port) +
-           ", timeshift_buffer_duration: " + std::to_string(global_timeshift_buffer_duration_sec) + "s");
+    LOG_CPP_INFO("Initializing with rtp_listen_port: %d, timeshift_buffer_duration: %ds", rtp_listen_port, global_timeshift_buffer_duration_sec);
     std::lock_guard<std::mutex> lock(manager_mutex_); // Protect shared state during init
 
     if (running_) {
-        LOG_AM("Already initialized.");
+        LOG_CPP_INFO("Already initialized.");
         return true;
     }
 
@@ -76,9 +73,9 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
     try {
         timeshift_manager_ = std::make_unique<TimeshiftManager>(std::chrono::seconds(global_timeshift_buffer_duration_sec));
         timeshift_manager_->start();
-        LOG_AM("TimeshiftManager started with buffer duration: " + std::to_string(global_timeshift_buffer_duration_sec) + "s.");
+        LOG_CPP_INFO("TimeshiftManager started with buffer duration: %ds.", global_timeshift_buffer_duration_sec);
     } catch (const std::exception& e) {
-        LOG_ERROR_AM("Failed to initialize TimeshiftManager: " + std::string(e.what()));
+        LOG_CPP_ERROR("Failed to initialize TimeshiftManager: %s", e.what());
         return false;
     }
 
@@ -97,7 +94,7 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
              throw std::runtime_error("RtpReceiver failed to start or socket setup failed.");
         }
     } catch (const std::exception& e) {
-        LOG_ERROR_AM("Failed to initialize RtpReceiver: " + std::string(e.what()));
+        LOG_CPP_ERROR("Failed to initialize RtpReceiver: %s", e.what());
         rtp_receiver_.reset(); // Clean up partially created receiver
         new_source_notification_queue_.reset();
         return false;
@@ -107,7 +104,7 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
     try {
         notification_thread_ = std::thread(&AudioManager::process_notifications, this);
     } catch (const std::system_error& e) {
-        LOG_ERROR_AM("Failed to start notification thread: " + std::string(e.what()));
+        LOG_CPP_ERROR("Failed to start notification thread: %s", e.what());
         if(rtp_receiver_) rtp_receiver_->stop(); // Stop the receiver if notification thread failed
         rtp_receiver_.reset();
         if(timeshift_manager_) timeshift_manager_->stop(); // Stop TimeshiftManager if subsequent steps fail
@@ -117,16 +114,16 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
     }
 
     running_ = true;
-    LOG_AM("Initialization successful.");
+    LOG_CPP_INFO("Initialization successful.");
     return true;
 }
 
 void AudioManager::shutdown() {
-    LOG_AM("Shutting down...");
+    LOG_CPP_INFO("Shutting down...");
     { // Scope for lock
         std::lock_guard<std::mutex> lock(manager_mutex_);
         if (!running_) {
-            LOG_AM("Already shut down.");
+            LOG_CPP_INFO("Already shut down.");
             return;
         }
         running_ = false; // Signal all loops to stop
@@ -139,12 +136,12 @@ void AudioManager::shutdown() {
 
     // Join notification thread
     if (notification_thread_.joinable()) {
-        LOG_AM("Joining notification thread...");
+        LOG_CPP_INFO("Joining notification thread...");
         try {
              notification_thread_.join();
-             LOG_AM("Notification thread joined.");
+             LOG_CPP_INFO("Notification thread joined.");
         } catch (const std::system_error& e) {
-             LOG_ERROR_AM("Error joining notification thread: " + std::string(e.what()));
+             LOG_CPP_ERROR("Error joining notification thread: %s", e.what());
         }
     }
 
@@ -153,22 +150,22 @@ void AudioManager::shutdown() {
 
     // Stop TimeshiftManager first, as other components might depend on it or its state
     if (timeshift_manager_) {
-        LOG_AM("Stopping TimeshiftManager...");
+        LOG_CPP_INFO("Stopping TimeshiftManager...");
         timeshift_manager_->stop();
         timeshift_manager_.reset();
-        LOG_AM("TimeshiftManager stopped.");
+        LOG_CPP_INFO("TimeshiftManager stopped.");
     }
 
     // Stop RTP Receiver
     if (rtp_receiver_) {
-        LOG_AM("Stopping RTP Receiver...");
+        LOG_CPP_INFO("Stopping RTP Receiver...");
         rtp_receiver_->stop();
         rtp_receiver_.reset(); // Destroy after stopping
-        LOG_AM("RTP Receiver stopped.");
+        LOG_CPP_INFO("RTP Receiver stopped.");
     }
 
     // Stop all Source Processors (using instance_id map)
-    LOG_AM("Stopping Source Processors...");
+    LOG_CPP_INFO("Stopping Source Processors...");
     for (auto& pair : sources_) {
         if (pair.second) {
             pair.second->stop();
@@ -179,11 +176,11 @@ void AudioManager::shutdown() {
     rtp_to_source_queues_.clear();
     source_to_sink_queues_.clear();
     command_queues_.clear();
-    LOG_AM("Source Processors stopped.");
+    LOG_CPP_INFO("Source Processors stopped.");
 
 
     // Stop all Sink Mixers
-    LOG_AM("Stopping Sink Mixers...");
+    LOG_CPP_INFO("Stopping Sink Mixers...");
     for (auto& pair : sinks_) {
         if (pair.second) {
             pair.second->stop();
@@ -192,7 +189,7 @@ void AudioManager::shutdown() {
     sinks_.clear(); // Destroy after stopping all
     mp3_output_queues_.clear(); // Clear MP3 queues
     sink_configs_.clear();
-    LOG_AM("Sink Mixers stopped.");
+    LOG_CPP_INFO("Sink Mixers stopped.");
 
     // Removed source_configs_.clear();
 
@@ -200,39 +197,39 @@ void AudioManager::shutdown() {
     new_source_notification_queue_.reset();
 
     // Stop all RawScreamReceivers
-    LOG_AM("Stopping Raw Scream Receivers...");
+    LOG_CPP_INFO("Stopping Raw Scream Receivers...");
     for (auto& pair : raw_scream_receivers_) {
         if (pair.second) {
             pair.second->stop();
         }
     }
     raw_scream_receivers_.clear();
-    LOG_AM("Raw Scream Receivers stopped.");
+    LOG_CPP_INFO("Raw Scream Receivers stopped.");
 
     // Stop all PerProcessScreamReceivers
-    LOG_AM("Stopping Per-Process Scream Receivers...");
+    LOG_CPP_INFO("Stopping Per-Process Scream Receivers...");
     for (auto& pair : per_process_scream_receivers_) {
         if (pair.second) {
             pair.second->stop();
         }
     }
     per_process_scream_receivers_.clear();
-    LOG_AM("Per-Process Scream Receivers stopped.");
+    LOG_CPP_INFO("Per-Process Scream Receivers stopped.");
 
-    LOG_AM("Shutdown complete.");
+    LOG_CPP_INFO("Shutdown complete.");
 }
 
 bool AudioManager::add_raw_scream_receiver(const RawScreamReceiverConfig& config) {
-    LOG_AM("Adding raw scream receiver for port: " + std::to_string(config.listen_port));
+    LOG_CPP_INFO("Adding raw scream receiver for port: %d", config.listen_port);
     std::lock_guard<std::mutex> lock(manager_mutex_);
 
     if (!running_) {
-        LOG_ERROR_AM("Cannot add raw scream receiver, manager is not running.");
+        LOG_CPP_ERROR("Cannot add raw scream receiver, manager is not running.");
         return false;
     }
 
     if (raw_scream_receivers_.count(config.listen_port)) {
-        LOG_ERROR_AM("Raw scream receiver for port " + std::to_string(config.listen_port) + " already exists.");
+        LOG_CPP_ERROR("Raw scream receiver for port %d already exists.", config.listen_port);
         return false;
     }
 
@@ -241,35 +238,35 @@ bool AudioManager::add_raw_scream_receiver(const RawScreamReceiverConfig& config
         new_receiver = std::make_unique<RawScreamReceiver>(config, new_source_notification_queue_, timeshift_manager_.get());
         new_receiver->start();
         // Basic check, might need more robust mechanism or longer sleep
-        std::this_thread::sleep_for(std::chrono::milliseconds(100)); 
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (!new_receiver->is_running()) {
             throw std::runtime_error("RawScreamReceiver failed to start.");
         }
     } catch (const std::exception& e) {
-        LOG_ERROR_AM("Failed to create or start RawScreamReceiver for port " + std::to_string(config.listen_port) + ": " + std::string(e.what()));
+        LOG_CPP_ERROR("Failed to create or start RawScreamReceiver for port %d: %s", config.listen_port, e.what());
         // new_receiver is already a unique_ptr, will clean up if it was allocated before throw
         return false;
     }
 
     raw_scream_receivers_[config.listen_port] = std::move(new_receiver);
-    LOG_AM("Raw scream receiver for port " + std::to_string(config.listen_port) + " added successfully.");
+    LOG_CPP_INFO("Raw scream receiver for port %d added successfully.", config.listen_port);
     return true;
 }
 
 bool AudioManager::remove_raw_scream_receiver(int listen_port) {
-    LOG_AM("Removing raw scream receiver for port: " + std::to_string(listen_port));
+    LOG_CPP_INFO("Removing raw scream receiver for port: %d", listen_port);
     std::unique_ptr<RawScreamReceiver> receiver_to_remove;
 
     { // Scope for lock
         std::lock_guard<std::mutex> lock(manager_mutex_);
         if (!running_) {
-            LOG_ERROR_AM("Cannot remove raw scream receiver, manager is not running.");
+            LOG_CPP_ERROR("Cannot remove raw scream receiver, manager is not running.");
             return false;
         }
 
         auto it = raw_scream_receivers_.find(listen_port);
         if (it == raw_scream_receivers_.end()) {
-            LOG_ERROR_AM("Raw scream receiver for port " + std::to_string(listen_port) + " not found.");
+            LOG_CPP_ERROR("Raw scream receiver for port %d not found.", listen_port);
             return false;
         }
 
@@ -281,21 +278,21 @@ bool AudioManager::remove_raw_scream_receiver(int listen_port) {
         receiver_to_remove->stop();
     }
 
-    LOG_AM("Raw scream receiver for port " + std::to_string(listen_port) + " removed successfully.");
+    LOG_CPP_INFO("Raw scream receiver for port %d removed successfully.", listen_port);
     return true;
 }
 
 bool AudioManager::add_per_process_scream_receiver(const PerProcessScreamReceiverConfig& config) {
-    LOG_AM("Adding per-process scream receiver for port: " + std::to_string(config.listen_port));
+    LOG_CPP_INFO("Adding per-process scream receiver for port: %d", config.listen_port);
     std::lock_guard<std::mutex> lock(manager_mutex_);
 
     if (!running_) {
-        LOG_ERROR_AM("Cannot add per-process scream receiver, manager is not running.");
+        LOG_CPP_ERROR("Cannot add per-process scream receiver, manager is not running.");
         return false;
     }
 
     if (per_process_scream_receivers_.count(config.listen_port)) {
-        LOG_ERROR_AM("Per-process scream receiver for port " + std::to_string(config.listen_port) + " already exists.");
+        LOG_CPP_ERROR("Per-process scream receiver for port %d already exists.", config.listen_port);
         return false;
     }
 
@@ -303,34 +300,34 @@ bool AudioManager::add_per_process_scream_receiver(const PerProcessScreamReceive
     try {
         new_receiver = std::make_unique<PerProcessScreamReceiver>(config, new_source_notification_queue_, timeshift_manager_.get());
         new_receiver->start();
-        std::this_thread::sleep_for(std::chrono::milliseconds(100)); 
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (!new_receiver->is_running()) {
             throw std::runtime_error("PerProcessScreamReceiver failed to start.");
         }
     } catch (const std::exception& e) {
-        LOG_ERROR_AM("Failed to create or start PerProcessScreamReceiver for port " + std::to_string(config.listen_port) + ": " + std::string(e.what()));
+        LOG_CPP_ERROR("Failed to create or start PerProcessScreamReceiver for port %d: %s", config.listen_port, e.what());
         return false;
     }
 
     per_process_scream_receivers_[config.listen_port] = std::move(new_receiver);
-    LOG_AM("Per-process scream receiver for port " + std::to_string(config.listen_port) + " added successfully.");
+    LOG_CPP_INFO("Per-process scream receiver for port %d added successfully.", config.listen_port);
     return true;
 }
 
 bool AudioManager::remove_per_process_scream_receiver(int listen_port) {
-    LOG_AM("Removing per-process scream receiver for port: " + std::to_string(listen_port));
+    LOG_CPP_INFO("Removing per-process scream receiver for port: %d", listen_port);
     std::unique_ptr<PerProcessScreamReceiver> receiver_to_remove;
 
     { // Scope for lock
         std::lock_guard<std::mutex> lock(manager_mutex_);
         if (!running_) {
-            LOG_ERROR_AM("Cannot remove per-process scream receiver, manager is not running.");
+            LOG_CPP_ERROR("Cannot remove per-process scream receiver, manager is not running.");
             return false;
         }
 
         auto it = per_process_scream_receivers_.find(listen_port);
         if (it == per_process_scream_receivers_.end()) {
-            LOG_ERROR_AM("Per-process scream receiver for port " + std::to_string(listen_port) + " not found.");
+            LOG_CPP_ERROR("Per-process scream receiver for port %d not found.", listen_port);
             return false;
         }
 
@@ -342,28 +339,28 @@ bool AudioManager::remove_per_process_scream_receiver(int listen_port) {
         receiver_to_remove->stop();
     }
 
-    LOG_AM("Per-process scream receiver for port " + std::to_string(listen_port) + " removed successfully.");
+    LOG_CPP_INFO("Per-process scream receiver for port %d removed successfully.", listen_port);
     return true;
 }
 
 bool AudioManager::add_sink(const SinkConfig& config) {
-    LOG_AM("Adding sink: " + config.id);
+    LOG_CPP_INFO("Adding sink: %s", config.id.c_str());
     std::lock_guard<std::mutex> lock(manager_mutex_);
 
     if (!running_) {
-        LOG_ERROR_AM("Cannot add sink, manager is not running.");
+        LOG_CPP_ERROR("Cannot add sink, manager is not running.");
         return false;
     }
 
     if (sinks_.count(config.id)) {
-        LOG_ERROR_AM("Sink ID already exists: " + config.id);
+        LOG_CPP_ERROR("Sink ID already exists: %s", config.id.c_str());
         return false;
     }
 
     // 1. Create MP3 Queue unconditionally
     auto mp3_queue = std::make_shared<Mp3Queue>();
     mp3_output_queues_[config.id] = mp3_queue;
-    LOG_AM("MP3 output queue created for sink: " + config.id);
+    LOG_CPP_INFO("MP3 output queue created for sink: %s", config.id.c_str());
 
     // 2. Create SinkMixerConfig
     SinkMixerConfig mixer_config;
@@ -387,7 +384,7 @@ bool AudioManager::add_sink(const SinkConfig& config) {
              throw std::runtime_error("SinkAudioMixer failed to start.");
         }
     } catch (const std::exception& e) {
-        LOG_ERROR_AM("Failed to create or start SinkAudioMixer for " + config.id + ": " + std::string(e.what()));
+        LOG_CPP_ERROR("Failed to create or start SinkAudioMixer for %s: %s", config.id.c_str(), e.what());
         mp3_output_queues_.erase(config.id); // Clean up MP3 queue if mixer failed
         return false;
     }
@@ -396,24 +393,24 @@ bool AudioManager::add_sink(const SinkConfig& config) {
     sinks_[config.id] = std::move(new_sink);
     sink_configs_[config.id] = config;
 
-    LOG_AM("Sink " + config.id + " added successfully.");
+    LOG_CPP_INFO("Sink %s added successfully.", config.id.c_str());
     return true;
 }
 
 bool AudioManager::remove_sink(const std::string& sink_id) {
-    LOG_AM("Removing sink: " + sink_id);
+    LOG_CPP_INFO("Removing sink: %s", sink_id.c_str());
     std::unique_ptr<SinkAudioMixer> sink_to_remove;
 
     { // Scope for lock
         std::lock_guard<std::mutex> lock(manager_mutex_);
         if (!running_) {
-             LOG_ERROR_AM("Cannot remove sink, manager is not running.");
+             LOG_CPP_ERROR("Cannot remove sink, manager is not running.");
              return false;
         }
 
         auto it = sinks_.find(sink_id);
         if (it == sinks_.end()) {
-            LOG_ERROR_AM("Sink not found: " + sink_id);
+            LOG_CPP_ERROR("Sink not found: %s", sink_id.c_str());
             return false;
         }
 
@@ -427,7 +424,7 @@ bool AudioManager::remove_sink(const std::string& sink_id) {
         sink_to_remove->stop();
     }
 
-    LOG_AM("Sink " + sink_id + " removed successfully.");
+    LOG_CPP_INFO("Sink %s removed successfully.", sink_id.c_str());
     return true;
 }
 
@@ -441,7 +438,7 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
 
     // Generate a unique instance ID
     std::string instance_id = generate_unique_instance_id(config.tag);
-    LOG_AM("Generated unique instance ID: " + instance_id);
+    LOG_CPP_INFO("Generated unique instance ID: %s", instance_id.c_str());
 
     // Validate EQ size from the input config
     SourceConfig validated_config = config; // Make a copy
@@ -497,7 +494,7 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     } else if (validated_config.protocol_type_hint == 2) {
         proc_config.protocol_type = InputProtocolType::PER_PROCESS_SCREAM_PACKET;
     } else {
-        LOG_WARN_AM("Unknown protocol_type_hint: " + std::to_string(validated_config.protocol_type_hint) + ". Defaulting to RTP_SCREAM_PAYLOAD.");
+        LOG_CPP_WARNING("Unknown protocol_type_hint: %d. Defaulting to RTP_SCREAM_PAYLOAD.", validated_config.protocol_type_hint);
         proc_config.protocol_type = InputProtocolType::RTP_SCREAM_PAYLOAD; // Default
     }
     proc_config.target_receiver_port = validated_config.target_receiver_port; // Copy target port
@@ -507,8 +504,11 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     else if (proc_config.protocol_type == InputProtocolType::RAW_SCREAM_PACKET) protocol_str = "RAW_SCREAM_PACKET";
     else if (proc_config.protocol_type == InputProtocolType::PER_PROCESS_SCREAM_PACKET) protocol_str = "PER_PROCESS_SCREAM_PACKET";
 
-    LOG_AM("Source instance " + instance_id + " configured with protocol type: " + protocol_str +
-           (proc_config.target_receiver_port != -1 ? ", Target Port: " + std::to_string(proc_config.target_receiver_port) : ""));
+    LOG_CPP_INFO("Source instance %s configured with protocol type: %s%s%d",
+                 instance_id.c_str(),
+                 protocol_str.c_str(),
+                 (proc_config.target_receiver_port != -1 ? ", Target Port: " : ""),
+                 (proc_config.target_receiver_port != -1 ? proc_config.target_receiver_port : 0)); // Provide a dummy int if not used for printf
 
 
     // Create and Start SourceInputProcessor
@@ -521,7 +521,7 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
              throw std::runtime_error("SourceInputProcessor failed to start.");
         }
     } catch (const std::exception& e) {
-        LOG_ERROR_AM("Failed to create or start SourceInputProcessor for instance " + instance_id + " (tag: " + config.tag + "): " + std::string(e.what()));
+        LOG_CPP_ERROR("Failed to create or start SourceInputProcessor for instance %s (tag: %s): %s", instance_id.c_str(), config.tag.c_str(), e.what());
         // Clean up queues created for this failed instance
         rtp_to_source_queues_.erase(instance_id);
         source_to_sink_queues_.erase(instance_id);
@@ -538,7 +538,7 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     //     // std::condition_variable* proc_cv = new_source->get_timeshift_cv(); // Removed
     //      rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue); // Removed
     //  } else {
-    //       LOG_ERROR_AM("RtpReceiver is null, cannot add output target for instance " + instance_id);
+    //       LOG_CPP_ERROR("RtpReceiver is null, cannot add output target for instance %s", instance_id.c_str());
     // ... (cleanup logic for failure)
     //  }
 
@@ -551,43 +551,43 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     // 1. Register with RtpReceiver
     if (rtp_receiver_) {
         rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
-        LOG_AM("  Registered instance " + instance_id + " with RtpReceiver.");
+        LOG_CPP_INFO("  Registered instance %s with RtpReceiver.", instance_id.c_str());
         registration_count++;
     } else {
-        LOG_WARN_AM("  RtpReceiver is null. Cannot register instance " + instance_id + ".");
+        LOG_CPP_WARNING("  RtpReceiver is null. Cannot register instance %s.", instance_id.c_str());
     }
 
     // 2. Register with all RawScreamReceivers
     if (raw_scream_receivers_.empty()) {
-        LOG_AM("  No RawScreamReceivers active to register with.");
+        LOG_CPP_INFO("  No RawScreamReceivers active to register with.");
     }
     for (auto const& [port, receiver_ptr] : raw_scream_receivers_) {
         if (receiver_ptr) {
             receiver_ptr->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
-            LOG_AM("  Registered instance " + instance_id + " with RawScreamReceiver on port " + std::to_string(port) + ".");
+            LOG_CPP_INFO("  Registered instance %s with RawScreamReceiver on port %d.", instance_id.c_str(), port);
             registration_count++;
         }
     }
 
     // 3. Register with all PerProcessScreamReceivers
     if (per_process_scream_receivers_.empty()) {
-        LOG_AM("  No PerProcessScreamReceivers active to register with.");
+        LOG_CPP_INFO("  No PerProcessScreamReceivers active to register with.");
     }
     for (auto const& [port, receiver_ptr] : per_process_scream_receivers_) {
         if (receiver_ptr) {
             receiver_ptr->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
-            LOG_AM("  Registered instance " + instance_id + " (tag: " + proc_config.source_tag + ") with PerProcessScreamReceiver on port " + std::to_string(port) + ".");
+            LOG_CPP_INFO("  Registered instance %s (tag: %s) with PerProcessScreamReceiver on port %d.", instance_id.c_str(), proc_config.source_tag.c_str(), port);
             registration_count++;
         }
     }
 
     if (registration_count == 0) {
-         LOG_WARN_AM("Warning: Source instance " + instance_id + " (tag: " + proc_config.source_tag + ") was not registered with ANY active receivers. It will not receive packets.");
+         LOG_CPP_WARNING("Warning: Source instance %s (tag: %s) was not registered with ANY active receivers. It will not receive packets.", instance_id.c_str(), proc_config.source_tag.c_str());
     }
     */
     // Ensure TimeshiftManager is available
     if (!timeshift_manager_) {
-        LOG_ERROR_AM("TimeshiftManager is null. Cannot configure source instance " + instance_id);
+        LOG_CPP_ERROR("TimeshiftManager is null. Cannot configure source instance %s", instance_id.c_str());
         // Clean up already created resources for this failed source
         rtp_to_source_queues_.erase(instance_id);
         source_to_sink_queues_.erase(instance_id);
@@ -605,9 +605,9 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
             proc_config.initial_delay_ms,
             proc_config.initial_timeshift_sec
         );
-        LOG_AM("  Registered instance " + instance_id + " with TimeshiftManager.");
+        LOG_CPP_INFO("  Registered instance %s with TimeshiftManager.", instance_id.c_str());
     } else {
-        LOG_ERROR_AM("TimeshiftManager or new_source is null. Cannot register with TimeshiftManager for instance " + instance_id);
+        LOG_CPP_ERROR("TimeshiftManager or new_source is null. Cannot register with TimeshiftManager for instance %s", instance_id.c_str());
         // Cleanup if registration fails
         rtp_to_source_queues_.erase(instance_id);
         source_to_sink_queues_.erase(instance_id);
@@ -618,7 +618,7 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
 
     sources_[instance_id] = std::move(new_source);
 
-    LOG_AM("Source instance " + instance_id + " (tag: " + config.tag + ") configured and started successfully.");
+    LOG_CPP_INFO("Source instance %s (tag: %s) configured and started successfully.", instance_id.c_str(), config.tag.c_str());
     return instance_id; // Return the unique ID
 }
 
@@ -638,7 +638,7 @@ bool AudioManager::remove_source(const std::string& instance_id) {
         // Find the processor by instance_id
         auto it = sources_.find(instance_id);
         if (it == sources_.end()) {
-            LOG_ERROR_AM("Source processor instance not found: " + instance_id);
+            LOG_CPP_ERROR("Source processor instance not found: %s", instance_id.c_str());
             return false;
         }
 
@@ -668,13 +668,13 @@ bool AudioManager::remove_source(const std::string& instance_id) {
             // Unregister from TimeshiftManager
             if (timeshift_manager_) {
                 timeshift_manager_->unregister_processor(instance_id, source_tag_for_removal);
-                LOG_AM("Unregistered instance " + instance_id + " (tag: " + source_tag_for_removal + ") from TimeshiftManager.");
+                LOG_CPP_INFO("Unregistered instance %s (tag: %s) from TimeshiftManager.", instance_id.c_str(), source_tag_for_removal.c_str());
             } else {
-                LOG_WARN_AM("TimeshiftManager is null during removal of instance " + instance_id + ". Cannot unregister.");
+                LOG_CPP_WARNING("TimeshiftManager is null during removal of instance %s. Cannot unregister.", instance_id.c_str());
             }
             // Calls to specific receiver remove_output_queue are no longer needed.
         } else {
-            LOG_ERROR_AM("Source tag for removal is empty for instance " + instance_id + ". Cannot unregister from TimeshiftManager.");
+            LOG_CPP_ERROR("Source tag for removal is empty for instance %s. Cannot unregister from TimeshiftManager.", instance_id.c_str());
         }
 
         for (auto& sink_pair : sinks_) {
@@ -687,7 +687,7 @@ bool AudioManager::remove_source(const std::string& instance_id) {
     // Stop the processor outside the lock
     if (source_to_remove) {
         source_to_remove->stop();
-        LOG_AM("Source processor instance " + instance_id + " stopped and removed.");
+        LOG_CPP_INFO("Source processor instance %s stopped and removed.", instance_id.c_str());
         return true; // Successfully found and stopped
     }
 
@@ -696,7 +696,7 @@ bool AudioManager::remove_source(const std::string& instance_id) {
 
 // process_notifications remains largely the same, but handle_new_source changes role
 void AudioManager::process_notifications() {
-    LOG_AM("Notification processing thread started.");
+    LOG_CPP_INFO("Notification processing thread started.");
     while (running_) {
         NewSourceNotification notification;
         // Blocking pop - waits until data available or queue is stopped
@@ -704,7 +704,7 @@ void AudioManager::process_notifications() {
 
         if (!success) { // pop returns false if queue was stopped
             if (running_) { // Log error only if we weren't expecting to stop
-                 LOG_ERROR_AM("Notification queue pop failed unexpectedly.");
+                 LOG_CPP_ERROR("Notification queue pop failed unexpectedly.");
             }
             break; // Exit loop if queue stopped or failed
         }
@@ -714,8 +714,9 @@ void AudioManager::process_notifications() {
 
         // TODO: Implement proper packet fan-out based on source_tag if RtpReceiver pushes packets here.
         // For now, this thread might just log the notification.
+        LOG_CPP_DEBUG("Received notification for source_tag: %s", notification.source_tag.c_str());
     }
-    LOG_AM("Notification processing thread finished.");
+    LOG_CPP_INFO("Notification processing thread finished.");
 }
 
 // handle_new_source is now just informational, processor creation is explicit via configure_source
@@ -725,7 +726,7 @@ void AudioManager::handle_new_source(const std::string& source_tag) {
     // but currently, it does nothing significant.
     std::lock_guard<std::mutex> lock(manager_mutex_);
     if (!running_) return;
-    LOG_AM("handle_new_source: Received packet notification for tag: " + source_tag + ". (Informational only)");
+    LOG_CPP_INFO("handle_new_source: Received packet notification for tag: %s. (Informational only)", source_tag.c_str());
 }
 
 // Refactored send_command_to_source to use instance_id
@@ -760,27 +761,27 @@ bool AudioManager::connect_source_sink(const std::string& source_instance_id, co
     // Find the sink
     auto sink_it = sinks_.find(sink_id);
     if (sink_it == sinks_.end() || !sink_it->second) {
-        LOG_ERROR_AM("Sink not found or invalid: " + sink_id);
+        LOG_CPP_ERROR("Sink not found or invalid: %s", sink_id.c_str());
         return false;
     }
 
     auto queue_it = source_to_sink_queues_.find(source_instance_id);
     if (queue_it == source_to_sink_queues_.end() || !queue_it->second) {
-        LOG_ERROR_AM("Source output queue not found for instance ID: " + source_instance_id);
+        LOG_CPP_ERROR("Source output queue not found for instance ID: %s", source_instance_id.c_str());
         return false;
     }
 
     auto source_it = sources_.find(source_instance_id);
      if (source_it == sources_.end() || !source_it->second) {
-         LOG_ERROR_AM("Source processor instance not found for ID: " + source_instance_id);
+         LOG_CPP_ERROR("Source processor instance not found for ID: %s", source_instance_id.c_str());
          return false;
      }
      std::string source_tag = source_it->second->get_source_tag();
-     // LOG_WARN_AM("Need getter for source_tag in SourceInputProcessor for connect_source_sink");
+     // LOG_CPP_WARNING("Need getter for source_tag in SourceInputProcessor for connect_source_sink");
 
 
     sink_it->second->add_input_queue(source_instance_id, queue_it->second); // Use instance_id now
-    LOG_AM("Connection successful: Source instance " + source_instance_id + " -> Sink " + sink_id);
+    LOG_CPP_INFO("Connection successful: Source instance %s -> Sink %s", source_instance_id.c_str(), sink_id.c_str());
     return true;
 }
 
@@ -795,22 +796,22 @@ bool AudioManager::disconnect_source_sink(const std::string& source_instance_id,
     // Find the sink
     auto sink_it = sinks_.find(sink_id);
     if (sink_it == sinks_.end() || !sink_it->second) {
-        LOG_ERROR_AM("Sink not found or invalid for disconnection: " + sink_id);
+        LOG_CPP_ERROR("Sink not found or invalid for disconnection: %s", sink_id.c_str());
         return false;
     }
 
      auto source_it = sources_.find(source_instance_id);
      if (source_it == sources_.end() || !source_it->second) {
          // Source instance doesn't exist, maybe already removed. Consider this success?
-         LOG_WARN_AM("Source processor instance not found for disconnection: " + source_instance_id + ". Assuming already disconnected.");
+         LOG_CPP_WARNING("Source processor instance not found for disconnection: %s. Assuming already disconnected.", source_instance_id.c_str());
          return true; // Or return false if strict check needed
      }
      std::string source_tag = source_it->second->get_source_tag();
-     // LOG_WARN_AM("Need getter for source_tag in SourceInputProcessor for disconnect_source_sink");
+     // LOG_CPP_WARNING("Need getter for source_tag in SourceInputProcessor for disconnect_source_sink");
 
 
     sink_it->second->remove_input_queue(source_instance_id); // Use instance_id now
-    LOG_AM("Disconnection successful: Source instance " + source_instance_id + " -x Sink " + sink_id);
+    LOG_CPP_INFO("Disconnection successful: Source instance %s -x Sink %s", source_instance_id.c_str(), sink_id.c_str());
     return true;
 }
 
@@ -846,9 +847,9 @@ bool AudioManager::update_source_delay(const std::string& instance_id, int delay
     // Then, update TimeshiftManager
     if (timeshift_manager_) {
         timeshift_manager_->update_processor_delay(instance_id, delay_ms);
-        LOG_AM("Updated delay in TimeshiftManager for instance " + instance_id + " to " + std::to_string(delay_ms) + "ms.");
+        LOG_CPP_INFO("Updated delay in TimeshiftManager for instance %s to %dms.", instance_id.c_str(), delay_ms);
     } else {
-        LOG_ERROR_AM("TimeshiftManager is null. Cannot update processor delay for instance " + instance_id);
+        LOG_CPP_ERROR("TimeshiftManager is null. Cannot update processor delay for instance %s", instance_id.c_str());
         return false; // Indicate failure if TimeshiftManager update fails
     }
     return cmd_sent; // Return status of command to SIP (or true if only TSM matters)
@@ -864,9 +865,9 @@ bool AudioManager::update_source_timeshift(const std::string& instance_id, float
     // Then, update TimeshiftManager
     if (timeshift_manager_) {
         timeshift_manager_->update_processor_timeshift(instance_id, timeshift_sec);
-        LOG_AM("Updated timeshift in TimeshiftManager for instance " + instance_id + " to " + std::to_string(timeshift_sec) + "s.");
+        LOG_CPP_INFO("Updated timeshift in TimeshiftManager for instance %s to %.2fs.", instance_id.c_str(), timeshift_sec);
     } else {
-        LOG_ERROR_AM("TimeshiftManager is null. Cannot update processor timeshift for instance " + instance_id);
+        LOG_CPP_ERROR("TimeshiftManager is null. Cannot update processor timeshift for instance %s", instance_id.c_str());
         return false; // Indicate failure
     }
     return cmd_sent; // Return status of command to SIP
@@ -879,9 +880,8 @@ bool AudioManager::update_source_speaker_layout_for_key(const std::string& insta
     cmd.input_channel_key = input_channel_key;
     cmd.speaker_layout_for_key = layout; // CppSpeakerLayout is now part of ControlCommand
 
-    LOG_AM("Sending SET_SPEAKER_MIX command to instance_id: " + instance_id + 
-           " for key: " + std::to_string(input_channel_key) + 
-           " (Auto: " + (layout.auto_mode ? "true" : "false") + ")");
+    LOG_CPP_INFO("Sending SET_SPEAKER_MIX command to instance_id: %s for key: %d (Auto: %s)",
+                 instance_id.c_str(), input_channel_key, (layout.auto_mode ? "true" : "false"));
     return send_command_to_source(instance_id, cmd);
 }
 
@@ -905,10 +905,10 @@ bool AudioManager::update_source_speaker_layouts_map(const std::string& instance
         // void set_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map);
         // This method was added to SourceInputProcessor in Task 17.10.1
         source_it->second->set_speaker_layouts_config(layouts_map);
-        LOG_AM("Updated speaker_layouts_map directly on SourceInputProcessor instance: " + instance_id);
+        LOG_CPP_INFO("Updated speaker_layouts_map directly on SourceInputProcessor instance: %s", instance_id.c_str());
         return true;
     } else {
-        LOG_ERROR_AM("SourceInputProcessor instance not found for speaker_layouts_map update: " + instance_id);
+        LOG_CPP_ERROR("SourceInputProcessor instance not found for speaker_layouts_map update: %s", instance_id.c_str());
         return false;
     }
 }
@@ -924,7 +924,7 @@ std::vector<uint8_t> AudioManager::get_mp3_data(const std::string& sink_id) {
 
         auto it = mp3_output_queues_.find(sink_id);
         if (it == mp3_output_queues_.end()) {
-            // LOG_ERROR_AM("MP3 queue not found for sink: " + sink_id); // Can be noisy
+            // LOG_CPP_ERROR("MP3 queue not found for sink: %s", sink_id.c_str()); // Can be noisy
             return {}; // Return empty vector
         }
         target_queue = it->second;
@@ -966,7 +966,7 @@ std::vector<uint8_t> AudioManager::get_mp3_data_by_ip(const std::string& ip_addr
         }
     }
 
-    // LOG_WARN_AM("No sink found with IP: " + ip_address); // Can be noisy
+    // LOG_CPP_WARNING("No sink found with IP: %s", ip_address.c_str()); // Can be noisy
     return {}; // IP address not found among sink configurations
 }
 
@@ -986,7 +986,7 @@ bool AudioManager::write_plugin_packet(
     std::lock_guard<std::mutex> lock(manager_mutex_);
 
     if (!running_) {
-        LOG_ERROR_AM("AudioManager not running. Cannot write plugin packet.");
+        LOG_CPP_ERROR("AudioManager not running. Cannot write plugin packet.");
         return false;
     }
 
@@ -1007,7 +1007,7 @@ bool AudioManager::write_plugin_packet(
     }
 
     if (!target_processor_ptr) {
-        LOG_ERROR_AM("SourceInputProcessor instance not found for tag: " + source_instance_tag);
+        LOG_CPP_ERROR("SourceInputProcessor instance not found for tag: %s", source_instance_tag.c_str());
         return false;
     }
 
@@ -1043,7 +1043,7 @@ std::vector<std::string> AudioManager::get_raw_scream_receiver_seen_tags(int lis
     if (it != raw_scream_receivers_.end() && it->second) {
         return it->second->get_seen_tags();
     }
-    LOG_WARN_AM("RawScreamReceiver not found for port: " + std::to_string(listen_port) + " when calling get_raw_scream_receiver_seen_tags.");
+    LOG_CPP_WARNING("RawScreamReceiver not found for port: %d when calling get_raw_scream_receiver_seen_tags.", listen_port);
     return {}; // Return empty vector if receiver not found
 }
 
@@ -1060,7 +1060,7 @@ void AudioManager::inject_plugin_packet_globally(
     std::lock_guard<std::mutex> lock(manager_mutex_);
 
     if (!running_ || !timeshift_manager_) {
-        LOG_WARN_AM("AudioManager not running or TimeshiftManager not available. Plugin packet ignored for source_tag: " + source_tag);
+        LOG_CPP_WARNING("AudioManager not running or TimeshiftManager not available. Plugin packet ignored for source_tag: %s", source_tag.c_str());
         return;
     }
 
@@ -1070,8 +1070,8 @@ void AudioManager::inject_plugin_packet_globally(
     // Let's assume it's defined in audio_types.h or source_input_processor.h which is included.
     // A quick check of source_input_processor.h shows: const size_t INPUT_CHUNK_BYTES = 1152;
     if (audio_payload.size() != INPUT_CHUNK_BYTES) {
-         LOG_ERROR_AM("Plugin packet payload incorrect size for source_tag: " + source_tag +
-                      ". Expected " + std::to_string(INPUT_CHUNK_BYTES) + ", got " + std::to_string(audio_payload.size()));
+         LOG_CPP_ERROR("Plugin packet payload incorrect size for source_tag: %s. Expected %zu, got %zu",
+                       source_tag.c_str(), INPUT_CHUNK_BYTES, audio_payload.size());
          return;
     }
 
@@ -1086,7 +1086,7 @@ void AudioManager::inject_plugin_packet_globally(
     packet.audio_data = audio_payload; // Copies the data
 
     timeshift_manager_->add_packet(std::move(packet));
-    LOG_AM("Plugin packet injected globally via TimeshiftManager for source_tag: " + source_tag);
+    LOG_CPP_INFO("Plugin packet injected globally via TimeshiftManager for source_tag: %s", source_tag.c_str());
 }
 
 std::vector<std::string> AudioManager::get_per_process_scream_receiver_seen_tags(int listen_port) {
@@ -1095,6 +1095,6 @@ std::vector<std::string> AudioManager::get_per_process_scream_receiver_seen_tags
     if (it != per_process_scream_receivers_.end() && it->second) {
         return it->second->get_seen_tags();
     }
-    LOG_WARN_AM("PerProcessScreamReceiver not found for port: " + std::to_string(listen_port) + " when calling get_per_process_scream_receiver_seen_tags.");
+    LOG_CPP_WARNING("PerProcessScreamReceiver not found for port: %d when calling get_per_process_scream_receiver_seen_tags.", listen_port);
     return {}; // Return empty vector if receiver not found
 }

@@ -1,33 +1,14 @@
 #include "timeshift_manager.h"
-#include "audio_types.h" // For LOG_TM macro, if it's defined there or in a common logging header
+#include "cpp_logger.h" // For new C++ logger
+#include "audio_types.h"
 
-#include <iostream> // For logging (can be replaced with a proper logger)
+#include <iostream> // For logging (cpp_logger fallback)
 #include <algorithm> // For std::min, std::remove_if, std::lower_bound
 #include <thread>    // For std::this_thread::sleep_for
 #include <utility>   // For std::move
 
-#if 1
-#define LOG_TM(level, msg)
-#define LOG_TM_DEBUG(msg)
-#define LOG_TM_INFO(msg)
-#define LOG_TM_WARN(msg)
-#define LOG_TM_ERROR(msg)
-#endif
-#ifndef LOG_TM
-#define LOG_TM(level, msg) std::cout << "[TimeshiftManager:" << level << "] " << msg << std::endl
-#endif
-#ifndef LOG_TM_DEBUG
-#define LOG_TM_DEBUG(msg) std::cout << "[TimeshiftManager:DEBUG] " << msg << std::endl
-#endif
-#ifndef LOG_TM_INFO
-#define LOG_TM_INFO(msg) std::cout << "[TimeshiftManager:INFO] " << msg << std::endl
-#endif
-#ifndef LOG_TM_WARN
-#define LOG_TM_WARN(msg) std::cout << "[TimeshiftManager:WARN] " << msg << std::endl
-#endif
-#ifndef LOG_TM_ERROR
-#define LOG_TM_ERROR(msg) std::cerr << "[TimeshiftManager:ERROR] " << msg << std::endl
-#endif
+// Old logger macros are removed. New macros (LOG_CPP_INFO, etc.) are in cpp_logger.h
+// The "[TimeshiftManager]" prefix will be manually added to the new log calls.
 
 
 namespace screamrouter {
@@ -40,30 +21,30 @@ const std::chrono::milliseconds TIMESIFT_MANAGER_LOOP_WAIT_TIMEOUT(50);
 TimeshiftManager::TimeshiftManager(std::chrono::seconds max_buffer_duration)
     : max_buffer_duration_sec_(max_buffer_duration),
       last_cleanup_time_(std::chrono::steady_clock::now()) {
-    LOG_TM_INFO("Initializing with max buffer duration: " + std::to_string(max_buffer_duration_sec_.count()) + "s");
+    LOG_CPP_INFO("[TimeshiftManager] Initializing with max buffer duration: %llds", (long long)max_buffer_duration_sec_.count());
 }
 
 TimeshiftManager::~TimeshiftManager() {
-    LOG_TM_INFO("Destroying...");
+    LOG_CPP_INFO("[TimeshiftManager] Destroying...");
     if (!stop_flag_) {
         stop();
     }
     // component_thread_ joining is handled by AudioComponent's destructor if not already joined by stop()
-    LOG_TM_INFO("Destruction complete.");
+    LOG_CPP_INFO("[TimeshiftManager] Destruction complete.");
 }
 
 void TimeshiftManager::start() {
     if (is_running()) {
-        LOG_TM_WARN("Already running.");
+        LOG_CPP_WARNING("[TimeshiftManager] Already running.");
         return;
     }
-    LOG_TM_INFO("Starting...");
+    LOG_CPP_INFO("[TimeshiftManager] Starting...");
     stop_flag_ = false;
     try {
         component_thread_ = std::thread(&TimeshiftManager::run, this);
-        LOG_TM_INFO("Component thread launched.");
+        LOG_CPP_INFO("[TimeshiftManager] Component thread launched.");
     } catch (const std::system_error& e) {
-        LOG_TM_ERROR("Failed to start component thread: " + std::string(e.what()));
+        LOG_CPP_ERROR("[TimeshiftManager] Failed to start component thread: %s", e.what());
         stop_flag_ = true; // Ensure stopped state if launch fails
         // Rethrow or handle error appropriately
         throw;
@@ -72,36 +53,36 @@ void TimeshiftManager::start() {
 
 void TimeshiftManager::stop() {
     if (stop_flag_) {
-        LOG_TM_WARN("Already stopped or stopping.");
+        LOG_CPP_WARNING("[TimeshiftManager] Already stopped or stopping.");
         return;
     }
-    LOG_TM_INFO("Stopping...");
+    LOG_CPP_INFO("[TimeshiftManager] Stopping...");
     stop_flag_ = true;
     run_loop_cv_.notify_all(); // Wake up the run loop if it's waiting
 
     if (component_thread_.joinable()) {
         try {
             component_thread_.join();
-            LOG_TM_INFO("Component thread joined.");
+            LOG_CPP_INFO("[TimeshiftManager] Component thread joined.");
         } catch (const std::system_error& e) {
-            LOG_TM_ERROR("Error joining component thread: " + std::string(e.what()));
+            LOG_CPP_ERROR("[TimeshiftManager] Error joining component thread: %s", e.what());
         }
     } else {
-        LOG_TM_WARN("Component thread was not joinable in stop().");
+        LOG_CPP_WARNING("[TimeshiftManager] Component thread was not joinable in stop().");
     }
-    LOG_TM_INFO("Stopped.");
+    LOG_CPP_INFO("[TimeshiftManager] Stopped.");
 }
 
 void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
     if (stop_flag_) {
-        LOG_TM_WARN("Attempted to add packet while stopped. Ignoring.");
+        LOG_CPP_WARNING("[TimeshiftManager] Attempted to add packet while stopped. Ignoring.");
         return;
     }
     {
         std::lock_guard<std::mutex> lock(buffer_mutex_);
         global_timeshift_buffer_.push_back(std::move(packet));
     }
-    // LOG_TM_DEBUG("Packet added to global buffer. Size: " + std::to_string(global_timeshift_buffer_.size()));
+    // LOG_CPP_DEBUG("[TimeshiftManager] Packet added to global buffer. Size: %zu", global_timeshift_buffer_.size());
     run_loop_cv_.notify_one();
 }
 
@@ -111,8 +92,8 @@ void TimeshiftManager::register_processor(
     std::shared_ptr<PacketQueue> target_queue,
     int initial_delay_ms,
     float initial_timeshift_sec) {
-    LOG_TM_INFO("Registering processor: instance_id=" + instance_id + ", source_tag=" + source_tag +
-                ", delay=" + std::to_string(initial_delay_ms) + "ms, timeshift=" + std::to_string(initial_timeshift_sec) + "s");
+    LOG_CPP_INFO("[TimeshiftManager] Registering processor: instance_id=%s, source_tag=%s, delay=%dms, timeshift=%.2fs",
+                 instance_id.c_str(), source_tag.c_str(), initial_delay_ms, initial_timeshift_sec);
 
     ProcessorTargetInfo info;
     info.target_queue = target_queue;
@@ -140,11 +121,11 @@ void TimeshiftManager::register_processor(
                 }
             }
             info.next_packet_read_index = found_idx;
-            LOG_TM_DEBUG("Initial timeshift > 0. Set next_packet_read_index to " + std::to_string(found_idx) + 
-                         " based on " + std::to_string(initial_timeshift_sec) + "s backshift.");
+            LOG_CPP_DEBUG("[TimeshiftManager] Initial timeshift > 0. Set next_packet_read_index to %zu based on %.2fs backshift.",
+                          found_idx, initial_timeshift_sec);
         } else {
             info.next_packet_read_index = global_timeshift_buffer_.size();
-            LOG_TM_DEBUG("Initial timeshift is 0 or buffer empty. Set next_packet_read_index to end of buffer: " + std::to_string(info.next_packet_read_index));
+            LOG_CPP_DEBUG("[TimeshiftManager] Initial timeshift is 0 or buffer empty. Set next_packet_read_index to end of buffer: %zu", info.next_packet_read_index);
         }
     } // buffer_mutex_ released
 
@@ -152,24 +133,25 @@ void TimeshiftManager::register_processor(
         std::lock_guard<std::mutex> targets_lock(targets_mutex_);
         processor_targets_[source_tag][instance_id] = info;
     }
-    LOG_TM_INFO("Processor " + instance_id + " registered for source_tag " + source_tag + " with read_idx " + std::to_string(info.next_packet_read_index));
+    LOG_CPP_INFO("[TimeshiftManager] Processor %s registered for source_tag %s with read_idx %zu",
+                 instance_id.c_str(), source_tag.c_str(), info.next_packet_read_index);
     run_loop_cv_.notify_one(); // New processor might be able to process immediately
 }
 
 void TimeshiftManager::unregister_processor(const std::string& instance_id, const std::string& source_tag) {
-    LOG_TM_INFO("Unregistering processor: instance_id=" + instance_id + ", source_tag=" + source_tag);
+    LOG_CPP_INFO("[TimeshiftManager] Unregistering processor: instance_id=%s, source_tag=%s", instance_id.c_str(), source_tag.c_str());
     std::lock_guard<std::mutex> lock(targets_mutex_);
     auto& source_map = processor_targets_[source_tag];
     source_map.erase(instance_id);
     if (source_map.empty()) {
         processor_targets_.erase(source_tag);
-        LOG_TM_INFO("Source tag " + source_tag + " removed as no processors are listening to it.");
+        LOG_CPP_INFO("[TimeshiftManager] Source tag %s removed as no processors are listening to it.", source_tag.c_str());
     }
-    LOG_TM_INFO("Processor " + instance_id + " unregistered.");
+    LOG_CPP_INFO("[TimeshiftManager] Processor %s unregistered.", instance_id.c_str());
 }
 
 void TimeshiftManager::update_processor_delay(const std::string& instance_id, int delay_ms) {
-    LOG_TM_INFO("Updating delay for processor " + instance_id + " to " + std::to_string(delay_ms) + "ms");
+    LOG_CPP_INFO("[TimeshiftManager] Updating delay for processor %s to %dms", instance_id.c_str(), delay_ms);
     std::lock_guard<std::mutex> lock(targets_mutex_);
     bool found = false;
     for (auto& [tag, source_map] : processor_targets_) {
@@ -181,13 +163,13 @@ void TimeshiftManager::update_processor_delay(const std::string& instance_id, in
         }
     }
     if (!found) {
-        LOG_TM_WARN("Attempted to update delay for unknown processor instance_id: " + instance_id);
+        LOG_CPP_WARNING("[TimeshiftManager] Attempted to update delay for unknown processor instance_id: %s", instance_id.c_str());
     }
     run_loop_cv_.notify_one(); // Delay change affects readiness
 }
 
 void TimeshiftManager::update_processor_timeshift(const std::string& instance_id, float timeshift_sec) {
-    LOG_TM_INFO("Updating timeshift for processor " + instance_id + " to " + std::to_string(timeshift_sec) + "s");
+    LOG_CPP_INFO("[TimeshiftManager] Updating timeshift for processor %s to %.2fs", instance_id.c_str(), timeshift_sec);
     std::lock_guard<std::mutex> targets_lock(targets_mutex_);
     bool found_processor = false;
     for (auto& [tag, source_map] : processor_targets_) {
@@ -201,7 +183,7 @@ void TimeshiftManager::update_processor_timeshift(const std::string& instance_id
                 std::lock_guard<std::mutex> buffer_lock(buffer_mutex_);
                 if (global_timeshift_buffer_.empty()) {
                     proc_it->second.next_packet_read_index = 0;
-                     LOG_TM_DEBUG("Timeshift updated for " + instance_id + ", buffer empty. Read index set to 0.");
+                     LOG_CPP_DEBUG("[TimeshiftManager] Timeshift updated for %s, buffer empty. Read index set to 0.", instance_id.c_str());
                 } else {
                     auto now = std::chrono::steady_clock::now();
                     auto target_past_time = now - std::chrono::milliseconds(proc_it->second.current_delay_ms) - std::chrono::duration<double>(timeshift_sec);
@@ -215,22 +197,22 @@ void TimeshiftManager::update_processor_timeshift(const std::string& instance_id
                         }
                     }
                     proc_it->second.next_packet_read_index = new_read_idx;
-                    LOG_TM_DEBUG("Timeshift updated for " + instance_id + ". New read_idx: " + std::to_string(new_read_idx) +
-                                 " based on " + std::to_string(timeshift_sec) + "s backshift.");
+                    LOG_CPP_DEBUG("[TimeshiftManager] Timeshift updated for %s. New read_idx: %zu based on %.2fs backshift.",
+                                 instance_id.c_str(), new_read_idx, timeshift_sec);
                 }
             } // buffer_mutex_ released
-            break; 
+            break;
         }
     }
     if (!found_processor) {
-        LOG_TM_WARN("Attempted to update timeshift for unknown processor instance_id: " + instance_id);
+        LOG_CPP_WARNING("[TimeshiftManager] Attempted to update timeshift for unknown processor instance_id: %s", instance_id.c_str());
     }
     run_loop_cv_.notify_one(); // Timeshift change affects readiness and next packet
 }
 
 
 void TimeshiftManager::run() {
-    LOG_TM_INFO("Run loop started.");
+    LOG_CPP_INFO("[TimeshiftManager] Run loop started.");
     while (!stop_flag_) {
         processing_loop_iteration();
 
@@ -259,16 +241,16 @@ void TimeshiftManager::run() {
             return !global_timeshift_buffer_.empty();
         });
     }
-    LOG_TM_INFO("Run loop exiting.");
+    LOG_CPP_INFO("[TimeshiftManager] Run loop exiting.");
 }
 
 void TimeshiftManager::processing_loop_iteration() {
-    // LOG_TM_DEBUG("Processing loop iteration started.");
+    // LOG_CPP_DEBUG("[TimeshiftManager] Processing loop iteration started.");
     std::lock_guard<std::mutex> targets_lock(targets_mutex_);
     std::lock_guard<std::mutex> buffer_lock(buffer_mutex_);
 
     if (global_timeshift_buffer_.empty()) {
-        // LOG_TM_DEBUG("Global buffer empty, nothing to process.");
+        // LOG_CPP_DEBUG("[TimeshiftManager] Global buffer empty, nothing to process.");
         return;
     }
 
@@ -290,14 +272,14 @@ void TimeshiftManager::processing_loop_iteration() {
                 if (scheduled_time_for_first_potential > current_steady_time) {
                     // The very first packet this processor is looking at is not yet due.
                     // So, nothing to do for this processor in this iteration.
-                    // LOG_TM_DEBUG("Processor " + instance_id + ": Oldest considered packet (idx " + std::to_string(target_info.next_packet_read_index) + ") not ready. Scheduled in " +
-                    //              std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(scheduled_time_for_first_potential - current_steady_time).count()) + "ms. Skipping processor.");
+                    // LOG_CPP_DEBUG("[TimeshiftManager] Processor %s: Oldest considered packet (idx %zu) not ready. Scheduled in %lldms. Skipping processor.",
+                    // instance_id.c_str(), target_info.next_packet_read_index, (long long)std::chrono::duration_cast<std::chrono::milliseconds>(scheduled_time_for_first_potential - current_steady_time).count());
                     continue; // Move to the next processor
                 }
             } else if (!global_timeshift_buffer_.empty() && target_info.next_packet_read_index >= global_timeshift_buffer_.size()) {
                 // Read index is at or past the end of the buffer, but buffer is not empty.
                 // This implies all prior packets were processed or skipped. Nothing new to process.
-                // LOG_TM_DEBUG("Processor " + instance_id + ": Read index " + std::to_string(target_info.next_packet_read_index) + " is at/past end of non-empty buffer. Nothing to process.");
+                // LOG_CPP_DEBUG("[TimeshiftManager] Processor %s: Read index %zu is at/past end of non-empty buffer. Nothing to process.", instance_id.c_str(), target_info.next_packet_read_index);
                 continue;
             }
 
@@ -311,8 +293,8 @@ void TimeshiftManager::processing_loop_iteration() {
                     // This should ideally not happen if registration is correct.
                     // If it does, it means this processor is iterating through packets it's not interested in.
                     // For now, we just skip. A more optimized structure might avoid this iteration.
-                    // LOG_TM_DEBUG("Processor " + instance_id + " (filter: " + target_info.source_tag_filter + 
-                    //              ") skipping packet with tag " + candidate_packet.source_tag + " at index " + std::to_string(target_info.next_packet_read_index));
+                    // LOG_CPP_DEBUG("[TimeshiftManager] Processor %s (filter: %s) skipping packet with tag %s at index %zu",
+                    // instance_id.c_str(), target_info.source_tag_filter.c_str(), candidate_packet.source_tag.c_str(), target_info.next_packet_read_index);
                     target_info.next_packet_read_index++;
                     continue;
                 }
@@ -322,22 +304,23 @@ void TimeshiftManager::processing_loop_iteration() {
 
                 if (scheduled_play_time <= current_steady_time) {
                     if (target_info.target_queue) {
-                        // LOG_TM_DEBUG("Processor " + instance_id + " pushing packet (idx " + std::to_string(target_info.next_packet_read_index) +
-                        //              ", tag " + candidate_packet.source_tag + ", sched_time_ms_ago: " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(current_steady_time - scheduled_play_time).count()) + ") to its queue.");
+                        // LOG_CPP_DEBUG("[TimeshiftManager] Processor %s pushing packet (idx %zu, tag %s, sched_time_ms_ago: %lld) to its queue.",
+                        // instance_id.c_str(), target_info.next_packet_read_index, candidate_packet.source_tag.c_str(),
+                        // (long long)std::chrono::duration_cast<std::chrono::milliseconds>(current_steady_time - scheduled_play_time).count());
                         target_info.target_queue->push(TaggedAudioPacket(candidate_packet)); // Push a copy
                     }
                     target_info.next_packet_read_index++;
                 } else {
                     // Packet is not yet ready for this processor, break from inner while for this processor
-                    // LOG_TM_DEBUG("Processor " + instance_id + ": packet at index " + std::to_string(target_info.next_packet_read_index) + 
-                    //              " not ready yet (scheduled in " + 
-                    //              std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(scheduled_play_time - current_steady_time).count()) + "ms).");
+                    // LOG_CPP_DEBUG("[TimeshiftManager] Processor %s: packet at index %zu not ready yet (scheduled in %lldms).",
+                    // instance_id.c_str(), target_info.next_packet_read_index,
+                    // (long long)std::chrono::duration_cast<std::chrono::milliseconds>(scheduled_play_time - current_steady_time).count());
                     break;
                 }
             }
         }
     }
-    // LOG_TM_DEBUG("Processing loop iteration finished.");
+    // LOG_CPP_DEBUG("[TimeshiftManager] Processing loop iteration finished.");
 }
 
 
@@ -345,7 +328,7 @@ void TimeshiftManager::cleanup_global_buffer() {
     std::lock_guard<std::mutex> buffer_lock(buffer_mutex_); // Protects global_timeshift_buffer_
 
     if (global_timeshift_buffer_.empty()) {
-        LOG_TM_DEBUG("Cleanup: Global buffer is empty.");
+        LOG_CPP_DEBUG("[TimeshiftManager] Cleanup: Global buffer is empty.");
         return;
     }
 
@@ -372,11 +355,11 @@ void TimeshiftManager::cleanup_global_buffer() {
         } else {
              // No processors registered, can potentially clear buffer up to max_buffer_duration_sec_
              // min_read_index_across_all_procs remains global_timeshift_buffer_.size(), meaning all packets before it are candidates for removal by time.
-             LOG_TM_DEBUG("Cleanup: No processors registered. Buffer can be cleaned based on time only.");
+             LOG_CPP_DEBUG("[TimeshiftManager] Cleanup: No processors registered. Buffer can be cleaned based on time only.");
         }
     } // targets_mutex_ released
 
-    LOG_TM_DEBUG("Cleanup: oldest_allowed_time_by_duration calculated. Min_read_index_across_all_procs: " + std::to_string(min_read_index_across_all_procs));
+    LOG_CPP_DEBUG("[TimeshiftManager] Cleanup: oldest_allowed_time_by_duration calculated. Min_read_index_across_all_procs: %zu", min_read_index_across_all_procs);
 
     size_t remove_count = 0;
     // Iterate from the front of the buffer
@@ -391,7 +374,7 @@ void TimeshiftManager::cleanup_global_buffer() {
     }
 
     if (remove_count > 0) {
-        LOG_TM_INFO("Cleanup: Removed " + std::to_string(remove_count) + " old packets from global buffer.");
+        LOG_CPP_INFO("[TimeshiftManager] Cleanup: Removed %zu old packets from global buffer.", remove_count);
         // Adjust next_packet_read_index for all processors
         std::lock_guard<std::mutex> targets_lock(targets_mutex_);
         for (auto& [tag, source_map] : processor_targets_) {
@@ -401,17 +384,17 @@ void TimeshiftManager::cleanup_global_buffer() {
                 } else {
                     // This case implies the processor's read index was pointing to packets that were just removed.
                     // It should be set to 0, as it now needs to start from the new beginning of the (relevant part of) the buffer.
-                    LOG_TM_WARN("Cleanup: Processor " + id + " read index (" + std::to_string(proc_info.next_packet_read_index) +
-                                 ") was less than remove_count (" + std::to_string(remove_count) + "). Resetting to 0.");
+                    LOG_CPP_WARNING("[TimeshiftManager] Cleanup: Processor %s read index (%zu) was less than remove_count (%zu). Resetting to 0.",
+                                    id.c_str(), proc_info.next_packet_read_index, remove_count);
                     proc_info.next_packet_read_index = 0;
                 }
             }
         }
-        LOG_TM_DEBUG("Cleanup: Adjusted next_packet_read_index for all processors by " + std::to_string(remove_count) + ".");
+        LOG_CPP_DEBUG("[TimeshiftManager] Cleanup: Adjusted next_packet_read_index for all processors by %zu.", remove_count);
     } else {
-        LOG_TM_DEBUG("Cleanup: No packets removed.");
+        LOG_CPP_DEBUG("[TimeshiftManager] Cleanup: No packets removed.");
     }
-    LOG_TM_DEBUG("Cleanup: Global buffer size after cleanup: " + std::to_string(global_timeshift_buffer_.size()));
+    LOG_CPP_DEBUG("[TimeshiftManager] Cleanup: Global buffer size after cleanup: %zu", global_timeshift_buffer_.size());
 }
 
 
