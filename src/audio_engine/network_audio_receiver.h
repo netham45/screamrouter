@@ -114,8 +114,8 @@ protected:
 
 
     // --- Common Helper Methods ---
-    bool setup_socket();
-    void close_socket();
+    virtual bool setup_socket();
+    virtual void close_socket();
     void log_message(const std::string& msg);
     void log_error(const std::string& msg);
     void log_warning(const std::string& msg);

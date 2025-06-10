@@ -3,16 +3,20 @@
 
 #include "network_audio_receiver.h" // Base class
 #include "audio_types.h"            // For RtpReceiverConfig, TaggedAudioPacket etc.
-                                    // std::string, std::vector, std::shared_ptr, std::chrono etc.
-                                    // are included via network_audio_receiver.h
+#include <rtc/rtp.hpp>              // libdatachannel RTP header
+#include <mutex>                    // For std::mutex
+#include <cstdint>                  // For uint32_t
+
+// POSIX socket includes (some might be in network_audio_receiver.h but good to be explicit)
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
 
 namespace screamrouter {
 namespace audio {
-
-// Forward declare if needed, though RtpReceiverConfig should be complete from audio_types.h
-// struct RtpReceiverConfig; (already in audio_types.h)
-// class TimeshiftManager; (already handled by network_audio_receiver.h)
-// using NotificationQueue = ::screamrouter::utils::ThreadSafeQueue<NewSourceNotification>; (already an alias in network_audio_receiver.h)
 
 class RtpReceiver : public NetworkAudioReceiver {
 public:
@@ -24,10 +28,21 @@ public:
 
     ~RtpReceiver() noexcept override;
 
-    // Public methods like start(), stop(), get_seen_tags() are inherited.
+    // Deleted copy and move constructors/assignments
+    RtpReceiver(const RtpReceiver&) = delete;
+    RtpReceiver& operator=(const RtpReceiver&) = delete;
+    RtpReceiver(RtpReceiver&&) = delete;
+    RtpReceiver& operator=(RtpReceiver&&) = delete;
+
+    // Global oRTP init/deinit are removed
 
 protected:
-    // Implementations for NetworkAudioReceiver's pure virtual methods
+    // Override base class methods
+    void run() override; // Core receiving loop using oRTP
+    bool setup_socket() override; // oRTP session setup replaces manual socket creation
+    void close_socket() override; // oRTP session destruction handles socket closing
+
+    // These methods become less relevant or dummied out with oRTP handling packet validation
     bool is_valid_packet_structure(const uint8_t* buffer, int size, const struct sockaddr_in& client_addr) override;
     
     bool process_and_validate_payload(
@@ -39,14 +54,33 @@ protected:
         std::string& out_source_tag
     ) override;
     
-    size_t get_receive_buffer_size() const override;
-    int get_poll_timeout_ms() const override;
+    // These might still be used by base class if run() calls parts of base logic, or can be dummied.
+    // For oRTP, buffer size is managed internally by oRTP.
+    size_t get_receive_buffer_size() const override; 
+    // Poll timeout is handled by rtp_session_recvm_with_ts blocking nature.
+    int get_poll_timeout_ms() const override; 
 
 private:
-    RtpReceiverConfig config_; // Specific configuration for RtpReceiver
+    RtpReceiverConfig config_;
+    // session_ and profile_ (oRTP specific) are removed.
+    // socket_fd_ from NetworkAudioReceiver will be used for the raw socket.
 
-    // Helper method specific to RTP processing
-    bool is_valid_rtp_header_payload(const uint8_t* buffer, int size); // Renamed for clarity
+    // Static members for global oRTP initialization are removed.
+
+    // oRTP SSRC changed callback is removed.
+    // handle_ssrc_changed will be called directly.
+    void handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc);
+
+    uint32_t last_known_ssrc_;
+    bool ssrc_initialized_;
+
+    // --- New members for PCM buffering ---
+    std::vector<uint8_t> pcm_accumulator_;
+    std::chrono::steady_clock::time_point last_rtp_packet_timestamp_;
+    // --- End new members ---
+
+    // Helper method specific to RTP processing (might be removed or adapted)
+    // bool is_valid_rtp_header_payload(const uint8_t* buffer, int size); // Likely obsolete
 };
 
 } // namespace audio

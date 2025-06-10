@@ -48,66 +48,62 @@ DEPS_CONFIG = {
         "main_header_file_rel_to_header_dir": "lame.h",
         "link_name": "mp3lame",
     },
-    "bctoolbox": {
-        "src_dir": PROJECT_ROOT / "src/audio_engine/bctoolbox",
-        "build_system": "cmake",
-        "cmake_build_dir_name": "_build",
+    "openssl": {
+        "src_dir": PROJECT_ROOT / "src/audio_engine/openssl",
+        "build_system": "cmake", # OpenSSL 3.x has good CMake support
+        "cmake_build_dir_name": "build_cmake", # Custom build directory
         "cmake_configure_args": [
             "-DCMAKE_BUILD_TYPE=Release",
-            "-DENABLE_TESTS_COMPONENT=OFF",
-            "-DENABLE_UNIT_TESTS=OFF",
+            "-DOPENSSL_NO_TESTS=ON",
+            "-DOPENSSL_NO_APPS=ON",
+            "-DOPENSSL_NO_DOCS=ON",
+            "-DOPENSSL_NO_STATIC_ENGINE=ON", # If not using engines
+            # Build static libs by default with OpenSSL's CMake.
+            # Forcing PIC for static libs on Unix-like systems.
+            # "-DCMAKE_POSITION_INDEPENDENT_CODE=ON", # This is set globally later
         ],
-        "lib_name_win": "bctoolbox.lib", # Assuming standard name, verify if different
-        "lib_name_unix_static": "libbctoolbox.a", # Actual name of the .a file
-        "unix_install_lib_dir_rel_to_deps_install": "lib64", # Installed to deps/lib64
-        "header_dir_name": "bctoolbox", # Headers installed to include/bctoolbox
-        "main_header_file_rel_to_header_dir": "defs.h", # A key header in bctoolbox
-        "link_name": "bctoolbox",
-        "clean_files_rel_to_src": [
-            "CMakeCache.txt", "Makefile", "cmake_install.cmake",
-            "install_manifest.txt", "config.h", "bctoolbox.pc",
-            "bctoolbox-tester.pc", "CMakeFiles", "_build", "_install"
-        ]
+        # OpenSSL produces libssl.a and libcrypto.a (or .lib on Windows)
+        "lib_name_win": "libcrypto.lib", # Primary, also need libssl.lib
+        "lib_name_unix_static": "libcrypto.a", # Primary, also need libssl.a
+        "extra_libs_unix_static": ["libssl.a"],
+        "extra_libs_win": ["libssl.lib"],
+        "unix_install_lib_dir_rel_to_deps_install": "lib", # Or lib64, check OpenSSL install layout
+        "header_dir_name": "openssl", # Headers typically go into include/openssl
+        "main_header_file_rel_to_header_dir": "ssl.h",
+        "link_name": "crypto", # Link against crypto, ssl will be added
+        "extra_link_names": ["ssl"],
+        "installs_cmake_config": True,
+        "cmake_config_install_dir_rel": "lib/cmake/OpenSSL", # Path to its CMake config
+        "clean_files_rel_to_src": ["build_cmake", "CMakeCache.txt", "Makefile", "cmake_install.cmake", "CMakeFiles"]
     },
-    "bcunit": {
-        "src_dir": PROJECT_ROOT / "src/audio_engine/bcunit",
+    "libdatachannel": {
+        "src_dir": PROJECT_ROOT / "src/audio_engine/libdatachannel",
         "build_system": "cmake",
-        "cmake_build_dir_name": "_build",
+        "cmake_build_dir_name": "build", # Common CMake build directory name
         "cmake_configure_args": [
             "-DCMAKE_BUILD_TYPE=Release",
+            "-DBUILD_SHARED_LIBS=OFF", # Build static library
+            "-DOPENSSL_USE_STATIC_LIBS=ON", # If OpenSSL is linked, prefer static
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+            "-DUSE_NICE=OFF", # Assuming NICE is not needed for plain RTP
+            "-DNO_EXAMPLES=ON",
+            "-DNO_TESTS=ON",
+            # Add other libdatachannel specific CMake flags as needed
+            # e.g., -DPLUGINS="" to disable plugins if not used
         ],
-        "lib_name_win": "bcunit.lib", # Assuming standard name
-        "lib_name_unix_static": "libbcunit.a", # Actual name of the .a file
-        "unix_install_lib_dir_rel_to_deps_install": "lib64", # Installed to deps/lib64
-        "header_dir_name": "BCUnit", # Headers installed to include/bcunit
-        "main_header_file_rel_to_header_dir": "BCUnit.h",
-        "link_name": "bcunit",
-        "clean_files_rel_to_src": [
-            "CMakeCache.txt", "Makefile", "cmake_install.cmake",
-            "install_manifest.txt", "config.h", "bcunit.pc",
-            "CMakeFiles", "BCUnitConfig.cmake", "BCUnitConfigVersion.cmake",
-            "_build", "_install"
-        ]
-    },
-    "ortp": {
-        "src_dir": PROJECT_ROOT / "src/audio_engine/ortp",
-        "build_system": "cmake",
-        "cmake_build_dir_name": "_build",
-        "cmake_configure_args": [ # BCToolbox_DIR and BCUnit_DIR will be added dynamically
-            "-DCMAKE_BUILD_TYPE=Release",
-            "-DCMAKE_C_FLAGS=-Wno-maybe-uninitialized", # For GCC/Clang, MSVC will ignore if not applicable
-            "-DENABLE_UNIT_TESTS=OFF",
-        ],
-        "lib_name_win": "ortp.lib", # Assuming standard name
-        "lib_name_unix_static": "libortp.a",
-        "header_dir_name": "include/ortp",
-        "main_header_file_rel_to_header_dir": "ortp.h", # e.g. ortp/include/ortp.h
-        "is_installed_to_deps_dir": False, # Special flag for ortp
-        "lib_search_path_rel_to_src_build": "src", # e.g. ortp/_build/src/libortp.a
-        "link_name": "ortp",
-        "clean_files_rel_to_src": [
+        "lib_name_win": "datachannel.lib", # Verify actual static lib name on Windows
+        "lib_name_unix_static": "libdatachannel.a", # Verify actual static lib name on Unix
+        "unix_install_lib_dir_rel_to_deps_install": "lib", # Or "lib64" depending on install
+        "header_dir_name": "rtc", # Headers are typically in include/rtc
+        "main_header_file_rel_to_header_dir": "rtc.hpp", # Key header
+        "link_name": "datachannel", # Link name for the library
+        "installs_cmake_config": True, # If it installs a CMake config file
+        "cmake_config_install_dir_rel": "lib/cmake/LibDataChannel", # Path to its CMake config
+        "clean_files_rel_to_src": [ # Files/dirs to clean in libdatachannel source dir
             "CMakeCache.txt", "Makefile", "cmake_install.cmake", "CMakeFiles",
-            "_build"
+            "build", # The build directory itself
+            "LibDataChannelConfig.cmake", "LibDataChannelConfigVersion.cmake", # Generated config files
+            "LibJuiceConfig.cmake", "LibJuiceConfigVersion.cmake" # If juice is part of it
         ]
     }
 }
@@ -155,6 +151,17 @@ class BuildExtCommand(_build_ext):
             if "-fPIC" not in cxxflags.split(): cxxflags = (cxxflags + " -fPIC").strip()
             current_env["CFLAGS"] = cflags
             current_env["CXXFLAGS"] = cxxflags
+            
+            # Removed explicit PYTHONPATH modification to avoid issues with pip's isolated build environment.
+            # The default environment should be sufficient for build tools.
+            # current_sys_path = os.pathsep.join(sys.path)
+            # existing_python_path = current_env.get("PYTHONPATH")
+            # if existing_python_path:
+            #     current_env["PYTHONPATH"] = current_sys_path + os.pathsep + existing_python_path
+            # else:
+            #     current_env["PYTHONPATH"] = current_sys_path
+            # print(f"  [DEBUG] subprocess PYTHONPATH for {dep_name}: {current_env.get('PYTHONPATH')}")
+
             subprocess.run(command_parts, cwd=cwd, check=True, env=current_env)
             return
 
@@ -189,46 +196,39 @@ class BuildExtCommand(_build_ext):
     def get_expected_header_path(self, config, src_dir_override=None):
         base_include_dir = DEPS_INSTALL_INCLUDE_DIR
         if config.get("is_installed_to_deps_dir", True) is False and src_dir_override:
-            # ortp headers are in ortp/include/ortp
             base_include_dir = src_dir_override 
-
-        header_subdir = config.get("header_dir_name", "") # e.g., "bctoolbox", "BCUnit", "include/ortp"
-        main_header_file = config["main_header_file_rel_to_header_dir"] # e.g., "defs.h", "BCUnit.h", "ortp.h"
-        
-        # For ortp, header_subdir is "include/ortp", so base_include_dir is src_dir ("ortp_project_root")
-        # Path becomes: ortp_project_root / "include/ortp" / "ortp.h"
-        # For bctoolbox, header_subdir is "bctoolbox", base_include_dir is DEPS_INSTALL_INCLUDE_DIR
-        # Path becomes: DEPS_INSTALL_INCLUDE_DIR / "bctoolbox" / "defs.h"
+        header_subdir = config.get("header_dir_name", "")
+        main_header_file = config["main_header_file_rel_to_header_dir"]
         if header_subdir:
             return base_include_dir / header_subdir / main_header_file
         return base_include_dir / main_header_file
 
     def get_expected_lib_path(self, config, src_dir_override=None, build_dir_override=None):
         lib_name = config["lib_name_unix_static"] if sys.platform != "win32" else config["lib_name_win"]
-
         if config.get("is_installed_to_deps_dir", True) is False: # ortp case
             if src_dir_override and build_dir_override:
-                # Library is in ortp's own build directory, e.g., ortp/_build/src/libortp.a
                 lib_search_subdir = config.get("lib_search_path_rel_to_src_build", "")
                 if lib_search_subdir:
                     return build_dir_override / lib_search_subdir / lib_name
                 return build_dir_override / lib_name
-            else: # Should not happen if overrides are correctly passed for ortp
+            else:
                 raise ValueError("src_dir_override and build_dir_override must be provided for non-installed libs")
-        else: # bctoolbox, bcunit, lame
+        else: # bctoolbox, bcunit, lame, mbedtls
             base_lib_dir = DEPS_INSTALL_LIB_DIR
             if sys.platform != "win32" and config.get("unix_install_lib_dir_rel_to_deps_install"):
-                # For bctoolbox/bcunit on Unix, they install to deps/lib64
                 base_lib_dir = DEPS_INSTALL_DIR / config["unix_install_lib_dir_rel_to_deps_install"]
             return base_lib_dir / lib_name
 
     def run(self):
+        # Removed automatic 'git submodule update' call.
+        # User should ensure submodules are initialized via 'git submodule update --init --recursive'
+        # in their project directory before running 'pip install .'.
+        # The script will check for the existence of submodule source directories.
+
         DEPS_INSTALL_LIB_DIR.mkdir(parents=True, exist_ok=True)
         DEPS_INSTALL_INCLUDE_DIR.mkdir(parents=True, exist_ok=True)
         all_deps_processed_successfully = True
-
-        # Define build order
-        ordered_deps_to_build = ["lame", "bctoolbox", "bcunit", "ortp"]
+        ordered_deps_to_build = ["lame", "openssl", "libdatachannel"]
 
         for dep_name in ordered_deps_to_build:
             if dep_name not in DEPS_CONFIG:
@@ -237,60 +237,88 @@ class BuildExtCommand(_build_ext):
             
             config = DEPS_CONFIG[dep_name]
             print(f"--- Handling dependency: {dep_name} ---")
+
             src_dir = config["src_dir"].resolve()
-            
             cmake_build_dir_name_for_paths = config.get("cmake_build_dir_name", "build_cmake")
             ortp_build_dir_for_paths = src_dir / cmake_build_dir_name_for_paths if dep_name == "ortp" else None
-
             expected_lib_path = self.get_expected_lib_path(config, src_dir_override=src_dir if dep_name == "ortp" else None, build_dir_override=ortp_build_dir_for_paths)
             expected_header_path = self.get_expected_header_path(config, src_dir_override=src_dir if dep_name == "ortp" else None)
-
 
             if not src_dir.exists():
                 print(f"ERROR: Source directory for {dep_name} not found at {src_dir}.", file=sys.stderr)
                 print("Ensure git submodules are initialized ('git submodule update --init --recursive').", file=sys.stderr)
                 all_deps_processed_successfully = False; continue
 
-            # Perform cleaning before checking existence or building
-            # This mirrors the `rm -rf` in build_ortp.sh more closely
-            if config["build_system"] == "cmake": # Specific cleaning for CMake projects
-                cmake_build_dir_name = config.get("cmake_build_dir_name", "build_cmake") # Default if not specified
-                cmake_build_dir_path = src_dir / cmake_build_dir_name
-                if cmake_build_dir_path.exists():
-                    print(f"Cleaning CMake build directory: {cmake_build_dir_path}")
-                    shutil.rmtree(cmake_build_dir_path, ignore_errors=True)
+            # --- Enhanced Clean for the current dependency's installed artifacts ---
+            # This section cleans artifacts from the DEPS_INSTALL_DIR for dependencies that are installed there.
+            if config.get("is_installed_to_deps_dir", True):
+                # Determine the paths for the library and main header file within DEPS_INSTALL_DIR
+                # Note: self.get_expected_lib_path/header_path correctly resolve to DEPS_INSTALL_DIR for these deps.
+                lib_to_clean_in_deps = self.get_expected_lib_path(config)
+                if lib_to_clean_in_deps.exists():
+                    print(f"DEBUG: Force cleaning existing installed library for {dep_name} from DEPS_INSTALL_DIR: {lib_to_clean_in_deps}")
+                    lib_to_clean_in_deps.unlink(missing_ok=True)
+
+                header_file_to_clean_in_deps = self.get_expected_header_path(config)
+                if header_file_to_clean_in_deps.exists() and header_file_to_clean_in_deps.is_file():
+                    print(f"DEBUG: Force cleaning existing installed main header file for {dep_name} from DEPS_INSTALL_DIR: {header_file_to_clean_in_deps}")
+                    header_file_to_clean_in_deps.unlink(missing_ok=True)
                 
+                # Clean the specific header subdirectory within DEPS_INSTALL_INCLUDE_DIR
+                # e.g., DEPS_INSTALL_INCLUDE_DIR / "lame" or DEPS_INSTALL_INCLUDE_DIR / "bctoolbox"
+                header_subdir_name_in_deps = config.get("header_dir_name")
+                # Ensure header_subdir_name_in_deps is a simple name, not a path like "include/ortp"
+                if header_subdir_name_in_deps and "/" not in header_subdir_name_in_deps and "\\" not in header_subdir_name_in_deps:
+                    installed_header_dir_to_clean = DEPS_INSTALL_INCLUDE_DIR / header_subdir_name_in_deps
+                    if installed_header_dir_to_clean.is_dir():
+                        print(f"DEBUG: Force cleaning existing installed header directory for {dep_name} from DEPS_INSTALL_DIR: {installed_header_dir_to_clean}")
+                        shutil.rmtree(installed_header_dir_to_clean, ignore_errors=True)
+            else:
+                # For deps not installed to DEPS_INSTALL_DIR (like ortp), expected_lib_path/header_path point to source/build dirs.
+                # We should not clean these source/build-specific artifact paths here as part of "installed artifact cleaning".
+                # The internal build directory cleaning (cmake_build_dir_path, etc.) handles cleaning within the dep's own build space.
+                print(f"DEBUG: Skipping install-dir (DEPS_INSTALL_DIR) clean for {dep_name} as is_installed_to_deps_dir is False.")
+
+            if config["build_system"] == "cmake":
+                cmake_build_dir_name = config.get("cmake_build_dir_name", "build_cmake")
+                cmake_build_dir_path = src_dir / cmake_build_dir_name
+                print(f"Force cleaning internal CMake build directory for {dep_name}: {cmake_build_dir_path}")
+                if cmake_build_dir_path.exists():
+                    shutil.rmtree(cmake_build_dir_path, ignore_errors=True)
+                cmake_cache_in_src = src_dir / "CMakeCache.txt"
+                if cmake_cache_in_src.exists():
+                    print(f"Cleaning CMakeCache.txt from {src_dir}")
+                    cmake_cache_in_src.unlink()
                 for item_name in config.get("clean_files_rel_to_src", []):
                     item_path = src_dir / item_name
                     if item_path.is_file() or item_path.is_symlink():
                         print(f"Cleaning file: {item_path}")
                         item_path.unlink(missing_ok=True)
-                    elif item_path.is_dir() and item_path != cmake_build_dir_path: # Avoid double delete if _build is in list
+                    elif item_path.is_dir() and item_path != cmake_build_dir_path: # Avoid re-deleting build dir if listed
                         print(f"Cleaning directory: {item_path}")
                         shutil.rmtree(item_path, ignore_errors=True)
             
-            # Check if already built (after cleaning, this effectively means we always rebuild if clean_files were present)
-            # To truly skip, cleaning should be conditional or a separate step.
-            # For now, this matches the task's implication of replicating the shell script's clean-then-build.
+            # This check should now ideally fail for bctoolbox, forcing a rebuild
             if expected_lib_path.exists() and expected_header_path.exists():
-                # This check might be less effective if cleaning always happens before.
-                # Consider a "force" flag or make cleaning more targeted if rebuilds are too frequent.
-                print(f"{dep_name} artifacts already found ({expected_lib_path}, {expected_header_path}). Assuming up-to-date post-clean attempt."); # continue
+                print(f"WARNING: {dep_name} artifacts still found ({expected_lib_path}, {expected_header_path}) post-install-dir-clean. Build might be skipped if these are valid.");
+            # else: # This else branch would be where the build happens
+            #    print(f"DEBUG: {dep_name} artifacts not found or cleaned. Proceeding with build.")
+
 
             build_successful = False
             try:
+                # The original "if expected_lib_path.exists()..." check that skipped builds is now implicitly handled
+                # because we delete the files. If they still exist, it's a warning.
+                # The build should proceed regardless unless an outer condition prevents it.
+
                 if config["build_system"] == "cmake":
                     cmake_build_dir = src_dir / config.get("cmake_build_dir_name", "build_cmake")
-                    # No: if cmake_build_dir.exists(): shutil.rmtree(cmake_build_dir) # Cleaning is done above
                     cmake_build_dir.mkdir(exist_ok=True)
 
                     configure_cmd_parts = [
                         "cmake", "-S", str(src_dir), "-B", str(cmake_build_dir),
                         f"-DCMAKE_INSTALL_PREFIX={DEPS_INSTALL_DIR}",
                         "-DCMAKE_POLICY_DEFAULT_CMP0077=NEW",
-                        # CMAKE_CONFIGURATION_TYPES is for multi-config generators like VS.
-                        # For single-config (Makefiles), CMAKE_BUILD_TYPE is used at configure time.
-                        # Let's ensure CMAKE_BUILD_TYPE is part of cmake_configure_args if needed.
                     ]
                     if sys.platform == "win32":
                         configure_cmd_parts.append("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
@@ -298,28 +326,34 @@ class BuildExtCommand(_build_ext):
                         configure_cmd_parts.append("-DCMAKE_POSITION_INDEPENDENT_CODE=ON")
                     
                     current_cmake_configure_args = list(config.get("cmake_configure_args", []))
-                    if dep_name == "ortp":
-                        current_cmake_configure_args.extend([
-                            f"-DBCToolbox_DIR={DEPS_INSTALL_DIR / 'share/BCToolbox/cmake'}",
-                            f"-DBCUnit_DIR={DEPS_INSTALL_DIR / 'share/BCUnit/cmake'}",
-                        ])
-                    
-                    # Ensure CMAKE_BUILD_TYPE=Release is present if not already
+                    # Removed specific logic for bctoolbox finding mbedtls, and ortp finding bctoolbox/bcunit
+                    # If libdatachannel needs to find other deps installed via DEPS_INSTALL_DIR,
+                    # CMAKE_PREFIX_PATH can be added for it here.
+                    if dep_name == "libdatachannel":
+                         # Point libdatachannel to our custom-built OpenSSL
+                         current_cmake_configure_args.append(f"-DOPENSSL_ROOT_DIR={DEPS_INSTALL_DIR}")
+                         # CMAKE_PREFIX_PATH can also help CMake find packages in DEPS_INSTALL_DIR
+                         current_cmake_configure_args.append(f"-DCMAKE_PREFIX_PATH={DEPS_INSTALL_DIR}")
+                         # Ensure we use the static OpenSSL libs we built
+                         current_cmake_configure_args.append("-DOPENSSL_USE_STATIC_LIBS=ON")
+
+
                     has_build_type = any("CMAKE_BUILD_TYPE" in arg for arg in current_cmake_configure_args)
                     if not has_build_type and not any("CMAKE_CONFIGURATION_TYPES" in arg for arg in current_cmake_configure_args):
                          current_cmake_configure_args.append("-DCMAKE_BUILD_TYPE=Release")
-
-
                     configure_cmd_parts.extend(current_cmake_configure_args)
+
+                    # Removed mbedtls pre-configuration steps
 
                     print(f"Running CMake configure for {dep_name}...")
                     self._run_subprocess_in_msvc_env(configure_cmd_parts, src_dir, dep_name=f"{dep_name} CMake configure")
-
-                    # For single-config generators (like Unix Makefiles), --config Release is used here.
-                    # For multi-config (like Visual Studio), it's specified during build.
+                    
                     build_target = "install"
-                    if dep_name == "ortp" and config.get("is_installed_to_deps_dir", True) is False:
-                        build_target = None # ortp is not installed, just built
+                    # For libdatachannel, we want it to install to DEPS_INSTALL_DIR
+                    # So, build_target remains "install" unless config specifies otherwise.
+                    # The old "ortp" special case for build_target = None is removed.
+                    if config.get("is_installed_to_deps_dir", True) is False: # Should not be the case for libdatachannel
+                        build_target = None
 
                     build_cmd_parts = ["cmake", "--build", str(cmake_build_dir), "--config", "Release"]
                     if build_target:
@@ -328,28 +362,50 @@ class BuildExtCommand(_build_ext):
                     
                     print(f"Running CMake build{' and ' + build_target if build_target else ''} for {dep_name}...")
                     self._run_subprocess_in_msvc_env(build_cmd_parts, src_dir, dep_name=f"{dep_name} CMake build")
-                    build_successful = True
 
-                    if dep_name == "bctoolbox" and build_successful:
-                        print("Patching BCToolboxConfig.cmake...")
-                        bctoolbox_config_file = DEPS_INSTALL_DIR / "share" / "BCToolbox" / "cmake" / "BCToolboxConfig.cmake"
-                        if bctoolbox_config_file.exists():
-                            with open(bctoolbox_config_file, "r+", encoding='utf-8') as f:
-                                content = f.read()
-                            new_content = re.sub(r"^\s*find_dependency\(\s*BCUnit\s*\)", r"#\g<0>", content, flags=re.MULTILINE)
-                            if new_content != content:
-                                with open(bctoolbox_config_file, "w", encoding='utf-8') as f:
-                                    f.write(new_content)
-                                print(f"Patched {bctoolbox_config_file}")
-                            else:
-                                print(f"Patch pattern not found in {bctoolbox_config_file}. Already patched or file changed?")
+                    if dep_name == "openssl":
+                        print(f"DEBUG: Verifying OpenSSL installation in {DEPS_INSTALL_DIR}")
+                        openssl_lib_dir = DEPS_INSTALL_LIB_DIR
+                        if sys.platform != "win32" and config.get("unix_install_lib_dir_rel_to_deps_install"):
+                            openssl_lib_dir = DEPS_INSTALL_DIR / config["unix_install_lib_dir_rel_to_deps_install"]
+                        
+                        libcrypto_path = openssl_lib_dir / ("libcrypto.a" if sys.platform != "win32" else "libcrypto.lib")
+                        libssl_path = openssl_lib_dir / ("libssl.a" if sys.platform != "win32" else "libssl.lib")
+                        
+                        print(f"DEBUG: Checking for {libcrypto_path}")
+                        if not libcrypto_path.exists():
+                            print(f"ERROR: {libcrypto_path} NOT FOUND after OpenSSL build.")
+                            build_successful = False
                         else:
-                            print(f"ERROR: Cannot find {bctoolbox_config_file} to patch.", file=sys.stderr)
-                            # This should be a failure for ortp build
-                            all_deps_processed_successfully = False # Mark as error
+                            print(f"DEBUG: Found {libcrypto_path}")
+
+                        print(f"DEBUG: Checking for {libssl_path}")
+                        if not libssl_path.exists():
+                            print(f"ERROR: {libssl_path} NOT FOUND after OpenSSL build.")
+                            build_successful = False
+                        else:
+                            print(f"DEBUG: Found {libssl_path}")
+                        
+                        openssl_include_dir = DEPS_INSTALL_INCLUDE_DIR / config["header_dir_name"]
+                        openssl_main_header = openssl_include_dir / config["main_header_file_rel_to_header_dir"]
+                        print(f"DEBUG: Checking for OpenSSL main header {openssl_main_header}")
+                        if not openssl_main_header.exists():
+                             print(f"ERROR: OpenSSL main header {openssl_main_header} NOT FOUND.")
+                             build_successful = False
+                        else:
+                            print(f"DEBUG: Found OpenSSL main header {openssl_main_header}")
+
+                    # Removed MbedTLS installation verification debug block
+                    # Removed bctoolbox symbol check debug block
+
+                    if build_successful: # Check if it's still true after OpenSSL verification
+                        build_successful = True # Redundant, but keeps structure
+                    else: # If OpenSSL verification failed
+                        pass # build_successful is already False
 
                 elif config["build_system"] == "autotools_or_nmake": # LAME
                     if sys.platform == "win32":
+                        # ... (Windows LAME build logic remains the same) ...
                         makefile_rel_path = config.get("nmake_makefile_rel_path_win", "Makefile.MSVC")
                         nmake_target = config.get("nmake_target_win", "")
                         actual_makefile_path = src_dir / makefile_rel_path
@@ -389,6 +445,25 @@ class BuildExtCommand(_build_ext):
                         build_successful = True
 
                 if build_successful:
+                    # --- BEGIN DEBUG: Check for libdatachannel CMake config file after build ---
+                    if dep_name == "libdatachannel" and config.get("installs_cmake_config"):
+                        libdatachannel_cmake_config_rel_path = config.get("cmake_config_install_dir_rel")
+                        if libdatachannel_cmake_config_rel_path:
+                            libdatachannel_cmake_config_dir_abs_path = DEPS_INSTALL_DIR / libdatachannel_cmake_config_rel_path
+                            expected_config_file = libdatachannel_cmake_config_dir_abs_path / "LibDataChannelConfig.cmake"
+                            print(f"DEBUG: Checking for libdatachannel CMake config at {expected_config_file}")
+                            if expected_config_file.exists():
+                                print(f"DEBUG: Found libdatachannel CMake config: {expected_config_file}")
+                            else:
+                                print(f"DEBUG: libdatachannel CMake config NOT FOUND in {libdatachannel_cmake_config_dir_abs_path}.")
+                                if libdatachannel_cmake_config_dir_abs_path.exists() and libdatachannel_cmake_config_dir_abs_path.is_dir():
+                                    print(f"DEBUG: Contents of {libdatachannel_cmake_config_dir_abs_path}: {list(libdatachannel_cmake_config_dir_abs_path.iterdir())}")
+                                else:
+                                    print(f"DEBUG: Directory {libdatachannel_cmake_config_dir_abs_path} does not exist or is not a directory.")
+                        else:
+                            print(f"DEBUG: cmake_config_install_dir_rel not defined for {dep_name} in DEPS_CONFIG.")
+                    # --- END DEBUG ---
+
                     if not expected_lib_path.exists():
                         print(f"ERROR: Library file {expected_lib_path} for {dep_name} NOT FOUND post-build.", file=sys.stderr); build_successful = False
                     if not expected_header_path.exists():
@@ -421,32 +496,46 @@ source_files = [
     "src/audio_engine/biquad/biquad.cpp", "src/configuration/audio_engine_config_applier.cpp",
     "src/audio_engine/r8brain-free-src/r8bbase.cpp", "src/audio_engine/r8brain-free-src/pffft.cpp",
     "src/audio_engine/timeshift_manager.cpp",
-    "src/audio_engine/cpp_logger.cpp",
+    "src/audio_engine/cpp_logger.cpp", "src/audio_engine/client_rtp_handler.cpp"
 ]
 main_extension_include_dirs = [
     str(PROJECT_ROOT / "src/audio_engine"), str(PROJECT_ROOT / "src/configuration"),
     str(PROJECT_ROOT / "src/audio_engine/r8brain-free-src"),
-    str(PROJECT_ROOT / "src/audio_engine/ortp/include"), # ortp's own include
-    str(PROJECT_ROOT / "src/screamrouter_logger"),      # For screamrouter_logger
-    str(PROJECT_ROOT / "src/utils")                     # For network_utils
+    # Add libdatachannel include path if it's installed to DEPS_INSTALL_INCLUDE_DIR/rtc
+    str(DEPS_INSTALL_INCLUDE_DIR), # Main deps include dir
+    str(DEPS_INSTALL_INCLUDE_DIR / DEPS_CONFIG["libdatachannel"]["header_dir_name"]), # e.g. build/deps/include/rtc
+    str(DEPS_INSTALL_INCLUDE_DIR / DEPS_CONFIG["openssl"]["header_dir_name"]), # e.g. build/deps/include/openssl
+    str(PROJECT_ROOT / "src/audio_engine/libdatachannel/include"), # Direct include if not installed centrally
+    str(PROJECT_ROOT / "src/audio_engine/openssl/include"), # Direct include for OpenSSL if needed
+    str(PROJECT_ROOT / "src/screamrouter_logger"),
+    str(PROJECT_ROOT / "src/utils")
 ]
 platform_extra_compile_args = []
 platform_extra_link_args = []
+
 main_extension_libraries = [
     DEPS_CONFIG["lame"]["link_name"],
-    DEPS_CONFIG["bctoolbox"]["link_name"],
-    DEPS_CONFIG["bcunit"]["link_name"],
-    DEPS_CONFIG["ortp"]["link_name"],
+    DEPS_CONFIG["libdatachannel"]["link_name"],
+    DEPS_CONFIG["openssl"]["link_name"], # e.g., "crypto"
 ]
-main_extension_library_dirs = [
-    # Add ortp's own library build directory (ortp_src/_build/src)
-    str(PROJECT_ROOT / "src/audio_engine/ortp" / DEPS_CONFIG["ortp"].get("cmake_build_dir_name", "_build") / DEPS_CONFIG["ortp"].get("lib_search_path_rel_to_src_build", "src")),
-    # Add deps/lib64 for bctoolbox and bcunit on Unix
-    str(DEPS_INSTALL_DIR / "lib64") if sys.platform != "win32" else "",
-]
-# Filter out empty strings from library_dirs that might occur on Windows
-main_extension_library_dirs = [d for d in main_extension_library_dirs if d]
+# Add extra OpenSSL libs if defined (e.g., "ssl")
+if DEPS_CONFIG["openssl"].get("extra_link_names"):
+    main_extension_libraries.extend(DEPS_CONFIG["openssl"]["extra_link_names"])
 
+# Add usrsctp if libdatachannel requires it and doesn't bundle/build it.
+# This might be system-dependent or require another submodule. For now, assume not needed explicitly here.
+# main_extension_libraries.append("usrsctp")
+
+
+# Removed platform-specific additions of bctoolbox, bcunit, ortp
+main_extension_library_dirs = [
+    str(DEPS_INSTALL_LIB_DIR), # General lib dir for deps
+    # Specific lib dir for libdatachannel if it installs to a subdir like lib64
+    str(DEPS_INSTALL_DIR / DEPS_CONFIG["libdatachannel"].get("unix_install_lib_dir_rel_to_deps_install", "lib")) if sys.platform != "win32" else str(DEPS_INSTALL_LIB_DIR),
+    # Specific lib dir for openssl if it installs to a subdir like lib64
+    str(DEPS_INSTALL_DIR / DEPS_CONFIG["openssl"].get("unix_install_lib_dir_rel_to_deps_install", "lib")) if sys.platform != "win32" else str(DEPS_INSTALL_LIB_DIR),
+]
+main_extension_library_dirs = [d for d in main_extension_library_dirs if d]
 
 if sys.platform == "win32":
     print("Configuring main extension for Windows (MSVC)")
@@ -455,9 +544,23 @@ if sys.platform == "win32":
 elif sys.platform == "darwin":
     print("Configuring main extension for macOS (Clang)")
     platform_extra_compile_args.extend(["-std=c++17", "-O2", "-Wall", "-fPIC", "-stdlib=libc++", "-mmacosx-version-min=10.14"])
-else:
+else: # Linux/Unix-like systems
     print(f"Configuring main extension for Linux/Unix-like system ({sys.platform})")
     platform_extra_compile_args.extend(["-std=c++17", "-O2", "-Wall", "-fPIC"])
+    # Link libdatachannel. Other dependencies like OpenSSL might be needed explicitly
+    # if not handled by libdatachannel's static build or found by the system linker.
+    platform_extra_link_args.extend([
+        # Example if libdatachannel needs explicit linking for its deps:
+        f"-l{DEPS_CONFIG['openssl']['extra_link_names'][0] if DEPS_CONFIG['openssl'].get('extra_link_names') else 'ssl'}", # Link ssl
+        f"-l{DEPS_CONFIG['openssl']['link_name']}", # Link crypto
+        # "-lusrsctp", # If needed
+        f"-l{DEPS_CONFIG['libdatachannel']['link_name']}",
+        "-lpthread", # Threads often needed with network libs
+        "-ldl"       # For dynamic loading if any dep uses it
+    ])
+    # If libdatachannel is a static library and its dependencies (OpenSSL, usrsctp) are also static
+    # and need to be linked directly, they might need to be wrapped with --whole-archive if they
+    # are not automatically pulled in. For now, assuming standard linking works.
 
 ext_modules = [
     Pybind11Extension("screamrouter_audio_engine",
@@ -473,7 +576,7 @@ ext_modules = [
 
 setup(
     name="screamrouter_audio_engine",
-    version="0.2.2", # Incremented version for oRTP integration
+    version="0.2.2",
     author="Cline",
     description="C++ audio engine for ScreamRouter (builds LAME, oRTP stack from submodules, auto MSVC env setup)",
     long_description=(PROJECT_ROOT / "README.md").read_text(encoding="utf-8") if (PROJECT_ROOT / "README.md").exists() else \

@@ -1,4 +1,5 @@
 #include "audio_manager.h"
+#include "rtp_receiver.h" // Added for global_ortp_init/deinit
 #include "raw_scream_receiver.h"
 #include "per_process_scream_receiver.h" // Include the new header
 #include "cpp_logger.h" // For new C++ logger
@@ -62,10 +63,14 @@ AudioManager::~AudioManager() {
 
 bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_duration_sec) {
     LOG_CPP_INFO("Initializing with rtp_listen_port: %d, timeshift_buffer_duration: %ds", rtp_listen_port, global_timeshift_buffer_duration_sec);
+    
+    RtpReceiver::global_ortp_init(); // Initialize oRTP globally
+
     std::lock_guard<std::mutex> lock(manager_mutex_); // Protect shared state during init
 
     if (running_) {
         LOG_CPP_INFO("Already initialized.");
+        // Note: If already running, global_ortp_init might have been called again, but it's ref-counted.
         return true;
     }
 
@@ -215,6 +220,9 @@ void AudioManager::shutdown() {
     }
     per_process_scream_receivers_.clear();
     LOG_CPP_INFO("Per-Process Scream Receivers stopped.");
+
+    RtpReceiver::global_ortp_deinit(); // Deinitialize oRTP globally
+    LOG_CPP_INFO("oRTP global deinitialization requested.");
 
     LOG_CPP_INFO("Shutdown complete.");
 }

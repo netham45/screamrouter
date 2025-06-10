@@ -76,6 +76,14 @@
         "typeindex": "cpp",
         "valarray": "cpp",
         "variant": "cpp",
+        "any": "cpp",
+        "bitset": "cpp",
+        "csignal": "cpp",
+        "regex": "cpp",
+        "future": "cpp",
+        "ranges": "cpp",
+        "shared_mutex": "cpp",
+        "span": "cpp"
     },
     "cmake.configureOnOpen": false,
     "c-cpp-flylint.cppcheck.extraArgs": [
