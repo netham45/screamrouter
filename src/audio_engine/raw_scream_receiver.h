@@ -4,6 +4,10 @@
 #include "network_audio_receiver.h" // Base class
 #include "audio_types.h"            // For RawScreamReceiverConfig etc.
 
+#include <map>
+#include <mutex>
+#include <cstdint>
+
 namespace screamrouter {
 namespace audio {
 
@@ -35,6 +39,8 @@ protected:
 
 private:
     RawScreamReceiverConfig config_;
+    std::map<std::string, uint32_t> stream_timestamps_;
+    std::mutex timestamps_mutex_;
 
     // Helper method specific to Raw Scream processing
     // This method will now primarily focus on the content validation after basic structure is checked.

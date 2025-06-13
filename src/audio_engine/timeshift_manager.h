@@ -29,6 +29,13 @@ struct ProcessorTargetInfo {
     std::string source_tag_filter; // The source_tag this processor is interested in.
 };
 
+struct StreamTimingState {
+    bool is_first_packet = true;
+    double jitter_estimate = 0.0; // Smoothed jitter estimate in milliseconds
+    uint32_t last_rtp_timestamp = 0;
+    std::chrono::steady_clock::time_point last_wallclock;
+};
+
 class TimeshiftManager : public AudioComponent {
 public:
     TimeshiftManager(std::chrono::seconds max_buffer_duration);
@@ -53,6 +60,10 @@ private:
     // Map: source_tag -> instance_id -> ProcessorTargetInfo
     std::map<std::string, std::map<std::string, ProcessorTargetInfo>> processor_targets_;
     std::mutex targets_mutex_; // Protects processor_targets_ structure (add/remove processors, update delays)
+
+    // Dejittering state
+    std::map<std::string, StreamTimingState> stream_timing_states_;
+    std::mutex timing_mutex_;
 
     std::condition_variable run_loop_cv_; // To wake up the run loop
     std::chrono::seconds max_buffer_duration_sec_; // Configurable max duration for the global buffer

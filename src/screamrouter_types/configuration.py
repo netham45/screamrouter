@@ -242,6 +242,8 @@ class SinkDescription(BaseModel):
     """ID used by mDNS auto-configuration to sync client settings changes"""
     use_tcp: bool = False
     enable_mp3: bool = True
+    protocol: str = "scream"
+    """The network protocol to use for the sink. Can be 'scream' or 'rtp'."""
 
     def __eq__(self, other):
         """Compares the name if a string.

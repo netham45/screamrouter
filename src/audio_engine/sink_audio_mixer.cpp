@@ -9,6 +9,8 @@
 #include <algorithm> // For std::fill, std::max
 #include <cmath>     // For std::chrono durations
 #include "audio_processor.h" // Include the AudioProcessor header
+#include "scream_sender.h"
+#include "rtp_sender.h"
 
 // Use namespaces for clarity
 namespace screamrouter { namespace audio { using namespace utils; } }
@@ -35,39 +37,36 @@ SinkAudioMixer::SinkAudioMixer(
     SinkMixerConfig config,
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue)
     : config_(config),
-      mp3_output_queue_(mp3_output_queue), // Store the shared_ptr (can be null)
-      udp_socket_fd_(INVALID_SOCKET_VALUE), // Initialize with platform-specific invalid value
-      // tcp_socket_fd_(-1), // Removed
+      mp3_output_queue_(mp3_output_queue),
       lame_global_flags_(nullptr),
-      lame_preprocessor_(nullptr), // Initialize the new member
-      // Fix mixing buffer size to be constant based on SINK_MIXING_BUFFER_SAMPLES
+      lame_preprocessor_(nullptr),
       mixing_buffer_(SINK_MIXING_BUFFER_SAMPLES, 0),
-      // Fix output buffer size for double buffering (Packet Size * 2)
-      output_network_buffer_(SINK_PACKET_SIZE_BYTES * 2, 0),
-      mp3_encode_buffer_(SINK_MP3_BUFFER_SIZE) // Allocate MP3 buffer
+      payload_buffer_(SINK_CHUNK_SIZE_BYTES * 2, 0),
+      mp3_encode_buffer_(SINK_MP3_BUFFER_SIZE)
  {
-    #ifdef _WIN32
-        // WSAStartup might have already been called by RtpReceiver if both exist.
-        WSADATA wsaData;
-        int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-        if (iResult != 0) {
-            LOG_CPP_ERROR("[SinkMixer:%s] WSAStartup failed: %d", config_.sink_id.c_str(), iResult);
-            throw std::runtime_error("WSAStartup failed.");
-        }
-    #endif
     LOG_CPP_INFO("[SinkMixer:%s] Initializing...", config_.sink_id.c_str());
 
-    // Validate config
     if (config_.output_bitdepth != 8 && config_.output_bitdepth != 16 && config_.output_bitdepth != 24 && config_.output_bitdepth != 32) {
          LOG_CPP_ERROR("[SinkMixer:%s] Unsupported output bit depth: %d. Defaulting to 16.", config_.sink_id.c_str(), config_.output_bitdepth);
          config_.output_bitdepth = 16;
     }
-    if (config_.output_channels <= 0 || config_.output_channels > 8) { // Assuming max 8 channels based on old code
+    if (config_.output_channels <= 0 || config_.output_channels > 8) {
          LOG_CPP_ERROR("[SinkMixer:%s] Invalid output channels: %d. Defaulting to 2.", config_.sink_id.c_str(), config_.output_channels);
          config_.output_channels = 2;
     }
 
-    build_scream_header();
+    if (config_.protocol == "rtp") {
+        LOG_CPP_INFO("[SinkMixer:%s] Creating RtpSender.", config_.sink_id.c_str());
+        network_sender_ = std::make_unique<RtpSender>(config_);
+    } else {
+        LOG_CPP_INFO("[SinkMixer:%s] Creating ScreamSender.", config_.sink_id.c_str());
+        network_sender_ = std::make_unique<ScreamSender>(config_);
+    }
+
+    if (!network_sender_) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to create network sender.", config_.sink_id.c_str());
+        throw std::runtime_error("Failed to create network sender.");
+    }
 
     if (mp3_output_queue_) {
         // Instantiate the AudioProcessor for LAME preprocessing
@@ -101,27 +100,7 @@ SinkAudioMixer::~SinkAudioMixer() {
         LOG_CPP_WARNING("[SinkMixer:%s] Warning: Joining thread in destructor, stop() might not have been called properly.", config_.sink_id.c_str());
         component_thread_.join();
     }
-    close_networking();
-    //close_lame(); // LAME cleanup should happen here if initialized
-
-    #ifdef _WIN32
-        // WSACleanup(); // Managed globally ideally
-    #endif
-}
-
-void SinkAudioMixer::build_scream_header() {
-    bool output_samplerate_44100_base = (config_.output_samplerate % 44100) == 0;
-    // Ensure divisor is not zero
-    uint8_t output_samplerate_mult = (config_.output_samplerate > 0) ?
-        ((output_samplerate_44100_base ? 44100 : 48000) / config_.output_samplerate) : 1;
-
-    scream_header_[0] = output_samplerate_mult + (output_samplerate_44100_base << 7);
-    scream_header_[1] = static_cast<uint8_t>(config_.output_bitdepth);
-    scream_header_[2] = static_cast<uint8_t>(config_.output_channels);
-    scream_header_[3] = config_.output_chlayout1;
-    scream_header_[4] = config_.output_chlayout2;
-    LOG_CPP_INFO("[SinkMixer:%s] Built Scream header for Rate: %d, Depth: %d, Channels: %d",
-                 config_.sink_id.c_str(), config_.output_samplerate, config_.output_bitdepth, config_.output_channels);
+    // network_sender_ is a unique_ptr and will be cleaned up automatically.
 }
 
 void SinkAudioMixer::initialize_lame() {
@@ -177,57 +156,6 @@ void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
     }
 }
 
-bool SinkAudioMixer::setup_networking() {
-    LOG_CPP_INFO("[SinkMixer:%s] Setting up networking...", config_.sink_id.c_str());
-    // UDP Setup
-    udp_socket_fd_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // socket() is generally cross-platform
-    if (udp_socket_fd_ == INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
-        LOG_CPP_ERROR("[SinkMixer:%s] Failed to create UDP socket", config_.sink_id.c_str());
-        return false;
-    }
-
-    // Set DSCP/TOS value (Best Effort is default, EF for Expedited Forwarding is 46)
-    // IP_TOS might require different handling or privileges on Windows.
-    #ifdef _WIN32
-        //DWORD tos_value_dword = static_cast<DWORD>(tos_value); // Example if DWORD needed
-        //if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_TOS, reinterpret_cast<const char*>(&tos_value_dword), sizeof(tos_value_dword)) < 0) {
-        // For now, skip TOS setting on Windows for simplicity, requires more investigation
-        LOG_CPP_WARNING("[SinkMixer:%s] Skipping TOS/DSCP setting on Windows.", config_.sink_id.c_str());
-    #else // POSIX
-        int dscp = 46; // EF PHB for low latency audio
-        int tos_value = dscp << 2;
-        if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_TOS, &tos_value, sizeof(tos_value)) < 0) {
-            LOG_CPP_ERROR("[SinkMixer:%s] Failed to set UDP socket TOS/DSCP", config_.sink_id.c_str());
-            // Non-fatal, continue anyway
-        }
-    #endif
-
-    // Prepare UDP destination address
-    memset(&udp_dest_addr_, 0, sizeof(udp_dest_addr_));
-    udp_dest_addr_.sin_family = AF_INET;
-    udp_dest_addr_.sin_port = htons(config_.output_port);
-    // Use inet_pton for cross-platform compatibility (preferred over inet_addr)
-    if (inet_pton(AF_INET, config_.output_ip.c_str(), &udp_dest_addr_.sin_addr) <= 0) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Invalid UDP destination IP address (inet_pton failed): %s", config_.sink_id.c_str(), config_.output_ip.c_str());
-        _close_socket(udp_socket_fd_); // Use corrected macro
-        udp_socket_fd_ = INVALID_SOCKET_VALUE;
-        return false;
-    }
-
-    // TCP setup is handled externally via set_tcp_fd()
-
-    LOG_CPP_INFO("[SinkMixer:%s] Networking setup complete (UDP target: %s:%d)", config_.sink_id.c_str(), config_.output_ip.c_str(), config_.output_port);
-    return true;
-}
-
-void SinkAudioMixer::close_networking() {
-    if (udp_socket_fd_ != INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
-        LOG_CPP_INFO("[SinkMixer:%s] Closing UDP socket", config_.sink_id.c_str()); // Simplified log
-        _close_socket(udp_socket_fd_); // Use corrected macro
-        udp_socket_fd_ = INVALID_SOCKET_VALUE; // Set to platform-specific invalid value
-    }
-    // Don't close tcp_socket_fd_ here, as it's managed externally // This comment is now misleading
-}
 
 void SinkAudioMixer::start() {
     if (is_running()) {
@@ -236,21 +164,21 @@ void SinkAudioMixer::start() {
     }
     LOG_CPP_INFO("[SinkMixer:%s] Starting...", config_.sink_id.c_str());
     stop_flag_ = false;
-    output_buffer_write_pos_ = 0; // Reset write position
+    payload_buffer_write_pos_ = 0;
 
-    if (!setup_networking()) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Networking setup failed. Cannot start mixer thread.", config_.sink_id.c_str());
+    if (!network_sender_ || !network_sender_->setup()) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Network sender setup failed. Cannot start mixer thread.", config_.sink_id.c_str());
         return;
     }
 
-    // Launch the thread
     try {
         component_thread_ = std::thread(&SinkAudioMixer::run, this);
         LOG_CPP_INFO("[SinkMixer:%s] Thread started.", config_.sink_id.c_str());
     } catch (const std::system_error& e) {
         LOG_CPP_ERROR("[SinkMixer:%s] Failed to start thread: %s", config_.sink_id.c_str(), e.what());
-        close_networking();
-        //close_lame();
+        if (network_sender_) {
+            network_sender_->close();
+        }
         throw;
     }
 }
@@ -263,22 +191,15 @@ void SinkAudioMixer::stop() {
     LOG_CPP_INFO("[SinkMixer:%s] Stopping...", config_.sink_id.c_str());
     stop_flag_ = true;
 
-    // Notify condition variables to wake up waiting threads
     input_cv_.notify_all();
 
-    // Flush LAME buffer before joining thread
     if (mp3_output_queue_ && lame_global_flags_) {
         LOG_CPP_INFO("[SinkMixer:%s] Flushing LAME buffer...", config_.sink_id.c_str());
         int flush_bytes = lame_encode_flush(lame_global_flags_, mp3_encode_buffer_.data(), mp3_encode_buffer_.size());
-        if (flush_bytes < 0) {
-            LOG_CPP_ERROR("[SinkMixer:%s] LAME flush failed with code: %d", config_.sink_id.c_str(), flush_bytes);
-        } else if (flush_bytes > 0) {
-            LOG_CPP_INFO("[SinkMixer:%s] LAME flushed %d bytes.", config_.sink_id.c_str(), flush_bytes);
+        if (flush_bytes > 0) {
             EncodedMP3Data mp3_data;
             mp3_data.mp3_data.assign(mp3_encode_buffer_.begin(), mp3_encode_buffer_.begin() + flush_bytes);
             mp3_output_queue_->push(std::move(mp3_data));
-        } else {
-             LOG_CPP_INFO("[SinkMixer:%s] LAME flush produced 0 bytes.", config_.sink_id.c_str());
         }
     }
 
@@ -289,13 +210,11 @@ void SinkAudioMixer::stop() {
         } catch (const std::system_error& e) {
             LOG_CPP_ERROR("[SinkMixer:%s] Error joining thread: %s", config_.sink_id.c_str(), e.what());
         }
-    } else {
-         LOG_CPP_INFO("[SinkMixer:%s] Thread was not joinable.", config_.sink_id.c_str());
     }
 
-    // Cleanup resources after thread has stopped
-    close_networking();
-    //close_lame();
+    if (network_sender_) {
+        network_sender_->close();
+    }
 }
 
 // Removed SinkAudioMixer::set_tcp_fd
@@ -432,6 +351,8 @@ void SinkAudioMixer::mix_buffers() {
     // Assumes queues_mutex_ is held by the caller (run loop)
     // Clear the mixing buffer (vector of int32_t) before accumulating samples
     std::fill(mixing_buffer_.begin(), mixing_buffer_.end(), 0);
+    
+    std::vector<uint32_t> collected_csrcs;
     size_t active_source_count = 0;
 
     // The total number of samples to mix is fixed by the mixing_buffer_ size
@@ -449,9 +370,11 @@ void SinkAudioMixer::mix_buffers() {
                  continue; // Skip this source
             }
             const auto& source_data = buf_it->second.audio_data; // Use iterator
-
-            size_t samples_in_source = source_data.size(); // Get actual sample count from the stored chunk
-            LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Mixing instance %s. Source samples=%zu. Expected=%zu.", config_.sink_id.c_str(), instance_id.c_str(), samples_in_source, total_samples_to_mix);
+            const auto& ssrcs = buf_it->second.ssrcs;
+            collected_csrcs.insert(collected_csrcs.end(), ssrcs.begin(), ssrcs.end());
+ 
+             size_t samples_in_source = source_data.size(); // Get actual sample count from the stored chunk
+             LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Mixing instance %s. Source samples=%zu. Expected=%zu.", config_.sink_id.c_str(), instance_id.c_str(), samples_in_source, total_samples_to_mix);
 
             // *** Check source data size against the fixed mixing buffer size ***
             // This check is redundant if wait_for_source_data correctly discards invalid chunks, but kept for safety.
@@ -479,13 +402,23 @@ void SinkAudioMixer::mix_buffers() {
             }
         } // end if(is_active)
     } // end for loop over sources
+    
+    // Store the unique CSRCs
+    std::sort(collected_csrcs.begin(), collected_csrcs.end());
+    collected_csrcs.erase(std::unique(collected_csrcs.begin(), collected_csrcs.end()), collected_csrcs.end());
+    
+    {
+        std::lock_guard<std::mutex> lock(csrc_mutex_);
+        current_csrcs_ = collected_csrcs;
+    }
+
     LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Mix complete. Mixed %zu active sources into mixing_buffer_ (%zu samples).", config_.sink_id.c_str(), active_source_count, total_samples_to_mix);
 }
 
 
 // Restored original bit-shifting logic (copies MSBs)
 void SinkAudioMixer::downscale_buffer() {
-    // Converts 32-bit mixing_buffer_ to target bit depth into output_network_buffer_
+    // Converts 32-bit mixing_buffer_ to target bit depth into payload_buffer_
     size_t output_byte_depth = config_.output_bitdepth / 8; // Bytes per sample in target format (e.g., 16-bit -> 2 bytes)
     // Calculate the number of samples based on the mixing buffer size (int32_t)
     size_t samples_to_convert = mixing_buffer_.size(); // Should be SINK_MIXING_BUFFER_SAMPLES (e.g., 576)
@@ -496,14 +429,12 @@ void SinkAudioMixer::downscale_buffer() {
                   config_.sink_id.c_str(), samples_to_convert, config_.output_bitdepth, expected_bytes_to_write);
 
 
-    // Ensure we don't write past the end of the output buffer's allocated space
-    // Note: output_network_buffer_ is double buffered (size = SINK_PACKET_SIZE_BYTES * 2 = (1152+5)*2 = 2314 bytes)
-    // We write data *after* the header space reserved at the beginning.
-    size_t available_space = output_network_buffer_.size() - SINK_HEADER_SIZE - output_buffer_write_pos_;
+    // Ensure we don't write past the end of the payload buffer's allocated space
+    size_t available_space = payload_buffer_.size() - payload_buffer_write_pos_;
 
     if (expected_bytes_to_write > available_space) {
         LOG_CPP_ERROR("[SinkMixer:%s] Downscale buffer overflow detected! Available space=%zu, needed=%zu. WritePos=%zu. BufferSize=%zu",
-                      config_.sink_id.c_str(), available_space, expected_bytes_to_write, output_buffer_write_pos_, output_network_buffer_.size());
+                      config_.sink_id.c_str(), available_space, expected_bytes_to_write, payload_buffer_write_pos_, payload_buffer_.size());
         // Limit the operation to prevent overflow, but data will be lost/corrupted.
         // Calculate how many full samples can fit in the available space.
         size_t max_samples_possible = available_space / output_byte_depth;
@@ -517,8 +448,8 @@ void SinkAudioMixer::downscale_buffer() {
         }
     }
 
-    // Get pointers for reading (from mixing_buffer_) and writing (to output_network_buffer_)
-    uint8_t* write_ptr_start = output_network_buffer_.data() + SINK_HEADER_SIZE + output_buffer_write_pos_; // Start writing after header space + current position
+    // Get pointers for reading (from mixing_buffer_) and writing (to payload_buffer_)
+    uint8_t* write_ptr_start = payload_buffer_.data() + payload_buffer_write_pos_;
     uint8_t* write_ptr = write_ptr_start;
     const int32_t* read_ptr = mixing_buffer_.data(); // Read from the start of the 32-bit mixed buffer
 
@@ -560,166 +491,9 @@ void SinkAudioMixer::downscale_buffer() {
                        config_.sink_id.c_str(), bytes_written, expected_bytes_to_write);
     }
 
-    // Update the write position in the output_network_buffer_
-    output_buffer_write_pos_ += bytes_written;
-    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale complete. output_buffer_write_pos_=%zu", config_.sink_id.c_str(), output_buffer_write_pos_);
-}
-
-
-void SinkAudioMixer::send_network_buffer(size_t length) {
-    // This function sends a complete network packet of the specified length.
-    // The length should typically be SINK_PACKET_SIZE_BYTES (header + payload).
-    LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Preparing to send buffer. Requested length=%zu bytes. Expected packet size=%zu bytes.",
-                  config_.sink_id.c_str(), length, static_cast<size_t>(SINK_PACKET_SIZE_BYTES));
-    if (length == 0) {
-        LOG_CPP_ERROR("[SinkMixer:%s] SendNet: Attempted to send network buffer with length 0.", config_.sink_id.c_str());
-        return;
-    }
-    // Ensure length includes header and doesn't exceed buffer capacity
-    if (length < SINK_HEADER_SIZE) {
-         LOG_CPP_ERROR("[SinkMixer:%s] SendNet: Attempted to send network buffer with length %zu < header size %zu",
-                       config_.sink_id.c_str(), length, static_cast<size_t>(SINK_HEADER_SIZE));
-         return; // Invalid length
-    }
-     // Check against expected packet size (SINK_PACKET_SIZE_BYTES = 1157)
-     if (length != SINK_PACKET_SIZE_BYTES) {
-         LOG_CPP_WARNING("[SinkMixer:%s] SendNet: Sending packet with length %zu which differs from expected SINK_PACKET_SIZE_BYTES (%zu).",
-                         config_.sink_id.c_str(), length, static_cast<size_t>(SINK_PACKET_SIZE_BYTES));
-     }
-    // Ensure length doesn't exceed the *total* allocated buffer size (double buffer)
-    if (length > output_network_buffer_.size()) {
-         LOG_CPP_ERROR("[SinkMixer:%s] SendNet: Attempted to send network buffer with length %zu > total buffer size %zu",
-                       config_.sink_id.c_str(), length, output_network_buffer_.size());
-         length = output_network_buffer_.size(); // Prevent overflow, but indicates an issue elsewhere
-         LOG_CPP_ERROR("[SinkMixer:%s] SendNet: Clamping send length to buffer size: %zu", config_.sink_id.c_str(), length);
-    }
-
-    // Add the pre-built Scream header to the start of the buffer *before* sending
-    memcpy(output_network_buffer_.data(), scream_header_, SINK_HEADER_SIZE); // Copy header to the very beginning
-    LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Header (%zu bytes) copied to buffer start.", config_.sink_id.c_str(), static_cast<size_t>(SINK_HEADER_SIZE));
-
-    // ---- START SILENCE CHECK ----
-    // For every packet it sends out, it samples five even points across the output packet's audio payload.
-    // If all sampled points are zero, it does not send the packet.
-    bool all_samples_zero = true;
-    if (length > SINK_HEADER_SIZE) { // Only check if there's an audio payload
-        const uint8_t* payload_ptr = output_network_buffer_.data() + SINK_HEADER_SIZE;
-        size_t payload_size_bytes = length - SINK_HEADER_SIZE;
-        size_t bytes_per_sample = config_.output_bitdepth / 8;
-
-        // Ensure parameters are valid for checking samples
-        if (bytes_per_sample > 0 && payload_size_bytes > 0 && (payload_size_bytes % bytes_per_sample == 0)) {
-            size_t num_payload_samples = payload_size_bytes / bytes_per_sample;
-
-            if (num_payload_samples >= 1) { // Must have at least one sample to check
-                size_t indices_to_check[5];
-                indices_to_check[0] = 0; // First sample
-                
-                if (num_payload_samples > 1) { // For num_payload_samples = 1, all indices will be 0.
-                    indices_to_check[1] = static_cast<size_t>(std::floor(1.0 * (num_payload_samples - 1) / 4.0));
-                    indices_to_check[2] = static_cast<size_t>(std::floor(2.0 * (num_payload_samples - 1) / 4.0));
-                    indices_to_check[3] = static_cast<size_t>(std::floor(3.0 * (num_payload_samples - 1) / 4.0));
-                    indices_to_check[4] = num_payload_samples - 1; // Last sample
-                } else { // num_payload_samples == 1
-                    indices_to_check[1] = 0;
-                    indices_to_check[2] = 0;
-                    indices_to_check[3] = 0;
-                    indices_to_check[4] = 0;
-                }
-                
-                LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Silence check on %zu samples. Indices: %zu,%zu,%zu,%zu,%zu",
-                              config_.sink_id.c_str(), num_payload_samples, indices_to_check[0], indices_to_check[1],
-                              indices_to_check[2], indices_to_check[3], indices_to_check[4]);
-
-                for (int i = 0; i < 5; ++i) {
-                    size_t sample_idx = indices_to_check[i];
-                    // sample_idx is confirmed to be < num_payload_samples by construction if num_payload_samples >=1
-
-                    const uint8_t* current_sample_ptr = payload_ptr + (sample_idx * bytes_per_sample);
-                    bool current_sample_is_zero = true;
-                    for (size_t byte_k = 0; byte_k < bytes_per_sample; ++byte_k) {
-                        if (current_sample_ptr[byte_k] < 1024) {
-                            current_sample_is_zero = false;
-                            break;
-                        }
-                    }
-                    if (!current_sample_is_zero) {
-                        all_samples_zero = false; // If one sample point is not zero, the packet is not silent
-                        break;
-                    }
-                }
-            } else {
-                // This case implies num_payload_samples is 0, but payload_size_bytes > 0.
-                // This means payload_size_bytes < bytes_per_sample.
-                // No full samples to check, so it's effectively silent for this check.
-                LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Not enough data for a single sample in payload for silence check. Payload bytes: %zu, bytes/sample: %zu. Considered silent.",
-                              config_.sink_id.c_str(), payload_size_bytes, bytes_per_sample);
-                // all_samples_zero remains true.
-            }
-        } else {
-            // This 'else' covers:
-            // 1. bytes_per_sample == 0 (should not happen due to constructor validation)
-            // 2. payload_size_bytes == 0 (already handled by outer 'if (length > SINK_HEADER_SIZE)', so all_samples_zero is true)
-            // 3. payload_size_bytes > 0 BUT (payload_size_bytes % bytes_per_sample != 0) -> malformed packet for this check.
-            if (payload_size_bytes > 0 && (bytes_per_sample == 0 || (payload_size_bytes % bytes_per_sample != 0) ) ) {
-                LOG_CPP_WARNING("[SinkMixer:%s] SendNet: Cannot perform silence check due to invalid sample/payload parameters (e.g., non-integer samples or zero bytes_per_sample). Payload bytes: %zu. Sending packet.",
-                                config_.sink_id.c_str(), payload_size_bytes);
-                all_samples_zero = false; // Force send if payload exists but check is problematic
-            }
-            // If payload_size_bytes is 0, all_samples_zero remains true (correct for empty payload).
-        }
-    } else {
-        // No payload (length == SINK_HEADER_SIZE), effectively silent.
-        LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: No payload to check for silence. Packet considered silent.", config_.sink_id.c_str());
-        // all_samples_zero is already true.
-    }
-
-    if (all_samples_zero) {
-        LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Packet identified as silent (either no payload or 5-point sample check passed). Skipping send.", config_.sink_id.c_str());
-        // The run loop will effectively discard this chunk from output_network_buffer_
-        // because it adjusts output_buffer_write_pos_ regardless of whether sendto was called.
-        return; // Do not send the packet
-    }
-    // ---- END SILENCE CHECK ----
-
-    // Send via UDP
-    if (udp_socket_fd_ != INVALID_SOCKET_VALUE) { // Check against platform-specific invalid value
-        LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: Sending %zu bytes via UDP to %s:%d",
-                      config_.sink_id.c_str(), length, config_.output_ip.c_str(), config_.output_port);
-        // Send from the beginning of the buffer, including the header
-        #ifdef _WIN32
-            // Windows sendto uses char* buffer and int length
-            int sent_bytes = sendto(udp_socket_fd_,
-                                        reinterpret_cast<const char*>(output_network_buffer_.data()),
-                                        static_cast<int>(length),
-                                        0, // Flags
-                                        (struct sockaddr *)&udp_dest_addr_,
-                                        sizeof(udp_dest_addr_));
-        #else
-            // POSIX sendto uses const void* buffer and size_t length
-            int sent_bytes = sendto(udp_socket_fd_,
-                                        output_network_buffer_.data(),
-                                        length,
-                                        0, // Flags
-                                        (struct sockaddr *)&udp_dest_addr_,
-                                        sizeof(udp_dest_addr_));
-        #endif
-
-        if (sent_bytes < 0) {
-            // EAGAIN or EWOULDBLOCK might be acceptable if non-blocking, but UDP usually doesn't block here.
-            // Check specific Windows errors like WSAEWOULDBLOCK if needed.
-            LOG_CPP_ERROR("[SinkMixer:%s] SendNet: UDP sendto failed", config_.sink_id.c_str());
-        } else if (static_cast<size_t>(sent_bytes) != length) {
-             LOG_CPP_ERROR("[SinkMixer:%s] SendNet: UDP sendto sent partial data: %d/%zu", config_.sink_id.c_str(), sent_bytes, length);
-        } else {
-             LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: UDP send successful (%d bytes).", config_.sink_id.c_str(), sent_bytes);
-        }
-    } else {
-         LOG_CPP_DEBUG("[SinkMixer:%s] SendNet: UDP socket not valid, skipping UDP send.", config_.sink_id.c_str());
-    }
-
-    // Send via TCP (if connected)
-    // TCP sending logic removed
+    // Update the write position in the payload_buffer_
+    payload_buffer_write_pos_ += bytes_written;
+    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale complete. payload_buffer_write_pos_=%zu", config_.sink_id.c_str(), payload_buffer_write_pos_);
 }
 
 
@@ -896,38 +670,29 @@ void SinkAudioMixer::run() {
 
             // 4. Downscale mixed buffer to network format
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Downscaling buffer...", config_.sink_id.c_str());
-            downscale_buffer(); // Appends to output_network_buffer_
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Downscaling complete. WritePos=%zu", config_.sink_id.c_str(), output_buffer_write_pos_);
+            downscale_buffer();
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Downscaling complete. WritePos=%zu", config_.sink_id.c_str(), payload_buffer_write_pos_);
 
-            // 5. Send network data if a full packet's worth of *payload* bytes has been accumulated
-            // We check against SINK_CHUNK_SIZE_BYTES (1152) because that's the payload size we accumulate via downscale_buffer
-            if (output_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Output buffer ready to send. WritePos=%zu bytes. ChunkSizeBytes=%zu bytes.",
-                              config_.sink_id.c_str(), output_buffer_write_pos_, static_cast<size_t>(SINK_CHUNK_SIZE_BYTES));
-                // Send the first packet (from start of double buffer), total size includes header
-                send_network_buffer(SINK_PACKET_SIZE_BYTES); // Send 1157 bytes (header + 1152 payload)
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Network buffer sent (size=%zu).", config_.sink_id.c_str(), static_cast<size_t>(SINK_PACKET_SIZE_BYTES));
-
-                // Shift the remaining data (if any) from the second half of the buffer to the beginning (after header space)
-                size_t bytes_remaining_after_send = output_buffer_write_pos_ - SINK_CHUNK_SIZE_BYTES;
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Rotating output buffer... Shifting %zu bytes from second half to start.", config_.sink_id.c_str(), bytes_remaining_after_send);
-                if (bytes_remaining_after_send > 0) {
-                    // Use memmove for potentially overlapping regions.
-                    // Source: Start of the data *after* the first sent chunk (at index SINK_PACKET_SIZE_BYTES)
-                    // Destination: Start of the payload area (at index SINK_HEADER_SIZE)
-                    // Length: The number of bytes remaining after sending the first chunk
-                    memmove(output_network_buffer_.data() + SINK_HEADER_SIZE,      // Dest
-                           output_network_buffer_.data() + SINK_PACKET_SIZE_BYTES, // Src
-                           bytes_remaining_after_send);                            // Len
+            // 5. Send network data if a full payload chunk has been accumulated
+            if (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Payload buffer ready to send. WritePos=%zu bytes.",
+                              config_.sink_id.c_str(), payload_buffer_write_pos_);
+                
+                if (network_sender_) {
+                    std::lock_guard<std::mutex> lock(csrc_mutex_);
+                    network_sender_->send_payload(payload_buffer_.data(), SINK_CHUNK_SIZE_BYTES, current_csrcs_);
                 }
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Output buffer rotated.", config_.sink_id.c_str());
-
-                // Adjust write position to reflect the remaining data
-                output_buffer_write_pos_ = bytes_remaining_after_send; // New write pos is the number of bytes shifted
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Adjusted write pos to %zu", config_.sink_id.c_str(), output_buffer_write_pos_);
+                
+                size_t bytes_remaining = payload_buffer_write_pos_ - SINK_CHUNK_SIZE_BYTES;
+                if (bytes_remaining > 0) {
+                    memmove(payload_buffer_.data(), payload_buffer_.data() + SINK_CHUNK_SIZE_BYTES, bytes_remaining);
+                }
+                
+                payload_buffer_write_pos_ = bytes_remaining;
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Adjusted write pos to %zu", config_.sink_id.c_str(), payload_buffer_write_pos_);
             } else {
-                 LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Output buffer not full enough yet for payload. WritePos=%zu bytes. Need=%zu bytes.",
-                               config_.sink_id.c_str(), output_buffer_write_pos_, static_cast<size_t>(SINK_CHUNK_SIZE_BYTES));
+                 LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Payload buffer not full enough yet. WritePos=%zu bytes. Need=%zu bytes.",
+                               config_.sink_id.c_str(), payload_buffer_write_pos_, static_cast<size_t>(SINK_CHUNK_SIZE_BYTES));
             }
         } else {
             // No input queues connected or no data available from wait_for_source_data

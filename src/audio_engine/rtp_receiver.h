@@ -4,7 +4,9 @@
 #include "network_audio_receiver.h" // Base class
 #include "audio_types.h"            // For RtpReceiverConfig, TaggedAudioPacket etc.
 #include <rtc/rtp.hpp>              // libdatachannel RTP header
+#include "sap_listener.h"
 #include <mutex>                    // For std::mutex
+#include <memory>
 #include <cstdint>                  // For uint32_t
 
 // POSIX socket includes (some might be in network_audio_receiver.h but good to be explicit)
@@ -78,6 +80,7 @@ private:
     std::vector<uint8_t> pcm_accumulator_;
     std::chrono::steady_clock::time_point last_rtp_packet_timestamp_;
     // --- End new members ---
+    std::unique_ptr<SapListener> sap_listener_;
 
     // Helper method specific to RTP processing (might be removed or adapted)
     // bool is_valid_rtp_header_payload(const uint8_t* buffer, int size); // Likely obsolete

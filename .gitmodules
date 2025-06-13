@@ -10,6 +10,6 @@
 [submodule "src/audio_engine/libdatachannel"]
 	path = src/audio_engine/libdatachannel
 	url = https://github.com/paullouisageneau/libdatachannel
-[submodule "src/audio_engine/src/audio_engine/openssl"]
-	path = src/audio_engine/src/audio_engine/openssl
+[submodule "src/audio_engine/openssl"]
+	path = src/audio_engine/openssl
 	url = https://github.com/openssl/openssl.git

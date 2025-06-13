@@ -95,6 +95,7 @@ private:
 
     // Processing buffer (holds output from AudioProcessor before pushing full chunks)
     std::vector<int32_t> process_buffer_;
+    std::vector<uint32_t> current_packet_ssrcs_;
     // size_t process_buffer_samples_ = 0; // Tracked by process_buffer_.size()
 
     // Current settings (can be updated by commands)
@@ -131,7 +132,7 @@ private:
     // Audio processing methods
     // void initialize_audio_processor(); // Removed
     void process_audio_chunk(const std::vector<uint8_t>& input_chunk_data); // Calls audio_processor_->processAudio
-    void push_output_chunk_if_ready(); // Pushes a full ProcessedAudioChunk to output_queue_
+    void push_output_chunk_if_ready();
 
     /**
      * @brief Checks packet format, reconfigures AudioProcessor if needed, and returns audio payload.

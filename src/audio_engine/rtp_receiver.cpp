@@ -1,7 +1,6 @@
 #include "rtp_receiver.h"
 #include "timeshift_manager.h" // For TimeshiftManager operations
 #include "audio_constants.h"   // For SCREAM_PAYLOAD_TYPE_RTP, etc.
-// #include <ortp/ortp.h> // Removed
 #include <rtc/rtp.hpp> // Added for libdatachannel
 #include <iostream>
 #include <vector>
@@ -11,13 +10,6 @@
 #include <utility>      // For std::move
 #include <algorithm>    // For std::find, std::min
 #include <cerrno>       // For errno
-
-// POSIX socket includes are now in rtp_receiver.h
-// #include <sys/types.h>
-// #include <sys/socket.h>
-// #include <netinet/in.h>
-// #include <arpa/inet.h>
-// #include <unistd.h> // For close()
 #include <sys/select.h> // For select()
 
 
@@ -27,13 +19,27 @@
 namespace screamrouter {
 namespace audio {
 
+namespace { // Anonymous namespace for helpers
+bool is_system_little_endian() {
+    int n = 1;
+    return (*(char *)&n == 1);
+}
+
+void swap_endianness(uint8_t* data, size_t size, int bit_depth) {
+    if (bit_depth == 16) {
+        for (size_t i = 0; i < size; i += 2) {
+            std::swap(data[i], data[i + 1]);
+        }
+    } else if (bit_depth == 24) {
+        for (size_t i = 0; i < size; i += 3) {
+            std::swap(data[i], data[i + 2]);
+        }
+    }
+}
+} // namespace
+
 const size_t TARGET_PCM_CHUNK_SIZE = 1152;
 const size_t RAW_RECEIVE_BUFFER_SIZE = 2048; // Buffer for recvfrom
-
-// Static member initialization for oRTP removed
-// std::mutex RtpReceiver::ortp_init_mutex_;
-// bool RtpReceiver::ortp_initialized_ = false;
-// int RtpReceiver::ortp_ref_count_ = 0;
 
 // RTP constants remain the same
 const int RTP_PAYLOAD_TYPE_L16_48K_STEREO = 127;
@@ -42,28 +48,20 @@ const int RTP_CHANNELS_L16_48K_STEREO = 2;
 const int RTP_BITS_PER_SAMPLE_L16_48K_STEREO = 16;
 
 
-// global_ortp_init and global_ortp_deinit removed
-// void RtpReceiver::global_ortp_init() { ... }
-// void RtpReceiver::global_ortp_deinit() { ... }
-
 RtpReceiver::RtpReceiver(
     RtpReceiverConfig config,
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager)
     : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, "[RtpReceiver]"),
       config_(config), last_known_ssrc_(0), ssrc_initialized_(false) {
-    // session_ and profile_ (oRTP specific) removed from initializer list
-    // global_ortp_init() call removed
     pcm_accumulator_.reserve(TARGET_PCM_CHUNK_SIZE * 2);
+    sap_listener_ = std::make_unique<SapListener>("[RtpReceiver-SAP]");
 }
 
 RtpReceiver::~RtpReceiver() noexcept {
-    // oRTP specific cleanup (session_, profile_) removed.
-    // Base class destructor handles stopping thread, which calls close_socket().
-    // global_ortp_deinit() call removed
+    
 }
 
-// oRTP SSRC Changed Callback (on_ssrc_changed_callback_static) removed.
 
 void RtpReceiver::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc) {
     char old_ssrc_hex[12];
@@ -73,13 +71,9 @@ void RtpReceiver::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc) {
 
     log_message("SSRC changed. Old SSRC: " + std::string(old_ssrc_hex) +
                 ", New SSRC: " + std::string(new_ssrc_hex) + ". Clearing PCM accumulator.");
-    // rtp_session_reset(session_) removed.
     pcm_accumulator_.clear();
     log_message("Internal PCM accumulator cleared due to SSRC change.");
 }
-
-
-// --- Overridden NetworkAudioReceiver Methods ---
 
 bool RtpReceiver::setup_socket() {
     log_message("Setting up raw UDP socket for RTP reception on port " + std::to_string(listen_port_));
@@ -92,22 +86,21 @@ bool RtpReceiver::setup_socket() {
 
     socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd_ == NAR_INVALID_SOCKET_VALUE) {
-        log_error("Failed to create UDP socket: " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR())));
+        log_error("Failed to create UDP socket: " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
         return false;
     }
 
     // Set socket options (e.g., SO_REUSEADDR, SO_RCVBUF)
     int optval = 1;
     if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&optval), sizeof(optval)) < 0) {
-        log_warning("Failed to set SO_REUSEADDR: " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR())));
+        log_warning("Failed to set SO_REUSEADDR: " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
         // Continue anyway
     }
 
-    // Set receive buffer size (e.g., 65536, similar to previous oRTP config)
     // Increased to 256KB to handle potential bursts, similar to other receivers
     int recv_buf_size = 256 * 1024;
     if (setsockopt(socket_fd_, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&recv_buf_size), sizeof(recv_buf_size)) < 0) {
-        log_warning("Failed to set SO_RCVBUF to " + std::to_string(recv_buf_size) + ": " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR())));
+        log_warning("Failed to set SO_RCVBUF to " + std::to_string(recv_buf_size) + ": " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
     } else {
         socklen_t optlen = sizeof(recv_buf_size);
         getsockopt(socket_fd_, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<char*>(&recv_buf_size), &optlen);
@@ -122,17 +115,25 @@ bool RtpReceiver::setup_socket() {
     servaddr.sin_port = htons(listen_port_);
 
     if (bind(socket_fd_, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
-        log_error("Failed to bind UDP socket to port " + std::to_string(listen_port_) + ": " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR())));
+        log_error("Failed to bind UDP socket to port " + std::to_string(listen_port_) + ": " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
         close(socket_fd_);
         socket_fd_ = NAR_INVALID_SOCKET_VALUE;
         return false;
     }
 
     log_message("Raw UDP socket successfully set up and bound to port " + std::to_string(listen_port_));
+    
+    if (sap_listener_) {
+        sap_listener_->start();
+    }
+
     return true;
 }
 
 void RtpReceiver::close_socket() {
+    if (sap_listener_) {
+        sap_listener_->stop();
+    }
     pcm_accumulator_.clear();
     if (socket_fd_ != NAR_INVALID_SOCKET_VALUE) {
         log_message("Closing raw UDP socket (fd: " + std::to_string(socket_fd_) + ")");
@@ -171,7 +172,7 @@ void RtpReceiver::run() {
             if (errno == EINTR) { // Interrupted by a signal
                 continue;
             }
-            log_error("select() error: " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR())));
+            log_error("select() error: " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
             // Consider a short sleep to prevent busy-looping on persistent select errors
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
@@ -189,8 +190,8 @@ void RtpReceiver::run() {
             if (n_received < 0) {
                 // EAGAIN or EWOULDBLOCK might occur if socket is non-blocking, but select should prevent this.
                 // However, other errors can occur.
-                if (NAR_GET_LAST_SOCK_ERROR() != EAGAIN && NAR_GET_LAST_SOCK_ERROR() != EWOULDBLOCK) {
-                     log_error("recvfrom() error: " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR())));
+                if (NAR_GET_LAST_SOCK_ERROR != EAGAIN && NAR_GET_LAST_SOCK_ERROR != EWOULDBLOCK) {
+                     log_error("recvfrom() error: " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
                 }
                 continue;
             }
@@ -221,27 +222,101 @@ void RtpReceiver::run() {
                 }
 
                 if (pt == RTP_PAYLOAD_TYPE_L16_48K_STEREO) {
-                    size_t header_len = rtp_header->headerLength(); // Includes CSRC list if present
+                    // Calculate header length manually.
+                    // Fixed RTP header size is 12 bytes.
+                    size_t header_len = 12;
+                    // Add length of CSRC list (each CSRC is 4 bytes).
+                    // Assumes rtp_header->csrcCount() is available and correct.
+                    header_len += rtp_header->csrcCount() * sizeof(uint32_t);
+
+                    // Manually check for RTP header extension.
+                    // The first byte of the RTP header (raw_buffer[0]) contains: V(2) P(1) X(1) CC(4)
+                    // X is the extension bit, which is the 4th bit from MSB (mask 0x10).
+                    if ((raw_buffer[0] & 0x10) != 0) { // Check if extension bit (X) is set
+                        // The RTP header extension structure is:
+                        // Defined by profile: 2 bytes
+                        // Length: 2 bytes (length of extension data in 32-bit words, EXCLUDING this 4-byte header)
+                        
+                        size_t min_ext_header_size = 4; // For "defined by profile" and "length" fields
+                        if (static_cast<size_t>(n_received) >= header_len + min_ext_header_size) {
+                            // Offset to the 16-bit length field of the extension header.
+                            // This is after the fixed header (12 bytes), CSRCs, and the 2-byte "defined by profile" field.
+                            size_t ext_length_field_offset = 12 + (rtp_header->csrcCount() * sizeof(uint32_t)) + 2;
+                            
+                            uint16_t ext_data_len_words = ntohs(*reinterpret_cast<const uint16_t*>(raw_buffer + ext_length_field_offset));
+                            size_t extension_total_length_bytes = min_ext_header_size + (static_cast<size_t>(ext_data_len_words) * 4);
+                            
+                            if (static_cast<size_t>(n_received) >= header_len + extension_total_length_bytes) {
+                                header_len += extension_total_length_bytes;
+                            } else {
+                                log_warning("RTP packet indicates extension, but is too short for declared extension data length. SSRC: 0x" + std::to_string(current_ssrc) + ", Declared words: " + std::to_string(ext_data_len_words));
+                                // Packet is malformed or truncated, proceed as if no valid extension.
+                            }
+                        } else {
+                            log_warning("RTP packet indicates extension, but is too short for extension header fields. SSRC: 0x" + std::to_string(current_ssrc));
+                            // Packet is malformed, proceed as if no valid extension.
+                        }
+                    }
                     if (static_cast<size_t>(n_received) >= header_len) {
                         const uint8_t* payload_data = raw_buffer + header_len;
                         size_t payload_len = n_received - header_len;
 
                         if (payload_len > 0) {
-                            pcm_accumulator_.insert(pcm_accumulator_.end(), payload_data, payload_data + payload_len);
+                            StreamProperties props;
+                            bool has_custom_props = sap_listener_ && sap_listener_->get_stream_properties(current_ssrc, props);
+
+                            if (!has_custom_props) {
+                                // Per request, if we don't have a SAP for this SSRC, ignore the packet.
+                                // A logging mechanism here could be useful but might be noisy.
+                                // For now, we just drop the packet by skipping to the next loop iteration.
+                                continue;
+                            }
+
+                            std::vector<uint8_t> processed_payload(payload_data, payload_data + payload_len);
+
+                            bool system_is_le = is_system_little_endian();
+                            if ((props.endianness == Endianness::BIG && system_is_le) ||
+                                (props.endianness == Endianness::LITTLE && !system_is_le)) {
+                                swap_endianness(processed_payload.data(), processed_payload.size(), props.bit_depth);
+                            }
+
+                            pcm_accumulator_.insert(pcm_accumulator_.end(), processed_payload.begin(), processed_payload.end());
                             last_rtp_packet_timestamp_ = received_time;
 
                             while (pcm_accumulator_.size() >= TARGET_PCM_CHUNK_SIZE) {
+                                const rtc::RtpHeader* rtp_header = reinterpret_cast<const rtc::RtpHeader*>(raw_buffer);
                                 TaggedAudioPacket packet;
                                 packet.received_time = last_rtp_packet_timestamp_;
+                                packet.rtp_timestamp = rtp_header->timestamp(); // ntohl() is handled by libdatachannel
                                 
+                                // Populate SSRC and CSRCs
+                                packet.ssrcs.push_back(rtp_header->ssrc());
+                                
+                                // Manually extract CSRCs from the raw buffer
+                                const uint8_t csrc_count = rtp_header->csrcCount();
+                                if (csrc_count > 0) {
+                                    // The CSRC list starts after the fixed 12-byte header.
+                                    const uint8_t* csrc_ptr = raw_buffer + 12;
+                                    for (uint8_t i = 0; i < csrc_count; i++) {
+                                        uint32_t csrc;
+                                        // Copy 4 bytes into a uint32_t.
+                                        memcpy(&csrc, csrc_ptr, sizeof(uint32_t));
+                                        // The value is in network byte order, convert it to host byte order.
+                                        packet.ssrcs.push_back(ntohl(csrc));
+                                        csrc_ptr += sizeof(uint32_t);
+                                    }
+                                }
+
                                 // Use sender's IP address for source_tag
                                 char client_ip_str[INET_ADDRSTRLEN];
                                 inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
                                 packet.source_tag = client_ip_str;
-
-                                packet.channels = RTP_CHANNELS_L16_48K_STEREO;
-                                packet.sample_rate = RTP_CLOCK_RATE_L16_48K_STEREO;
-                                packet.bit_depth = RTP_BITS_PER_SAMPLE_L16_48K_STEREO;
+                                
+                                // We already have the stream properties from the check before accumulating,
+                                // so we can use the `props` variable.
+                                packet.channels = props.channels;
+                                packet.sample_rate = props.sample_rate;
+                                packet.bit_depth = props.bit_depth;
                                 packet.chlayout1 = 0x03; // Stereo L/R
                                 packet.chlayout2 = 0x00;
 
@@ -313,12 +388,8 @@ size_t RtpReceiver::get_receive_buffer_size() const {
 }
 
 int RtpReceiver::get_poll_timeout_ms() const {
-    // This is used by the base class's poll() if its run() is active,
-    // and now also used by select() in our custom run() loop.
     return 100; // ms
 }
-
-// The old is_valid_rtp_header_payload method is obsolete.
 
 } // namespace audio
 } // namespace screamrouter

@@ -1,5 +1,4 @@
 #include "audio_manager.h"
-#include "rtp_receiver.h" // Added for global_ortp_init/deinit
 #include "raw_scream_receiver.h"
 #include "per_process_scream_receiver.h" // Include the new header
 #include "cpp_logger.h" // For new C++ logger
@@ -64,13 +63,11 @@ AudioManager::~AudioManager() {
 bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_duration_sec) {
     LOG_CPP_INFO("Initializing with rtp_listen_port: %d, timeshift_buffer_duration: %ds", rtp_listen_port, global_timeshift_buffer_duration_sec);
     
-    RtpReceiver::global_ortp_init(); // Initialize oRTP globally
 
     std::lock_guard<std::mutex> lock(manager_mutex_); // Protect shared state during init
 
     if (running_) {
         LOG_CPP_INFO("Already initialized.");
-        // Note: If already running, global_ortp_init might have been called again, but it's ref-counted.
         return true;
     }
 
@@ -221,9 +218,6 @@ void AudioManager::shutdown() {
     per_process_scream_receivers_.clear();
     LOG_CPP_INFO("Per-Process Scream Receivers stopped.");
 
-    RtpReceiver::global_ortp_deinit(); // Deinitialize oRTP globally
-    LOG_CPP_INFO("oRTP global deinitialization requested.");
-
     LOG_CPP_INFO("Shutdown complete.");
 }
 
@@ -373,6 +367,7 @@ bool AudioManager::add_sink(const SinkConfig& config) {
     // 2. Create SinkMixerConfig
     SinkMixerConfig mixer_config;
     mixer_config.sink_id = config.id;
+    mixer_config.protocol = config.protocol;
     mixer_config.output_ip = config.output_ip;
     mixer_config.output_port = config.output_port;
     mixer_config.output_bitdepth = config.bitdepth;
@@ -491,33 +486,6 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
     proc_config.initial_timeshift_sec = validated_config.initial_timeshift_sec; // Added from SourceConfig
     // proc_config.timeshift_buffer_duration_sec remains default or could be made configurable
 
-    // Determine protocol type and target receiver port from validated config
-    // These fields are primarily for the SourceInputProcessor's internal configuration
-    // and for the remove_source logic if it needs to unregister from a specific receiver.
-    // For add_output_queue, we now register with ALL receivers.
-    if (validated_config.protocol_type_hint == 0) {
-        proc_config.protocol_type = InputProtocolType::RTP_SCREAM_PAYLOAD;
-    } else if (validated_config.protocol_type_hint == 1) {
-        proc_config.protocol_type = InputProtocolType::RAW_SCREAM_PACKET;
-    } else if (validated_config.protocol_type_hint == 2) {
-        proc_config.protocol_type = InputProtocolType::PER_PROCESS_SCREAM_PACKET;
-    } else {
-        LOG_CPP_WARNING("Unknown protocol_type_hint: %d. Defaulting to RTP_SCREAM_PAYLOAD.", validated_config.protocol_type_hint);
-        proc_config.protocol_type = InputProtocolType::RTP_SCREAM_PAYLOAD; // Default
-    }
-    proc_config.target_receiver_port = validated_config.target_receiver_port; // Copy target port
-
-    std::string protocol_str = "UNKNOWN";
-    if (proc_config.protocol_type == InputProtocolType::RTP_SCREAM_PAYLOAD) protocol_str = "RTP_SCREAM_PAYLOAD";
-    else if (proc_config.protocol_type == InputProtocolType::RAW_SCREAM_PACKET) protocol_str = "RAW_SCREAM_PACKET";
-    else if (proc_config.protocol_type == InputProtocolType::PER_PROCESS_SCREAM_PACKET) protocol_str = "PER_PROCESS_SCREAM_PACKET";
-
-    LOG_CPP_INFO("Source instance %s configured with protocol type: %s%s%d",
-                 instance_id.c_str(),
-                 protocol_str.c_str(),
-                 (proc_config.target_receiver_port != -1 ? ", Target Port: " : ""),
-                 (proc_config.target_receiver_port != -1 ? proc_config.target_receiver_port : 0)); // Provide a dummy int if not used for printf
-
 
     // Create and Start SourceInputProcessor
     std::unique_ptr<SourceInputProcessor> new_source;
@@ -537,62 +505,6 @@ std::string AudioManager::configure_source(const SourceConfig& config) {
         return ""; // Return empty string on failure
     }
 
-    // Register input queue with RtpReceiver - This logic is now superseded by TimeshiftManager
-    // The SIP's input queue (rtp_queue) is given to TimeshiftManager.
-    // Receivers send to TimeshiftManager, which then routes to the correct SIP's rtp_queue.
-    // So, direct registration of SIP queues with individual receivers is no longer needed.
-    // if (rtp_receiver_) {
-    //     // std::mutex* proc_mutex = new_source->get_timeshift_mutex(); // Removed
-    //     // std::condition_variable* proc_cv = new_source->get_timeshift_cv(); // Removed
-    //      rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue); // Removed
-    //  } else {
-    //       LOG_CPP_ERROR("RtpReceiver is null, cannot add output target for instance %s", instance_id.c_str());
-    // ... (cleanup logic for failure)
-    //  }
-
-    // --- Register SourceInputProcessor's queue with ALL active receivers ---
-    // This entire block is no longer needed as TimeshiftManager handles packet distribution.
-    // Receivers will send all packets to TimeshiftManager.
-    /*
-    int registration_count = 0;
-
-    // 1. Register with RtpReceiver
-    if (rtp_receiver_) {
-        rtp_receiver_->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
-        LOG_CPP_INFO("  Registered instance %s with RtpReceiver.", instance_id.c_str());
-        registration_count++;
-    } else {
-        LOG_CPP_WARNING("  RtpReceiver is null. Cannot register instance %s.", instance_id.c_str());
-    }
-
-    // 2. Register with all RawScreamReceivers
-    if (raw_scream_receivers_.empty()) {
-        LOG_CPP_INFO("  No RawScreamReceivers active to register with.");
-    }
-    for (auto const& [port, receiver_ptr] : raw_scream_receivers_) {
-        if (receiver_ptr) {
-            receiver_ptr->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
-            LOG_CPP_INFO("  Registered instance %s with RawScreamReceiver on port %d.", instance_id.c_str(), port);
-            registration_count++;
-        }
-    }
-
-    // 3. Register with all PerProcessScreamReceivers
-    if (per_process_scream_receivers_.empty()) {
-        LOG_CPP_INFO("  No PerProcessScreamReceivers active to register with.");
-    }
-    for (auto const& [port, receiver_ptr] : per_process_scream_receivers_) {
-        if (receiver_ptr) {
-            receiver_ptr->add_output_queue(proc_config.source_tag, instance_id, rtp_queue);
-            LOG_CPP_INFO("  Registered instance %s (tag: %s) with PerProcessScreamReceiver on port %d.", instance_id.c_str(), proc_config.source_tag.c_str(), port);
-            registration_count++;
-        }
-    }
-
-    if (registration_count == 0) {
-         LOG_CPP_WARNING("Warning: Source instance %s (tag: %s) was not registered with ANY active receivers. It will not receive packets.", instance_id.c_str(), proc_config.source_tag.c_str());
-    }
-    */
     // Ensure TimeshiftManager is available
     if (!timeshift_manager_) {
         LOG_CPP_ERROR("TimeshiftManager is null. Cannot configure source instance %s", instance_id.c_str());
@@ -653,8 +565,6 @@ bool AudioManager::remove_source(const std::string& instance_id) {
         if (it->second) {
              const auto& proc_config = it->second->get_config();
              source_tag_for_removal = proc_config.source_tag;
-             proto_type = proc_config.protocol_type;
-             target_port = proc_config.target_receiver_port;
         } else {
              sources_.erase(it); // Remove the null entry
              return false; // Indicate failure

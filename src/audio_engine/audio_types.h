@@ -5,6 +5,7 @@
 #include <string>
 #include <chrono>
 #include <cstdint> // For fixed-width integers like uint8_t, uint32_t
+#include <optional> // For std::optional
 // #include "audio_processor.h" // For EQ_BANDS - No longer needed here if defines are moved
 #include "audio_constants.h" // Include the new constants file
 // #include "../configuration/audio_engine_config_types.h" // For CppSpeakerLayout - No longer needed, CppSpeakerLayout moved here
@@ -62,6 +63,8 @@ struct TaggedAudioPacket {
     std::string source_tag;                     // Identifier for the source (e.g., IP address)
     std::vector<uint8_t> audio_data;            // Audio payload (ALWAYS 1152 bytes of PCM)
     std::chrono::steady_clock::time_point received_time; // Timestamp for timeshifting/jitter
+    std::optional<uint32_t> rtp_timestamp;      // Optional RTP timestamp for dejittering
+    std::vector<uint32_t> ssrcs;                // SSRC and CSRCs
     // --- Added Format Info ---
     int channels = 0;                           // Number of audio channels in payload
     int sample_rate = 0;                        // Sample rate of audio in payload
@@ -77,6 +80,7 @@ struct TaggedAudioPacket {
 struct ProcessedAudioChunk {
     // Changed to int32_t to match the signed nature of processed PCM data
     std::vector<int32_t> audio_data; // Processed audio data (e.g., 288 samples of int32_t for 1152 bytes)
+    std::vector<uint32_t> ssrcs;     // SSRC and CSRCs
     // std::string source_tag; // Optional: Could be added if mixer needs to know origin beyond the queue
 };
 
@@ -144,14 +148,8 @@ struct SourceConfig {
     std::vector<float> initial_eq; // Size EQ_BANDS expected by AudioProcessor
     int initial_delay_ms = 0;
     float initial_timeshift_sec = 0.0f; // Added for TimeshiftManager integration
-    // Timeshift duration is often global or sink-related, managed in SourceInputProcessor config
-
-    // --- NEW FIELDS ---
     int target_output_channels = 2;    // Target output channels for this source path
     int target_output_samplerate = 48000; // Target output samplerate for this source path
-    // --- END NEW FIELDS ---
-    int protocol_type_hint = 0; // 0 for RTP_SCREAM_PAYLOAD, 1 for RAW_SCREAM_PACKET, 2 for PER_PROCESS_SCREAM_PACKET
-    int target_receiver_port = -1; // Add this line
 };
 
 struct SinkConfig {
@@ -166,6 +164,7 @@ struct SinkConfig {
     // bool use_tcp = false; // Removed
     bool enable_mp3 = false; // Flag to enable MP3 output queue
     // int mp3_bitrate = 192; // Example MP3 setting if needed here
+    std::string protocol = "scream"; // "scream" or "rtp"
 };
 
 // Configuration for RtpReceiver component
@@ -228,12 +227,6 @@ struct SourceProcessorConfig {
             }
         }
     }
-    InputProtocolType protocol_type = InputProtocolType::RTP_SCREAM_PAYLOAD; // Add this line
-    int target_receiver_port = -1; // Add this line
-    // Input format hints (if needed, otherwise assume standard like 16-bit, 48kHz, 2ch)
-    // int input_channels = 2;
-    // int input_samplerate = 48000;
-    // int input_bitdepth = 16;
 };
 
 // Configuration for AudioManager (C++ specific settings)
@@ -253,10 +246,7 @@ struct SinkMixerConfig {
     int output_channels;
     uint8_t output_chlayout1;
     uint8_t output_chlayout2;
-    // bool use_tcp; // Removed
-    // MP3 Encoding settings (if applicable)
-    // bool enable_mp3_output; // Determined by whether mp3_output_queue is provided
-    // int mp3_bitrate = 192; // Example setting for LAME
+    std::string protocol = "scream"; // "scream" or "rtp"
 };
 
 

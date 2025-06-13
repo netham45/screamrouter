@@ -59,6 +59,7 @@ export interface Sink {
   time_sync_delay: number;
   favorite?: boolean;
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
+  protocol?: string;
 }
 
 /**

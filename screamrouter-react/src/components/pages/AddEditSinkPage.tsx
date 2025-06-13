@@ -49,6 +49,7 @@ const AddEditSinkPage: React.FC = () => {
   const [delay, setDelay] = useState(0);
   const [timeSync, setTimeSync] = useState(false);
   const [timeSyncDelay, setTimeSyncDelay] = useState('0');
+  const [protocol, setProtocol] = useState('scream');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -77,6 +78,7 @@ const AddEditSinkPage: React.FC = () => {
             setDelay(sinkData.delay || 0);
             setTimeSync(sinkData.time_sync || false);
             setTimeSyncDelay(sinkData.time_sync_delay?.toString() || '0');
+            setProtocol(sinkData.protocol || 'scream');
           } else {
             setError(`Sink "${sinkName}" not found.`);
           }
@@ -107,6 +109,7 @@ const AddEditSinkPage: React.FC = () => {
       delay,
       time_sync: timeSync,
       time_sync_delay: parseInt(timeSyncDelay),
+      protocol: protocol,
     };
 
     try {
@@ -131,6 +134,7 @@ const AddEditSinkPage: React.FC = () => {
         setDelay(0);
         setTimeSync(false);
         setTimeSyncDelay('0');
+        setProtocol('scream');
       }
     } catch (error) {
       console.error('Error submitting sink:', error);
@@ -264,6 +268,18 @@ const AddEditSinkPage: React.FC = () => {
               <option value="surround">Surround</option>
               <option value="5.1">5.1</option>
               <option value="7.1">7.1</option>
+            </Select>
+          </FormControl>
+
+          <FormControl>
+            <FormLabel>Protocol</FormLabel>
+            <Select
+              value={protocol}
+              onChange={(e) => setProtocol(e.target.value)}
+              bg={inputBg}
+            >
+              <option value="scream">Scream</option>
+              <option value="rtp">RTP</option>
             </Select>
           </FormControl>
           

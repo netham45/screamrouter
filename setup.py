@@ -50,55 +50,84 @@ DEPS_CONFIG = {
     },
     "openssl": {
         "src_dir": PROJECT_ROOT / "src/audio_engine/openssl",
-        "build_system": "cmake", # OpenSSL 3.x has good CMake support
-        "cmake_build_dir_name": "build_cmake", # Custom build directory
-        "cmake_configure_args": [
-            "-DCMAKE_BUILD_TYPE=Release",
-            "-DOPENSSL_NO_TESTS=ON",
-            "-DOPENSSL_NO_APPS=ON",
-            "-DOPENSSL_NO_DOCS=ON",
-            "-DOPENSSL_NO_STATIC_ENGINE=ON", # If not using engines
-            # Build static libs by default with OpenSSL's CMake.
-            # Forcing PIC for static libs on Unix-like systems.
-            # "-DCMAKE_POSITION_INDEPENDENT_CODE=ON", # This is set globally later
+        "build_system": "configure_make_openssl", # Changed from "cmake"
+        "configure_script_name_unix": "Configure", # Or "config"
+        "configure_args_unix": [
+            "linux-x86_64", # Target OS, can be platform-dependent. OpenSSL often auto-detects.
+                            # Other common targets: darwin64-x86_64-cc (macOS), mingw64 (MinGW on Win)
+            "no-shared",    # Build static libraries
+            "no-tests",
+            "no-apps",
+            "no-docs",
+            "no-comp",      # Disable compression algorithms if not needed
+            "no-engine",    # Disable engine support if not needed
+            "no-weak-ssl-ciphers",
+            "no-legacy",    # For OpenSSL 3.x, if legacy provider not needed
+            # -fPIC is crucial for static libs that will be linked into a shared object (our Python extension)
+            # This can be passed via CFLAGS in env, or directly if Configure supports it.
+            # OpenSSL's Configure script usually respects CFLAGS/CXXFLAGS from environment.
+            # We will ensure -fPIC is in CFLAGS in the _run_subprocess_in_msvc_env (which handles non-Windows too)
+            # or pass it directly like: "CFLAGS=-fPIC CXXFLAGS=-fPIC" if needed as part of the command.
+            # For OpenSSL 3.x, it's often better to pass options like 'no-pic' or let it handle PIC.
+            # However, for linking into a Python extension, PIC is essential.
+            # Let's rely on environment CFLAGS for -fPIC for now.
+            # --prefix and --openssldir will be added dynamically in the build step.
         ],
-        # OpenSSL produces libssl.a and libcrypto.a (or .lib on Windows)
-        "lib_name_win": "libcrypto.lib", # Primary, also need libssl.lib
-        "lib_name_unix_static": "libcrypto.a", # Primary, also need libssl.a
+        "configure_args_win": [ # For Windows, if attempting native build (complex)
+            "VC-WIN64A", # Example for 64-bit MSVC
+            "no-shared",
+            "no-tests",
+            "no-apps",
+            "no-docs",
+            "no-asm", # Often simplifies Windows builds if NASM isn't configured
+        ],
+        "make_command_unix": "make",
+        "make_command_win": "nmake", # For MSVC builds after Configure
+        "make_targets_unix": ["depend", "all"], # Build targets
+        "install_targets_unix": ["install_sw", "install_ssldirs"], # Install targets
+        "make_targets_win": [], # nmake doesn't usually have 'all' like GNU make
+        "install_targets_win": ["install_sw", "install_ssldirs"],
+        "lib_name_win": "libcrypto.lib",
+        "lib_name_unix_static": "libcrypto.a",
         "extra_libs_unix_static": ["libssl.a"],
         "extra_libs_win": ["libssl.lib"],
-        "unix_install_lib_dir_rel_to_deps_install": "lib", # Or lib64, check OpenSSL install layout
-        "header_dir_name": "openssl", # Headers typically go into include/openssl
+        "unix_install_lib_dir_rel_to_deps_install": "lib64", # OpenSSL default
+        "header_dir_name": "openssl",
         "main_header_file_rel_to_header_dir": "ssl.h",
-        "link_name": "crypto", # Link against crypto, ssl will be added
+        "link_name": "crypto",
         "extra_link_names": ["ssl"],
-        "installs_cmake_config": True,
-        "cmake_config_install_dir_rel": "lib/cmake/OpenSSL", # Path to its CMake config
-        "clean_files_rel_to_src": ["build_cmake", "CMakeCache.txt", "Makefile", "cmake_install.cmake", "CMakeFiles"]
+        "installs_cmake_config": False, # Traditional build does not install CMake config
+        "clean_files_rel_to_src": [
+            "Makefile", "Makefile.bak", "configdata.pm",
+            "libcrypto.a", "libssl.a", "libcrypto.so", "libssl.so",
+            "libcrypto.lib", "libssl.lib",
+            "libcrypto.pc", "libssl.pc", "openssl.pc",
+            "*.o", "*.obj", "apps", "include/openssl/opensslconf.h" # Clean generated files
+        ],
+        "clean_dirs_rel_to_src": ["_build", "build_cmake"] # Clean old/other build dirs
     },
     "libdatachannel": {
         "src_dir": PROJECT_ROOT / "src/audio_engine/libdatachannel",
         "build_system": "cmake",
         "cmake_build_dir_name": "build", # Common CMake build directory name
         "cmake_configure_args": [
+            "-DBUILD_SHARED_LIBS=OFF", # Build libdatachannel as a static library
             "-DCMAKE_BUILD_TYPE=Release",
-            "-DBUILD_SHARED_LIBS=OFF", # Build static library
             "-DOPENSSL_USE_STATIC_LIBS=ON", # If OpenSSL is linked, prefer static
             "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
             "-DUSE_NICE=OFF", # Assuming NICE is not needed for plain RTP
             "-DNO_EXAMPLES=ON",
             "-DNO_TESTS=ON",
-            # Add other libdatachannel specific CMake flags as needed
             # e.g., -DPLUGINS="" to disable plugins if not used
         ],
         "lib_name_win": "datachannel.lib", # Verify actual static lib name on Windows
-        "lib_name_unix_static": "libdatachannel.a", # Verify actual static lib name on Unix
-        "unix_install_lib_dir_rel_to_deps_install": "lib", # Or "lib64" depending on install
+        "lib_name_unix_static": "libdatachannel.a",
+        "unix_install_lib_dir_rel_to_deps_install": "lib64", # Changed from "lib" to "lib64" for Unix
         "header_dir_name": "rtc", # Headers are typically in include/rtc
         "main_header_file_rel_to_header_dir": "rtc.hpp", # Key header
         "link_name": "datachannel", # Link name for the library
         "installs_cmake_config": True, # If it installs a CMake config file
-        "cmake_config_install_dir_rel": "lib/cmake/LibDataChannel", # Path to its CMake config
+        "cmake_config_install_dir_rel": "lib64/cmake/LibDataChannel", # Changed from "lib" to "lib64" for Unix
         "clean_files_rel_to_src": [ # Files/dirs to clean in libdatachannel source dir
             "CMakeCache.txt", "Makefile", "cmake_install.cmake", "CMakeFiles",
             "build", # The build directory itself
@@ -244,6 +273,18 @@ class BuildExtCommand(_build_ext):
             expected_lib_path = self.get_expected_lib_path(config, src_dir_override=src_dir if dep_name == "ortp" else None, build_dir_override=ortp_build_dir_for_paths)
             expected_header_path = self.get_expected_header_path(config, src_dir_override=src_dir if dep_name == "ortp" else None)
 
+            if dep_name == "openssl":
+                print(f"DEBUG_OPENSSL: Checking existence for src_dir: {src_dir}")
+                print(f"DEBUG_OPENSSL: os.path.exists(str(src_dir)): {os.path.exists(str(src_dir))}")
+                print(f"DEBUG_OPENSSL: src_dir.is_dir(): {src_dir.is_dir()}")
+                # Try listing contents if it's a dir, to see if Python can access it
+                if os.path.exists(str(src_dir)) and src_dir.is_dir():
+                    try:
+                        print(f"DEBUG_OPENSSL: Contents of {src_dir}: {os.listdir(str(src_dir))[:5]}") # Print first 5 items
+                    except Exception as e_ls:
+                        print(f"DEBUG_OPENSSL: Error listing {src_dir}: {e_ls}")
+
+
             if not src_dir.exists():
                 print(f"ERROR: Source directory for {dep_name} not found at {src_dir}.", file=sys.stderr)
                 print("Ensure git submodules are initialized ('git submodule update --init --recursive').", file=sys.stderr)
@@ -311,7 +352,7 @@ class BuildExtCommand(_build_ext):
                 # because we delete the files. If they still exist, it's a warning.
                 # The build should proceed regardless unless an outer condition prevents it.
 
-                if config["build_system"] == "cmake":
+                if config["build_system"] == "cmake": # For libdatachannel
                     cmake_build_dir = src_dir / config.get("cmake_build_dir_name", "build_cmake")
                     cmake_build_dir.mkdir(exist_ok=True)
 
@@ -326,15 +367,9 @@ class BuildExtCommand(_build_ext):
                         configure_cmd_parts.append("-DCMAKE_POSITION_INDEPENDENT_CODE=ON")
                     
                     current_cmake_configure_args = list(config.get("cmake_configure_args", []))
-                    # Removed specific logic for bctoolbox finding mbedtls, and ortp finding bctoolbox/bcunit
-                    # If libdatachannel needs to find other deps installed via DEPS_INSTALL_DIR,
-                    # CMAKE_PREFIX_PATH can be added for it here.
                     if dep_name == "libdatachannel":
-                         # Point libdatachannel to our custom-built OpenSSL
                          current_cmake_configure_args.append(f"-DOPENSSL_ROOT_DIR={DEPS_INSTALL_DIR}")
-                         # CMAKE_PREFIX_PATH can also help CMake find packages in DEPS_INSTALL_DIR
-                         current_cmake_configure_args.append(f"-DCMAKE_PREFIX_PATH={DEPS_INSTALL_DIR}")
-                         # Ensure we use the static OpenSSL libs we built
+                         current_cmake_configure_args.append(f"-DCMAKE_PREFIX_PATH={DEPS_INSTALL_DIR}") # Helps find OpenSSL installed in DEPS_INSTALL_DIR
                          current_cmake_configure_args.append("-DOPENSSL_USE_STATIC_LIBS=ON")
 
 
@@ -343,16 +378,11 @@ class BuildExtCommand(_build_ext):
                          current_cmake_configure_args.append("-DCMAKE_BUILD_TYPE=Release")
                     configure_cmd_parts.extend(current_cmake_configure_args)
 
-                    # Removed mbedtls pre-configuration steps
-
                     print(f"Running CMake configure for {dep_name}...")
                     self._run_subprocess_in_msvc_env(configure_cmd_parts, src_dir, dep_name=f"{dep_name} CMake configure")
                     
-                    build_target = "install"
-                    # For libdatachannel, we want it to install to DEPS_INSTALL_DIR
-                    # So, build_target remains "install" unless config specifies otherwise.
-                    # The old "ortp" special case for build_target = None is removed.
-                    if config.get("is_installed_to_deps_dir", True) is False: # Should not be the case for libdatachannel
+                    build_target = "install" # libdatachannel should also be installed
+                    if config.get("is_installed_to_deps_dir", True) is False: # Should not be false for libdatachannel
                         build_target = None
 
                     build_cmd_parts = ["cmake", "--build", str(cmake_build_dir), "--config", "Release"]
@@ -362,29 +392,101 @@ class BuildExtCommand(_build_ext):
                     
                     print(f"Running CMake build{' and ' + build_target if build_target else ''} for {dep_name}...")
                     self._run_subprocess_in_msvc_env(build_cmd_parts, src_dir, dep_name=f"{dep_name} CMake build")
+                    build_successful = True
 
-                    if dep_name == "openssl":
-                        print(f"DEBUG: Verifying OpenSSL installation in {DEPS_INSTALL_DIR}")
-                        openssl_lib_dir = DEPS_INSTALL_LIB_DIR
-                        if sys.platform != "win32" and config.get("unix_install_lib_dir_rel_to_deps_install"):
-                            openssl_lib_dir = DEPS_INSTALL_DIR / config["unix_install_lib_dir_rel_to_deps_install"]
+                elif config["build_system"] == "configure_make_openssl": # OpenSSL
+                    if sys.platform == "win32":
+                        # OpenSSL build on Windows using Configure and nmake is complex.
+                        # For now, focusing on Linux/macOS. This would need specific handling.
+                        print(f"WARNING: OpenSSL build via Configure/nmake on Windows is not fully implemented in this script. Expect issues.", file=sys.stderr)
+                        # Example: perl Configure VC-WIN64A no-asm no-shared --prefix=... --openssldir=...
+                        # Then nmake, nmake install_sw
+                        # This requires Perl and nmake in PATH.
+                        # For simplicity, we might assume OpenSSL is pre-installed on Windows or use vcpkg/Conan.
+                        # For now, let this fail or be handled manually.
+                        configure_script = "Configure" # Or path to perl.exe
+                        openssl_config_args = config.get("configure_args_win", [])
+                        # Add prefix and openssldir
+                        full_configure_cmd = [configure_script] + openssl_config_args + [
+                            f"--prefix={DEPS_INSTALL_DIR}",
+                            f"--openssldir={DEPS_INSTALL_DIR / 'ssl'}" # Common practice for openssldir
+                        ]
+                        # This needs to be run with MSVC env
+                        # self._run_subprocess_in_msvc_env(full_configure_cmd, src_dir, dep_name=f"{dep_name} Configure")
+                        # self._run_subprocess_in_msvc_env(["nmake"], src_dir, dep_name=f"{dep_name} nmake build")
+                        # self._run_subprocess_in_msvc_env(["nmake"] + config.get("make_targets_win", ["install_sw"]), src_dir, dep_name=f"{dep_name} nmake install")
+                        print("OpenSSL build on Windows via Configure/nmake needs manual setup or a more robust script.", file=sys.stderr)
+                        build_successful = False # Mark as not automatically handled for now
+                    else: # Linux/macOS
+                        # Clean previous Makefile if it exists from a failed run
+                        if (src_dir / "Makefile").exists():
+                            (src_dir / "Makefile").unlink()
+
+                        configure_script = src_dir / "Configure"
+                        if not configure_script.exists() and (src_dir / "config").exists(): # Some OpenSSL versions use 'config'
+                            configure_script = src_dir / "config"
+                        elif not configure_script.exists():
+                             raise FileNotFoundError(f"OpenSSL Configure script not found at {src_dir / 'Configure'} or {src_dir / 'config'}")
+
+                        openssl_config_args = config.get("configure_args_unix", [])
+                        # Add CFLAGS for PIC if not already in args
+                        env = os.environ.copy()
+                        cflags = env.get("CFLAGS", "")
+                        if "-fPIC" not in cflags: cflags = (cflags + " -fPIC").strip()
+                        env["CFLAGS"] = cflags
                         
-                        libcrypto_path = openssl_lib_dir / ("libcrypto.a" if sys.platform != "win32" else "libcrypto.lib")
-                        libssl_path = openssl_lib_dir / ("libssl.a" if sys.platform != "win32" else "libssl.lib")
+                        # For OpenSSL, it's better to pass CFLAGS via its Configure script if possible,
+                        # or ensure they are in the environment. The ./Configure script often respects CFLAGS.
+                        # Some OpenSSL versions might need 'CFLAGS=-fPIC ./Configure ...'
+
+                        full_configure_cmd = [str(configure_script)]
+                        full_configure_cmd += openssl_config_args + [
+                            f"--prefix={DEPS_INSTALL_DIR}",
+                            f"--openssldir={DEPS_INSTALL_DIR / 'ssl'}"
+                        ]
+                        # Remove any duplicate -fPIC if already in openssl_config_args
+                        if "-fPIC" in openssl_config_args and "CFLAGS=-fPIC" not in " ".join(full_configure_cmd):
+                             pass # Already handled by env CFLAGS or direct arg
+                        elif "-fPIC" not in openssl_config_args and "CFLAGS" not in " ".join(full_configure_cmd):
+                             # If Configure doesn't pick up CFLAGS from env, might need to prepend
+                             # For now, rely on env CFLAGS
+                             pass
+
+
+                        print(f"Running OpenSSL Configure for {dep_name}: {' '.join(full_configure_cmd)}")
+                        subprocess.run(full_configure_cmd, cwd=src_dir, check=True, env=env)
+                        
+                        make_cmd = ["make", "-j", str(os.cpu_count() or 1)]
+                        print(f"Running OpenSSL make for {dep_name}: {' '.join(make_cmd)}")
+                        subprocess.run(make_cmd, cwd=src_dir, check=True, env=env)
+                        
+                        install_targets = config.get("install_targets_unix", ["install_sw"]) # install_sw is common
+                        for target in install_targets:
+                            print(f"Running OpenSSL make {target} for {dep_name}...")
+                            subprocess.run(["make", target], cwd=src_dir, check=True, env=env)
+                        build_successful = True
+
+                    # Verification for OpenSSL after configure_make_openssl
+                    if build_successful and dep_name == "openssl":
+                        print(f"DEBUG: Verifying OpenSSL installation in {DEPS_INSTALL_DIR} after Configure/make")
+                        openssl_lib_dir_path = DEPS_INSTALL_LIB_DIR
+                        if sys.platform != "win32" and config.get("unix_install_lib_dir_rel_to_deps_install"):
+                            openssl_lib_dir_path = DEPS_INSTALL_DIR / config["unix_install_lib_dir_rel_to_deps_install"]
+                        
+                        libcrypto_path = openssl_lib_dir_path / config["lib_name_unix_static"]
+                        libssl_path = openssl_lib_dir_path / config["extra_libs_unix_static"][0]
                         
                         print(f"DEBUG: Checking for {libcrypto_path}")
                         if not libcrypto_path.exists():
                             print(f"ERROR: {libcrypto_path} NOT FOUND after OpenSSL build.")
                             build_successful = False
-                        else:
-                            print(f"DEBUG: Found {libcrypto_path}")
+                        else: print(f"DEBUG: Found {libcrypto_path}")
 
                         print(f"DEBUG: Checking for {libssl_path}")
                         if not libssl_path.exists():
                             print(f"ERROR: {libssl_path} NOT FOUND after OpenSSL build.")
                             build_successful = False
-                        else:
-                            print(f"DEBUG: Found {libssl_path}")
+                        else: print(f"DEBUG: Found {libssl_path}")
                         
                         openssl_include_dir = DEPS_INSTALL_INCLUDE_DIR / config["header_dir_name"]
                         openssl_main_header = openssl_include_dir / config["main_header_file_rel_to_header_dir"]
@@ -392,16 +494,8 @@ class BuildExtCommand(_build_ext):
                         if not openssl_main_header.exists():
                              print(f"ERROR: OpenSSL main header {openssl_main_header} NOT FOUND.")
                              build_successful = False
-                        else:
-                            print(f"DEBUG: Found OpenSSL main header {openssl_main_header}")
+                        else: print(f"DEBUG: Found OpenSSL main header {openssl_main_header}")
 
-                    # Removed MbedTLS installation verification debug block
-                    # Removed bctoolbox symbol check debug block
-
-                    if build_successful: # Check if it's still true after OpenSSL verification
-                        build_successful = True # Redundant, but keeps structure
-                    else: # If OpenSSL verification failed
-                        pass # build_successful is already False
 
                 elif config["build_system"] == "autotools_or_nmake": # LAME
                     if sys.platform == "win32":
@@ -492,11 +586,14 @@ source_files = [
     "src/audio_engine/network_audio_receiver.cpp",
     "src/audio_engine/rtp_receiver.cpp", "src/audio_engine/raw_scream_receiver.cpp", "src/audio_engine/per_process_scream_receiver.cpp",
     "src/audio_engine/source_input_processor.cpp", "src/audio_engine/sink_audio_mixer.cpp",
+    "src/audio_engine/scream_sender.cpp", "src/audio_engine/rtp_sender.cpp",
     "src/audio_engine/audio_processor.cpp", "src/audio_engine/layout_mixer.cpp",
     "src/audio_engine/biquad/biquad.cpp", "src/configuration/audio_engine_config_applier.cpp",
     "src/audio_engine/r8brain-free-src/r8bbase.cpp", "src/audio_engine/r8brain-free-src/pffft.cpp",
     "src/audio_engine/timeshift_manager.cpp",
-    "src/audio_engine/cpp_logger.cpp", "src/audio_engine/client_rtp_handler.cpp"
+    "src/audio_engine/cpp_logger.cpp",
+    "src/audio_engine/sap_listener.cpp",
+    "src/audio_engine/rtp_sender_registry.cpp"
 ]
 main_extension_include_dirs = [
     str(PROJECT_ROOT / "src/audio_engine"), str(PROJECT_ROOT / "src/configuration"),
@@ -527,7 +624,7 @@ if DEPS_CONFIG["openssl"].get("extra_link_names"):
 # main_extension_libraries.append("usrsctp")
 
 
-# Removed platform-specific additions of bctoolbox, bcunit, ortp
+# Removed platform-specificOons of bctoolbox, bcunit, ortp
 main_extension_library_dirs = [
     str(DEPS_INSTALL_LIB_DIR), # General lib dir for deps
     # Specific lib dir for libdatachannel if it installs to a subdir like lib64

@@ -78,6 +78,34 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
         LOG_CPP_WARNING("[TimeshiftManager] Attempted to add packet while stopped. Ignoring.");
         return;
     }
+
+    // --- JITTER CALCULATION LOGIC ---
+    if (packet.rtp_timestamp.has_value() && packet.sample_rate > 0) {
+        std::lock_guard<std::mutex> lock(timing_mutex_);
+        auto& state = stream_timing_states_[packet.source_tag]; // Creates if not exists
+        
+        if (state.is_first_packet) {
+            state.is_first_packet = false;
+        } else {
+            // Time difference in wall-clock time (in milliseconds)
+            auto arrival_diff = packet.received_time - state.last_wallclock;
+            double arrival_diff_ms = std::chrono::duration<double, std::milli>(arrival_diff).count();
+
+            // Time difference in RTP timestamps (in milliseconds)
+            uint32_t rtp_diff_samples = packet.rtp_timestamp.value() - state.last_rtp_timestamp;
+            double rtp_diff_ms = (static_cast<double>(rtp_diff_samples) * 1000.0) / static_cast<double>(packet.sample_rate);
+
+            // Jitter calculation per RFC 3550
+            double transit_time_diff = arrival_diff_ms - rtp_diff_ms;
+            double jitter_diff = std::abs(transit_time_diff) - state.jitter_estimate;
+            state.jitter_estimate += jitter_diff / 16.0;
+        }
+
+        state.last_rtp_timestamp = packet.rtp_timestamp.value();
+        state.last_wallclock = packet.received_time;
+    }
+    // --- END JITTER CALCULATION ---
+
     {
         std::lock_guard<std::mutex> lock(buffer_mutex_);
         global_timeshift_buffer_.push_back(std::move(packet));
@@ -299,8 +327,18 @@ void TimeshiftManager::processing_loop_iteration() {
                     continue;
                 }
                 
-                // Calculate scheduled play time (delay_duration, backshift_duration, current_steady_time are from above)
-                auto scheduled_play_time = candidate_packet.received_time + delay_duration + backshift_duration;
+                // Calculate scheduled play time, including adaptive jitter delay
+                double jitter_ms = 0.0;
+                {
+                    std::lock_guard<std::mutex> lock(timing_mutex_);
+                    if (stream_timing_states_.count(candidate_packet.source_tag)) {
+                        // Use a factor of 4x the jitter estimate for the buffer
+                        jitter_ms = stream_timing_states_.at(candidate_packet.source_tag).jitter_estimate * 4.0;
+                    }
+                }
+                auto jitter_delay_duration = std::chrono::duration<double, std::milli>(jitter_ms);
+                auto total_delay_duration = delay_duration + jitter_delay_duration;
+                auto scheduled_play_time = candidate_packet.received_time + total_delay_duration + backshift_duration;
 
                 if (scheduled_play_time <= current_steady_time) {
                     if (target_info.target_queue) {
@@ -374,7 +412,7 @@ void TimeshiftManager::cleanup_global_buffer() {
     }
 
     if (remove_count > 0) {
-        LOG_CPP_INFO("[TimeshiftManager] Cleanup: Removed %zu old packets from global buffer.", remove_count);
+        LOG_CPP_DEBUG("[TimeshiftManager] Cleanup: Removed %zu old packets from global buffer.", remove_count);
         // Adjust next_packet_read_index for all processors
         std::lock_guard<std::mutex> targets_lock(targets_mutex_);
         for (auto& [tag, source_map] : processor_targets_) {

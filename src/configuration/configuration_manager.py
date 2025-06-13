@@ -955,6 +955,7 @@ class ConfigurationManager(threading.Thread):
 
             cpp_sink_engine_config.chlayout1 = chlayout1
             cpp_sink_engine_config.chlayout2 = chlayout2
+            cpp_sink_engine_config.protocol = py_sink_desc.protocol
             
             cpp_applied_sink.sink_engine_config = cpp_sink_engine_config
 

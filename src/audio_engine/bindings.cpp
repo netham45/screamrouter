@@ -29,9 +29,7 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
         .def_readwrite("tag", &SourceConfig::tag, "Unique identifier (e.g., IP address or user tag)")
         .def_readwrite("initial_volume", &SourceConfig::initial_volume, "Initial volume level (default: 1.0)")
         .def_readwrite("initial_eq", &SourceConfig::initial_eq, "Initial equalizer settings (list of floats, size EQ_BANDS)")
-        .def_readwrite("initial_delay_ms", &SourceConfig::initial_delay_ms, "Initial delay in milliseconds (default: 0)")
-        .def_readwrite("protocol_type_hint", &SourceConfig::protocol_type_hint, "Input protocol type (0=RTP_PAYLOAD, 1=RAW_PACKET)")
-        .def_readwrite("target_receiver_port", &SourceConfig::target_receiver_port, "Target receiver listen port (used for RAW_PACKET type)");
+        .def_readwrite("initial_delay_ms", &SourceConfig::initial_delay_ms, "Initial delay in milliseconds (default: 0)");
         // Add __repr__ for better debugging in Python if desired
         // .def("__repr__", [](const SourceConfig &a) {
         //     return "<SourceConfig tag='" + a.tag + "'>";
@@ -47,7 +45,8 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
         .def_readwrite("samplerate", &SinkConfig::samplerate, "Output sample rate (e.g., 48000)")
         .def_readwrite("channels", &SinkConfig::channels, "Output channel count (e.g., 2)")
         .def_readwrite("chlayout1", &SinkConfig::chlayout1, "Scream header channel layout byte 1")
-        .def_readwrite("chlayout2", &SinkConfig::chlayout2, "Scream header channel layout byte 2"); // Semicolon moved here
+        .def_readwrite("chlayout2", &SinkConfig::chlayout2, "Scream header channel layout byte 2") // Semicolon moved here
+        .def_readwrite("protocol", &SinkConfig::protocol, "Network protocol (e.g., 'scream', 'rtp')");
         // .def_readwrite("use_tcp", &SinkConfig::use_tcp, "Whether this sink uses TCP output (managed externally)"); // Removed
         // Removed .def_readwrite("enable_mp3", ...) as MP3 queue is now always created internally
         // Add __repr__

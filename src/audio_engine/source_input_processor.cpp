@@ -338,6 +338,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
         ProcessedAudioChunk output_chunk;
         // Copy the required number of samples
          output_chunk.audio_data.assign(process_buffer_.begin(), process_buffer_.begin() + required_samples);
+         output_chunk.ssrcs = current_packet_ssrcs_;
          size_t pushed_samples = output_chunk.audio_data.size();
 
          // Push to the output queue
@@ -378,6 +379,7 @@ void SourceInputProcessor::input_loop() {
 
         if (packet_ok_for_processing && audio_processor_) {
             if (audio_payload_ptr && audio_payload_size == INPUT_CHUNK_BYTES) { // CHUNK_SIZE is INPUT_CHUNK_BYTES
+                current_packet_ssrcs_ = timed_packet.ssrcs;
                 std::vector<uint8_t> chunk_data_for_processing(audio_payload_ptr, audio_payload_ptr + audio_payload_size);
                 process_audio_chunk(chunk_data_for_processing);
                 push_output_chunk_if_ready();
