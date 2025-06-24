@@ -17,6 +17,13 @@ export interface SpeakerLayout {
 }
 // --- End New SpeakerLayout Interface ---
 
+export interface SourceMetadata {
+  title?: string;
+  artist?: string;
+  album?: string;
+  artUrl?: string;
+}
+
 export interface Source {
   name: string;
   ip: string;
@@ -35,6 +42,7 @@ export interface Source {
   tag?: string;
   channels?: number; // Added for Source
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
+  metadata?: SourceMetadata;
 }
 
 /**
@@ -60,6 +68,7 @@ export interface Sink {
   favorite?: boolean;
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
   protocol?: string;
+  volume_normalization?: boolean;
 }
 
 /**
@@ -86,6 +95,7 @@ export interface Equalizer {
   b7: number; b8: number; b9: number; b10: number; b11: number; b12: number;
   b13: number; b14: number; b15: number; b16: number; b17: number; b18: number;
   name?: string;
+  normalization_enabled?: boolean;
 }
 
 /**
@@ -261,7 +271,7 @@ const ApiService = {
   reorderRoute: (name: string, newIndex: number) => axios.get(`/routes/${name}/reorder/${newIndex}`),
 
   // Control source playback
-  controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => 
+  controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'pause' | 'nexttrack') =>
     axios.get(`/sources/${sourceName}/${action}`),
 
   // Utility methods

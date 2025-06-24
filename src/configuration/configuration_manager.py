@@ -54,7 +54,8 @@ from src.screamrouter_types.annotations import (DelayType, IPAddressType,
                                                 VolumeType)
 from src.screamrouter_types.configuration import (Equalizer, RouteDescription,
                                                   SinkDescription,
-                                                  SourceDescription, SpeakerLayout)
+                                                  SourceDescription,
+                                                  SpeakerLayout)
 from src.screamrouter_types.exceptions import InUseError
 from src.utils.mdns_pinger import MDNSPinger
 from src.utils.mdns_responder import MDNSResponder
@@ -139,34 +140,6 @@ class ConfigurationManager(threading.Thread):
                 
                 self.cpp_config_applier = screamrouter_audio_engine.AudioEngineConfigApplier(self.cpp_audio_manager)
                 _logger.info("[Configuration Manager] C++ AudioEngineConfigApplier created using provided AudioManager.")
-
-                # --- Add Raw Scream Receivers (using the provided and initialized AudioManager) ---
-                # This logic can remain if ConfigurationManager is responsible for adding these
-                # specific raw receivers during its setup, using the shared AudioManager.
-                ports_to_add = [4010, 16401] # Example ports
-                for port in ports_to_add:
-                    try:
-                        _logger.info("[Configuration Manager] Adding C++ RawScreamReceiver on port %d...", port)
-                        raw_config = screamrouter_audio_engine.RawScreamReceiverConfig()
-                        raw_config.listen_port = port
-                        if not self.cpp_audio_manager.add_raw_scream_receiver(raw_config):
-                            _logger.error("[Configuration Manager] Failed to add C++ RawScreamReceiver on port %d.", port)
-                        else:
-                            _logger.info("[Configuration Manager] C++ RawScreamReceiver added successfully on port %d.", port)
-                    except Exception as raw_e: # pylint: disable=broad-except
-                        _logger.exception("[Configuration Manager] Exception adding C++ RawScreamReceiver on port %d: %s", port, raw_e)
-                # --- End Add Raw Scream Receivers ---
-
-                try:
-                    _logger.info("[Configuration Manager] Adding C++ PerProcessScreamReceiver on port %d...", 16402)
-                    per_process_config = screamrouter_audio_engine.PerProcessScreamReceiverConfig()
-                    per_process_config.listen_port = 16402
-                    if not self.cpp_audio_manager.add_per_process_scream_receiver(per_process_config):
-                        _logger.error("[Configuration Manager] Failed to add C++ PerProcessScreamReceiver on port %d.", 16402)
-                    else:
-                        _logger.info("[Configuration Manager] C++ PerProcessScreamReceiver added successfully on port %d.", 16402)
-                except Exception as raw_e: # pylint: disable=broad-except
-                    _logger.exception("[Configuration Manager] Exception adding C++ PerProcessScreamReceiver on port %d: %s", 16402, raw_e)
 
             except Exception as e: # pylint: disable=broad-except
                 _logger.exception("[Configuration Manager] Exception during C++ engine setup with provided AudioManager: %s", e)
@@ -519,6 +492,13 @@ class ConfigurationManager(threading.Thread):
         """Set the delay for a sink or sink group"""
         sink: SinkDescription = self.get_sink_by_name(sink_name)
         sink.delay = delay
+        self.__reload_configuration() # Trigger full reload
+        return True
+
+    def update_sink_volume_normalization(self, sink_name: SinkNameType, volume_normalization: bool) -> bool:
+        """Set the volume normalization for a sink or sink group"""
+        sink: SinkDescription = self.get_sink_by_name(sink_name)
+        sink.volume_normalization = volume_normalization
         self.__reload_configuration() # Trigger full reload
         return True
 
@@ -989,33 +969,46 @@ class ConfigurationManager(threading.Thread):
                     
                     cpp_source_path.target_sink_id = cpp_applied_sink.sink_id # Link to the sink
                     
-                    cpp_source_path.volume = py_source_desc.volume 
+                    cpp_source_path.volume = py_source_desc.volume
+
+                    # --- Combine Equalizers ---
+                    # The final EQ for a path is a combination of the source's and sink's EQs.
+                    # We assume the Equalizer type has a __mul__ or __imul__ method for combination.
+                    # This mirrors the logic used for plugin sources.
+                    combined_equalizer = deepcopy(py_source_desc.equalizer)
+                    if py_sink_desc.equalizer:
+                        # This assumes the Equalizer class overloads the multiplication operator
+                        # to combine the bands and normalization settings.
+                        combined_equalizer *= py_sink_desc.equalizer
                     
-                    # Ensure EQ bands list is the correct size
-                    eq_bands = [py_source_desc.equalizer.b1,
-                                py_source_desc.equalizer.b2,
-                                py_source_desc.equalizer.b3,
-                                py_source_desc.equalizer.b4,
-                                py_source_desc.equalizer.b5,
-                                py_source_desc.equalizer.b6,
-                                py_source_desc.equalizer.b7,
-                                py_source_desc.equalizer.b8,
-                                py_source_desc.equalizer.b9,
-                                py_source_desc.equalizer.b10,
-                                py_source_desc.equalizer.b11,
-                                py_source_desc.equalizer.b12,
-                                py_source_desc.equalizer.b13,
-                                py_source_desc.equalizer.b14,
-                                py_source_desc.equalizer.b15,
-                                py_source_desc.equalizer.b16,
-                                py_source_desc.equalizer.b17,
-                                py_source_desc.equalizer.b18]
+                    # Ensure EQ bands list is the correct size, using the combined equalizer
+                    eq_bands = [combined_equalizer.b1,
+                                combined_equalizer.b2,
+                                combined_equalizer.b3,
+                                combined_equalizer.b4,
+                                combined_equalizer.b5,
+                                combined_equalizer.b6,
+                                combined_equalizer.b7,
+                                combined_equalizer.b8,
+                                combined_equalizer.b9,
+                                combined_equalizer.b10,
+                                combined_equalizer.b11,
+                                combined_equalizer.b12,
+                                combined_equalizer.b13,
+                                combined_equalizer.b14,
+                                combined_equalizer.b15,
+                                combined_equalizer.b16,
+                                combined_equalizer.b17,
+                                combined_equalizer.b18]
                     if len(eq_bands) != EQ_BANDS:
-                         _logger.warning("[Config Translator]     EQ band count mismatch for source %s (%d vs %d). Using default flat EQ.", 
+                         _logger.warning("[Config Translator]     EQ band count mismatch for source %s (%d vs %d). Using default flat EQ.",
                                          py_source_desc.name, len(eq_bands), EQ_BANDS)
                          cpp_source_path.eq_values = [1.0] * EQ_BANDS # Default flat EQ (1.0)
                     else:
                         cpp_source_path.eq_values = eq_bands
+                    
+                    cpp_source_path.eq_normalization = combined_equalizer.normalization_enabled
+                    cpp_source_path.volume_normalization = py_sink_desc.volume_normalization
                         
                     cpp_source_path.delay_ms = py_source_desc.delay
                     cpp_source_path.timeshift_sec = py_source_desc.timeshift

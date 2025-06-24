@@ -14,3 +14,4 @@ websockify
 uvicorn
 zeroconf
 pybind11>=2.6
+pybind11-stubgen

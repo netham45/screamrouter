@@ -6,8 +6,8 @@ import threading
 import time
 from ctypes import c_bool
 from subprocess import TimeoutExpired
-from typing import (Any,  # Added Any for audio_manager_instance placeholder
-                    List)
+from typing import Any  # Added Any for audio_manager_instance placeholder
+from typing import List
 
 from fastapi import FastAPI
 

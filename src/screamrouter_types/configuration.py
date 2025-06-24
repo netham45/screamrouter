@@ -52,6 +52,8 @@ class Equalizer(BaseModel):
     """Set 16744Hz band gain."""
     b18: annotations.EqualizerBandType18 = float(1.0)
     """Set 20000Hz band gain."""
+    normalization_enabled: bool = True
+    """Enable or disable equalizer normalization."""
 
     def __eq__(self, other):
         """Compares the name if a string.
@@ -234,6 +236,8 @@ class SinkDescription(BaseModel):
     """Timeshift backwards in seconds"""
     speaker_layouts: Dict[int, SpeakerLayout] = Field(default_factory=dict)
     """Speaker Layouts keyed by input channel count"""
+    volume_normalization: bool = False
+    """Enable or disable volume normalization."""
     time_sync: bool = False
     """Rather the sink is timesynced (Normal Scream receivers are not compatible)"""
     time_sync_delay: int = 0
@@ -243,7 +247,7 @@ class SinkDescription(BaseModel):
     use_tcp: bool = False
     enable_mp3: bool = True
     protocol: str = "scream"
-    """The network protocol to use for the sink. Can be 'scream' or 'rtp'."""
+    """The network protocol to use for the sink. Can be 'scream', 'rtp', or 'web_receiver'."""
 
     def __eq__(self, other):
         """Compares the name if a string.

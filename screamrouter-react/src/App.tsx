@@ -18,10 +18,12 @@ import AddEditRoutePage from './components/pages/AddEditRoutePage'; // Import th
 import AddEditGroupPage from './components/pages/AddEditGroupPage'; // Import the AddEditGroupPage component
 import ProcessListPage from './components/pages/ProcessListPage'; // Import the ProcessListPage component
 import SpeakerLayoutPage from './components/pages/SpeakerLayoutPage'; // Import the SpeakerLayoutPage component
+import ListenPage from './components/pages/ListenPage'; // Import the ListenPage component
 import { DesktopMenu } from './components/desktopMenu'; // Import DesktopMenu
 import { ColorProvider } from './components/desktopMenu/context/ColorContext'; // Import ColorProvider
 import FullMenu from './components/FullMenu'; // Import the FullMenu component
 import GlobalFunctionsComponent from './GlobalFunctionsComponent'; // Import the GlobalFunctionsComponent
+import { WebRTCAudioPlayers } from './components/webrtc/AudioPlayer'; // Import the WebRTC audio players
 import './App.css'; // Import global styles
 import './styles/darkMode.css'; // Import dark mode styles
 import { Source, Sink, Route as RouteType } from './api/api'; // Import types for Source, Sink, and Route
@@ -139,6 +141,7 @@ const AppContent: React.FC = () => {
         <Route path="/edit-group" element={<AddEditGroupPage />} /> {/* Route to AddEditGroupPage component */}
         <Route path="/processes/:ip" element={<ProcessListPage />} /> {/* Route to ProcessListPage component with IP parameter */}
         <Route path="/speaker-layout-standalone" element={<SpeakerLayoutPage />} /> {/* Route to SpeakerLayoutPage component */}
+        <Route path="/listen/:sinkName" element={<ListenPage />} /> {/* Route to ListenPage component */}
       </Routes>
       
       {showEqualizerModal && selectedItem && selectedItemType && (
@@ -156,7 +159,7 @@ const AppContent: React.FC = () => {
           }}
         />
       )}
-      <audio id="audio" /> {/* Audio element for audio playback */}
+      <WebRTCAudioPlayers /> {/* Add the WebRTC audio players */}
     </Router>
   );
 };

@@ -3,13 +3,13 @@
 	url = https://github.com/novnc/noVNC.git
 [submodule "src/audio_engine/deps/lame"]
 	path = src/audio_engine/deps/lame
-	url = https://github.com/netham45/lame
+	url = https://github.com/rhishi/lame.git
 [submodule "src/audio_engine/deps/r8brain-free-src"]
 	path = src/audio_engine/deps/r8brain-free-src
-	url = https://github.com/avaneev/r8brain-free-src
+	url = https://github.com/avaneev/r8brain-free-src.git
 [submodule "src/audio_engine/deps/libdatachannel"]
 	path = src/audio_engine/deps/libdatachannel
-	url = https://github.com/paullouisageneau/libdatachannel
+	url = https://github.com/paullouisageneau/libdatachannel.git
 [submodule "src/audio_engine/deps/openssl"]
 	path = src/audio_engine/deps/openssl
 	url = https://github.com/openssl/openssl.git

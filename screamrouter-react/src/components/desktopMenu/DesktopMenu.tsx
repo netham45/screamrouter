@@ -27,7 +27,7 @@ const DesktopMenu: React.FC = () => {
     sinks,
     routes,
     activeSource,
-    listeningToSink,
+    listeningStatus,
     visualizingSink,
     onTranscribeSink,
     onListenToSink,
@@ -170,7 +170,7 @@ const DesktopMenu: React.FC = () => {
     onToggleActiveSource,
     // Type conversion for the sink-related callbacks
     (ip: string) => onTranscribeSink(ip),
-    (name: string | null) => onListenToSink(name ? sinks.find(s => s.name === name) || null : null),
+    (name: string | null) => { if (name) onListenToSink(name); },
     (name: string | null) => onVisualizeSink(name ? sinks.find(s => s.name === name) || null : null),
     navigateToItem
     // openDeleteDialog and showSpeakerLayoutPage will be assigned to actions object later
@@ -243,7 +243,7 @@ const DesktopMenu: React.FC = () => {
             sinks={sinks.filter(sink => starredSinks.includes(sink.name))}
             routes={routes}
             starredSinks={starredSinks}
-            listeningToSink={listeningToSink?.name || null}
+            listeningStatus={listeningStatus}
             visualizingSink={visualizingSink?.name || null}
             actions={actions}
             selectedItem={selectedItem}
@@ -275,7 +275,7 @@ const DesktopMenu: React.FC = () => {
             sinks={sinks}
             routes={routes}
             starredSinks={starredSinks}
-            listeningToSink={listeningToSink?.name || null}
+            listeningStatus={listeningStatus}
             visualizingSink={visualizingSink?.name || null}
             actions={actions}
             selectedItem={selectedItem}
@@ -293,10 +293,10 @@ const DesktopMenu: React.FC = () => {
       case MenuLevel.NowListening:
         return (
           <SinkList
-            sinks={listeningToSink ? [listeningToSink] : []}
+            sinks={sinks.filter(s => listeningStatus.get(s.name))}
             routes={routes}
             starredSinks={starredSinks}
-            listeningToSink={listeningToSink?.name || null}
+            listeningStatus={listeningStatus}
             visualizingSink={visualizingSink?.name || null}
             actions={actions}
             selectedItem={selectedItem}
@@ -321,7 +321,7 @@ const DesktopMenu: React.FC = () => {
             <SinkList
               routes={routes}
               sinks={getRecentSinks()}
-              listeningToSink={listeningToSink?.name || null}
+              listeningStatus={listeningStatus}
               visualizingSink={visualizingSink?.name || null}
               starredSinks={starredSinks}
               actions={actions}

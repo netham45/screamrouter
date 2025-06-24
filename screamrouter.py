@@ -4,12 +4,13 @@ import os
 import signal
 import sys
 import threading
-import OpenSSL.crypto  # For reading the SSL certificate
 
+import OpenSSL.crypto  # For reading the SSL certificate
 import uvicorn
 from fastapi import FastAPI
 
-from src.screamrouter_logger.screamrouter_logger import get_logger # Ensure this is here for logger
+from src.screamrouter_logger.screamrouter_logger import \
+    get_logger  # Ensure this is here for logger
 
 logger = get_logger(__name__) # Moved logger initialization up
 
@@ -44,19 +45,19 @@ except ImportError:
 
 import src.constants.constants as constants
 from src.api.api_configuration import APIConfiguration
+from src.api.api_equalizer import APIEqualizer
+from src.api.api_webrtc import APIWebRTC
 from src.api.api_website import APIWebsite
-from src.api.api_webstream import APIWebStream
 from src.api.api_websocket_config import APIWebsocketConfig
 from src.api.api_websocket_debug import APIWebsocketDebug
-from src.api.api_equalizer import APIEqualizer
-
-from src.screamrouter_types.configuration import AudioManagerConfig
+from src.api.api_webstream import APIWebStream
 from src.configuration.configuration_manager import ConfigurationManager
 from src.plugin_manager.plugin_manager import PluginManager
+from src.screamrouter_types.configuration import AudioManagerConfig
+from src.utils.mdns_ptr_responder import ManualPTRResponder  # mDNS
+from src.utils.ntp_server import NTPServerProcess  # NTP Server
 # from src.screamrouter_logger.screamrouter_logger import get_logger # Moved up
 from src.utils.utils import set_process_name
-from src.utils.mdns_ptr_responder import ManualPTRResponder # mDNS
-from src.utils.ntp_server import NTPServerProcess # NTP Server
 
 try:
     os.nice(-15)
@@ -160,6 +161,7 @@ else:
 webstream: APIWebStream = APIWebStream(app, audio_manager) # Pass audio_manager
 websocket_config: APIWebsocketConfig = APIWebsocketConfig(app)
 websocket_debug: APIWebsocketDebug = APIWebsocketDebug(app)
+webrtc_api: APIWebRTC = APIWebRTC(app, audio_manager)
 plugin_manager: PluginManager = PluginManager(app, audio_manager_instance=audio_manager)
 plugin_manager.start_registered_plugins()
 
@@ -219,6 +221,7 @@ except Exception as e:
 # Get the IP address of the local machine
 # This is the IP address that Uvicorn is listening on
 import socket
+
 local_ip = None
 try:
     # Get the IP address that would be used to connect to an external host
@@ -274,6 +277,16 @@ screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstrea
 api_controller = APIConfiguration(app, screamrouter_configuration)
 website: APIWebsite = APIWebsite(app, screamrouter_configuration)
 equalizer: APIEqualizer = APIEqualizer(app)
+
+@app.on_event("startup")
+async def on_startup():
+    """
+    Event handler for application startup.
+    """
+    logger.info("Application starting up...")
+    # Start background tasks that require a running event loop
+    webrtc_api.start_background_tasks()
+    logger.info("WebRTC API background tasks started.")
 
 config = uvicorn.Config(app=app,
                         port=constants.API_PORT,

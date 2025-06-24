@@ -6,13 +6,13 @@ On Windows, it tries to automatically find and use vcvarsall.bat
 to set up the MSVC build environment if not already configured.
 Project uses std::thread, so pthreads-win32 is not included.
 """
-import sys
 import os
-import subprocess
+import re  # Added for patching
 import shutil
-from pathlib import Path
 import struct
-import re # Added for patching
+import subprocess
+import sys
+from pathlib import Path
 
 from setuptools import setup
 from setuptools.command.build_ext import build_ext as _build_ext
@@ -34,7 +34,7 @@ DEPS_INSTALL_INCLUDE_DIR = DEPS_INSTALL_DIR / "include"
 # --- Dependency Definitions for Building from Submodules ---
 DEPS_CONFIG = {
     "lame": {
-        "src_dir": PROJECT_ROOT / "src/audio_engine/lame",
+        "src_dir": PROJECT_ROOT / "src/audio_engine/deps/lame",
         "build_system": "autotools_or_nmake",
         "nmake_makefile_rel_path_win": "Makefile.MSVC",
         "nmake_target_win": "",
@@ -49,7 +49,7 @@ DEPS_CONFIG = {
         "link_name": "mp3lame",
     },
     "openssl": {
-        "src_dir": PROJECT_ROOT / "src/audio_engine/openssl",
+        "src_dir": PROJECT_ROOT / "src/audio_engine/deps/openssl",
         "build_system": "configure_make_openssl", # Changed from "cmake"
         "configure_script_name_unix": "Configure", # Or "config"
         "configure_args_unix": [
@@ -107,7 +107,7 @@ DEPS_CONFIG = {
         "clean_dirs_rel_to_src": ["_build", "build_cmake"] # Clean old/other build dirs
     },
     "libdatachannel": {
-        "src_dir": PROJECT_ROOT / "src/audio_engine/libdatachannel",
+        "src_dir": PROJECT_ROOT / "src/audio_engine/deps/libdatachannel",
         "build_system": "cmake",
         "cmake_build_dir_name": "build", # Common CMake build directory name
         "cmake_configure_args": [
@@ -126,6 +126,7 @@ DEPS_CONFIG = {
         "header_dir_name": "rtc", # Headers are typically in include/rtc
         "main_header_file_rel_to_header_dir": "rtc.hpp", # Key header
         "link_name": "datachannel", # Link name for the library
+        "extra_link_names": ["juice", "usrsctp", "srtp2"], # Add juice, usrsctp, and srtp2 as dependencies
         "installs_cmake_config": True, # If it installs a CMake config file
         "cmake_config_install_dir_rel": "lib64/cmake/LibDataChannel", # Changed from "lib" to "lib64" for Unix
         "clean_files_rel_to_src": [ # Files/dirs to clean in libdatachannel source dir
@@ -134,6 +135,24 @@ DEPS_CONFIG = {
             "LibDataChannelConfig.cmake", "LibDataChannelConfigVersion.cmake", # Generated config files
             "LibJuiceConfig.cmake", "LibJuiceConfigVersion.cmake" # If juice is part of it
         ]
+    },
+    "opus": {
+        "src_dir": PROJECT_ROOT / "src/audio_engine/deps/opus",
+        "build_system": "autotools_or_nmake",
+        "nmake_makefile_rel_path_win": "win32/VS2015/opus.sln", # This is a solution file, requires msbuild
+        "win_build_system": "msbuild",
+        "win_solution_path_rel": "win32/VS2015/opus.sln",
+        "win_static_lib_project_name": "opus",
+        "win_static_lib_rel_path": "win32/VS2015/x64/Release/opus.lib",
+        "win_headers_rel_path": "include",
+        "unix_configure_args": ["--disable-shared", "--enable-static", "--with-pic", "--disable-doc", "--disable-extra-programs"],
+        "unix_make_targets": ["install"],
+        "lib_name_win": "opus.lib",
+        "lib_name_unix_static": "libopus.a",
+        "header_dir_name": "opus",
+        "main_header_file_rel_to_header_dir": "opus.h",
+        "link_name": "opus",
+        "installs_cmake_config": False,
     }
 }
 
@@ -257,7 +276,7 @@ class BuildExtCommand(_build_ext):
         DEPS_INSTALL_LIB_DIR.mkdir(parents=True, exist_ok=True)
         DEPS_INSTALL_INCLUDE_DIR.mkdir(parents=True, exist_ok=True)
         all_deps_processed_successfully = True
-        ordered_deps_to_build = ["lame", "openssl", "libdatachannel"]
+        ordered_deps_to_build = ["lame", "opus", "openssl", "libdatachannel"]
 
         for dep_name in ordered_deps_to_build:
             if dep_name not in DEPS_CONFIG:
@@ -497,35 +516,56 @@ class BuildExtCommand(_build_ext):
                         else: print(f"DEBUG: Found OpenSSL main header {openssl_main_header}")
 
 
-                elif config["build_system"] == "autotools_or_nmake": # LAME
+                elif config["build_system"] == "autotools_or_nmake":
                     if sys.platform == "win32":
-                        # ... (Windows LAME build logic remains the same) ...
-                        makefile_rel_path = config.get("nmake_makefile_rel_path_win", "Makefile.MSVC")
-                        nmake_target = config.get("nmake_target_win", "")
-                        actual_makefile_path = src_dir / makefile_rel_path
-                        if not actual_makefile_path.is_file():
-                            print(f"ERROR: LAME Makefile '{actual_makefile_path}' not found for {dep_name}.", file=sys.stderr)
-                            build_successful = False
-                        else:
-                            nmake_cmd = ["nmake", "/f", str(actual_makefile_path), nmake_target, "comp=msvc", "asm=no", "MACHINE=", "LN_OPTS=", "LN_DLL="]
-                            self._run_subprocess_in_msvc_env(nmake_cmd, src_dir, dep_name=f"{dep_name} nmake")
-                            lib_found_and_copied = False
-                            for pattern in config["win_lib_search_rel_paths"]:
-                                found_libs = list(src_dir.glob(pattern))
-                                if found_libs:
-                                    found_libs.sort(key=lambda p: (len(str(p)), "x64" not in str(p).lower()))
-                                    shutil.copy2(found_libs[0], DEPS_INSTALL_LIB_DIR / config["lib_name_win"])
-                                    lib_found_and_copied = True; break
-                            if not lib_found_and_copied:
-                                print(f"ERROR: LAME library {config['lib_name_win']} not found after nmake.", file=sys.stderr)
-                                build_successful = False
-                            else: build_successful = True
-                            if build_successful:
+                        if config.get("win_build_system") == "msbuild":
+                            sln_path = src_dir / config["win_solution_path_rel"]
+                            proj_name = config["win_static_lib_project_name"]
+                            msbuild_cmd = [
+                                "msbuild", str(sln_path),
+                                f"/p:Configuration=Release",
+                                f"/p:Platform={'x64' if struct.calcsize('P') * 8 == 64 else 'Win32'}",
+                                f"/t:{proj_name}"
+                            ]
+                            self._run_subprocess_in_msvc_env(msbuild_cmd, src_dir, dep_name=f"{dep_name} msbuild")
+                            built_lib_path = src_dir / config["win_static_lib_rel_path"]
+                            if built_lib_path.exists():
+                                shutil.copy2(built_lib_path, DEPS_INSTALL_LIB_DIR / config["lib_name_win"])
                                 src_hdr_dir = src_dir / config["win_headers_rel_path"]
                                 dest_hdr_dir = DEPS_INSTALL_INCLUDE_DIR / config["header_dir_name"]
                                 if dest_hdr_dir.exists(): shutil.rmtree(dest_hdr_dir)
                                 shutil.copytree(src_hdr_dir, dest_hdr_dir, dirs_exist_ok=True)
-                    else: # LAME autotools
+                                build_successful = True
+                            else:
+                                print(f"ERROR: Library not found at {built_lib_path} after msbuild.", file=sys.stderr)
+                                build_successful = False
+                        else:
+                            makefile_rel_path = config.get("nmake_makefile_rel_path_win", "Makefile.MSVC")
+                            nmake_target = config.get("nmake_target_win", "")
+                            actual_makefile_path = src_dir / makefile_rel_path
+                            if not actual_makefile_path.is_file():
+                                print(f"ERROR: LAME Makefile '{actual_makefile_path}' not found for {dep_name}.", file=sys.stderr)
+                                build_successful = False
+                            else:
+                                nmake_cmd = ["nmake", "/f", str(actual_makefile_path), nmake_target, "comp=msvc", "asm=no", "MACHINE=", "LN_OPTS=", "LN_DLL="]
+                                self._run_subprocess_in_msvc_env(nmake_cmd, src_dir, dep_name=f"{dep_name} nmake")
+                                lib_found_and_copied = False
+                                for pattern in config["win_lib_search_rel_paths"]:
+                                    found_libs = list(src_dir.glob(pattern))
+                                    if found_libs:
+                                        found_libs.sort(key=lambda p: (len(str(p)), "x64" not in str(p).lower()))
+                                        shutil.copy2(found_libs[0], DEPS_INSTALL_LIB_DIR / config["lib_name_win"])
+                                        lib_found_and_copied = True; break
+                                if not lib_found_and_copied:
+                                    print(f"ERROR: LAME library {config['lib_name_win']} not found after nmake.", file=sys.stderr)
+                                    build_successful = False
+                                else: build_successful = True
+                                if build_successful:
+                                    src_hdr_dir = src_dir / config["win_headers_rel_path"]
+                                    dest_hdr_dir = DEPS_INSTALL_INCLUDE_DIR / config["header_dir_name"]
+                                    if dest_hdr_dir.exists(): shutil.rmtree(dest_hdr_dir)
+                                    shutil.copytree(src_hdr_dir, dest_hdr_dir, dirs_exist_ok=True)
+                    else: # Autotools for Unix-like systems
                         if not (src_dir / "configure").exists() and (src_dir / "autogen.sh").exists():
                             subprocess.run(["sh", "./autogen.sh"], cwd=src_dir, check=True)
                         configure_cmd = ["./configure", f"--prefix={DEPS_INSTALL_DIR}"] + config["unix_configure_args"]
@@ -580,33 +620,60 @@ class BuildExtCommand(_build_ext):
         print(f"Ensured {DEPS_INSTALL_INCLUDE_DIR} and {DEPS_INSTALL_LIB_DIR} are in extension paths.")
         super().run()
 
+        # --- Generate pybind11 stubs after build ---
+        if not self.dry_run:
+            print("--- Generating pybind11 stubs ---")
+            try:
+                # The stub generator needs to import the module, which is in the build_lib directory.
+                env = os.environ.copy()
+                env["PYTHONPATH"] = self.build_lib + os.pathsep + env.get("PYTHONPATH", "")
+
+                stubgen_cmd = [
+                    sys.executable,
+                    "-m",
+                    "pybind11_stubgen",
+                    "screamrouter_audio_engine",
+                    "--output-dir",
+                    ".",  # Output .pyi file to the project root
+                    "--no-setup-py-cmd" # Prevent recursion
+                ]
+                
+                print(f"Running command: {' '.join(stubgen_cmd)}")
+                subprocess.run(stubgen_cmd, check=True, env=env)
+                print("Successfully generated stubs for screamrouter_audio_engine.")
+
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                print(f"WARNING: Failed to generate pybind11 stubs: {e}", file=sys.stderr)
+                # We don't fail the whole build if stub generation fails.
+                pass
+
 # --- Main Extension Configuration ---
-source_files = [
-    "src/audio_engine/bindings.cpp", "src/audio_engine/audio_manager.cpp",
-    "src/audio_engine/network_audio_receiver.cpp",
-    "src/audio_engine/rtp_receiver.cpp", "src/audio_engine/raw_scream_receiver.cpp", "src/audio_engine/per_process_scream_receiver.cpp",
-    "src/audio_engine/source_input_processor.cpp", "src/audio_engine/sink_audio_mixer.cpp",
-    "src/audio_engine/scream_sender.cpp", "src/audio_engine/rtp_sender.cpp",
-    "src/audio_engine/audio_processor.cpp", "src/audio_engine/layout_mixer.cpp",
-    "src/audio_engine/biquad/biquad.cpp", "src/configuration/audio_engine_config_applier.cpp",
-    "src/audio_engine/r8brain-free-src/r8bbase.cpp", "src/audio_engine/r8brain-free-src/pffft.cpp",
-    "src/audio_engine/timeshift_manager.cpp",
-    "src/audio_engine/cpp_logger.cpp",
-    "src/audio_engine/sap_listener.cpp",
-    "src/audio_engine/rtp_sender_registry.cpp"
-]
-main_extension_include_dirs = [
-    str(PROJECT_ROOT / "src/audio_engine"), str(PROJECT_ROOT / "src/configuration"),
-    str(PROJECT_ROOT / "src/audio_engine/r8brain-free-src"),
-    # Add libdatachannel include path if it's installed to DEPS_INSTALL_INCLUDE_DIR/rtc
-    str(DEPS_INSTALL_INCLUDE_DIR), # Main deps include dir
-    str(DEPS_INSTALL_INCLUDE_DIR / DEPS_CONFIG["libdatachannel"]["header_dir_name"]), # e.g. build/deps/include/rtc
-    str(DEPS_INSTALL_INCLUDE_DIR / DEPS_CONFIG["openssl"]["header_dir_name"]), # e.g. build/deps/include/openssl
-    str(PROJECT_ROOT / "src/audio_engine/libdatachannel/include"), # Direct include if not installed centrally
-    str(PROJECT_ROOT / "src/audio_engine/openssl/include"), # Direct include for OpenSSL if needed
-    str(PROJECT_ROOT / "src/screamrouter_logger"),
-    str(PROJECT_ROOT / "src/utils")
-]
+src_root = Path("src")
+source_files = []
+for root, dirs, files in os.walk(str(src_root)):
+    # Exclude 'deps' directories from the search
+    if 'deps' in dirs:
+        dirs.remove('deps')
+    for file in files:
+        if file.endswith(".cpp"):
+            source_files.append(str(Path(root) / file))
+
+# Add r8brain source file directly
+source_files.append("src/audio_engine/deps/r8brain-free-src/r8bbase.cpp")
+
+# Dynamically generate include directories from the discovered source files
+include_dirs_from_sources = {str(Path(f).parent) for f in source_files}
+
+main_extension_include_dirs = list(include_dirs_from_sources.union({
+    str(DEPS_INSTALL_INCLUDE_DIR),
+    str(DEPS_INSTALL_INCLUDE_DIR / DEPS_CONFIG["libdatachannel"]["header_dir_name"]),
+    str(DEPS_INSTALL_INCLUDE_DIR / DEPS_CONFIG["openssl"]["header_dir_name"]),
+    # Add r8brain include directory
+    str(PROJECT_ROOT / "src/audio_engine/deps/r8brain-free-src"),
+    # Add other necessary non-discoverable include directories here
+    str(PROJECT_ROOT / "src/audio_engine/json/include"),
+    str(PROJECT_ROOT / "src/audio_engine/opus/include"),
+}))
 platform_extra_compile_args = []
 platform_extra_link_args = []
 
@@ -614,10 +681,13 @@ main_extension_libraries = [
     DEPS_CONFIG["lame"]["link_name"],
     DEPS_CONFIG["libdatachannel"]["link_name"],
     DEPS_CONFIG["openssl"]["link_name"], # e.g., "crypto"
+    DEPS_CONFIG["opus"]["link_name"],
 ]
 # Add extra OpenSSL libs if defined (e.g., "ssl")
 if DEPS_CONFIG["openssl"].get("extra_link_names"):
     main_extension_libraries.extend(DEPS_CONFIG["openssl"]["extra_link_names"])
+if DEPS_CONFIG["libdatachannel"].get("extra_link_names"):
+    main_extension_libraries.extend(DEPS_CONFIG["libdatachannel"]["extra_link_names"])
 
 # Add usrsctp if libdatachannel requires it and doesn't bundle/build it.
 # This might be system-dependent or require another submodule. For now, assume not needed explicitly here.
@@ -661,7 +731,7 @@ else: # Linux/Unix-like systems
 
 ext_modules = [
     Pybind11Extension("screamrouter_audio_engine",
-        sources=sorted([str(PROJECT_ROOT / f) for f in source_files]),
+        sources=sorted(source_files),
         include_dirs=main_extension_include_dirs,
         library_dirs=main_extension_library_dirs,
         libraries=main_extension_libraries,
@@ -674,7 +744,7 @@ ext_modules = [
 setup(
     name="screamrouter_audio_engine",
     version="0.2.2",
-    author="Cline",
+    author="Netham45",
     description="C++ audio engine for ScreamRouter (builds LAME, oRTP stack from submodules, auto MSVC env setup)",
     long_description=(PROJECT_ROOT / "README.md").read_text(encoding="utf-8") if (PROJECT_ROOT / "README.md").exists() else \
                      "Builds LAME, bctoolbox, bcunit, oRTP from submodules. Tries to auto-setup MSVC env on Windows.",

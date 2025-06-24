@@ -50,6 +50,7 @@ const AddEditSinkPage: React.FC = () => {
   const [timeSync, setTimeSync] = useState(false);
   const [timeSyncDelay, setTimeSyncDelay] = useState('0');
   const [protocol, setProtocol] = useState('scream');
+  const [volumeNormalization, setVolumeNormalization] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -79,6 +80,7 @@ const AddEditSinkPage: React.FC = () => {
             setTimeSync(sinkData.time_sync || false);
             setTimeSyncDelay(sinkData.time_sync_delay?.toString() || '0');
             setProtocol(sinkData.protocol || 'scream');
+            setVolumeNormalization(sinkData.volume_normalization || false);
           } else {
             setError(`Sink "${sinkName}" not found.`);
           }
@@ -110,6 +112,7 @@ const AddEditSinkPage: React.FC = () => {
       time_sync: timeSync,
       time_sync_delay: parseInt(timeSyncDelay),
       protocol: protocol,
+      volume_normalization: volumeNormalization,
     };
 
     try {
@@ -135,6 +138,7 @@ const AddEditSinkPage: React.FC = () => {
         setTimeSync(false);
         setTimeSyncDelay('0');
         setProtocol('scream');
+        setVolumeNormalization(false);
       }
     } catch (error) {
       console.error('Error submitting sink:', error);
@@ -280,6 +284,7 @@ const AddEditSinkPage: React.FC = () => {
             >
               <option value="scream">Scream</option>
               <option value="rtp">RTP</option>
+              <option value="web_receiver">Web Receiver</option>
             </Select>
           </FormControl>
           
@@ -291,6 +296,17 @@ const AddEditSinkPage: React.FC = () => {
           <FormControl>
             <FormLabel>Timeshift</FormLabel>
             <TimeshiftSlider value={delay} onChange={setDelay} />
+          </FormControl>
+
+          <FormControl>
+            <Flex alignItems="center">
+              <Checkbox
+                isChecked={volumeNormalization}
+                onChange={(e) => setVolumeNormalization(e.target.checked)}
+                mr={2}
+              />
+              <FormLabel mb={0}>Volume Normalization</FormLabel>
+            </Flex>
           </FormControl>
           
           <FormControl>

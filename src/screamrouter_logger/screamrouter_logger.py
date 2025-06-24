@@ -4,9 +4,8 @@ import logging
 import logging.handlers
 import os
 import sys
-import os
 import threading
-import time # Already imported, but good to ensure
+import time  # Already imported, but good to ensure
 
 # Attempt to import the C++ audio engine bindings
 try:
@@ -113,21 +112,17 @@ def _cpp_log_retrieval_worker():
                     
                     python_level_int = _map_cpp_level_to_python(cpp_level_from_c)
 
-                    
-                    # If not skipped (i.e., not DEBUG),
-                    # proceed to create and handle the log record.
-                    if python_level_int != logging.DEBUG:
-                        record = logging.LogRecord(
-                            name=CPP_LOGGER_NAME,
-                            level=python_level_int,
-                            pathname=cpp_filename,
-                            lineno=cpp_lineno,
-                            msg=message,
-                            args=(),
-                            exc_info=None,
-                            func="N/A_CPP_POLL"
-                        )
-                        logger.handle(record)
+                    record = logging.LogRecord(
+                        name=CPP_LOGGER_NAME,
+                        level=python_level_int,
+                        pathname=cpp_filename,
+                        lineno=cpp_lineno,
+                        msg=message,
+                        args=(),
+                        exc_info=None,
+                        func="N/A_CPP_POLL"
+                    )
+                    logger.handle(record)
                 else:
                     MAIN_LOGGER.error(f"Received malformed log entry tuple from C++: {entry_tuple}")
 

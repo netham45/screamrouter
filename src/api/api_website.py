@@ -8,6 +8,7 @@ import httpx
 import websockify
 import websockify.websocketproxy
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -38,14 +39,23 @@ class APIWebsite():
         """Main FastAPI instance"""
         self.screamrouter_configuration:ConfigurationManager = screamrouter_configuration
         """ScreamRouter Configuration Manager"""
+        self.main_api.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
         self.main_api.get(f"{SITE_PREFIX}/vnc/{{source_name}}",
                           tags=["Site Resources"])(self.vnc)
         self.main_api.mount("/site/noVNC", StaticFiles(directory="./site/noVNC"), name="noVNC")
+        self.main_api.mount("/site/static", StaticFiles(directory="./site/static"), name="static")
         self.main_api.get("/favicon.ico", tags=["Site Resources"])(self.favicon)
 
         self._templates = Jinja2Templates(directory="./site/")
         mimetypes.add_type('application/javascript', '.js')
         mimetypes.add_type('text/css', '.css')
+        mimetypes.add_type('audio/mpeg', '.mp3')
         logger.info("[Website] Endpoints added")
         self.vnc_websockifiys: List[multiprocessing.Process] = []
         """Holds a list of websockify processes to kill"""
