@@ -1,23 +1,28 @@
+/**
+ * @file sink_audio_mixer.cpp
+ * @brief Implements the SinkAudioMixer class for mixing and outputting audio.
+ * @details This file contains the implementation of the SinkAudioMixer, which is a
+ *          core component responsible for collecting audio from multiple sources,
+ *          mixing it, and dispatching it to various network senders.
+ */
 #include "sink_audio_mixer.h"
-#include "../utils/cpp_logger.h" // For new C++ logger
-#include <iostream> // For logging (cpp_logger fallback)
+#include "../utils/cpp_logger.h"
+#include <iostream>
 #include <stdexcept>
-#include <cstring> // For memcpy, memset
+#include <cstring>
 #include <vector>
 #include <chrono>
-#include <system_error> // For thread/socket errors
-#include <algorithm> // For std::fill, std::max
-#include <cmath>     // For std::chrono durations
-#include "../audio_processor/audio_processor.h" // Include the AudioProcessor header
+#include <system_error>
+#include <algorithm>
+#include <cmath>
+#include "../audio_processor/audio_processor.h"
 #include "../senders/scream/scream_sender.h"
 #include "../senders/rtp/rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
 
-// Use namespaces for clarity
 using namespace screamrouter::audio;
 using namespace screamrouter::audio::utils;
 
-// Include SIMD headers if available
 #ifdef __SSE2__
 #include <emmintrin.h>
 #endif
@@ -25,14 +30,16 @@ using namespace screamrouter::audio::utils;
 #include <immintrin.h>
 #endif
 
-// Old logger macros are removed. New macros (LOG_CPP_INFO, etc.) are in cpp_logger.h
-// The sink_id from config_ will be manually prepended in the new log calls.
+/** @brief Default timeout for waiting for input data before proceeding with a mix cycle. */
+const std::chrono::milliseconds INPUT_WAIT_TIMEOUT(60);
+/** @brief Default bitrate for MP3 encoding if enabled. */
+const int DEFAULT_MP3_BITRATE = 192;
 
-// Define how long to wait for input data before mixing silence/last known data
-const std::chrono::milliseconds INPUT_WAIT_TIMEOUT(20); // e.g., 20ms
-const int DEFAULT_MP3_BITRATE = 192; // Default bitrate if MP3 enabled
-
-
+/**
+ * @brief Constructs a SinkAudioMixer.
+ * @param config The configuration for this sink.
+ * @param mp3_output_queue A queue for sending out encoded MP3 data. Can be nullptr.
+ */
 SinkAudioMixer::SinkAudioMixer(
     SinkMixerConfig config,
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue)
@@ -41,7 +48,7 @@ SinkAudioMixer::SinkAudioMixer(
       lame_global_flags_(nullptr),
       stereo_preprocessor_(nullptr),
       mixing_buffer_(SINK_MIXING_BUFFER_SAMPLES, 0),
-      stereo_buffer_(SINK_MIXING_BUFFER_SAMPLES * 2, 0), // Stereo, 32-bit
+      stereo_buffer_(SINK_MIXING_BUFFER_SAMPLES * 2, 0),
       payload_buffer_(SINK_CHUNK_SIZE_BYTES * 2, 0),
       mp3_encode_buffer_(SINK_MP3_BUFFER_SIZE)
  {
@@ -64,7 +71,6 @@ SinkAudioMixer::SinkAudioMixer(
         network_sender_ = std::make_unique<ScreamSender>(config_);
     } else if (config_.protocol == "web_receiver") {
         LOG_CPP_INFO("[SinkMixer:%s] Protocol is 'web_receiver', skipping default sender creation.", config_.sink_id.c_str());
-        // No default sender for web_receiver, it uses listeners
         network_sender_ = nullptr;
     } else {
         LOG_CPP_WARNING("[SinkMixer:%s] Unknown protocol '%s', defaulting to ScreamSender.", config_.sink_id.c_str(), config_.protocol.c_str());
@@ -76,15 +82,8 @@ SinkAudioMixer::SinkAudioMixer(
         throw std::runtime_error("Failed to create network sender.");
     }
 
-    // Always create the stereo preprocessor, it's needed for WebRTC listeners
     stereo_preprocessor_ = std::make_unique<AudioProcessor>(
-        config_.output_channels,
-        2, // Stereo outputN
-        32,
-        config_.output_samplerate,
-        config_.output_samplerate,
-        1.0f,
-        std::map<int, CppSpeakerLayout>()
+        config_.output_channels, 2, 32, config_.output_samplerate, config_.output_samplerate, 1.0f, std::map<int, CppSpeakerLayout>()
     );
 
     if (!stereo_preprocessor_) {
@@ -101,6 +100,9 @@ SinkAudioMixer::SinkAudioMixer(
     LOG_CPP_INFO("[SinkMixer:%s] Initialization complete.", config_.sink_id.c_str());
 }
 
+/**
+ * @brief Destructor for the SinkAudioMixer.
+ */
 SinkAudioMixer::~SinkAudioMixer() {
     if (!stop_flag_) {
         stop();
@@ -109,11 +111,13 @@ SinkAudioMixer::~SinkAudioMixer() {
         LOG_CPP_WARNING("[SinkMixer:%s] Warning: Joining thread in destructor, stop() might not have been called properly.", config_.sink_id.c_str());
         component_thread_.join();
     }
-    // network_sender_ is a unique_ptr and will be cleaned up automatically.
 }
 
+/**
+ * @brief Initializes the LAME MP3 encoder if MP3 output is enabled.
+ */
 void SinkAudioMixer::initialize_lame() {
-    if (!mp3_output_queue_) return; // Don't initialize if not enabled
+    if (!mp3_output_queue_) return;
 
     LOG_CPP_INFO("[SinkMixer:%s] Initializing LAME MP3 encoder...", config_.sink_id.c_str());
     lame_global_flags_ = lame_init();
@@ -123,20 +127,23 @@ void SinkAudioMixer::initialize_lame() {
     }
 
     lame_set_in_samplerate(lame_global_flags_, config_.output_samplerate);
-    // Matching c_utils: Rely on LAME defaults/inference for other parameters
-    lame_set_VBR(lame_global_flags_, vbr_off); // Use CBR for streaming (matches c_utils)
+    lame_set_VBR(lame_global_flags_, vbr_off);
 
     int ret = lame_init_params(lame_global_flags_);
     if (ret < 0) {
         LOG_CPP_ERROR("[SinkMixer:%s] lame_init_params() failed with code: %d", config_.sink_id.c_str(), ret);
         lame_close(lame_global_flags_);
         lame_global_flags_ = nullptr;
-        return; // Return early if params init failed
+        return;
     }
     LOG_CPP_INFO("[SinkMixer:%s] LAME initialized successfully.", config_.sink_id.c_str());
 }
 
-// Updated to use instance_id
+/**
+ * @brief Adds an input queue from a source processor.
+ * @param instance_id The unique ID of the source processor instance.
+ * @param queue A shared pointer to the source's output queue.
+ */
 void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared_ptr<InputChunkQueue> queue) {
     if (!queue) {
         LOG_CPP_ERROR("[SinkMixer:%s] Attempted to add null input queue for instance: %s", config_.sink_id.c_str(), instance_id.c_str());
@@ -145,15 +152,17 @@ void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
         input_queues_[instance_id] = queue;
-        input_active_state_[instance_id] = false; // Start as inactive
-        // Initialize buffer for this source instance (e.g., with silence)
-        source_buffers_[instance_id].audio_data.assign(SINK_MIXING_BUFFER_SAMPLES, 0); // Size is total samples, not channels * samples
+        input_active_state_[instance_id] = false;
+        source_buffers_[instance_id].audio_data.assign(SINK_MIXING_BUFFER_SAMPLES, 0);
         LOG_CPP_INFO("[SinkMixer:%s] Added input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
-    input_cv_.notify_one(); // Notify run loop in case it was waiting with no sources
+    input_cv_.notify_one();
 }
 
-// Updated to use instance_id
+/**
+ * @brief Removes an input queue associated with a source processor.
+ * @param instance_id The unique ID of the source processor instance.
+ */
 void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
      {
         std::lock_guard<std::mutex> lock(queues_mutex_);
@@ -164,17 +173,19 @@ void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
     }
 }
 
+/**
+ * @brief Adds a network listener (e.g., a WebRTC peer) to this sink.
+ * @param listener_id A unique ID for the listener.
+ * @param sender A unique pointer to the listener's network sender implementation.
+ */
 void SinkAudioMixer::add_listener(const std::string& listener_id, std::unique_ptr<INetworkSender> sender) {
     if (!sender) {
         LOG_CPP_ERROR("[SinkMixer:%s] Attempted to add null listener sender for ID: %s", config_.sink_id.c_str(), listener_id.c_str());
         return;
     }
     
-    // Set up cleanup callback for WebRtcSender instances
     if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
         webrtc_sender->set_cleanup_callback(listener_id, [this](const std::string& id) {
-            // This callback will be called from WebRtcSender when it needs cleanup
-            // We schedule the removal to happen on the next cleanup cycle
             LOG_CPP_INFO("[SinkMixer:%s] Cleanup callback triggered for listener: %s", config_.sink_id.c_str(), id.c_str());
         });
     }
@@ -190,6 +201,10 @@ void SinkAudioMixer::add_listener(const std::string& listener_id, std::unique_pt
     }
 }
 
+/**
+ * @brief Removes a network listener from this sink.
+ * @param listener_id The ID of the listener to remove.
+ */
 void SinkAudioMixer::remove_listener(const std::string& listener_id) {
     std::unique_ptr<INetworkSender> sender_to_remove;
     {
@@ -198,7 +213,6 @@ void SinkAudioMixer::remove_listener(const std::string& listener_id) {
         if (it != listener_senders_.end()) {
             sender_to_remove = std::move(it->second);
             
-            // FORCE CLOSE THE CONNECTION BEFORE REMOVING!
             if (sender_to_remove) {
                 if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender_to_remove.get())) {
                     LOG_CPP_INFO("[SinkMixer:%s] Force closing WebRTC connection for listener: %s", config_.sink_id.c_str(), listener_id.c_str());
@@ -210,14 +224,19 @@ void SinkAudioMixer::remove_listener(const std::string& listener_id) {
             LOG_CPP_INFO("[SinkMixer:%s] Removed listener sender with ID: %s", config_.sink_id.c_str(), listener_id.c_str());
         } else {
             LOG_CPP_DEBUG("[SinkMixer:%s] Listener sender with ID already removed: %s", config_.sink_id.c_str(), listener_id.c_str());
-            return; // Already removed, nothing to do
+            return;
         }
     }
     if (sender_to_remove) {
-        sender_to_remove->close(); // Call close again to be sure
+        sender_to_remove->close();
     }
 }
 
+/**
+ * @brief Gets a raw pointer to a listener's network sender.
+ * @param listener_id The ID of the listener.
+ * @return A pointer to the `INetworkSender`, or `nullptr` if not found.
+ */
 INetworkSender* SinkAudioMixer::get_listener(const std::string& listener_id) {
     std::lock_guard<std::mutex> lock(listener_senders_mutex_);
     auto it = listener_senders_.find(listener_id);
@@ -227,7 +246,39 @@ INetworkSender* SinkAudioMixer::get_listener(const std::string& listener_id) {
     return nullptr;
 }
 
+SinkAudioMixerStats SinkAudioMixer::get_stats() {
+    SinkAudioMixerStats stats;
+    stats.total_chunks_mixed = m_total_chunks_mixed.load();
 
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        stats.total_input_streams = input_queues_.size();
+        size_t active_count = 0;
+        for (const auto& [id, is_active] : input_active_state_) {
+            if (is_active) {
+                active_count++;
+            }
+        }
+        stats.active_input_streams = active_count;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
+        for (const auto& [id, sender] : listener_senders_) {
+            stats.listener_ids.push_back(id);
+        }
+    }
+
+    return stats;
+}
+
+const SinkMixerConfig& SinkAudioMixer::get_config() const {
+    return config_;
+}
+
+/**
+ * @brief Starts the mixer's processing thread.
+ */
 void SinkAudioMixer::start() {
     if (is_running()) {
         LOG_CPP_INFO("[SinkMixer:%s] Already running.", config_.sink_id.c_str());
@@ -254,6 +305,9 @@ void SinkAudioMixer::start() {
     }
 }
 
+/**
+ * @brief Stops the mixer's processing thread and cleans up resources.
+ */
 void SinkAudioMixer::stop() {
      if (stop_flag_) {
         LOG_CPP_INFO("[SinkMixer:%s] Already stopped or stopping.", config_.sink_id.c_str());
@@ -287,7 +341,6 @@ void SinkAudioMixer::stop() {
         network_sender_->close();
     }
 
-    // Also close all listener senders
     {
         std::lock_guard<std::mutex> lock(listener_senders_mutex_);
         for (auto& pair : listener_senders_) {
@@ -300,73 +353,61 @@ void SinkAudioMixer::stop() {
     }
 }
 
-// Removed SinkAudioMixer::set_tcp_fd
-
+/**
+ * @brief Waits for data from input queues and determines which sources are active.
+ * @param ignored_timeout A timeout value (currently ignored in implementation).
+ * @return `true` if any data was popped from any queue, `false` otherwise.
+ */
 bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_timeout */) {
-    // This function replicates the logic of mark_fds_active_inactive and
-    // parts of handle_receive_buffers from the old c_utils version.
-    // It determines which sources are active, gives lagging active sources a grace period,
-    // marks persistently lagging sources as inactive, checks if inactive sources became active,
-    // and attempts to pop data from all sources deemed ready for this cycle.
-
-    std::lock_guard<std::mutex> lock(queues_mutex_); // Lock for the duration
+    std::lock_guard<std::mutex> lock(queues_mutex_);
 
     bool data_actually_popped_this_cycle = false;
-    std::map<std::string, bool> ready_this_cycle; // Tracks sources ready in this specific cycle
-    std::vector<std::string> lagging_active_sources; // Sources active but not immediately ready
+    std::map<std::string, bool> ready_this_cycle;
+    std::vector<std::string> lagging_active_sources;
 
-    // --- Step 1: Initial Check (like first part of mark_fds_active_inactive) ---
-    // Check all sources we *expect* to be active first, plus check inactive ones becoming active.
     LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Initial non-blocking check...", config_.sink_id.c_str());
-    // Use instance_id as the key/loop variable
     for (auto const& [instance_id, queue_ptr] : input_queues_) {
         ProcessedAudioChunk chunk;
-        // Check active state using instance_id
         bool previously_active = input_active_state_.count(instance_id) ? input_active_state_[instance_id] : false;
 
-        if (queue_ptr->try_pop(chunk)) { // Data is immediately available
+        if (queue_ptr->try_pop(chunk)) {
              if (chunk.audio_data.size() != SINK_MIXING_BUFFER_SAMPLES) {
                  LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.", config_.sink_id.c_str(), instance_id.c_str(), chunk.audio_data.size());
-                 ready_this_cycle[instance_id] = false; // Not ready with valid data
-                 // Don't mark active if data is invalid
+                 ready_this_cycle[instance_id] = false;
              } else {
                  LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Pop SUCCESS (Initial) for instance %s", config_.sink_id.c_str(), instance_id.c_str());
-                 source_buffers_[instance_id] = std::move(chunk); // Store valid chunk using instance_id
+                 m_total_chunks_mixed++;
+                 source_buffers_[instance_id] = std::move(chunk);
                  ready_this_cycle[instance_id] = true;
                  data_actually_popped_this_cycle = true;
                  if (!previously_active) {
                      LOG_CPP_INFO("[SinkMixer:%s] Input instance %s became active", config_.sink_id.c_str(), instance_id.c_str());
                  }
-                 input_active_state_[instance_id] = true; // Mark/confirm as active using instance_id
+                 input_active_state_[instance_id] = true;
              }
-        } else { // No data immediately available
+        } else {
             ready_this_cycle[instance_id] = false;
             if (previously_active) {
-                // This source *was* active, but doesn't have data right now. Add to lagging list.
                 LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Pop FAILED (Initial) for ACTIVE instance %s. Adding to grace period check.", config_.sink_id.c_str(), instance_id.c_str());
-                lagging_active_sources.push_back(instance_id); // Add instance_id to lagging list
+                lagging_active_sources.push_back(instance_id);
             } else {
-                 // Source was inactive and still has no data. Keep it inactive.
                  input_active_state_[instance_id] = false;
             }
         }
     }
 
-    // --- Step 2 & 3: Grace Period for Lagging Active Sources ---
     if (!lagging_active_sources.empty()) {
         LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Entering grace period check for %zu sources.", config_.sink_id.c_str(), lagging_active_sources.size());
         auto grace_period_start = std::chrono::steady_clock::now();
         long elapsed_us = 0;
 
         while (!lagging_active_sources.empty() && elapsed_us <= GRACE_PERIOD_TIMEOUT.count() * 1000) {
-             // Polling with short sleep - less efficient than select/CV but mimics the old logic structure
             std::this_thread::sleep_for(GRACE_PERIOD_POLL_INTERVAL);
 
-            // Check remaining lagging sources
-            for (auto it = lagging_active_sources.begin(); it != lagging_active_sources.end(); /* manually increment */) {
-                const std::string& instance_id = *it; // Use instance_id
-                auto queue_it = input_queues_.find(instance_id); // Find queue by instance_id
-                if (queue_it == input_queues_.end()) { // Should not happen
+            for (auto it = lagging_active_sources.begin(); it != lagging_active_sources.end();) {
+                const std::string& instance_id = *it;
+                auto queue_it = input_queues_.find(instance_id);
+                if (queue_it == input_queues_.end()) {
                     it = lagging_active_sources.erase(it);
                     continue;
                 }
@@ -375,118 +416,89 @@ bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_t
                 if (queue_it->second->try_pop(chunk)) {
                     if (chunk.audio_data.size() != SINK_MIXING_BUFFER_SAMPLES) {
                          LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk (Grace Period) from instance %s with unexpected sample count: %zu. Discarding.", config_.sink_id.c_str(), instance_id.c_str(), chunk.audio_data.size());
-                         // Still remove from lagging list, but don't mark ready
                     } else {
                         LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Pop SUCCESS (Grace Period) for instance %s", config_.sink_id.c_str(), instance_id.c_str());
-                        source_buffers_[instance_id] = std::move(chunk); // Use instance_id
+                        m_total_chunks_mixed++;
+                        source_buffers_[instance_id] = std::move(chunk);
                         ready_this_cycle[instance_id] = true;
                         data_actually_popped_this_cycle = true;
                     }
-                    it = lagging_active_sources.erase(it); // Remove from lagging list
+                    it = lagging_active_sources.erase(it);
                 } else {
-                    ++it; // Move to next lagging source
+                    ++it;
                 }
             }
             elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - grace_period_start).count();
         }
 
-        // --- Step 3 Continued: Mark remaining lagged sources as inactive ---
         if (!lagging_active_sources.empty()) {
             LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Grace period ended. %zu instances still lagging.", config_.sink_id.c_str(), lagging_active_sources.size());
-            for (const auto& instance_id : lagging_active_sources) { // Use instance_id
+            for (const auto& instance_id : lagging_active_sources) {
                 if (input_active_state_.count(instance_id) && input_active_state_[instance_id]) {
                      LOG_CPP_INFO("[SinkMixer:%s] Input instance %s timed out grace period, marking inactive.", config_.sink_id.c_str(), instance_id.c_str());
-                     input_active_state_[instance_id] = false; // Mark as definitively inactive using instance_id
+                     input_active_state_[instance_id] = false;
                 }
             }
         } else {
              LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Grace period ended. All lagging sources caught up.", config_.sink_id.c_str());
         }
-    } // End grace period check
+    }
 
-
-    // --- Final Result ---
-    // The mixing logic will use `input_active_state_` and `source_buffers_`.
-    // We need to return whether *any* data was successfully retrieved and stored
-    // in `source_buffers_` during this call to signal the run loop to mix.
-
-    // Update the internal state map for mixing based on who was ready *this cycle*
-    // (We already updated the persistent input_active_state_ above)
-    for(auto const& [instance_id, is_ready] : ready_this_cycle) { // Use instance_id
-        // This map is implicitly used by mix_buffers which checks source_buffers_ map.
-        // If ready_this_cycle[id] is false, mix_buffers won't find a *new* chunk for it,
-        // but might mix old data if we didn't clear source_buffers_. Let's clear
-        // buffers for sources not ready this cycle.
-         if (!is_ready && source_buffers_.count(instance_id)) { // Use instance_id
-             // Optional: Decide if you want to mix stale data or silence for sources
-             // that weren't ready this cycle. Clearing ensures silence/no contribution.
-             // source_buffers_.erase(instance_id); // To ensure no stale data is mixed
-             // Or fill with silence:
-             // source_buffers_[source_id].audio_data.assign(SINK_MIXING_BUFFER_SAMPLES, 0);
+    for(auto const& [instance_id, is_ready] : ready_this_cycle) {
+         if (!is_ready && source_buffers_.count(instance_id)) {
          }
     }
 
     return data_actually_popped_this_cycle;
 }
 
-
+/**
+ * @brief Mixes audio from all active source buffers into the main mixing buffer.
+ */
 void SinkAudioMixer::mix_buffers() {
-    // Assumes queues_mutex_ is held by the caller (run loop)
-    // Clear the mixing buffer (vector of int32_t) before accumulating samples
     std::fill(mixing_buffer_.begin(), mixing_buffer_.end(), 0);
     
     std::vector<uint32_t> collected_csrcs;
     size_t active_source_count = 0;
 
-    // The total number of samples to mix is fixed by the mixing_buffer_ size
-    size_t total_samples_to_mix = mixing_buffer_.size(); // Should be SINK_MIXING_BUFFER_SAMPLES (e.g., 576)
+    size_t total_samples_to_mix = mixing_buffer_.size();
     LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Starting mix. Target samples=%zu (Mixing buffer size).", config_.sink_id.c_str(), total_samples_to_mix);
 
-
-    for (auto const& [instance_id, is_active] : input_active_state_) { // Iterate through all potential sources using instance_id
-        if (is_active) { // Only process sources marked active in wait_for_source_data
+    for (auto const& [instance_id, is_active] : input_active_state_) {
+        if (is_active) {
             active_source_count++;
-            // Check if the source buffer actually exists in the map (should always exist if active)
-            auto buf_it = source_buffers_.find(instance_id); // Find buffer by instance_id
+            auto buf_it = source_buffers_.find(instance_id);
             if (buf_it == source_buffers_.end()) {
                  LOG_CPP_ERROR("[SinkMixer:%s] Mixing error: Source buffer not found for active instance %s", config_.sink_id.c_str(), instance_id.c_str());
-                 continue; // Skip this source
+                 continue;
             }
-            const auto& source_data = buf_it->second.audio_data; // Use iterator
+            const auto& source_data = buf_it->second.audio_data;
             const auto& ssrcs = buf_it->second.ssrcs;
             collected_csrcs.insert(collected_csrcs.end(), ssrcs.begin(), ssrcs.end());
  
-             size_t samples_in_source = source_data.size(); // Get actual sample count from the stored chunk
+             size_t samples_in_source = source_data.size();
              LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Mixing instance %s. Source samples=%zu. Expected=%zu.", config_.sink_id.c_str(), instance_id.c_str(), samples_in_source, total_samples_to_mix);
 
-            // *** Check source data size against the fixed mixing buffer size ***
-            // This check is redundant if wait_for_source_data correctly discards invalid chunks, but kept for safety.
             if (samples_in_source != total_samples_to_mix) {
                  LOG_CPP_ERROR("[SinkMixer:%s] MixBuffers: Source buffer for instance %s size mismatch! Expected %zu, got %zu. Skipping source.", config_.sink_id.c_str(), instance_id.c_str(), total_samples_to_mix, samples_in_source);
-                 continue; // Skip this source
+                 continue;
             }
 
-            // Now we expect samples_in_source == total_samples_to_mix
             LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Accumulating %zu samples from instance %s", config_.sink_id.c_str(), total_samples_to_mix, instance_id.c_str());
 
-            // *** Iterate over the entire mixing buffer size ***
             for (size_t i = 0; i < total_samples_to_mix; ++i) {
-                // Accessing mixing_buffer_[i]. Size is total_samples_to_mix. Safe.
-                // Accessing source_data[i]. Size >= total_samples_to_mix. Safe.
                 int64_t sum = static_cast<int64_t>(mixing_buffer_[i]) + source_data[i];
-                // Clamp the sum to 32-bit integer range
                 if (sum > INT32_MAX) {
                     mixing_buffer_[i] = INT32_MAX;
-                } else if (sum < INT32_MIN) { // Check against INT32_MIN for underflow
+                } else if (sum < INT32_MIN) {
                     mixing_buffer_[i] = INT32_MIN;
                 } else {
                     mixing_buffer_[i] = static_cast<int32_t>(sum);
                 }
             }
-        } // end if(is_active)
-    } // end for loop over sources
+        }
+    }
     
-    // Store the unique CSRCs
     std::sort(collected_csrcs.begin(), collected_csrcs.end());
     collected_csrcs.erase(std::unique(collected_csrcs.begin(), collected_csrcs.end()), collected_csrcs.end());
     
@@ -498,74 +510,57 @@ void SinkAudioMixer::mix_buffers() {
     LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Mix complete. Mixed %zu active sources into mixing_buffer_ (%zu samples).", config_.sink_id.c_str(), active_source_count, total_samples_to_mix);
 }
 
-
-// Restored original bit-shifting logic (copies MSBs)
+/**
+ * @brief Downscales the 32-bit mixed audio to the target bit depth for network output.
+ */
 void SinkAudioMixer::downscale_buffer() {
-    // Converts 32-bit mixing_buffer_ to target bit depth into payload_buffer_
-    size_t output_byte_depth = config_.output_bitdepth / 8; // Bytes per sample in target format (e.g., 16-bit -> 2 bytes)
-    // Calculate the number of samples based on the mixing buffer size (int32_t)
-    size_t samples_to_convert = mixing_buffer_.size(); // Should be SINK_MIXING_BUFFER_SAMPLES (e.g., 576)
+    size_t output_byte_depth = config_.output_bitdepth / 8;
+    size_t samples_to_convert = mixing_buffer_.size();
 
-    // Calculate the total number of bytes this conversion *should* produce
-    size_t expected_bytes_to_write = samples_to_convert * output_byte_depth; // e.g., 576 samples * 2 bytes/sample = 1152 bytes for 16-bit stereo
+    size_t expected_bytes_to_write = samples_to_convert * output_byte_depth;
     LOG_CPP_DEBUG("[SinkMixer:%s] Downscale: Converting %zu samples (int32) to %d-bit. Expected output bytes=%zu.",
                   config_.sink_id.c_str(), samples_to_convert, config_.output_bitdepth, expected_bytes_to_write);
 
-
-    // Ensure we don't write past the end of the payload buffer's allocated space
     size_t available_space = payload_buffer_.size() - payload_buffer_write_pos_;
 
     if (expected_bytes_to_write > available_space) {
         LOG_CPP_ERROR("[SinkMixer:%s] Downscale buffer overflow detected! Available space=%zu, needed=%zu. WritePos=%zu. BufferSize=%zu",
                       config_.sink_id.c_str(), available_space, expected_bytes_to_write, payload_buffer_write_pos_, payload_buffer_.size());
-        // Limit the operation to prevent overflow, but data will be lost/corrupted.
-        // Calculate how many full samples can fit in the available space.
         size_t max_samples_possible = available_space / output_byte_depth;
-        samples_to_convert = max_samples_possible; // Limit samples
-        expected_bytes_to_write = samples_to_convert * output_byte_depth; // Adjust expected bytes accordingly
+        samples_to_convert = max_samples_possible;
+        expected_bytes_to_write = samples_to_convert * output_byte_depth;
         LOG_CPP_ERROR("[SinkMixer:%s] Downscale: Limiting conversion to %zu samples (%zu bytes) due to space limit.",
                       config_.sink_id.c_str(), samples_to_convert, expected_bytes_to_write);
         if (samples_to_convert == 0) {
              LOG_CPP_ERROR("[SinkMixer:%s] Downscale buffer has no space left. available=%zu", config_.sink_id.c_str(), available_space);
-             return; // Nothing can be written
+             return;
         }
     }
 
-    // Get pointers for reading (from mixing_buffer_) and writing (to payload_buffer_)
     uint8_t* write_ptr_start = payload_buffer_.data() + payload_buffer_write_pos_;
     uint8_t* write_ptr = write_ptr_start;
-    const int32_t* read_ptr = mixing_buffer_.data(); // Read from the start of the 32-bit mixed buffer
+    const int32_t* read_ptr = mixing_buffer_.data();
 
-    // Perform the conversion using bit-shifting
     for (size_t i = 0; i < samples_to_convert; ++i) {
-        int32_t sample = read_ptr[i]; // Read the full 32-bit sample
-        switch (config_.output_bitdepth) { // Convert based on the sink's configured output bit depth
-            case 16: // Target: 16-bit
-                // Writes MSB first (e.g., AA), then next MSB (e.g., BB) assuming network byte order matters?
-                // Let's stick to the original order: BB then AA for 0xAABBCCDD
-                // Write 2 bytes for 16-bit output
-                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF); // BB (Byte 1)
-                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF); // AA (Byte 0)
+        int32_t sample = read_ptr[i];
+        switch (config_.output_bitdepth) {
+            case 16:
+                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
+                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
                 break;
-            case 24: // Target: 24-bit
-                 // Original order: CC, BB, AA for 0xAABBCCDD
-                 // Write 3 bytes for 24-bit output
-                *write_ptr++ = static_cast<uint8_t>((sample >> 8) & 0xFF);  // CC (Byte 2)
-                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF); // BB (Byte 1)
-                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF); // AA (Byte 0)
+            case 24:
+                *write_ptr++ = static_cast<uint8_t>((sample >> 8) & 0xFF);
+                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
+                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
                 break;
-            case 32: // Target: 32-bit
-                 // Original order: DD, CC, BB, AA for 0xAABBCCDD
-                 // Write 4 bytes for 32-bit output
-                *write_ptr++ = static_cast<uint8_t>((sample) & 0xFF);       // DD (Byte 3)
-                *write_ptr++ = static_cast<uint8_t>((sample >> 8) & 0xFF);  // CC (Byte 2)
-                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF); // BB (Byte 1)
-                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF); // AA (Byte 0)
+            case 32:
+                *write_ptr++ = static_cast<uint8_t>((sample) & 0xFF);
+                *write_ptr++ = static_cast<uint8_t>((sample >> 8) & 0xFF);
+                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
+                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
                 break;
-             // Note: Bit depth 8 is not handled here, but was validated in constructor
         }
     }
-    // Calculate bytes actually written based on pointer difference
     size_t bytes_written = write_ptr - write_ptr_start;
     LOG_CPP_DEBUG("[SinkMixer:%s] Downscale: Conversion loop finished. Bytes written=%zu. Expected=%zu.",
                   config_.sink_id.c_str(), bytes_written, expected_bytes_to_write);
@@ -574,12 +569,14 @@ void SinkAudioMixer::downscale_buffer() {
                        config_.sink_id.c_str(), bytes_written, expected_bytes_to_write);
     }
 
-    // Update the write position in the payload_buffer_
     payload_buffer_write_pos_ += bytes_written;
     LOG_CPP_DEBUG("[SinkMixer:%s] Downscale complete. payload_buffer_write_pos_=%zu", config_.sink_id.c_str(), payload_buffer_write_pos_);
 }
 
-
+/**
+ * @brief Pre-processes the mixed audio into a stereo format for listeners and MP3 encoding.
+ * @return The number of stereo samples processed.
+ */
 size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
     if (!stereo_preprocessor_) {
         return 0;
@@ -609,6 +606,10 @@ size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
     return processed_samples_count;
 }
 
+/**
+ * @brief Dispatches the pre-processed stereo audio to all registered listeners.
+ * @param samples_to_dispatch The number of stereo samples to send.
+ */
 void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
     std::vector<std::string> closed_listeners_to_remove;
     
@@ -630,15 +631,13 @@ void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
 
         for (auto const& [id, sender] : listener_senders_) {
             if (sender) {
-                // Check if this is a closed WebRTC sender
                 if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
                     if (webrtc_sender->is_closed()) {
                         closed_listeners_to_remove.push_back(id);
                         LOG_CPP_INFO("[SinkMixer:%s] Found closed listener during dispatch: %s", config_.sink_id.c_str(), id.c_str());
-                        // ACTUALLY CLOSE THE CONNECTION!
                         webrtc_sender->close();
                         LOG_CPP_INFO("[SinkMixer:%s] Forcibly closed WebRTC connection during dispatch: %s", config_.sink_id.c_str(), id.c_str());
-                        continue; // Skip this closed sender
+                        continue;
                     }
                 }
                 sender->send_payload(payload_data, payload_size, empty_csrcs);
@@ -646,13 +645,16 @@ void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
         }
     }
 
-    // Remove closed listeners immediately (outside the lock to avoid deadlock)
     for (const auto& listener_id : closed_listeners_to_remove) {
         remove_listener(listener_id);
         LOG_CPP_INFO("[SinkMixer:%s] Immediately removed closed listener: %s", config_.sink_id.c_str(), listener_id.c_str());
     }
 }
 
+/**
+ * @brief Encodes the pre-processed stereo audio to MP3 and pushes it to the output queue.
+ * @param samples_to_encode The number of stereo samples to encode.
+ */
 void SinkAudioMixer::encode_and_push_mp3(size_t samples_to_encode) {
     if (!mp3_output_queue_ || !lame_global_flags_ || samples_to_encode == 0) {
         return;
@@ -685,18 +687,18 @@ void SinkAudioMixer::encode_and_push_mp3(size_t samples_to_encode) {
     }
 }
 
+/**
+ * @brief Periodically checks for and removes closed or timed-out WebRTC listeners.
+ */
 void SinkAudioMixer::cleanup_closed_listeners() {
-    // This method is called from the run() loop, so it's on the mixer's own thread.
     std::vector<std::string> listeners_to_remove;
     {
         std::lock_guard<std::mutex> lock(listener_senders_mutex_);
         for (const auto& pair : listener_senders_) {
-            // We must dynamic_cast to call the specific WebRtcSender method.
             if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(pair.second.get())) {
                 if (webrtc_sender->is_closed() || webrtc_sender->should_cleanup_due_to_timeout()) {
                     listeners_to_remove.push_back(pair.first);
                     LOG_CPP_INFO("[SinkMixer:%s] Found closed/timed-out listener to cleanup: %s", config_.sink_id.c_str(), pair.first.c_str());
-                    // ACTUALLY CLOSE THE CONNECTION!
                     webrtc_sender->close();
                     LOG_CPP_INFO("[SinkMixer:%s] Forcibly closed WebRTC connection for listener: %s", config_.sink_id.c_str(), pair.first.c_str());
                 }
@@ -704,57 +706,48 @@ void SinkAudioMixer::cleanup_closed_listeners() {
         }
     }
 
-    // Now, remove the collected listeners. This will call remove_listener, which
-    // acquires its own lock, but there is no deadlock because we are not holding
-    // the lock from the above scope.
     for (const auto& listener_id : listeners_to_remove) {
-        // This call is now safe as it's initiated from the mixer's thread, not a callback.
         remove_listener(listener_id);
         LOG_CPP_INFO("[SinkMixer:%s] Successfully cleaned up listener: %s", config_.sink_id.c_str(), listener_id.c_str());
     }
     
-    // Log listener count for monitoring
     if (!listeners_to_remove.empty()) {
         std::lock_guard<std::mutex> lock(listener_senders_mutex_);
         LOG_CPP_INFO("[SinkMixer:%s] Cleanup complete. Remaining listeners: %zu", config_.sink_id.c_str(), listener_senders_.size());
     }
 }
 
+/**
+ * @brief The main processing loop for the mixer thread.
+ */
 void SinkAudioMixer::run() {
     LOG_CPP_INFO("[SinkMixer:%s] Entering run loop.", config_.sink_id.c_str());
 
     LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Starting iteration.", config_.sink_id.c_str());
     while (!stop_flag_) {
-        // Periodically check for and clean up closed listeners to avoid deadlocks.
         cleanup_closed_listeners();
-        // 1. Wait for and retrieve data from source queues
         LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Waiting for source data...", config_.sink_id.c_str());
         bool data_available = wait_for_source_data(INPUT_WAIT_TIMEOUT);
         LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Wait finished. Data available: %s", config_.sink_id.c_str(), (data_available ? "true" : "false"));
 
         if (stop_flag_) {
              LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Stop flag checked after wait, breaking.", config_.sink_id.c_str());
-             break; // Check flag again after potentially waiting
+             break;
         }
 
-        // Lock queues mutex for mixing and state access
         std::unique_lock<std::mutex> lock(queues_mutex_);
 
-        if (data_available) { // Only mix and dispatch if new data was actually available this cycle
+        if (data_available) {
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Data available or queues not empty, proceeding to mix.", config_.sink_id.c_str());
-            // 2. Mix data from active source buffers
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing buffers...", config_.sink_id.c_str());
             mix_buffers();
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing complete.", config_.sink_id.c_str());
 
-            // Unlock queues mutex before potentially long operations
             lock.unlock();
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Queues mutex unlocked.", config_.sink_id.c_str());
 
-            // 3. Downscale mixed buffer to network format for primary output
             downscale_buffer();
 
-            // 4. Send network data if a full payload chunk has been accumulated
             if (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
                 if (network_sender_) {
                     std::lock_guard<std::mutex> lock(csrc_mutex_);
@@ -768,7 +761,6 @@ void SinkAudioMixer::run() {
                 payload_buffer_write_pos_ = bytes_remaining;
             }
 
-            // 5. Handle secondary outputs (WebRTC listeners and MP3 encoding)
             bool has_listeners;
             {
                 std::lock_guard<std::mutex> lock(listener_senders_mutex_);
@@ -788,14 +780,12 @@ void SinkAudioMixer::run() {
                 }
             }
         } else {
-            // No input queues connected or no data available from wait_for_source_data
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No data available and input queues empty. Sleeping briefly.", config_.sink_id.c_str());
             lock.unlock();
-            // Add a small sleep to prevent busy-waiting if there are truly no inputs or no data
-            std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Sleep 10ms
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: End of iteration.", config_.sink_id.c_str());
-    } // End while loop
+    }
 
     LOG_CPP_INFO("[SinkMixer:%s] Exiting run loop.", config_.sink_id.c_str());
 }

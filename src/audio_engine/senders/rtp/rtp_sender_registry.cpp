@@ -8,6 +8,9 @@ RtpSenderRegistry& RtpSenderRegistry::get_instance() {
     return instance;
 }
 
+RtpSenderRegistry::RtpSenderRegistry() = default;
+RtpSenderRegistry::~RtpSenderRegistry() = default;
+
 void RtpSenderRegistry::add_ssrc(uint32_t ssrc) {
     std::lock_guard<std::mutex> lock(mutex_);
     local_ssrcs_.insert(ssrc);

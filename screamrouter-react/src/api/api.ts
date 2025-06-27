@@ -98,6 +98,47 @@ export interface Equalizer {
   normalization_enabled?: boolean;
 }
 
+export interface StreamStats {
+  jitter_estimate_ms: number;
+  packets_per_second: number;
+  timeshift_buffer_size: number;
+}
+
+export interface SourceStats {
+  instance_id: string;
+  source_tag: string;
+  input_queue_size: number;
+  output_queue_size: number;
+  packets_processed_per_second: number;
+}
+
+export interface WebRtcListenerStats {
+  listener_id: string;
+  connection_state: string;
+  pcm_buffer_size: number;
+  packets_sent_per_second: number;
+}
+
+export interface SinkStats {
+  sink_id: string;
+  active_input_streams: number;
+  total_input_streams: number;
+  packets_mixed_per_second: number;
+  webrtc_listeners: WebRtcListenerStats[];
+}
+
+export interface GlobalStats {
+  timeshift_buffer_total_size: number;
+  packets_added_to_timeshift_per_second: number;
+}
+
+export interface AudioEngineStats {
+  global_stats: GlobalStats;
+  stream_stats: Record<string, StreamStats>;
+  source_stats: SourceStats[];
+  sink_stats: SinkStats[];
+}
+
 /**
  * Interface for WebSocket update message
  */
@@ -302,8 +343,11 @@ const ApiService = {
 
   updateRouteSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
       return axios.post(`/api/routes/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout);
-  }
+  },
   // --- End Speaker Layout Update Methods ---
+
+  // --- Stats ---
+  getStats: () => axios.get<AudioEngineStats>('/api/stats'),
 };
 
 export default ApiService;

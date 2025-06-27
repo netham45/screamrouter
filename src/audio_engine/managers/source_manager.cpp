@@ -153,5 +153,14 @@ std::map<std::string, std::shared_ptr<CommandQueue>>& SourceManager::get_command
     return m_command_queues;
 }
 
+std::vector<SourceInputProcessor*> SourceManager::get_all_processors() {
+    std::vector<SourceInputProcessor*> processors;
+    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    for (auto const& [id, proc] : m_sources) {
+        processors.push_back(proc.get());
+    }
+    return processors;
+}
+
 } // namespace audio
 } // namespace screamrouter

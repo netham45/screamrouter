@@ -80,6 +80,33 @@ std::string get_primary_source_ip() {
 }
 } // end anonymous namespace
 
+namespace { // Anonymous namespace for channel mapping helper
+
+// Based on Windows WAVEFORMATEXTENSIBLE dwChannelMask
+std::vector<int> get_channel_order_from_mask(uint8_t chlayout1, uint8_t chlayout2) {
+    uint32_t channel_mask = (static_cast<uint32_t>(chlayout2) << 8) | chlayout1;
+    std::vector<int> order;
+
+    // This is a simplified mapping based on common speaker setups.
+    // The order follows the typical WAV file channel order.
+    if (channel_mask & 0x00000001) order.push_back(1); // Front Left
+    if (channel_mask & 0x00000002) order.push_back(2); // Front Right
+    if (channel_mask & 0x00000004) order.push_back(3); // Front Center
+    if (channel_mask & 0x00000008) order.push_back(4); // LFE
+    if (channel_mask & 0x00000010) order.push_back(5); // Back Left
+    if (channel_mask & 0x00000020) order.push_back(6); // Back Right
+    if (channel_mask & 0x00000040) order.push_back(7); // Front Left of Center
+    if (channel_mask & 0x00000080) order.push_back(8); // Front Right of Center
+    if (channel_mask & 0x00000100) order.push_back(9); // Back Center
+    if (channel_mask & 0x00000200) order.push_back(10); // Side Left
+    if (channel_mask & 0x00000400) order.push_back(11); // Side Right
+    // Add other channels as needed based on the full dwChannelMask spec
+
+    return order;
+}
+
+} // end anonymous namespace
+
 RtpSender::RtpSender(const SinkMixerConfig& config)
     : config_(config),
       udp_socket_fd_(PLATFORM_INVALID_SOCKET),
@@ -367,35 +394,26 @@ void RtpSender::sap_announcement_loop() {
             sdp << "s=" << config_.sink_id << "\n";
             sdp << "c=IN IP4 " << config_.output_ip << "\n";
             sdp << "t=0 0\n";
-            sdp << "m=audio " << config_.output_port << " RTP/AVP " << RTP_PAYLOAD_TYPE_L16_48K_STEREO << "\n";
+            sdp << "m=audio " << config_.output_port << " RTP/AVP " << RTP_PAYLOAD_TYPE_L16_48K_STEREO << "\n"; 
             sdp << "a=rtpmap:" << RTP_PAYLOAD_TYPE_L16_48K_STEREO << " L16/48000/" << config_.output_channels << "\n";
+            sdp << "a=fmtp:" << RTP_PAYLOAD_TYPE_L16_48K_STEREO << " buffer-time=20\n";
             
-            // Add channel map if not in auto mode and channels > 2
-            if (!config_.speaker_layout.auto_mode && config_.output_channels > 2) {
-                std::stringstream channel_map_ss;
-                channel_map_ss << "a=channelmap:" << RTP_PAYLOAD_TYPE_L16_48K_STEREO << " " << config_.output_channels;
+            // Add channel map if channels > 2, using the scream channel layout
+            if (config_.output_channels > 2) {
+                std::vector<int> channel_order = get_channel_order_from_mask(config_.output_chlayout1, config_.output_chlayout2);
                 
-                std::vector<int> channel_order;
-                // This logic assumes a simple 1-to-1 mapping in the matrix.
-                // It finds which input channel (column) maps to each output channel (row).
-                for (int i = 0; i < config_.output_channels; ++i) {
-                    bool found = false;
-                    for (int j = 0; j < config_.output_channels; ++j) {
-                        if (config_.speaker_layout.matrix[i][j] == 1.0f) {
-                            channel_order.push_back(j + 1); // Channel numbers are 1-based
-                            found = true;
-                            break;
-                        }
+                // Ensure the channel order size matches the channel count for a valid map
+                if (channel_order.size() == static_cast<size_t>(config_.output_channels)) {
+                    std::stringstream channel_map_ss;
+                    channel_map_ss << "a=channelmap:" << RTP_PAYLOAD_TYPE_L16_48K_STEREO << " " << config_.output_channels;
+                    for (size_t i = 0; i < channel_order.size(); ++i) {
+                        channel_map_ss << (i == 0 ? " " : ",") << channel_order[i];
                     }
-                    if (!found) {
-                        channel_order.push_back(0); // Use 0 for unassigned channels
-                    }
+                    sdp << channel_map_ss.str() << "\n";
+                } else {
+                    LOG_CPP_WARNING("[RtpSender:%s] Channel mask layout does not match channel count. Mask: %02X%02X, Count: %d. Skipping channelmap.",
+                                    config_.sink_id.c_str(), config_.output_chlayout2, config_.output_chlayout1, config_.output_channels);
                 }
-
-                for (size_t i = 0; i < channel_order.size(); ++i) {
-                    channel_map_ss << (i == 0 ? " " : ",") << channel_order[i];
-                }
-                sdp << channel_map_ss.str() << "\n";
             }
 
             std::string sdp_str = sdp.str();

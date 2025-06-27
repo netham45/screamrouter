@@ -46,6 +46,7 @@ except ImportError:
 import src.constants.constants as constants
 from src.api.api_configuration import APIConfiguration
 from src.api.api_equalizer import APIEqualizer
+from src.api.api_stats import APIStats
 from src.api.api_webrtc import APIWebRTC
 from src.api.api_website import APIWebsite
 from src.api.api_websocket_config import APIWebsocketConfig
@@ -277,6 +278,7 @@ screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstrea
 api_controller = APIConfiguration(app, screamrouter_configuration)
 website: APIWebsite = APIWebsite(app, screamrouter_configuration)
 equalizer: APIEqualizer = APIEqualizer(app)
+stats_api: APIStats = APIStats(app, screamrouter_configuration)
 
 @app.on_event("startup")
 async def on_startup():

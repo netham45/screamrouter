@@ -1,3 +1,10 @@
+/**
+ * @file audio_processor.h
+ * @brief Defines the AudioProcessor class for handling core audio processing tasks.
+ * @details This class is responsible for a pipeline of audio operations including
+ *          volume adjustment, equalization, speaker mixing, and resampling. It is designed
+ *          to be used within a larger audio engine.
+ */
 #ifndef AUDIO_PROCESSOR_H
 #define AUDIO_PROCESSOR_H
 
@@ -5,48 +12,105 @@
 #include <cstring>
 #include <thread>
 #include <atomic>
-#include <vector> // Added for std::vector
-#include <map>    // Added for std::map
-#include <mutex>  // Added for std::mutex
-#include "../audio_constants.h" // For MAX_CHANNELS, EQ_BANDS
-#include "../configuration/audio_engine_config_types.h" // For CppSpeakerLayout
+#include <vector>
+#include <map>
+#include <mutex>
+#include "../audio_constants.h"
+#include "../configuration/audio_engine_config_types.h"
 
-// r8brain includes moved here, before class definition
+// r8brain includes
 #include "../deps/r8brain-free-src/r8bconf.h"
 #include "../deps/r8brain-free-src/CDSPResampler.h"
 
-// MAX_CHANNELS and EQ_BANDS are now in audio_constants.h
+/**
+ * @def CHUNK_SIZE
+ * @brief The size of the audio chunk in bytes to be processed at a time.
+ */
 #define CHUNK_SIZE 1152
 
-// struct SRC_STATE_tag; // No longer needed
-// typedef SRC_STATE_tag SRC_STATE; // No longer needed
 class Biquad;
 
-
+/**
+ * @class AudioProcessor
+ * @brief Manages the core audio processing pipeline.
+ * @details This class encapsulates all the logic for processing raw audio data.
+ *          This includes format conversion, volume control, equalization, speaker mixing,
+ *          and sample rate conversion. It uses the r8brain library for high-quality resampling.
+ */
 class AudioProcessor {
 public:
-    AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, 
+    /**
+     * @brief Constructs an AudioProcessor instance.
+     * @param inputChannels Number of input audio channels.
+     * @param outputChannels Number of output audio channels.
+     * @param inputBitDepth Bit depth of the input audio.
+     * @param inputSampleRate Sample rate of the input audio.
+     * @param outputSampleRate Sample rate of the output audio.
+     * @param volume Initial volume level.
+     * @param initial_layouts_config Initial map of speaker layouts keyed by input channel count.
+     */
+    AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth,
                    int inputSampleRate, int outputSampleRate, float volume,
-                   const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config); // Changed to audio namespace
+                   const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config);
+    /**
+     * @brief Destructor for the AudioProcessor.
+     */
     ~AudioProcessor();
 
+    /**
+     * @brief Processes a chunk of audio data.
+     * @param inputBuffer Pointer to the input audio buffer.
+     * @param outputBuffer Pointer to the output buffer for processed audio.
+     * @return The number of bytes written to the output buffer.
+     */
     int processAudio(const uint8_t* inputBuffer, int32_t* outputBuffer);
+
+    /**
+     * @brief Sets the volume level.
+     * @param newVolume The new volume level (e.g., 1.0 for normal).
+     */
     void setVolume(float newVolume);
+
+    /**
+     * @brief Sets the equalizer band gains.
+     * @param newEq Pointer to an array of floats representing the new EQ gains.
+     */
     void setEqualizer(const float* newEq);
+
+    /**
+     * @brief Enables or disables volume normalization.
+     * @param enabled True to enable, false to disable.
+     */
     void setVolumeNormalization(bool enabled);
+
+    /**
+     * @brief Enables or disables equalizer normalization.
+     * @param enabled True to enable, false to disable.
+     */
     void setEqNormalization(bool enabled);
     
-    // --- Speaker Layout Configuration Method ---
-    void update_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& new_layouts_config); // Changed to audio namespace
+    /**
+     * @brief Updates the speaker layout configuration.
+     * @param new_layouts_config A map of new speaker layouts.
+     */
+    void update_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& new_layouts_config);
 
-    // --- Old Speaker Mix Methods (still used by select_active_speaker_mix) ---
+    /**
+     * @brief Applies a custom speaker mix matrix.
+     * @param custom_matrix The custom speaker mix matrix to apply.
+     */
     void applyCustomSpeakerMix(const std::vector<std::vector<float>>& custom_matrix);
+
+    /**
+     * @brief Calculates and applies an automatic speaker mix based on input/output channels.
+     */
     void calculateAndApplyAutoSpeakerMix();
 
-private: // Changed from protected to private for better encapsulation
-    // --- New Speaker Layouts Map ---
-    std::map<int, screamrouter::audio::CppSpeakerLayout> speaker_layouts_config_; // Changed to audio namespace
-    std::mutex speaker_layouts_config_mutex_; // To protect access to speaker_layouts_config_
+private:
+    /** @brief Map of speaker layouts, keyed by the number of input channels. */
+    std::map<int, screamrouter::audio::CppSpeakerLayout> speaker_layouts_config_;
+    /** @brief Mutex to protect access to the speaker layouts configuration. */
+    std::mutex speaker_layouts_config_mutex_;
 
     // --- Core Audio Parameters ---
     int inputChannels, outputChannels;
@@ -63,38 +127,33 @@ private: // Changed from protected to private for better encapsulation
     bool eq_normalization_enabled_ = true;
     float current_gain_ = 1.0f;
 
+    // --- Internal Buffers ---
     std::vector<uint8_t> receive_buffer;
     std::vector<int32_t> scaled_buffer;
-    // uint8_t *scaled_buffer_int8 will be handled by reinterpret_cast<uint8_t*>(scaled_buffer.data())
     std::vector<int32_t> resampled_buffer;
     std::vector<std::vector<int32_t>> channel_buffers;
     std::vector<std::vector<int32_t>> remixed_channel_buffers;
     std::vector<int32_t> merged_buffer;
     std::vector<int32_t> processed_buffer;
 
-    size_t scale_buffer_pos = 0; // Changed to size_t for consistency with vector sizes
-    size_t process_buffer_pos = 0; // Changed to size_t
-    size_t merged_buffer_pos = 0;  // Changed to size_t
-    size_t resample_buffer_pos = 0; // Changed to size_t
-    size_t channel_buffer_pos = 0;  // Changed to size_t
+    // --- Buffer Position Trackers ---
+    size_t scale_buffer_pos = 0;
+    size_t process_buffer_pos = 0;
+    size_t merged_buffer_pos = 0;
+    size_t resample_buffer_pos = 0;
+    size_t channel_buffer_pos = 0;
 
-    // libsamplerate members removed
-    // SRC_STATE* sampler;
-    // SRC_STATE* downsampler;
-    // std::vector<float> resampler_data_in;
-    // std::vector<float> resampler_data_out;
-
-    // r8brain members added
-    std::vector<r8b::CDSPResampler24*> upsamplers; // Removed r8brain:: namespace
-    std::vector<r8b::CDSPResampler24*> downsamplers; // Removed r8brain:: namespace
+    // --- r8brain Resampler Members ---
+    std::vector<r8b::CDSPResampler24*> upsamplers;
+    std::vector<r8b::CDSPResampler24*> downsamplers;
     std::vector<std::vector<double>> r8brain_upsampler_in_buf;
     std::vector<std::vector<double>> r8brain_downsampler_in_buf;
 
+    // --- Filters ---
     Biquad* filters[screamrouter::audio::MAX_CHANNELS][screamrouter::audio::EQ_BANDS];
     Biquad* dcFilters[screamrouter::audio::MAX_CHANNELS];
 
-    // void updateSpeakerMix(); // This line will be removed or commented out if calculateAndApplyAutoSpeakerMix replaces it
-    // calculateAndApplyAutoSpeakerMix is now public
+    // --- Private Methods for Audio Pipeline Stages ---
     void setupBiquad();
     void initializeSampler();
     void scaleBuffer();
@@ -113,17 +172,17 @@ private: // Changed from protected to private for better encapsulation
     bool isProcessingRequiredCheck();
     void monitorBuffers();
 
-    // Buffer monitoring thread
+    // --- Buffer Monitoring Thread ---
     std::thread monitor_thread;
     std::atomic<bool> monitor_running;
 
-    // Cache for isProcessingRequired result
+    // --- Caching for Processing Requirement ---
     bool isProcessingRequiredCache = false;
     bool isProcessingRequiredCacheSet = false;
 
     // --- Private Helper Methods ---
-    void select_active_speaker_mix(); 
-    void select_active_speaker_mix_locked(); // New private method, assumes lock is held
+    void select_active_speaker_mix();
+    void select_active_speaker_mix_locked();
 };
 
 #endif // AUDIO_PROCESSOR_H

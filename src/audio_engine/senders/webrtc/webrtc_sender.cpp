@@ -359,6 +359,7 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
             rtc::FrameInfo frame_info(current_timestamp_);
             const auto* opus_data_byte_ptr = reinterpret_cast<const std::byte*>(opus_buffer_.data());
             audio_track_->sendFrame(rtc::binary(opus_data_byte_ptr, opus_data_byte_ptr + encoded_bytes), frame_info);
+            m_total_packets_sent++;
             current_timestamp_ += OPUS_FRAME_SAMPLES_PER_CHANNEL;
         }
         
@@ -423,6 +424,26 @@ void WebRtcSender::trigger_cleanup_if_needed() {
         cleanup_requested_.store(true);
         cleanup_callback_(listener_id_);
     }
+}
+
+WebRtcSenderStats WebRtcSender::get_stats() {
+    WebRtcSenderStats stats;
+    stats.total_packets_sent = m_total_packets_sent.load();
+    stats.pcm_buffer_size = pcm_buffer_.size();
+
+    std::string state_str;
+    switch (state_.load()) {
+        case rtc::PeerConnection::State::New: state_str = "New"; break;
+        case rtc::PeerConnection::State::Connecting: state_str = "Connecting"; break;
+        case rtc::PeerConnection::State::Connected: state_str = "Connected"; break;
+        case rtc::PeerConnection::State::Disconnected: state_str = "Disconnected"; break;
+        case rtc::PeerConnection::State::Failed: state_str = "Failed"; break;
+        case rtc::PeerConnection::State::Closed: state_str = "Closed"; break;
+        default: state_str = "Unknown"; break;
+    }
+    stats.connection_state = state_str;
+
+    return stats;
 }
 
 } // namespace audio

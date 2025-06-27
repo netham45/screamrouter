@@ -1,4 +1,9 @@
-// src/audio_engine/protocol_types.h
+/**
+ * @file protocol_types.h
+ * @brief Defines types related to network protocols used in the audio engine.
+ * @details This file contains enumerations and structures for configuring
+ *          different network protocols like legacy Scream and RTP.
+ */
 #ifndef PROTOCOL_TYPES_H
 #define PROTOCOL_TYPES_H
 
@@ -11,21 +16,27 @@ namespace screamrouter {
 namespace config {
 
 /**
+ * @enum ProtocolType
  * @brief Defines the network protocol to be used by a sender or receiver.
  */
 enum class ProtocolType {
-    LEGACY_SCREAM = 0,  // Use the original Scream protocol format.
-    RTP = 1             // Use the Real-time Transport Protocol (RTP).
+    LEGACY_SCREAM = 0,  ///< Use the original Scream protocol format.
+    RTP = 1             ///< Use the Real-time Transport Protocol (RTP).
 };
 
 /**
+ * @struct RTPConfigCpp
  * @brief Holds configuration parameters specific to the RTP protocol.
  */
 struct RTPConfigCpp {
-    int destination_port = 0;       // The UDP port to which RTP packets will be sent.
-    int source_listening_port = 0;  // The UDP port where the corresponding RTP source is listening.
-    uint8_t payload_type_pcm = 96;  // The RTP payload type identifier for raw PCM audio.
-    uint8_t payload_type_mp3 = 14;  // The RTP payload type identifier for MP3 audio.
+    /** @brief The UDP port to which RTP packets will be sent. */
+    int destination_port = 0;
+    /** @brief The UDP port where the corresponding RTP source is listening. */
+    int source_listening_port = 0;
+    /** @brief The RTP payload type identifier for raw PCM audio. */
+    uint8_t payload_type_pcm = 96;
+    /** @brief The RTP payload type identifier for MP3 audio. */
+    uint8_t payload_type_mp3 = 14;
 };
 
 /**

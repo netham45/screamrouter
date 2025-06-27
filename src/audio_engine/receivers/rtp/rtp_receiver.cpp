@@ -53,7 +53,8 @@ RtpReceiver::RtpReceiver(
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager)
     : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, "[RtpReceiver]"),
-      config_(config), epoll_fd_(NAR_INVALID_SOCKET_VALUE), last_known_ssrc_(0), ssrc_initialized_(false) {
+      config_(config), epoll_fd_(NAR_INVALID_SOCKET_VALUE), last_known_ssrc_(0), ssrc_initialized_(false),
+      is_accumulating_chunk_(false), chunk_first_packet_rtp_timestamp_(0), last_rtp_timestamp_(0), last_chunk_remainder_samples_(0) {
     pcm_accumulator_.reserve(TARGET_PCM_CHUNK_SIZE * 2);
     sap_listener_ = std::make_unique<SapListener>("[RtpReceiver-SAP]", config_.known_ips);
     if (sap_listener_) {
@@ -77,6 +78,7 @@ void RtpReceiver::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc) {
     log_message("SSRC changed. Old SSRC: " + std::string(old_ssrc_hex) +
                 ", New SSRC: " + std::string(new_ssrc_hex) + ". Clearing PCM accumulator.");
     pcm_accumulator_.clear();
+    is_accumulating_chunk_ = false; // Reset chunk accumulation on SSRC change
     log_message("Internal PCM accumulator cleared due to SSRC change.");
 }
 
@@ -265,54 +267,61 @@ void RtpReceiver::run() {
                             }
 
                             if (!has_props) {
-                                // If both lookups fail, log and ignore the packet
-                                if (sap_listener_) {
-                                    char client_ip_str[INET_ADDRSTRLEN];
-                                    inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
-                                    LOG_CPP_DEBUG(("Ignoring RTP packet from " + std::string(client_ip_str) +
-                                                " with unknown SSRC: " + std::to_string(current_ssrc) +
-                                                ". No matching SAP announcement found via SSRC or IP.").c_str());
-                                }
-                                continue;
+                            // If both lookups fail, log and ignore the packet
+                            if (sap_listener_) {
+                                char client_ip_str[INET_ADDRSTRLEN];
+                                inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
+                                LOG_CPP_DEBUG(("Ignoring RTP packet from " + std::string(client_ip_str) +
+                                            " with unknown SSRC: " + std::to_string(current_ssrc) +
+                                            ". No matching SAP announcement found via SSRC or IP.").c_str());
                             }
+                            continue;
+                        }
 
-                            std::vector<uint8_t> processed_payload(payload_data, payload_data + payload_len);
+                        // **FIX**: Capture timestamp info from the FIRST packet of a new chunk.
+                        if (!is_accumulating_chunk_) {
+                            chunk_first_packet_received_time_ = received_time;
+                            chunk_first_packet_rtp_timestamp_ = rtp_header->timestamp();
+                            is_accumulating_chunk_ = true;
+                        }
 
-                            bool system_is_le = is_system_little_endian();
-                            if ((props.endianness == Endianness::BIG && system_is_le) ||
-                                (props.endianness == Endianness::LITTLE && !system_is_le)) {
-                                swap_endianness(processed_payload.data(), processed_payload.size(), props.bit_depth);
-                            }
+                        std::vector<uint8_t> processed_payload(payload_data, payload_data + payload_len);
 
-                            pcm_accumulator_.insert(pcm_accumulator_.end(), processed_payload.begin(), processed_payload.end());
-                            last_rtp_packet_timestamp_ = received_time;
+                        bool system_is_le = is_system_little_endian();
+                        if ((props.endianness == Endianness::BIG && system_is_le) ||
+                            (props.endianness == Endianness::LITTLE && !system_is_le)) {
+                            swap_endianness(processed_payload.data(), processed_payload.size(), props.bit_depth);
+                        }
 
-                            while (pcm_accumulator_.size() >= TARGET_PCM_CHUNK_SIZE) {
-                                const rtc::RtpHeader* rtp_header = reinterpret_cast<const rtc::RtpHeader*>(raw_buffer);
-                                TaggedAudioPacket packet;
-                                packet.received_time = last_rtp_packet_timestamp_;
-                                packet.rtp_timestamp = rtp_header->timestamp(); // ntohl() is handled by libdatachannel
-                                
-                                // Populate SSRC and CSRCs
-                                packet.ssrcs.push_back(rtp_header->ssrc());
+                        pcm_accumulator_.insert(pcm_accumulator_.end(), processed_payload.begin(), processed_payload.end());
+
+                        while (pcm_accumulator_.size() >= TARGET_PCM_CHUNK_SIZE) {
+                            TaggedAudioPacket packet;
+                            // **FIX**: Use the timestamp from the FIRST packet that started this chunk.
+                            packet.received_time = chunk_first_packet_received_time_;
+                            packet.rtp_timestamp = chunk_first_packet_rtp_timestamp_;
+                            
+                            // Populate SSRC and CSRCs from the most recent RTP header
+                            const rtc::RtpHeader* current_rtp_header = reinterpret_cast<const rtc::RtpHeader*>(raw_buffer);
+                            packet.ssrcs.push_back(current_rtp_header->ssrc());
                                 
                                 // Manually extract CSRCs from the raw buffer
                                 const uint8_t csrc_count = rtp_header->csrcCount();
                                 if (csrc_count > 0) {
-                                    // The CSRC list starts after the fixed 12-byte header.
-                                    const uint8_t* csrc_ptr = raw_buffer + 12;
-                                    for (uint8_t i = 0; i < csrc_count; i++) {
-                                        uint32_t csrc;
-                                        // Copy 4 bytes into a uint32_t.
-                                        memcpy(&csrc, csrc_ptr, sizeof(uint32_t));
-                                        // The value is in network byte order, convert it to host byte order.
-                                        packet.ssrcs.push_back(ntohl(csrc));
-                                        csrc_ptr += sizeof(uint32_t);
-                                    }
-                                }
+                            // The CSRC list starts after the fixed 12-byte header.
+                            const uint8_t* csrc_ptr = raw_buffer + 12;
+                            for (uint8_t i = 0; i < csrc_count; i++) {
+                                uint32_t csrc;
+                                // Copy 4 bytes into a uint32_t.
+                                memcpy(&csrc, csrc_ptr, sizeof(uint32_t));
+                                // The value is in network byte order, convert it to host byte order.
+                                packet.ssrcs.push_back(ntohl(csrc));
+                                csrc_ptr += sizeof(uint32_t);
+                            }
+                        }
 
-                                // Use sender's IP address for source_tag
-                                char client_ip_str[INET_ADDRSTRLEN];
+                        // Use sender's IP address for source_tag
+                        char client_ip_str[INET_ADDRSTRLEN];
                                 inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
                                 packet.source_tag = client_ip_str;
                                 
@@ -324,12 +333,15 @@ void RtpReceiver::run() {
                                 packet.chlayout1 = 0x03; // Stereo L/R
                                 packet.chlayout2 = 0x00;
 
-                                packet.audio_data.assign(pcm_accumulator_.begin(), pcm_accumulator_.begin() + TARGET_PCM_CHUNK_SIZE);
-                                pcm_accumulator_.erase(pcm_accumulator_.begin(), pcm_accumulator_.begin() + TARGET_PCM_CHUNK_SIZE);
+                        packet.audio_data.assign(pcm_accumulator_.begin(), pcm_accumulator_.begin() + TARGET_PCM_CHUNK_SIZE);
+                        pcm_accumulator_.erase(pcm_accumulator_.begin(), pcm_accumulator_.begin() + TARGET_PCM_CHUNK_SIZE);
+                        
+                        // **FIX**: Reset the accumulation flag after sending a chunk.
+                        is_accumulating_chunk_ = false;
 
-                                if (timeshift_manager_) {
-                                    timeshift_manager_->add_packet(std::move(packet));
-                                }
+                        if (timeshift_manager_) {
+                            timeshift_manager_->add_packet(std::move(packet));
+                        }
 
                                 bool new_tag = false;
                                 {

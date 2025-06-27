@@ -1,3 +1,11 @@
+/**
+ * @file thread_safe_queue.h
+ * @brief Defines a generic, thread-safe queue for inter-thread communication.
+ * @details This file contains the `ThreadSafeQueue` class template, which provides a
+ *          blocking, thread-safe queue implementation using a `std::deque`, `std::mutex`,
+ *          and `std::condition_variable`. It's a fundamental utility for passing data
+ *          between different audio components running in separate threads.
+ */
 #ifndef THREAD_SAFE_QUEUE_H
 #define THREAD_SAFE_QUEUE_H
 
@@ -5,51 +13,58 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
-#include <memory> // For std::move
+#include <memory>
 
 namespace screamrouter {
 namespace audio {
 namespace utils {
 
+/**
+ * @class ThreadSafeQueue
+ * @brief A template class for a thread-safe queue.
+ * @tparam T The type of elements to be stored in the queue.
+ */
 template <typename T>
 class ThreadSafeQueue {
 public:
+    /**
+     * @brief Default constructor.
+     */
     ThreadSafeQueue() : stop_requested_(false) {}
 
-    // Non-copyable and non-movable for simplicity, manage via pointers (e.g., shared_ptr)
+    // The queue is non-copyable and non-movable to enforce management via pointers.
     ThreadSafeQueue(const ThreadSafeQueue&) = delete;
     ThreadSafeQueue& operator=(const ThreadSafeQueue&) = delete;
     ThreadSafeQueue(ThreadSafeQueue&&) = delete;
     ThreadSafeQueue& operator=(ThreadSafeQueue&&) = delete;
 
     /**
-     * @brief Pushes an item onto the queue. Thread-safe.
-     * @param item The item to push (will be moved).
+     * @brief Pushes an item onto the queue in a thread-safe manner.
+     * @param item The item to push (will be moved into the queue).
      */
     void push(T item) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (stop_requested_) {
-                // Optional: Throw an exception or handle if pushing after stop is invalid
                 return;
             }
             queue_.push_back(std::move(item));
-        } // Mutex released here
+        }
         cond_.notify_one();
     }
 
     /**
-     * @brief Pops an item from the queue. Blocks if the queue is empty until an item
-     *        is available or stop() is called. Thread-safe.
-     * @param item Reference to store the popped item.
-     * @return true if an item was successfully popped, false if the queue was stopped.
+     * @brief Pops an item from the queue, blocking if the queue is empty.
+     * @details This method will wait until an item is available or until `stop()` is called.
+     * @param item A reference to store the popped item.
+     * @return `true` if an item was successfully popped, `false` if the queue was stopped and is empty.
      */
     bool pop(T& item) {
         std::unique_lock<std::mutex> lock(mutex_);
         cond_.wait(lock, [this] { return !queue_.empty() || stop_requested_; });
 
         if (stop_requested_ && queue_.empty()) {
-            return false; // Stopped and no items left
+            return false;
         }
 
         if (!queue_.empty()) {
@@ -57,22 +72,18 @@ public:
             queue_.pop_front();
             return true;
         }
-
-        // Should not be reached if logic is correct, but handle defensively
         return false;
     }
 
     /**
-     * @brief Attempts to pop an item from the queue without blocking. Thread-safe.
-     * @param item Reference to store the popped item if successful.
-     * @return true if an item was popped, false if the queue was empty.
+     * @brief Attempts to pop an item from the queue without blocking.
+     * @param item A reference to store the popped item if successful.
+     * @return `true` if an item was popped, `false` if the queue was empty.
      */
     bool try_pop(T& item) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (queue_.empty() || stop_requested_) { // Don't pop if stopped, even if items remain? Or allow draining? Let's allow draining.
-             if (queue_.empty()) {
-                return false;
-             }
+        if (queue_.empty()) {
+            return false;
         }
         item = std::move(queue_.front());
         queue_.pop_front();
@@ -80,21 +91,21 @@ public:
     }
 
     /**
-     * @brief Signals the queue to stop blocking operations and notifies waiting threads.
-     *        After calling stop(), subsequent push operations might be ignored or throw,
-     *        and pop operations will return false once the queue is empty. Thread-safe.
+     * @brief Signals the queue to stop blocking operations.
+     * @details This notifies all waiting threads to wake up. After `stop()` is called,
+     *          `pop()` will return `false` once the queue becomes empty.
      */
     void stop() {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             stop_requested_ = true;
-        } // Mutex released here
-        cond_.notify_all(); // Wake up all waiting threads
+        }
+        cond_.notify_all();
     }
 
     /**
-     * @brief Checks if the queue is currently empty. Thread-safe.
-     * @return true if the queue is empty, false otherwise.
+     * @brief Checks if the queue is currently empty.
+     * @return `true` if the queue is empty, `false` otherwise.
      */
     bool empty() const {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -102,7 +113,7 @@ public:
     }
 
     /**
-     * @brief Gets the current number of items in the queue. Thread-safe.
+     * @brief Gets the current number of items in the queue.
      * @return The number of items in the queue.
      */
     size_t size() const {
@@ -111,16 +122,15 @@ public:
     }
 
     /**
-     * @brief Checks if the queue has been stopped. Thread-safe.
-     * @return true if stop() has been called, false otherwise.
+     * @brief Checks if the queue has been stopped.
+     * @return `true` if `stop()` has been called, `false` otherwise.
      */
     bool is_stopped() const {
-        // No lock needed for atomic read
         return stop_requested_;
     }
 
 private:
-    mutable std::mutex mutex_; // Mutable to allow locking in const methods like empty() and size()
+    mutable std::mutex mutex_;
     std::condition_variable cond_;
     std::deque<T> queue_;
     std::atomic<bool> stop_requested_;

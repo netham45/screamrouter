@@ -37,7 +37,8 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
         m_webrtc_manager = std::make_unique<WebRtcManager>(m_manager_mutex, m_sink_manager.get(), m_sink_manager->get_sink_configs());
         m_connection_manager = std::make_unique<ConnectionManager>(m_manager_mutex, m_source_manager.get(), m_sink_manager.get(), m_source_manager->get_source_to_sink_queues(), m_source_manager->get_sources());
         m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_source_manager->get_command_queues(), m_timeshift_manager.get(), m_source_manager->get_sources());
-        m_data_api_manager = std::make_unique<DataApiManager>(m_manager_mutex, m_sink_manager->get_mp3_output_queues(), m_sink_manager->get_sink_configs());
+        m_mp3_data_api_manager = std::make_unique<MP3DataApiManager>(m_manager_mutex, m_sink_manager->get_mp3_output_queues(), m_sink_manager->get_sink_configs());
+        m_stats_manager = std::make_unique<StatsManager>(m_timeshift_manager.get(), m_source_manager.get(), m_sink_manager.get());
 
         if (!m_receiver_manager->initialize_receivers(rtp_listen_port, m_notification_queue)) {
             throw std::runtime_error("Failed to initialize receivers");
@@ -45,6 +46,7 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
 
         m_timeshift_manager->start();
         m_receiver_manager->start_receivers();
+        m_stats_manager->start();
         
         m_notification_thread = std::thread(&AudioManager::process_notifications, this);
 
@@ -85,17 +87,22 @@ void AudioManager::shutdown() {
     if (m_timeshift_manager) {
         m_timeshift_manager->stop();
     }
+
+    if (m_stats_manager) {
+        m_stats_manager->stop();
+    }
     
     // The managers will be destroyed automatically via unique_ptr,
     // which will stop any components they own.
     m_receiver_manager.reset();
     m_webrtc_manager.reset();
-    m_data_api_manager.reset();
+    m_mp3_data_api_manager.reset();
     m_control_api_manager.reset();
     m_connection_manager.reset();
     m_sink_manager.reset();
     m_source_manager.reset();
     m_timeshift_manager.reset();
+    m_stats_manager.reset();
 
     LOG_CPP_INFO("AudioManager shutdown complete.");
 }
@@ -141,11 +148,11 @@ void AudioManager::update_source_parameters(const std::string& instance_id, Sour
 }
 
 std::vector<uint8_t> AudioManager::get_mp3_data(const std::string& sink_id) {
-    return m_data_api_manager ? m_data_api_manager->get_mp3_data(sink_id, m_running) : std::vector<uint8_t>();
+    return m_mp3_data_api_manager ? m_mp3_data_api_manager->get_mp3_data(sink_id, m_running) : std::vector<uint8_t>();
 }
 
 std::vector<uint8_t> AudioManager::get_mp3_data_by_ip(const std::string& ip_address) {
-    return m_data_api_manager ? m_data_api_manager->get_mp3_data_by_ip(ip_address, m_running) : std::vector<uint8_t>();
+    return m_mp3_data_api_manager ? m_mp3_data_api_manager->get_mp3_data_by_ip(ip_address, m_running) : std::vector<uint8_t>();
 }
 
 std::vector<std::string> AudioManager::get_rtp_receiver_seen_tags() {
@@ -222,6 +229,13 @@ void AudioManager::add_webrtc_remote_ice_candidate(const std::string& sink_id, c
     if (m_webrtc_manager) {
         m_webrtc_manager->add_webrtc_remote_ice_candidate(sink_id, listener_id, candidate, sdpMid, m_running);
     }
+}
+
+AudioEngineStats AudioManager::get_audio_engine_stats() {
+    if (m_stats_manager) {
+        return m_stats_manager->get_current_stats();
+    }
+    return AudioEngineStats();
 }
 
 void AudioManager::process_notifications() {

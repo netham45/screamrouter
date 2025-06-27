@@ -1,7 +1,15 @@
+/**
+ * @file network_audio_receiver.h
+ * @brief Defines the base class for all network audio receivers.
+ * @details This file contains the abstract base class `NetworkAudioReceiver`, which provides
+ *          the core functionality for receiving audio packets from the network. It handles
+ *          socket setup, the main receive loop, and management of seen source tags.
+ *          Derived classes must implement the protocol-specific logic for packet validation
+ *          and processing.
+ */
 #ifndef NETWORK_AUDIO_RECEIVER_H
 #define NETWORK_AUDIO_RECEIVER_H
 
-// Standard library includes first
 #include <string>
 #include <vector>
 #include <set>
@@ -10,12 +18,11 @@
 #include <atomic>
 #include <chrono>
 
-// Project headers
 #include "../utils/audio_component.h"
-#include "../utils/thread_safe_queue.h" // Ensure this is included at the top level, after std libs
-#include "../audio_types.h" // For NewSourceNotification, TaggedAudioPacket, TimeshiftManager
+#include "../utils/thread_safe_queue.h"
+#include "../audio_types.h"
 
-// Platform-specific socket includes
+// Platform-specific socket includes and type definitions
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
@@ -29,8 +36,8 @@
     #include <sys/socket.h>
     #include <netinet/in.h>
     #include <arpa/inet.h>
-    #include <unistd.h> // For close
-    #include <poll.h>   // For poll
+    #include <unistd.h>
+    #include <poll.h>
     #include <errno.h>
     using socket_t = int;
     #define NAR_INVALID_SOCKET_VALUE -1
@@ -41,37 +48,56 @@
 namespace screamrouter {
 namespace audio {
 
-// Forward declaration
-class TimeshiftManager; // Forward declare
+class TimeshiftManager;
 
-// Note: Including thread_safe_queue.h which defines the ThreadSafeQueue in the screamrouter::audio::utils namespace
 using NotificationQueue = screamrouter::audio::utils::ThreadSafeQueue<NewSourceNotification>;
-// TaggedAudioPacket is defined in audio_types.h
 
+/**
+ * @class NetworkAudioReceiver
+ * @brief An abstract base class for components that receive audio from the network.
+ * @details This class implements the `AudioComponent` interface and provides a common
+ *          framework for receiving UDP packets. It manages a socket, runs a receive
+ *          loop in a dedicated thread, and forwards received packets to a `TimeshiftManager`.
+ *          Derived classes must implement the protocol-specific parsing and validation logic.
+ */
 class NetworkAudioReceiver : public AudioComponent {
 public:
+    /**
+     * @brief Constructs a NetworkAudioReceiver.
+     * @param listen_port The UDP port to listen on.
+     * @param notification_queue A queue for sending notifications about new sources.
+     * @param timeshift_manager A pointer to the `TimeshiftManager` to which packets will be sent.
+     * @param logger_prefix A prefix string for log messages.
+     */
     NetworkAudioReceiver(
         uint16_t listen_port,
         std::shared_ptr<NotificationQueue> notification_queue,
         TimeshiftManager* timeshift_manager,
         std::string logger_prefix
     );
+    /**
+     * @brief Virtual destructor.
+     */
     virtual ~NetworkAudioReceiver() noexcept;
 
-    // --- AudioComponent Interface ---
+    /** @brief Starts the receiver's processing thread. */
     void start() override;
+    /** @brief Stops the receiver's processing thread. */
     void stop() override;
 
+    /**
+     * @brief Gets a list of all unique source tags seen by this receiver.
+     * @return A vector of strings, each representing a source tag.
+     */
     std::vector<std::string> get_seen_tags();
 
 protected:
-    // --- AudioComponent Interface ---
-    void run() override; // The main thread loop
+    /** @brief The main processing loop for the receiver thread. */
+    void run() override;
 
     // --- Pure Virtual Methods for Derived Classes ---
     /**
-     * @brief Performs basic structural validation of the received packet.
-     * E.g., checks size for Raw/PerProcess, or minimum size for RTP header.
+     * @brief Performs basic structural validation of a received packet.
      * @param buffer Pointer to the start of the received UDP payload.
      * @param size Size of the received payload.
      * @param client_addr The address of the client that sent the packet.
@@ -81,13 +107,11 @@ protected:
 
     /**
      * @brief Processes the payload of a structurally valid packet.
-     * This method should parse the packet type (RTP, Raw Scream, Per-Process Scream),
-     * extract the source_tag, populate the out_packet with audio data and format.
      * @param buffer Pointer to the start of the received UDP payload.
      * @param size Size of the received payload.
      * @param client_addr The address of the client that sent the packet.
      * @param received_time The time the packet was received.
-     * @param out_packet Reference to a TaggedAudioPacket to be populated.
+     * @param out_packet Reference to a `TaggedAudioPacket` to be populated.
      * @param out_source_tag Reference to a string to store the extracted source tag.
      * @return true if the payload is successfully parsed and validated, false otherwise.
      */
@@ -102,19 +126,21 @@ protected:
 
     /**
      * @brief Gets the recommended size for the receive buffer.
-     * @return The size of the receive buffer.
+     * @return The size of the receive buffer in bytes.
      */
     virtual size_t get_receive_buffer_size() const = 0;
 
     /**
-     * @brief Gets the timeout value for the poll() call in milliseconds.
+     * @brief Gets the timeout value for the `poll()` call.
      * @return The poll timeout in milliseconds.
      */
     virtual int get_poll_timeout_ms() const = 0;
 
 
     // --- Common Helper Methods ---
+    /** @brief Sets up the UDP socket for listening. */
     virtual bool setup_socket();
+    /** @brief Closes the UDP socket. */
     virtual void close_socket();
     void log_message(const std::string& msg);
     void log_error(const std::string& msg);

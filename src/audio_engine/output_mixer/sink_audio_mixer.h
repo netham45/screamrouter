@@ -1,131 +1,175 @@
+/**
+ * @file sink_audio_mixer.h
+ * @brief Defines the SinkAudioMixer class for mixing and outputting audio.
+ * @details This class is responsible for collecting processed audio chunks from multiple
+ *          source processors, mixing them together, and sending the final output to a
+ *          network destination. It can also encode the output to MP3 and handle
+ *          multiple network listeners (e.g., for WebRTC).
+ */
 #ifndef SINK_AUDIO_MIXER_H
 #define SINK_AUDIO_MIXER_H
 
-// Define platform-specific socket types and macros FIRST
 #include "../utils/audio_component.h"
 #include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
-#include "../senders/i_network_sender.h" // Include the new interface
+#include "../senders/i_network_sender.h"
 
 #include <string>
 #include <vector>
 #include <map>
-#include <memory> // For shared_ptr, unique_ptr
+#include <memory>
 #include <mutex>
 #include <condition_variable>
-#include <lame/lame.h> // For LAME MP3 encoding
+#include <lame/lame.h>
+#include <atomic>
 
-
-// Forward declare AudioProcessor
 class AudioProcessor;
 
 namespace screamrouter {
 namespace audio {
 
-// Using aliases for clarity
+/**
+ * @struct SinkAudioMixerStats
+ * @brief Holds raw statistics collected from the SinkAudioMixer.
+ */
+struct SinkAudioMixerStats {
+    uint64_t total_chunks_mixed = 0;
+    size_t active_input_streams = 0;
+    size_t total_input_streams = 0;
+    std::vector<std::string> listener_ids;
+};
+
 using InputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using Mp3OutputQueue = utils::ThreadSafeQueue<EncodedMP3Data>;
 
-// Define constants based on the network protocol requirement of 1152 bytes output payload
-const size_t SINK_CHUNK_SIZE_BYTES = 1152; // Network output payload size (protocol spec)
-// Mixing buffer holds enough 32-bit samples to generate 1152 bytes after downscaling.
-// For 16-bit stereo output (current test case): 1152 bytes / (16/8 bytes/sample) = 576 samples.
-const size_t SINK_MIXING_BUFFER_SAMPLES = 576; // Samples needed for 1152 bytes @ 16-bit stereo
-const size_t SINK_MP3_BUFFER_SIZE = SINK_CHUNK_SIZE_BYTES * 8; // Generous buffer for MP3 output
+/** @brief The size of the network output payload in bytes. */
+const size_t SINK_CHUNK_SIZE_BYTES = 1152;
+/** @brief The number of 32-bit samples required in the mixing buffer to produce a full output chunk. */
+const size_t SINK_MIXING_BUFFER_SAMPLES = 576;
+/** @brief A generous buffer size for MP3 encoding output. */
+const size_t SINK_MP3_BUFFER_SIZE = SINK_CHUNK_SIZE_BYTES * 8;
 
+/**
+ * @class SinkAudioMixer
+ * @brief Mixes audio from multiple sources and sends it to a network sink.
+ * @details This component runs its own thread to pull processed audio chunks from one or
+ *          more input queues, mix them, and then dispatch the result. It can send the
+ *          output via a primary network sender (e.g., UDP) and also to multiple
+ *          additional listeners (e.g., WebRTC peers). It can optionally encode the
+ *          mixed audio to MP3 and place it in an output queue.
+ */
 class SinkAudioMixer : public AudioComponent {
 public:
-    // Input queues map: Key is the unique source instance ID
+    /** @brief A map of input queues, keyed by the unique source instance ID. */
     using InputQueueMap = std::map<std::string, std::shared_ptr<InputChunkQueue>>;
 
+    /**
+     * @brief Constructs a SinkAudioMixer.
+     * @param config The configuration for this sink mixer.
+     * @param mp3_output_queue A shared pointer to a queue for MP3 data. Can be nullptr if MP3 output is disabled.
+     */
     SinkAudioMixer(
         SinkMixerConfig config,
-        std::shared_ptr<Mp3OutputQueue> mp3_output_queue // Can be nullptr if MP3 not needed
+        std::shared_ptr<Mp3OutputQueue> mp3_output_queue
     );
 
+    /**
+     * @brief Destructor. Stops the mixer thread and cleans up resources.
+     */
     ~SinkAudioMixer() override;
 
-    // --- AudioComponent Interface ---
+    /** @brief Starts the mixer's processing thread. */
     void start() override;
+    /** @brief Stops the mixer's processing thread. */
     void stop() override;
 
-    // --- SinkAudioMixer Specific ---
     /**
-     * @brief Adds an input queue from a SourceInputProcessor instance.
-     * @param instance_id The unique identifier of the source processor instance providing the queue.
-     * @param queue Shared pointer to the source instance's output queue (`ProcessedAudioChunk`).
+     * @brief Adds an input queue from a source processor.
+     * @param instance_id The unique ID of the source processor instance.
+     * @param queue A shared pointer to the source's output queue.
      */
     void add_input_queue(const std::string& instance_id, std::shared_ptr<InputChunkQueue> queue);
 
     /**
-     * @brief Removes an input queue associated with a source processor instance ID.
-     * @param instance_id The unique identifier of the source processor instance whose queue should be removed.
+     * @brief Removes an input queue.
+     * @param instance_id The unique ID of the source processor instance whose queue should be removed.
      */
     void remove_input_queue(const std::string& instance_id);
 
-    /**
-     * @brief Updates the TCP file descriptor if the connection changes.
-     *        Assumes external management of the TCP connection itself.
-     * @param fd The new TCP socket file descriptor, or -1 if disconnected.
-     */
-    // void set_tcp_fd(int fd); // Removed
+    /** @brief Gets the MP3 output queue. */
     std::shared_ptr<Mp3OutputQueue> get_mp3_queue() const { return mp3_output_queue_; }
 
+    /**
+     * @brief Adds a network listener to this sink.
+     * @param listener_id A unique ID for the listener.
+     * @param sender A unique pointer to the listener's network sender.
+     */
     void add_listener(const std::string& listener_id, std::unique_ptr<INetworkSender> sender);
+    /**
+     * @brief Removes a network listener from this sink.
+     * @param listener_id The ID of the listener to remove.
+     */
     void remove_listener(const std::string& listener_id);
+    /**
+     * @brief Gets a raw pointer to a listener's network sender.
+     * @param listener_id The ID of the listener.
+     * @return A pointer to the `INetworkSender`, or `nullptr` if not found.
+     */
     INetworkSender* get_listener(const std::string& listener_id);
+
+    /**
+     * @brief Retrieves the current statistics from the mixer.
+     * @return A struct containing the current stats.
+     */
+    SinkAudioMixerStats get_stats();
+
+    /**
+     * @brief Gets the configuration of the sink mixer.
+     * @return The sink mixer's configuration.
+     */
+    const SinkMixerConfig& get_config() const;
  
  protected:
-     // --- AudioComponent Interface ---
-    void run() override; // The main thread loop
+     /** @brief The main processing loop for the mixer thread. */
+    void run() override;
 
 private:
     SinkMixerConfig config_;
-    std::shared_ptr<Mp3OutputQueue> mp3_output_queue_; // Null if MP3 output disabled
-    std::unique_ptr<INetworkSender> network_sender_; // The sender implementation
+    std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
+    std::unique_ptr<INetworkSender> network_sender_;
     
-    // Listener Senders
     std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
     std::mutex listener_senders_mutex_;
 
-    // Input queues from SourceInputProcessors
     InputQueueMap input_queues_;
-    std::mutex queues_mutex_; // Protects input_queues_, input_active_state_, source_buffers_
+    std::mutex queues_mutex_;
 
-    // Track active state per source instance queue
-    std::map<std::string, bool> input_active_state_; // Key is instance_id
+    std::map<std::string, bool> input_active_state_;
+    std::map<std::string, ProcessedAudioChunk> source_buffers_;
 
-    // Buffers to hold the latest chunk popped from each source instance *this cycle*
-    std::map<std::string, ProcessedAudioChunk> source_buffers_; // Key is instance_id
-
-    // Condition variable to wait for input data (used minimally in this approach)
-    std::condition_variable input_cv_; // KEEP if needed elsewhere, but wait_for logic changes
-    std::mutex input_cv_mutex_;      // KEEP if needed elsewhere
+    std::condition_variable input_cv_;
+    std::mutex input_cv_mutex_;
 
     const std::chrono::milliseconds GRACE_PERIOD_TIMEOUT{45};
     const std::chrono::milliseconds GRACE_PERIOD_POLL_INTERVAL{1};
 
-    // Mixing buffer (32-bit)
     std::vector<int32_t> mixing_buffer_;
-    std::vector<int32_t> stereo_buffer_; // Buffer for stereo-processed audio
-    // Payload buffer (double buffer)
-    std::vector<uint8_t> payload_buffer_; // Size = SINK_CHUNK_SIZE_BYTES * 2
-    size_t payload_buffer_write_pos_ = 0; // Position where next downscaled byte goes
+    std::vector<int32_t> stereo_buffer_;
+    std::vector<uint8_t> payload_buffer_;
+    size_t payload_buffer_write_pos_ = 0;
     
-    // CSRC/SSRC tracking
     std::vector<uint32_t> current_csrcs_;
     std::mutex csrc_mutex_;
 
-    // LAME MP3 Encoder state
     lame_t lame_global_flags_ = nullptr;
-    std::unique_ptr<AudioProcessor> stereo_preprocessor_; // Preprocessor for LAME and WebRTC listeners
-    std::vector<uint8_t> mp3_encode_buffer_; // Temporary buffer for encoded MP3 data
+    std::unique_ptr<AudioProcessor> stereo_preprocessor_;
+    std::vector<uint8_t> mp3_encode_buffer_;
 
-    // Internal Methods
+    std::atomic<uint64_t> m_total_chunks_mixed{0};
+
     void initialize_lame();
     void close_lame();
 
-    // Main loop helpers
     bool wait_for_source_data(std::chrono::milliseconds timeout);
     void mix_buffers();
     void downscale_buffer();

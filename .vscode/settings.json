@@ -83,7 +83,8 @@
         "future": "cpp",
         "ranges": "cpp",
         "shared_mutex": "cpp",
-        "span": "cpp"
+        "span": "cpp",
+        "complex": "cpp"
     },
     "cmake.configureOnOpen": false,
     "c-cpp-flylint.cppcheck.extraArgs": [

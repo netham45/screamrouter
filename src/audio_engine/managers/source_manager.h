@@ -1,3 +1,9 @@
+/**
+ * @file source_manager.h
+ * @brief Defines the SourceManager class for managing audio sources.
+ * @details This class handles the creation, configuration, and lifecycle of
+ *          `SourceInputProcessor` instances, which represent individual audio sources.
+ */
 #ifndef SOURCE_MANAGER_H
 #define SOURCE_MANAGER_H
 
@@ -17,22 +23,59 @@ namespace audio {
 
 class TimeshiftManager;
 
+/**
+ * @class SourceManager
+ * @brief Manages all audio sources in the audio engine.
+ * @details This class is responsible for the lifecycle of `SourceInputProcessor` objects.
+ *          It provides an interface to configure new sources and remove existing ones,
+ *          and it manages the various queues associated with each source.
+ */
 class SourceManager {
 public:
+    /**
+     * @brief Constructs a SourceManager.
+     * @param manager_mutex A reference to the main AudioManager mutex for thread safety.
+     * @param timeshift_manager A pointer to the TimeshiftManager for registering new processors.
+     */
     SourceManager(std::mutex& manager_mutex, TimeshiftManager* timeshift_manager);
+    /**
+     * @brief Destructor.
+     */
     ~SourceManager();
 
+    /**
+     * @brief Configures and creates a new source processor instance.
+     * @param config The configuration for the new source.
+     * @param running A flag indicating if the audio engine is running.
+     * @return A unique instance ID for the newly created source processor, or an empty string on failure.
+     */
     std::string configure_source(const SourceConfig& config, bool running);
+    /**
+     * @brief Removes an existing source processor instance.
+     * @param instance_id The unique ID of the source processor to remove.
+     * @return true if the source was removed successfully, false otherwise.
+     */
     bool remove_source(const std::string& instance_id);
 
-    // Other public methods to be added as needed...
-
-    // Getter methods for AudioManager
+    /** @brief Gets a reference to the map of active source processors. */
     std::map<std::string, std::unique_ptr<SourceInputProcessor>>& get_sources();
+    /** @brief Gets a reference to the map of source-to-sink chunk queues. */
     std::map<std::string, std::shared_ptr<ChunkQueue>>& get_source_to_sink_queues();
+    /** @brief Gets a reference to the map of command queues for sources. */
     std::map<std::string, std::shared_ptr<CommandQueue>>& get_command_queues();
 
+    /**
+     * @brief Gets a vector of pointers to all active source processors.
+     * @return A vector of `SourceInputProcessor` pointers.
+     */
+    std::vector<SourceInputProcessor*> get_all_processors();
+
 private:
+    /**
+     * @brief Generates a unique identifier for a new source processor instance.
+     * @param base_tag The source tag to use as a base for the ID.
+     * @return A unique string ID.
+     */
     std::string generate_unique_instance_id(const std::string& base_tag);
 
     std::mutex& m_manager_mutex;

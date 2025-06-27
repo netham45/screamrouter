@@ -144,5 +144,14 @@ std::vector<std::string> SinkManager::get_sink_ids() {
     return ids;
 }
 
+std::vector<SinkAudioMixer*> SinkManager::get_all_mixers() {
+    std::vector<SinkAudioMixer*> mixers;
+    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    for (auto const& [id, mixer] : m_sinks) {
+        mixers.push_back(mixer.get());
+    }
+    return mixers;
+}
+
 } // namespace audio
 } // namespace screamrouter

@@ -100,11 +100,16 @@ const std::string& SourceInputProcessor::get_source_tag() const {
     return config_.source_tag;
 }
 
-// --- Plugin Data Injection ---
-    // Method void SourceInputProcessor::inject_plugin_packet(...) is removed.
-
-
+SourceInputProcessorStats SourceInputProcessor::get_stats() {
+    SourceInputProcessorStats stats;
+    stats.total_packets_processed = m_total_packets_processed.load();
+    stats.input_queue_size = input_queue_ ? input_queue_->size() : 0;
+    stats.output_queue_size = output_queue_ ? output_queue_->size() : 0;
+    return stats;
+}
 // --- Initialization & Configuration ---
+
+
 
 void SourceInputProcessor::set_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map) { // Changed to audio namespace
     std::lock_guard<std::mutex> lock(processor_config_mutex_); // Protect map and processor access
@@ -330,6 +335,7 @@ void SourceInputProcessor::input_loop() {
     LOG_CPP_INFO("[SourceProc:%s] Input loop started (receives timed packets).", config_.instance_id.c_str());
     TaggedAudioPacket timed_packet;
     while (!stop_flag_ && input_queue_ && input_queue_->pop(timed_packet)) {
+        m_total_packets_processed++;
         // Packet is already timed correctly by TimeshiftManager.
         // Directly proceed to format checking and processing.
         const uint8_t* audio_payload_ptr = nullptr;

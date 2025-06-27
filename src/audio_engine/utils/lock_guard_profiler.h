@@ -1,3 +1,11 @@
+/**
+ * @file lock_guard_profiler.h
+ * @brief Defines a debugging utility for profiling and monitoring mutex lock durations.
+ * @details This file contains the `LockGuardProfiler` and `LockWatchdog` classes,
+ *          which are used to detect long-held locks and potential deadlocks in
+ *          a multithreaded environment. This is a debugging tool and may not be
+ *          intended for production builds.
+ */
 #ifndef LOCK_GUARD_PROFILER_H
 #define LOCK_GUARD_PROFILER_H
 
@@ -14,78 +22,51 @@ namespace screamrouter {
 namespace audio {
 namespace utils {
 
+/**
+ * @enum LockType
+ * @brief Specifies the type of lock being acquired (read or write).
+ */
 enum class LockType {
-    READ,
-    WRITE
+    READ,  ///< A shared (read) lock.
+    WRITE  ///< An exclusive (write) lock.
 };
 
-// Define lock duration thresholds
+// Define lock duration thresholds for logging
 const std::chrono::milliseconds WRITE_LOCK_THRESHOLD(20);
 const std::chrono::milliseconds READ_LOCK_THRESHOLD(1000);
 
-// Define lock duration watchdog thresholds
+// Define lock duration thresholds for the watchdog to terminate the program
 const std::chrono::milliseconds WRITE_LOCK_WATCHDOG_THRESHOLD(200);
 const std::chrono::milliseconds READ_LOCK_WATCHDOG_THRESHOLD(5000);
 
 class LockGuardProfiler;
 
+/**
+ * @class LockWatchdog
+ * @brief A singleton that monitors all active `LockGuardProfiler` instances.
+ * @details This class runs a background thread that periodically checks all registered
+ *          locks. If a lock is held for longer than a predefined threshold, it logs
+ *          a fatal error and terminates the program to prevent deadlocks.
+ */
 class LockWatchdog {
 public:
-    static LockWatchdog& getInstance() {
-        static LockWatchdog instance;
-        return instance;
-    }
+    /** @brief Gets the singleton instance of the watchdog. */
+    static LockWatchdog& getInstance();
 
-    void registerLock(LockGuardProfiler* profiler, LockType type, const char* file, int line, std::chrono::steady_clock::time_point start_time) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        active_locks_[profiler] = {type, file, line, start_time};
-    }
+    /** @brief Registers a lock with the watchdog. */
+    void registerLock(LockGuardProfiler* profiler, LockType type, const char* file, int line, std::chrono::steady_clock::time_point start_time);
 
-    void unregisterLock(LockGuardProfiler* profiler) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        active_locks_.erase(profiler);
-    }
+    /** @brief Unregisters a lock from the watchdog when it's released. */
+    void unregisterLock(LockGuardProfiler* profiler);
 
     LockWatchdog(const LockWatchdog&) = delete;
     LockWatchdog& operator=(const LockWatchdog&) = delete;
 
 private:
-    LockWatchdog() : running_(true) {
-        watchdog_thread_ = std::thread(&LockWatchdog::watchdogLoop, this);
-    }
+    LockWatchdog();
+    ~LockWatchdog();
 
-    ~LockWatchdog() {
-        running_ = false;
-        if (watchdog_thread_.joinable()) {
-            watchdog_thread_.join();
-        }
-    }
-
-    void watchdogLoop() {
-        while (running_) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto now = std::chrono::steady_clock::now();
-
-            for (const auto& pair : active_locks_) {
-                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - pair.second.start_time);
-                if (pair.second.type == LockType::WRITE) {
-                    if (duration > WRITE_LOCK_WATCHDOG_THRESHOLD) {
-                        LOG_CPP_ERROR("[LockWatchdog] Write lock held for %lldms at %s:%d (Threshold: %lldms). Terminating.",
-                                      (long long)duration.count(), pair.second.file, pair.second.line, (long long)WRITE_LOCK_WATCHDOG_THRESHOLD.count());
-                        std::terminate();
-                    }
-                } else { // READ
-                    if (duration > READ_LOCK_WATCHDOG_THRESHOLD) {
-                         LOG_CPP_ERROR("[LockWatchdog] Read lock held for %lldms at %s:%d (Threshold: %lldms). Terminating.",
-                                      (long long)duration.count(), pair.second.file, pair.second.line, (long long)READ_LOCK_WATCHDOG_THRESHOLD.count());
-                        std::terminate();
-                    }
-                }
-            }
-        }
-    }
+    void watchdogLoop();
 
     struct LockInfo {
         LockType type;
@@ -100,45 +81,29 @@ private:
     std::atomic<bool> running_;
 };
 
-
+/**
+ * @class LockGuardProfiler
+ * @brief A RAII-style lock guard that profiles lock duration.
+ * @details This class wraps `std::unique_lock` and `std::shared_lock` to provide
+ *          automatic profiling of lock acquisition and hold times. When a lock is
+ *          held for too long, it logs a warning. It also registers itself with the
+ *          `LockWatchdog` for deadlock detection.
+ */
 class LockGuardProfiler {
 public:
-    LockGuardProfiler(std::shared_mutex& m, LockType type, const char* file, int line)
-        : mutex_(m), lock_type_(type), file_(file), line_(line), start_time_(std::chrono::steady_clock::now()) {
-        LockWatchdog::getInstance().registerLock(this, lock_type_, file_, line_, start_time_);
-        LOG_CPP_DEBUG("[LockProfiler] Attempting %s lock at %s:%d", lock_type_ == LockType::WRITE ? "WRITE" : "READ", file_, line_);
-        if (lock_type_ == LockType::WRITE) {
-            unique_lock_ = std::unique_lock<std::shared_mutex>(mutex_);
-        } else {
-            shared_lock_ = std::shared_lock<std::shared_mutex>(mutex_);
-        }
-        LOG_CPP_DEBUG("[LockProfiler] Acquired %s lock at %s:%d", lock_type_ == LockType::WRITE ? "WRITE" : "READ", file_, line_);
-    }
+    /**
+     * @brief Constructs a LockGuardProfiler and acquires a lock.
+     * @param m The `std::shared_mutex` to lock.
+     * @param type The type of lock to acquire (READ or WRITE).
+     * @param file The source file where the lock is acquired.
+     * @param line The line number where the lock is acquired.
+     */
+    LockGuardProfiler(std::shared_mutex& m, LockType type, const char* file, int line);
 
-    ~LockGuardProfiler() {
-        LOG_CPP_DEBUG("[LockProfiler] Releasing %s lock from %s:%d", lock_type_ == LockType::WRITE ? "WRITE" : "READ", file_, line_);
-        LockWatchdog::getInstance().unregisterLock(this);
-        auto end_time = std::chrono::steady_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time_);
-
-        if (lock_type_ == LockType::WRITE) {
-            if (duration > WRITE_LOCK_THRESHOLD) {
-                LOG_CPP_ERROR("[LockProfiler] Write lock held for %lldms at %s:%d (Threshold: %lldms)",
-                              (long long)duration.count(), file_, line_, (long long)WRITE_LOCK_THRESHOLD.count());
-            }
-            if (unique_lock_.owns_lock()) {
-                unique_lock_.unlock();
-            }
-        } else { // READ
-            if (duration > READ_LOCK_THRESHOLD) {
-                LOG_CPP_ERROR("[LockProfiler] Read lock held for %lldms at %s:%d (Threshold: %lldms)",
-                              (long long)duration.count(), file_, line_, (long long)READ_LOCK_THRESHOLD.count());
-            }
-            if (shared_lock_.owns_lock()) {
-                shared_lock_.unlock();
-            }
-        }
-    }
+    /**
+     * @brief Destructor. Releases the lock and logs the duration if it exceeds a threshold.
+     */
+    ~LockGuardProfiler();
 
     // Prevent copying/moving
     LockGuardProfiler(const LockGuardProfiler&) = delete;
@@ -153,7 +118,6 @@ private:
     int line_;
     std::chrono::steady_clock::time_point start_time_;
 
-    // A lock guard can hold one of two types of locks
     std::unique_lock<std::shared_mutex> unique_lock_;
     std::shared_lock<std::shared_mutex> shared_lock_;
 };

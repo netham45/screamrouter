@@ -1,3 +1,11 @@
+/**
+ * @file bindings.cpp
+ * @brief Defines the Python module for the ScreamRouter C++ audio engine.
+ * @details This file uses pybind11 to create the `screamrouter_audio_engine` Python module.
+ *          It imports binding functions from various components (like AudioManager, configuration,
+ *          and logger) and calls them in the correct dependency order to construct the module.
+ *          It also binds global constants to make them accessible from Python.
+ */
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
@@ -13,9 +21,15 @@
 namespace py = pybind11;
 using namespace screamrouter;
 
-// Define the Python module using the PYBIND11_MODULE macro
-// The first argument is the name of the Python module as it will be imported (e.g., `import screamrouter_audio_engine`)
-// The second argument `m` is the py::module_ object representing the module
+/**
+ * @brief The main entry point for the pybind11 module definition.
+ * @param m A `py::module_` object representing the Python module being created.
+ *
+ * This macro defines the `screamrouter_audio_engine` module and orchestrates the
+ * binding of all C++ classes, functions, and constants. The bindings are
+ * called in a specific order to ensure that dependencies are met. For example,
+ * basic data types are bound before the classes that use them.
+ */
 PYBIND11_MODULE(screamrouter_audio_engine, m) {
     m.doc() = "ScreamRouter C++ Audio Engine Extension"; // Optional module docstring
 

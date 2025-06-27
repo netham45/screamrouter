@@ -14,11 +14,11 @@ MP3DataApiManager::MP3DataApiManager(
     : m_manager_mutex(manager_mutex),
       m_mp3_output_queues(mp3_output_queues),
       m_sink_configs(sink_configs) {
-    LOG_CPP_INFO("DataApiManager created.");
+    LOG_CPP_INFO("MP3DataApiManager created.");
 }
 
 MP3DataApiManager::~MP3DataApiManager() {
-    LOG_CPP_INFO("DataApiManager destroyed.");
+    LOG_CPP_INFO("MP3DataApiManager destroyed.");
 }
 
 std::vector<uint8_t> MP3DataApiManager::get_mp3_data(const std::string& sink_id, bool running) {

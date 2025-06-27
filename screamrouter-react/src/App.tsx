@@ -18,6 +18,7 @@ import AddEditRoutePage from './components/pages/AddEditRoutePage'; // Import th
 import AddEditGroupPage from './components/pages/AddEditGroupPage'; // Import the AddEditGroupPage component
 import ProcessListPage from './components/pages/ProcessListPage'; // Import the ProcessListPage component
 import SpeakerLayoutPage from './components/pages/SpeakerLayoutPage'; // Import the SpeakerLayoutPage component
+import StatsPage from './components/pages/StatsPage'; // Import the StatsPage component
 import ListenPage from './components/pages/ListenPage'; // Import the ListenPage component
 import { DesktopMenu } from './components/desktopMenu'; // Import DesktopMenu
 import { ColorProvider } from './components/desktopMenu/context/ColorContext'; // Import ColorProvider
@@ -142,6 +143,7 @@ const AppContent: React.FC = () => {
         <Route path="/processes/:ip" element={<ProcessListPage />} /> {/* Route to ProcessListPage component with IP parameter */}
         <Route path="/speaker-layout-standalone" element={<SpeakerLayoutPage />} /> {/* Route to SpeakerLayoutPage component */}
         <Route path="/listen/:sinkName" element={<ListenPage />} /> {/* Route to ListenPage component */}
+        <Route path="/stats" element={<StatsPage />} /> {/* Route to StatsPage component */}
       </Routes>
       
       {showEqualizerModal && selectedItem && selectedItemType && (
