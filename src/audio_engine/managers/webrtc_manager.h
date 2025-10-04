@@ -13,9 +13,20 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <map>
 
 namespace screamrouter {
 namespace audio {
+
+/**
+ * @struct WebRtcListenerInfo
+ * @brief Stores information about an active WebRTC listener.
+ */
+struct WebRtcListenerInfo {
+    std::string sink_id;
+    std::string listener_id;
+    std::string ip_address;
+};
 
 /**
  * @class WebRtcManager
@@ -47,6 +58,7 @@ public:
      * @param on_local_description_callback Callback to send the local SDP answer.
      * @param on_ice_candidate_callback Callback to send local ICE candidates.
      * @param running A flag indicating if the audio engine is running.
+     * @param client_ip The IP address of the client.
      * @return true if the listener was added successfully, false otherwise.
      */
     bool add_webrtc_listener(
@@ -55,7 +67,8 @@ public:
         const std::string& offer_sdp,
         std::function<void(const std::string& sdp)> on_local_description_callback,
         std::function<void(const std::string& candidate, const std::string& sdpMid)> on_ice_candidate_callback,
-        bool running
+        bool running,
+        const std::string& client_ip
     );
 
     /**
@@ -89,6 +102,7 @@ private:
     std::mutex& m_manager_mutex;
     SinkManager* m_sink_manager;
     std::map<std::string, SinkConfig>& m_sink_configs;
+    std::map<std::string, WebRtcListenerInfo> m_webrtc_listeners;
 };
 
 } // namespace audio

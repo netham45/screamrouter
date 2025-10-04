@@ -76,12 +76,41 @@ void StatsManager::collect_stats() {
             new_stats.stream_stats[tag].jitter_estimate_ms = jitter;
         }
 
+        for (auto const& [tag, val] : tm_stats.stream_late_packets) {
+            new_stats.stream_stats[tag].timeshift_buffer_late_packets = val;
+        }
+
+        for (auto const& [tag, val] : tm_stats.stream_lagging_events) {
+            new_stats.stream_stats[tag].timeshift_buffer_lagging_events = val;
+        }
+
+        for (auto const& [tag, val] : tm_stats.stream_tm_buffer_underruns) {
+            new_stats.stream_stats[tag].tm_buffer_underruns = val;
+        }
+
+        for (auto const& [tag, val] : tm_stats.stream_tm_packets_discarded) {
+            new_stats.stream_stats[tag].tm_packets_discarded = val;
+        }
+
+        for (auto const& [tag, val] : tm_stats.stream_last_arrival_time_error_ms) {
+            new_stats.stream_stats[tag].last_arrival_time_error_ms = val;
+        }
+
+        for (auto const& [tag, val] : tm_stats.stream_target_buffer_level_ms) {
+            new_stats.stream_stats[tag].target_buffer_level_ms = val;
+        }
+
+        for (auto const& [tag, val] : tm_stats.stream_buffer_target_fill_percentage) {
+            new_stats.stream_stats[tag].buffer_target_fill_percentage = val;
+        }
+
         for (auto const& [tag, total_packets] : tm_stats.stream_total_packets) {
             uint64_t last_packets = m_last_stream_packets.count(tag) ? m_last_stream_packets[tag] : 0;
             if (last_packets > 0) {
                new_stats.stream_stats[tag].packets_per_second = (total_packets - last_packets) / elapsed_seconds;
             }
             m_last_stream_packets[tag] = total_packets;
+            new_stats.stream_stats[tag].total_packets_in_stream = total_packets;
         }
     }
 
@@ -95,6 +124,7 @@ void StatsManager::collect_stats() {
             s_stats.source_tag = source->get_source_tag();
             s_stats.input_queue_size = raw_stats.input_queue_size;
             s_stats.output_queue_size = raw_stats.output_queue_size;
+            s_stats.reconfigurations = raw_stats.reconfigurations;
             
             uint64_t processed_now = raw_stats.total_packets_processed;
             if (m_last_source_packets_processed.count(s_stats.instance_id)) {
@@ -124,6 +154,9 @@ void StatsManager::collect_stats() {
             s_stats.sink_id = sink->get_config().sink_id;
             s_stats.active_input_streams = raw_stats.active_input_streams;
             s_stats.total_input_streams = raw_stats.total_input_streams;
+            s_stats.sink_buffer_underruns = raw_stats.buffer_underruns;
+            s_stats.sink_buffer_overflows = raw_stats.buffer_overflows;
+            s_stats.mp3_buffer_overflows = raw_stats.mp3_buffer_overflows;
 
             uint64_t mixed_now = raw_stats.total_chunks_mixed;
             if (m_last_sink_chunks_mixed.count(s_stats.sink_id)) {

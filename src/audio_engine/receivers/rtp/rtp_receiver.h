@@ -13,8 +13,10 @@
 #include "../../audio_types.h"
 #include <rtc/rtp.hpp>
 #include "sap_listener.h"
+#include "rtp_reordering_buffer.h" // Added for jitter buffer
 #include <mutex>
 #include <memory>
+#include <map> // Added for SSRC -> buffer mapping
 #include <cstdint>
 #include <sys/epoll.h>
 #include <sys/types.h>
@@ -94,28 +96,56 @@ private:
      * @brief Opens a new socket to receive a dynamic RTP session announced via SAP.
      * @param ip The IP address of the session.
      * @param port The port of the session.
+     * @param source_ip The source IP for unicast streams (empty for multicast).
      */
-    void open_dynamic_session(const std::string& ip, int port);
+    void open_dynamic_session(const std::string& ip, int port, const std::string& source_ip = "");
     /**
      * @brief Handles changes in the SSRC of an RTP stream.
      * @param old_ssrc The old SSRC.
      * @param new_ssrc The new SSRC.
+     * @param source_key The source identifier (IP:port).
      */
-    void handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc);
-
-    uint32_t last_known_ssrc_;
-    bool ssrc_initialized_;
-
-    std::vector<uint8_t> pcm_accumulator_;
+    void handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, const std::string& source_key);
+    /** @brief Processes packets that are ready from the reordering buffer. */
+    void process_ready_packets(uint32_t ssrc, const struct sockaddr_in& client_addr);
+    /** @brief Internal version of process_ready_packets that can optionally skip locking. */
+    void process_ready_packets_internal(uint32_t ssrc, const struct sockaddr_in& client_addr, bool take_lock);
     
-    // Timing information for the chunk currently being accumulated
-    bool is_accumulating_chunk_;
-    std::chrono::steady_clock::time_point chunk_first_packet_received_time_;
-    uint32_t chunk_first_packet_rtp_timestamp_;
+    /**
+     * @brief Generates a unique key for identifying a source.
+     * @param addr The socket address of the source.
+     * @return A string in the format "IP:port".
+     */
+    std::string get_source_key(const struct sockaddr_in& addr) const;
+
+    // Per-source SSRC tracking to handle multiple independent RTP streams
+    std::map<std::string, uint32_t> source_to_last_ssrc_;  // Map: "IP:port" -> last known SSRC
+    std::mutex source_ssrc_mutex_;  // Protects source_to_last_ssrc_
+
+    // Jitter and reordering handling
+    std::map<uint32_t, RtpReorderingBuffer> reordering_buffers_;
+    std::mutex reordering_buffer_mutex_;
+
+    // PCM accumulation, now per-SSRC
+    std::map<uint32_t, std::vector<uint8_t>> pcm_accumulators_;
+    std::map<uint32_t, bool> is_accumulating_chunk_;
+    std::map<uint32_t, std::chrono::steady_clock::time_point> chunk_first_packet_received_time_;
+    std::map<uint32_t, uint32_t> chunk_first_packet_rtp_timestamp_;
+    
     uint32_t last_rtp_timestamp_ = 0;
     uint32_t last_chunk_remainder_samples_ = 0;
 
     std::unique_ptr<SapListener> sap_listener_;
+
+    // Track unicast sessions by source IP -> socket mapping
+    struct SessionInfo {
+        socket_t socket_fd;
+        std::string destination_ip;
+        int port;
+        std::string source_ip; // Empty for multicast, specific IP for unicast
+    };
+    std::map<socket_t, SessionInfo> socket_sessions_; // Maps socket FD to session info
+    std::map<std::string, socket_t> unicast_source_to_socket_; // Maps "source_ip:dest_ip:port" to socket FD
 };
 
 } // namespace audio

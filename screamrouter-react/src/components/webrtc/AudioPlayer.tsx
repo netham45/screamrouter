@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { useAppContext } from '../../context/AppContext';
+import { useWebRTC } from '../../context/WebRTCContext';
 
 const AudioPlayer: React.FC<{
   stream: MediaStream,
@@ -34,12 +34,17 @@ const AudioPlayer: React.FC<{
 export const WebRTCAudioPlayers: React.FC = () => {
   // This is a placeholder, we need to get the streams from the context.
   // Let's assume AppContext provides a map of streams.
-  const { audioStreams, onPlaybackError } = useAppContext();
+  const { audioStreams, playbackError } = useWebRTC();
+
+  const handlePlaybackError = (sinkId: string, error: Error) => {
+    // The playbackError is now handled in the WebRTCContext
+    console.error(`Playback error for sink ${sinkId}:`, error);
+  };
 
   return (
     <div>
       {Array.from(audioStreams.entries()).map(([sinkId, stream]) => (
-        <AudioPlayer key={sinkId} sinkId={sinkId} stream={stream} onPlaybackError={onPlaybackError} />
+        <AudioPlayer key={sinkId} sinkId={sinkId} stream={stream} onPlaybackError={handlePlaybackError} />
       ))}
     </div>
   );

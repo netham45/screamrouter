@@ -1,10 +1,6 @@
-
 #include "audio_processor.h"
 #include "../utils/cpp_logger.h" // For new C++ logger
 #include "biquad/biquad.h"
-#include "../deps/r8brain-free-src/r8bconf.h"
-#include "../deps/r8brain-free-src/r8bbase.h"
-#include "../deps/r8brain-free-src/CDSPResampler.h"
 #include <algorithm>
 #include <stdexcept>
 #include <cmath>
@@ -28,30 +24,29 @@ using namespace screamrouter::audio;
 #endif
 
 #define CHUNK_SIZE 1152
-#define OVERSAMPLING_FACTOR 1
 
-AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth, 
+AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth,
                                int inputSampleRate, int outputSampleRate, float volume,
-                               const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config) // Changed to audio namespace
-    : inputChannels(inputChannels), outputChannels(outputChannels), inputBitDepth(inputBitDepth),
-      inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate), smoothing_factor_(0.005f),
+                               const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config,
+                               std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
+    : m_settings(settings),
+      inputChannels(inputChannels), outputChannels(outputChannels), inputBitDepth(inputBitDepth),
+      inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate),
       speaker_layouts_config_(initial_layouts_config), // Initialize the map
       monitor_running(true),
-      receive_buffer(CHUNK_SIZE * 4), 
-      scaled_buffer(CHUNK_SIZE * 8),  
-      resampled_buffer(CHUNK_SIZE * MAX_CHANNELS * 4 * OVERSAMPLING_FACTOR), // Larger for resampling
-      channel_buffers(MAX_CHANNELS, std::vector<int32_t>(CHUNK_SIZE * 8 * OVERSAMPLING_FACTOR)), // Larger for resampling
-      remixed_channel_buffers(MAX_CHANNELS, std::vector<int32_t>(CHUNK_SIZE * 8 * OVERSAMPLING_FACTOR)), // Larger for resampling
-      merged_buffer(CHUNK_SIZE * MAX_CHANNELS * 4 * OVERSAMPLING_FACTOR), // Larger for resampling
+      receive_buffer(CHUNK_SIZE * 4),
+      scaled_buffer(CHUNK_SIZE * 8),
+      resampled_buffer(CHUNK_SIZE * MAX_CHANNELS * 4 * m_settings->processor_tuning.oversampling_factor), // Larger for resampling
+      channel_buffers(MAX_CHANNELS, std::vector<int32_t>(CHUNK_SIZE * 8 * m_settings->processor_tuning.oversampling_factor)), // Larger for resampling
+      remixed_channel_buffers(MAX_CHANNELS, std::vector<int32_t>(CHUNK_SIZE * 8 * m_settings->processor_tuning.oversampling_factor)), // Larger for resampling
+      merged_buffer(CHUNK_SIZE * MAX_CHANNELS * 4 * m_settings->processor_tuning.oversampling_factor), // Larger for resampling
       processed_buffer(CHUNK_SIZE * MAX_CHANNELS * 4), // Final output size related
-      // Removed resampler_data_in and resampler_data_out (float buffers for libsamplerate)
-      // sampler(nullptr), downsampler(nullptr) replaced by r8brain vectors
       isProcessingRequiredCache(false), isProcessingRequiredCacheSet(false), // Initialize cache flags
-      volume_normalization_enabled_(false), eq_normalization_enabled_(true)
-    // Add new r8brain member variables
-    // upsamplers and downsamplers will be initialized in the constructor body or initializer list if default constructible
-    // r8brain_upsampler_in_buf and r8brain_downsampler_in_buf will be initialized in constructor body
+      volume_normalization_enabled_(false), eq_normalization_enabled_(true),
+      playback_rate_(1.0),
+      m_upsampler(nullptr), m_downsampler(nullptr)
 {
+    smoothing_factor_ = m_settings->processor_tuning.volume_smoothing_factor;
     target_volume_.store(volume);
     current_volume_.store(volume);
     LOG_CPP_INFO("[AudioProc] Constructor: inputChannels=%d, outputChannels=%d, inputSampleRate=%d, outputSampleRate=%d",
@@ -74,11 +69,6 @@ AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputB
         }
     }
 
-    // Initialize r8brain resampler vectors (they are default constructible)
-    // upsamplers; // Default construction
-    // downsamplers; // Default construction
-    // r8brain_upsampler_in_buf; // Default construction
-    // r8brain_downsampler_in_buf; // Default construction
     // Initialize filter pointers to nullptr before use
     for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
         for (int band = 0; band < EQ_BANDS; ++band) {
@@ -87,10 +77,9 @@ AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputB
         dcFilters[ch] = nullptr;
     }
     
-    std::fill(eq, eq + EQ_BANDS, 1.0f); 
-    // calculateAndApplyAutoSpeakerMix(); // Old call, select_active_speaker_mix will handle initial setup
+    std::fill(eq, eq + EQ_BANDS, 1.0f);
     setupBiquad();
-    initializeSampler(); // This might need adjustment if it depends on speaker_mix being set prior
+    initializeSampler();
     setupDCFilter();
     select_active_speaker_mix(); // Call to select initial mix
 
@@ -111,15 +100,15 @@ AudioProcessor::~AudioProcessor() {
         monitor_thread.join();
     }
 
-    // Clean up r8brain resamplers
-    for (auto ptr : upsamplers) {
-        delete ptr;
+    // Clean up libsamplerate resamplers
+    if (m_upsampler) {
+        src_delete(m_upsampler);
+        m_upsampler = nullptr;
     }
-    upsamplers.clear();
-    for (auto ptr : downsamplers) {
-        delete ptr;
+    if (m_downsampler) {
+        src_delete(m_downsampler);
+        m_downsampler = nullptr;
     }
-    downsamplers.clear();
      
     for (int channel = 0; channel < MAX_CHANNELS; channel++) {
         for (int i = 0; i < EQ_BANDS; i++) {
@@ -138,6 +127,9 @@ void AudioProcessor::monitorBuffers() {
 }
 
 int AudioProcessor::processAudio(const uint8_t* inputBuffer, int32_t* outputBuffer) {
+    // Playback rate is applied dynamically within resample() and downsample() via src_ratio.
+    // No re-initialization is needed for minor clock drift adjustments.
+
     // 1. Copy input data
     if (receive_buffer.size() < CHUNK_SIZE) {
         try { receive_buffer.resize(CHUNK_SIZE); }
@@ -151,11 +143,11 @@ int AudioProcessor::processAudio(const uint8_t* inputBuffer, int32_t* outputBuff
     resample();
     splitBufferToChannels();
     mixSpeakers();
-    removeDCOffset();
+    //removeDCOffset();
     equalize();
     mergeChannelsToBuffer();
     downsample();
-    noiseShapingDither();
+    //noiseShapingDither();
     // --- End Pipeline ---
 
     // Determine samples to copy based on actual samples processed and available
@@ -194,6 +186,17 @@ void AudioProcessor::setVolumeNormalization(bool enabled) {
     volume_normalization_enabled_ = enabled;
 }
 
+void AudioProcessor::set_playback_rate(double rate) {
+    // Clamp the rate to a reasonable range to avoid extreme changes that cause artifacts.
+    // We use a small range (+/- 2%) for imperceptible adjustments.
+    double clamped_rate = std::max(0.98, std::min(1.02, rate));
+    if (std::abs(clamped_rate - playback_rate_.load()) > 0.0001) {
+        playback_rate_.store(clamped_rate);
+        // The new rate will be used dynamically by src_process in the next audio processing call.
+        LOG_CPP_DEBUG("[AudioProc] Playback rate set to %.4f.", clamped_rate);
+    }
+}
+
 void AudioProcessor::setEqNormalization(bool enabled) {
     eq_normalization_enabled_ = enabled;
     setupBiquad(); // Re-setup biquad to apply the new setting
@@ -216,6 +219,19 @@ void AudioProcessor::setEqualizer(const float* newEq) {
     }
 }
 
+void AudioProcessor::flushFilters() {
+    for (int ch = 0; ch < MAX_CHANNELS; ++ch) {
+        for (int band = 0; band < EQ_BANDS; ++band) {
+            if (filters[ch][band]) {
+                filters[ch][band]->flush();
+            }
+        }
+        if (dcFilters[ch]) {
+            dcFilters[ch]->flush();
+        }
+    }
+}
+
 void AudioProcessor::setupBiquad() {
     float max_gain = 1.0f;
     if (eq_normalization_enabled_) {
@@ -227,7 +243,7 @@ void AudioProcessor::setupBiquad() {
                                  1046.5023f, 1479.9768f, 2093.0045f, 2959.9536f, 4186.0091f, 5919.9072f, 8372.0181f, 11839.814f,
                                  16744.036f, 20000.0f};
 
-    float sampleRateForFilters = static_cast<float>(outputSampleRate * OVERSAMPLING_FACTOR);
+    float sampleRateForFilters = static_cast<float>(outputSampleRate * m_settings->processor_tuning.oversampling_factor);
     if (sampleRateForFilters <= 0) {
          LOG_CPP_ERROR("[AudioProc] Error: Invalid sample rate (%d) for Biquad setup.", outputSampleRate);
          return;
@@ -255,116 +271,33 @@ void AudioProcessor::setupBiquad() {
 }
 
 void AudioProcessor::initializeSampler() {
-    // Clean up existing r8brain resamplers
-    for (auto ptr : upsamplers) {
-        delete ptr;
+    int error;
+
+    // Clean up existing resamplers
+    if (m_upsampler) {
+        src_delete(m_upsampler);
+        m_upsampler = nullptr;
     }
-    upsamplers.clear();
-    for (auto ptr : downsamplers) {
-        delete ptr;
+    if (m_downsampler) {
+        src_delete(m_downsampler);
+        m_downsampler = nullptr;
     }
-    downsamplers.clear();
 
     if (inputSampleRate <= 0 || outputSampleRate <= 0) {
-        LOG_CPP_ERROR("[AudioProc] Error: Invalid input or output sample rate for r8brain initialization.");
+        LOG_CPP_ERROR("[AudioProc] Error: Invalid input or output sample rate for libsamplerate initialization.");
         return;
     }
 
-    // Initialize upsamplers
-    if (inputChannels > 0) {
-        int max_frames_per_channel_in = 0;
-        if (inputBitDepth > 0 && inputChannels > 0) { // Ensure inputBitDepth and inputChannels are positive
-             max_frames_per_channel_in = (CHUNK_SIZE / (inputBitDepth / 8)) / inputChannels;
-        }
-        if (max_frames_per_channel_in <= 0) { // Default to a reasonable capacity if calculation fails
-            max_frames_per_channel_in = 2048; // Default capacity
-            LOG_CPP_WARNING("[AudioProc] Warning: Could not determine max_frames_per_channel_in, defaulting to %d", max_frames_per_channel_in);
-        }
-
-        upsamplers.reserve(inputChannels);
-        r8brain_upsampler_in_buf.resize(inputChannels);
-        for (int i = 0; i < inputChannels; ++i) {
-            try {
-                upsamplers.push_back(new r8b::CDSPResampler24(
-                    static_cast<double>(inputSampleRate),
-                    static_cast<double>(outputSampleRate * OVERSAMPLING_FACTOR),
-                    max_frames_per_channel_in
-                ));
-                r8brain_upsampler_in_buf[i].resize(max_frames_per_channel_in);
-            } catch (const std::bad_alloc& e) {
-                LOG_CPP_ERROR("[AudioProc] Error allocating r8brain upsampler or buffer for channel %d: %s", i, e.what());
-                // Clean up already allocated resamplers in case of partial failure
-                for (auto ptr : upsamplers) delete ptr;
-                upsamplers.clear();
-                r8brain_upsampler_in_buf.clear();
-                return;
-            }  catch (const std::exception& e) { // Changed to std::exception
-                LOG_CPP_ERROR("[AudioProc] Standard exception during upsampler creation for channel %d: %s", i, e.what());
-                for (auto ptr : upsamplers) delete ptr;
-                upsamplers.clear();
-                r8brain_upsampler_in_buf.clear();
-                return;
-            } catch (...) {
-                LOG_CPP_ERROR("[AudioProc] Unknown exception during upsampler creation for channel %d", i);
-                for (auto ptr : upsamplers) delete ptr;
-                upsamplers.clear();
-                r8brain_upsampler_in_buf.clear();
-                return;
-            }
-        }
+    // Create upsampler
+    m_upsampler = src_new(SRC_SINC_BEST_QUALITY, inputChannels, &error);
+    if (m_upsampler == nullptr) {
+        LOG_CPP_ERROR("[AudioProc] Error creating libsamplerate upsampler: %s", src_strerror(error));
     }
 
-    // Initialize downsamplers
-    if (outputChannels > 0) {
-        // Estimate max frames after upsampling. This is a rough guide for buffer capacity.
-        // A more precise calculation would involve the resampling ratio.
-        // Using a generous estimate based on existing buffer sizes.
-        int max_frames_per_channel_out_oversampled = (CHUNK_SIZE * MAX_CHANNELS * 4 * OVERSAMPLING_FACTOR) / outputChannels;
-         if (max_frames_per_channel_out_oversampled <= 0) { // Default to a reasonable capacity
-            max_frames_per_channel_out_oversampled = 2048 * OVERSAMPLING_FACTOR * 2; // Default capacity, considering oversampling
-            LOG_CPP_WARNING("[AudioProc] Warning: Could not determine max_frames_per_channel_out_oversampled, defaulting to %d", max_frames_per_channel_out_oversampled);
-        }
-
-        downsamplers.reserve(outputChannels);
-        r8brain_downsampler_in_buf.resize(outputChannels);
-        for (int i = 0; i < outputChannels; ++i) {
-            try {
-                downsamplers.push_back(new r8b::CDSPResampler24( // Removed r8brain::
-                    static_cast<double>(outputSampleRate * OVERSAMPLING_FACTOR),
-                    static_cast<double>(outputSampleRate),
-                    max_frames_per_channel_out_oversampled
-                ));
-                r8brain_downsampler_in_buf[i].resize(max_frames_per_channel_out_oversampled);
-            } catch (const std::bad_alloc& e) {
-                LOG_CPP_ERROR("[AudioProc] Error allocating r8brain downsampler or buffer for channel %d: %s", i, e.what());
-                for (auto ptr : downsamplers) delete ptr;
-                downsamplers.clear();
-                r8brain_downsampler_in_buf.clear();
-                // Also clean up upsamplers if downsampler allocation fails mid-way
-                for (auto ptr : upsamplers) delete ptr;
-                upsamplers.clear();
-                r8brain_upsampler_in_buf.clear();
-                return;
-            } catch (const std::exception& e) { // Changed to std::exception
-                LOG_CPP_ERROR("[AudioProc] Standard exception during downsampler creation for channel %d: %s", i, e.what());
-                for (auto ptr : downsamplers) delete ptr;
-                downsamplers.clear();
-                r8brain_downsampler_in_buf.clear();
-                for (auto ptr : upsamplers) delete ptr;
-                upsamplers.clear();
-                r8brain_upsampler_in_buf.clear();
-                return;
-            } catch (...) {
-                LOG_CPP_ERROR("[AudioProc] Unknown exception during downsampler creation for channel %d", i);
-                for (auto ptr : downsamplers) delete ptr;
-                downsamplers.clear();
-                r8brain_downsampler_in_buf.clear();
-                for (auto ptr : upsamplers) delete ptr;
-                upsamplers.clear();
-                r8brain_upsampler_in_buf.clear();
-                return;
-            }
-        }
+    // Create downsampler
+    m_downsampler = src_new(SRC_SINC_BEST_QUALITY, outputChannels, &error);
+    if (m_downsampler == nullptr) {
+        LOG_CPP_ERROR("[AudioProc] Error creating libsamplerate downsampler: %s", src_strerror(error));
     }
 }
 
@@ -414,24 +347,21 @@ void AudioProcessor::scaleBuffer() {
 }
 
 float AudioProcessor::softClip(float sample) {
-    const float threshold = 0.8f;
-    const float knee = 0.2f;
-    const float kneeStart = threshold - knee / 2.0f;
-    const float kneeEnd = threshold + knee / 2.0f;
+    // This is a standard cubic soft-clipping algorithm. It provides a smooth
+    // transition into saturation, replacing the previous flawed implementation.
+    // NOTE: This simpler, correct implementation does not use the 'soft_clip_threshold' or 
+    // 'soft_clip_knee' parameters from the settings. It provides a fixed clipping curve
+    // that starts compressing at a level of ~0.67 and clips fully at 1.0.
 
-    float absample = std::abs(sample);
-    if (absample <= kneeStart) {
-        return sample;
-    } else if (absample >= kneeEnd) {
-        float sign = (sample > 0) ? 1.0f : -1.0f;
-        return sign * (kneeStart + (absample - kneeStart) / (1.0f + std::pow((absample - kneeStart)/(kneeEnd - kneeStart), 2.0f)));
-    } else {
-        float t = (absample - kneeStart) / knee;
-        float sign = (sample > 0) ? 1.0f : -1.0f;
-        float smooth_t = t * t * (3.0f - 2.0f * t);
-        float clipped_val = sign * (kneeStart + (absample - kneeStart) / (1.0f + std::pow((absample - kneeStart)/(kneeEnd - kneeStart), 2.0f)));
-        return sample * (1.0f - smooth_t) + clipped_val * smooth_t;
+    if (sample >= 1.0f) {
+        return 1.0f;
     }
+    if (sample <= -1.0f) {
+        return -1.0f;
+    }
+    
+    // Apply the cubic clipping curve for samples within the [-1.0, 1.0] range.
+    return sample - (sample * sample * sample) / 3.0f;
 }
 
 void AudioProcessor::volumeAdjust() {
@@ -448,12 +378,12 @@ void AudioProcessor::volumeAdjust() {
         }
         double rms = (scale_buffer_pos > 0) ? sqrt(sum_of_squares / scale_buffer_pos) : 0.0;
         
-        float target_rms = 0.1; // Target RMS level (e.g., -20 dBFS)
+        float target_rms = m_settings->processor_tuning.normalization_target_rms; // Target RMS level (e.g., -20 dBFS)
         float gain = (rms > 0) ? target_rms / rms : 1.0;
 
         // Apply gain with smoothing to avoid clicks
-        float attack_smoothing_factor = 0.2f; // Faster attack
-        float decay_smoothing_factor = 0.05f; // Slower decay
+        float attack_smoothing_factor = m_settings->processor_tuning.normalization_attack_smoothing; // Faster attack
+        float decay_smoothing_factor = m_settings->processor_tuning.normalization_decay_smoothing; // Slower decay
 
         for (size_t i = 0; i < scale_buffer_pos; ++i) {
             if (i < scaled_buffer.size()) {
@@ -487,138 +417,74 @@ void AudioProcessor::volumeAdjust() {
 }
 
 void AudioProcessor::resample() {
-    // Bypass if no processing needed or rates already match target
-    if (!isProcessingRequired() || inputSampleRate == outputSampleRate * OVERSAMPLING_FACTOR) {
+    if (!isProcessingRequired() || m_upsampler == nullptr) {
         size_t samples_to_copy = scale_buffer_pos;
         if (samples_to_copy > scaled_buffer.size()) {
-             LOG_CPP_ERROR("[AudioProc] Error: scale_buffer_pos (%zu) exceeds scaled_buffer size (%zu) in resample bypass.", samples_to_copy, scaled_buffer.size());
-             samples_to_copy = scaled_buffer.size();
+            LOG_CPP_ERROR("[AudioProc] Error: scale_buffer_pos (%zu) exceeds scaled_buffer size (%zu) in resample bypass.", samples_to_copy, scaled_buffer.size());
+            samples_to_copy = scaled_buffer.size();
         }
-        if (samples_to_copy > resampled_buffer.capacity()) {
-             LOG_CPP_ERROR("[AudioProc] Error: Not enough capacity in resampled_buffer for memcpy. Required: %zu, Capacity: %zu", samples_to_copy, resampled_buffer.capacity());
-             resample_buffer_pos = 0; return;
+        if (resampled_buffer.size() < samples_to_copy) {
+            try { resampled_buffer.resize(samples_to_copy); }
+            catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resampled_buffer: %s", e.what()); resample_buffer_pos = 0; return; }
         }
-         if (resampled_buffer.size() < samples_to_copy) {
-             try { resampled_buffer.resize(samples_to_copy); }
-             catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resampled_buffer: %s", e.what()); resample_buffer_pos = 0; return; }
-         }
         memcpy(resampled_buffer.data(), scaled_buffer.data(), samples_to_copy * sizeof(int32_t));
         resample_buffer_pos = samples_to_copy;
         return;
-    }
-
-    // Proceed with resampling
-    if (upsamplers.empty() || inputChannels <= 0 || inputSampleRate <= 0 || outputSampleRate <= 0) {
-         LOG_CPP_ERROR("[AudioProc] Error: Upsamplers not initialized or invalid channels/rate for resampling.");
-         resample_buffer_pos = 0; return;
     }
 
     if (scale_buffer_pos == 0) {
         resample_buffer_pos = 0;
         return;
     }
-    
-    size_t num_input_frames = scale_buffer_pos / inputChannels;
-    if (num_input_frames == 0) { resample_buffer_pos = 0; return; }
 
-    // De-interleave and convert to double for r8brain
-    for (int ch = 0; ch < inputChannels; ++ch) {
-        if (r8brain_upsampler_in_buf[ch].size() < num_input_frames) {
-            try {
-                r8brain_upsampler_in_buf[ch].resize(num_input_frames);
-            } catch (const std::bad_alloc& e) {
-                LOG_CPP_ERROR("[AudioProc] Error resizing r8brain_upsampler_in_buf for channel %d: %s", ch, e.what());
-                resample_buffer_pos = 0; return;
-            }
-        }
-        for (size_t frame = 0; frame < num_input_frames; ++frame) {
-            if ((frame * inputChannels + ch) < scaled_buffer.size()) {
-                 r8brain_upsampler_in_buf[ch][frame] = static_cast<double>(scaled_buffer[frame * inputChannels + ch]) / 2147483647.0; // INT32_MAX
-            } else {
-                LOG_CPP_ERROR("[AudioProc] Error: Out of bounds access in resample data preparation.");
-                resample_buffer_pos = 0; return;
-            }
-        }
-    }
-    
-    std::vector<double*> r8brain_output_ptrs(inputChannels);
-    int output_frames_generated = 0; 
+    std::vector<float> float_in_buffer(scale_buffer_pos);
+    src_int_to_float_array(scaled_buffer.data(), float_in_buffer.data(), scale_buffer_pos);
 
-    for (int ch = 0; ch < inputChannels; ++ch) {
-        if (ch < upsamplers.size() && upsamplers[ch] != nullptr) {
-            try {
-                // The third argument to process is a reference to a double*, 
-                // r8brain will set this pointer to its internal buffer.
-                output_frames_generated = upsamplers[ch]->process(r8brain_upsampler_in_buf[ch].data(), num_input_frames, r8brain_output_ptrs[ch]);
-                if (output_frames_generated < 0) { // r8brain might return negative on error
-                    LOG_CPP_ERROR("[AudioProc] r8brain upsampling error on channel %d. Code: %d", ch, output_frames_generated);
-                    resample_buffer_pos = 0; return;
-                }
-            } catch (const std::exception& e) { // Changed to std::exception
-                LOG_CPP_ERROR("[AudioProc] Standard exception during upsampling on channel %d: %s", ch, e.what());
-                resample_buffer_pos = 0; return;
-            } catch (...) {
-                LOG_CPP_ERROR("[AudioProc] Unknown exception during upsampling on channel %d", ch);
-                resample_buffer_pos = 0; return;
-            }
-        } else {
-            LOG_CPP_ERROR("[AudioProc] Error: Upsampler for channel %d is null or out of bounds.", ch);
-            resample_buffer_pos = 0; return;
-        }
+    double current_playback_rate = playback_rate_.load();
+    double effective_oversampled_rate = static_cast<double>(outputSampleRate * m_settings->processor_tuning.oversampling_factor) * current_playback_rate;
+    double ratio = effective_oversampled_rate / inputSampleRate;
+
+    std::vector<float> float_out_buffer(static_cast<size_t>(scale_buffer_pos * ratio) + 10);
+
+    SRC_DATA src_data = {0};
+    src_data.data_in = float_in_buffer.data();
+    src_data.input_frames = scale_buffer_pos / inputChannels;
+    src_data.data_out = float_out_buffer.data();
+    src_data.output_frames = float_out_buffer.size() / inputChannels;
+    src_data.src_ratio = ratio;
+
+    int error = src_process(m_upsampler, &src_data);
+    if (error) {
+        LOG_CPP_ERROR("[AudioProc] libsamplerate upsampling error: %s", src_strerror(error));
+        resample_buffer_pos = 0;
+        return;
     }
-    
-    size_t total_output_samples = static_cast<size_t>(output_frames_generated) * inputChannels;
-    if (resampled_buffer.size() < total_output_samples) {
-        try {
-            resampled_buffer.resize(total_output_samples);
-        } catch (const std::bad_alloc& e) {
-            LOG_CPP_ERROR("[AudioProc] Error resizing resampled_buffer: %s", e.what());
-            resample_buffer_pos = 0; return;
-        }
+
+    size_t output_samples = src_data.output_frames_gen * inputChannels;
+    if (resampled_buffer.size() < output_samples) {
+        try { resampled_buffer.resize(output_samples); }
+        catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resampled_buffer for output: %s", e.what()); resample_buffer_pos = 0; return; }
     }
-    
-    // Interleave and convert back to int32_t
-    for (int frame = 0; frame < output_frames_generated; ++frame) {
-        for (int ch = 0; ch < inputChannels; ++ch) {
-            if (r8brain_output_ptrs[ch] != nullptr) {
-                double sample_double = r8brain_output_ptrs[ch][frame];
-                sample_double = std::max(-1.0, std::min(1.0, sample_double)); // Clipping
-                resampled_buffer[frame * inputChannels + ch] = static_cast<int32_t>(sample_double * 2147483647.0);
-            } else {
-                 LOG_CPP_ERROR("[AudioProc] Error: r8brain output pointer for channel %d is null after processing.", ch);
-                 resample_buffer_pos = 0; return;
-            }
-        }
-    }
-    resample_buffer_pos = total_output_samples;
+
+    src_float_to_int_array(float_out_buffer.data(), resampled_buffer.data(), output_samples);
+    resample_buffer_pos = output_samples;
 }
 
 
 void AudioProcessor::downsample() {
-     // Bypass if no processing needed or rates already match final target
-     if (!isProcessingRequired() || outputSampleRate * OVERSAMPLING_FACTOR == outputSampleRate) {
-         size_t samples_to_copy = merged_buffer_pos;
-         if (samples_to_copy > merged_buffer.size()) {
-              LOG_CPP_ERROR("[AudioProc] Error: merged_buffer_pos (%zu) exceeds merged_buffer size (%zu) in downsample bypass.", samples_to_copy, merged_buffer.size());
-              samples_to_copy = merged_buffer.size();
-         }
-         if (samples_to_copy > processed_buffer.capacity()) {
-              LOG_CPP_ERROR("[AudioProc] Error: Not enough capacity in processed_buffer for memcpy. Required: %zu, Capacity: %zu", samples_to_copy, processed_buffer.capacity());
-              process_buffer_pos = 0; return;
-         }
-          if (processed_buffer.size() < samples_to_copy) {
-              try { processed_buffer.resize(samples_to_copy); }
-              catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing processed_buffer: %s", e.what()); process_buffer_pos = 0; return; }
-          }
-         memcpy(processed_buffer.data(), merged_buffer.data(), samples_to_copy * sizeof(int32_t));
-         process_buffer_pos = samples_to_copy;
-         return;
-     }
-
-    // Proceed with downsampling
-    if (downsamplers.empty() || outputChannels <= 0 || outputSampleRate <= 0) {
-         LOG_CPP_ERROR("[AudioProc] Error: Downsamplers not initialized or invalid channels/rate for downsampling.");
-         process_buffer_pos = 0; return;
+    if (!isProcessingRequired() || m_downsampler == nullptr) {
+        size_t samples_to_copy = merged_buffer_pos;
+        if (samples_to_copy > merged_buffer.size()) {
+            LOG_CPP_ERROR("[AudioProc] Error: merged_buffer_pos (%zu) exceeds merged_buffer size (%zu) in downsample bypass.", samples_to_copy, merged_buffer.size());
+            samples_to_copy = merged_buffer.size();
+        }
+        if (processed_buffer.size() < samples_to_copy) {
+            try { processed_buffer.resize(samples_to_copy); }
+            catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing processed_buffer: %s", e.what()); process_buffer_pos = 0; return; }
+        }
+        memcpy(processed_buffer.data(), merged_buffer.data(), samples_to_copy * sizeof(int32_t));
+        process_buffer_pos = samples_to_copy;
+        return;
     }
 
     if (merged_buffer_pos == 0) {
@@ -626,77 +492,37 @@ void AudioProcessor::downsample() {
         return;
     }
 
-    size_t num_input_frames_for_downsample = merged_buffer_pos / outputChannels;
-    if (num_input_frames_for_downsample == 0) { process_buffer_pos = 0; return; }
+    std::vector<float> float_in_buffer(merged_buffer_pos);
+    src_int_to_float_array(merged_buffer.data(), float_in_buffer.data(), merged_buffer_pos);
 
-    // De-interleave and convert to double for r8brain
-    for (int ch = 0; ch < outputChannels; ++ch) {
-        if (r8brain_downsampler_in_buf[ch].size() < num_input_frames_for_downsample) {
-            try {
-                r8brain_downsampler_in_buf[ch].resize(num_input_frames_for_downsample);
-            } catch (const std::bad_alloc& e) {
-                LOG_CPP_ERROR("[AudioProc] Error resizing r8brain_downsampler_in_buf for channel %d: %s", ch, e.what());
-                process_buffer_pos = 0; return;
-            }
-        }
-        for (size_t frame = 0; frame < num_input_frames_for_downsample; ++frame) {
-            if ((frame * outputChannels + ch) < merged_buffer.size()) {
-                r8brain_downsampler_in_buf[ch][frame] = static_cast<double>(merged_buffer[frame * outputChannels + ch]) / 2147483647.0; // INT32_MAX
-            } else {
-                LOG_CPP_ERROR("[AudioProc] Error: Out of bounds access in downsample data preparation.");
-                process_buffer_pos = 0; return;
-            }
-        }
+    double current_playback_rate = playback_rate_.load();
+    double effective_oversampled_rate = static_cast<double>(outputSampleRate * m_settings->processor_tuning.oversampling_factor) * current_playback_rate;
+    double ratio = static_cast<double>(outputSampleRate) / effective_oversampled_rate;
+
+    std::vector<float> float_out_buffer(static_cast<size_t>(merged_buffer_pos * ratio) + 10);
+
+    SRC_DATA src_data = {0};
+    src_data.data_in = float_in_buffer.data();
+    src_data.input_frames = merged_buffer_pos / outputChannels;
+    src_data.data_out = float_out_buffer.data();
+    src_data.output_frames = float_out_buffer.size() / outputChannels;
+    src_data.src_ratio = ratio;
+
+    int error = src_process(m_downsampler, &src_data);
+    if (error) {
+        LOG_CPP_ERROR("[AudioProc] libsamplerate downsampling error: %s", src_strerror(error));
+        process_buffer_pos = 0;
+        return;
     }
 
-    std::vector<double*> r8brain_output_ptrs_down(outputChannels);
-    int final_output_frames_generated = 0;
-
-    for (int ch = 0; ch < outputChannels; ++ch) {
-        if (ch < downsamplers.size() && downsamplers[ch] != nullptr) {
-            try {
-                final_output_frames_generated = downsamplers[ch]->process(r8brain_downsampler_in_buf[ch].data(), num_input_frames_for_downsample, r8brain_output_ptrs_down[ch]);
-                 if (final_output_frames_generated < 0) { // r8brain might return negative on error
-                    LOG_CPP_ERROR("[AudioProc] r8brain downsampling error on channel %d. Code: %d", ch, final_output_frames_generated);
-                    process_buffer_pos = 0; return;
-                }
-            } catch (const std::exception& e) { // Changed to std::exception
-                LOG_CPP_ERROR("[AudioProc] Standard exception during downsampling on channel %d: %s", ch, e.what());
-                process_buffer_pos = 0; return;
-            } catch (...) {
-                LOG_CPP_ERROR("[AudioProc] Unknown exception during downsampling on channel %d", ch);
-                process_buffer_pos = 0; return;
-            }
-        } else {
-            LOG_CPP_ERROR("[AudioProc] Error: Downsampler for channel %d is null or out of bounds.", ch);
-            process_buffer_pos = 0; return;
-        }
+    size_t output_samples = src_data.output_frames_gen * outputChannels;
+    if (processed_buffer.size() < output_samples) {
+        try { processed_buffer.resize(output_samples); }
+        catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing processed_buffer for output: %s", e.what()); process_buffer_pos = 0; return; }
     }
 
-    size_t total_final_output_samples = static_cast<size_t>(final_output_frames_generated) * outputChannels;
-    if (processed_buffer.size() < total_final_output_samples) {
-        try {
-            processed_buffer.resize(total_final_output_samples);
-        } catch (const std::bad_alloc& e) {
-            LOG_CPP_ERROR("[AudioProc] Error resizing processed_buffer for downsampling: %s", e.what());
-            process_buffer_pos = 0; return;
-        }
-    }
-
-    // Interleave and convert back to int32_t
-    for (int frame = 0; frame < final_output_frames_generated; ++frame) {
-        for (int ch = 0; ch < outputChannels; ++ch) {
-             if (r8brain_output_ptrs_down[ch] != nullptr) {
-                double sample_double = r8brain_output_ptrs_down[ch][frame];
-                sample_double = std::max(-1.0, std::min(1.0, sample_double)); // Clipping
-                processed_buffer[frame * outputChannels + ch] = static_cast<int32_t>(sample_double * 2147483647.0);
-            } else {
-                 LOG_CPP_ERROR("[AudioProc] Error: r8brain output pointer for channel %d is null after downsampling.", ch);
-                 process_buffer_pos = 0; return;
-            }
-        }
-    }
-    process_buffer_pos = total_final_output_samples;
+    src_float_to_int_array(float_out_buffer.data(), processed_buffer.data(), output_samples);
+    process_buffer_pos = output_samples;
 }
 
 
@@ -1223,8 +1049,11 @@ void AudioProcessor::noiseShapingDither() {
     if (process_buffer_pos == 0) return; // Nothing to process
 
     const float ditherAmplitude = (inputBitDepth > 0) ? (1.0f / (static_cast<unsigned long long>(1) << (inputBitDepth - 1))) : 0.0f;
-    const float shapingFactor = 0.25f;
-    static float error_accumulator = 0.0f; 
+    
+    // Clamp the shaping factor to a safe range [0.0, 1.0] to prevent instability.
+    const float shapingFactor = std::max(0.0f, std::min(1.0f, m_settings->processor_tuning.dither_noise_shaping_factor));
+
+    static float error_accumulator = 0.0f;
     
     // Consider seeding generator less frequently if performance is critical
     // Wrapped std::chrono::system_clock::now in parentheses to avoid macro expansion issues on Windows
@@ -1247,7 +1076,7 @@ void AudioProcessor::noiseShapingDither() {
 
 
 void AudioProcessor::setupDCFilter() {
-    float sampleRateForFilters = static_cast<float>(outputSampleRate * OVERSAMPLING_FACTOR);
+    float sampleRateForFilters = static_cast<float>(outputSampleRate * m_settings->processor_tuning.oversampling_factor);
      if (sampleRateForFilters <= 0) {
           LOG_CPP_ERROR("[AudioProc] Error: Invalid sample rate (%d) for DC Filter setup.", outputSampleRate);
           for (int channel = 0; channel < MAX_CHANNELS; ++channel) {
@@ -1258,9 +1087,9 @@ void AudioProcessor::setupDCFilter() {
 
     for (int channel = 0; channel < MAX_CHANNELS; ++channel) {
         delete dcFilters[channel];
-        float normalized_freq = 20.0f / sampleRateForFilters;
+        float normalized_freq = m_settings->processor_tuning.dc_filter_cutoff_hz / sampleRateForFilters;
          if (normalized_freq >= 0.5f) normalized_freq = 0.499f;
-         try {
+          try {
             dcFilters[channel] = new Biquad(bq_type_highpass, normalized_freq, 0.707f, 0.0f);
          } catch (const std::bad_alloc& e) {
              LOG_CPP_ERROR("[AudioProc] Error allocating DC filter [%d]: %s", channel, e.what());

@@ -19,13 +19,33 @@ bool WebRtcManager::add_webrtc_listener(
     const std::string& offer_sdp,
     std::function<void(const std::string& sdp)> on_local_description_callback,
     std::function<void(const std::string& candidate, const std::string& sdpMid)> on_ice_candidate_callback,
-    bool running)
+    bool running,
+    const std::string& client_ip)
 {
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
     if (!running) {
         LOG_CPP_ERROR("[WebRtcManager] Cannot add WebRTC listener, manager is not running.");
         return false;
     }
+
+    // Collect listeners to remove (from same IP) without holding the lock
+    std::vector<std::pair<std::string, std::string>> listeners_to_remove;
+    {
+        std::lock_guard<std::mutex> lock(m_manager_mutex);
+        for (auto it = m_webrtc_listeners.begin(); it != m_webrtc_listeners.end(); ++it) {
+            if (it->second.ip_address == client_ip) {
+                LOG_CPP_INFO("[WebRtcManager] Found existing WebRTC listener %s from IP %s. Will remove it.", it->second.listener_id.c_str(), client_ip.c_str());
+                listeners_to_remove.push_back({it->second.sink_id, it->second.listener_id});
+            }
+        }
+    }
+
+    // Remove the listeners without holding the lock to avoid deadlock
+    for (const auto& [old_sink_id, old_listener_id] : listeners_to_remove) {
+        remove_webrtc_listener(old_sink_id, old_listener_id, running);
+    }
+
+    // Now proceed with adding the new listener
+    std::lock_guard<std::mutex> lock(m_manager_mutex);
 
     auto config_it = m_sink_configs.find(sink_id);
     if (config_it == m_sink_configs.end()) {
@@ -49,7 +69,11 @@ bool WebRtcManager::add_webrtc_listener(
 
         auto webrtc_sender = std::make_unique<WebRtcSender>(mixer_config, offer_sdp, on_local_description_callback, on_ice_candidate_callback);
         m_sink_manager->add_listener_to_sink(sink_id, listener_id, std::move(webrtc_sender));
-        LOG_CPP_INFO("[WebRtcManager] Added WebRTC listener %s to sink %s", listener_id.c_str(), sink_id.c_str());
+        
+        // Store listener info
+        m_webrtc_listeners[listener_id] = {sink_id, listener_id, client_ip};
+
+        LOG_CPP_INFO("[WebRtcManager] Added WebRTC listener %s to sink %s for IP %s", listener_id.c_str(), sink_id.c_str(), client_ip.c_str());
         return true;
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("[WebRtcManager] Failed to create WebRtcSender for listener %s on sink %s: %s", listener_id.c_str(), sink_id.c_str(), e.what());
@@ -70,6 +94,7 @@ bool WebRtcManager::remove_webrtc_listener(const std::string& sink_id, const std
     }
 
     m_sink_manager->remove_listener_from_sink(sink_id, listener_id);
+    m_webrtc_listeners.erase(listener_id);
     LOG_CPP_INFO("[WebRtcManager] Removed WebRTC listener %s from sink %s", listener_id.c_str(), sink_id.c_str());
     return true;
 }

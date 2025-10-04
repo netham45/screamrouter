@@ -287,7 +287,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         int items_scanned = sscanf(m_line.c_str(), "m=audio %d", &port);
         if (items_scanned == 1 && port > 0) {
             if (session_callback_ && !connection_ip.empty()) {
-                session_callback_(connection_ip, port);
+                session_callback_(connection_ip, port, source_ip);
             }
         } else {
             LOG_CPP_WARNING("%s Failed to parse port from m-line: %s", logger_prefix_.c_str(), m_line.c_str());

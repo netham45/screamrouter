@@ -98,6 +98,8 @@ struct TaggedAudioPacket {
     uint8_t chlayout1 = 0;
     /** @brief Scream channel layout byte 2. */
     uint8_t chlayout2 = 0;
+    /** @brief Playback rate adjustment factor (1.0 is normal speed). */
+    double playback_rate = 1.0;
 };
 
 /**
@@ -175,6 +177,15 @@ struct StreamStats {
     double jitter_estimate_ms = 0.0;
     double packets_per_second = 0.0;
     size_t timeshift_buffer_size = 0;
+    uint64_t timeshift_buffer_late_packets = 0;
+    uint64_t timeshift_buffer_lagging_events = 0;
+    uint64_t tm_buffer_underruns = 0;
+    uint64_t tm_packets_discarded = 0;
+    double last_arrival_time_error_ms = 0.0;
+    double total_anchor_adjustment_ms = 0.0;
+    uint64_t total_packets_in_stream = 0;
+    double target_buffer_level_ms = 0.0;
+    double buffer_target_fill_percentage = 0.0;
 };
 
 struct SourceStats {
@@ -183,6 +194,7 @@ struct SourceStats {
     size_t input_queue_size = 0;
     size_t output_queue_size = 0;
     double packets_processed_per_second = 0.0;
+    uint64_t reconfigurations = 0;
 };
 
 struct WebRtcListenerStats {
@@ -197,6 +209,9 @@ struct SinkStats {
     size_t active_input_streams = 0;
     size_t total_input_streams = 0;
     double packets_mixed_per_second = 0.0;
+    uint64_t sink_buffer_underruns = 0;
+    uint64_t sink_buffer_overflows = 0;
+    uint64_t mp3_buffer_overflows = 0;
     std::vector<WebRtcListenerStats> webrtc_listeners;
 };
 
@@ -502,7 +517,16 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def(py::init<>())
             .def_readwrite("jitter_estimate_ms", &StreamStats::jitter_estimate_ms)
             .def_readwrite("packets_per_second", &StreamStats::packets_per_second)
-            .def_readwrite("timeshift_buffer_size", &StreamStats::timeshift_buffer_size);
+            .def_readwrite("timeshift_buffer_size", &StreamStats::timeshift_buffer_size)
+            .def_readwrite("timeshift_buffer_late_packets", &StreamStats::timeshift_buffer_late_packets)
+            .def_readwrite("timeshift_buffer_lagging_events", &StreamStats::timeshift_buffer_lagging_events)
+            .def_readwrite("tm_buffer_underruns", &StreamStats::tm_buffer_underruns)
+            .def_readwrite("tm_packets_discarded", &StreamStats::tm_packets_discarded)
+            .def_readwrite("last_arrival_time_error_ms", &StreamStats::last_arrival_time_error_ms)
+            .def_readwrite("total_anchor_adjustment_ms", &StreamStats::total_anchor_adjustment_ms)
+            .def_readwrite("total_packets_in_stream", &StreamStats::total_packets_in_stream)
+            .def_readwrite("target_buffer_level_ms", &StreamStats::target_buffer_level_ms)
+            .def_readwrite("buffer_target_fill_percentage", &StreamStats::buffer_target_fill_percentage);
 
         py::class_<SourceStats>(m, "SourceStats", "Statistics for a single source processor")
             .def(py::init<>())
@@ -510,7 +534,8 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("source_tag", &SourceStats::source_tag)
             .def_readwrite("input_queue_size", &SourceStats::input_queue_size)
             .def_readwrite("output_queue_size", &SourceStats::output_queue_size)
-            .def_readwrite("packets_processed_per_second", &SourceStats::packets_processed_per_second);
+            .def_readwrite("packets_processed_per_second", &SourceStats::packets_processed_per_second)
+            .def_readwrite("reconfigurations", &SourceStats::reconfigurations);
 
         py::class_<WebRtcListenerStats>(m, "WebRtcListenerStats", "Statistics for a single WebRTC listener")
             .def(py::init<>())
@@ -525,6 +550,9 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("active_input_streams", &SinkStats::active_input_streams)
             .def_readwrite("total_input_streams", &SinkStats::total_input_streams)
             .def_readwrite("packets_mixed_per_second", &SinkStats::packets_mixed_per_second)
+            .def_readwrite("sink_buffer_underruns", &SinkStats::sink_buffer_underruns)
+            .def_readwrite("sink_buffer_overflows", &SinkStats::sink_buffer_overflows)
+            .def_readwrite("mp3_buffer_overflows", &SinkStats::mp3_buffer_overflows)
             .def_readwrite("webrtc_listeners", &SinkStats::webrtc_listeners);
 
         py::class_<GlobalStats>(m, "GlobalStats", "Global statistics for the audio engine")

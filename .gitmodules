@@ -19,3 +19,6 @@
 [submodule "src/audio_engine/deps/--force"]
 	path = src/audio_engine/deps/--force
 	url = https://github.com/netham45/lame.git
+[submodule "src/audio_engine/deps/libsamplerate"]
+	path = src/audio_engine/deps/libsamplerate
+	url = https://github.com/libsndfile/libsamplerate.git

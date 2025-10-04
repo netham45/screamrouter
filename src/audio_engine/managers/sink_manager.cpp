@@ -5,8 +5,8 @@
 namespace screamrouter {
 namespace audio {
 
-SinkManager::SinkManager(std::mutex& manager_mutex)
-    : m_manager_mutex(manager_mutex) {
+SinkManager::SinkManager(std::mutex& manager_mutex, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
+    : m_manager_mutex(manager_mutex), m_settings(settings) {
     LOG_CPP_INFO("SinkManager created.");
 }
 
@@ -37,7 +37,7 @@ bool SinkManager::add_sink(const SinkConfig& config, bool running) {
         mixer_config.output_chlayout1 = config.chlayout1;
         mixer_config.output_chlayout2 = config.chlayout2;
         mixer_config.speaker_layout = config.speaker_layout;
-        new_sink = std::make_unique<SinkAudioMixer>(mixer_config, mp3_queue);
+        new_sink = std::make_unique<SinkAudioMixer>(mixer_config, mp3_queue, m_settings);
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("Failed to create SinkAudioMixer for %s: %s", config.id.c_str(), e.what());
         return false;

@@ -12,10 +12,12 @@
 #include "../utils/audio_component.h"
 #include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
+#include "../configuration/audio_engine_settings.h"
 
 #include <string>
 #include <vector>
 #include <deque>
+#include "stream_clock.h"
 #include <map>
 #include <chrono>
 #include <memory>
@@ -50,20 +52,28 @@ struct ProcessorTargetInfo {
  * @brief Holds state information for dejittering a specific audio stream.
  */
 struct StreamTimingState {
-    // Jitter estimation fields
     bool is_first_packet = true;
-    double jitter_estimate = 0.0;
     uint32_t last_rtp_timestamp = 0;
     std::chrono::steady_clock::time_point last_wallclock;
-    double avg_packet_interval_ms = 20.0; // Default to a safe 20ms
+    std::unique_ptr<StreamClock> clock;
 
-    // Playout clock mapping fields
-    bool playout_clock_initialized = false;
-    uint32_t anchor_rtp_timestamp = 0;
-    std::chrono::steady_clock::time_point anchor_wallclock_time;
+    // Jitter estimation (RFC 3550)
+    double jitter_estimate = 1.0; // Start with 1ms default jitter
+
+    // Playout buffer state
+    double current_buffer_level_ms = 0.0;
+    double current_playback_rate = 1.0;
     uint32_t last_played_rtp_timestamp = 0;
+    double last_arrival_time_error_ms = 0.0; // For stats
+    double target_buffer_level_ms = 0.0;
+    double buffer_target_fill_percentage = 0.0;
 
+    // Stats
     std::atomic<uint64_t> total_packets{0};
+    std::atomic<uint64_t> late_packets_count{0};
+    std::atomic<uint64_t> tm_buffer_underruns{0};
+    std::atomic<uint64_t> tm_packets_discarded{0};
+    std::atomic<uint64_t> lagging_events_count{0};
 };
 
 /**
@@ -76,6 +86,13 @@ struct TimeshiftManagerStats {
     std::map<std::string, double> jitter_estimates;
     std::map<std::string, uint64_t> stream_total_packets;
     std::map<std::string, size_t> processor_read_indices;
+    std::map<std::string, uint64_t> stream_late_packets;
+    std::map<std::string, uint64_t> stream_lagging_events;
+    std::map<std::string, uint64_t> stream_tm_buffer_underruns;
+    std::map<std::string, uint64_t> stream_tm_packets_discarded;
+    std::map<std::string, double> stream_last_arrival_time_error_ms;
+    std::map<std::string, double> stream_target_buffer_level_ms;
+    std::map<std::string, double> stream_buffer_target_fill_percentage;
 };
 
 /**
@@ -91,8 +108,9 @@ public:
     /**
      * @brief Constructs a TimeshiftManager.
      * @param max_buffer_duration The maximum duration of audio to hold in the global buffer.
+     * @param settings The shared audio engine settings.
      */
-    TimeshiftManager(std::chrono::seconds max_buffer_duration);
+    TimeshiftManager(std::chrono::seconds max_buffer_duration, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
     /**
      * @brief Destructor.
      */
@@ -151,6 +169,7 @@ private:
     // Map: source_tag -> instance_id -> ProcessorTargetInfo
     std::map<std::string, std::map<std::string, ProcessorTargetInfo>> processor_targets_;
     std::mutex data_mutex_;
+    std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 
     std::map<std::string, StreamTimingState> stream_timing_states_;
     std::mutex timing_mutex_;

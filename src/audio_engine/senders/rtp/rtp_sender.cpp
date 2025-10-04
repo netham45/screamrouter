@@ -152,6 +152,19 @@ bool RtpSender::setup() {
         return false;
     }
 
+#ifndef _WIN32
+    // Set socket priority for low latency on Linux
+    int priority = 6; // Corresponds to AC_VO (Access Category Voice)
+    if (setsockopt(udp_socket_fd_, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority)) < 0) {
+        LOG_CPP_WARNING("[RtpSender:%s] Failed to set socket priority on UDP socket.", config_.sink_id.c_str());
+    }
+    // Allow reusing the address to avoid issues with lingering sockets
+    int reuse = 1;
+    if (setsockopt(udp_socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        LOG_CPP_WARNING("[RtpSender:%s] Failed to set SO_REUSEADDR on UDP socket.", config_.sink_id.c_str());
+    }
+#endif
+
     // If the destination is a multicast address, configure the socket accordingly.
     if (is_multicast(config_.output_ip)) {
         LOG_CPP_INFO("[RtpSender:%s] Destination is a multicast address. Configuring socket for multicast.", config_.sink_id.c_str());
@@ -207,9 +220,21 @@ bool RtpSender::setup() {
     if (sap_socket_fd_ == PLATFORM_INVALID_SOCKET) {
         LOG_CPP_ERROR("[RtpSender:%s] Failed to create SAP socket", config_.sink_id.c_str());
         // We can still function without SAP, so just log and continue
-    } else {
-        // Set TTL for multicast packets to allow them to traverse routers (if needed)
-        int ttl = 16;
+   } else {
+#ifndef _WIN32
+       // Set socket priority for low latency on Linux
+       int priority = 6;
+       if (setsockopt(sap_socket_fd_, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority)) < 0) {
+           LOG_CPP_WARNING("[RtpSender:%s] Failed to set socket priority on SAP socket.", config_.sink_id.c_str());
+       }
+       // Allow reusing the address
+       int reuse = 1;
+       if (setsockopt(sap_socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+           LOG_CPP_WARNING("[RtpSender:%s] Failed to set SO_REUSEADDR on SAP socket.", config_.sink_id.c_str());
+       }
+#endif
+       // Set TTL for multicast packets to allow them to traverse routers (if needed)
+       int ttl = 16;
 #ifdef _WIN32
         if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_MULTICAST_TTL, (const char*)&ttl, sizeof(ttl)) < 0) {
 #else
@@ -397,7 +422,7 @@ void RtpSender::sap_announcement_loop() {
             sdp << "m=audio " << config_.output_port << " RTP/AVP " << RTP_PAYLOAD_TYPE_L16_48K_STEREO << "\n"; 
             sdp << "a=rtpmap:" << RTP_PAYLOAD_TYPE_L16_48K_STEREO << " L16/48000/" << config_.output_channels << "\n";
             sdp << "a=fmtp:" << RTP_PAYLOAD_TYPE_L16_48K_STEREO << " buffer-time=20\n";
-            
+
             // Add channel map if channels > 2, using the scream channel layout
             if (config_.output_channels > 2) {
                 std::vector<int> channel_order = get_channel_order_from_mask(config_.output_chlayout1, config_.output_chlayout2);

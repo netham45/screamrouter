@@ -9,6 +9,7 @@
 
 #include "../audio_types.h"
 #include "../configuration/audio_engine_config_types.h"
+#include "../configuration/audio_engine_settings.h"
 #include "../input_processor/source_input_processor.h"
 #include "../utils/thread_safe_queue.h"
 #include <string>
@@ -37,7 +38,7 @@ public:
      * @param manager_mutex A reference to the main AudioManager mutex for thread safety.
      * @param timeshift_manager A pointer to the TimeshiftManager for registering new processors.
      */
-    SourceManager(std::mutex& manager_mutex, TimeshiftManager* timeshift_manager);
+    SourceManager(std::mutex& manager_mutex, TimeshiftManager* timeshift_manager, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
     /**
      * @brief Destructor.
      */
@@ -80,6 +81,7 @@ private:
 
     std::mutex& m_manager_mutex;
     TimeshiftManager* m_timeshift_manager;
+    std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 
     std::map<std::string, std::unique_ptr<SourceInputProcessor>> m_sources;
     std::map<std::string, std::shared_ptr<PacketQueue>> m_rtp_to_source_queues;

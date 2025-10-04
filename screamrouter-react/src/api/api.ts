@@ -102,6 +102,15 @@ export interface StreamStats {
   jitter_estimate_ms: number;
   packets_per_second: number;
   timeshift_buffer_size: number;
+  timeshift_buffer_late_packets: number;
+  timeshift_buffer_lagging_events: number;
+  last_arrival_time_error_ms: number;
+  total_anchor_adjustment_ms: number;
+  total_packets_in_stream: number;
+  tm_buffer_underruns: number;
+  tm_packets_discarded: number;
+  target_buffer_level_ms: number;
+  buffer_target_fill_percentage: number;
 }
 
 export interface SourceStats {
@@ -110,6 +119,7 @@ export interface SourceStats {
   input_queue_size: number;
   output_queue_size: number;
   packets_processed_per_second: number;
+  reconfigurations: number;
 }
 
 export interface WebRtcListenerStats {
@@ -124,6 +134,9 @@ export interface SinkStats {
   active_input_streams: number;
   total_input_streams: number;
   packets_mixed_per_second: number;
+  sink_buffer_underruns: number;
+  sink_buffer_overflows: number;
+  mp3_buffer_overflows: number;
   webrtc_listeners: WebRtcListenerStats[];
 }
 
@@ -138,6 +151,53 @@ export interface AudioEngineStats {
   source_stats: SourceStats[];
   sink_stats: SinkStats[];
 }
+
+// --- Audio Engine Settings Interfaces ---
+export interface TimeshiftTuning {
+  cleanup_interval_ms: number;
+  reanchor_interval_sec: number;
+  jitter_smoothing_factor: number;
+  jitter_safety_margin_multiplier: number;
+  late_packet_threshold_ms: number;
+  target_buffer_level_ms: number;
+  proportional_gain_kp: number;
+  min_playback_rate: number;
+  max_playback_rate: number;
+  loop_max_sleep_ms: number;
+}
+
+export interface MixerTuning {
+  grace_period_timeout_ms: number;
+  grace_period_poll_interval_ms: number;
+  mp3_bitrate_kbps: number;
+  mp3_vbr_enabled: boolean;
+  mp3_output_queue_max_size: number;
+}
+
+export interface SourceProcessorTuning {
+  command_loop_sleep_ms: number;
+}
+
+export interface ProcessorTuning {
+  oversampling_factor: number;
+  volume_smoothing_factor: number;
+  dc_filter_cutoff_hz: number;
+  soft_clip_threshold: number;
+  soft_clip_knee: number;
+  normalization_target_rms: number;
+  normalization_attack_smoothing: number;
+  normalization_decay_smoothing: number;
+  dither_noise_shaping_factor: number;
+}
+
+export interface AudioEngineSettings {
+  timeshift_tuning: TimeshiftTuning;
+  mixer_tuning: MixerTuning;
+  source_processor_tuning: SourceProcessorTuning;
+  processor_tuning: ProcessorTuning;
+}
+// --- End Audio Engine Settings Interfaces ---
+
 
 /**
  * Interface for WebSocket update message
@@ -348,6 +408,10 @@ const ApiService = {
 
   // --- Stats ---
   getStats: () => axios.get<AudioEngineStats>('/api/stats'),
+
+  // --- Settings ---
+  getSettings: () => axios.get<AudioEngineSettings>('/api/settings'),
+  updateSettings: (settings: AudioEngineSettings) => axios.post('/api/settings', settings),
 };
 
 export default ApiService;

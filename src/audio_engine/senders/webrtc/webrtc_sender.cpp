@@ -311,7 +311,7 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
             case rtc::PeerConnection::State::Closed: state_str = "Closed"; break;
             default: state_str = "Unknown"; break;
         }
-        LOG_CPP_WARNING("[WebRtcSender:%s] Not connected, state: %s", config_.sink_id.c_str(), state_str.c_str());
+        LOG_CPP_DEBUG("[WebRtcSender:%s] Not connected, state: %s", config_.sink_id.c_str(), state_str.c_str());
         return;
     }
     if (!audio_track_) {

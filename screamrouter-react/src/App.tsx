@@ -8,6 +8,7 @@ import { BrowserRouter as Router, Routes, Route, useSearchParams, useParams } fr
 import { ChakraProvider } from '@chakra-ui/react'; // Import ChakraProvider
 import theme from './theme'; // Import custom theme
 import { AppProvider, useAppContext } from './context/AppContext'; // Import context provider and hook
+import { WebRTCProvider } from './context/WebRTCContext'; // Import the WebRTC provider
 import VNC from './components/pages/VNCPage'; // Import the VNC component
 import Visualizer from './components/pages/VisualizerPage'; // Import the Visualizer component
 import Equalizer from './components/pages/EqualizerPage'; // Import the Equalizer component
@@ -174,7 +175,9 @@ const App: React.FC = () => {
   return (
     <ChakraProvider theme={theme}> {/* Provide Chakra UI theme to the entire application */}
       <AppProvider> {/* Provide context to the entire application */}
-        <AppContent /> {/* Render the main content of the application */}
+        <WebRTCProvider>
+          <AppContent /> {/* Render the main content of the application */}
+        </WebRTCProvider>
       </AppProvider>
     </ChakraProvider>
   );

@@ -14,8 +14,8 @@ namespace audio {
 // Static counter for generating unique instance IDs, moved from audio_manager
 static std::atomic<uint64_t> instance_id_counter{0};
 
-SourceManager::SourceManager(std::mutex& manager_mutex, TimeshiftManager* timeshift_manager)
-    : m_manager_mutex(manager_mutex), m_timeshift_manager(timeshift_manager) {
+SourceManager::SourceManager(std::mutex& manager_mutex, TimeshiftManager* timeshift_manager, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
+    : m_manager_mutex(manager_mutex), m_timeshift_manager(timeshift_manager), m_settings(settings) {
     LOG_CPP_INFO("SourceManager created.");
 }
 
@@ -68,7 +68,7 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
         proc_config.initial_delay_ms = validated_config.initial_delay_ms;
         proc_config.initial_timeshift_sec = validated_config.initial_timeshift_sec;
 
-        new_source = std::make_unique<SourceInputProcessor>(proc_config, rtp_queue, sink_queue, cmd_queue);
+        new_source = std::make_unique<SourceInputProcessor>(proc_config, rtp_queue, sink_queue, cmd_queue, m_settings);
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("Failed to create SourceInputProcessor for instance %s (tag: %s): %s", instance_id.c_str(), config.tag.c_str(), e.what());
         return "";

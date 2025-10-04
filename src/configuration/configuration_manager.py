@@ -60,6 +60,7 @@ from src.screamrouter_types.exceptions import InUseError
 from src.utils.mdns_pinger import MDNSPinger
 from src.utils.mdns_responder import MDNSResponder
 from src.utils.mdns_settings_pinger import MDNSSettingsPinger
+from src.utils.mdns_scream_advertiser import ScreamAdvertiser
 
 # Import and initialize logger *before* the try block that might use it
 _logger = screamrouter_logger.get_logger(__name__)
@@ -100,6 +101,9 @@ class ConfigurationManager(threading.Thread):
         self.mdns_settings_pinger: MDNSSettingsPinger = MDNSSettingsPinger(self)
         """MDNS Settings Pinger, handles querying for settings to sync with sources"""
         self.mdns_settings_pinger.start()
+        self.mdns_scream_advertiser: ScreamAdvertiser = ScreamAdvertiser(port=constants.RTP_RECEIVER_PORT)
+        """MDNS Scream Advertiser, advertises the RTP listener as a _scream._udp service"""
+        self.mdns_scream_advertiser.start()
         self.sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
         self.source_descriptions:  List[SourceDescription] = []
@@ -562,6 +566,7 @@ class ConfigurationManager(threading.Thread):
         self.mdns_responder.stop()
         self.mdns_pinger.stop()
         self.mdns_settings_pinger.stop()
+        self.mdns_scream_advertiser.stop()
         _logger.debug("[Configuration Manager] mDNS stopped")
         self.running = False
 

@@ -13,6 +13,7 @@
 #include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
 #include "../senders/i_network_sender.h"
+#include "../configuration/audio_engine_settings.h"
 
 #include <string>
 #include <vector>
@@ -37,6 +38,9 @@ struct SinkAudioMixerStats {
     size_t active_input_streams = 0;
     size_t total_input_streams = 0;
     std::vector<std::string> listener_ids;
+    uint64_t buffer_underruns = 0;
+    uint64_t buffer_overflows = 0;
+    uint64_t mp3_buffer_overflows = 0;
 };
 
 using InputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
@@ -70,7 +74,8 @@ public:
      */
     SinkAudioMixer(
         SinkMixerConfig config,
-        std::shared_ptr<Mp3OutputQueue> mp3_output_queue
+        std::shared_ptr<Mp3OutputQueue> mp3_output_queue,
+        std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings
     );
 
     /**
@@ -135,6 +140,7 @@ public:
 
 private:
     SinkMixerConfig config_;
+    std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
     std::unique_ptr<INetworkSender> network_sender_;
     
@@ -150,7 +156,7 @@ private:
     std::condition_variable input_cv_;
     std::mutex input_cv_mutex_;
 
-    const std::chrono::milliseconds GRACE_PERIOD_TIMEOUT{45};
+    const std::chrono::milliseconds GRACE_PERIOD_TIMEOUT{12};
     const std::chrono::milliseconds GRACE_PERIOD_POLL_INTERVAL{1};
 
     std::vector<int32_t> mixing_buffer_;
@@ -166,11 +172,14 @@ private:
     std::vector<uint8_t> mp3_encode_buffer_;
 
     std::atomic<uint64_t> m_total_chunks_mixed{0};
+    std::atomic<uint64_t> m_buffer_underruns{0};
+    std::atomic<uint64_t> m_buffer_overflows{0};
+    std::atomic<uint64_t> m_mp3_buffer_overflows{0};
 
     void initialize_lame();
     void close_lame();
 
-    bool wait_for_source_data(std::chrono::milliseconds timeout);
+    bool wait_for_source_data();
     void mix_buffers();
     void downscale_buffer();
     size_t preprocess_for_listeners_and_mp3();

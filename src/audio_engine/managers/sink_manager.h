@@ -8,6 +8,7 @@
 #define SINK_MANAGER_H
 
 #include "../configuration/audio_engine_config_types.h"
+#include "../configuration/audio_engine_settings.h"
 #include "../output_mixer/sink_audio_mixer.h"
 #include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
@@ -34,7 +35,7 @@ public:
      * @brief Constructs a SinkManager.
      * @param manager_mutex A reference to the main AudioManager mutex for thread safety.
      */
-    SinkManager(std::mutex& manager_mutex);
+    SinkManager(std::mutex& manager_mutex, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
     /**
      * @brief Destructor.
      */
@@ -103,6 +104,7 @@ public:
 
 private:
     std::mutex& m_manager_mutex;
+    std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 
     std::map<std::string, std::unique_ptr<SinkAudioMixer>> m_sinks;
     std::map<std::string, SinkConfig> m_sink_configs;

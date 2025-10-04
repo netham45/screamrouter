@@ -52,6 +52,16 @@ bool ScreamSender::setup() {
     }
 
 #ifndef _WIN32
+    // Set socket priority for low latency on Linux
+    int priority = 6; // Corresponds to AC_VO (Access Category Voice)
+    if (setsockopt(udp_socket_fd_, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority)) < 0) {
+        LOG_CPP_WARNING("[ScreamSender:%s] Failed to set socket priority on UDP socket.", config_.sink_id.c_str());
+    }
+    // Allow reusing the address to avoid issues with lingering sockets
+    int reuse = 1;
+    if (setsockopt(udp_socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        LOG_CPP_WARNING("[ScreamSender:%s] Failed to set SO_REUSEADDR on UDP socket.", config_.sink_id.c_str());
+    }
     int dscp = 46; // EF PHB for low latency audio
     int tos_value = dscp << 2;
     if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_TOS, &tos_value, sizeof(tos_value)) < 0) {

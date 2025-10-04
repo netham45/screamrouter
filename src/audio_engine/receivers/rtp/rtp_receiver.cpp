@@ -53,13 +53,12 @@ RtpReceiver::RtpReceiver(
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager)
     : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, "[RtpReceiver]"),
-      config_(config), epoll_fd_(NAR_INVALID_SOCKET_VALUE), last_known_ssrc_(0), ssrc_initialized_(false),
-      is_accumulating_chunk_(false), chunk_first_packet_rtp_timestamp_(0), last_rtp_timestamp_(0), last_chunk_remainder_samples_(0) {
-    pcm_accumulator_.reserve(TARGET_PCM_CHUNK_SIZE * 2);
+      config_(config), epoll_fd_(NAR_INVALID_SOCKET_VALUE), last_rtp_timestamp_(0), last_chunk_remainder_samples_(0) {
+    // pcm_accumulator_ is now a map, no global reservation
     sap_listener_ = std::make_unique<SapListener>("[RtpReceiver-SAP]", config_.known_ips);
     if (sap_listener_) {
-        sap_listener_->set_session_callback([this](const std::string& ip, int port) {
-            this->open_dynamic_session(ip, port);
+        sap_listener_->set_session_callback([this](const std::string& ip, int port, const std::string& source_ip) {
+            this->open_dynamic_session(ip, port, source_ip);
         });
     }
 }
@@ -69,17 +68,33 @@ RtpReceiver::~RtpReceiver() noexcept {
 }
 
 
-void RtpReceiver::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc) {
+// Helper function to generate a unique key for each source
+std::string RtpReceiver::get_source_key(const struct sockaddr_in& addr) const {
+    char ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &(addr.sin_addr), ip_str, INET_ADDRSTRLEN);
+    return std::string(ip_str) + ":" + std::to_string(ntohs(addr.sin_port));
+}
+
+void RtpReceiver::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, const std::string& source_key) {
     char old_ssrc_hex[12];
     char new_ssrc_hex[12];
     snprintf(old_ssrc_hex, sizeof(old_ssrc_hex), "0x%08X", old_ssrc);
     snprintf(new_ssrc_hex, sizeof(new_ssrc_hex), "0x%08X", new_ssrc);
 
-    log_message("SSRC changed. Old SSRC: " + std::string(old_ssrc_hex) +
-                ", New SSRC: " + std::string(new_ssrc_hex) + ". Clearing PCM accumulator.");
-    pcm_accumulator_.clear();
-    is_accumulating_chunk_ = false; // Reset chunk accumulation on SSRC change
-    log_message("Internal PCM accumulator cleared due to SSRC change.");
+    log_message("SSRC changed for source " + source_key +
+                ". Old SSRC: " + std::string(old_ssrc_hex) +
+                ", New SSRC: " + std::string(new_ssrc_hex) + ". Clearing state for old SSRC.");
+   
+   std::lock_guard<std::mutex> lock(reordering_buffer_mutex_);
+   if (reordering_buffers_.count(old_ssrc)) {
+       reordering_buffers_.at(old_ssrc).reset();
+   }
+   pcm_accumulators_.erase(old_ssrc);
+   is_accumulating_chunk_.erase(old_ssrc);
+   chunk_first_packet_received_time_.erase(old_ssrc);
+   chunk_first_packet_rtp_timestamp_.erase(old_ssrc);
+
+   log_message("State for SSRC " + std::string(old_ssrc_hex) + " cleared due to SSRC change.");
 }
 
 bool RtpReceiver::setup_socket() {
@@ -98,7 +113,7 @@ bool RtpReceiver::setup_socket() {
  
     // Open the default port, listening on all interfaces
     const int default_port = 40000;
-    open_dynamic_session("0.0.0.0", default_port);
+    open_dynamic_session("0.0.0.0", default_port, "");
  
     if (socket_fds_.empty()) {
         log_error("Failed to bind the default UDP socket on port " + std::to_string(default_port));
@@ -120,7 +135,18 @@ void RtpReceiver::close_socket() {
     if (sap_listener_) {
         sap_listener_->stop();
     }
-    pcm_accumulator_.clear();
+   {
+       std::lock_guard<std::mutex> lock(reordering_buffer_mutex_);
+       reordering_buffers_.clear();
+       pcm_accumulators_.clear();
+       is_accumulating_chunk_.clear();
+       chunk_first_packet_received_time_.clear();
+       chunk_first_packet_rtp_timestamp_.clear();
+   }
+   {
+       std::lock_guard<std::mutex> lock(source_ssrc_mutex_);
+       source_to_last_ssrc_.clear();
+   }
 
     std::lock_guard<std::mutex> lock(socket_fds_mutex_);
 
@@ -167,207 +193,123 @@ void RtpReceiver::run() {
         }
  
         if (n_events == 0) { // Timeout
+            // Timeout: opportunity to process packets from jitter buffer
+            // even if no new packets have arrived.
+            std::lock_guard<std::mutex> lock(reordering_buffer_mutex_);
+            for(auto const& [ssrc, val] : reordering_buffers_) {
+                // Call internal version with take_lock=false since we already hold the lock
+                process_ready_packets_internal(ssrc, cliaddr, false);
+            }
             continue;
         }
- 
+
         for (int i = 0; i < n_events; ++i) {
             if ((events[i].events & EPOLLIN)) {
                 socket_t current_socket_fd = events[i].data.fd;
                 ssize_t n_received = recvfrom(current_socket_fd, raw_buffer, RAW_RECEIVE_BUFFER_SIZE, 0, (struct sockaddr *)&cliaddr, &len);
- 
+
                 if (!is_running()) break;
- 
+
                 if (n_received < 0) {
-                // EAGAIN or EWOULDBLOCK might occur if socket is non-blocking, but select should prevent this.
-                // However, other errors can occur.
-                if (NAR_GET_LAST_SOCK_ERROR != EAGAIN && NAR_GET_LAST_SOCK_ERROR != EWOULDBLOCK) {
-                     log_error("recvfrom() error: " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
+                    if (NAR_GET_LAST_SOCK_ERROR != EAGAIN && NAR_GET_LAST_SOCK_ERROR != EWOULDBLOCK) {
+                        log_error("recvfrom() error: " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
+                    }
+                    continue;
                 }
-                continue;
-            }
 
-            if (n_received == 0) { // Should not happen for UDP
-                log_warning("recvfrom() returned 0 bytes.");
-                continue;
-            }
+                if (n_received == 0) {
+                    log_warning("recvfrom() returned 0 bytes.");
+                    continue;
+                }
             
-            // Successfully received data
-            auto received_time = std::chrono::steady_clock::now();
+                auto received_time = std::chrono::steady_clock::now();
 
-            if (static_cast<size_t>(n_received) >= sizeof(rtc::RtpHeader)) {
-                const rtc::RtpHeader* rtp_header = reinterpret_cast<const rtc::RtpHeader*>(raw_buffer);
-                
-                uint8_t pt = rtp_header->payloadType();
-                uint32_t current_ssrc = rtp_header->ssrc(); // ntohl is handled by libdatachannel
-
-                if (!ssrc_initialized_) {
-                    ssrc_initialized_ = true;
-                    last_known_ssrc_ = current_ssrc;
-                    char ssrc_hex[12];
-                    snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", current_ssrc);
-                    log_message("Initial SSRC detected: " + std::string(ssrc_hex));
-                } else if (current_ssrc != last_known_ssrc_) {
-                    handle_ssrc_changed(last_known_ssrc_, current_ssrc);
-                    last_known_ssrc_ = current_ssrc; // Update after handling
+                if (static_cast<size_t>(n_received) < sizeof(rtc::RtpHeader)) {
+                    log_warning("Received packet too small to be an RTP packet (" + std::to_string(n_received) + " bytes). Source: " + std::string(inet_ntoa(cliaddr.sin_addr)));
+                    continue;
                 }
 
-                if (pt == RTP_PAYLOAD_TYPE_L16_48K_STEREO) {
-                    // Calculate header length manually.
-                    // Fixed RTP header size is 12 bytes.
-                    size_t header_len = 12;
-                    // Add length of CSRC list (each CSRC is 4 bytes).
-                    // Assumes rtp_header->csrcCount() is available and correct.
-                    header_len += rtp_header->csrcCount() * sizeof(uint32_t);
+                const rtc::RtpHeader* rtp_header = reinterpret_cast<const rtc::RtpHeader*>(raw_buffer);
+                uint8_t pt = rtp_header->payloadType();
+                uint32_t current_ssrc = rtp_header->ssrc();
 
-                    // Manually check for RTP header extension.
-                    // The first byte of the RTP header (raw_buffer[0]) contains: V(2) P(1) X(1) CC(4)
-                    // X is the extension bit, which is the 4th bit from MSB (mask 0x10).
-                    if ((raw_buffer[0] & 0x10) != 0) { // Check if extension bit (X) is set
-                        // The RTP header extension structure is:
-                        // Defined by profile: 2 bytes
-                        // Length: 2 bytes (length of extension data in 32-bit words, EXCLUDING this 4-byte header)
-                        
-                        size_t min_ext_header_size = 4; // For "defined by profile" and "length" fields
-                        if (static_cast<size_t>(n_received) >= header_len + min_ext_header_size) {
-                            // Offset to the 16-bit length field of the extension header.
-                            // This is after the fixed header (12 bytes), CSRCs, and the 2-byte "defined by profile" field.
-                            size_t ext_length_field_offset = 12 + (rtp_header->csrcCount() * sizeof(uint32_t)) + 2;
-                            
-                            uint16_t ext_data_len_words = ntohs(*reinterpret_cast<const uint16_t*>(raw_buffer + ext_length_field_offset));
-                            size_t extension_total_length_bytes = min_ext_header_size + (static_cast<size_t>(ext_data_len_words) * 4);
-                            
-                            if (static_cast<size_t>(n_received) >= header_len + extension_total_length_bytes) {
-                                header_len += extension_total_length_bytes;
-                            } else {
-                                log_warning("RTP packet indicates extension, but is too short for declared extension data length. SSRC: 0x" + std::to_string(current_ssrc) + ", Declared words: " + std::to_string(ext_data_len_words));
-                                // Packet is malformed or truncated, proceed as if no valid extension.
-                            }
-                        } else {
-                            log_warning("RTP packet indicates extension, but is too short for extension header fields. SSRC: 0x" + std::to_string(current_ssrc));
-                            // Packet is malformed, proceed as if no valid extension.
-                        }
+                // Per-source SSRC tracking to handle multiple independent RTP streams
+                std::string source_key = get_source_key(cliaddr);
+                {
+                    std::lock_guard<std::mutex> lock(source_ssrc_mutex_);
+                    
+                    auto it = source_to_last_ssrc_.find(source_key);
+                    if (it == source_to_last_ssrc_.end()) {
+                        // First packet from this source
+                        source_to_last_ssrc_[source_key] = current_ssrc;
+                        char ssrc_hex[12];
+                        snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", current_ssrc);
+                        log_message("New RTP source detected: " + source_key + " with SSRC " + std::string(ssrc_hex));
+                    } else if (it->second != current_ssrc) {
+                        // SSRC changed for THIS SOURCE ONLY
+                        uint32_t old_ssrc = it->second;
+                        handle_ssrc_changed(old_ssrc, current_ssrc, source_key);
+                        it->second = current_ssrc;
                     }
-                    if (static_cast<size_t>(n_received) >= header_len) {
-                        const uint8_t* payload_data = raw_buffer + header_len;
-                        size_t payload_len = n_received - header_len;
+                }
 
-                        if (payload_len > 0) {
-                            StreamProperties props;
-                            bool has_props = false;
-                            if (sap_listener_) {
-                                // First, try to get properties by SSRC (preferred)
-                                has_props = sap_listener_->get_stream_properties(current_ssrc, props);
-                                
-                                if (!has_props) {
-                                    // If SSRC lookup fails, try to get by sender IP address
-                                    char client_ip_str[INET_ADDRSTRLEN];
-                                    inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
-                                    has_props = sap_listener_->get_stream_properties_by_ip(client_ip_str, props);
-                                }
-                            }
-
-                            if (!has_props) {
-                            // If both lookups fail, log and ignore the packet
-                            if (sap_listener_) {
-                                char client_ip_str[INET_ADDRSTRLEN];
-                                inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
-                                LOG_CPP_DEBUG(("Ignoring RTP packet from " + std::string(client_ip_str) +
-                                            " with unknown SSRC: " + std::to_string(current_ssrc) +
-                                            ". No matching SAP announcement found via SSRC or IP.").c_str());
-                            }
-                            continue;
-                        }
-
-                        // **FIX**: Capture timestamp info from the FIRST packet of a new chunk.
-                        if (!is_accumulating_chunk_) {
-                            chunk_first_packet_received_time_ = received_time;
-                            chunk_first_packet_rtp_timestamp_ = rtp_header->timestamp();
-                            is_accumulating_chunk_ = true;
-                        }
-
-                        std::vector<uint8_t> processed_payload(payload_data, payload_data + payload_len);
-
-                        bool system_is_le = is_system_little_endian();
-                        if ((props.endianness == Endianness::BIG && system_is_le) ||
-                            (props.endianness == Endianness::LITTLE && !system_is_le)) {
-                            swap_endianness(processed_payload.data(), processed_payload.size(), props.bit_depth);
-                        }
-
-                        pcm_accumulator_.insert(pcm_accumulator_.end(), processed_payload.begin(), processed_payload.end());
-
-                        while (pcm_accumulator_.size() >= TARGET_PCM_CHUNK_SIZE) {
-                            TaggedAudioPacket packet;
-                            // **FIX**: Use the timestamp from the FIRST packet that started this chunk.
-                            packet.received_time = chunk_first_packet_received_time_;
-                            packet.rtp_timestamp = chunk_first_packet_rtp_timestamp_;
-                            
-                            // Populate SSRC and CSRCs from the most recent RTP header
-                            const rtc::RtpHeader* current_rtp_header = reinterpret_cast<const rtc::RtpHeader*>(raw_buffer);
-                            packet.ssrcs.push_back(current_rtp_header->ssrc());
-                                
-                                // Manually extract CSRCs from the raw buffer
-                                const uint8_t csrc_count = rtp_header->csrcCount();
-                                if (csrc_count > 0) {
-                            // The CSRC list starts after the fixed 12-byte header.
-                            const uint8_t* csrc_ptr = raw_buffer + 12;
-                            for (uint8_t i = 0; i < csrc_count; i++) {
-                                uint32_t csrc;
-                                // Copy 4 bytes into a uint32_t.
-                                memcpy(&csrc, csrc_ptr, sizeof(uint32_t));
-                                // The value is in network byte order, convert it to host byte order.
-                                packet.ssrcs.push_back(ntohl(csrc));
-                                csrc_ptr += sizeof(uint32_t);
-                            }
-                        }
-
-                        // Use sender's IP address for source_tag
-                        char client_ip_str[INET_ADDRSTRLEN];
-                                inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
-                                packet.source_tag = client_ip_str;
-                                
-                                // We already have the stream properties from the check before accumulating,
-                                // so we can use the `props` variable.
-                                packet.channels = props.channels;
-                                packet.sample_rate = props.sample_rate;
-                                packet.bit_depth = props.bit_depth;
-                                packet.chlayout1 = 0x03; // Stereo L/R
-                                packet.chlayout2 = 0x00;
-
-                        packet.audio_data.assign(pcm_accumulator_.begin(), pcm_accumulator_.begin() + TARGET_PCM_CHUNK_SIZE);
-                        pcm_accumulator_.erase(pcm_accumulator_.begin(), pcm_accumulator_.begin() + TARGET_PCM_CHUNK_SIZE);
-                        
-                        // **FIX**: Reset the accumulation flag after sending a chunk.
-                        is_accumulating_chunk_ = false;
-
-                        if (timeshift_manager_) {
-                            timeshift_manager_->add_packet(std::move(packet));
-                        }
-
-                                bool new_tag = false;
-                                {
-                                    std::lock_guard<std::mutex> lock(seen_tags_mutex_);
-                                    if (std::find(seen_tags_.begin(), seen_tags_.end(), packet.source_tag) == seen_tags_.end()) {
-                                        seen_tags_.push_back(packet.source_tag);
-                                        new_tag = true;
-                                    }
-                                }
-                                if (new_tag && notification_queue_) {
-                                    notification_queue_->push({packet.source_tag});
-                                }
-                            } // End while pcm_accumulator has enough data
-                        } else {
-                            log_warning("Received RTP packet (PT=" + std::to_string(pt) + ") with no payload after header.");
-                        }
-                    } else {
-                         log_warning("Received RTP packet (PT=" + std::to_string(pt) + ") smaller than its own header length (" + std::to_string(n_received) + " < " + std::to_string(header_len) + "). SSRC: 0x" + std::to_string(current_ssrc));
-                    }
-                } else {
+                if (pt != RTP_PAYLOAD_TYPE_L16_48K_STEREO) {
                     log_warning("Received packet with unexpected payload type: " + std::to_string(pt) +
                                 ", expected " + std::to_string(RTP_PAYLOAD_TYPE_L16_48K_STEREO) + ". SSRC: 0x" + std::to_string(current_ssrc));
+                    continue;
                 }
-            } else {
-                log_warning("Received packet too small to be an RTP packet (" + std::to_string(n_received) + " bytes). Source: " + std::string(inet_ntoa(cliaddr.sin_addr)));
-            }
+
+                // --- Start of Reordering Buffer Logic ---
+
+                // 1. Create RtpPacketData from the raw buffer
+                RtpPacketData packet_data;
+                packet_data.sequence_number = rtp_header->seqNumber();
+                packet_data.rtp_timestamp = rtp_header->timestamp();
+                packet_data.received_time = received_time;
+                packet_data.ssrc = current_ssrc;
+
+                size_t header_len = 12 + (rtp_header->csrcCount() * sizeof(uint32_t));
+                // (Extension handling logic omitted for brevity in this refactor, but would go here)
+
+                if (static_cast<size_t>(n_received) < header_len) {
+                    log_warning("Received RTP packet smaller than its own header length. SSRC: 0x" + std::to_string(current_ssrc));
+                    continue;
+                }
+
+                const uint8_t* payload_data = raw_buffer + header_len;
+                size_t payload_len = n_received - header_len;
+                if (payload_len > 0) {
+                    packet_data.payload.assign(payload_data, payload_data + payload_len);
+                }
+
+                const uint8_t csrc_count = rtp_header->csrcCount();
+                if (csrc_count > 0) {
+                    const uint8_t* csrc_ptr = raw_buffer + 12;
+                    for (uint8_t c = 0; c < csrc_count; c++) {
+                        uint32_t csrc;
+                        memcpy(&csrc, csrc_ptr, sizeof(uint32_t));
+                        packet_data.csrcs.push_back(ntohl(csrc));
+                        csrc_ptr += sizeof(uint32_t);
+                    }
+                }
+
+                // 2. Add the packet to the appropriate reordering buffer
+                {
+                    std::lock_guard<std::mutex> lock(reordering_buffer_mutex_);
+                    // This will create a new buffer for the SSRC if one doesn't exist
+                    bool is_new_buffer = (reordering_buffers_.find(current_ssrc) == reordering_buffers_.end());
+                    if (is_new_buffer) {
+                        char ssrc_hex[12];
+                        snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", current_ssrc);
+                        log_message("Creating new reordering buffer for SSRC " + std::string(ssrc_hex) +
+                                    " from " + inet_ntoa(cliaddr.sin_addr) + ":" + std::to_string(ntohs(cliaddr.sin_port)));
+                    }
+                    reordering_buffers_[current_ssrc].add_packet(std::move(packet_data));
+                }
+
+                // 3. Process any packets that are now ready
+                process_ready_packets(current_ssrc, cliaddr);
+
             } // End if EPOLLIN
         } // End for n_events
     } // End while is_running
@@ -375,7 +317,7 @@ void RtpReceiver::run() {
 }
 
 
-void RtpReceiver::open_dynamic_session(const std::string& ip, int port) {
+void RtpReceiver::open_dynamic_session(const std::string& ip, int port, const std::string& source_ip) {
     if (port <= 0 || port > 65535) {
         log_warning("Invalid port number received: " + std::to_string(port));
         return;
@@ -443,6 +385,122 @@ void RtpReceiver::open_dynamic_session(const std::string& ip, int port) {
 
     socket_fds_.push_back(sock_fd);
     log_message("Successfully bound and added new socket for " + ip + ":" + std::to_string(port) + " to epoll.");
+}
+
+void RtpReceiver::process_ready_packets(uint32_t ssrc, const struct sockaddr_in& client_addr) {
+    process_ready_packets_internal(ssrc, client_addr, true);
+}
+
+void RtpReceiver::process_ready_packets_internal(uint32_t ssrc, const struct sockaddr_in& client_addr, bool take_lock) {
+    std::unique_ptr<std::lock_guard<std::mutex>> lock_ptr;
+    if (take_lock) {
+        lock_ptr = std::make_unique<std::lock_guard<std::mutex>>(reordering_buffer_mutex_);
+    }
+
+    if (reordering_buffers_.find(ssrc) == reordering_buffers_.end()) {
+        return; // No buffer for this SSRC
+    }
+
+    auto ready_packets = reordering_buffers_.at(ssrc).get_ready_packets();
+    if (ready_packets.empty()) {
+        return; // No packets ready to process
+    }
+    
+    // Log when we process packets after potential loss
+    if (ready_packets.size() > 1) {
+        char ssrc_hex[12];
+        snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", ssrc);
+        log_message("Processing " + std::to_string(ready_packets.size()) +
+                    " ready packets for SSRC " + std::string(ssrc_hex) + " after reordering/recovery");
+    }
+
+    // Get stream properties for this SSRC
+    StreamProperties props;
+    bool has_props = false;
+    if (sap_listener_) {
+        has_props = sap_listener_->get_stream_properties(ssrc, props);
+        if (!has_props) {
+            char client_ip_str[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
+            has_props = sap_listener_->get_stream_properties_by_ip(client_ip_str, props);
+        }
+    }
+    if (!has_props) {
+        char ssrc_hex[12];
+        snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", ssrc);
+        LOG_CPP_WARNING(("Ignoring ready packets for unknown SSRC: " + std::string(ssrc_hex) +
+                       " - no SAP properties found").c_str());
+        return;
+    }
+
+    // Get or create the accumulator for this SSRC
+    auto& pcm_accumulator = pcm_accumulators_[ssrc];
+    if (pcm_accumulator.capacity() < TARGET_PCM_CHUNK_SIZE * 2) {
+        pcm_accumulator.reserve(TARGET_PCM_CHUNK_SIZE * 2);
+    }
+
+    for (auto& packet_data : ready_packets) {
+        if (!is_accumulating_chunk_[ssrc]) {
+            chunk_first_packet_received_time_[ssrc] = packet_data.received_time;
+            chunk_first_packet_rtp_timestamp_[ssrc] = packet_data.rtp_timestamp;
+            is_accumulating_chunk_[ssrc] = true;
+        }
+
+        std::vector<uint8_t> processed_payload = std::move(packet_data.payload);
+        bool system_is_le = is_system_little_endian();
+        if ((props.endianness == Endianness::BIG && system_is_le) ||
+            (props.endianness == Endianness::LITTLE && !system_is_le)) {
+            swap_endianness(processed_payload.data(), processed_payload.size(), props.bit_depth);
+        }
+
+        pcm_accumulator.insert(pcm_accumulator.end(), processed_payload.begin(), processed_payload.end());
+
+        while (pcm_accumulator.size() >= TARGET_PCM_CHUNK_SIZE) {
+            TaggedAudioPacket packet;
+            packet.received_time = chunk_first_packet_received_time_[ssrc];
+            packet.rtp_timestamp = chunk_first_packet_rtp_timestamp_[ssrc];
+            
+            size_t bytes_per_sample = props.bit_depth / 8;
+            if (bytes_per_sample > 0 && props.channels > 0) {
+                size_t samples_in_chunk = (TARGET_PCM_CHUNK_SIZE / bytes_per_sample) / props.channels;
+                chunk_first_packet_rtp_timestamp_[ssrc] += samples_in_chunk;
+            }
+
+            packet.ssrcs.push_back(packet_data.ssrc);
+            packet.ssrcs.insert(packet.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
+
+            char client_ip_str[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
+            packet.source_tag = client_ip_str;
+            
+            packet.channels = props.channels;
+            packet.sample_rate = props.sample_rate;
+            packet.bit_depth = props.bit_depth;
+            packet.chlayout1 = 0x03; // Stereo L/R
+            packet.chlayout2 = 0x00;
+
+            packet.audio_data.assign(pcm_accumulator.begin(), pcm_accumulator.begin() + TARGET_PCM_CHUNK_SIZE);
+            pcm_accumulator.erase(pcm_accumulator.begin(), pcm_accumulator.begin() + TARGET_PCM_CHUNK_SIZE);
+            
+            is_accumulating_chunk_[ssrc] = false;
+
+            if (timeshift_manager_) {
+                timeshift_manager_->add_packet(std::move(packet));
+            }
+
+            bool new_tag = false;
+            {
+                std::lock_guard<std::mutex> lock(seen_tags_mutex_);
+                if (std::find(seen_tags_.begin(), seen_tags_.end(), packet.source_tag) == seen_tags_.end()) {
+                    seen_tags_.push_back(packet.source_tag);
+                    new_tag = true;
+                }
+            }
+            if (new_tag && notification_queue_) {
+                notification_queue_->push({packet.source_tag});
+            }
+        }
+    }
 }
 
 

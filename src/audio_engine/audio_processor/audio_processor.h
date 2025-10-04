@@ -17,10 +17,10 @@
 #include <mutex>
 #include "../audio_constants.h"
 #include "../configuration/audio_engine_config_types.h"
+#include "../configuration/audio_engine_settings.h"
 
-// r8brain includes
-#include "../deps/r8brain-free-src/r8bconf.h"
-#include "../deps/r8brain-free-src/CDSPResampler.h"
+// libsamplerate include
+#include <samplerate.h>
 
 /**
  * @def CHUNK_SIZE
@@ -35,7 +35,7 @@ class Biquad;
  * @brief Manages the core audio processing pipeline.
  * @details This class encapsulates all the logic for processing raw audio data.
  *          This includes format conversion, volume control, equalization, speaker mixing,
- *          and sample rate conversion. It uses the r8brain library for high-quality resampling.
+ *          and sample rate conversion. It uses the libsamplerate library for high-quality resampling.
  */
 class AudioProcessor {
 public:
@@ -51,7 +51,8 @@ public:
      */
     AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth,
                    int inputSampleRate, int outputSampleRate, float volume,
-                   const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config);
+                   const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config,
+                   std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
     /**
      * @brief Destructor for the AudioProcessor.
      */
@@ -78,6 +79,12 @@ public:
     void setEqualizer(const float* newEq);
 
     /**
+     * @brief Sets the playback rate for time-stretching or compression.
+     * @param rate The new playback rate (1.0 is normal speed).
+     */
+    void set_playback_rate(double rate);
+
+    /**
      * @brief Enables or disables volume normalization.
      * @param enabled True to enable, false to disable.
      */
@@ -96,6 +103,11 @@ public:
     void update_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& new_layouts_config);
 
     /**
+     * @brief Flushes the internal state of all filters.
+     */
+    void flushFilters();
+
+    /**
      * @brief Applies a custom speaker mix matrix.
      * @param custom_matrix The custom speaker mix matrix to apply.
      */
@@ -107,6 +119,7 @@ public:
     void calculateAndApplyAutoSpeakerMix();
 
 private:
+    std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
     /** @brief Map of speaker layouts, keyed by the number of input channels. */
     std::map<int, screamrouter::audio::CppSpeakerLayout> speaker_layouts_config_;
     /** @brief Mutex to protect access to the speaker layouts configuration. */
@@ -121,6 +134,8 @@ private:
     float smoothing_factor_;
     float eq[screamrouter::audio::EQ_BANDS];
     float speaker_mix[screamrouter::audio::MAX_CHANNELS][screamrouter::audio::MAX_CHANNELS];
+    std::atomic<double> playback_rate_{1.0};
+    double m_last_known_playback_rate = 1.0;
 
     // --- Normalization Flags ---
     bool volume_normalization_enabled_ = false;
@@ -143,11 +158,9 @@ private:
     size_t resample_buffer_pos = 0;
     size_t channel_buffer_pos = 0;
 
-    // --- r8brain Resampler Members ---
-    std::vector<r8b::CDSPResampler24*> upsamplers;
-    std::vector<r8b::CDSPResampler24*> downsamplers;
-    std::vector<std::vector<double>> r8brain_upsampler_in_buf;
-    std::vector<std::vector<double>> r8brain_downsampler_in_buf;
+    // --- libsamplerate Resampler Members ---
+    SRC_STATE* m_upsampler;
+    SRC_STATE* m_downsampler;
 
     // --- Filters ---
     Biquad* filters[screamrouter::audio::MAX_CHANNELS][screamrouter::audio::EQ_BANDS];

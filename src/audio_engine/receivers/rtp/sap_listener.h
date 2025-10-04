@@ -68,7 +68,7 @@ struct StreamProperties {
 class SapListener {
 public:
     /** @brief A callback function type to notify about a new session. */
-    using SessionCallback = std::function<void(const std::string& ip, int port)>;
+    using SessionCallback = std::function<void(const std::string& ip, int port, const std::string& source_ip)>;
 
     /**
      * @brief Constructs a SapListener.

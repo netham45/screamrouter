@@ -14,6 +14,7 @@
 #include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
 #include "../audio_processor/audio_processor.h"
+#include "../configuration/audio_engine_settings.h"
 
 #include <string>
 #include <vector>
@@ -36,6 +37,7 @@ struct SourceInputProcessorStats {
     uint64_t total_packets_processed = 0;
     size_t input_queue_size = 0;
     size_t output_queue_size = 0;
+    uint64_t reconfigurations = 0;
 };
 
 // Using aliases for clarity
@@ -76,7 +78,8 @@ public:
         SourceProcessorConfig config,
         std::shared_ptr<InputPacketQueue> input_queue,
         std::shared_ptr<OutputChunkQueue> output_queue,
-        std::shared_ptr<CommandQueue> command_queue
+        std::shared_ptr<CommandQueue> command_queue,
+        std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings
     );
 
     /**
@@ -140,12 +143,14 @@ private:
     std::shared_ptr<InputPacketQueue> input_queue_;
     std::shared_ptr<OutputChunkQueue> output_queue_;
     std::shared_ptr<CommandQueue> command_queue_;
+    std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::mutex processor_config_mutex_;
 
-    std::vector<int32_t> process_buffer_;
+    std::vector<int32_t> process_buffer_; // This will be repurposed as the resampler output buffer
     std::vector<uint32_t> current_packet_ssrcs_;
+    double m_current_playback_rate = 1.0;
 
     float current_volume_;
     std::vector<float> current_eq_;
@@ -157,6 +162,9 @@ private:
     std::thread input_thread_;
 
     std::atomic<uint64_t> m_total_packets_processed{0};
+    std::atomic<uint64_t> m_reconfigurations{0};
+    std::chrono::steady_clock::time_point m_last_packet_time;
+    bool m_is_first_packet_after_discontinuity = true;
 
     /**
      * @brief Processes any pending commands from the command queue.

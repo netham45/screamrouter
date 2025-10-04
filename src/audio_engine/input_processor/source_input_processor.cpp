@@ -31,11 +31,13 @@ SourceInputProcessor::SourceInputProcessor(
     SourceProcessorConfig config, // config now includes instance_id
     std::shared_ptr<InputPacketQueue> input_queue,
     std::shared_ptr<OutputChunkQueue> output_queue,
-    std::shared_ptr<CommandQueue> command_queue)
+    std::shared_ptr<CommandQueue> command_queue,
+    std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
     : config_(std::move(config)), // Use std::move for config
       input_queue_(input_queue),
       output_queue_(output_queue),
       command_queue_(command_queue),
+      m_settings(settings),
       current_volume_(config_.initial_volume), // Initialize from moved config_
       current_eq_(config_.initial_eq),
       current_delay_ms_(config_.initial_delay_ms),
@@ -105,6 +107,7 @@ SourceInputProcessorStats SourceInputProcessor::get_stats() {
     stats.total_packets_processed = m_total_packets_processed.load();
     stats.input_queue_size = input_queue_ ? input_queue_->size() : 0;
     stats.output_queue_size = output_queue_ ? output_queue_->size() : 0;
+    stats.reconfigurations = m_reconfigurations.load();
     return stats;
 }
 // --- Initialization & Configuration ---
@@ -328,16 +331,34 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
 // --- New/Modified Thread Loops ---
 
 void SourceInputProcessor::input_loop() {
-    LOG_CPP_INFO("[SourceProc:%s] Input loop started.", config_.instance_id.c_str());
-    TaggedAudioPacket new_packet;
-    // Loop exits when pop returns false (queue stopped and empty) or stop_flag_ is set
-    // This loop now receives packets already timed by TimeshiftManager.
     LOG_CPP_INFO("[SourceProc:%s] Input loop started (receives timed packets).", config_.instance_id.c_str());
     TaggedAudioPacket timed_packet;
     while (!stop_flag_ && input_queue_ && input_queue_->pop(timed_packet)) {
         m_total_packets_processed++;
-        // Packet is already timed correctly by TimeshiftManager.
-        // Directly proceed to format checking and processing.
+
+        // --- Discontinuity Detection ---
+        auto now = std::chrono::steady_clock::now();
+        if (!m_is_first_packet_after_discontinuity) {
+            auto time_since_last_packet = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_packet_time).count();
+            if (time_since_last_packet > 100) { // 100ms threshold for a discontinuity
+                LOG_CPP_WARNING("[SourceProc:%s] Audio discontinuity detected (%lld ms). Flushing filters.", config_.instance_id.c_str(), time_since_last_packet);
+                if (audio_processor_) {
+                    audio_processor_->flushFilters();
+                }
+            }
+        }
+        m_last_packet_time = now;
+        m_is_first_packet_after_discontinuity = false;
+
+        // Check if the playback rate has changed and command the AudioProcessor.
+        if (audio_processor_ && std::abs(timed_packet.playback_rate - m_current_playback_rate) > 0.0001) {
+            std::lock_guard<std::mutex> lock(processor_config_mutex_);
+            if (audio_processor_) { // Double-check after lock
+                audio_processor_->set_playback_rate(timed_packet.playback_rate);
+                m_current_playback_rate = timed_packet.playback_rate;
+            }
+        }
+
         const uint8_t* audio_payload_ptr = nullptr;
         size_t audio_payload_size = 0;
         
@@ -348,10 +369,14 @@ void SourceInputProcessor::input_loop() {
         );
 
         if (packet_ok_for_processing && audio_processor_) {
-            if (audio_payload_ptr && audio_payload_size == INPUT_CHUNK_BYTES) { // CHUNK_SIZE is INPUT_CHUNK_BYTES
+            if (audio_payload_ptr && audio_payload_size == INPUT_CHUNK_BYTES) {
                 current_packet_ssrcs_ = timed_packet.ssrcs;
                 std::vector<uint8_t> chunk_data_for_processing(audio_payload_ptr, audio_payload_ptr + audio_payload_size);
+                
+                // This function now appends variable-sized output to our internal buffer
                 process_audio_chunk(chunk_data_for_processing);
+                
+                // This function now deals out fixed-size chunks from the buffer
                 push_output_chunk_if_ready();
             } else {
                 LOG_CPP_ERROR("[SourceProc:%s] Audio payload invalid after check_format_and_reconfigure. Size: %zu", config_.instance_id.c_str(), audio_payload_size);
@@ -438,7 +463,8 @@ bool SourceInputProcessor::check_format_and_reconfigure(
                 target_ap_input_samplerate,
                 config_.output_samplerate,  // Target output format from SIP config
                 current_volume_,
-                current_speaker_layouts_map_ // Pass the currently configured speaker layouts
+                current_speaker_layouts_map_, // Pass the currently configured speaker layouts
+                m_settings
             );
             // The following lines will be adjusted once AudioProcessor constructor takes the map.
             // For now, this is how it would be if AudioProcessor still took individual settings.
@@ -470,6 +496,7 @@ bool SourceInputProcessor::check_format_and_reconfigure(
             m_current_ap_input_channels = target_ap_input_channels;
             m_current_ap_input_samplerate = target_ap_input_samplerate;
             m_current_ap_input_bitdepth = target_ap_input_bitdepth;
+            m_reconfigurations++;
             LOG_CPP_INFO("[SourceProc:%s] AudioProcessor reconfigured successfully.", config_.instance_id.c_str());
         } catch (const std::exception& e) {
             LOG_CPP_ERROR("[SourceProc:%s] Failed to reconfigure AudioProcessor: %s", config_.instance_id.c_str(), e.what());
@@ -507,8 +534,8 @@ void SourceInputProcessor::run() {
          process_commands(); // Check for commands
 
          // Sleep briefly to prevent busy-waiting when no commands are pending
-         std::this_thread::sleep_for(std::chrono::milliseconds(20)); // Or use command_queue_->wait_for_data() if available
-     }
+         std::this_thread::sleep_for(std::chrono::milliseconds(m_settings->source_processor_tuning.command_loop_sleep_ms)); // Or use command_queue_->wait_for_data() if available
+      }
      LOG_CPP_INFO("[SourceProc:%s] Command processing loop finished (stop signaled).", config_.instance_id.c_str());
 
      // --- Cleanup after stop_flag_ is set ---

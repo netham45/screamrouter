@@ -30,11 +30,7 @@ using namespace screamrouter::audio::utils;
 #include <immintrin.h>
 #endif
 
-/** @brief Default timeout for waiting for input data before proceeding with a mix cycle. */
-const std::chrono::milliseconds INPUT_WAIT_TIMEOUT(60);
 /** @brief Default bitrate for MP3 encoding if enabled. */
-const int DEFAULT_MP3_BITRATE = 192;
-
 /**
  * @brief Constructs a SinkAudioMixer.
  * @param config The configuration for this sink.
@@ -42,14 +38,17 @@ const int DEFAULT_MP3_BITRATE = 192;
  */
 SinkAudioMixer::SinkAudioMixer(
     SinkMixerConfig config,
-    std::shared_ptr<Mp3OutputQueue> mp3_output_queue)
+    std::shared_ptr<Mp3OutputQueue> mp3_output_queue,
+    std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
     : config_(config),
+      m_settings(settings),
       mp3_output_queue_(mp3_output_queue),
-      lame_global_flags_(nullptr),
-      stereo_preprocessor_(nullptr),
+      network_sender_(nullptr),
       mixing_buffer_(SINK_MIXING_BUFFER_SAMPLES, 0),
       stereo_buffer_(SINK_MIXING_BUFFER_SAMPLES * 2, 0),
       payload_buffer_(SINK_CHUNK_SIZE_BYTES * 2, 0),
+      lame_global_flags_(nullptr),
+      stereo_preprocessor_(nullptr),
       mp3_encode_buffer_(SINK_MP3_BUFFER_SIZE)
  {
     LOG_CPP_INFO("[SinkMixer:%s] Initializing...", config_.sink_id.c_str());
@@ -83,7 +82,7 @@ SinkAudioMixer::SinkAudioMixer(
     }
 
     stereo_preprocessor_ = std::make_unique<AudioProcessor>(
-        config_.output_channels, 2, 32, config_.output_samplerate, config_.output_samplerate, 1.0f, std::map<int, CppSpeakerLayout>()
+        config_.output_channels, 2, 32, config_.output_samplerate, config_.output_samplerate, 1.0f, std::map<int, CppSpeakerLayout>(), m_settings
     );
 
     if (!stereo_preprocessor_) {
@@ -127,7 +126,8 @@ void SinkAudioMixer::initialize_lame() {
     }
 
     lame_set_in_samplerate(lame_global_flags_, config_.output_samplerate);
-    lame_set_VBR(lame_global_flags_, vbr_off);
+    lame_set_brate(lame_global_flags_, m_settings->mixer_tuning.mp3_bitrate_kbps);
+    lame_set_VBR(lame_global_flags_, m_settings->mixer_tuning.mp3_vbr_enabled ? vbr_default : vbr_off);
 
     int ret = lame_init_params(lame_global_flags_);
     if (ret < 0) {
@@ -249,6 +249,9 @@ INetworkSender* SinkAudioMixer::get_listener(const std::string& listener_id) {
 SinkAudioMixerStats SinkAudioMixer::get_stats() {
     SinkAudioMixerStats stats;
     stats.total_chunks_mixed = m_total_chunks_mixed.load();
+    stats.buffer_underruns = m_buffer_underruns.load();
+    stats.buffer_overflows = m_buffer_overflows.load();
+    stats.mp3_buffer_overflows = m_mp3_buffer_overflows.load();
 
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
@@ -358,7 +361,7 @@ void SinkAudioMixer::stop() {
  * @param ignored_timeout A timeout value (currently ignored in implementation).
  * @return `true` if any data was popped from any queue, `false` otherwise.
  */
-bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_timeout */) {
+bool SinkAudioMixer::wait_for_source_data() {
     std::lock_guard<std::mutex> lock(queues_mutex_);
 
     bool data_actually_popped_this_cycle = false;
@@ -381,7 +384,7 @@ bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_t
                  ready_this_cycle[instance_id] = true;
                  data_actually_popped_this_cycle = true;
                  if (!previously_active) {
-                     LOG_CPP_INFO("[SinkMixer:%s] Input instance %s became active", config_.sink_id.c_str(), instance_id.c_str());
+                     LOG_CPP_DEBUG("[SinkMixer:%s] Input instance %s became active", config_.sink_id.c_str(), instance_id.c_str());
                  }
                  input_active_state_[instance_id] = true;
              }
@@ -401,8 +404,8 @@ bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_t
         auto grace_period_start = std::chrono::steady_clock::now();
         long elapsed_us = 0;
 
-        while (!lagging_active_sources.empty() && elapsed_us <= GRACE_PERIOD_TIMEOUT.count() * 1000) {
-            std::this_thread::sleep_for(GRACE_PERIOD_POLL_INTERVAL);
+        while (!lagging_active_sources.empty() && elapsed_us <= m_settings->mixer_tuning.grace_period_timeout_ms * 1000) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(m_settings->mixer_tuning.grace_period_poll_interval_ms));
 
             for (auto it = lagging_active_sources.begin(); it != lagging_active_sources.end();) {
                 const std::string& instance_id = *it;
@@ -435,8 +438,9 @@ bool SinkAudioMixer::wait_for_source_data(std::chrono::milliseconds /* ignored_t
             LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Grace period ended. %zu instances still lagging.", config_.sink_id.c_str(), lagging_active_sources.size());
             for (const auto& instance_id : lagging_active_sources) {
                 if (input_active_state_.count(instance_id) && input_active_state_[instance_id]) {
-                     LOG_CPP_INFO("[SinkMixer:%s] Input instance %s timed out grace period, marking inactive.", config_.sink_id.c_str(), instance_id.c_str());
+                     LOG_CPP_DEBUG("[SinkMixer:%s] Input instance %s timed out grace period, marking inactive.", config_.sink_id.c_str(), instance_id.c_str());
                      input_active_state_[instance_id] = false;
+                     m_buffer_underruns++;
                 }
             }
         } else {
@@ -526,6 +530,7 @@ void SinkAudioMixer::downscale_buffer() {
     if (expected_bytes_to_write > available_space) {
         LOG_CPP_ERROR("[SinkMixer:%s] Downscale buffer overflow detected! Available space=%zu, needed=%zu. WritePos=%zu. BufferSize=%zu",
                       config_.sink_id.c_str(), available_space, expected_bytes_to_write, payload_buffer_write_pos_, payload_buffer_.size());
+        m_buffer_overflows++;
         size_t max_samples_possible = available_space / output_byte_depth;
         samples_to_convert = max_samples_possible;
         expected_bytes_to_write = samples_to_convert * output_byte_depth;
@@ -660,8 +665,9 @@ void SinkAudioMixer::encode_and_push_mp3(size_t samples_to_encode) {
         return;
     }
 
-    if (mp3_output_queue_->size() > 10) {
+    if (mp3_output_queue_->size() > static_cast<size_t>(m_settings->mixer_tuning.mp3_output_queue_max_size)) {
         LOG_CPP_DEBUG("[SinkMixer:%s] MP3 output queue full, skipping encoding for this cycle.", config_.sink_id.c_str());
+        m_mp3_buffer_overflows++;
         return;
     }
 
@@ -727,7 +733,7 @@ void SinkAudioMixer::run() {
     while (!stop_flag_) {
         cleanup_closed_listeners();
         LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Waiting for source data...", config_.sink_id.c_str());
-        bool data_available = wait_for_source_data(INPUT_WAIT_TIMEOUT);
+        bool data_available = wait_for_source_data();
         LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Wait finished. Data available: %s", config_.sink_id.c_str(), (data_available ? "true" : "false"));
 
         if (stop_flag_) {

@@ -642,11 +642,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         const candidateJson = event.candidate.toJSON();
+        const payload = {
+          candidate: candidateJson.candidate,
+          sdpMid: candidateJson.sdpMid
+        };
         if (listenerId) {
           fetch(`/api/whep/${sinkId}/${listenerId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(candidateJson)
+            body: JSON.stringify(payload)
           }).catch(e => console.error(`[WebRTC:${sinkId}] Error sending ICE candidate:`, e));
         } else {
           iceCandidateQueue.push(event.candidate);
@@ -744,10 +748,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       while (iceCandidateQueue.length > 0) {
         const candidate = iceCandidateQueue.shift();
         if (candidate) {
+          const candidateJson = candidate.toJSON();
+          const payload = {
+            candidate: candidateJson.candidate,
+            sdpMid: candidateJson.sdpMid
+          };
           fetch(`/api/whep/${sinkId}/${listenerId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(candidate.toJSON())
+            body: JSON.stringify(payload)
           }).catch(e => console.error(`[WebRTC:${sinkId}] Error sending queued ICE candidate:`, e));
         }
       }

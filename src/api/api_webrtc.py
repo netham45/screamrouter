@@ -120,6 +120,8 @@ class APIWebRTC:
                 content="Unsupported Media Type: Content-Type must be application/sdp"
             )
 
+        client_ip = request.client.host
+
         try:
             offer_sdp_bytes = await request.body()
             offer_sdp = offer_sdp_bytes.decode("utf-8")
@@ -162,7 +164,8 @@ class APIWebRTC:
                 listener_id,
                 offer_sdp,
                 on_local_description,
-                on_ice_candidate
+                on_ice_candidate,
+                client_ip
             )
 
             if not success:
@@ -178,7 +181,8 @@ class APIWebRTC:
             async with self.listeners_lock:
                 self.listeners_info[listener_id] = {
                     "sink_id": sink_id,
-                    "last_heartbeat": time.time()
+                    "last_heartbeat": time.time(),
+                    "ip": client_ip
                 }
         except Exception as e:
             logger.error(f"Failed to create whep listener for sink '{sink_id}': {e}", exc_info=True)
@@ -217,6 +221,8 @@ class APIWebRTC:
             candidate_data = json.loads(candidate_json_bytes)
             candidate = candidate_data.get("candidate")
             sdp_mid = candidate_data.get("sdpMid")
+            print(candidate_json_bytes)
+            print(candidate_data)
             if not candidate or not sdp_mid:
                 return Response(status_code=400, content="Bad Request: 'candidate' and 'sdpMid' fields are required.")
             
@@ -224,7 +230,7 @@ class APIWebRTC:
             logger.info(f"[whep:{listener_id}] Relayed ICE candidate to C++ engine.")
             return Response(status_code=204)
         except Exception as e:
-            loger.error(f"Failed to process ICE candidate for listener '{listener_id}': {e}", exc_info=True)
+            logger.error(f"Failed to process ICE candidate for listener '{listener_id}': {e}", exc_info=True)
             return Response(status_code=500, content="Failed to process ICE candidate.")
 
     async def whep_delete(self, sink_id: str, listener_id: str):

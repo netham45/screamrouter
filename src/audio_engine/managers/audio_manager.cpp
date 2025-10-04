@@ -28,11 +28,12 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
     LOG_CPP_INFO("Initializing AudioManager with rtp_listen_port: %d, timeshift_buffer_duration: %ds", rtp_listen_port, global_timeshift_buffer_duration_sec);
 
     try {
-        m_timeshift_manager = std::make_unique<TimeshiftManager>(std::chrono::seconds(global_timeshift_buffer_duration_sec));
+        m_settings = std::make_shared<AudioEngineSettings>();
+        m_timeshift_manager = std::make_unique<TimeshiftManager>(std::chrono::seconds(global_timeshift_buffer_duration_sec), m_settings);
         m_notification_queue = std::make_shared<NotificationQueue>();
 
-        m_source_manager = std::make_unique<SourceManager>(m_manager_mutex, m_timeshift_manager.get());
-        m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex);
+        m_source_manager = std::make_unique<SourceManager>(m_manager_mutex, m_timeshift_manager.get(), m_settings);
+        m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex, m_settings);
         m_receiver_manager = std::make_unique<ReceiverManager>(m_manager_mutex, m_timeshift_manager.get());
         m_webrtc_manager = std::make_unique<WebRtcManager>(m_manager_mutex, m_sink_manager.get(), m_sink_manager->get_sink_configs());
         m_connection_manager = std::make_unique<ConnectionManager>(m_manager_mutex, m_source_manager.get(), m_sink_manager.get(), m_source_manager->get_source_to_sink_queues(), m_source_manager->get_sources());
@@ -210,9 +211,10 @@ bool AudioManager::add_webrtc_listener(
     const std::string& listener_id,
     const std::string& offer_sdp,
     std::function<void(const std::string& sdp)> on_local_description_callback,
-    std::function<void(const std::string& candidate, const std::string& sdpMid)> on_ice_candidate_callback)
+    std::function<void(const std::string& candidate, const std::string& sdpMid)> on_ice_candidate_callback,
+    const std::string& client_ip)
 {
-    return m_webrtc_manager ? m_webrtc_manager->add_webrtc_listener(sink_id, listener_id, offer_sdp, on_local_description_callback, on_ice_candidate_callback, m_running) : false;
+    return m_webrtc_manager ? m_webrtc_manager->add_webrtc_listener(sink_id, listener_id, offer_sdp, on_local_description_callback, on_ice_candidate_callback, m_running, client_ip) : false;
 }
 
 bool AudioManager::remove_webrtc_listener(const std::string& sink_id, const std::string& listener_id) {
@@ -236,6 +238,21 @@ AudioEngineStats AudioManager::get_audio_engine_stats() {
         return m_stats_manager->get_current_stats();
     }
     return AudioEngineStats();
+}
+
+AudioEngineSettings AudioManager::get_audio_settings() {
+    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    if (m_settings) {
+        return *m_settings;
+    }
+    return AudioEngineSettings();
+}
+
+void AudioManager::set_audio_settings(const AudioEngineSettings& new_settings) {
+    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    if (m_settings) {
+        *m_settings = new_settings;
+    }
 }
 
 void AudioManager::process_notifications() {

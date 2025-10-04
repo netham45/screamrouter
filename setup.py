@@ -122,7 +122,7 @@ DEPS_CONFIG = {
         ],
         "lib_name_win": "datachannel.lib", # Verify actual static lib name on Windows
         "lib_name_unix_static": "libdatachannel.a",
-        "unix_install_lib_dir_rel_to_deps_install": "lib64", # Changed from "lib" to "lib64" for Unix
+        "unix_install_lib_dir_rel_to_deps_install": "lib", # Changed from "lib" to "lib64" for Unix
         "header_dir_name": "rtc", # Headers are typically in include/rtc
         "main_header_file_rel_to_header_dir": "rtc.hpp", # Key header
         "link_name": "datachannel", # Link name for the library
@@ -152,6 +152,27 @@ DEPS_CONFIG = {
         "header_dir_name": "opus",
         "main_header_file_rel_to_header_dir": "opus.h",
         "link_name": "opus",
+        "installs_cmake_config": False,
+    },
+    "libsamplerate": {
+        "src_dir": PROJECT_ROOT / "src/audio_engine/deps/libsamplerate",
+        "build_system": "autotools_or_nmake",
+        "win_build_system": "cmake",
+        "cmake_build_dir_name": "build_cmake",
+        "cmake_configure_args": [
+            "-DBUILD_SHARED_LIBS=OFF",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+            "-DLIBSAMPLERATE_EXAMPLES=OFF",
+            "-DBUILD_TESTING=OFF",
+        ],
+        "unix_configure_args": ["--disable-shared", "--enable-static", "--with-pic", "--disable-fftw", "--disable-sndfile"],
+        "unix_make_targets": ["install"],
+        "lib_name_win": "samplerate.lib",
+        "lib_name_unix_static": "libsamplerate.a",
+        "header_dir_name": "",
+        "main_header_file_rel_to_header_dir": "samplerate.h",
+        "link_name": "samplerate",
         "installs_cmake_config": False,
     }
 }
@@ -241,6 +262,44 @@ class BuildExtCommand(_build_ext):
             print("Ensure Visual Studio C++ tools are correctly installed and try running from a Developer Command Prompt.", file=sys.stderr)
             raise e
 
+    def _handle_opus_model(self):
+        """Downloads opus model to a local cache and copies it to the submodule."""
+        print("--- Handling Opus model ---")
+        cache_dir = PROJECT_ROOT / "build_cache"
+        cache_dir.mkdir(exist_ok=True)
+        
+        model_checksum = "a86f0a9db852691d4335608733ec8384a407e585801ab9e4b490e0be297ac382"
+        model_filename = f"opus_data-{model_checksum}.tar.gz"
+        model_url = f"https://media.xiph.org/opus/models/{model_filename}"
+        cached_model_path = cache_dir / model_filename
+        
+        if not cached_model_path.exists():
+            print(f"Downloading Opus model from {model_url} to {cached_model_path}")
+            try:
+                # Using subprocess with curl/wget for simplicity, as requests might not be available during setup
+                subprocess.run(["wget", "-O", str(cached_model_path), model_url], check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                print(f"wget not found or failed, trying with curl...")
+                try:
+                    subprocess.run(["curl", "-L", "-o", str(cached_model_path), model_url], check=True)
+                except (subprocess.CalledProcessError, FileNotFoundError) as e2:
+                    print(f"ERROR: Failed to download Opus model with wget and curl: {e2}", file=sys.stderr)
+                    print("Please download the model manually from the URL above and place it in the 'build_cache' directory.", file=sys.stderr)
+                    # We don't exit here, to allow the build to proceed if the file is manually placed.
+                    return
+
+        opus_dnn_dir = PROJECT_ROOT / "src/audio_engine/deps/opus/dnn"
+        opus_model_dest = opus_dnn_dir / model_filename
+        
+        if opus_dnn_dir.exists():
+            if not opus_model_dest.exists() or opus_model_dest.stat().st_size != cached_model_path.stat().st_size:
+                print(f"Copying Opus model from {cached_model_path} to {opus_model_dest}")
+                shutil.copy2(cached_model_path, opus_model_dest)
+            else:
+                print("Opus model already exists in submodule directory. Skipping copy.")
+        else:
+            print(f"WARNING: Opus DNN directory not found at {opus_dnn_dir}. Cannot copy model.", file=sys.stderr)
+
     def get_expected_header_path(self, config, src_dir_override=None):
         base_include_dir = DEPS_INSTALL_INCLUDE_DIR
         if config.get("is_installed_to_deps_dir", True) is False and src_dir_override:
@@ -275,8 +334,9 @@ class BuildExtCommand(_build_ext):
 
         DEPS_INSTALL_LIB_DIR.mkdir(parents=True, exist_ok=True)
         DEPS_INSTALL_INCLUDE_DIR.mkdir(parents=True, exist_ok=True)
+        self._handle_opus_model()
         all_deps_processed_successfully = True
-        ordered_deps_to_build = ["lame", "opus", "openssl", "libdatachannel"]
+        ordered_deps_to_build = ["lame", "opus", "libsamplerate", "openssl", "libdatachannel"]
 
         for dep_name in ordered_deps_to_build:
             if dep_name not in DEPS_CONFIG:
@@ -658,9 +718,6 @@ for root, dirs, files in os.walk(str(src_root)):
         if file.endswith(".cpp"):
             source_files.append(str(Path(root) / file))
 
-# Add r8brain source file directly
-source_files.append("src/audio_engine/deps/r8brain-free-src/r8bbase.cpp")
-
 # Dynamically generate include directories from the discovered source files
 include_dirs_from_sources = {str(Path(f).parent) for f in source_files}
 
@@ -668,8 +725,6 @@ main_extension_include_dirs = list(include_dirs_from_sources.union({
     str(DEPS_INSTALL_INCLUDE_DIR),
     str(DEPS_INSTALL_INCLUDE_DIR / DEPS_CONFIG["libdatachannel"]["header_dir_name"]),
     str(DEPS_INSTALL_INCLUDE_DIR / DEPS_CONFIG["openssl"]["header_dir_name"]),
-    # Add r8brain include directory
-    str(PROJECT_ROOT / "src/audio_engine/deps/r8brain-free-src"),
     # Add other necessary non-discoverable include directories here
     str(PROJECT_ROOT / "src/audio_engine/json/include"),
     str(PROJECT_ROOT / "src/audio_engine/opus/include"),
@@ -682,6 +737,7 @@ main_extension_libraries = [
     DEPS_CONFIG["libdatachannel"]["link_name"],
     DEPS_CONFIG["openssl"]["link_name"], # e.g., "crypto"
     DEPS_CONFIG["opus"]["link_name"],
+    DEPS_CONFIG["libsamplerate"]["link_name"],
 ]
 # Add extra OpenSSL libs if defined (e.g., "ssl")
 if DEPS_CONFIG["openssl"].get("extra_link_names"):

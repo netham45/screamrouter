@@ -19,6 +19,7 @@
 #include "receiver_manager.h"
 #include "../input_processor/timeshift_manager.h"
 #include "stats_manager.h"
+#include "../configuration/audio_engine_settings.h"
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -216,7 +217,8 @@ public:
         const std::string& listener_id,
         const std::string& offer_sdp,
         std::function<void(const std::string& sdp)> on_local_description_callback,
-        std::function<void(const std::string& candidate, const std::string& sdpMid)> on_ice_candidate_callback
+        std::function<void(const std::string& candidate, const std::string& sdpMid)> on_ice_candidate_callback,
+        const std::string& client_ip
     );
     /**
      * @brief Removes a WebRTC listener from a sink.
@@ -248,9 +250,22 @@ public:
      */
     AudioEngineStats get_audio_engine_stats();
 
+    /**
+     * @brief Retrieves the current audio engine tuning settings.
+     * @return A copy of the current AudioEngineSettings object.
+     */
+    AudioEngineSettings get_audio_settings();
+
+    /**
+     * @brief Updates the audio engine tuning settings.
+     * @param new_settings The new settings to apply.
+     */
+    void set_audio_settings(const AudioEngineSettings& new_settings);
+
 private:
     std::atomic<bool> m_running{false};
     std::mutex m_manager_mutex;
+    std::shared_ptr<AudioEngineSettings> m_settings;
 
     // --- Sub-Managers ---
     std::unique_ptr<TimeshiftManager> m_timeshift_manager;
@@ -278,6 +293,51 @@ private:
  */
 inline void bind_audio_manager(pybind11::module_ &m) {
     namespace py = pybind11;
+
+    py::class_<TimeshiftTuning>(m, "TimeshiftTuning")
+        .def(py::init<>())
+        .def_readwrite("cleanup_interval_ms", &TimeshiftTuning::cleanup_interval_ms)
+        .def_readwrite("reanchor_interval_sec", &TimeshiftTuning::reanchor_interval_sec)
+        .def_readwrite("jitter_smoothing_factor", &TimeshiftTuning::jitter_smoothing_factor)
+        .def_readwrite("jitter_safety_margin_multiplier", &TimeshiftTuning::jitter_safety_margin_multiplier)
+        .def_readwrite("late_packet_threshold_ms", &TimeshiftTuning::late_packet_threshold_ms)
+        .def_readwrite("target_buffer_level_ms", &TimeshiftTuning::target_buffer_level_ms)
+        .def_readwrite("proportional_gain_kp", &TimeshiftTuning::proportional_gain_kp)
+        .def_readwrite("min_playback_rate", &TimeshiftTuning::min_playback_rate)
+        .def_readwrite("max_playback_rate", &TimeshiftTuning::max_playback_rate)
+        .def_readwrite("loop_max_sleep_ms", &TimeshiftTuning::loop_max_sleep_ms);
+
+    py::class_<MixerTuning>(m, "MixerTuning")
+        .def(py::init<>())
+        .def_readwrite("grace_period_timeout_ms", &MixerTuning::grace_period_timeout_ms)
+        .def_readwrite("grace_period_poll_interval_ms", &MixerTuning::grace_period_poll_interval_ms)
+        .def_readwrite("mp3_bitrate_kbps", &MixerTuning::mp3_bitrate_kbps)
+        .def_readwrite("mp3_vbr_enabled", &MixerTuning::mp3_vbr_enabled)
+        .def_readwrite("mp3_output_queue_max_size", &MixerTuning::mp3_output_queue_max_size);
+
+    py::class_<SourceProcessorTuning>(m, "SourceProcessorTuning")
+        .def(py::init<>())
+        .def_readwrite("command_loop_sleep_ms", &SourceProcessorTuning::command_loop_sleep_ms);
+
+    py::class_<ProcessorTuning>(m, "ProcessorTuning")
+        .def(py::init<>())
+        .def_readwrite("oversampling_factor", &ProcessorTuning::oversampling_factor)
+        .def_readwrite("volume_smoothing_factor", &ProcessorTuning::volume_smoothing_factor)
+        .def_readwrite("dc_filter_cutoff_hz", &ProcessorTuning::dc_filter_cutoff_hz)
+        .def_readwrite("soft_clip_threshold", &ProcessorTuning::soft_clip_threshold)
+        .def_readwrite("soft_clip_knee", &ProcessorTuning::soft_clip_knee)
+        .def_readwrite("normalization_target_rms", &ProcessorTuning::normalization_target_rms)
+        .def_readwrite("normalization_attack_smoothing", &ProcessorTuning::normalization_attack_smoothing)
+        .def_readwrite("normalization_decay_smoothing", &ProcessorTuning::normalization_decay_smoothing)
+        .def_readwrite("dither_noise_shaping_factor", &ProcessorTuning::dither_noise_shaping_factor);
+
+    py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
+        .def(py::init<>())
+        .def_readwrite("timeshift_tuning", &AudioEngineSettings::timeshift_tuning)
+        .def_readwrite("mixer_tuning", &AudioEngineSettings::mixer_tuning)
+        .def_readwrite("source_processor_tuning", &AudioEngineSettings::source_processor_tuning)
+        .def_readwrite("processor_tuning", &AudioEngineSettings::processor_tuning);
+
     py::class_<AudioManager, std::shared_ptr<AudioManager>>(m, "AudioManager", "Main class for managing the C++ audio engine")
         .def(py::init<>(), "Constructor")
         .def("initialize", &AudioManager::initialize,
@@ -358,6 +418,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
             py::arg("offer_sdp"),
             py::arg("on_local_description_callback"),
             py::arg("on_ice_candidate_callback"),
+            py::arg("client_ip"),
             "Creates and attaches a WebRTC listener to a sink.")
        .def("remove_webrtc_listener", &AudioManager::remove_webrtc_listener,
             py::arg("sink_id"),
@@ -376,7 +437,9 @@ inline void bind_audio_manager(pybind11::module_ &m) {
             py::arg("sdpMid"),
             "Forwards a remote ICE candidate to a specific WebRTC listener.")
        .def("get_audio_engine_stats", &AudioManager::get_audio_engine_stats,
-            "Retrieves a snapshot of all current audio engine statistics.");
+            "Retrieves a snapshot of all current audio engine statistics.")
+       .def("get_audio_settings", &AudioManager::get_audio_settings, "Retrieves the current audio engine tuning settings.")
+       .def("set_audio_settings", &AudioManager::set_audio_settings, py::arg("settings"), "Updates the audio engine tuning settings.");
 }
 
 } // namespace audio
