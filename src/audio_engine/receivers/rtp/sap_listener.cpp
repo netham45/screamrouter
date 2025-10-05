@@ -180,8 +180,12 @@ bool SapListener::setup_sockets() {
     socket_t fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
         LOG_CPP_ERROR("%s Failed to create socket", logger_prefix_.c_str());
-        close(epoll_fd_);
-        epoll_fd_ = -1;
+        #ifdef _WIN32
+            // epoll_fd_ doesn't exist on Windows
+        #else
+            close(epoll_fd_);
+            epoll_fd_ = -1;
+        #endif
         return false;
     }
 
@@ -198,9 +202,14 @@ bool SapListener::setup_sockets() {
 
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         LOG_CPP_ERROR("%s Failed to bind to port %d", logger_prefix_.c_str(), SAP_PORT);
-        close(fd);
-        close(epoll_fd_);
-        epoll_fd_ = -1;
+        #ifdef _WIN32
+            closesocket(fd);
+            // epoll_fd_ doesn't exist on Windows
+        #else
+            close(fd);
+            close(epoll_fd_);
+            epoll_fd_ = -1;
+        #endif
         return false;
     }
     LOG_CPP_INFO("%s Successfully set up listener on 0.0.0.0:%d", logger_prefix_.c_str(), SAP_PORT);
@@ -234,9 +243,14 @@ bool SapListener::setup_sockets() {
         event.data.fd = fd;
         if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &event) == -1) {
             LOG_CPP_ERROR("%s Failed to add socket to epoll", logger_prefix_.c_str());
-            close(fd);
-            close(epoll_fd_);
-            epoll_fd_ = -1;
+            #ifdef _WIN32
+                closesocket(fd);
+                // epoll_fd_ doesn't exist on Windows
+            #else
+                close(fd);
+                close(epoll_fd_);
+                epoll_fd_ = -1;
+            #endif
             return false;
         }
 
@@ -256,7 +270,11 @@ void SapListener::close_sockets() {
         }
     #endif
     for (socket_t fd : sockets_) {
-        close(fd);
+        #ifdef _WIN32
+            closesocket(fd);
+        #else
+            close(fd);
+        #endif
     }
     sockets_.clear();
     LOG_CPP_INFO("%s All SAP sockets closed.", logger_prefix_.c_str());

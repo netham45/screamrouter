@@ -12,6 +12,10 @@
 #include <cerrno>       // For errno
 #ifndef _WIN32
     #include <sys/epoll.h>  // For epoll
+#else
+    // Define ssize_t for Windows
+    #include <BaseTsd.h>
+    typedef SSIZE_T ssize_t;
 #endif
  
  
@@ -184,7 +188,11 @@ void RtpReceiver::close_socket() {
     #endif
     for (socket_t sock_fd : socket_fds_) {
         log_message("Closing raw UDP socket (fd: " + std::to_string(sock_fd) + ")");
-        close(sock_fd);
+        #ifdef _WIN32
+            closesocket(sock_fd);
+        #else
+            close(sock_fd);
+        #endif
     }
     socket_fds_.clear();
     log_message("All raw UDP socket resources released.");
@@ -368,8 +376,10 @@ void RtpReceiver::run() {
                     if (is_new_buffer) {
                         char ssrc_hex[12];
                         snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", current_ssrc);
+                        char client_ip_str[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
                         log_message("Creating new reordering buffer for SSRC " + std::string(ssrc_hex) +
-                                    " from " + inet_ntoa(cliaddr.sin_addr) + ":" + std::to_string(ntohs(cliaddr.sin_port)));
+                                    " from " + std::string(client_ip_str) + ":" + std::to_string(ntohs(cliaddr.sin_port)));
                     }
                     reordering_buffers_[current_ssrc].add_packet(std::move(packet_data));
                 }
@@ -435,14 +445,22 @@ void RtpReceiver::open_dynamic_session(const std::string& ip, int port, const st
     servaddr.sin_port = htons(port);
     if (inet_pton(AF_INET, ip.c_str(), &servaddr.sin_addr) <= 0) {
         log_error("Invalid IP address string: " + ip);
-        close(sock_fd);
+        #ifdef _WIN32
+            closesocket(sock_fd);
+        #else
+            close(sock_fd);
+        #endif
         return;
     }
 
 
     if (bind(sock_fd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
         log_message("Could not bind to " + ip + ":" + std::to_string(port) + ": " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
-        close(sock_fd);
+        #ifdef _WIN32
+            closesocket(sock_fd);
+        #else
+            close(sock_fd);
+        #endif
         return;
     }
 
@@ -459,7 +477,11 @@ void RtpReceiver::open_dynamic_session(const std::string& ip, int port, const st
         event.data.fd = sock_fd;
         if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, sock_fd, &event) == -1) {
             log_error("Failed to add socket for " + ip + ":" + std::to_string(port) + " to epoll: " + std::string(strerror(errno)));
-            close(sock_fd);
+            #ifdef _WIN32
+                closesocket(sock_fd);
+            #else
+                close(sock_fd);
+            #endif
             return;
         }
 
