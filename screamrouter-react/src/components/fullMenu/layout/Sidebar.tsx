@@ -119,6 +119,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                   if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile
                 }}
               />
+               <NavItem
+               icon="chart-bar"
+               label="Stats"
+               isActive={currentCategory === 'stats'}
+               onClick={() => {
+                 setCurrentCategory('stats');
+                 if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile
+               }}
+               />
             </VStack>
           </Box>
           

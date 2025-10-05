@@ -39,6 +39,13 @@ module.exports = {
         test: /\.css$/,
         use: ['style-loader', 'css-loader'],
       },
+      {
+        test: /\.(wav|mp3|ogg)$/,
+        type: 'asset/resource',
+        generator: {
+          filename: 'static/media/[hash][ext][query]'
+        }
+      },
     ],
   },
   plugins: [

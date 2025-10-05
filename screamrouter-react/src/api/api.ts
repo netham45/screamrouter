@@ -17,6 +17,13 @@ export interface SpeakerLayout {
 }
 // --- End New SpeakerLayout Interface ---
 
+export interface SourceMetadata {
+  title?: string;
+  artist?: string;
+  album?: string;
+  artUrl?: string;
+}
+
 export interface Source {
   name: string;
   ip: string;
@@ -35,6 +42,7 @@ export interface Source {
   tag?: string;
   channels?: number; // Added for Source
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
+  metadata?: SourceMetadata;
 }
 
 /**
@@ -59,6 +67,8 @@ export interface Sink {
   time_sync_delay: number;
   favorite?: boolean;
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
+  protocol?: string;
+  volume_normalization?: boolean;
 }
 
 /**
@@ -85,7 +95,109 @@ export interface Equalizer {
   b7: number; b8: number; b9: number; b10: number; b11: number; b12: number;
   b13: number; b14: number; b15: number; b16: number; b17: number; b18: number;
   name?: string;
+  normalization_enabled?: boolean;
 }
+
+export interface StreamStats {
+  jitter_estimate_ms: number;
+  packets_per_second: number;
+  timeshift_buffer_size: number;
+  timeshift_buffer_late_packets: number;
+  timeshift_buffer_lagging_events: number;
+  last_arrival_time_error_ms: number;
+  total_anchor_adjustment_ms: number;
+  total_packets_in_stream: number;
+  tm_buffer_underruns: number;
+  tm_packets_discarded: number;
+  target_buffer_level_ms: number;
+  buffer_target_fill_percentage: number;
+}
+
+export interface SourceStats {
+  instance_id: string;
+  source_tag: string;
+  input_queue_size: number;
+  output_queue_size: number;
+  packets_processed_per_second: number;
+  reconfigurations: number;
+}
+
+export interface WebRtcListenerStats {
+  listener_id: string;
+  connection_state: string;
+  pcm_buffer_size: number;
+  packets_sent_per_second: number;
+}
+
+export interface SinkStats {
+  sink_id: string;
+  active_input_streams: number;
+  total_input_streams: number;
+  packets_mixed_per_second: number;
+  sink_buffer_underruns: number;
+  sink_buffer_overflows: number;
+  mp3_buffer_overflows: number;
+  webrtc_listeners: WebRtcListenerStats[];
+}
+
+export interface GlobalStats {
+  timeshift_buffer_total_size: number;
+  packets_added_to_timeshift_per_second: number;
+}
+
+export interface AudioEngineStats {
+  global_stats: GlobalStats;
+  stream_stats: Record<string, StreamStats>;
+  source_stats: SourceStats[];
+  sink_stats: SinkStats[];
+}
+
+// --- Audio Engine Settings Interfaces ---
+export interface TimeshiftTuning {
+  cleanup_interval_ms: number;
+  reanchor_interval_sec: number;
+  jitter_smoothing_factor: number;
+  jitter_safety_margin_multiplier: number;
+  late_packet_threshold_ms: number;
+  target_buffer_level_ms: number;
+  proportional_gain_kp: number;
+  min_playback_rate: number;
+  max_playback_rate: number;
+  loop_max_sleep_ms: number;
+}
+
+export interface MixerTuning {
+  grace_period_timeout_ms: number;
+  grace_period_poll_interval_ms: number;
+  mp3_bitrate_kbps: number;
+  mp3_vbr_enabled: boolean;
+  mp3_output_queue_max_size: number;
+}
+
+export interface SourceProcessorTuning {
+  command_loop_sleep_ms: number;
+}
+
+export interface ProcessorTuning {
+  oversampling_factor: number;
+  volume_smoothing_factor: number;
+  dc_filter_cutoff_hz: number;
+  soft_clip_threshold: number;
+  soft_clip_knee: number;
+  normalization_target_rms: number;
+  normalization_attack_smoothing: number;
+  normalization_decay_smoothing: number;
+  dither_noise_shaping_factor: number;
+}
+
+export interface AudioEngineSettings {
+  timeshift_tuning: TimeshiftTuning;
+  mixer_tuning: MixerTuning;
+  source_processor_tuning: SourceProcessorTuning;
+  processor_tuning: ProcessorTuning;
+}
+// --- End Audio Engine Settings Interfaces ---
+
 
 /**
  * Interface for WebSocket update message
@@ -260,7 +372,7 @@ const ApiService = {
   reorderRoute: (name: string, newIndex: number) => axios.get(`/routes/${name}/reorder/${newIndex}`),
 
   // Control source playback
-  controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => 
+  controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'pause' | 'nexttrack') =>
     axios.get(`/sources/${sourceName}/${action}`),
 
   // Utility methods
@@ -291,8 +403,15 @@ const ApiService = {
 
   updateRouteSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
       return axios.post(`/api/routes/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout);
-  }
+  },
   // --- End Speaker Layout Update Methods ---
+
+  // --- Stats ---
+  getStats: () => axios.get<AudioEngineStats>('/api/stats'),
+
+  // --- Settings ---
+  getSettings: () => axios.get<AudioEngineSettings>('/api/settings'),
+  updateSettings: (settings: AudioEngineSettings) => axios.post('/api/settings', settings),
 };
 
 export default ApiService;

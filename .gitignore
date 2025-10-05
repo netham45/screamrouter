@@ -1,7 +1,7 @@
 config.yaml
 equalizers.yaml
 __pycache__/
-*.py[cod]
+*.py[codi]
 logs/
 cert/
 build/

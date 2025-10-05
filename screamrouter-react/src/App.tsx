@@ -8,6 +8,7 @@ import { BrowserRouter as Router, Routes, Route, useSearchParams, useParams } fr
 import { ChakraProvider } from '@chakra-ui/react'; // Import ChakraProvider
 import theme from './theme'; // Import custom theme
 import { AppProvider, useAppContext } from './context/AppContext'; // Import context provider and hook
+import { WebRTCProvider } from './context/WebRTCContext'; // Import the WebRTC provider
 import VNC from './components/pages/VNCPage'; // Import the VNC component
 import Visualizer from './components/pages/VisualizerPage'; // Import the Visualizer component
 import Equalizer from './components/pages/EqualizerPage'; // Import the Equalizer component
@@ -18,10 +19,13 @@ import AddEditRoutePage from './components/pages/AddEditRoutePage'; // Import th
 import AddEditGroupPage from './components/pages/AddEditGroupPage'; // Import the AddEditGroupPage component
 import ProcessListPage from './components/pages/ProcessListPage'; // Import the ProcessListPage component
 import SpeakerLayoutPage from './components/pages/SpeakerLayoutPage'; // Import the SpeakerLayoutPage component
+import StatsPage from './components/pages/StatsPage'; // Import the StatsPage component
+import ListenPage from './components/pages/ListenPage'; // Import the ListenPage component
 import { DesktopMenu } from './components/desktopMenu'; // Import DesktopMenu
 import { ColorProvider } from './components/desktopMenu/context/ColorContext'; // Import ColorProvider
 import FullMenu from './components/FullMenu'; // Import the FullMenu component
 import GlobalFunctionsComponent from './GlobalFunctionsComponent'; // Import the GlobalFunctionsComponent
+import { WebRTCAudioPlayers } from './components/webrtc/AudioPlayer'; // Import the WebRTC audio players
 import './App.css'; // Import global styles
 import './styles/darkMode.css'; // Import dark mode styles
 import { Source, Sink, Route as RouteType } from './api/api'; // Import types for Source, Sink, and Route
@@ -139,6 +143,8 @@ const AppContent: React.FC = () => {
         <Route path="/edit-group" element={<AddEditGroupPage />} /> {/* Route to AddEditGroupPage component */}
         <Route path="/processes/:ip" element={<ProcessListPage />} /> {/* Route to ProcessListPage component with IP parameter */}
         <Route path="/speaker-layout-standalone" element={<SpeakerLayoutPage />} /> {/* Route to SpeakerLayoutPage component */}
+        <Route path="/listen/:sinkName" element={<ListenPage />} /> {/* Route to ListenPage component */}
+        <Route path="/stats" element={<StatsPage />} /> {/* Route to StatsPage component */}
       </Routes>
       
       {showEqualizerModal && selectedItem && selectedItemType && (
@@ -156,7 +162,7 @@ const AppContent: React.FC = () => {
           }}
         />
       )}
-      <audio id="audio" /> {/* Audio element for audio playback */}
+      <WebRTCAudioPlayers /> {/* Add the WebRTC audio players */}
     </Router>
   );
 };
@@ -169,7 +175,9 @@ const App: React.FC = () => {
   return (
     <ChakraProvider theme={theme}> {/* Provide Chakra UI theme to the entire application */}
       <AppProvider> {/* Provide context to the entire application */}
-        <AppContent /> {/* Render the main content of the application */}
+        <WebRTCProvider>
+          <AppContent /> {/* Render the main content of the application */}
+        </WebRTCProvider>
       </AppProvider>
     </ChakraProvider>
   );

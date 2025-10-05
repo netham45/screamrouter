@@ -1,0 +1,96 @@
+/**
+ * @file receiver_manager.h
+ * @brief Defines the ReceiverManager class for managing various audio receivers.
+ * @details This class is responsible for the lifecycle of different types of network
+ *          receivers (RTP, Raw Scream, etc.), initializing them, and providing a
+ *          unified interface to access information from them.
+ */
+#ifndef RECEIVER_MANAGER_H
+#define RECEIVER_MANAGER_H
+
+#include "../receivers/rtp/rtp_receiver.h"
+#include "../receivers/scream/raw_scream_receiver.h"
+#include "../receivers/scream/per_process_scream_receiver.h"
+#include "../utils/thread_safe_queue.h"
+#include "../input_processor/timeshift_manager.h"
+#include "../audio_types.h"
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
+#include <mutex>
+
+namespace screamrouter {
+namespace audio {
+
+/**
+ * @class ReceiverManager
+ * @brief Manages the creation, lifecycle, and data access for all audio receivers.
+ * @details This class abstracts the handling of multiple receiver types. It holds instances
+ *          of different receivers and provides methods to initialize, start, stop, and
+ *          query them.
+ */
+class ReceiverManager {
+public:
+    /**
+     * @brief Constructs a ReceiverManager.
+     * @param manager_mutex A reference to the main AudioManager mutex for thread safety.
+     * @param timeshift_manager A pointer to the TimeshiftManager to which receivers will send packets.
+     */
+    ReceiverManager(std::mutex& manager_mutex, TimeshiftManager* timeshift_manager);
+    /**
+     * @brief Destructor.
+     */
+    ~ReceiverManager();
+
+    /**
+     * @brief Initializes all configured receivers.
+     * @param rtp_listen_port The port for the main RTP receiver.
+     * @param notification_queue The queue for sending notifications about new sources.
+     * @return true on success, false otherwise.
+     */
+    bool initialize_receivers(int rtp_listen_port, std::shared_ptr<NotificationQueue> notification_queue);
+    /**
+     * @brief Starts all initialized receivers.
+     */
+    void start_receivers();
+    /**
+     * @brief Stops all running receivers.
+     */
+    void stop_receivers();
+    /**
+     * @brief Cleans up and destroys all receiver instances.
+     */
+    void cleanup_receivers();
+
+    /**
+     * @brief Gets the list of source tags seen by the main RTP receiver.
+     * @return A vector of source tag strings.
+     */
+    std::vector<std::string> get_rtp_receiver_seen_tags();
+    /**
+     * @brief Gets the list of source tags seen by a specific Raw Scream receiver.
+     * @param listen_port The port of the receiver to query.
+     * @return A vector of source tag strings.
+     */
+    std::vector<std::string> get_raw_scream_receiver_seen_tags(int listen_port);
+    /**
+     * @brief Gets the list of source tags seen by a specific Per-Process Scream receiver.
+     * @param listen_port The port of the receiver to query.
+     * @return A vector of source tag strings.
+     */
+    std::vector<std::string> get_per_process_scream_receiver_seen_tags(int listen_port);
+
+private:
+    std::mutex& m_manager_mutex;
+    TimeshiftManager* m_timeshift_manager;
+
+    std::unique_ptr<RtpReceiver> m_rtp_receiver;
+    std::map<int, std::unique_ptr<RawScreamReceiver>> m_raw_scream_receivers;
+    std::map<int, std::unique_ptr<PerProcessScreamReceiver>> m_per_process_scream_receivers;
+};
+
+} // namespace audio
+} // namespace screamrouter
+
+#endif // RECEIVER_MANAGER_H

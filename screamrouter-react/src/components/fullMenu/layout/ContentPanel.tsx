@@ -10,7 +10,9 @@ import FavoritesContent from '../content/FavoritesContent';
 import SourceContent from '../content/SourceContent';
 import SinkContent from '../content/SinkContent';
 import RouteContent from '../content/RouteContent';
+import StatsPage from '../../pages/StatsPage';
 import { ContentProps, ContentCategory, ViewMode } from '../types';
+import { Actions } from '../../../utils/actions';
 
 /**
  * ContentPanel component for the FullMenu.
@@ -23,7 +25,7 @@ interface ContentPanelProps extends Omit<ContentProps, 'viewMode' | 'sortConfig'
   onSort: (key: string) => void;
   sortConfig: { key: string; direction: 'asc' | 'desc' };
   isDarkMode?: boolean;
-  actions: Record<string, unknown>;
+  actions: Actions;
 }
 
 const ContentPanel: React.FC<ContentPanelProps> = ({
@@ -48,7 +50,7 @@ const ContentPanel: React.FC<ContentPanelProps> = ({
       viewMode,
       sortConfig,
       isDarkMode,
-      actions
+      actions: actions
     };
 
     switch (currentCategory) {
@@ -72,6 +74,8 @@ const ContentPanel: React.FC<ContentPanelProps> = ({
         return <SinkContent {...completeProps} />;
       case 'route':
         return <RouteContent {...completeProps} />;
+     case 'stats':
+       return <StatsPage />;
       default:
         return <DashboardContent {...completeProps} />;
     }

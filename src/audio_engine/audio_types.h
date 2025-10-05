@@ -1,3 +1,10 @@
+/**
+ * @file audio_types.h
+ * @brief Defines core data structures, types, and enumerations for the audio engine.
+ * @details This file contains the definitions for various data structures used for inter-thread
+ *          communication, configuration, and control within the ScreamRouter audio engine. It also
+ *          includes pybind11 bindings for exposing these types to Python.
+ */
 #ifndef AUDIO_TYPES_H
 #define AUDIO_TYPES_H
 
@@ -5,262 +12,573 @@
 #include <string>
 #include <chrono>
 #include <cstdint> // For fixed-width integers like uint8_t, uint32_t
-// #include "audio_processor.h" // For EQ_BANDS - No longer needed here if defines are moved
+#include <optional> // For std::optional
 #include "audio_constants.h" // Include the new constants file
-// #include "../configuration/audio_engine_config_types.h" // For CppSpeakerLayout - No longer needed, CppSpeakerLayout moved here
+#include <map>
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+#include <pybind11/operators.h> // For operator overloads
+#include "utils/thread_safe_queue.h"
 
 // MAX_CHANNELS and EQ_BANDS are now in audio_constants.h
 // CHUNK_SIZE is still in audio_processor.h as it's more specific to its processing logic
 
 namespace screamrouter {
-
-// Forward declare config namespace for CppSpeakerLayout if it's kept there,
-// but we are moving CppSpeakerLayout into the audio namespace for simplicity here.
-// namespace config { struct CppSpeakerLayout; }
-
 namespace audio {
 
-// --- CppSpeakerLayout Struct Definition (Moved from audio_engine_config_types.h) ---
-// This struct is used by ControlCommand in this file, and by AppliedSourcePathParams in audio_engine_config_types.h
-// For AppliedSourcePathParams to use it, it will need to refer to screamrouter::audio::CppSpeakerLayout
-// or audio_engine_config_types.h will need to include audio_types.h (which it does).
+/**
+ * @struct CppSpeakerLayout
+ * @brief Defines a speaker mixing matrix and its operational mode.
+ * @details This struct is used to configure how input channels are mapped to output channels,
+ *          either through an automatic pass-through or a custom user-defined matrix.
+ */
 struct CppSpeakerLayout {
+    /** @brief True for auto mix (default), false for using the custom matrix. */
     bool auto_mode = true;
+    /** @brief 8x8 speaker mix matrix, defining gain from input (row) to output (col). */
     std::vector<std::vector<float>> matrix;
 
+    /**
+     * @brief Default constructor.
+     * @details Initializes in auto_mode with an identity matrix.
+     */
     CppSpeakerLayout() : auto_mode(true) {
         matrix.assign(MAX_CHANNELS, std::vector<float>(MAX_CHANNELS, 0.0f));
         for (int i = 0; i < MAX_CHANNELS; ++i) {
-            if (i < MAX_CHANNELS) { 
-                matrix[i][i] = 1.0f; 
+            if (i < MAX_CHANNELS) {
+                matrix[i][i] = 1.0f;
             }
         }
     }
 
-    // Equality operator
+    /**
+     * @brief Equality operator for comparing two speaker layouts.
+     * @param other The other CppSpeakerLayout to compare against.
+     * @return True if the layouts are equal, false otherwise.
+     */
     bool operator==(const CppSpeakerLayout& other) const {
         if (auto_mode != other.auto_mode) {
             return false;
         }
-        // If both are in auto_mode, they are equal regardless of matrix content (as matrix is default/ignored)
+        // If both are in auto_mode, they are considered equal.
         if (auto_mode) {
-            return true; 
+            return true;
         }
-        // If not in auto_mode, compare matrices
+        // If not in auto_mode, the matrices must match.
         return matrix == other.matrix;
     }
 };
-// --- End CppSpeakerLayout Struct Definition ---
 
 // --- Data Structures for Inter-Thread Communication ---
 
 /**
+ * @struct TaggedAudioPacket
  * @brief Represents a raw audio packet received from the network, tagged with its source.
- *        Passed from RtpReceiver to the corresponding SourceInputProcessor.
+ * @details Passed from a receiver component to the corresponding SourceInputProcessor.
  */
 struct TaggedAudioPacket {
-    std::string source_tag;                     // Identifier for the source (e.g., IP address)
-    std::vector<uint8_t> audio_data;            // Audio payload (ALWAYS 1152 bytes of PCM)
-    std::chrono::steady_clock::time_point received_time; // Timestamp for timeshifting/jitter
-    // --- Added Format Info ---
-    int channels = 0;                           // Number of audio channels in payload
-    int sample_rate = 0;                        // Sample rate of audio in payload
-    int bit_depth = 0;                          // Bit depth of audio in payload
-    uint8_t chlayout1 = 0;                      // Scream channel layout byte 1
-    uint8_t chlayout2 = 0;                      // Scream channel layout byte 2
+    /** @brief Identifier for the source (e.g., IP address or user tag). */
+    std::string source_tag;
+    /** @brief Raw audio payload (e.g., 1152 bytes of PCM). */
+    std::vector<uint8_t> audio_data;
+    /** @brief Timestamp for timeshifting/jitter buffer. */
+    std::chrono::steady_clock::time_point received_time;
+    /** @brief Optional RTP timestamp for dejittering. */
+    std::optional<uint32_t> rtp_timestamp;
+    /** @brief List of SSRC and CSRCs from the RTP header. */
+    std::vector<uint32_t> ssrcs;
+    // --- Audio Format Info ---
+    /** @brief Number of audio channels in the payload. */
+    int channels = 0;
+    /** @brief Sample rate of the audio in the payload. */
+    int sample_rate = 0;
+    /** @brief Bit depth of the audio in the payload. */
+    int bit_depth = 0;
+    /** @brief Scream channel layout byte 1. */
+    uint8_t chlayout1 = 0;
+    /** @brief Scream channel layout byte 2. */
+    uint8_t chlayout2 = 0;
+    /** @brief Playback rate adjustment factor (1.0 is normal speed). */
+    double playback_rate = 1.0;
 };
 
 /**
+ * @struct ProcessedAudioChunk
  * @brief Represents a chunk of audio data after processing by a SourceInputProcessor.
- *        Passed from SourceInputProcessor to SinkAudioMixer(s).
+ * @details Passed from a SourceInputProcessor to one or more SinkAudioMixer(s).
  */
 struct ProcessedAudioChunk {
-    // Changed to int32_t to match the signed nature of processed PCM data
-    std::vector<int32_t> audio_data; // Processed audio data (e.g., 288 samples of int32_t for 1152 bytes)
-    // std::string source_tag; // Optional: Could be added if mixer needs to know origin beyond the queue
+    /** @brief Processed audio data as 32-bit signed integers. */
+    std::vector<int32_t> audio_data;
+    /** @brief SSRC and CSRCs, forwarded from the original packet. */
+    std::vector<uint32_t> ssrcs;
 };
 
 /**
- * @brief Enum defining types of control commands for SourceInputProcessor.
+ * @enum CommandType
+ * @brief Defines types of control commands for a SourceInputProcessor.
  */
 enum class CommandType {
-    SET_VOLUME,
-    SET_EQ,
-    SET_DELAY,
-    SET_TIMESHIFT, // Controls the 'backshift' amount
-    // --- New Command Type ---
-    SET_SPEAKER_MIX
+    SET_VOLUME,                 ///< Change the volume level.
+    SET_EQ,                     ///< Set the equalizer band values.
+    SET_DELAY,                  ///< Set the delay in integer milliseconds.
+    SET_TIMESHIFT,              ///< Set the timeshift delay in float seconds.
+    SET_EQ_NORMALIZATION,       ///< Enable or disable equalizer normalization.
+    SET_VOLUME_NORMALIZATION,   ///< Enable or disable volume normalization.
+    SET_SPEAKER_MIX             ///< Set the speaker layout mapping.
 };
 
 /**
+ * @struct ControlCommand
  * @brief Represents a command sent from AudioManager to a SourceInputProcessor.
  */
 struct ControlCommand {
+    /** @brief The type of command to execute. */
     CommandType type;
-    // Using separate members for simplicity over std::variant for now
-    float float_value;         // For volume, timeshift - Initialized in constructor
-    int int_value;             // For delay_ms - Initialized in constructor
-    std::vector<float> eq_values;     // For EQ bands (size should match AudioProcessor expectation, e.g., 18)
+    /** @brief Value for volume, timeshift. */
+    float float_value;
+    /** @brief Value for delay_ms. */
+    int int_value;
+    /** @brief Values for all EQ bands. */
+    std::vector<float> eq_values;
+    /** @brief Key for the speaker layout map (e.g., number of input channels). */
+    int input_channel_key;
+    /** @brief The speaker layout to apply for the given key. */
+    CppSpeakerLayout speaker_layout_for_key;
 
-    // --- Updated Speaker Layout Command Members ---
-    int input_channel_key;                                  // NEW: Specifies which input channel config this layout is for
-    CppSpeakerLayout speaker_layout_for_key; // NEW: The actual layout for that key (now in this namespace)
-    // Old members removed:
-    // std::vector<std::vector<float>> speaker_mix_matrix; 
-    // bool use_auto_speaker_mix;                         
-
-    // Default constructor
-    ControlCommand() : type(CommandType::SET_VOLUME), float_value(0.0f), int_value(0), input_channel_key(0) {
-        // eq_values will be default constructed (empty)
-        // speaker_layout_for_key will be default constructed (auto_mode=true, identity matrix)
-    }
-
-    // Consider adding specific constructors or static factory methods for each command type
-    // e.g., static ControlCommand CreateSetSpeakerLayoutCommand(int key, const screamrouter::config::CppSpeakerLayout& layout);
+    /**
+     * @brief Default constructor.
+     */
+    ControlCommand() : type(CommandType::SET_VOLUME), float_value(0.0f), int_value(0), input_channel_key(0) {}
 };
 
 /**
- * @brief Notification sent from RtpReceiver to AudioManager when a new source is detected.
+ * @struct NewSourceNotification
+ * @brief Notification sent from a receiver to AudioManager when a new source is detected.
  */
 struct NewSourceNotification {
-    std::string source_tag; // Identifier (IP address) of the new source
+    /** @brief Identifier (e.g., IP address) of the new source. */
+    std::string source_tag;
 };
 
 /**
+ * @struct EncodedMP3Data
  * @brief Represents a chunk of MP3 encoded audio data.
- *        Passed from SinkAudioMixer to AudioManager/Python layer.
+ * @details Passed from a SinkAudioMixer to the AudioManager for consumption by Python.
  */
 struct EncodedMP3Data {
-    std::vector<uint8_t> mp3_data; // Chunk of MP3 bytes
+    /** @brief A chunk of MP3-encoded bytes. */
+    std::vector<uint8_t> mp3_data;
 };
 
+// --- Statistics Structs ---
 
-// --- Configuration Structs (Simplified versions for C++ internal use) ---
-// These might mirror or be derived from Python-side descriptions
+struct StreamStats {
+    double jitter_estimate_ms = 0.0;
+    double packets_per_second = 0.0;
+    size_t timeshift_buffer_size = 0;
+    uint64_t timeshift_buffer_late_packets = 0;
+    uint64_t timeshift_buffer_lagging_events = 0;
+    uint64_t tm_buffer_underruns = 0;
+    uint64_t tm_packets_discarded = 0;
+    double last_arrival_time_error_ms = 0.0;
+    double total_anchor_adjustment_ms = 0.0;
+    uint64_t total_packets_in_stream = 0;
+    double target_buffer_level_ms = 0.0;
+    double buffer_target_fill_percentage = 0.0;
+};
 
+struct SourceStats {
+    std::string instance_id;
+    std::string source_tag;
+    size_t input_queue_size = 0;
+    size_t output_queue_size = 0;
+    double packets_processed_per_second = 0.0;
+    uint64_t reconfigurations = 0;
+};
+
+struct WebRtcListenerStats {
+    std::string listener_id;
+    std::string connection_state; // e.g., "Connected", "Failed"
+    size_t pcm_buffer_size = 0;
+    double packets_sent_per_second = 0.0;
+};
+
+struct SinkStats {
+    std::string sink_id;
+    size_t active_input_streams = 0;
+    size_t total_input_streams = 0;
+    double packets_mixed_per_second = 0.0;
+    uint64_t sink_buffer_underruns = 0;
+    uint64_t sink_buffer_overflows = 0;
+    uint64_t mp3_buffer_overflows = 0;
+    std::vector<WebRtcListenerStats> webrtc_listeners;
+};
+
+struct GlobalStats {
+    size_t timeshift_buffer_total_size = 0;
+    double packets_added_to_timeshift_per_second = 0.0;
+};
+
+struct AudioEngineStats {
+    GlobalStats global_stats;
+    std::map<std::string, StreamStats> stream_stats; // Keyed by stream_tag
+    std::vector<SourceStats> source_stats;
+    std::vector<SinkStats> sink_stats;
+};
+
+// --- Configuration Structs (For C++ internal use) ---
+
+
+/**
+ * @struct SourceConfig
+ * @brief Initial configuration for a single audio source path.
+ */
 struct SourceConfig {
+    /** @brief Unique identifier for the source (e.g., IP address). */
     std::string tag;
+    /** @brief Initial volume level (0.0 to 1.0+). */
     float initial_volume = 1.0f;
-    std::vector<float> initial_eq; // Size EQ_BANDS expected by AudioProcessor
+    /** @brief Initial equalizer settings (size EQ_BANDS). */
+    std::vector<float> initial_eq;
+    /** @brief Initial delay in milliseconds. */
     int initial_delay_ms = 0;
-    float initial_timeshift_sec = 0.0f; // Added for TimeshiftManager integration
-    // Timeshift duration is often global or sink-related, managed in SourceInputProcessor config
-
-    // --- NEW FIELDS ---
-    int target_output_channels = 2;    // Target output channels for this source path
-    int target_output_samplerate = 48000; // Target output samplerate for this source path
-    // --- END NEW FIELDS ---
-    int protocol_type_hint = 0; // 0 for RTP_SCREAM_PAYLOAD, 1 for RAW_SCREAM_PACKET, 2 for PER_PROCESS_SCREAM_PACKET
-    int target_receiver_port = -1; // Add this line
+    /** @brief Initial timeshift in seconds. */
+    float initial_timeshift_sec = 0.0f;
+    /** @brief Required output channels for this source's processing path. */
+    int target_output_channels = 2;
+    /** @brief Required output sample rate for this source's processing path. */
+    int target_output_samplerate = 48000;
 };
 
+/**
+ * @struct SinkConfig
+ * @brief Configuration for a single audio sink (output).
+ */
 struct SinkConfig {
-    std::string id; // Unique ID for this sink instance
+    /** @brief Unique ID for this sink instance. */
+    std::string id;
+    /** @brief Destination IP address for UDP output. */
     std::string output_ip;
+    /** @brief Destination port for UDP output. */
     int output_port;
+    /** @brief Output bit depth (e.g., 16, 24, 32). */
     int bitdepth = 16;
+    /** @brief Output sample rate (e.g., 44100, 48000). */
     int samplerate = 48000;
+    /** @brief Output channel count. */
     int channels = 2;
-    uint8_t chlayout1 = 0x03; // Default Stereo L/R
+    /** @brief Scream header channel layout byte 1. */
+    uint8_t chlayout1 = 0x03;
+    /** @brief Scream header channel layout byte 2. */
     uint8_t chlayout2 = 0x00;
-    // bool use_tcp = false; // Removed
-    bool enable_mp3 = false; // Flag to enable MP3 output queue
-    // int mp3_bitrate = 192; // Example MP3 setting if needed here
+    /** @brief Flag to enable the MP3 output queue for this sink. */
+    bool enable_mp3 = false;
+    /** @brief Network protocol ("scream", "rtp", "web_receiver"). */
+    std::string protocol = "scream";
+    /** @brief Speaker layout configuration for this sink. */
+    CppSpeakerLayout speaker_layout;
+    /** @brief Enable time synchronization for RTP streams. */
+    bool time_sync_enabled = false;
+    /** @brief Time synchronization delay in milliseconds. */
+    int time_sync_delay_ms = 0;
 };
 
-// Configuration for RtpReceiver component
+/**
+ * @struct RtpReceiverConfig
+ * @brief Configuration for the main RTP receiver component.
+ */
 struct RtpReceiverConfig {
-    int listen_port = 40000; // Default port
-    // std::string bind_ip = "0.0.0.0"; // Optional: Interface IP to bind to
+    /** @brief Default UDP port to listen on for RTP packets. */
+    int listen_port = 40000;
+    /** @brief Pre-configured list of known source IPs. */
+    std::vector<std::string> known_ips;
 };
 
-// Configuration for RawScreamReceiver component
+/**
+ * @struct RawScreamReceiverConfig
+ * @brief Configuration for a raw Scream receiver component.
+ */
 struct RawScreamReceiverConfig {
-    int listen_port = 4010; // Default port (adjust if needed)
-    // std::string bind_ip = "0.0.0.0"; // Optional: Interface IP to bind to
+    /** @brief UDP port to listen on for raw Scream packets. */
+    int listen_port = 4010;
 };
 
-// Configuration for PerProcessScreamReceiver component
+/**
+ * @struct PerProcessScreamReceiverConfig
+ * @brief Configuration for a per-process Scream receiver component.
+ */
 struct PerProcessScreamReceiverConfig {
-    int listen_port = 16402; // Port for this receiver
-    // Add other config options if needed, e.g., interface_ip
+    /** @brief UDP port to listen on for per-process Scream packets. */
+    int listen_port = 16402;
 };
 
-// Enum to specify the expected input data format for a SourceInputProcessor
+/**
+ * @enum InputProtocolType
+ * @brief Enum to specify the expected input data format for a SourceInputProcessor.
+ */
 enum class InputProtocolType {
-    RTP_SCREAM_PAYLOAD,       // Expects raw PCM audio data (RTP payload)
-    RAW_SCREAM_PACKET,        // Expects full 5-byte header + PCM audio data
-    PER_PROCESS_SCREAM_PACKET // Expects Program Tag + 5-byte header + PCM audio data
+    RTP_SCREAM_PAYLOAD,       ///< Expects raw PCM audio data (from an RTP payload).
+    RAW_SCREAM_PACKET,        ///< Expects a full Scream packet (5-byte header + PCM).
+    PER_PROCESS_SCREAM_PACKET ///< Expects a per-process packet (Program Tag + 5-byte header + PCM).
 };
 
-// Configuration for SourceInputProcessor component
+/**
+ * @struct SourceProcessorConfig
+ * @brief Configuration for a SourceInputProcessor component.
+ */
 struct SourceProcessorConfig {
-    std::string instance_id; // Unique identifier for this specific processor instance
-    std::string source_tag; // Identifier (IP or user tag) - potentially shared
-    // Target format (from Sink) - Needed for AudioProcessor initialization
-    int output_channels = 2;         // This will be populated from SourceConfig.target_output_channels
-    int output_samplerate = 48000;   // This will be populated from SourceConfig.target_output_samplerate
-    // Initial settings (from SourceConfig)
-    float initial_volume = 1.0f; // Corrected default to 1.0f to match typical usage
-    std::vector<float> initial_eq; // Default constructor will handle empty, or AudioManager can default
+    /** @brief Unique identifier for this specific processor instance. */
+    std::string instance_id;
+    /** @brief Identifier of the source this processor handles (IP or user tag). */
+    std::string source_tag;
+    /** @brief Target output channels, populated from SinkConfig. */
+    int output_channels = 2;
+    /** @brief Target output sample rate, populated from SinkConfig. */
+    int output_samplerate = 48000;
+    /** @brief Initial volume level. */
+    float initial_volume = 1.0f;
+    /** @brief Initial equalizer settings. */
+    std::vector<float> initial_eq;
+    /** @brief Initial delay in milliseconds. */
     int initial_delay_ms = 0;
-    float initial_timeshift_sec = 0.0f; // Added for TimeshiftManager integration
-    int timeshift_buffer_duration_sec = 5; // Default timeshift buffer duration
+    /** @brief Initial timeshift in seconds. */
+    float initial_timeshift_sec = 0.0f;
+    /** @brief Duration of the internal timeshift buffer in seconds. */
+    int timeshift_buffer_duration_sec = 5;
+    /** @brief Custom 8x8 speaker mix matrix. */
+    std::vector<std::vector<float>> speaker_mix_matrix;
+    /** @brief True to use dynamic mixing logic, false to use the matrix. */
+    bool use_auto_speaker_mix;
 
-    // --- New Speaker Mix Members ---
-    std::vector<std::vector<float>> speaker_mix_matrix; // For custom 8x8 matrix
-    bool use_auto_speaker_mix;                         // True to use existing dynamic logic
-
-    // Constructor to initialize eq_values if not done by default vector behavior
-    // Consider adding a default constructor or ensuring initialization elsewhere
-    SourceProcessorConfig() : // output_channels, output_samplerate, initial_volume, initial_delay_ms, initial_timeshift_sec
-                              // are already initialized by class member defaults.
-                              // The task example re-initializes them here for explicitness.
-                              output_channels(2), output_samplerate(48000),
-                              initial_volume(1.0f), initial_delay_ms(0), initial_timeshift_sec(0.0f),
-                              use_auto_speaker_mix(true) {
-        initial_eq.assign(EQ_BANDS, 1.0f); // Default flat EQ
-        // Initialize speaker_mix_matrix to an 8x8 identity matrix
-        speaker_mix_matrix.resize(MAX_CHANNELS, std::vector<float>(MAX_CHANNELS, 0.0f));
-        for (size_t i = 0; i < MAX_CHANNELS; ++i) { // Changed int to size_t
-            if (i < speaker_mix_matrix.size() && i < speaker_mix_matrix[i].size()) { // Basic bounds check
-                speaker_mix_matrix[i][i] = 1.0f;
-            }
+    /**
+     * @brief Default constructor.
+     */
+   SourceProcessorConfig() : use_auto_speaker_mix(true) {
+       initial_eq.assign(screamrouter::audio::EQ_BANDS, 1.0f); // Default to a flat EQ.
+       // Initialize speaker_mix_matrix to an 8x8 identity matrix.
+       speaker_mix_matrix.resize(screamrouter::audio::MAX_CHANNELS, std::vector<float>(screamrouter::audio::MAX_CHANNELS, 0.0f));
+       for (size_t i = 0; i < screamrouter::audio::MAX_CHANNELS; ++i) {
+           if (i < speaker_mix_matrix.size() && i < speaker_mix_matrix[i].size()) {
+               speaker_mix_matrix[i][i] = 1.0f;
+           }
         }
     }
-    InputProtocolType protocol_type = InputProtocolType::RTP_SCREAM_PAYLOAD; // Add this line
-    int target_receiver_port = -1; // Add this line
-    // Input format hints (if needed, otherwise assume standard like 16-bit, 48kHz, 2ch)
-    // int input_channels = 2;
-    // int input_samplerate = 48000;
-    // int input_bitdepth = 16;
 };
 
-// Configuration for AudioManager (C++ specific settings)
+/**
+ * @struct AudioManagerConfigCpp
+ * @brief C++ specific configuration for the AudioManager.
+ */
 struct AudioManagerConfigCpp {
-    int rtp_listen_port = 4010; // Default from current AudioManager::initialize
-    int global_timeshift_buffer_duration_sec = 300; // Default 5 minutes
-    // Add other C++ specific AudioManager settings here if needed
+    /** @brief Default main RTP listen port. */
+    int rtp_listen_port = 4010;
+    /** @brief Default global timeshift buffer duration (5 minutes). */
+    int global_timeshift_buffer_duration_sec = 300;
 };
 
-// Configuration for SinkAudioMixer component
+/**
+ * @struct SinkMixerConfig
+ * @brief Configuration for a SinkAudioMixer component.
+ */
 struct SinkMixerConfig {
-    std::string sink_id; // Unique identifier (e.g., IP:Port or name)
+    /** @brief Unique identifier for the sink this mixer serves. */
+    std::string sink_id;
+    /** @brief Destination IP address. */
     std::string output_ip;
+    /** @brief Destination port. */
     int output_port;
+    /** @brief Output bit depth. */
     int output_bitdepth;
+    /** @brief Output sample rate. */
     int output_samplerate;
+    /** @brief Output channel count. */
     int output_channels;
+    /** @brief Scream header channel layout byte 1. */
     uint8_t output_chlayout1;
+    /** @brief Scream header channel layout byte 2. */
     uint8_t output_chlayout2;
-    // bool use_tcp; // Removed
-    // MP3 Encoding settings (if applicable)
-    // bool enable_mp3_output; // Determined by whether mp3_output_queue is provided
-    // int mp3_bitrate = 192; // Example setting for LAME
+    /** @brief Network protocol ("scream" or "rtp"). */
+    std::string protocol = "scream";
+    /** @brief Speaker layout for RTP channel mapping. */
+    CppSpeakerLayout speaker_layout;
+    /** @brief Enable time synchronization for RTP streams. */
+    bool time_sync_enabled = false;
+    /** @brief Time synchronization delay in milliseconds. */
+    int time_sync_delay_ms = 0;
 };
 
 
-} // namespace audio
-} // namespace screamrouter
+/**
+ * @struct SourceParameterUpdates
+ * @brief A struct to hold a batch of parameter updates for a source.
+ * @details Using std::optional allows for updating only specified parameters atomically.
+ */
+struct SourceParameterUpdates {
+    /** @brief Optional new volume level. */
+    std::optional<float> volume;
+    /** @brief Optional new EQ band values. */
+    std::optional<std::vector<float>> eq_values;
+    /** @brief Optional new EQ normalization state. */
+    std::optional<bool> eq_normalization;
+    /** @brief Optional new volume normalization state. */
+    std::optional<bool> volume_normalization;
+    /** @brief Optional new delay in milliseconds. */
+    std::optional<int> delay_ms;
+    /** @brief Optional new timeshift in seconds. */
+    std::optional<float> timeshift_sec;
+    /** @brief Optional new map of speaker layouts. */
+    std::optional<std::map<int, CppSpeakerLayout>> speaker_layouts_map;
+    };
+    
+// --- Queue Type Aliases ---
+/** @brief A thread-safe queue for passing raw audio packets between threads. */
+using PacketQueue = utils::ThreadSafeQueue<TaggedAudioPacket>;
+/** @brief A thread-safe queue for passing processed audio chunks between threads. */
+using ChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
+/** @brief A thread-safe queue for sending control commands to audio processors. */
+using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
+/** @brief A thread-safe queue for passing encoded MP3 data. */
+using Mp3Queue = utils::ThreadSafeQueue<EncodedMP3Data>;
+/** @brief A thread-safe queue for notifying about new audio sources. */
+using NotificationQueue = utils::ThreadSafeQueue<NewSourceNotification>;
+/** @brief A type definition for a request to remove a listener, containing a source and sink ID pair. */
+using ListenerRemovalRequest = std::pair<std::string, std::string>;
+/** @brief A thread-safe queue for handling requests to remove listeners. */
+using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
+
+    /**
+     * @brief Binds the C++ audio types to the given Python module.
+     * @param m The pybind11 module to which the types will be bound.
+     */
+    inline void bind_audio_types(pybind11::module_ &m) {
+        namespace py = pybind11;
+    
+        py::class_<SourceConfig>(m, "SourceConfig", "Configuration for an audio source")
+            .def(py::init<>())
+            .def_readwrite("tag", &SourceConfig::tag, "Unique identifier (e.g., IP address or user tag)")
+            .def_readwrite("initial_volume", &SourceConfig::initial_volume, "Initial volume level (default: 1.0)")
+            .def_readwrite("initial_eq", &SourceConfig::initial_eq, "Initial equalizer settings (list of floats, size EQ_BANDS)")
+            .def_readwrite("initial_delay_ms", &SourceConfig::initial_delay_ms, "Initial delay in milliseconds (default: 0)");
+    
+        py::class_<SinkConfig>(m, "SinkConfig", "Configuration for an audio sink")
+            .def(py::init<>()) // Bind the default constructor
+            .def_readwrite("id", &SinkConfig::id, "Unique identifier for this sink instance")
+            .def_readwrite("output_ip", &SinkConfig::output_ip, "Destination IP address for UDP output")
+            .def_readwrite("output_port", &SinkConfig::output_port, "Destination port for UDP output")
+            .def_readwrite("bitdepth", &SinkConfig::bitdepth, "Output bit depth (e.g., 16)")
+            .def_readwrite("samplerate", &SinkConfig::samplerate, "Output sample rate (e.g., 48000)")
+            .def_readwrite("channels", &SinkConfig::channels, "Output channel count (e.g., 2)")
+            .def_readwrite("chlayout1", &SinkConfig::chlayout1, "Scream header channel layout byte 1")
+            .def_readwrite("chlayout2", &SinkConfig::chlayout2, "Scream header channel layout byte 2")
+            .def_readwrite("protocol", &SinkConfig::protocol, "Network protocol (e.g., 'scream', 'rtp')")
+            .def_readwrite("time_sync_enabled", &SinkConfig::time_sync_enabled, "Enable time synchronization for RTP streams")
+            .def_readwrite("time_sync_delay_ms", &SinkConfig::time_sync_delay_ms, "Time synchronization delay in milliseconds");
+    
+        py::class_<RawScreamReceiverConfig>(m, "RawScreamReceiverConfig", "Configuration for a raw Scream receiver")
+            .def(py::init<>()) // Default constructor
+            .def_readwrite("listen_port", &RawScreamReceiverConfig::listen_port, "UDP port to listen on");
+    
+        py::class_<PerProcessScreamReceiverConfig>(m, "PerProcessScreamReceiverConfig", "Configuration for a per-process Scream receiver")
+            .def(py::init<>())
+            .def_readwrite("listen_port", &PerProcessScreamReceiverConfig::listen_port, "UDP port to listen on for per-process receiver");
+    
+        py::enum_<InputProtocolType>(m, "InputProtocolType", "Specifies the expected input packet type")
+            .value("RTP_SCREAM_PAYLOAD", InputProtocolType::RTP_SCREAM_PAYLOAD)
+            .value("RAW_SCREAM_PACKET", InputProtocolType::RAW_SCREAM_PACKET)
+            .value("PER_PROCESS_SCREAM_PACKET", InputProtocolType::PER_PROCESS_SCREAM_PACKET)
+            .export_values();
+    
+        py::class_<CppSpeakerLayout>(m, "CppSpeakerLayout", "C++ structure for speaker layout configuration")
+            .def(py::init<>()) // Default constructor
+            .def_readwrite("auto_mode", &CppSpeakerLayout::auto_mode, "True for auto mix, false for custom matrix")
+            .def_readwrite("matrix", &CppSpeakerLayout::matrix, "8x8 speaker mix matrix");
+    
+        py::enum_<CommandType>(m, "CommandType", "Type of control command for a source")
+            .value("SET_VOLUME", CommandType::SET_VOLUME)
+            .value("SET_EQ", CommandType::SET_EQ)
+            .value("SET_DELAY", CommandType::SET_DELAY)
+            .value("SET_TIMESHIFT", CommandType::SET_TIMESHIFT)
+            .value("SET_EQ_NORMALIZATION", CommandType::SET_EQ_NORMALIZATION)
+            .value("SET_VOLUME_NORMALIZATION", CommandType::SET_VOLUME_NORMALIZATION)
+            .value("SET_SPEAKER_MIX", CommandType::SET_SPEAKER_MIX)
+            .export_values();
+    
+        py::class_<SourceParameterUpdates>(m, "SourceParameterUpdates", "Holds optional parameter updates for a source")
+            .def(py::init<>())
+            .def_readwrite("volume", &SourceParameterUpdates::volume, "Optional volume level")
+            .def_readwrite("eq_values", &SourceParameterUpdates::eq_values, "Optional list of EQ values")
+            .def_readwrite("eq_normalization", &SourceParameterUpdates::eq_normalization, "Optional EQ normalization flag")
+            .def_readwrite("volume_normalization", &SourceParameterUpdates::volume_normalization, "Optional volume normalization flag")
+            .def_readwrite("delay_ms", &SourceParameterUpdates::delay_ms, "Optional delay in milliseconds")
+            .def_readwrite("timeshift_sec", &SourceParameterUpdates::timeshift_sec, "Optional timeshift in seconds")
+            .def_readwrite("speaker_layouts_map", &SourceParameterUpdates::speaker_layouts_map, "Optional map of input channel counts to speaker layouts");
+    
+        py::class_<ControlCommand>(m, "ControlCommand", "Command structure for SourceInputProcessor")
+            .def(py::init<>())
+            .def_readwrite("type", &ControlCommand::type, "The type of the command")
+            .def_readwrite("float_value", &ControlCommand::float_value, "Floating point value for the command")
+            .def_readwrite("int_value", &ControlCommand::int_value, "Integer value for the command")
+            .def_readwrite("eq_values", &ControlCommand::eq_values, "List of float values for EQ")
+            .def_readwrite("input_channel_key", &ControlCommand::input_channel_key, "Input channel key for speaker mix")
+            .def_readwrite("speaker_layout_for_key", &ControlCommand::speaker_layout_for_key, "Speaker layout for the given key");
+
+        py::class_<StreamStats>(m, "StreamStats", "Statistics for a single audio stream")
+            .def(py::init<>())
+            .def_readwrite("jitter_estimate_ms", &StreamStats::jitter_estimate_ms)
+            .def_readwrite("packets_per_second", &StreamStats::packets_per_second)
+            .def_readwrite("timeshift_buffer_size", &StreamStats::timeshift_buffer_size)
+            .def_readwrite("timeshift_buffer_late_packets", &StreamStats::timeshift_buffer_late_packets)
+            .def_readwrite("timeshift_buffer_lagging_events", &StreamStats::timeshift_buffer_lagging_events)
+            .def_readwrite("tm_buffer_underruns", &StreamStats::tm_buffer_underruns)
+            .def_readwrite("tm_packets_discarded", &StreamStats::tm_packets_discarded)
+            .def_readwrite("last_arrival_time_error_ms", &StreamStats::last_arrival_time_error_ms)
+            .def_readwrite("total_anchor_adjustment_ms", &StreamStats::total_anchor_adjustment_ms)
+            .def_readwrite("total_packets_in_stream", &StreamStats::total_packets_in_stream)
+            .def_readwrite("target_buffer_level_ms", &StreamStats::target_buffer_level_ms)
+            .def_readwrite("buffer_target_fill_percentage", &StreamStats::buffer_target_fill_percentage);
+
+        py::class_<SourceStats>(m, "SourceStats", "Statistics for a single source processor")
+            .def(py::init<>())
+            .def_readwrite("instance_id", &SourceStats::instance_id)
+            .def_readwrite("source_tag", &SourceStats::source_tag)
+            .def_readwrite("input_queue_size", &SourceStats::input_queue_size)
+            .def_readwrite("output_queue_size", &SourceStats::output_queue_size)
+            .def_readwrite("packets_processed_per_second", &SourceStats::packets_processed_per_second)
+            .def_readwrite("reconfigurations", &SourceStats::reconfigurations);
+
+        py::class_<WebRtcListenerStats>(m, "WebRtcListenerStats", "Statistics for a single WebRTC listener")
+            .def(py::init<>())
+            .def_readwrite("listener_id", &WebRtcListenerStats::listener_id)
+            .def_readwrite("connection_state", &WebRtcListenerStats::connection_state)
+            .def_readwrite("pcm_buffer_size", &WebRtcListenerStats::pcm_buffer_size)
+            .def_readwrite("packets_sent_per_second", &WebRtcListenerStats::packets_sent_per_second);
+
+        py::class_<SinkStats>(m, "SinkStats", "Statistics for a single sink mixer")
+            .def(py::init<>())
+            .def_readwrite("sink_id", &SinkStats::sink_id)
+            .def_readwrite("active_input_streams", &SinkStats::active_input_streams)
+            .def_readwrite("total_input_streams", &SinkStats::total_input_streams)
+            .def_readwrite("packets_mixed_per_second", &SinkStats::packets_mixed_per_second)
+            .def_readwrite("sink_buffer_underruns", &SinkStats::sink_buffer_underruns)
+            .def_readwrite("sink_buffer_overflows", &SinkStats::sink_buffer_overflows)
+            .def_readwrite("mp3_buffer_overflows", &SinkStats::mp3_buffer_overflows)
+            .def_readwrite("webrtc_listeners", &SinkStats::webrtc_listeners);
+
+        py::class_<GlobalStats>(m, "GlobalStats", "Global statistics for the audio engine")
+            .def(py::init<>())
+            .def_readwrite("timeshift_buffer_total_size", &GlobalStats::timeshift_buffer_total_size)
+            .def_readwrite("packets_added_to_timeshift_per_second", &GlobalStats::packets_added_to_timeshift_per_second);
+
+        py::class_<AudioEngineStats>(m, "AudioEngineStats", "A collection of all statistics from the audio engine")
+            .def(py::init<>())
+            .def_readwrite("global_stats", &AudioEngineStats::global_stats)
+            .def_readwrite("stream_stats", &AudioEngineStats::stream_stats)
+            .def_readwrite("source_stats", &AudioEngineStats::source_stats)
+            .def_readwrite("sink_stats", &AudioEngineStats::sink_stats);
+    }
+    
+    } // namespace audio
+    } // namespace screamrouter
 
 #endif // AUDIO_TYPES_H

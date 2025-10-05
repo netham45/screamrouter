@@ -1,0 +1,238 @@
+name: Build Windows MSI Package
+permissions:
+  contents: read # Required to checkout code
+
+on:
+  workflow_call:
+    outputs:
+      msi_path:
+        description: "Path to the built .msi file"
+        value: ${{ jobs.build-msi.outputs.msi_path }}
+      version:
+        description: "Version of the built package"
+        value: ${{ jobs.build-msi.outputs.version }}
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  build-msi:
+    runs-on: windows-latest
+    outputs:
+      msi_path: ${{ steps.save_artifact_path.outputs.msi_path }} # Placeholder for now
+      version: ${{ env.APP_VERSION }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Get commit short SHA
+        id: sha
+        shell: pwsh
+        run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Set Application Version
+        id: get_version
+        shell: pwsh
+        run: |
+          $rawVersion = ""
+          if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
+            $rawVersion = "${{ github.ref }}".Substring("refs/tags/v".Length) # e.g., 1.2.3
+            $wixVersion = "$rawVersion.0" # WiX needs 4 segments, e.g., 1.2.3.0
+          } else {
+            $rawVersion = "0.0.0-${{ env.SHORT_SHA }}"
+            $wixVersion = "0.0.0.0" # Default for non-tag builds
+          }
+          echo "APP_VERSION=$rawVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "WIX_APP_VERSION=$wixVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Raw Application version set to: $rawVersion"
+          Write-Host "WiX Application version set to: $wixVersion"
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18' # Adjust if your project needs a different version
+
+      - name: Install Python build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install pybind11 setuptools wheel
+          Write-Host "Python build dependencies installed."
+
+      - name: Build React Frontend
+        shell: pwsh
+        working-directory: ./screamrouter-react
+        run: |
+          npm install
+          npm run build
+          Write-Host "React frontend built."
+
+      - name: Build Python C++ Extension and Wheel
+        shell: pwsh
+        run: |
+          python setup.py bdist_wheel
+          Write-Host "Python C++ extension and wheel built."
+
+      - name: Create Staging Directory for MSI
+        shell: pwsh
+        run: |
+          $stagingPath = Join-Path $env:RUNNER_TEMP "ScreamRouterStaging"
+          New-Item -ItemType Directory -Force -Path $stagingPath
+          echo "STAGING_PATH=$stagingPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Staging directory created at $stagingPath"
+
+      - name: Install Python Application into Staging
+        shell: pwsh
+        run: |
+          $wheelFile = Get-ChildItem -Path ./dist/screamrouter-*.whl | Select-Object -First 1 -ExpandProperty FullName
+          Write-Host "Found wheel: $wheelFile"
+          pip install --target "${{ env.STAGING_PATH }}\python_runtime" $wheelFile
+          pip install --target "${{ env.STAGING_PATH }}\python_runtime" -r requirements.txt
+          Write-Host "Python application and dependencies installed into staging."
+
+      - name: Copy React Frontend to Staging
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ env.STAGING_PATH }}\site"
+          Copy-Item -Path ./site/* -Destination "${{ env.STAGING_PATH }}\site" -Recurse -Force
+          Write-Host "React frontend copied to staging."
+
+      - name: Copy Other Application Files to Staging
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ env.STAGING_PATH }}\app"
+          Copy-Item -Path ./screamrouter.py -Destination "${{ env.STAGING_PATH }}\app\"
+          Copy-Item -Path ./uvicorn_log_config.yaml -Destination "${{ env.STAGING_PATH }}\app\"
+          Copy-Item -Path ./images -Destination "${{ env.STAGING_PATH }}\app\images" -Recurse -Force
+          # Add other files if necessary, e.g. README.md
+          # Copy-Item -Path ./README.md -Destination "${{ env.STAGING_PATH }}\app\"
+          Write-Host "Other application files copied to staging."
+
+      - name: Download and Extract Embeddable Python
+        shell: pwsh
+        run: |
+          $pythonEmbedUrl = "https://www.python.org/ftp/python/3.12.3/python-3.12.3-embed-amd64.zip" # Ensure this version is current or desired
+          $pythonEmbedZip = Join-Path $env:RUNNER_TEMP "python-embed.zip"
+          $pythonEmbedDir = "${{ env.STAGING_PATH }}\python_embed"
+          New-Item -ItemType Directory -Force -Path $pythonEmbedDir
+          Invoke-WebRequest -Uri $pythonEmbedUrl -OutFile $pythonEmbedZip
+          Expand-Archive -Path $pythonEmbedZip -DestinationPath $pythonEmbedDir -Force
+          Remove-Item $pythonEmbedZip
+          Write-Host "Embeddable Python downloaded and extracted to $pythonEmbedDir"
+
+      - name: Create WiX Project File (ScreamRouter.wxs)
+        shell: pwsh
+        run: |
+          $productGuid = (New-Guid).Guid
+          $shortcutGuid = (New-Guid).Guid
+          # TODO: Update Manufacturer to your actual company/developer name if "ScreamRouter Project" is not suitable.
+          $manufacturer = "ScreamRouter Project"
+
+          Write-Host "Using Product UpgradeCode: $productGuid"
+          Write-Host "Using Shortcut Component Guid: $shortcutGuid"
+          Write-Host "Using Manufacturer: $manufacturer"
+          Write-Host "Using WiX Version: ${{ env.WIX_APP_VERSION }}"
+          Write-Host "Using Display Name Version: ${{ env.APP_VERSION }}"
+
+          $wxsContent = @"
+          <?xml version='1.0' encoding='UTF-8'?>
+          <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'
+               xmlns:util='http://schemas.microsoft.com/wix/UtilExtension'>
+
+            <Product Id='*' Name='ScreamRouter ${{ env.APP_VERSION }}' Language='1033' Version='${{ env.WIX_APP_VERSION }}'
+                     Manufacturer='$manufacturer' UpgradeCode='$productGuid'>
+
+              <Package InstallerVersion='301' Compressed='yes' InstallScope='perUser' Platform='x64' />
+              <MediaTemplate EmbedCab='yes' />
+
+              <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+              <Feature Id='MainApplication' Title='ScreamRouter Application' Level='1'>
+                <ComponentGroupRef Id='AppComponents' />
+                <ComponentGroupRef Id='PythonRuntimeComponents' />
+                <ComponentGroupRef Id='PythonEmbedComponents' />
+                <ComponentRef Id='ApplicationShortcuts' />
+              </Feature>
+
+              <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+              <UIRef Id="WixUI_InstallDir" />
+              <!-- <WixVariable Id="WixUILicenseRtf" Value="path\to\your\License.rtf" /> --> <!-- Optional: Create License.rtf and uncomment -->
+
+              <Directory Id='TARGETDIR' Name='SourceDir'>
+                <Directory Id='AppDataFolder'> <!-- %APPDATA% -->
+                  <Directory Id='INSTALLFOLDER' Name='ScreamRouter'>
+                    <Directory Id='APPDIR' Name='app' />
+                    <Directory Id='PYTHON_RUNTIME_DIR' Name='python_runtime' />
+                    <Directory Id='PYTHON_EMBED_DIR' Name='python_embed' />
+                  </Directory>
+                </Directory>
+                <Directory Id="ProgramMenuFolder">
+                  <Directory Id="ApplicationProgramsFolder" Name="ScreamRouter"/>
+                </Directory>
+              </Directory>
+
+              <!-- ComponentGroups are defined in the .wxs files generated by heat.exe -->
+              <!-- We only need to reference them here. -->
+
+              <DirectoryRef Id="ApplicationProgramsFolder">
+                <Component Id="ApplicationShortcuts" Guid="$shortcutGuid">
+                  <Shortcut Id="ApplicationStartMenuShortcut"
+                            Name="ScreamRouter"
+                            Description="Launch ScreamRouter"
+                            Target="[PYTHON_EMBED_DIR]python.exe"
+                            Arguments="[APPDIR]screamrouter.py"
+                            WorkingDirectory="APPDIR"/>
+                  <RemoveFolder Id="CleanupApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall"/>
+                  <RegistryValue Root="HKCU" Key="Software\$manufacturer\ScreamRouter" Name="installed" Type="integer" Value="1" KeyPath="yes"/>
+                </Component>
+              </DirectoryRef>
+
+              <!-- TODO: Add CustomAction for post-install tasks if needed -->
+            </Product>
+          </Wix>
+          "@
+          $wxsContent | Out-File -FilePath "ScreamRouter.wxs" -Encoding UTF8
+          Write-Host "ScreamRouter.wxs created."
+
+      - name: Harvest Application Files with WiX heat.exe
+        shell: pwsh
+        run: |
+          heat.exe dir "${{ env.STAGING_PATH }}/app" -dr APPDIR -cg AppComponents -gg -sreg -scom -sfrag -t HeatFilter.xsl -out AppComponents.wxs
+          heat.exe dir "${{ env.STAGING_PATH }}/python_runtime" -dr PYTHON_RUNTIME_DIR -cg PythonRuntimeComponents -gg -sreg -scom -sfrag -t HeatFilter.xsl -out PythonRuntimeComponents.wxs
+          heat.exe dir "${{ env.STAGING_PATH }}/python_embed" -dr PYTHON_EMBED_DIR -cg PythonEmbedComponents -gg -sreg -scom -sfrag -t HeatFilter.xsl -out PythonEmbedComponents.wxs
+          Write-Host "WiX fragment files generated with filtering."
+
+      - name: Compile WiX Project (candle.exe)
+        shell: cmd
+        run: |
+          candle.exe -ext WixUtilExtension -ext WixUIExtension -arch x64 ScreamRouter.wxs AppComponents.wxs PythonRuntimeComponents.wxs PythonEmbedComponents.wxs
+          echo WiX project compiled.
+
+      - name: Link WiX Project (light.exe)
+        shell: pwsh
+        run: |
+          $msiName = "screamrouter-${{ env.APP_VERSION }}-win-x64.msi"
+          light.exe -ext WixUtilExtension -ext WixUIExtension -out $msiName ScreamRouter.wixobj AppComponents.wixobj PythonRuntimeComponents.wixobj PythonEmbedComponents.wixobj -pdbout ScreamRouter.wixpdb
+          echo "MSI_NAME=$msiName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "MSI linked: $msiName"
+
+      - name: Save MSI artifact path
+        id: save_artifact_path
+        shell: pwsh
+        run: |
+          echo "msi_path=${{ env.MSI_NAME }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "MSI path saved: ${{ env.MSI_NAME }}"
+
+      - name: Upload MSI Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screamrouter-msi
+          path: ${{ env.MSI_NAME }}
+          retention-days: 7

@@ -26,9 +26,9 @@ interface SinkListProps {
   starredSinks: string[];
   
   /**
-   * Name of the sink being listened to
+   * Map of sink names to their listening status
    */
-  listeningToSink: string | null;
+  listeningStatus: Map<string, boolean>;
   
   /**
    * Name of the sink being visualized
@@ -59,7 +59,7 @@ const SinkList: React.FC<SinkListProps> = ({
   sinks,
   routes,
   starredSinks,
-  listeningToSink,
+  listeningStatus,
   visualizingSink,
   actions,
   selectedItem
@@ -198,7 +198,7 @@ const SinkList: React.FC<SinkListProps> = ({
               sink={sink}
               routes={getSinkRoutes(sink.name)}
               isStarred={starredSinks.includes(sink.name)}
-              listeningToSink={listeningToSink}
+              isListening={listeningStatus.get(sink.name) || false}
               visualizingSink={visualizingSink}
               actions={actions}
               isSelected={selectedItem === sink.name}

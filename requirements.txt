@@ -2,6 +2,7 @@ dnspython
 fastapi
 httpx
 Jinja2
+netifaces
 numpy
 pydantic
 pyOpenSSL
@@ -13,4 +14,5 @@ websockets
 websockify
 uvicorn
 zeroconf
-pybind11>=2.6 # For C++ extension building
+pybind11>=2.6
+pybind11-stubgen

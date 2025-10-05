@@ -37,6 +37,8 @@ class APIConfiguration():
             self._configuration_controller.update_sink_delay)
         self._app.get("/sinks/{sink_name}/timeshift/{timeshift}", tags=["Sink Configuration"])(
             self._configuration_controller.update_sink_timeshift)
+        self._app.get("/sinks/{sink_name}/volume_normalization/{volume_normalization}", tags=["Sink Configuration"])(
+            self._configuration_controller.update_sink_volume_normalization)
         self._app.post("/sinks/{sink_name}/equalizer/", tags=["Sink Configuration"])(
             self._configuration_controller.update_sink_equalizer)
         self._app.get("/sinks/{sink_name}/reorder/{new_index}", tags=["Sink Configuration"])(

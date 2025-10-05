@@ -76,7 +76,21 @@
         "typeindex": "cpp",
         "valarray": "cpp",
         "variant": "cpp",
+        "any": "cpp",
+        "bitset": "cpp",
+        "csignal": "cpp",
+        "regex": "cpp",
+        "future": "cpp",
+        "ranges": "cpp",
+        "shared_mutex": "cpp",
+        "span": "cpp",
+        "complex": "cpp"
     },
     "cmake.configureOnOpen": false,
-    "c-cpp-flylint.cppcheck.extraArgs": ["--force", "--std=c++17", "--enable=all"],
+    "c-cpp-flylint.cppcheck.extraArgs": [
+        "--force",
+        "--std=c++17",
+        "--enable=all"
+    ],
+    "C_Cpp.errorSquiggles": "enabled",
 }

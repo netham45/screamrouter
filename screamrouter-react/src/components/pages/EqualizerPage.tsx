@@ -29,7 +29,8 @@ import {
   Input,
   FormControl,
   FormLabel,
-  Portal
+  Portal,
+  Checkbox
 } from '@chakra-ui/react';
 import ApiService, { Equalizer as EqualizerType } from '../../api/api';
 
@@ -141,6 +142,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
    * State to keep track of the current equalizer settings.
    */
   const [equalizer, setEqualizer] = useState<EqualizerType>(item.equalizer);
+  const [eqNormalization, setEqNormalization] = useState(item.equalizer.normalization_enabled ?? true);
 
   /**
    * State to keep track of any error messages.
@@ -225,15 +227,16 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   const updateEqualizer = async () => {
     try {
       setError(null);
+      const eqData = { ...equalizer, normalization_enabled: eqNormalization };
       switch (type) {
         case 'sources':
-          await ApiService.updateSourceEqualizer(item.name, equalizer);
+          await ApiService.updateSourceEqualizer(item.name, eqData);
           break;
         case 'sinks':
-          await ApiService.updateSinkEqualizer(item.name, equalizer);
+          await ApiService.updateSinkEqualizer(item.name, eqData);
           break;
         case 'routes':
-          await ApiService.updateRouteEqualizer(item.name, equalizer);
+          await ApiService.updateRouteEqualizer(item.name, eqData);
           break;
       }
     } catch (error) {
@@ -342,7 +345,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
   /**
    * Sorted list of frequency bands for rendering sliders in order.
    */
-  const sortedBands = Object.entries(equalizer).filter(([key]) => key !== 'name').sort((a, b) => {
+  const sortedBands = Object.entries(equalizer).filter(([key]) => key.startsWith('b')).sort((a, b) => {
     const bandA = parseInt(a[0].slice(1), 10);
     const bandB = parseInt(b[0].slice(1), 10);
     return bandA - bandB;
@@ -564,8 +567,15 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
           <Button colorScheme="red" size="sm" onClick={deleteEqualizer}>
             Delete
           </Button>
+          <Checkbox
+               isChecked={eqNormalization}
+               onChange={(e) => setEqNormalization(e.target.checked)}
+               ml={4}
+             >
+               Normalize
+             </Checkbox>
         </Flex>
-        
+       
         <Flex
           justifyContent="space-between"
           alignItems="flex-end"
