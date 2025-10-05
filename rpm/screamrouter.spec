@@ -107,7 +107,9 @@ cp setup.py pyproject.toml README.md %{buildroot}%{_datadir}/%{name}/
 cp -r build_system %{buildroot}%{_datadir}/%{name}/
 
 # Copy src directory (which now includes the compiled .so extension)
+# Exclude deps directory to avoid packaging build artifacts with problematic filenames
 cp -r src %{buildroot}%{_datadir}/%{name}/
+rm -rf %{buildroot}%{_datadir}/%{name}/src/audio_engine/deps
 
 # Copy the built React site
 cp -r site %{buildroot}%{_datadir}/%{name}/
