@@ -7,7 +7,9 @@
 #include <stdexcept>
 #include <system_error>
 #include <cerrno>
-#include <sys/select.h>
+#ifndef _WIN32
+    #include <sys/select.h>
+#endif
 
 namespace screamrouter {
 namespace audio {

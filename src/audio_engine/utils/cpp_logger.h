@@ -30,7 +30,7 @@ enum class LogLevel {
     DEBUG,   ///< Detailed information, typically of interest only when diagnosing problems.
     INFO,    ///< Confirmation that things are working as expected.
     WARNING, ///< An indication that something unexpected happened, or a potential problem.
-    ERROR    ///< A serious problem, preventing the program from performing a function.
+    ERR      ///< A serious problem, preventing the program from performing a function.
 };
 
 /** @brief Global atomic variable to hold the current log level. */
@@ -97,7 +97,7 @@ inline void bind_logger(pybind11::module_ &m) {
         .value("DEBUG", LogLevel::DEBUG)
         .value("INFO", LogLevel::INFO)
         .value("WARNING", LogLevel::WARNING)
-        .value("ERROR", LogLevel::ERROR)
+        .value("ERROR", LogLevel::ERR)
         .export_values();
  
     m.def("get_cpp_log_messages", [](int timeout_ms) {
@@ -147,6 +147,6 @@ inline void bind_logger(pybind11::module_ &m) {
 /** @def LOG_CPP_WARNING(fmt, ...) @brief Logs a message at the WARNING level. */
 #define LOG_CPP_WARNING(fmt, ...) LOG_CPP_BASE(screamrouter::audio::logging::LogLevel::WARNING, fmt, ##__VA_ARGS__)
 /** @def LOG_CPP_ERROR(fmt, ...) @brief Logs a message at the ERROR level. */
-#define LOG_CPP_ERROR(fmt, ...)   LOG_CPP_BASE(screamrouter::audio::logging::LogLevel::ERROR, fmt, ##__VA_ARGS__)
+#define LOG_CPP_ERROR(fmt, ...)   LOG_CPP_BASE(screamrouter::audio::logging::LogLevel::ERR, fmt, ##__VA_ARGS__)
 
 #endif // CPP_LOGGER_H
