@@ -27,7 +27,7 @@ jobs:
       - name: Install Git and basic dependencies
         run: |
           dnf install -y epel-release && dnf install -y dnf-plugins-core && dnf config-manager --set-enabled crb && dnf install -y git gcc gcc-c++ make lame-devel rpmdevtools rpmlint openssl \
-            python3-devel python3-pip python3-setuptools python3-virtualenv \
+            python3-devel python3-pip python3-setuptools python3-virtualenv python3-pyyaml \
             autoconf automake libtool cmake \
             perl
 
