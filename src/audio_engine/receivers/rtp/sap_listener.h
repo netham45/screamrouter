@@ -27,6 +27,7 @@
     #include <winsock2.h>
     #include <ws2tcpip.h>
     using socket_t = SOCKET;
+    #define NAR_INVALID_SOCKET_VALUE INVALID_SOCKET
 #else // POSIX
     #include <sys/types.h>
     #include <sys/socket.h>
@@ -34,6 +35,7 @@
     #include <arpa/inet.h>
     #include <unistd.h>
     using socket_t = int;
+    #define NAR_INVALID_SOCKET_VALUE -1
 #endif
 
 namespace screamrouter {

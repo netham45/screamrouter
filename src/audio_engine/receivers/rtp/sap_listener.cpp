@@ -9,6 +9,10 @@
 #include <cerrno>
 #ifndef _WIN32
     #include <sys/select.h>
+#else
+    // Define ssize_t for Windows
+    #include <BaseTsd.h>
+    typedef SSIZE_T ssize_t;
 #endif
 
 namespace screamrouter {
@@ -216,7 +220,10 @@ bool SapListener::setup_sockets() {
 
     for (const auto& group : MULTICAST_GROUPS) {
         struct ip_mreq mreq;
-        mreq.imr_multiaddr.s_addr = inet_addr(group.c_str());
+        if (inet_pton(AF_INET, group.c_str(), &mreq.imr_multiaddr) <= 0) {
+            LOG_CPP_ERROR("%s Failed to parse multicast group address %s", logger_prefix_.c_str(), group.c_str());
+            continue;
+        }
         mreq.imr_interface.s_addr = htonl(INADDR_ANY);
         if (setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq)) < 0) {
             LOG_CPP_ERROR("%s Failed to join multicast group %s", logger_prefix_.c_str(), group.c_str());
