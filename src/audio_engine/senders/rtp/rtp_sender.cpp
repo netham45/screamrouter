@@ -494,7 +494,7 @@ const int RTP_PAYLOAD_TYPE_L16_48K_STEREO = 127;
          return;
      }
  
-     const size_t csrc_count = std::min(csrcs.size(), (size_t)15); // Max 15 CSRCs
+     const size_t csrc_count = (std::min)(csrcs.size(), (size_t)15); // Max 15 CSRCs - parentheses avoid Windows max macro
      const size_t rtp_header_size = 12 + (csrc_count * 4);
      std::vector<uint8_t> packet_buffer(rtp_header_size + payload_size);
  
@@ -829,12 +829,19 @@ void RtpSender::rtcp_thread_loop() {
         }
         
         // Set socket timeout for non-blocking receive
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000; // 100ms timeout
-        if (setsockopt(rtcp_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-            LOG_CPP_WARNING("[RtpSender:%s] Failed to set receive timeout on RTCP socket (errno=%d: %s)",
-                          config_.sink_id.c_str(), errno, strerror(errno));
+        #ifdef _WIN32
+            DWORD timeout = 100; // 100ms timeout
+            if (setsockopt(rtcp_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout)) < 0) {
+                LOG_CPP_WARNING("[RtpSender:%s] Failed to set receive timeout on RTCP socket (error=%d)",
+                              config_.sink_id.c_str(), WSAGetLastError());
+        #else
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000; // 100ms timeout
+            if (setsockopt(rtcp_socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+                LOG_CPP_WARNING("[RtpSender:%s] Failed to set receive timeout on RTCP socket (errno=%d: %s)",
+                              config_.sink_id.c_str(), errno, strerror(errno));
+        #endif
         } else {
             LOG_CPP_INFO("[RtpSender:%s] RTCP socket receive timeout set to 100ms", config_.sink_id.c_str());
         }
@@ -891,9 +898,11 @@ void RtpSender::rtcp_thread_loop() {
             #endif
             
             if (recv_len > 0) {
+                char sender_ip[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &sender_addr.sin_addr, sender_ip, INET_ADDRSTRLEN);
                 LOG_CPP_INFO("[RtpSender:%s] Received RTCP packet: %zd bytes from %s:%d",
                             config_.sink_id.c_str(), recv_len,
-                            inet_ntoa(sender_addr.sin_addr), ntohs(sender_addr.sin_port));
+                            sender_ip, ntohs(sender_addr.sin_port));
                 // Process the received RTCP packet
                 process_incoming_rtcp(recv_buffer, recv_len, sender_addr);
             } else if (recv_len < 0) {
@@ -944,7 +953,11 @@ void RtpSender::send_rtcp_sr() {
         uint32_t rtp_timestamp;     // RTP timestamp
         uint32_t packet_count;      // Sender's packet count
         uint32_t octet_count;       // Sender's octet count
-    } __attribute__((packed));
+    }
+    #ifndef _WIN32
+        __attribute__((packed))
+    #endif
+    ;
 
     struct rtcp_sr sr;
     memset(&sr, 0, sizeof(sr));
