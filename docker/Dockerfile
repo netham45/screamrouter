@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     libmp3lame0 \
     openssl \
+    libtool-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # Create directory for SSL certificates and config
