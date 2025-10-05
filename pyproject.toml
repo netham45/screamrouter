@@ -2,6 +2,7 @@
 requires = [
     "setuptools>=42",
     "wheel",
-    "pybind11>=2.6"  # Add pybind11 here
+    "pybind11>=2.6",
+    "PyYAML>=5.0"  # Required for build_system config loading
 ]
 build-backend = "setuptools.build_meta"

@@ -1,0 +1,133 @@
+# Platform-specific configuration
+# Supports: Linux (Debian/RHEL) and Windows only
+
+platforms:
+  linux:
+    detection:
+      os_name: ["Linux"]
+      
+    distributions:
+      debian:
+        detection_files:
+          - "/etc/debian_version"
+          - "/etc/lsb-release"  # Ubuntu
+        detection_commands:
+          - ["lsb_release", "-is"]  # Returns "Debian" or "Ubuntu"
+        package_manager: "apt"
+        required_packages:
+          - "build-essential"
+          - "cmake"
+          - "autoconf"
+          - "automake"
+          - "libtool"
+          - "pkg-config"
+          - "wget"
+          - "curl"
+          - "git"
+        package_install_cmd: "apt-get install -y"
+        lib_dirs:
+          - "{install_dir}/lib"
+          - "{install_dir}/lib64"
+          - "/usr/lib/x86_64-linux-gnu"
+          - "/usr/lib"
+          
+      rhel:
+        detection_files:
+          - "/etc/redhat-release"
+          - "/etc/centos-release"
+          - "/etc/fedora-release"
+          - "/etc/rocky-release"
+          - "/etc/almalinux-release"
+        package_manager: "yum"
+        required_packages:
+          - "gcc"
+          - "gcc-c++"
+          - "make"
+          - "cmake"
+          - "autoconf"
+          - "automake"
+          - "libtool"
+          - "pkgconfig"
+          - "wget"
+          - "curl"
+          - "git"
+        package_install_cmd: "yum install -y"
+        lib_dirs:
+          - "{install_dir}/lib"
+          - "{install_dir}/lib64"
+          - "/usr/lib64"
+          
+    compiler:
+      cc: "gcc"
+      cxx: "g++"
+      make: "make"
+      flags:
+        CFLAGS: "-O2 -fPIC"
+        CXXFLAGS: "-O2 -fPIC -std=c++17"
+        LDFLAGS: "-L{install_dir}/lib -L{install_dir}/lib64"
+      parallel_make: "-j{cpu_count}"
+        
+  windows:
+    detection:
+      os_name: ["Windows"]
+      
+    msvc:
+      detection:
+        env_vars: ["VCINSTALLDIR", "VCToolsInstallDir"]
+        vswhere_path: "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+        
+      setup:
+        vcvarsall_search_patterns:
+          - "{vs_install_path}/VC/Auxiliary/Build/vcvarsall.bat"
+          - "{vs_install_path}/VC/vcvarsall.bat"  # Older versions
+        architectures:
+          x64:
+            vcvars_arch: "x64"
+            cmake_arch: "x64"
+            cmake_generator: "Visual Studio 17 2022"
+            platform: "x64"
+            is_64bit: true
+          x86:
+            vcvars_arch: "x86"
+            cmake_arch: "Win32"
+            cmake_generator: "Visual Studio 17 2022"
+            platform: "Win32"
+            is_64bit: false
+            
+      compiler:
+        cc: "cl"
+        cxx: "cl"
+        make: "nmake"
+        flags:
+          CFLAGS: "/O2 /MD /D_CRT_SECURE_NO_WARNINGS"
+          CXXFLAGS: "/O2 /MD /std:c++17 /EHsc /D_CRT_SECURE_NO_WARNINGS"
+          LDFLAGS: "/LIBPATH:{install_dir}\\lib"
+        parallel_build: "/MP"
+          
+    required_tools:
+      - name: "cmake"
+        check_command: ["cmake", "--version"]
+        install_hint: "Download from https://cmake.org/download/"
+      - name: "perl"
+        check_command: ["perl", "--version"]
+        install_hint: "Download Strawberry Perl from https://strawberryperl.com/"
+        required_for: ["openssl"]
+      - name: "git"
+        check_command: ["git", "--version"]
+        install_hint: "Download from https://git-scm.com/download/win"
+        
+    lib_dirs:
+      - "{install_dir}\\lib"
+      - "{install_dir}\\lib64"
+
+# Architecture detection
+architectures:
+  x86_64:
+    aliases: ["x64", "amd64", "x86-64"]
+    bits: 64
+  i686:
+    aliases: ["x86", "i386", "i586"]
+    bits: 32
+  aarch64:
+    aliases: ["arm64", "armv8"]
+    bits: 64

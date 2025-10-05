@@ -1,0 +1,238 @@
+# Dependency Configuration for ScreamRouter Build System
+# This file defines all external dependencies and their build configurations
+# Supports: Linux (Debian/RHEL) and Windows
+
+dependencies:
+  lame:
+    version: "3.100"
+    source_dir: "src/audio_engine/deps/lame"
+    description: "LAME MP3 encoder library"
+    
+    # Build configurations per platform
+    build_configs:
+      linux:
+        build_system: "autotools"
+        configure_script: "./configure"
+        configure_args:
+          - "--prefix={install_dir}"
+          - "--disable-shared"
+          - "--enable-static"
+          - "--disable-frontend"
+          - "--with-pic"
+        make_targets: ["all", "install"]
+        
+      windows:
+        build_system: "nmake"
+        makefile: "Makefile.MSVC"
+        nmake_args:
+          - "comp=msvc"
+          - "asm=no"
+          - "MACHINE="
+          - "LN_OPTS="
+          - "LN_DLL="
+        output_files:
+          - "output/libmp3lame-static.lib"
+        headers_dir: "include"
+          
+    outputs:
+      libraries:
+        linux: ["libmp3lame.a"]
+        windows: ["mp3lame.lib"]
+      headers:
+        - "lame/lame.h"
+      pkg_config: "lame.pc"
+
+  opus:
+    version: "1.4"
+    source_dir: "src/audio_engine/deps/opus"
+    description: "Opus audio codec"
+    
+    # Special requirements
+    requires_model: true
+    model_config:
+      url: "https://media.xiph.org/opus/models/opus_data-{checksum}.tar.gz"
+      checksum: "a86f0a9db852691d4335608733ec8384a407e585801ab9e4b490e0be297ac382"
+      cache_dir: "build_cache"
+      target_dir: "dnn"
+      
+    build_configs:
+      linux:
+        build_system: "autotools"
+        pre_configure:
+          - "./autogen.sh"  # If configure doesn't exist
+        configure_script: "./configure"
+        configure_args:
+          - "--prefix={install_dir}"
+          - "--disable-shared"
+          - "--enable-static"
+          - "--with-pic"
+          - "--disable-doc"
+          - "--disable-extra-programs"
+        make_targets: ["all", "install"]
+        
+      windows:
+        build_system: "cmake"
+        build_dir: "build_msvc"
+        cmake_args:
+          - "-DOPUS_BUILD_SHARED_LIBRARY=OFF"
+          - "-DOPUS_BUILD_PROGRAMS=OFF"
+          - "-DOPUS_BUILD_TESTING=OFF"
+          - "-DOPUS_INSTALL_PKG_CONFIG_MODULE=OFF"
+          - "-DCMAKE_INSTALL_PREFIX={install_dir}"
+          - "-DCMAKE_INSTALL_LIBDIR=lib"
+        generator: "Visual Studio 17 2022"
+        arch: "x64"
+        
+    outputs:
+      libraries:
+        linux: ["libopus.a"]
+        windows: ["opus.lib"]
+      headers:
+        - "opus/opus.h"
+        - "opus/opus_types.h"
+        - "opus/opus_defines.h"
+
+  openssl:
+    version: "3.0"
+    source_dir: "src/audio_engine/deps/openssl"
+    description: "OpenSSL cryptography library"
+    
+    build_configs:
+      linux:
+        build_system: "configure"
+        configure_script: "./Configure"
+        platform_target:
+          x86_64: "linux-x86_64"
+          aarch64: "linux-aarch64"
+          i686: "linux-generic32"
+        configure_args:
+          - "{platform_target}"
+          - "--prefix={install_dir}"
+          - "--openssldir={install_dir}/ssl"
+          - "no-shared"
+          - "no-tests"
+          - "no-docs"
+          - "no-comp"
+          - "no-engine"
+          - "no-weak-ssl-ciphers"
+          - "no-legacy"
+        make_targets: ["depend", "all", "install_sw", "install_ssldirs"]
+        env_vars:
+          CFLAGS: "-fPIC"
+          CXXFLAGS: "-fPIC"
+          
+      windows:
+        build_system: "configure"
+        configure_script: "perl Configure"
+        platform_target:
+          x64: "VC-WIN64A"
+          x86: "VC-WIN32"
+        configure_args:
+          - "{platform_target}"
+          - "--prefix={install_dir}"
+          - "--openssldir={install_dir}/ssl"
+          - "no-shared"
+          - "no-tests"
+          - "no-apps"
+          - "no-docs"
+          - "no-asm"  # Simplifies build, avoids NASM requirement
+        make_command: "nmake"
+        make_targets: ["all", "install_sw", "install_ssldirs"]
+        requires_perl: true
+        
+    outputs:
+      libraries:
+        linux: ["libcrypto.a", "libssl.a"]
+        windows: ["libcrypto.lib", "libssl.lib"]
+      headers:
+        - "openssl/*.h"
+      install_subdirs:
+        linux: ["lib64", "lib"]  # Check both
+        windows: ["lib"]
+
+  libdatachannel:
+    version: "0.18"
+    source_dir: "src/audio_engine/deps/libdatachannel"
+    description: "WebRTC Data Channels library"
+    
+    dependencies:
+      - "openssl"
+      
+    build_configs:
+      all:  # Same for all platforms
+        build_system: "cmake"
+        build_dir: "build"
+        cmake_args:
+          - "-DBUILD_SHARED_LIBS=OFF"
+          - "-DCMAKE_BUILD_TYPE=Release"
+          - "-DOPENSSL_USE_STATIC_LIBS=ON"
+          - "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+          - "-DCMAKE_INSTALL_PREFIX={install_dir}"
+          - "-DCMAKE_PREFIX_PATH={install_dir}"
+          - "-DOPENSSL_ROOT_DIR={install_dir}"
+          - "-DUSE_NICE=OFF"
+          - "-DNO_EXAMPLES=ON"
+          - "-DNO_TESTS=ON"
+          - "-DCMAKE_INSTALL_LIBDIR=lib"
+        
+    outputs:
+      libraries:
+        linux: ["libdatachannel.a", "libjuice.a", "libusrsctp.a", "libsrtp2.a"]
+        windows: ["datachannel.lib", "juice.lib", "usrsctp.lib", "srtp2.lib"]
+      headers:
+        - "rtc/*.hpp"
+        - "rtc/*.h"
+      cmake_config: "LibDataChannel"
+
+  libsamplerate:
+    version: "0.2.2"
+    source_dir: "src/audio_engine/deps/libsamplerate"
+    description: "Sample rate conversion library"
+    
+    build_configs:
+      linux:
+        build_system: "autotools"
+        pre_configure:
+          - "./autogen.sh"  # If configure doesn't exist
+        configure_script: "./configure"
+        configure_args:
+          - "--prefix={install_dir}"
+          - "--disable-shared"
+          - "--enable-static"
+          - "--with-pic"
+          - "--disable-fftw"
+          - "--disable-sndfile"
+        make_targets: ["all", "install"]
+        
+      windows:
+        build_system: "cmake"
+        build_dir: "build_cmake"
+        cmake_args:
+          - "-DBUILD_SHARED_LIBS=OFF"
+          - "-DCMAKE_BUILD_TYPE=Release"
+          - "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+          - "-DLIBSAMPLERATE_EXAMPLES=OFF"
+          - "-DBUILD_TESTING=OFF"
+          - "-DCMAKE_INSTALL_PREFIX={install_dir}"
+        
+    outputs:
+      libraries:
+        linux: ["libsamplerate.a"]
+        windows: ["samplerate.lib"]
+      headers:
+        - "samplerate.h"
+
+# Build order (respects dependencies)
+build_order:
+  - lame
+  - opus
+  - libsamplerate
+  - openssl
+  - libdatachannel
+
+# Global build options
+build_options:
+  parallel_jobs: 0  # 0 = auto-detect CPU count
+  continue_on_error: false
+  clean_before_build: false  # Don't clean by default - causes issues with autotools
+  verify_after_build: true
