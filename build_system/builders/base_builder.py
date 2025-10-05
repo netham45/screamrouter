@@ -5,6 +5,7 @@ Base builder class that all builders inherit from
 import os
 import subprocess
 import shutil
+import struct
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -13,7 +14,7 @@ from typing import Dict, List, Optional, Any
 class BaseBuilder(ABC):
     """Abstract base class for all builders"""
     
-    def __init__(self, 
+    def __init__(self,
                  name: str,
                  config: Dict[str, Any],
                  platform: str,
@@ -57,7 +58,43 @@ class BaseBuilder(ABC):
         
         # Setup environment
         self.env = os.environ.copy()
+        self._vcvarsall_path = None
+        self._vcvars_arch = None
         self._setup_environment()
+    
+    def _find_vcvarsall(self):
+        """Find vcvarsall.bat for MSVC environment setup on Windows"""
+        if self.platform != "windows":
+            return None
+            
+        if self._vcvarsall_path is not None:
+            return self._vcvarsall_path
+            
+        # Try vswhere first
+        vswhere_path = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
+        
+        if vswhere_path.exists():
+            try:
+                cmd = [
+                    str(vswhere_path), "-latest", "-prerelease", "-products", "*",
+                    "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                    "-property", "installationPath"
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                vs_install_path = Path(result.stdout.strip())
+                vcvarsall = vs_install_path / "VC/Auxiliary/Build/vcvarsall.bat"
+                
+                if vcvarsall.exists():
+                    self._vcvarsall_path = str(vcvarsall)
+                    # Determine architecture
+                    is_64bit = struct.calcsize("P") * 8 == 64
+                    self._vcvars_arch = "x64" if is_64bit else "x86"
+                    return self._vcvarsall_path
+            except Exception as e:
+                self.logger.debug(f"vswhere failed: {e}")
+        
+        self.logger.debug("Could not find vcvarsall.bat. Commands will run without MSVC environment setup.")
+        return None
     
     def _setup_environment(self):
         """Setup build environment variables"""
@@ -76,8 +113,8 @@ class BaseBuilder(ABC):
             self.env["INCLUDE"] = f"{self.install_dir}\\include;" + self.env.get("INCLUDE", "")
             self.env["LIB"] = f"{self.install_dir}\\lib;" + self.env.get("LIB", "")
     
-    def run_command(self, 
-                   cmd: List[str], 
+    def run_command(self,
+                   cmd: List[str],
                    cwd: Optional[Path] = None,
                    env: Optional[Dict] = None,
                    check: bool = True,
@@ -109,6 +146,41 @@ class BaseBuilder(ABC):
         if self.dry_run:
             self.logger.info(f"[DRY RUN] Would run: {cmd_str}")
             return subprocess.CompletedProcess(cmd, 0, "", "")
+        
+        # On Windows, check if we need MSVC environment for certain commands
+        if self.platform == "windows" and not shell:
+            cmd_name = cmd[0] if isinstance(cmd, list) else cmd.split()[0]
+            needs_msvc = cmd_name.lower() in ["nmake", "cl", "link", "lib"]
+            
+            # Check if MSVC tools are available
+            if needs_msvc and not shutil.which(cmd_name) and "VCINSTALLDIR" not in os.environ:
+                # Need to set up MSVC environment
+                vcvarsall = self._find_vcvarsall()
+                if vcvarsall:
+                    # Wrap command with vcvarsall
+                    cmd_str = " ".join(f'"{c}"' if " " in str(c) else str(c) for c in cmd)
+                    full_cmd = f'"{vcvarsall}" {self._vcvars_arch} && {cmd_str}'
+                    
+                    self.logger.debug(f"Running with MSVC environment: {full_cmd}")
+                    
+                    # Run with shell=True for vcvarsall
+                    try:
+                        return subprocess.run(
+                            full_cmd,
+                            cwd=cwd,
+                            env=env,
+                            check=check,
+                            capture_output=capture_output,
+                            text=True,
+                            shell=True
+                        )
+                    except subprocess.CalledProcessError as e:
+                        self.logger.error(f"Command failed: {full_cmd}")
+                        if e.stdout:
+                            self.logger.error(f"stdout: {e.stdout}")
+                        if e.stderr:
+                            self.logger.error(f"stderr: {e.stderr}")
+                        raise
         
         try:
             result = subprocess.run(

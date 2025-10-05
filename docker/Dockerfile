@@ -38,7 +38,7 @@ COPY setup.py ./
 COPY pyproject.toml ./
 COPY README.md ./
 COPY src/ ./src/
-
+COPY build_system/ ./build_system/
 
 # Install Python dependencies and build the project
 RUN pip install --no-cache-dir -r requirements.txt .
