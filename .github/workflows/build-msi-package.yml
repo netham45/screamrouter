@@ -63,7 +63,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install pybind11 setuptools wheel
+          pip install pybind11 setuptools wheel pyyaml
           Write-Host "Python build dependencies installed."
 
       - name: Build React Frontend

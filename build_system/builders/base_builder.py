@@ -258,8 +258,10 @@ class BaseBuilder(ABC):
         self.logger.info("Handling Opus model...")
         
         model_config = self.config.get("model_config", {})
-        cache_dir = Path(model_config.get("cache_dir", "build_cache"))
-        cache_dir.mkdir(exist_ok=True)
+        # Use absolute path from project root
+        project_root = self.source_dir.parent.parent.parent  # src/audio_engine/deps/opus -> project root
+        cache_dir = project_root / model_config.get("cache_dir", "build_cache")
+        cache_dir.mkdir(parents=True, exist_ok=True)
         
         checksum = model_config["checksum"]
         model_filename = f"opus_data-{checksum}.tar.gz"
