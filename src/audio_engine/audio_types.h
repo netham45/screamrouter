@@ -278,6 +278,10 @@ struct SinkConfig {
     std::string protocol = "scream";
     /** @brief Speaker layout configuration for this sink. */
     CppSpeakerLayout speaker_layout;
+    /** @brief Enable time synchronization for RTP streams. */
+    bool time_sync_enabled = false;
+    /** @brief Time synchronization delay in milliseconds. */
+    int time_sync_delay_ms = 0;
 };
 
 /**
@@ -398,6 +402,10 @@ struct SinkMixerConfig {
     std::string protocol = "scream";
     /** @brief Speaker layout for RTP channel mapping. */
     CppSpeakerLayout speaker_layout;
+    /** @brief Enable time synchronization for RTP streams. */
+    bool time_sync_enabled = false;
+    /** @brief Time synchronization delay in milliseconds. */
+    int time_sync_delay_ms = 0;
 };
 
 
@@ -463,7 +471,9 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("channels", &SinkConfig::channels, "Output channel count (e.g., 2)")
             .def_readwrite("chlayout1", &SinkConfig::chlayout1, "Scream header channel layout byte 1")
             .def_readwrite("chlayout2", &SinkConfig::chlayout2, "Scream header channel layout byte 2")
-            .def_readwrite("protocol", &SinkConfig::protocol, "Network protocol (e.g., 'scream', 'rtp')");
+            .def_readwrite("protocol", &SinkConfig::protocol, "Network protocol (e.g., 'scream', 'rtp')")
+            .def_readwrite("time_sync_enabled", &SinkConfig::time_sync_enabled, "Enable time synchronization for RTP streams")
+            .def_readwrite("time_sync_delay_ms", &SinkConfig::time_sync_delay_ms, "Time synchronization delay in milliseconds");
     
         py::class_<RawScreamReceiverConfig>(m, "RawScreamReceiverConfig", "Configuration for a raw Scream receiver")
             .def(py::init<>()) // Default constructor

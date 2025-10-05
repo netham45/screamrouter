@@ -37,6 +37,8 @@ bool SinkManager::add_sink(const SinkConfig& config, bool running) {
         mixer_config.output_chlayout1 = config.chlayout1;
         mixer_config.output_chlayout2 = config.chlayout2;
         mixer_config.speaker_layout = config.speaker_layout;
+        mixer_config.time_sync_enabled = config.time_sync_enabled;
+        mixer_config.time_sync_delay_ms = config.time_sync_delay_ms;
         new_sink = std::make_unique<SinkAudioMixer>(mixer_config, mp3_queue, m_settings);
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("Failed to create SinkAudioMixer for %s: %s", config.id.c_str(), e.what());

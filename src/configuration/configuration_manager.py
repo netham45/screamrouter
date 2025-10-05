@@ -942,6 +942,10 @@ class ConfigurationManager(threading.Thread):
             cpp_sink_engine_config.chlayout2 = chlayout2
             cpp_sink_engine_config.protocol = py_sink_desc.protocol
             
+            # Add time sync configuration
+            cpp_sink_engine_config.time_sync_enabled = py_sink_desc.time_sync
+            cpp_sink_engine_config.time_sync_delay_ms = py_sink_desc.time_sync_delay
+
             cpp_applied_sink.sink_engine_config = cpp_sink_engine_config
 
             # C. Process each source connected to this sink

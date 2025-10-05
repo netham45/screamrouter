@@ -428,7 +428,7 @@ void RtpReceiver::process_ready_packets_internal(uint32_t ssrc, const struct soc
     if (!has_props) {
         char ssrc_hex[12];
         snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", ssrc);
-        LOG_CPP_WARNING(("Ignoring ready packets for unknown SSRC: " + std::string(ssrc_hex) +
+        LOG_CPP_DEBUG(("Ignoring ready packets for unknown SSRC: " + std::string(ssrc_hex) +
                        " - no SAP properties found").c_str());
         return;
     }
