@@ -86,49 +86,94 @@ void SapListener::set_session_callback(SessionCallback callback) {
 void SapListener::run() {
     LOG_CPP_INFO("%s SAP listener thread started.", logger_prefix_.c_str());
     char buffer[2048];
-    const int MAX_EVENTS = 64;
-    struct epoll_event events[MAX_EVENTS];
+    
+    #ifndef _WIN32
+        const int MAX_EVENTS = 64;
+        struct epoll_event events[MAX_EVENTS];
+    #endif
 
     while (running_) {
-        int n_events = epoll_wait(epoll_fd_, events, MAX_EVENTS, 1000); // 1-second timeout
+        #ifdef _WIN32
+            // Windows: Use select()
+            fd_set read_fds = master_read_fds_;
+            struct timeval tv;
+            tv.tv_sec = 1;
+            tv.tv_usec = 0;
+            
+            int n_events = select(max_fd_ + 1, &read_fds, NULL, NULL, &tv);
+        #else
+            // Linux: Use epoll
+            int n_events = epoll_wait(epoll_fd_, events, MAX_EVENTS, 1000); // 1-second timeout
+        #endif
 
         if (!running_) {
             break;
         }
 
         if (n_events < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            LOG_CPP_ERROR("%s epoll_wait() error: %s", logger_prefix_.c_str(), strerror(errno));
+            #ifdef _WIN32
+                if (WSAGetLastError() == WSAEINTR) {
+                    continue;
+                }
+                LOG_CPP_ERROR("%s select() error: %d", logger_prefix_.c_str(), WSAGetLastError());
+            #else
+                if (errno == EINTR) {
+                    continue;
+                }
+                LOG_CPP_ERROR("%s epoll_wait() error: %s", logger_prefix_.c_str(), strerror(errno));
+            #endif
             continue;
         }
 
-        for (int i = 0; i < n_events; ++i) {
-            if ((events[i].events & EPOLLIN)) {
-                socket_t fd = events[i].data.fd;
-                struct sockaddr_in cliaddr;
-                socklen_t len = sizeof(cliaddr);
-                ssize_t n_received = recvfrom(fd, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&cliaddr, &len);
+        #ifdef _WIN32
+            // Windows select: iterate through all sockets
+            for (socket_t fd : sockets_) {
+                if (FD_ISSET(fd, &read_fds)) {
+                    struct sockaddr_in cliaddr;
+                    socklen_t len = sizeof(cliaddr);
+                    ssize_t n_received = recvfrom(fd, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&cliaddr, &len);
 
-                if (n_received > 0) {
-                    buffer[n_received] = '\0';
-                    char client_ip_str[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
-                    process_sap_packet(buffer, n_received, client_ip_str);
+                    if (n_received > 0) {
+                        buffer[n_received] = '\0';
+                        char client_ip_str[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
+                        process_sap_packet(buffer, n_received, client_ip_str);
+                    }
                 }
             }
-        }
+        #else
+            // Linux epoll: iterate through ready events
+            for (int i = 0; i < n_events; ++i) {
+                if ((events[i].events & EPOLLIN)) {
+                    socket_t fd = events[i].data.fd;
+                    struct sockaddr_in cliaddr;
+                    socklen_t len = sizeof(cliaddr);
+                    ssize_t n_received = recvfrom(fd, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&cliaddr, &len);
+
+                    if (n_received > 0) {
+                        buffer[n_received] = '\0';
+                        char client_ip_str[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET, &(cliaddr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
+                        process_sap_packet(buffer, n_received, client_ip_str);
+                    }
+                }
+            }
+        #endif
     }
     LOG_CPP_INFO("%s SAP listener thread finished.", logger_prefix_.c_str());
 }
 
 bool SapListener::setup_sockets() {
-    epoll_fd_ = epoll_create1(0);
-    if (epoll_fd_ == -1) {
-        LOG_CPP_ERROR("%s Failed to create epoll instance", logger_prefix_.c_str());
-        return false;
-    }
+    #ifdef _WIN32
+        FD_ZERO(&master_read_fds_);
+        max_fd_ = NAR_INVALID_SOCKET_VALUE;
+    #else
+        epoll_fd_ = epoll_create1(0);
+        if (epoll_fd_ == -1) {
+            LOG_CPP_ERROR("%s Failed to create epoll instance", logger_prefix_.c_str());
+            return false;
+        }
+    #endif
 
     socket_t fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
@@ -174,26 +219,40 @@ bool SapListener::setup_sockets() {
         LOG_CPP_WARNING("%s Failed to set IP_MULTICAST_LOOP", logger_prefix_.c_str());
     }
 
-    struct epoll_event event;
-    event.events = EPOLLIN;
-    event.data.fd = fd;
-    if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &event) == -1) {
-        LOG_CPP_ERROR("%s Failed to add socket to epoll", logger_prefix_.c_str());
-        close(fd);
-        close(epoll_fd_);
-        epoll_fd_ = -1;
-        return false;
-    }
+    #ifdef _WIN32
+        FD_SET(fd, &master_read_fds_);
+        if (fd > max_fd_) {
+            max_fd_ = fd;
+        }
+        sockets_.push_back(fd);
+        return true;
+    #else
+        struct epoll_event event;
+        event.events = EPOLLIN;
+        event.data.fd = fd;
+        if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &event) == -1) {
+            LOG_CPP_ERROR("%s Failed to add socket to epoll", logger_prefix_.c_str());
+            close(fd);
+            close(epoll_fd_);
+            epoll_fd_ = -1;
+            return false;
+        }
 
-    sockets_.push_back(fd);
-    return true;
+        sockets_.push_back(fd);
+        return true;
+    #endif
 }
 
 void SapListener::close_sockets() {
-    if (epoll_fd_ != -1) {
-        close(epoll_fd_);
-        epoll_fd_ = -1;
-    }
+    #ifdef _WIN32
+        FD_ZERO(&master_read_fds_);
+        max_fd_ = NAR_INVALID_SOCKET_VALUE;
+    #else
+        if (epoll_fd_ != -1) {
+            close(epoll_fd_);
+            epoll_fd_ = -1;
+        }
+    #endif
     for (socket_t fd : sockets_) {
         close(fd);
     }

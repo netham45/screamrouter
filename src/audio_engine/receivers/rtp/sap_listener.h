@@ -17,7 +17,9 @@
 #include <unordered_map>
 #include <functional>
 #include <memory>
-#include <sys/epoll.h>
+#ifndef _WIN32
+    #include <sys/epoll.h>
+#endif
 
 #include "../../utils/cpp_logger.h"
 
@@ -129,7 +131,12 @@ public:
     std::thread thread_;
     std::atomic<bool> running_{false};
     std::vector<socket_t> sockets_;
-    int epoll_fd_ = -1;
+    #ifdef _WIN32
+        fd_set master_read_fds_;
+        socket_t max_fd_ = NAR_INVALID_SOCKET_VALUE;
+    #else
+        int epoll_fd_ = -1;
+    #endif
 
     std::mutex ssrc_map_mutex_;
     std::unordered_map<uint32_t, StreamProperties> ssrc_to_properties_;

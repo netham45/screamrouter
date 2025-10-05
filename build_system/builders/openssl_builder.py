@@ -93,7 +93,32 @@ class OpenSSLBuilder(BaseBuilder):
                 env["CXXFLAGS"] = env.get("CXXFLAGS", "") + " -fPIC"
         
         # Run configuration
-        return self.run_command(configure_cmd, env=env).returncode == 0
+        result = self.run_command(configure_cmd, env=env)
+        if result.returncode != 0:
+            return False
+        
+        # WORKAROUND: OpenSSL 3.6.0-dev doesn't generate opensslconf.h
+        # Create it manually from configuration.h (which is generated)
+        opensslconf_h = self.source_dir / "include/openssl/opensslconf.h"
+        configuration_h = self.source_dir / "include/openssl/configuration.h"
+        
+        if not opensslconf_h.exists() and configuration_h.exists():
+            self.logger.debug("Creating opensslconf.h from configuration.h for OpenSSL 3.6.0-dev")
+            # opensslconf.h should just include configuration.h
+            opensslconf_content = """/* Automatically generated opensslconf.h wrapper */
+#ifndef OPENSSL_OPENSSLCONF_H
+# define OPENSSL_OPENSSLCONF_H
+# pragma once
+
+# include <openssl/configuration.h>
+
+#endif
+"""
+            if not self.dry_run:
+                opensslconf_h.write_text(opensslconf_content)
+                self.logger.info(f"Created {opensslconf_h}")
+        
+        return True
     
     def build(self) -> bool:
         """Build OpenSSL"""

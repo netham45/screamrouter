@@ -18,7 +18,9 @@
 #include <memory>
 #include <map> // Added for SSRC -> buffer mapping
 #include <cstdint>
-#include <sys/epoll.h>
+#ifndef _WIN32
+    #include <sys/epoll.h>
+#endif
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -88,7 +90,12 @@ protected:
 
 private:
     RtpReceiverConfig config_;
-    int epoll_fd_;
+    #ifdef _WIN32
+        fd_set master_read_fds_;  // Master set for select()
+        socket_t max_fd_;          // Highest socket fd for select()
+    #else
+        int epoll_fd_;             // Linux epoll descriptor
+    #endif
     std::vector<socket_t> socket_fds_;
     std::mutex socket_fds_mutex_;
  

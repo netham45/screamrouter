@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmp3lame0 \
     openssl \
     libtool-bin \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create directory for SSL certificates and config
@@ -38,7 +39,9 @@ COPY requirements.txt ./
 COPY setup.py ./
 COPY pyproject.toml ./
 COPY README.md ./
+COPY .gitmodules ./
 COPY src/ ./src/
+
 COPY build_system/ ./build_system/
 
 # Install Python dependencies and build the project

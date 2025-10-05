@@ -26,7 +26,13 @@ class CMakeBuilder(BaseBuilder):
     
     def configure(self) -> bool:
         """Configure using CMake"""
-        # Create build directory
+        # Remove entire build directory if it exists to avoid stale cache
+        if self.build_dir.exists():
+            self.logger.debug(f"Removing stale build directory: {self.build_dir}")
+            if not self.dry_run:
+                shutil.rmtree(self.build_dir, ignore_errors=True)
+        
+        # Create fresh build directory
         self.build_dir.mkdir(parents=True, exist_ok=True)
         
         # Build CMake command

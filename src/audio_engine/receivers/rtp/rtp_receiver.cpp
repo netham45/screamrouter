@@ -10,7 +10,9 @@
 #include <utility>      // For std::move
 #include <algorithm>    // For std::find, std::min
 #include <cerrno>       // For errno
-#include <sys/epoll.h>  // For epoll
+#ifndef _WIN32
+    #include <sys/epoll.h>  // For epoll
+#endif
  
  
  // Platform-specific includes for inet_ntoa, struct sockaddr_in etc. are in network_audio_receiver.h
@@ -53,7 +55,16 @@ RtpReceiver::RtpReceiver(
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager)
     : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, "[RtpReceiver]"),
-      config_(config), epoll_fd_(NAR_INVALID_SOCKET_VALUE), last_rtp_timestamp_(0), last_chunk_remainder_samples_(0) {
+      config_(config),
+      #ifdef _WIN32
+          max_fd_(NAR_INVALID_SOCKET_VALUE),
+      #else
+          epoll_fd_(NAR_INVALID_SOCKET_VALUE),
+      #endif
+      last_rtp_timestamp_(0), last_chunk_remainder_samples_(0) {
+    #ifdef _WIN32
+        FD_ZERO(&master_read_fds_);
+    #endif
     // pcm_accumulator_ is now a map, no global reservation
     sap_listener_ = std::make_unique<SapListener>("[RtpReceiver-SAP]", config_.known_ips);
     if (sap_listener_) {
@@ -100,16 +111,25 @@ void RtpReceiver::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, cons
 bool RtpReceiver::setup_socket() {
     log_message("Setting up raw UDP sockets for RTP reception...");
  
-    if (epoll_fd_ != NAR_INVALID_SOCKET_VALUE) {
-        log_warning("setup_socket called but epoll_fd_ is already valid. Closing existing sockets first.");
-        close_socket();
-    }
- 
-    epoll_fd_ = epoll_create1(0);
-    if (epoll_fd_ == -1) {
-        log_error("Failed to create epoll file descriptor: " + std::string(strerror(errno)));
-        return false;
-    }
+    #ifdef _WIN32
+        if (max_fd_ != NAR_INVALID_SOCKET_VALUE) {
+            log_warning("setup_socket called but sockets already initialized. Closing existing sockets first.");
+            close_socket();
+        }
+        FD_ZERO(&master_read_fds_);
+        max_fd_ = NAR_INVALID_SOCKET_VALUE;
+    #else
+        if (epoll_fd_ != NAR_INVALID_SOCKET_VALUE) {
+            log_warning("setup_socket called but epoll_fd_ is already valid. Closing existing sockets first.");
+            close_socket();
+        }
+     
+        epoll_fd_ = epoll_create1(0);
+        if (epoll_fd_ == -1) {
+            log_error("Failed to create epoll file descriptor: " + std::string(strerror(errno)));
+            return false;
+        }
+    #endif
  
     // Open the default port, listening on all interfaces
     const int default_port = 40000;
@@ -117,8 +137,10 @@ bool RtpReceiver::setup_socket() {
  
     if (socket_fds_.empty()) {
         log_error("Failed to bind the default UDP socket on port " + std::to_string(default_port));
-        close(epoll_fd_);
-        epoll_fd_ = NAR_INVALID_SOCKET_VALUE;
+        #ifndef _WIN32
+            close(epoll_fd_);
+            epoll_fd_ = NAR_INVALID_SOCKET_VALUE;
+        #endif
         return false;
     }
  
@@ -150,11 +172,16 @@ void RtpReceiver::close_socket() {
 
     std::lock_guard<std::mutex> lock(socket_fds_mutex_);
 
-    if (epoll_fd_ != NAR_INVALID_SOCKET_VALUE) {
-        log_message("Closing epoll file descriptor (fd: " + std::to_string(epoll_fd_) + ")");
-        close(epoll_fd_);
-        epoll_fd_ = NAR_INVALID_SOCKET_VALUE;
-    }
+    #ifdef _WIN32
+        FD_ZERO(&master_read_fds_);
+        max_fd_ = NAR_INVALID_SOCKET_VALUE;
+    #else
+        if (epoll_fd_ != NAR_INVALID_SOCKET_VALUE) {
+            log_message("Closing epoll file descriptor (fd: " + std::to_string(epoll_fd_) + ")");
+            close(epoll_fd_);
+            epoll_fd_ = NAR_INVALID_SOCKET_VALUE;
+        }
+    #endif
     for (socket_t sock_fd : socket_fds_) {
         log_message("Closing raw UDP socket (fd: " + std::to_string(sock_fd) + ")");
         close(sock_fd);
@@ -164,30 +191,61 @@ void RtpReceiver::close_socket() {
 }
 
 void RtpReceiver::run() {
-    log_message("RTP receiver thread started using epoll and libdatachannel parser.");
+    #ifdef _WIN32
+        log_message("RTP receiver thread started using select and libdatachannel parser.");
+    #else
+        log_message("RTP receiver thread started using epoll and libdatachannel parser.");
+    #endif
  
-    if (epoll_fd_ == NAR_INVALID_SOCKET_VALUE || socket_fds_.empty()) {
-        log_error("Sockets are not initialized. Thread cannot run.");
-        return;
-    }
+    #ifdef _WIN32
+        if (socket_fds_.empty()) {
+            log_error("Sockets are not initialized. Thread cannot run.");
+            return;
+        }
+    #else
+        if (epoll_fd_ == NAR_INVALID_SOCKET_VALUE || socket_fds_.empty()) {
+            log_error("Sockets are not initialized. Thread cannot run.");
+            return;
+        }
+    #endif
  
     unsigned char raw_buffer[RAW_RECEIVE_BUFFER_SIZE];
     struct sockaddr_in cliaddr;
     socklen_t len = sizeof(cliaddr);
  
-    const int MAX_EVENTS = 10;
-    struct epoll_event events[MAX_EVENTS];
+    #ifndef _WIN32
+        const int MAX_EVENTS = 10;
+        struct epoll_event events[MAX_EVENTS];
+    #endif
  
     while (is_running()) {
-        int n_events = epoll_wait(epoll_fd_, events, MAX_EVENTS, get_poll_timeout_ms());
+        #ifdef _WIN32
+            // Windows: Use select()
+            fd_set read_fds = master_read_fds_;
+            struct timeval tv;
+            tv.tv_sec = get_poll_timeout_ms() / 1000;
+            tv.tv_usec = (get_poll_timeout_ms() % 1000) * 1000;
+            
+            int n_events = select(max_fd_ + 1, &read_fds, NULL, NULL, &tv);
+        #else
+            // Linux: Use epoll
+            int n_events = epoll_wait(epoll_fd_, events, MAX_EVENTS, get_poll_timeout_ms());
+        #endif
  
         if (!is_running()) break;
  
         if (n_events < 0) {
-            if (errno == EINTR) { // Interrupted by a signal
-                continue;
-            }
-            log_error("epoll_wait() error: " + std::string(strerror(errno)));
+            #ifdef _WIN32
+                if (WSAGetLastError() == WSAEINTR) {
+                    continue;
+                }
+                log_error("select() error: " + std::to_string(WSAGetLastError()));
+            #else
+                if (errno == EINTR) { // Interrupted by a signal
+                    continue;
+                }
+                log_error("epoll_wait() error: " + std::string(strerror(errno)));
+            #endif
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
@@ -203,10 +261,19 @@ void RtpReceiver::run() {
             continue;
         }
 
-        for (int i = 0; i < n_events; ++i) {
-            if ((events[i].events & EPOLLIN)) {
-                socket_t current_socket_fd = events[i].data.fd;
-                ssize_t n_received = recvfrom(current_socket_fd, raw_buffer, RAW_RECEIVE_BUFFER_SIZE, 0, (struct sockaddr *)&cliaddr, &len);
+        #ifdef _WIN32
+            // Windows select: iterate through all sockets
+            std::lock_guard<std::mutex> lock(socket_fds_mutex_);
+            for (socket_t current_socket_fd : socket_fds_) {
+                if (FD_ISSET(current_socket_fd, &read_fds)) {
+                    ssize_t n_received = recvfrom(current_socket_fd, (char*)raw_buffer, RAW_RECEIVE_BUFFER_SIZE, 0, (struct sockaddr *)&cliaddr, &len);
+        #else
+            // Linux epoll: iterate through ready events
+            for (int i = 0; i < n_events; ++i) {
+                if ((events[i].events & EPOLLIN)) {
+                    socket_t current_socket_fd = events[i].data.fd;
+                    ssize_t n_received = recvfrom(current_socket_fd, raw_buffer, RAW_RECEIVE_BUFFER_SIZE, 0, (struct sockaddr *)&cliaddr, &len);
+        #endif
 
                 if (!is_running()) break;
 
@@ -310,8 +377,13 @@ void RtpReceiver::run() {
                 // 3. Process any packets that are now ready
                 process_ready_packets(current_ssrc, cliaddr);
 
-            } // End if EPOLLIN
-        } // End for n_events
+                #ifdef _WIN32
+                    } // End if FD_ISSET
+                } // End for socket_fds_
+            #else
+                } // End if EPOLLIN
+            } // End for n_events
+        #endif
     } // End while is_running
     log_message("RTP receiver thread finished.");
 }
@@ -374,17 +446,26 @@ void RtpReceiver::open_dynamic_session(const std::string& ip, int port, const st
         return;
     }
 
-    struct epoll_event event;
-    event.events = EPOLLIN;
-    event.data.fd = sock_fd;
-    if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, sock_fd, &event) == -1) {
-        log_error("Failed to add socket for " + ip + ":" + std::to_string(port) + " to epoll: " + std::string(strerror(errno)));
-        close(sock_fd);
-        return;
-    }
+    #ifdef _WIN32
+        FD_SET(sock_fd, &master_read_fds_);
+        if (sock_fd > max_fd_) {
+            max_fd_ = sock_fd;
+        }
+        socket_fds_.push_back(sock_fd);
+        log_message("Successfully bound and added new socket for " + ip + ":" + std::to_string(port) + " to select.");
+    #else
+        struct epoll_event event;
+        event.events = EPOLLIN;
+        event.data.fd = sock_fd;
+        if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, sock_fd, &event) == -1) {
+            log_error("Failed to add socket for " + ip + ":" + std::to_string(port) + " to epoll: " + std::string(strerror(errno)));
+            close(sock_fd);
+            return;
+        }
 
-    socket_fds_.push_back(sock_fd);
-    log_message("Successfully bound and added new socket for " + ip + ":" + std::to_string(port) + " to epoll.");
+        socket_fds_.push_back(sock_fd);
+        log_message("Successfully bound and added new socket for " + ip + ":" + std::to_string(port) + " to epoll.");
+    #endif
 }
 
 void RtpReceiver::process_ready_packets(uint32_t ssrc, const struct sockaddr_in& client_addr) {
