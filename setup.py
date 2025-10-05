@@ -115,6 +115,7 @@ DEPS_CONFIG = {
             "-DCMAKE_BUILD_TYPE=Release",
             "-DOPENSSL_USE_STATIC_LIBS=ON", # If OpenSSL is linked, prefer static
             "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+            "-DCMAKE_INSTALL_LIBDIR=lib", # Prefer lib on Debian-like systems
             "-DUSE_NICE=OFF", # Assuming NICE is not needed for plain RTP
             "-DNO_EXAMPLES=ON",
             "-DNO_TESTS=ON",
@@ -122,13 +123,15 @@ DEPS_CONFIG = {
         ],
         "lib_name_win": "datachannel.lib", # Verify actual static lib name on Windows
         "lib_name_unix_static": "libdatachannel.a",
-        "unix_install_lib_dir_rel_to_deps_install": "lib", # Changed from "lib" to "lib64" for Unix
+        "unix_install_lib_dir_rel_to_deps_install": "lib",
+        "alternate_unix_install_lib_dirs": ["lib64"],
         "header_dir_name": "rtc", # Headers are typically in include/rtc
         "main_header_file_rel_to_header_dir": "rtc.hpp", # Key header
         "link_name": "datachannel", # Link name for the library
         "extra_link_names": ["juice", "usrsctp", "srtp2"], # Add juice, usrsctp, and srtp2 as dependencies
         "installs_cmake_config": True, # If it installs a CMake config file
-        "cmake_config_install_dir_rel": "lib64/cmake/LibDataChannel", # Changed from "lib" to "lib64" for Unix
+        "cmake_config_install_dir_rel": "lib/cmake/LibDataChannel",
+        "cmake_config_install_dir_fallbacks": ["lib64/cmake/LibDataChannel"],
         "clean_files_rel_to_src": [ # Files/dirs to clean in libdatachannel source dir
             "CMakeCache.txt", "Makefile", "cmake_install.cmake", "CMakeFiles",
             "build", # The build directory itself
@@ -326,6 +329,16 @@ class BuildExtCommand(_build_ext):
                 base_lib_dir = DEPS_INSTALL_DIR / config["unix_install_lib_dir_rel_to_deps_install"]
             return base_lib_dir / lib_name
 
+    def get_alternate_installed_lib_paths(self, config):
+        """Return alternate locations where the library might be installed."""
+        alt_paths = []
+        if config.get("is_installed_to_deps_dir", True) is False:
+            return alt_paths
+        if sys.platform != "win32":
+            for alt_dir in config.get("alternate_unix_install_lib_dirs", []):
+                alt_paths.append((DEPS_INSTALL_DIR / alt_dir) / config["lib_name_unix_static"])
+        return alt_paths
+
     def run(self):
         # Removed automatic 'git submodule update' call.
         # User should ensure submodules are initialized via 'git submodule update --init --recursive'
@@ -378,6 +391,10 @@ class BuildExtCommand(_build_ext):
                 if lib_to_clean_in_deps.exists():
                     print(f"DEBUG: Force cleaning existing installed library for {dep_name} from DEPS_INSTALL_DIR: {lib_to_clean_in_deps}")
                     lib_to_clean_in_deps.unlink(missing_ok=True)
+                for alt_lib_path in self.get_alternate_installed_lib_paths(config):
+                    if alt_lib_path.exists():
+                        print(f"DEBUG: Force cleaning alternate installed library for {dep_name}: {alt_lib_path}")
+                        alt_lib_path.unlink(missing_ok=True)
 
                 header_file_to_clean_in_deps = self.get_expected_header_path(config)
                 if header_file_to_clean_in_deps.exists() and header_file_to_clean_in_deps.is_file():
@@ -641,24 +658,40 @@ class BuildExtCommand(_build_ext):
                 if build_successful:
                     # --- BEGIN DEBUG: Check for libdatachannel CMake config file after build ---
                     if dep_name == "libdatachannel" and config.get("installs_cmake_config"):
-                        libdatachannel_cmake_config_rel_path = config.get("cmake_config_install_dir_rel")
-                        if libdatachannel_cmake_config_rel_path:
-                            libdatachannel_cmake_config_dir_abs_path = DEPS_INSTALL_DIR / libdatachannel_cmake_config_rel_path
-                            expected_config_file = libdatachannel_cmake_config_dir_abs_path / "LibDataChannelConfig.cmake"
-                            print(f"DEBUG: Checking for libdatachannel CMake config at {expected_config_file}")
-                            if expected_config_file.exists():
-                                print(f"DEBUG: Found libdatachannel CMake config: {expected_config_file}")
-                            else:
-                                print(f"DEBUG: libdatachannel CMake config NOT FOUND in {libdatachannel_cmake_config_dir_abs_path}.")
-                                if libdatachannel_cmake_config_dir_abs_path.exists() and libdatachannel_cmake_config_dir_abs_path.is_dir():
-                                    print(f"DEBUG: Contents of {libdatachannel_cmake_config_dir_abs_path}: {list(libdatachannel_cmake_config_dir_abs_path.iterdir())}")
+                        rel_paths = []
+                        primary_rel_path = config.get("cmake_config_install_dir_rel")
+                        if primary_rel_path:
+                            rel_paths.append(primary_rel_path)
+                        rel_paths.extend(config.get("cmake_config_install_dir_fallbacks", []))
+
+                        if rel_paths:
+                            config_found = False
+                            for rel_path in rel_paths:
+                                config_dir_abs_path = DEPS_INSTALL_DIR / rel_path
+                                expected_config_file = config_dir_abs_path / "LibDataChannelConfig.cmake"
+                                print(f"DEBUG: Checking for libdatachannel CMake config at {expected_config_file}")
+                                if expected_config_file.exists():
+                                    print(f"DEBUG: Found libdatachannel CMake config: {expected_config_file}")
+                                    config_found = True
+                                    break
+                                if config_dir_abs_path.exists() and config_dir_abs_path.is_dir():
+                                    print(f"DEBUG: Contents of {config_dir_abs_path}: {list(config_dir_abs_path.iterdir())}")
                                 else:
-                                    print(f"DEBUG: Directory {libdatachannel_cmake_config_dir_abs_path} does not exist or is not a directory.")
+                                    print(f"DEBUG: Directory {config_dir_abs_path} does not exist or is not a directory.")
+                            if not config_found:
+                                print("DEBUG: libdatachannel CMake config not found in any configured directory.")
                         else:
                             print(f"DEBUG: cmake_config_install_dir_rel not defined for {dep_name} in DEPS_CONFIG.")
                     # --- END DEBUG ---
 
-                    if not expected_lib_path.exists():
+                    lib_found = expected_lib_path.exists()
+                    if not lib_found:
+                        for alt_lib_path in self.get_alternate_installed_lib_paths(config):
+                            if alt_lib_path.exists():
+                                print(f"DEBUG: Found {dep_name} library at alternate location {alt_lib_path}")
+                                lib_found = True
+                                break
+                    if not lib_found:
                         print(f"ERROR: Library file {expected_lib_path} for {dep_name} NOT FOUND post-build.", file=sys.stderr); build_successful = False
                     if not expected_header_path.exists():
                         print(f"ERROR: Main header {expected_header_path} for {dep_name} NOT FOUND post-build.", file=sys.stderr); build_successful = False
