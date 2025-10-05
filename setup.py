@@ -44,9 +44,15 @@ DEPS_CONFIG = {
         "unix_make_targets": ["install"],
         "lib_name_win": "mp3lame.lib",
         "lib_name_unix_static": "libmp3lame.a",
+        "alternate_unix_install_lib_dirs": ["lib64"],
         "header_dir_name": "lame",
         "main_header_file_rel_to_header_dir": "lame.h",
         "link_name": "mp3lame",
+        "clean_files_rel_to_src": [
+            "Makefile", "config.status", "config.log", "config.h", "stamp-h1",
+            "libtool", "*.la", "*.pc",
+            "*.o", "*.lo", ".libs", ".deps"
+        ],
     },
     "openssl": {
         "src_dir": PROJECT_ROOT / "src/audio_engine/deps/openssl",
@@ -142,20 +148,34 @@ DEPS_CONFIG = {
     "opus": {
         "src_dir": PROJECT_ROOT / "src/audio_engine/deps/opus",
         "build_system": "autotools_or_nmake",
-        "nmake_makefile_rel_path_win": "win32/VS2015/opus.sln", # This is a solution file, requires msbuild
-        "win_build_system": "msbuild",
-        "win_solution_path_rel": "win32/VS2015/opus.sln",
-        "win_static_lib_project_name": "opus",
-        "win_static_lib_rel_path": "win32/VS2015/x64/Release/opus.lib",
+        "nmake_makefile_rel_path_win": "win32/VS2015/opus.sln", # Historical MSBuild solution, kept for reference
+        "win_build_system": "cmake",
+        "cmake_generator_win": "Visual Studio 17 2022",
+        "cmake_win_arch": "x64",
+        "cmake_build_dir_name_win": "build_msvc",
+        "cmake_configure_args_win": [
+            "-DOPUS_BUILD_SHARED_LIBRARY=OFF",
+            "-DOPUS_BUILD_PROGRAMS=OFF",
+            "-DOPUS_BUILD_TESTING=OFF",
+            "-DOPUS_INSTALL_PKG_CONFIG_MODULE=OFF",
+            "-DCMAKE_INSTALL_LIBDIR=lib",
+        ],
+        "cmake_install_target_win": "install",
         "win_headers_rel_path": "include",
         "unix_configure_args": ["--disable-shared", "--enable-static", "--with-pic", "--disable-doc", "--disable-extra-programs"],
         "unix_make_targets": ["install"],
         "lib_name_win": "opus.lib",
         "lib_name_unix_static": "libopus.a",
+        "alternate_unix_install_lib_dirs": ["lib64"],
         "header_dir_name": "opus",
         "main_header_file_rel_to_header_dir": "opus.h",
         "link_name": "opus",
         "installs_cmake_config": False,
+        "clean_files_rel_to_src": [
+            "Makefile", "config.status", "config.log", "config.h", "stamp-h1",
+            "libtool", "libopus.la", "opus.pc", "opus-uninstalled.pc",
+            "*.o", "*.lo", "*.la", ".libs", ".deps"
+        ],
     },
     "libsamplerate": {
         "src_dir": PROJECT_ROOT / "src/audio_engine/deps/libsamplerate",
@@ -173,10 +193,16 @@ DEPS_CONFIG = {
         "unix_make_targets": ["install"],
         "lib_name_win": "samplerate.lib",
         "lib_name_unix_static": "libsamplerate.a",
+        "alternate_unix_install_lib_dirs": ["lib64"],
         "header_dir_name": "",
         "main_header_file_rel_to_header_dir": "samplerate.h",
         "link_name": "samplerate",
         "installs_cmake_config": False,
+        "clean_files_rel_to_src": [
+            "Makefile", "config.status", "config.log", "config.h", "stamp-h1",
+            "libtool", "*.la", "*.pc",
+            "*.o", "*.lo", ".libs", ".deps"
+        ],
     }
 }
 
@@ -434,6 +460,16 @@ class BuildExtCommand(_build_ext):
                     elif item_path.is_dir() and item_path != cmake_build_dir_path: # Avoid re-deleting build dir if listed
                         print(f"Cleaning directory: {item_path}")
                         shutil.rmtree(item_path, ignore_errors=True)
+            elif config["build_system"] in ["autotools_or_nmake", "configure_make_openssl"]:
+                # Clean autotools/configure build artifacts that may be platform-specific
+                for item_name in config.get("clean_files_rel_to_src", []):
+                    item_path = src_dir / item_name
+                    if item_path.is_file() or item_path.is_symlink():
+                        print(f"Cleaning file: {item_path}")
+                        item_path.unlink(missing_ok=True)
+                    elif item_path.is_dir():
+                        print(f"Cleaning directory: {item_path}")
+                        shutil.rmtree(item_path, ignore_errors=True)
             
             # This check should now ideally fail for bctoolbox, forcing a rebuild
             if expected_lib_path.exists() and expected_header_path.exists():
@@ -594,6 +630,7 @@ class BuildExtCommand(_build_ext):
 
 
                 elif config["build_system"] == "autotools_or_nmake":
+                    
                     if sys.platform == "win32":
                         if config.get("win_build_system") == "msbuild":
                             sln_path = src_dir / config["win_solution_path_rel"]
@@ -616,6 +653,38 @@ class BuildExtCommand(_build_ext):
                             else:
                                 print(f"ERROR: Library not found at {built_lib_path} after msbuild.", file=sys.stderr)
                                 build_successful = False
+                        elif config.get("win_build_system") == "cmake":
+                            cmake_build_dir = src_dir / config.get("cmake_build_dir_name_win", "build")
+                            if cmake_build_dir.exists():
+                                shutil.rmtree(cmake_build_dir, ignore_errors=True)
+                            cmake_build_dir.mkdir(parents=True, exist_ok=True)
+
+                            configure_cmd = [
+                                "cmake", "-S", str(src_dir), "-B", str(cmake_build_dir),
+                                f"-DCMAKE_INSTALL_PREFIX={DEPS_INSTALL_DIR}",
+                                "-DCMAKE_POLICY_DEFAULT_CMP0077=NEW",
+                                "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL",
+                            ]
+                            generator = config.get("cmake_generator_win")
+                            if generator:
+                                configure_cmd.extend(["-G", generator])
+                            arch = config.get("cmake_win_arch")
+                            if arch:
+                                configure_cmd.extend(["-A", arch])
+                            configure_cmd.extend(config.get("cmake_configure_args_win", []))
+
+                            print(f"Running CMake configure for {dep_name} (Windows)...")
+                            self._run_subprocess_in_msvc_env(configure_cmd, src_dir, dep_name=f"{dep_name} CMake configure (win)")
+
+                            build_cmd = ["cmake", "--build", str(cmake_build_dir), "--config", "Release"]
+                            install_target = config.get("cmake_install_target_win")
+                            if install_target:
+                                build_cmd.extend(["--target", install_target])
+                            build_cmd.extend(["-j", str(os.cpu_count() or 1)])
+
+                            print(f"Running CMake build for {dep_name} (Windows)...")
+                            self._run_subprocess_in_msvc_env(build_cmd, src_dir, dep_name=f"{dep_name} CMake build (win)")
+                            build_successful = True
                         else:
                             makefile_rel_path = config.get("nmake_makefile_rel_path_win", "Makefile.MSVC")
                             nmake_target = config.get("nmake_target_win", "")
