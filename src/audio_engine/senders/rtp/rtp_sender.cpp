@@ -11,9 +11,11 @@
 #include <sstream>
 #include <errno.h> // For errno, EAGAIN, EWOULDBLOCK, ETIMEDOUT
 
-#include <unistd.h> // For close()
-#include <arpa/inet.h> // For inet_pton, inet_ntop
-#include <sys/socket.h> // For socket, connect, getsockname
+#ifndef _WIN32
+    #include <unistd.h> // For close()
+    #include <arpa/inet.h> // For inet_pton, inet_ntop
+    #include <sys/socket.h> // For socket, connect, getsockname
+#endif
 
 namespace screamrouter {
 namespace audio {
@@ -872,12 +874,21 @@ void RtpSender::rtcp_thread_loop() {
             struct sockaddr_in sender_addr;
             socklen_t sender_addr_len = sizeof(sender_addr);
             
-            ssize_t recv_len = recvfrom(rtcp_socket_fd_,
-                                       recv_buffer,
+            #ifdef _WIN32
+                int recv_len = recvfrom(rtcp_socket_fd_,
+                                       (char*)recv_buffer,
                                        sizeof(recv_buffer),
                                        0,
                                        (struct sockaddr*)&sender_addr,
                                        &sender_addr_len);
+            #else
+                ssize_t recv_len = recvfrom(rtcp_socket_fd_,
+                                           recv_buffer,
+                                           sizeof(recv_buffer),
+                                           0,
+                                           (struct sockaddr*)&sender_addr,
+                                           &sender_addr_len);
+            #endif
             
             if (recv_len > 0) {
                 LOG_CPP_INFO("[RtpSender:%s] Received RTCP packet: %zd bytes from %s:%d",
@@ -973,12 +984,21 @@ void RtpSender::send_rtcp_sr() {
                 config_.output_ip.c_str(), config_.output_port + 1);
     
     // Send the RTCP packet
-    int sent_bytes = sendto(rtcp_socket_fd_,
-                           &sr,
-                           sizeof(sr),
-                           0,
-                           (struct sockaddr *)&rtcp_dest_addr_,
-                           sizeof(rtcp_dest_addr_));
+    #ifdef _WIN32
+        int sent_bytes = sendto(rtcp_socket_fd_,
+                               (const char*)&sr,
+                               sizeof(sr),
+                               0,
+                               (struct sockaddr *)&rtcp_dest_addr_,
+                               sizeof(rtcp_dest_addr_));
+    #else
+        int sent_bytes = sendto(rtcp_socket_fd_,
+                               &sr,
+                               sizeof(sr),
+                               0,
+                               (struct sockaddr *)&rtcp_dest_addr_,
+                               sizeof(rtcp_dest_addr_));
+    #endif
 
     if (sent_bytes < 0) {
         int error_code = errno;
