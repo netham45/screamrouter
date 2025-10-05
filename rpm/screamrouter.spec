@@ -10,6 +10,7 @@ Source0:        %{name}-%{version}.tar.gz
 BuildRequires:  python3-devel
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-pip
+BuildRequires:  python3-pyyaml
 BuildRequires:  git
 BuildRequires:  nodejs
 BuildRequires:  npm
@@ -102,6 +103,8 @@ cp requirements.txt %{buildroot}%{_datadir}/%{name}/
 cp uvicorn_log_config.yaml %{buildroot}%{_datadir}/%{name}/
 cp setup.py pyproject.toml README.md %{buildroot}%{_datadir}/%{name}/
 
+# Copy build_system directory (needed by setup.py)
+cp -r build_system %{buildroot}%{_datadir}/%{name}/
 
 # Copy src directory (which now includes the compiled .so extension)
 cp -r src %{buildroot}%{_datadir}/%{name}/
