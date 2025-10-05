@@ -76,7 +76,18 @@ class BuildExtCommand(build_ext):
                 # Windows-specific flags
                 ext.extra_compile_args.extend([
                     "/std:c++17", "/O2", "/W3", "/EHsc",
-                    "/D_CRT_SECURE_NO_WARNINGS", "/MP"
+                    "/D_CRT_SECURE_NO_WARNINGS", "/MP",
+                    # Define static linking for libdatachannel
+                    "/DRTC_STATIC"
+                ])
+                # Add Windows system libraries required by OpenSSL and libjuice
+                ext.libraries.extend([
+                    "advapi32",  # Event logging, registry, crypto
+                    "crypt32",   # Certificate store
+                    "user32",    # MessageBox, window station
+                    "bcrypt",    # BCryptGenRandom
+                    "ws2_32",    # Winsock (network)
+                    "iphlpapi",  # IP Helper (network)
                 ])
             else:
                 # Linux-specific flags
@@ -138,12 +149,12 @@ ext_modules = [
         libraries=[
             # Core dependencies
             "mp3lame",
-            "opus", 
+            "opus",
             "samplerate",
             "datachannel",
-            # OpenSSL
-            "ssl",
-            "crypto",
+            # OpenSSL (libssl/libcrypto on Windows, ssl/crypto on Linux)
+            "libssl" if sys.platform == "win32" else "ssl",
+            "libcrypto" if sys.platform == "win32" else "crypto",
             # libdatachannel dependencies
             "juice",
             "usrsctp",

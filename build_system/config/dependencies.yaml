@@ -159,9 +159,26 @@ dependencies:
       - "openssl"
       
     build_configs:
-      all:  # Same for all platforms
+      linux:
         build_system: "cmake"
         build_dir: "build"
+        cmake_args:
+          - "-DBUILD_SHARED_LIBS=OFF"
+          - "-DCMAKE_BUILD_TYPE=Release"
+          - "-DOPENSSL_USE_STATIC_LIBS=ON"
+          - "-DCMAKE_POSITION_INDEPENDENT_CODE=ON"
+          - "-DCMAKE_INSTALL_PREFIX={install_dir}"
+          - "-DCMAKE_PREFIX_PATH={install_dir}"
+          - "-DOPENSSL_ROOT_DIR={install_dir}"
+          - "-DUSE_NICE=OFF"
+          - "-DNO_EXAMPLES=ON"
+          - "-DNO_TESTS=ON"
+          - "-DCMAKE_INSTALL_LIBDIR=lib"
+      
+      windows:
+        build_system: "cmake"
+        build_dir: "build"
+        generator: "Visual Studio 17 2022"
         cmake_args:
           - "-DBUILD_SHARED_LIBS=OFF"
           - "-DCMAKE_BUILD_TYPE=Release"
@@ -207,6 +224,7 @@ dependencies:
       windows:
         build_system: "cmake"
         build_dir: "build_cmake"
+        generator: "Visual Studio 17 2022"
         cmake_args:
           - "-DBUILD_SHARED_LIBS=OFF"
           - "-DCMAKE_BUILD_TYPE=Release"
