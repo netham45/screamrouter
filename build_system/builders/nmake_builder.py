@@ -4,6 +4,8 @@ NMake builder for Windows MSVC projects
 
 import os
 import shutil
+import subprocess
+import struct
 from pathlib import Path
 from .base_builder import BaseBuilder
 
@@ -17,9 +19,67 @@ class NMakeBuilder(BaseBuilder):
         if self.platform != "windows":
             raise ValueError("NMake builder only supports Windows")
         
-        # Check for nmake
-        if not shutil.which("nmake"):
-            raise FileNotFoundError("nmake not found. Please run from Visual Studio Developer Command Prompt")
+        # Don't check for nmake yet - we'll set up MSVC environment if needed
+        self._vcvarsall_path = None
+        self._vcvars_arch = None
+        
+    def _find_vcvarsall(self):
+        """Find vcvarsall.bat for MSVC environment setup"""
+        if self._vcvarsall_path is not None:
+            return self._vcvarsall_path
+            
+        # Try vswhere first
+        vswhere_path = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
+        
+        if vswhere_path.exists():
+            try:
+                cmd = [
+                    str(vswhere_path), "-latest", "-prerelease", "-products", "*",
+                    "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                    "-property", "installationPath"
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                vs_install_path = Path(result.stdout.strip())
+                vcvarsall = vs_install_path / "VC/Auxiliary/Build/vcvarsall.bat"
+                
+                if vcvarsall.exists():
+                    self._vcvarsall_path = str(vcvarsall)
+                    # Determine architecture
+                    is_64bit = struct.calcsize("P") * 8 == 64
+                    self._vcvars_arch = "x64" if is_64bit else "x86"
+                    return self._vcvarsall_path
+            except Exception as e:
+                self.logger.debug(f"vswhere failed: {e}")
+        
+        self.logger.warning("Could not find vcvarsall.bat. Commands will run without MSVC environment setup.")
+        return None
+    
+    def run_command(self, cmd, **kwargs):
+        """Override run_command to wrap with MSVC environment if needed"""
+        # Check if nmake is available
+        if not shutil.which("nmake") and "VCINSTALLDIR" not in os.environ:
+            # Need to set up MSVC environment
+            vcvarsall = self._find_vcvarsall()
+            if vcvarsall:
+                # Wrap command with vcvarsall
+                cmd_str = " ".join(f'"{c}"' if " " in str(c) else str(c) for c in cmd)
+                full_cmd = f'"{vcvarsall}" {self._vcvars_arch} && {cmd_str}'
+                
+                self.logger.debug(f"Running with MSVC environment: {full_cmd}")
+                
+                # Run with shell=True for vcvarsall
+                return subprocess.run(
+                    full_cmd,
+                    cwd=kwargs.get('cwd', self.source_dir),
+                    env=kwargs.get('env', self.env),
+                    check=kwargs.get('check', True),
+                    capture_output=kwargs.get('capture_output', False),
+                    text=True,
+                    shell=True
+                )
+        
+        # Otherwise use parent implementation
+        return super().run_command(cmd, **kwargs)
     
     def configure(self) -> bool:
         """NMake doesn't need configuration"""
