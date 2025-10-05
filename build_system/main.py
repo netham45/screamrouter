@@ -352,7 +352,11 @@ class BuildSystem:
         print(f"\nDependencies ({len(self.config.get_dependencies())}):")
         
         for dep in self.config.get_dependencies():
-            status = "✓ Built" if self.cache.is_built(dep, self.platform, self.arch) else "✗ Not built"
+            # Use ASCII-safe characters for Windows compatibility
+            if self.cache.is_built(dep, self.platform, self.arch):
+                status = "[OK] Built"
+            else:
+                status = "[X] Not built"
             print(f"  - {dep:20} {status}")
         
         print(f"\nSupported platforms: {', '.join(self.SUPPORTED_PLATFORMS)}")
