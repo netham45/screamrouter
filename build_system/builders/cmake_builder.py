@@ -48,11 +48,13 @@ class CMakeBuilder(BaseBuilder):
             if generator:
                 cmd.extend(["-G", generator])
             
-            # Architecture
-            if self.arch == "x64":
-                cmd.extend(["-A", "x64"])
-            elif self.arch == "x86":
-                cmd.extend(["-A", "Win32"])
+            # Architecture (only for Visual Studio generators)
+            # Ninja and other generators don't support -A flag
+            if generator and "Visual Studio" in generator:
+                if self.arch == "x64":
+                    cmd.extend(["-A", "x64"])
+                elif self.arch == "x86":
+                    cmd.extend(["-A", "Win32"])
             
             # Runtime library
             cmd.append("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
