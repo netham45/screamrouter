@@ -42,13 +42,24 @@ class BuildReactCommand(_build):
             print(f"WARNING: React directory {react_dir} not found, skipping React build", file=sys.stderr)
             return
         
+        # Determine npm command based on platform
+        # On Windows, npm is typically npm.cmd
+        npm_cmd = 'npm.cmd' if sys.platform == 'win32' else 'npm'
+        
+        # Check if npm exists
+        if not shutil.which(npm_cmd):
+            raise RuntimeError(
+                f"{npm_cmd} not found. Please install Node.js and npm to build the React frontend.\n"
+                "Visit https://nodejs.org/ for installation instructions."
+            )
+        
         print("Building React frontend...")
         
         # Run npm install
         print("Running npm install...")
         try:
             subprocess.run(
-                ["npm", "install"],
+                [npm_cmd, "install"],
                 cwd=str(react_dir),
                 check=True,
                 capture_output=False
@@ -57,7 +68,7 @@ class BuildReactCommand(_build):
             raise RuntimeError(f"npm install failed: {e}")
         except FileNotFoundError:
             raise RuntimeError(
-                "npm not found. Please install Node.js and npm to build the React frontend.\n"
+                f"{npm_cmd} not found. Please install Node.js and npm to build the React frontend.\n"
                 "Visit https://nodejs.org/ for installation instructions."
             )
         
@@ -65,7 +76,7 @@ class BuildReactCommand(_build):
         print("Running npm run build...")
         try:
             subprocess.run(
-                ["npm", "run", "build"],
+                [npm_cmd, "run", "build"],
                 cwd=str(react_dir),
                 check=True,
                 capture_output=False
@@ -73,27 +84,12 @@ class BuildReactCommand(_build):
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"npm run build failed: {e}")
         
-        # Copy built files to site/ directory
-        react_build_dir = react_dir / "build"
-        if not react_build_dir.exists():
-            raise RuntimeError(f"React build output not found at {react_build_dir}")
+        # Webpack is configured to output directly to ../site directory
+        # No need to copy files - they're already in the right place
+        if not site_dir.exists():
+            raise RuntimeError(f"React build output not found at {site_dir}")
         
-        print(f"Copying React build files from {react_build_dir} to {site_dir}...")
-        
-        # Create site directory if it doesn't exist
-        site_dir.mkdir(exist_ok=True)
-        
-        # Copy all files from react build to site
-        for item in react_build_dir.iterdir():
-            dest = site_dir / item.name
-            if item.is_dir():
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(item, dest)
-            else:
-                shutil.copy2(item, dest)
-        
-        print("React frontend build completed successfully.")
+        print(f"React build completed successfully. Files output to {site_dir}")
 
 
 class BuildExtCommand(build_ext):
