@@ -72,6 +72,10 @@ class OpenSSLBuilder(BaseBuilder):
             f"--openssldir={self.install_dir}/ssl"
         ])
         
+        # On Windows, explicitly set libdir to 'lib' to avoid lib64
+        if self.platform == "windows":
+            configure_cmd.append("--libdir=lib")
+        
         # Add configure arguments
         configure_args = self.build_config.get("configure_args", [])
         for arg in configure_args:

@@ -118,7 +118,6 @@ platforms:
         
     lib_dirs:
       - "{install_dir}\\lib"
-      - "{install_dir}\\lib64"
 
 # Architecture detection
 architectures:

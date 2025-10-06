@@ -43,6 +43,9 @@ class CMakeBuilder(BaseBuilder):
         
         # Add platform-specific options
         if self.platform == "windows":
+            # On Windows, always use 'lib' directory to avoid 32-bit/64-bit confusion
+            cmd.append("-DCMAKE_INSTALL_LIBDIR=lib")
+            
             # Generator
             generator = self.build_config.get("generator")
             if generator:

@@ -38,7 +38,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake autoconf automake libtool-bin pkg-config
+          sudo apt-get install -y build-essential cmake autoconf automake libtool-bin pkg-config curl wget
       
       - name: Install Python build dependencies
         run: |
@@ -51,7 +51,7 @@ jobs:
       - name: Test wheel installation
         run: |
           pip install dist/*.whl
-          python -c "import screamrouter; print(f'ScreamRouter version: {screamrouter.__version__ if hasattr(screamrouter, \"__version__\") else \"unknown\"}')"
+          python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -89,7 +89,7 @@ jobs:
             python:${{ matrix.python-version }}-slim \
             bash -c "
               apt-get update && \
-              apt-get install -y build-essential cmake autoconf automake libtool-bin pkg-config curl && \
+              apt-get install -y build-essential cmake autoconf automake libtool-bin pkg-config curl wget && \
               curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
               apt-get install -y nodejs && \
               python -m pip install --upgrade pip && \
@@ -105,7 +105,7 @@ jobs:
             python:${{ matrix.python-version }}-slim \
             bash -c "
               pip install dist/*.whl && \
-              python -c 'import screamrouter; print(f\"ScreamRouter version: {screamrouter.__version__ if hasattr(screamrouter, \\\"__version__\\\") else \\\"unknown\\\"}\")'
+              python -c 'import screamrouter; print(\"ScreamRouter version:\", getattr(screamrouter, \"__version__\", \"unknown\"))'
             "
       
       - name: Upload wheel artifact
@@ -160,7 +160,7 @@ jobs:
       - name: Test wheel installation
         run: |
           pip install (Get-Item dist\*.whl).FullName
-          python -c "import screamrouter; print(f'ScreamRouter version: {screamrouter.__version__ if hasattr(screamrouter, \"__version__\") else \"unknown\"}')"
+          python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -214,7 +214,7 @@ jobs:
       - name: Test wheel installation
         run: |
           pip install (Get-Item dist\*.whl).FullName
-          python -c "import screamrouter; print(f'ScreamRouter version: {screamrouter.__version__ if hasattr(screamrouter, \"__version__\") else \"unknown\"}')"
+          python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4

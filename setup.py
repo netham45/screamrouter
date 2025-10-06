@@ -149,8 +149,13 @@ class BuildExtCommand(build_ext):
             ext.include_dirs.insert(0, str(install_dir / "include"))
             
             # Add library directories
-            ext.library_dirs.insert(0, str(install_dir / "lib"))
-            ext.library_dirs.insert(0, str(install_dir / "lib64"))
+            # On Windows, use only 'lib' directory (32-bit and 64-bit both use lib)
+            # On Linux, check both lib and lib64
+            if sys.platform == "win32":
+                ext.library_dirs.insert(0, str(install_dir / "lib"))
+            else:
+                ext.library_dirs.insert(0, str(install_dir / "lib"))
+                ext.library_dirs.insert(0, str(install_dir / "lib64"))
             
             # Platform-specific adjustments
             if sys.platform == "win32":

@@ -81,7 +81,6 @@ dependencies:
           - "-DCMAKE_INSTALL_PREFIX={install_dir}"
           - "-DCMAKE_INSTALL_LIBDIR=lib"
         generator: "Visual Studio 17 2022"
-        arch: "x64"
         
     outputs:
       libraries:
@@ -232,6 +231,7 @@ dependencies:
           - "-DLIBSAMPLERATE_EXAMPLES=OFF"
           - "-DBUILD_TESTING=OFF"
           - "-DCMAKE_INSTALL_PREFIX={install_dir}"
+          - "-DCMAKE_INSTALL_LIBDIR=lib"
         
     outputs:
       libraries:

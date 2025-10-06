@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """ScreamRouter"""
+import argparse
 import os
 import signal
 import sys
@@ -61,7 +62,91 @@ from screamrouter.utils.ntp_server import NTPServerProcess  # NTP Server
 from screamrouter.utils.utils import set_process_name
 
 
+def parse_arguments():
+    """Parse command-line arguments and set environment variables"""
+    parser = argparse.ArgumentParser(
+        description='ScreamRouter - Routes PCM audio around for Scream sinks and sources',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Add arguments for all user-configurable constants
+    parser.add_argument('--scream-receiver-port', type=int, default=16401,
+                        help='Port to receive Scream data at')
+    parser.add_argument('--scream-per-process-receiver-port', type=int, default=16402,
+                        help='Port to receive per-process data at')
+    parser.add_argument('--rtp-receiver-port', type=int, default=40000,
+                        help='Port to receive RTP data at')
+    parser.add_argument('--sink-port', type=int, default=4010,
+                        help='Port for a Scream Sink')
+    parser.add_argument('--api-port', type=int, default=443,
+                        help='Port FastAPI runs on')
+    parser.add_argument('--api-host', type=str, default='0.0.0.0',
+                        help='Host FastAPI binds to')
+    parser.add_argument('--logs-dir', type=str, default='/var/log/screamrouter/logs/',
+                        help='Directory logs are stored in')
+    parser.add_argument('--console-log-level', type=str, default='INFO',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                        help='Log level for stdout')
+    parser.add_argument('--log-to-file', type=str, default='True',
+                        choices=['True', 'False', 'true', 'false'],
+                        help='Determines whether logs are written to files')
+    parser.add_argument('--log-entries-to-retain', type=int, default=2,
+                        help='Number of previous runs to retain logs for')
+    parser.add_argument('--show-ffmpeg-output', type=str, default='False',
+                        choices=['True', 'False', 'true', 'false'],
+                        help='Show ffmpeg output')
+    parser.add_argument('--npm-react-debug-site', type=str, default='False',
+                        choices=['True', 'False', 'true', 'false'],
+                        help='Enable to use a locally running npm dev server for the React site')
+    parser.add_argument('--certificate', type=str, default='/etc/screamrouter/cert/cert.pem',
+                        help='SSL certificate path')
+    parser.add_argument('--certificate-key', type=str, default='/etc/screamrouter/cert/privkey.pem',
+                        help='SSL certificate key path')
+    parser.add_argument('--timeshift-duration', type=int, default=300,
+                        help='Timeshift duration in seconds')
+    parser.add_argument('--configuration-reload-timeout', type=int, default=3,
+                        help='Configuration reload timeout in seconds')
+    parser.add_argument('--config-path', type=str, default='/etc/screamrouter/config.yaml',
+                        help='Path to the configuration file')
+    parser.add_argument('--equalizer-config-path', type=str, default='/etc/screamrouter/equalizers.yaml',
+                        help='Path to the equalizer configurations file')
+    
+    args = parser.parse_args()
+    
+    # Set environment variables from arguments
+    # Only set if not already set in environment
+    env_mappings = {
+        'SCREAM_RECEIVER_PORT': str(args.scream_receiver_port),
+        'SCREAM_PER_PROCESS_RECEIVER_PORT': str(args.scream_per_process_receiver_port),
+        'RTP_RECEIVER_PORT': str(args.rtp_receiver_port),
+        'SINK_PORT': str(args.sink_port),
+        'API_PORT': str(args.api_port),
+        'API_HOST': args.api_host,
+        'LOGS_DIR': args.logs_dir,
+        'CONSOLE_LOG_LEVEL': args.console_log_level,
+        'LOG_TO_FILE': args.log_to_file,
+        'LOG_ENTRIES_TO_RETAIN': str(args.log_entries_to_retain),
+        'SHOW_FFMPEG_OUTPUT': args.show_ffmpeg_output,
+        'NPM_REACT_DEBUG_SITE': args.npm_react_debug_site,
+        'CERTIFICATE': args.certificate,
+        'CERTIFICATE_KEY': args.certificate_key,
+        'TIMESHIFT_DURATION': str(args.timeshift_duration),
+        'CONFIGURATION_RELOAD_TIMEOUT': str(args.configuration_reload_timeout),
+        'CONFIG_PATH': args.config_path,
+        'EQUALIZER_CONFIG_PATH': args.equalizer_config_path,
+    }
+    
+    for env_var, value in env_mappings.items():
+        if env_var not in os.environ:
+            os.environ[env_var] = value
+    
+    return args
+
+
 def main():
+    # Parse arguments and set environment variables before any imports that use constants
+    parse_arguments()
+    
     try:
         os.nice(-15)
     except:

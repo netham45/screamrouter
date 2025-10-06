@@ -110,6 +110,7 @@ class BaseBuilder(ABC):
             
         elif self.platform == "windows":
             # Windows-specific environment
+            # On Windows, use only 'lib' directory for both x86 and x64
             self.env["INCLUDE"] = f"{self.install_dir}\\include;" + self.env.get("INCLUDE", "")
             self.env["LIB"] = f"{self.install_dir}\\lib;" + self.env.get("LIB", "")
     
