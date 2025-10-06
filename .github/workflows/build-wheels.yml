@@ -1,0 +1,273 @@
+name: Build Python Wheels
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-linux-x86_64:
+    name: Build Linux x86_64 Wheels
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake autoconf automake libtool pkg-config
+      
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pybind11 PyYAML wheel setuptools
+      
+      - name: Build wheel
+        run: python setup.py bdist_wheel
+      
+      - name: Test wheel installation
+        run: |
+          pip install dist/*.whl
+          python -c "import screamrouter; print(f'ScreamRouter version: {screamrouter.__version__ if hasattr(screamrouter, \"__version__\") else \"unknown\"}')"
+      
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-x86_64-py${{ matrix.python-version }}
+          path: dist/*.whl
+          retention-days: 7
+
+  build-linux-arm64:
+    name: Build Linux ARM64 Wheels
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build wheel in ARM64 container
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            python:${{ matrix.python-version }}-slim \
+            bash -c "
+              apt-get update && \
+              apt-get install -y build-essential cmake autoconf automake libtool pkg-config curl && \
+              curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+              apt-get install -y nodejs && \
+              python -m pip install --upgrade pip && \
+              pip install pybind11 PyYAML wheel setuptools && \
+              python setup.py bdist_wheel
+            "
+      
+      - name: Test wheel installation in ARM64 container
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            python:${{ matrix.python-version }}-slim \
+            bash -c "
+              pip install dist/*.whl && \
+              python -c 'import screamrouter; print(f\"ScreamRouter version: {screamrouter.__version__ if hasattr(screamrouter, \\\"__version__\\\") else \\\"unknown\\\"}\")'
+            "
+      
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-arm64-py${{ matrix.python-version }}
+          path: dist/*.whl
+          retention-days: 7
+
+  build-windows-x64:
+    name: Build Windows x64 Wheels
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Install Strawberry Perl
+        run: |
+          choco install strawberryperl -y
+          echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pybind11 PyYAML wheel setuptools
+      
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      
+      - name: Build wheel
+        run: python setup.py bdist_wheel
+      
+      - name: Test wheel installation
+        run: |
+          pip install (Get-Item dist\*.whl).FullName
+          python -c "import screamrouter; print(f'ScreamRouter version: {screamrouter.__version__ if hasattr(screamrouter, \"__version__\") else \"unknown\"}')"
+      
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-x64-py${{ matrix.python-version }}
+          path: dist/*.whl
+          retention-days: 7
+
+  build-windows-x86:
+    name: Build Windows x86 Wheels
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x86
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Install Strawberry Perl
+        run: |
+          choco install strawberryperl -y
+          echo "C:\Strawberry\perl\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pybind11 PyYAML wheel setuptools
+      
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+      
+      - name: Build wheel
+        run: python setup.py bdist_wheel
+      
+      - name: Test wheel installation
+        run: |
+          pip install (Get-Item dist\*.whl).FullName
+          python -c "import screamrouter; print(f'ScreamRouter version: {screamrouter.__version__ if hasattr(screamrouter, \"__version__\") else \"unknown\"}')"
+      
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-x86-py${{ matrix.python-version }}
+          path: dist/*.whl
+          retention-days: 7
+
+  collect-artifacts:
+    name: Collect All Wheels
+    runs-on: ubuntu-latest
+    needs: [build-linux-x86_64, build-linux-arm64, build-windows-x64, build-windows-x86]
+    
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-wheels
+          pattern: wheels-*
+      
+      - name: Organize wheels
+        run: |
+          mkdir -p python-wheels
+          find all-wheels -name '*.whl' -exec cp {} python-wheels/ \;
+      
+      - name: List all built wheels
+        run: |
+          echo "Built wheels:"
+          ls -lh python-wheels/
+          echo ""
+          echo "Wheel inventory:"
+          for wheel in python-wheels/*.whl; do
+            echo "  - $(basename $wheel)"
+          done
+      
+      - name: Upload combined wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels
+          path: python-wheels/
+          retention-days: 30
+      
+      - name: Generate wheel matrix summary
+        run: |
+          echo "## Wheel Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Total wheels built: $(ls python-wheels/*.whl | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Wheels by Platform:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 | $(ls python-wheels/*manylinux*x86_64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 | $(ls python-wheels/*manylinux*aarch64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x64 | $(ls python-wheels/*win_amd64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x86 | $(ls python-wheels/*win32.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY

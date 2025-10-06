@@ -1,0 +1,19 @@
+# Include documentation and configuration files
+include README.md
+include LICENSE
+include requirements.txt
+include uvicorn_log_config.yaml
+
+# Include React frontend (built to site/)
+recursive-include site *
+
+# Include images
+recursive-include images *.png
+recursive-include images *.jpg
+
+# Include build system
+recursive-include build_system *.py
+recursive-include build_system *.yaml
+
+# Include JSON headers for C++ extension
+recursive-include src/audio_engine/json/include *.hpp

@@ -11,6 +11,11 @@ on:
     branches: [ main, master, windows_installer ]
   workflow_dispatch:  # Allows manual triggering
 
+# Prevent concurrent builds of the same workflow
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-deb:
     uses: ./.github/workflows/build-debian-package.yml
@@ -21,8 +26,13 @@ jobs:
   build-msi:
     uses: ./.github/workflows/build-msi-package.yml
   
+  # Build Python wheels for all platforms (Linux x86_64/ARM64, Windows x64/x86)
+  # This produces 16 wheels total (4 platforms × 4 Python versions: 3.9-3.12)
+  build-wheels:
+    uses: ./.github/workflows/build-wheels.yml
+  
   create-release:
-    needs: [build-deb, build-rpm, build-msi]
+    needs: [build-deb, build-rpm, build-msi, build-wheels]
     runs-on: ubuntu-latest
     permissions:
       contents: write  # Needed for creating releases
@@ -54,6 +64,13 @@ jobs:
           name: screamrouter-msi # This should match the artifact name in build-msi-package.yml
           path: ./artifacts
       
+      # Download Python wheels (16 wheels: 4 platforms × 4 Python versions)
+      - name: Download Python wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheels
+          path: ./artifacts/wheels
+      
       - name: Set release details
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
@@ -75,7 +92,13 @@ jobs:
       
       - name: Display package files
         run: |
+          echo "=== DEB/RPM/MSI Packages ==="
           ls -la ./artifacts/
+          echo ""
+          echo "=== Python Wheels ==="
+          ls -la ./artifacts/wheels/
+          echo ""
+          echo "Total wheels: $(ls ./artifacts/wheels/*.whl 2>/dev/null | wc -l)"
       
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -84,6 +107,7 @@ jobs:
             ./artifacts/screamrouter_*.deb
             ./artifacts/screamrouter-*.rpm
             ./artifacts/screamrouter-*.msi
+            ./artifacts/wheels/*.whl
           name: ${{ env.RELEASE_NAME }}
           tag_name: ${{ env.TAG_NAME }}
           draft: false

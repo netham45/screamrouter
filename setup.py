@@ -1,12 +1,22 @@
 """
 Minimal setup.py using the new modular build system
+
+Build Requirements:
+- C++ compiler (gcc/clang on Linux, MSVC on Windows)
+- CMake >= 3.14
+- Node.js and npm (for building React frontend)
+- Python development headers
+- OpenSSL development libraries
 """
 
 import os
 import sys
+import shutil
+import subprocess
 from pathlib import Path
 from setuptools import setup, Extension, find_packages
 from setuptools.command.build_ext import build_ext
+from distutils.command.build import build as _build
 
 # Ensure we can import from the project directory
 project_root = Path(__file__).parent.resolve()
@@ -21,10 +31,78 @@ except ImportError:
     sys.exit(1)
 
 
+class BuildReactCommand(_build):
+    """Custom command to build React frontend"""
+    
+    def run(self):
+        react_dir = Path("screamrouter-react")
+        site_dir = Path("site")
+        
+        if not react_dir.exists():
+            print(f"WARNING: React directory {react_dir} not found, skipping React build", file=sys.stderr)
+            return
+        
+        print("Building React frontend...")
+        
+        # Run npm install
+        print("Running npm install...")
+        try:
+            subprocess.run(
+                ["npm", "install"],
+                cwd=str(react_dir),
+                check=True,
+                capture_output=False
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"npm install failed: {e}")
+        except FileNotFoundError:
+            raise RuntimeError(
+                "npm not found. Please install Node.js and npm to build the React frontend.\n"
+                "Visit https://nodejs.org/ for installation instructions."
+            )
+        
+        # Run npm run build
+        print("Running npm run build...")
+        try:
+            subprocess.run(
+                ["npm", "run", "build"],
+                cwd=str(react_dir),
+                check=True,
+                capture_output=False
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"npm run build failed: {e}")
+        
+        # Copy built files to site/ directory
+        react_build_dir = react_dir / "build"
+        if not react_build_dir.exists():
+            raise RuntimeError(f"React build output not found at {react_build_dir}")
+        
+        print(f"Copying React build files from {react_build_dir} to {site_dir}...")
+        
+        # Create site directory if it doesn't exist
+        site_dir.mkdir(exist_ok=True)
+        
+        # Copy all files from react build to site
+        for item in react_build_dir.iterdir():
+            dest = site_dir / item.name
+            if item.is_dir():
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(item, dest)
+            else:
+                shutil.copy2(item, dest)
+        
+        print("React frontend build completed successfully.")
+
+
 class BuildExtCommand(build_ext):
     """Custom build_ext that uses our modular build system"""
     
     def run(self):
+        # Build React frontend first
+        print("Building React frontend before C++ extensions...")
+        self.run_command('build_react')
         # Import BuildSystem here to avoid issues with pip's isolated build environment
         try:
             from build_system import BuildSystem
@@ -113,12 +191,12 @@ class BuildExtCommand(build_ext):
                 
                 subprocess.run([
                     sys.executable, "-m", "pybind11_stubgen",
-                    "screamrouter_audio_engine",
+                    "screamrouter",
                     "--output-dir", ".",
                     "--no-setup-py-cmd"
                 ], check=True, env=env)
                 
-                print("Successfully generated stubs for screamrouter_audio_engine.")
+                print("Successfully generated stubs for screamrouter.")
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
                 print(f"WARNING: Failed to generate pybind11 stubs: {e}", file=sys.stderr)
 
@@ -140,7 +218,7 @@ source_files.sort()
 # Create extension
 ext_modules = [
     Pybind11Extension(
-        "screamrouter_audio_engine",
+        "screamrouter",
         sources=source_files,
         include_dirs=[
             "src/audio_engine",
@@ -173,18 +251,32 @@ if readme_path.exists():
         long_description = f.read()
 
 setup(
-    name="screamrouter_audio_engine",
+    name="screamrouter",
     version="0.3.0",
     author="Netham45",
-    description="C++ audio engine for ScreamRouter with modular build system",
+    description="ScreamRouter audio routing system with web interface and C++ audio engine",
     long_description=long_description,
     long_description_content_type="text/markdown",
     ext_modules=ext_modules,
-    cmdclass={"build_ext": BuildExtCommand},
+    cmdclass={
+        "build_react": BuildReactCommand,
+        "build_ext": BuildExtCommand
+    },
     packages=find_packages(where="src"),
     package_dir={"": "src"},
+    package_data={
+        "": [
+            "site/**/*",
+            "images/*.png",
+            "images/*.jpg",
+            "uvicorn_log_config.yaml",
+            "build_system/*.py",
+            "build_system/*.yaml",
+        ]
+    },
+    include_package_data=True,
     zip_safe=False,
-    python_requires=">=3.7",
+    python_requires=">=3.9",
     install_requires=[
         "pybind11>=2.6",
         "pybind11-stubgen",
@@ -202,11 +294,10 @@ setup(
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
         "Programming Language :: C++",
         "Operating System :: Microsoft :: Windows",
         "Operating System :: POSIX :: Linux",

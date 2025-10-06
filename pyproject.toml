@@ -6,3 +6,62 @@ requires = [
     "PyYAML>=5.0"  # Required for build_system config loading
 ]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "screamrouter"
+version = "0.3.0"
+description = "ScreamRouter audio routing system with web interface and C++ audio engine"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Netham45"}
+]
+keywords = ["audio", "routing", "scream", "network", "streaming", "webrtc"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: C++",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+
+dependencies = [
+    "pybind11>=2.6",
+    "pybind11-stubgen",
+    "dnspython",
+    "fastapi",
+    "httpx",
+    "Jinja2",
+    "netifaces",
+    "numpy",
+    "pydantic",
+    "pyOpenSSL",
+    "PyYAML",
+    "setproctitle",
+    "starlette",
+    "uvicorn",
+    "websockets",
+    "websockify",
+    "zeroconf",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "mypy",
+]
+
+[project.urls]
+Homepage = "https://github.com/netham45/screamrouter"
+Repository = "https://github.com/netham45/screamrouter"
+Issues = "https://github.com/netham45/screamrouter/issues"

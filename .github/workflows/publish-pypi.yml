@@ -1,0 +1,161 @@
+name: Publish to Test PyPI
+
+on:
+  # Trigger on published releases
+  release:
+    types: [published]
+  
+  # Allow manual triggering for testing
+  workflow_dispatch:
+    inputs:
+      use_production_pypi:
+        description: 'Publish to PRODUCTION PyPI (default is Test PyPI)'
+        required: false
+        type: boolean
+        default: false
+
+# Prevent concurrent publishing
+concurrency:
+  group: pypi-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-to-pypi:
+    name: Publish Python Wheels to PyPI
+    runs-on: ubuntu-latest
+    
+    # Required for Trusted Publishers authentication with PyPI
+    # No API tokens needed when using Trusted Publishers
+    permissions:
+      id-token: write  # IMPORTANT: Required for PyPI Trusted Publishers
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Download the wheels built by the build-wheels workflow
+      # These should be available from the most recent workflow run
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheels
+          path: dist/
+          # Note: For release events, artifacts come from the build workflow
+          # triggered by the same tag push
+      
+      - name: List downloaded wheels
+        run: |
+          echo "Downloaded wheels:"
+          ls -lh dist/
+          echo ""
+          echo "Wheel count: $(ls dist/*.whl 2>/dev/null | wc -l)"
+      
+      # Verify we have the expected number of wheels (16 total)
+      # 4 platforms × 4 Python versions = 16 wheels
+      - name: Verify wheel integrity
+        run: |
+          WHEEL_COUNT=$(ls dist/*.whl 2>/dev/null | wc -l)
+          echo "Found $WHEEL_COUNT wheels"
+          
+          if [ "$WHEEL_COUNT" -ne 16 ]; then
+            echo "::warning::Expected 16 wheels but found $WHEEL_COUNT"
+            echo "This may indicate a build failure for some platforms"
+          fi
+          
+          # List wheels by platform for verification
+          echo ""
+          echo "=== Wheel Inventory ==="
+          echo "Linux x86_64: $(ls dist/*manylinux*x86_64.whl 2>/dev/null | wc -l)"
+          echo "Linux ARM64:  $(ls dist/*manylinux*aarch64.whl 2>/dev/null | wc -l)"
+          echo "Windows x64:  $(ls dist/*win_amd64.whl 2>/dev/null | wc -l)"
+          echo "Windows x86:  $(ls dist/*win32.whl 2>/dev/null | wc -l)"
+          
+          # Validate wheel naming
+          echo ""
+          echo "=== Wheel Files ==="
+          for wheel in dist/*.whl; do
+            if [ -f "$wheel" ]; then
+              echo "✓ $(basename $wheel)"
+            fi
+          done
+      
+      # Publish to Test PyPI (DEFAULT - for testing before production)
+      # This uses PyPI Trusted Publishers - no API token needed
+      #
+      # SETUP REQUIRED: Configure Test PyPI project with Trusted Publisher:
+      #   1. Go to: https://test.pypi.org/manage/account/publishing/
+      #   2. Add a new Trusted Publisher with:
+      #      - PyPI Project Name: screamrouter
+      #      - Owner: {your-github-username-or-org}
+      #      - Repository name: screamrouter
+      #      - Workflow name: publish-pypi.yml
+      #      - Environment name: (leave empty, or specify if using environments)
+      #
+      # NOTE: Test PyPI projects are periodically cleaned up (may be deleted after a few months)
+      # Package URL: https://test.pypi.org/project/screamrouter/
+      - name: Publish to Test PyPI
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.use_production_pypi != 'true')
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+          verbose: true
+          print-hash: true
+      
+      # Publish to PRODUCTION PyPI (commented out - enable when ready for production)
+      # To switch to production PyPI:
+      #   1. Set up Trusted Publisher at: https://pypi.org/manage/project/screamrouter/settings/publishing/
+      #   2. Uncomment the step below
+      #   3. Update the workflow_dispatch input condition or rename inputs
+      #
+      # - name: Publish to Production PyPI
+      #   if: github.event.inputs.use_production_pypi == 'true'
+      #   uses: pypa/gh-action-pypi-publish@release/v1
+      #   with:
+      #     skip-existing: true
+      #     verbose: true
+      #     print-hash: true
+      
+      - name: Generate publishing summary
+        if: success()
+        run: |
+          echo "## 🧪 Test PyPI Publishing Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Successfully published wheels to **Test PyPI**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **This is a TEST release** - not available on production PyPI" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Total wheels published:** $(ls dist/*.whl 2>/dev/null | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Published Wheels:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Python Versions |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|----------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 | 3.9, 3.10, 3.11, 3.12 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 | 3.9, 3.10, 3.11, 3.12 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x64 | 3.9, 3.10, 3.11, 3.12 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x86 | 3.9, 3.10, 3.11, 3.12 |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 View on Test PyPI:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "https://test.pypi.org/project/screamrouter/" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📥 Installation Instructions:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Basic installation (from Test PyPI only):**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo 'pip install --index-url https://test.pypi.org/simple/ screamrouter' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Recommended installation (with dependencies from production PyPI):**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo 'pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple screamrouter' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ℹ️ Important Notes:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- 🧪 Test PyPI is for testing only - packages may be periodically deleted" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 Dependencies should come from production PyPI (use --extra-index-url)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔄 To publish to production PyPI, see workflow file comments and uncomment production step" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔐 Trusted Publisher must be configured separately for Test PyPI" >> $GITHUB_STEP_SUMMARY
