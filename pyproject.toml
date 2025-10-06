@@ -65,3 +65,13 @@ dev = [
 Homepage = "https://github.com/netham45/screamrouter"
 Repository = "https://github.com/netham45/screamrouter"
 Issues = "https://github.com/netham45/screamrouter/issues"
+
+[project.scripts]
+screamrouter = "screamrouter.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["screamrouter*"]
+
+[tool.setuptools.package-data]
+screamrouter = ["site/**/*", "images/**/*", "*.yaml"]

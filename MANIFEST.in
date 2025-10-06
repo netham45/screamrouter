@@ -1,19 +1,34 @@
-# Include documentation and configuration files
+# Documentation and configuration
 include README.md
 include LICENSE
 include requirements.txt
 include uvicorn_log_config.yaml
 
-# Include React frontend (built to site/)
-recursive-include site *
+# Python package
+recursive-include screamrouter *.py
 
-# Include images
-recursive-include images *.png
-recursive-include images *.jpg
+# Web assets - include everything in screamrouter/site
+graft screamrouter/site
 
-# Include build system
-recursive-include build_system *.py
-recursive-include build_system *.yaml
+# Include uvicorn log config in screamrouter package
+include screamrouter/uvicorn_log_config.yaml
 
-# Include JSON headers for C++ extension
-recursive-include src/audio_engine/json/include *.hpp
+# Also include root site and uvicorn config for sdist
+graft site
+include uvicorn_log_config.yaml
+
+# Images
+recursive-include images *.png *.jpg
+
+# C++ extension source (for sdist)
+recursive-include src/audio_engine *.cpp *.h *.hpp
+include screamrouter_audio_engine.pyi
+
+# Build system
+recursive-include build_system *.py *.yaml
+
+# Exclude development files
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
+global-exclude *.so

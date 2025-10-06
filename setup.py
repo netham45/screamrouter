@@ -85,11 +85,18 @@ class BuildReactCommand(_build):
             raise RuntimeError(f"npm run build failed: {e}")
         
         # Webpack is configured to output directly to ../site directory
-        # No need to copy files - they're already in the right place
+        # Copy site directory into screamrouter package for proper packaging
+        package_site_dir = Path("screamrouter/site")
+        
         if not site_dir.exists():
             raise RuntimeError(f"React build output not found at {site_dir}")
         
-        print(f"React build completed successfully. Files output to {site_dir}")
+        # Copy site directory to screamrouter package directory
+        if package_site_dir.exists():
+            shutil.rmtree(package_site_dir)
+        shutil.copytree(site_dir, package_site_dir)
+        
+        print(f"React build completed successfully. Files copied to {package_site_dir}")
 
 
 class BuildExtCommand(build_ext):
@@ -187,12 +194,12 @@ class BuildExtCommand(build_ext):
                 
                 subprocess.run([
                     sys.executable, "-m", "pybind11_stubgen",
-                    "screamrouter",
+                    "screamrouter_audio_engine",
                     "--output-dir", ".",
                     "--no-setup-py-cmd"
                 ], check=True, env=env)
                 
-                print("Successfully generated stubs for screamrouter.")
+                print("Successfully generated stubs for screamrouter_audio_engine.")
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
                 print(f"WARNING: Failed to generate pybind11 stubs: {e}", file=sys.stderr)
 
@@ -214,7 +221,7 @@ source_files.sort()
 # Create extension
 ext_modules = [
     Pybind11Extension(
-        "screamrouter",
+        "screamrouter_audio_engine",
         sources=source_files,
         include_dirs=[
             "src/audio_engine",
@@ -258,19 +265,19 @@ setup(
         "build_react": BuildReactCommand,
         "build_ext": BuildExtCommand
     },
-    packages=find_packages(where="src"),
-    package_dir={"": "src"},
+    packages=find_packages(include=["screamrouter", "screamrouter.*"]),
     package_data={
-        "": [
+        "screamrouter": [
             "site/**/*",
-            "images/*.png",
-            "images/*.jpg",
             "uvicorn_log_config.yaml",
-            "build_system/*.py",
-            "build_system/*.yaml",
         ]
     },
     include_package_data=True,
+    entry_points={
+        "console_scripts": [
+            "screamrouter=screamrouter.__main__:main",
+        ],
+    },
     zip_safe=False,
     python_requires=">=3.9",
     install_requires=[
