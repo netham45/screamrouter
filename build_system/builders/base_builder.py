@@ -331,35 +331,41 @@ class BaseBuilder(ABC):
             return True
             
         # Try to use dumpbin to check library architecture
+        # Use /ARCHIVEMEMBERS to get minimal output showing just the machine type
         try:
             result = self.run_command(
-                ["dumpbin", "/headers", str(lib_path)],
+                ["dumpbin", "/ARCHIVEMEMBERS", str(lib_path)],
                 capture_output=True,
                 check=False
             )
             
             if result.returncode == 0 and result.stdout:
-                output = result.stdout.lower()
-                
-                # Check for architecture markers
-                if self.arch == "x86":
-                    # x86 libraries should show "machine (x86)" or "machine: 0x14c" (I386)
-                    if "machine (x86)" in output or "14c i386" in output or "machine: 0x14c" in output:
-                        self.logger.debug(f"Verified {lib_path.name} is x86")
-                        return True
-                    elif "machine (x64)" in output or "8664 x64" in output or "machine: 0x8664" in output:
-                        self.logger.warning(f"Library {lib_path.name} is x64 but we're building for x86!")
-                        return False
-                elif self.arch == "x64":
-                    # x64 libraries should show "machine (x64)" or "machine: 0x8664" (AMD64)
-                    if "machine (x64)" in output or "8664 x64" in output or "machine: 0x8664" in output:
-                        self.logger.debug(f"Verified {lib_path.name} is x64")
-                        return True
-                    elif "machine (x86)" in output or "14c i386" in output or "machine: 0x14c" in output:
-                        self.logger.warning(f"Library {lib_path.name} is x86 but we're building for x64!")
-                        return False
+                # Look for FILE HEADER VALUES section with machine type
+                # Expected format: "machine (x86)" or "machine (x64)"
+                lines = result.stdout.split('\n')
+                for line in lines:
+                    line_lower = line.lower()
+                    if 'machine' in line_lower and ('x86' in line_lower or 'x64' in line_lower or '14c' in line_lower or '8664' in line_lower):
+                        # Check for architecture markers
+                        if self.arch == "x86":
+                            # x86 libraries should show "14c machine (x86)"
+                            if "(x86)" in line_lower or "14c" in line_lower:
+                                self.logger.debug(f"✓ {lib_path.name} is x86")
+                                return True
+                            elif "(x64)" in line_lower or "8664" in line_lower:
+                                self.logger.error(f"✗ {lib_path.name} is x64 but expected x86")
+                                return False
+                        elif self.arch == "x64":
+                            # x64 libraries should show "8664 machine (x64)"
+                            if "(x64)" in line_lower or "8664" in line_lower:
+                                self.logger.debug(f"✓ {lib_path.name} is x64")
+                                return True
+                            elif "(x86)" in line_lower or "14c" in line_lower:
+                                self.logger.error(f"✗ {lib_path.name} is x86 but expected x64")
+                                return False
+                        break  # Found the machine line, stop searching
         except Exception as e:
-            self.logger.debug(f"Could not verify library architecture (dumpbin failed): {e}")
+            self.logger.debug(f"Could not verify library architecture: {e}")
             # Don't fail verification if dumpbin is unavailable
             
         return True
