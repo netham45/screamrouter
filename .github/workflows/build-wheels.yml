@@ -38,7 +38,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake autoconf automake libtool pkg-config
+          sudo apt-get install -y build-essential cmake autoconf automake libtool-bin pkg-config
       
       - name: Install Python build dependencies
         run: |
@@ -89,7 +89,7 @@ jobs:
             python:${{ matrix.python-version }}-slim \
             bash -c "
               apt-get update && \
-              apt-get install -y build-essential cmake autoconf automake libtool pkg-config curl && \
+              apt-get install -y build-essential cmake autoconf automake libtool-bin pkg-config curl && \
               curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
               apt-get install -y nodejs && \
               python -m pip install --upgrade pip && \
