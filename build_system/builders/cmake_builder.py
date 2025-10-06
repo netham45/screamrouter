@@ -55,12 +55,25 @@ class CMakeBuilder(BaseBuilder):
             # Ninja and other generators don't support -A flag
             if generator and "Visual Studio" in generator:
                 if self.arch == "x64":
+                    self.logger.info(f"Setting CMake architecture to x64 for {self.name}")
                     cmd.extend(["-A", "x64"])
                 elif self.arch == "x86":
+                    self.logger.info(f"Setting CMake architecture to Win32 (x86) for {self.name}")
                     cmd.extend(["-A", "Win32"])
+                else:
+                    self.logger.warning(f"Unknown architecture '{self.arch}' for {self.name}, CMake may use default")
+            elif generator:
+                # For non-Visual Studio generators, log architecture detection
+                self.logger.info(f"Using generator '{generator}' with auto-detected architecture {self.arch}")
             
-            # Runtime library
+            # Runtime library - use MultiThreadedDLL for Release builds
             cmd.append("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL")
+            
+            # Explicitly set the architecture for CMake to avoid any auto-detection issues
+            if self.arch == "x86":
+                # Force 32-bit build flags
+                cmd.append("-DCMAKE_C_FLAGS=/arch:IA32")
+                cmd.append("-DCMAKE_CXX_FLAGS=/arch:IA32")
         else:
             # Position independent code for Linux
             cmd.append("-DCMAKE_POSITION_INDEPENDENT_CODE=ON")

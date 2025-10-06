@@ -20,14 +20,23 @@ class PlatformDetector:
         Returns:
             Dictionary with platform information
         """
+        python_bits = 64 if sys.maxsize > 2**32 else 32
+        arch = self._get_architecture()
+        
         info = {
             "os": platform.system(),
             "platform": self._get_platform_name(),
-            "arch": self._get_architecture(),
+            "arch": arch,
             "machine": platform.machine(),
             "python_version": sys.version,
-            "python_bits": 64 if sys.maxsize > 2**32 else 32
+            "python_bits": python_bits
         }
+        
+        # Log architecture detection for debugging Windows x86 issues
+        if info["platform"] == "windows":
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Platform Detection: Python {python_bits}-bit, Machine: {platform.machine()}, Detected arch: {arch}")
         
         # Add distribution info for Linux
         if info["platform"] == "linux":
@@ -54,21 +63,35 @@ class PlatformDetector:
             return system
     
     def _get_architecture(self) -> str:
-        """Get normalized architecture"""
-        machine = platform.machine().lower()
+        """Get normalized architecture based on Python interpreter"""
+        # CRITICAL: Use Python's pointer size as the primary indicator
+        # This is essential for cross-compilation scenarios where 32-bit Python
+        # runs on 64-bit Windows (platform.machine() returns AMD64 but we need x86)
         
-        # x86_64 variants
-        if machine in ["x86_64", "amd64", "x64"]:
-            return "x64"
-        # x86 variants
+        # Check Python interpreter pointer size first
+        python_bits = 64 if sys.maxsize > 2**32 else 32
+        
+        # For x86/x64, use Python's architecture
+        # This is CRITICAL for Windows where 32-bit Python can run on 64-bit OS
+        if python_bits == 32:
+            # Force x86 architecture when running 32-bit Python
+            return "x86"
+        elif python_bits == 64:
+            # Check if it's ARM64 or x64
+            machine = platform.machine().lower()
+            if machine in ["aarch64", "arm64"]:
+                return "aarch64"
+            else:
+                return "x64"
+        
+        # Fallback to machine detection (shouldn't reach here)
+        machine = platform.machine().lower()
+        if machine in ["aarch64", "arm64"]:
+            return "aarch64"
         elif machine in ["i386", "i686", "x86"]:
             return "x86"
-        # ARM variants
-        elif machine in ["aarch64", "arm64"]:
-            return "aarch64"
         else:
-            # Default based on pointer size
-            return "x64" if sys.maxsize > 2**32 else "x86"
+            return "x64"
     
     def _detect_linux_distribution(self) -> str:
         """Detect Linux distribution"""

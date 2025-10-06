@@ -299,6 +299,12 @@ class BaseBuilder(ABC):
                 return False
             else:
                 self.logger.debug(f"Found library: {lib_path}")
+                
+                # On Windows, verify library architecture using dumpbin if available
+                if self.platform == "windows" and lib_path.suffix.lower() == ".lib":
+                    if not self._verify_library_architecture(lib_path):
+                        self.logger.error(f"Library {lib} has incorrect architecture (expected {self.arch})")
+                        return False
         
         # Check headers
         headers = outputs.get("headers", [])
@@ -317,6 +323,45 @@ class BaseBuilder(ABC):
                 else:
                     self.logger.debug(f"Found header: {header_path}")
         
+        return True
+    
+    def _verify_library_architecture(self, lib_path: Path) -> bool:
+        """Verify library architecture on Windows using dumpbin"""
+        if self.platform != "windows":
+            return True
+            
+        # Try to use dumpbin to check library architecture
+        try:
+            result = self.run_command(
+                ["dumpbin", "/headers", str(lib_path)],
+                capture_output=True,
+                check=False
+            )
+            
+            if result.returncode == 0 and result.stdout:
+                output = result.stdout.lower()
+                
+                # Check for architecture markers
+                if self.arch == "x86":
+                    # x86 libraries should show "machine (x86)" or "machine: 0x14c" (I386)
+                    if "machine (x86)" in output or "14c i386" in output or "machine: 0x14c" in output:
+                        self.logger.debug(f"Verified {lib_path.name} is x86")
+                        return True
+                    elif "machine (x64)" in output or "8664 x64" in output or "machine: 0x8664" in output:
+                        self.logger.warning(f"Library {lib_path.name} is x64 but we're building for x86!")
+                        return False
+                elif self.arch == "x64":
+                    # x64 libraries should show "machine (x64)" or "machine: 0x8664" (AMD64)
+                    if "machine (x64)" in output or "8664 x64" in output or "machine: 0x8664" in output:
+                        self.logger.debug(f"Verified {lib_path.name} is x64")
+                        return True
+                    elif "machine (x86)" in output or "14c i386" in output or "machine: 0x14c" in output:
+                        self.logger.warning(f"Library {lib_path.name} is x86 but we're building for x64!")
+                        return False
+        except Exception as e:
+            self.logger.debug(f"Could not verify library architecture (dumpbin failed): {e}")
+            # Don't fail verification if dumpbin is unavailable
+            
         return True
     
     def handle_special_requirements(self) -> bool:

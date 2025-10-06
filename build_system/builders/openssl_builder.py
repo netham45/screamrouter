@@ -62,8 +62,10 @@ class OpenSSLBuilder(BaseBuilder):
             platform_targets = self.build_config.get("platform_target", {})
             if self.arch == "x64":
                 target = platform_targets.get("x64", "VC-WIN64A")
+                self.logger.info(f"OpenSSL: Building for x64 with target {target}")
             else:
                 target = platform_targets.get("x86", "VC-WIN32")
+                self.logger.info(f"OpenSSL: Building for x86 with target {target}")
             configure_cmd.append(target)
         
         # Add prefix and openssldir

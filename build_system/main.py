@@ -67,7 +67,17 @@ class BuildSystem:
         else:
             self.arch = arch
             
+        # Enhanced logging for architecture detection
         self.logger.info(f"Platform: {self.platform} ({self.arch})")
+        if self.verbose or self.platform == "windows":
+            # Always log detailed info on Windows to help diagnose x86/x64 issues
+            self.logger.info(f"Platform info: {self.platform_info}")
+            import sys
+            python_bits = 64 if sys.maxsize > 2**32 else 32
+            self.logger.info(f"Python bits: {python_bits}")
+            import platform as plat
+            self.logger.info(f"Platform machine: {plat.machine()}")
+            self.logger.info(f"Detected architecture: {self.arch} (will be used for all dependency builds)")
         
         # Check for macOS and provide helpful message
         if sys.platform == "darwin":
