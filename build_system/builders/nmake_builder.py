@@ -19,8 +19,27 @@ class NMakeBuilder(BaseBuilder):
     
     def configure(self) -> bool:
         """NMake doesn't need configuration"""
-        # NMake projects typically don't have a configure step
         return True
+    
+    def clean(self) -> bool:
+        """Clean nmake build artifacts"""
+        self.logger.info(f"Cleaning {self.name}...")
+        
+        # Try to run nmake clean if the makefile supports it
+        makefile = self.build_config.get("makefile")
+        if makefile:
+            makefile_path = self.source_dir / makefile
+            if makefile_path.exists():
+                try:
+                    cmd = ["nmake", "/f", str(makefile_path), "clean"]
+                    self.logger.debug(f"Running clean command: {' '.join(cmd)}")
+                    # Don't fail if clean fails - it's not critical
+                    self.run_command(cmd, check=False)
+                except Exception as e:
+                    self.logger.debug(f"Clean failed (non-critical): {e}")
+        
+        # Also call parent clean to remove build directories
+        return super().clean()
     
     def build(self) -> bool:
         """Build using nmake"""
@@ -35,9 +54,15 @@ class NMakeBuilder(BaseBuilder):
         # Build nmake command
         cmd = ["nmake", "/f", str(makefile)]
         
-        # Add nmake arguments
+        # Add nmake arguments with variable replacement
         nmake_args = self.build_config.get("nmake_args", [])
-        cmd.extend(nmake_args)
+        self.logger.debug(f"nmake_args from config: {nmake_args}")
+        for arg in nmake_args:
+            self.logger.debug(f"Processing arg: '{arg}' (type: {type(arg)})")
+            replaced_arg = self.replace_variables(arg)
+            self.logger.debug(f"Replacing '{arg}' -> '{replaced_arg}'")
+            cmd.append(replaced_arg)
+        self.logger.debug(f"Final cmd list: {cmd}")
         
         # Add target if specified
         target = self.build_config.get("nmake_target")

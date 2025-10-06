@@ -24,11 +24,12 @@ dependencies:
       windows:
         build_system: "nmake"
         makefile: "Makefile.MSVC"
+        clean_before_build: true
         nmake_args:
           - "comp=msvc"
           - "asm=no"
-          - "MACHINE="
-          - "LN_OPTS="
+          - "MACHINE=/machine:{arch}"
+          - "LN_OPTS=LIBCMT.lib OLDNAMES.lib kernel32.lib user32.lib"
           - "LN_DLL="
         output_files:
           - "output/libmp3lame-static.lib"

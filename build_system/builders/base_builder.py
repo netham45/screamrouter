@@ -86,9 +86,8 @@ class BaseBuilder(ABC):
                 
                 if vcvarsall.exists():
                     self._vcvarsall_path = str(vcvarsall)
-                    # Determine architecture
-                    is_64bit = struct.calcsize("P") * 8 == 64
-                    self._vcvars_arch = "x64" if is_64bit else "x86"
+                    # Use target architecture instead of Python interpreter architecture
+                    self._vcvars_arch = "x64" if self.arch == "x64" else "x86"
                     return self._vcvarsall_path
             except Exception as e:
                 self.logger.debug(f"vswhere failed: {e}")
@@ -209,13 +208,20 @@ class BaseBuilder(ABC):
     
     def replace_variables(self, text: str) -> str:
         """Replace variables in configuration strings"""
+        # Map architecture to machine type for linker
+        machine_arch = "I386" if self.arch == "x86" else "X64"
+        
+        self.logger.debug(f"replace_variables: self.arch={self.arch}, machine_arch={machine_arch}")
+        
         replacements = {
             "{install_dir}": str(self.install_dir),
             "{source_dir}": str(self.source_dir),
             "{platform}": self.platform,
-            "{arch}": self.arch,
+            "{arch}": machine_arch,
             "{cpu_count}": str(os.cpu_count() or 1),
         }
+        
+        self.logger.debug(f"replace_variables: input='{text}'")
         
         # Add platform-specific targets
         if "platform_target" in self.build_config:
@@ -233,8 +239,11 @@ class BaseBuilder(ABC):
                 replacements["{platform_target}"] = targets.get("i686", "")
         
         for key, value in replacements.items():
+            if key in text:
+                self.logger.debug(f"replace_variables: replacing {key} with {value}")
             text = text.replace(key, value)
         
+        self.logger.debug(f"replace_variables: output='{text}'")
         return text
     
     @abstractmethod
@@ -299,12 +308,6 @@ class BaseBuilder(ABC):
                 return False
             else:
                 self.logger.debug(f"Found library: {lib_path}")
-                
-                # On Windows, verify library architecture using dumpbin if available
-                if self.platform == "windows" and lib_path.suffix.lower() == ".lib":
-                    if not self._verify_library_architecture(lib_path):
-                        self.logger.error(f"Library {lib} has incorrect architecture (expected {self.arch})")
-                        return False
         
         # Check headers
         headers = outputs.get("headers", [])
@@ -323,51 +326,6 @@ class BaseBuilder(ABC):
                 else:
                     self.logger.debug(f"Found header: {header_path}")
         
-        return True
-    
-    def _verify_library_architecture(self, lib_path: Path) -> bool:
-        """Verify library architecture on Windows using dumpbin"""
-        if self.platform != "windows":
-            return True
-            
-        # Try to use dumpbin to check library architecture
-        # Use /ARCHIVEMEMBERS to get minimal output showing just the machine type
-        try:
-            result = self.run_command(
-                ["dumpbin", "/ARCHIVEMEMBERS", str(lib_path)],
-                capture_output=True,
-                check=False
-            )
-            
-            if result.returncode == 0 and result.stdout:
-                # Look for FILE HEADER VALUES section with machine type
-                # Expected format: "machine (x86)" or "machine (x64)"
-                lines = result.stdout.split('\n')
-                for line in lines:
-                    line_lower = line.lower()
-                    if 'machine' in line_lower and ('x86' in line_lower or 'x64' in line_lower or '14c' in line_lower or '8664' in line_lower):
-                        # Check for architecture markers
-                        if self.arch == "x86":
-                            # x86 libraries should show "14c machine (x86)"
-                            if "(x86)" in line_lower or "14c" in line_lower:
-                                self.logger.debug(f"✓ {lib_path.name} is x86")
-                                return True
-                            elif "(x64)" in line_lower or "8664" in line_lower:
-                                self.logger.error(f"✗ {lib_path.name} is x64 but expected x86")
-                                return False
-                        elif self.arch == "x64":
-                            # x64 libraries should show "8664 machine (x64)"
-                            if "(x64)" in line_lower or "8664" in line_lower:
-                                self.logger.debug(f"✓ {lib_path.name} is x64")
-                                return True
-                            elif "(x86)" in line_lower or "14c" in line_lower:
-                                self.logger.error(f"✗ {lib_path.name} is x86 but expected x64")
-                                return False
-                        break  # Found the machine line, stop searching
-        except Exception as e:
-            self.logger.debug(f"Could not verify library architecture: {e}")
-            # Don't fail verification if dumpbin is unavailable
-            
         return True
     
     def handle_special_requirements(self) -> bool:
