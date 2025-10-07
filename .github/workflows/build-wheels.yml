@@ -71,10 +71,15 @@ jobs:
               ls -lh dist/
             "
       
+      - name: Set up Python ${{ matrix.python-version }} for testing
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      
       - name: Test wheel installation
         run: |
-          python${{ matrix.python-version }} -m pip install dist/*.whl
-          python${{ matrix.python-version }} -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
+          python -m pip install dist/*.whl
+          python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
