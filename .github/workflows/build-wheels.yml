@@ -267,7 +267,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Platform | Count |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux x86_64 | $(ls python-wheels/*manylinux*x86_64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux ARM64 | $(ls python-wheels/*manylinux*aarch64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 | $(ls python-wheels/*linux_x86_64.whl python-wheels/*manylinux*x86_64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows x64 | $(ls python-wheels/*win_amd64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows x86 | $(ls python-wheels/*win32.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY

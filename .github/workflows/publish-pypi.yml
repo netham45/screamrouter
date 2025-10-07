@@ -1,9 +1,13 @@
 name: Publish to Test PyPI
 
 on:
-  # Trigger on published releases
-  release:
-    types: [published]
+  # Trigger after build-wheels workflow completes
+  workflow_run:
+    workflows: ["Build Python Wheels"]
+    types:
+      - completed
+    branches:
+      - main
   
   # Allow manual triggering for testing
   workflow_dispatch:
@@ -13,6 +17,10 @@ on:
         required: false
         type: boolean
         default: false
+      run_id:
+        description: 'Build workflow run ID (leave empty for latest)'
+        required: false
+        type: string
 
 # Prevent concurrent publishing
 concurrency:
@@ -23,26 +31,28 @@ jobs:
   publish-to-pypi:
     name: Publish Python Wheels to PyPI
     runs-on: ubuntu-latest
+    # Only run if the build workflow succeeded or if manually triggered
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     
     # Required for Trusted Publishers authentication with PyPI
     # No API tokens needed when using Trusted Publishers
     permissions:
       id-token: write  # IMPORTANT: Required for PyPI Trusted Publishers
       contents: read
+      actions: read  # Required to download artifacts from other workflows
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       
       # Download the wheels built by the build-wheels workflow
-      # These should be available from the most recent workflow run
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
         with:
           name: python-wheels
           path: dist/
-          # Note: For release events, artifacts come from the build workflow
-          # triggered by the same tag push
+          run-id: ${{ github.event.inputs.run_id || github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: List downloaded wheels
         run: |
@@ -66,7 +76,7 @@ jobs:
           # List wheels by platform for verification
           echo ""
           echo "=== Wheel Inventory ==="
-          echo "Linux x86_64: $(ls dist/*manylinux*x86_64.whl 2>/dev/null | wc -l)"
+          echo "Linux x86_64: $(ls dist/*linux_x86_64.whl dist/*manylinux*x86_64.whl 2>/dev/null | wc -l)"
           echo "Windows x64:  $(ls dist/*win_amd64.whl 2>/dev/null | wc -l)"
           echo "Windows x86:  $(ls dist/*win32.whl 2>/dev/null | wc -l)"
           
@@ -94,7 +104,7 @@ jobs:
       # NOTE: Test PyPI projects are periodically cleaned up (may be deleted after a few months)
       # Package URL: https://test.pypi.org/project/screamrouter/
       - name: Publish to Test PyPI
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.use_production_pypi != 'true')
+        if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && github.event.inputs.use_production_pypi != 'true')
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
