@@ -54,6 +54,12 @@ jobs:
           run-id: ${{ github.event.inputs.run_id || github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       
+      - name: Clean dist directory
+        run: |
+          # Remove any non-wheel files (like .egg files)
+          find dist/ -type f ! -name "*.whl" -delete
+          echo "Cleaned dist directory - keeping only .whl files"
+      
       - name: List downloaded wheels
         run: |
           echo "Downloaded wheels:"
