@@ -48,8 +48,8 @@ jobs:
               curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
               yum install -y nodejs
               
-              # Install system dependencies
-              yum install -y wget curl
+              # Install system dependencies including perl for OpenSSL
+              yum install -y wget curl perl perl-IPC-Cmd
               
               # Use the Python from manylinux
               \${PYBIN}/python -m pip install --upgrade pip
