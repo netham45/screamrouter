@@ -48,6 +48,21 @@ jobs:
       - name: Build wheel
         run: python setup.py bdist_wheel
       
+      - name: Install auditwheel
+        run: pip install auditwheel
+      
+      - name: Repair wheel with auditwheel
+        run: |
+          # Repair the wheel to make it manylinux compatible
+          auditwheel repair dist/*.whl -w dist/
+          # Remove the original linux_x86_64 wheel
+          rm -f dist/*linux_x86_64.whl
+      
+      - name: List repaired wheels
+        run: |
+          echo "Repaired wheels:"
+          ls -lh dist/
+      
       - name: Test wheel installation
         run: |
           pip install dist/*.whl
