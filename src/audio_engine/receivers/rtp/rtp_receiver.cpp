@@ -15,9 +15,6 @@
 #else
     // Define ssize_t for Windows if not already defined (e.g., by Python headers)
     #include <BaseTsd.h>
-    #ifndef ssize_t
-        typedef SSIZE_T ssize_t;
-    #endif
 #endif
  
  
