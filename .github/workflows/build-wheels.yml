@@ -90,7 +90,7 @@ jobs:
 
   build-linux-arm64:
     name: Build Linux ARM64 Wheels
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, arm64]
     strategy:
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13']
