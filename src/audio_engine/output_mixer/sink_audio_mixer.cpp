@@ -23,11 +23,13 @@
 using namespace screamrouter::audio;
 using namespace screamrouter::audio::utils;
 
-#ifdef __SSE2__
-#include <emmintrin.h>
-#endif
-#ifdef __AVX2__
-#include <immintrin.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #ifdef __SSE2__
+    #include <emmintrin.h>
+    #endif
+    #ifdef __AVX2__
+    #include <immintrin.h>
+    #endif
 #endif
 
 /** @brief Default bitrate for MP3 encoding if enabled. */

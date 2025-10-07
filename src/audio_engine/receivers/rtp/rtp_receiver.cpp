@@ -13,9 +13,11 @@
 #ifndef _WIN32
     #include <sys/epoll.h>  // For epoll
 #else
-    // Define ssize_t for Windows
+    // Define ssize_t for Windows if not already defined (e.g., by Python headers)
     #include <BaseTsd.h>
-    typedef SSIZE_T ssize_t;
+    #ifndef ssize_t
+        typedef SSIZE_T ssize_t;
+    #endif
 #endif
  
  

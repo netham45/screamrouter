@@ -8,7 +8,10 @@
 #ifndef Biquad_h
 #define Biquad_h
 
-#include <immintrin.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    #include <immintrin.h>
+    #define SCREAMROUTER_X86
+#endif
 
 /**
  * @enum
@@ -24,8 +27,8 @@ enum {
     bq_type_highshelf   ///< High-shelf filter.
 };
 
-// Check for SSE support
-#if defined(__SSE__) || defined(_M_IX86) || defined(_M_X64)
+// Check for SSE support on x86 platforms only
+#if defined(SCREAMROUTER_X86) && (defined(__SSE__) || defined(_M_IX86) || defined(_M_X64))
     /**
      * @def BIQUAD_USE_SIMD
      * @brief A macro to control whether SIMD instructions are used. Disabled for now.
