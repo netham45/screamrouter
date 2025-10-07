@@ -4,6 +4,13 @@ permissions:
   pull-requests: read
 
 on:
+  # Trigger after PyPI publish workflow completes
+  workflow_run:
+    workflows: ["Publish to PyPI"]
+    types:
+      - completed
+    branches:
+      - main
   push:
     branches: [ main, master, new_backend ]
     tags: [ 'v*' ]
@@ -14,6 +21,8 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # Only run if the PyPI workflow succeeded or if triggered manually/by push/PR
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     
     steps:
       - name: Checkout code

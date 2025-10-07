@@ -3,10 +3,6 @@ version: '3.8'
 services:
   screamrouter:
     image: netham45/screamrouter:latest
-    # Uncomment the following lines to build from source instead
-    # build:
-    #   context: ..
-    #   dockerfile: docker/Dockerfile
     container_name: screamrouter
     restart: unless-stopped
     volumes:
@@ -22,4 +18,3 @@ services:
       - CERTIFICATE_KEY=/app/cert/privkey.pem
       - CONFIG_PATH=/app/config/config.yaml
       - EQUALIZER_CONFIG_PATH=/app/config/equalizers.yaml
-      # You can override ports and paths by changing the values above

@@ -17,7 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+        manylinux-image: ['manylinux2014_x86_64']
     
     steps:
       - name: Checkout code
@@ -25,48 +26,55 @@ jobs:
         with:
           submodules: recursive
       
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-      
-      - name: Install system dependencies
+      - name: Build wheel in manylinux container
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake autoconf automake libtool-bin pkg-config curl wget
-      
-      - name: Install Python build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pybind11 PyYAML wheel setuptools
-      
-      - name: Build wheel
-        run: python setup.py bdist_wheel
-      
-      - name: Install auditwheel
-        run: pip install auditwheel
-      
-      - name: Repair wheel with auditwheel
-        run: |
-          # Repair the wheel to make it manylinux compatible
-          auditwheel repair dist/*.whl -w dist/
-          # Remove the original linux_x86_64 wheel
-          rm -f dist/*linux_x86_64.whl
-      
-      - name: List repaired wheels
-        run: |
-          echo "Repaired wheels:"
-          ls -lh dist/
+          # Map Python version to manylinux Python binary
+          case "${{ matrix.python-version }}" in
+            "3.10") PYBIN="/opt/python/cp310-cp310/bin" ;;
+            "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
+            "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
+            "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
+          esac
+          
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e PYBIN="${PYBIN}" \
+            quay.io/pypa/${{ matrix.manylinux-image }} \
+            bash -c "
+              set -e
+              
+              # Install Node.js (required for React build)
+              curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+              yum install -y nodejs
+              
+              # Install system dependencies
+              yum install -y wget curl
+              
+              # Use the Python from manylinux
+              \${PYBIN}/python -m pip install --upgrade pip
+              \${PYBIN}/pip install pybind11 PyYAML wheel setuptools auditwheel
+              
+              # Build the wheel
+              \${PYBIN}/python setup.py bdist_wheel
+              
+              # Repair the wheel to make it manylinux compatible
+              for whl in dist/*linux_x86_64.whl; do
+                if [ -f \"\$whl\" ]; then
+                  auditwheel repair \"\$whl\" -w dist/
+                  rm -f \"\$whl\"
+                fi
+              done
+              
+              # List the repaired wheels
+              echo 'Repaired wheels:'
+              ls -lh dist/
+            "
       
       - name: Test wheel installation
         run: |
-          pip install dist/*.whl
-          python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
+          python${{ matrix.python-version }} -m pip install dist/*.whl
+          python${{ matrix.python-version }} -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -135,7 +143,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
     
     steps:
       - name: Checkout code
@@ -189,7 +197,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
     
     steps:
       - name: Checkout code
