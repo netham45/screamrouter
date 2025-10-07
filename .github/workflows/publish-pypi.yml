@@ -51,15 +51,15 @@ jobs:
           echo ""
           echo "Wheel count: $(ls dist/*.whl 2>/dev/null | wc -l)"
       
-      # Verify we have the expected number of wheels (12 total)
-      # 4 platforms × 3 Python versions = 12 wheels
+      # Verify we have the expected number of wheels (9 total)
+      # 3 platforms × 3 Python versions = 9 wheels
       - name: Verify wheel integrity
         run: |
           WHEEL_COUNT=$(ls dist/*.whl 2>/dev/null | wc -l)
           echo "Found $WHEEL_COUNT wheels"
           
-          if [ "$WHEEL_COUNT" -ne 12 ]; then
-            echo "::warning::Expected 12 wheels but found $WHEEL_COUNT"
+          if [ "$WHEEL_COUNT" -ne 9 ]; then
+            echo "::warning::Expected 9 wheels but found $WHEEL_COUNT"
             echo "This may indicate a build failure for some platforms"
           fi
           
@@ -67,7 +67,6 @@ jobs:
           echo ""
           echo "=== Wheel Inventory ==="
           echo "Linux x86_64: $(ls dist/*manylinux*x86_64.whl 2>/dev/null | wc -l)"
-          echo "Linux ARM64:  $(ls dist/*manylinux*aarch64.whl 2>/dev/null | wc -l)"
           echo "Windows x64:  $(ls dist/*win_amd64.whl 2>/dev/null | wc -l)"
           echo "Windows x86:  $(ls dist/*win32.whl 2>/dev/null | wc -l)"
           
@@ -133,7 +132,6 @@ jobs:
           echo "| Platform | Python Versions |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|----------------|" >> $GITHUB_STEP_SUMMARY
           echo "| Linux x86_64 | 3.10, 3.11, 3.12 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux ARM64 | 3.10, 3.11, 3.12 |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows x64 | 3.10, 3.11, 3.12 |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows x86 | 3.10, 3.11, 3.12 |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
