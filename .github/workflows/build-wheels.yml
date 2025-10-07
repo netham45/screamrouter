@@ -18,7 +18,7 @@ jobs:
     strategy:
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13']
-        manylinux-image: ['manylinux2014_x86_64']
+        manylinux-image: ['manylinux_2_28_x86_64']
     
     steps:
       - name: Checkout code
@@ -44,7 +44,7 @@ jobs:
             bash -c "
               set -e
               
-              # Install Node.js (required for React build)
+              # Install Node.js
               curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
               yum install -y nodejs
               
