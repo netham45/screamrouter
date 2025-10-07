@@ -11,11 +11,6 @@ on:
       - completed
     branches:
       - main
-  push:
-    branches: [ main, master, new_backend ]
-    tags: [ 'v*' ]
-  pull_request:
-    branches: [ main, master, new_backend ]
   workflow_dispatch:  # Allows manual triggering
 
 jobs:
