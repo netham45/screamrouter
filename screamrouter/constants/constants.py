@@ -2,6 +2,42 @@
 
 import importlib.resources
 import os
+import sys
+from pathlib import Path
+
+
+def _get_base_paths() -> tuple[str, str, str]:
+    """Get base paths for config, logs, and certs based on OS and user privileges.
+    
+    Returns:
+        tuple: (config_dir, logs_dir, cert_dir)
+    """
+    is_windows = sys.platform == 'win32'
+    is_root = os.geteuid() == 0 if hasattr(os, 'geteuid') else False
+    
+    if is_windows:
+        # Windows: Use APPDATA
+        appdata = os.getenv('APPDATA', os.path.expanduser('~\\AppData\\Roaming'))
+        base_dir = os.path.join(appdata, 'screamrouter')
+        config_dir = base_dir
+        logs_dir = os.path.join(base_dir, 'logs')
+        cert_dir = os.path.join(base_dir, 'cert')
+    elif is_root:
+        # Root user: System-wide paths
+        config_dir = '/etc/screamrouter'
+        logs_dir = '/var/log/screamrouter/logs'
+        cert_dir = '/etc/screamrouter/cert'
+    else:
+        # Non-root user: ~/.config/screamrouter
+        config_base = os.path.expanduser('~/.config/screamrouter')
+        config_dir = config_base
+        logs_dir = os.path.join(config_base, 'logs')
+        cert_dir = os.path.join(config_base, 'cert')
+    
+    return config_dir, logs_dir, cert_dir
+
+
+_CONFIG_DIR, _LOGS_DIR, _CERT_DIR = _get_base_paths()
 
 # ##########
 # User Configurable Options
@@ -19,7 +55,7 @@ API_PORT: int = int(os.getenv("API_PORT", "443"))
 """This is the port FastAPI runs on"""
 API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
 """This is the host FastAPI binds to"""
-LOGS_DIR: str = os.getenv("LOGS_DIR", "/var/log/screamrouter/logs/")
+LOGS_DIR: str = os.getenv("LOGS_DIR", _LOGS_DIR)
 """This is the directory logs are stored in"""
 CONSOLE_LOG_LEVEL: str = os.getenv("CONSOLE_LOG_LEVEL", "INFO")
 """Log level for stdout
@@ -32,18 +68,17 @@ SHOW_FFMPEG_OUTPUT: bool = os.getenv("SHOW_FFMPEG_OUTPUT", "False").lower() == "
 """Show ffmpeg output"""
 NPM_REACT_DEBUG_SITE: bool = os.getenv("NPM_REACT_DEBUG_SITE", "False").lower() == "true"
 """Enable to use a locally running npm dev server for the React site"""
-CERTIFICATE: str = os.getenv("CERTIFICATE", "/etc/screamrouter/cert/cert.pem")
+CERTIFICATE: str = os.getenv("CERTIFICATE", os.path.join(_CERT_DIR, "cert.pem"))
 """SSL Cert"""
-CERTIFICATE_KEY: str = os.getenv("CERTIFICATE_KEY", "/etc/screamrouter/cert/privkey.pem")
+CERTIFICATE_KEY: str = os.getenv("CERTIFICATE_KEY", os.path.join(_CERT_DIR, "privkey.pem"))
 """SSL Cert Key"""
 TIMESHIFT_DURATION: int = int(os.getenv("TIMESHIFT_DURATION", "300"))
 """Timeshift duration in seconds."""
 CONFIGURATION_RELOAD_TIMEOUT: int = int(os.getenv("CONFIGURATION_RELOAD_TIMEOUT", "3"))
 """Configuration reload timeout in seconds."""
-CONFIG_PATH = os.path.join(os.getcwd(), os.getenv("CONFIG_PATH", "/etc/screamrouter/config.yaml"))
+CONFIG_PATH = os.getenv("CONFIG_PATH", os.path.join(_CONFIG_DIR, "config.yaml"))
 """Path to the configuration file"""
-EQUALIZER_CONFIG_PATH = os.path.join(os.getcwd(),
-                                     os.getenv("EQUALIZER_CONFIG_PATH", "/etc/screamrouter/equalizers.yaml"))
+EQUALIZER_CONFIG_PATH = os.getenv("EQUALIZER_CONFIG_PATH", os.path.join(_CONFIG_DIR, "equalizers.yaml"))
 """Path to the equalizer configurations file"""
 
 

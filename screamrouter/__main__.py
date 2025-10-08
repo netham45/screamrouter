@@ -147,6 +147,20 @@ def main():
     # Parse arguments and set environment variables before any imports that use constants
     parse_arguments()
     
+    # Verify SSL certificates exist before proceeding
+    if not os.path.isfile(constants.CERTIFICATE):
+        logger.error(f"SSL certificate not found at: {constants.CERTIFICATE}")
+        logger.error("Please ensure the certificate file exists before running ScreamRouter.")
+        sys.exit(1)
+    
+    if not os.path.isfile(constants.CERTIFICATE_KEY):
+        logger.error(f"SSL certificate key not found at: {constants.CERTIFICATE_KEY}")
+        logger.error("Please ensure the certificate key file exists before running ScreamRouter.")
+        sys.exit(1)
+    
+    logger.info(f"SSL certificate found: {constants.CERTIFICATE}")
+    logger.info(f"SSL certificate key found: {constants.CERTIFICATE_KEY}")
+    
     try:
         os.nice(-15)
     except:
