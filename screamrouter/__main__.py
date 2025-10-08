@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """ScreamRouter"""
 import argparse
+import datetime
+import ipaddress
 import os
 import signal
+import socket
 import sys
 import threading
 
 import OpenSSL.crypto  # For reading the SSL certificate
 import uvicorn
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 from fastapi import FastAPI
 
 from screamrouter.screamrouter_logger.screamrouter_logger import \
@@ -60,6 +67,102 @@ from screamrouter.utils.mdns_ptr_responder import ManualPTRResponder  # mDNS
 from screamrouter.utils.ntp_server import NTPServerProcess  # NTP Server
 # from screamrouter.screamrouter_logger.screamrouter_logger import get_logger # Moved up
 from screamrouter.utils.utils import set_process_name
+
+
+def generate_self_signed_certificate(cert_path: str, key_path: str, hostname: str = "screamrouter.local"):
+    """
+    Generate a self-signed certificate and private key.
+    
+    Args:
+        cert_path: Path where the certificate will be saved
+        key_path: Path where the private key will be saved
+        hostname: Hostname to use in the certificate (default: screamrouter.local)
+    """
+    logger.info(f"Generating self-signed certificate for {hostname}...")
+    
+    # Ensure the directory exists
+    cert_dir = os.path.dirname(cert_path)
+    if cert_dir and not os.path.exists(cert_dir):
+        try:
+            os.makedirs(cert_dir, exist_ok=True)
+            logger.info(f"Created certificate directory: {cert_dir}")
+        except Exception as e:
+            logger.error(f"Failed to create certificate directory {cert_dir}: {e}")
+            raise
+    
+    # Generate private key
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+    )
+    
+    # Get the local hostname if not using the default
+    if hostname == "screamrouter.local":
+        try:
+            hostname = socket.gethostname()
+            if not hostname.endswith('.local'):
+                hostname = f"{hostname}.local"
+        except Exception:
+            hostname = "screamrouter.local"
+    
+    # Create certificate subject and issuer
+    subject = issuer = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Auto-Generated"),
+        x509.NameAttribute(NameOID.LOCALITY_NAME, "ScreamRouter"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "ScreamRouter"),
+        x509.NameAttribute(NameOID.COMMON_NAME, hostname),
+    ])
+    
+    # Build certificate with Subject Alternative Names
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.utcnow())
+        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))  # 10 years
+        .add_extension(
+            x509.SubjectAlternativeName([
+                x509.DNSName(hostname),
+                x509.DNSName("screamrouter.local"),
+                x509.DNSName("localhost"),
+                x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+            ]),
+            critical=False,
+        )
+        .sign(private_key, hashes.SHA256())
+    )
+    
+    # Write private key to file
+    try:
+        with open(key_path, "wb") as key_file:
+            key_file.write(
+                private_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.TraditionalOpenSSL,
+                    encryption_algorithm=serialization.NoEncryption(),
+                )
+            )
+        # Set appropriate permissions (readable only by owner)
+        os.chmod(key_path, 0o600)
+        logger.info(f"Private key written to: {key_path}")
+    except Exception as e:
+        logger.error(f"Failed to write private key to {key_path}: {e}")
+        raise
+    
+    # Write certificate to file
+    try:
+        with open(cert_path, "wb") as cert_file:
+            cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
+        logger.info(f"Certificate written to: {cert_path}")
+    except Exception as e:
+        logger.error(f"Failed to write certificate to {cert_path}: {e}")
+        raise
+    
+    logger.info(f"Self-signed certificate generated successfully for {hostname}")
+    logger.info(f"Certificate is valid for 10 years")
 
 
 def parse_arguments():
@@ -147,19 +250,24 @@ def main():
     # Parse arguments and set environment variables before any imports that use constants
     parse_arguments()
     
-    # Verify SSL certificates exist before proceeding
-    if not os.path.isfile(constants.CERTIFICATE):
-        logger.error(f"SSL certificate not found at: {constants.CERTIFICATE}")
-        logger.error("Please ensure the certificate file exists before running ScreamRouter.")
-        sys.exit(1)
+    # Verify SSL certificates exist, generate if missing
+    cert_missing = not os.path.isfile(constants.CERTIFICATE)
+    key_missing = not os.path.isfile(constants.CERTIFICATE_KEY)
     
-    if not os.path.isfile(constants.CERTIFICATE_KEY):
-        logger.error(f"SSL certificate key not found at: {constants.CERTIFICATE_KEY}")
-        logger.error("Please ensure the certificate key file exists before running ScreamRouter.")
-        sys.exit(1)
-    
-    logger.info(f"SSL certificate found: {constants.CERTIFICATE}")
-    logger.info(f"SSL certificate key found: {constants.CERTIFICATE_KEY}")
+    if cert_missing or key_missing:
+        logger.warning("SSL certificate or key not found, generating self-signed certificate...")
+        try:
+            generate_self_signed_certificate(
+                cert_path=constants.CERTIFICATE,
+                key_path=constants.CERTIFICATE_KEY
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate self-signed certificate: {e}")
+            logger.error("Please manually create the certificate files or check permissions.")
+            sys.exit(1)
+    else:
+        logger.info(f"SSL certificate found: {constants.CERTIFICATE}")
+        logger.info(f"SSL certificate key found: {constants.CERTIFICATE_KEY}")
     
     try:
         os.nice(-15)
