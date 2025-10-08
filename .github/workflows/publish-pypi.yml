@@ -67,15 +67,15 @@ jobs:
           echo ""
           echo "Wheel count: $(ls dist/*.whl 2>/dev/null | wc -l)"
       
-      # Verify we have the expected number of wheels (16 total)
-      # 4 platforms × 4 Python versions = 16 wheels
+      # Verify we have the expected number of wheels (20 total)
+      # 4 platforms × 5 Python versions = 20 wheels
       - name: Verify wheel integrity
         run: |
           WHEEL_COUNT=$(ls dist/*.whl 2>/dev/null | wc -l)
           echo "Found $WHEEL_COUNT wheels"
           
-          if [ "$WHEEL_COUNT" -ne 16 ]; then
-            echo "::warning::Expected 16 wheels but found $WHEEL_COUNT"
+          if [ "$WHEEL_COUNT" -ne 20 ]; then
+            echo "::warning::Expected 20 wheels but found $WHEEL_COUNT"
             echo "This may indicate a build failure for some platforms"
           fi
           
@@ -142,10 +142,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Platform | Python Versions |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|----------------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux x86_64 | 3.10, 3.11, 3.12, 3.13 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux ARM64 | 3.10, 3.11, 3.12, 3.13 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows x64 | 3.10, 3.11, 3.12, 3.13 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows x86 | 3.10, 3.11, 3.12, 3.13 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x64 | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x86 | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📦 View on PyPI:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -160,5 +160,5 @@ jobs:
           echo "### ℹ️ Important Notes:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- 🔐 Trusted Publisher authentication is configured for this repository" >> $GITHUB_STEP_SUMMARY
-          echo "- 📦 Package supports Python 3.10, 3.11, 3.12, and 3.13" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 Package supports Python 3.10, 3.11, 3.12, 3.13, and 3.14" >> $GITHUB_STEP_SUMMARY
           echo "- 💻 Available for Linux x86_64, Linux ARM64, Windows x64, and Windows x86 platforms" >> $GITHUB_STEP_SUMMARY

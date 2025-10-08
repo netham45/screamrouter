@@ -6,11 +6,11 @@ import sys
 from pathlib import Path
 
 
-def _get_base_paths() -> tuple[str, str, str]:
+def _get_base_paths() -> tuple[str, str, str, int]:
     """Get base paths for config, logs, and certs based on OS and user privileges.
     
     Returns:
-        tuple: (config_dir, logs_dir, cert_dir)
+        tuple: (config_dir, logs_dir, cert_dir, default_api_port)
     """
     is_windows = sys.platform == 'win32'
     is_root = os.geteuid() == 0 if hasattr(os, 'geteuid') else False
@@ -22,22 +22,25 @@ def _get_base_paths() -> tuple[str, str, str]:
         config_dir = base_dir
         logs_dir = os.path.join(base_dir, 'logs')
         cert_dir = os.path.join(base_dir, 'cert')
+        default_api_port = 8443  # Non-privileged port for Windows
     elif is_root:
         # Root user: System-wide paths
         config_dir = '/etc/screamrouter'
         logs_dir = '/var/log/screamrouter/logs'
         cert_dir = '/etc/screamrouter/cert'
+        default_api_port = 443  # Privileged port for root
     else:
         # Non-root user: ~/.config/screamrouter
         config_base = os.path.expanduser('~/.config/screamrouter')
         config_dir = config_base
         logs_dir = os.path.join(config_base, 'logs')
         cert_dir = os.path.join(config_base, 'cert')
+        default_api_port = 8443  # Non-privileged port for non-root
     
-    return config_dir, logs_dir, cert_dir
+    return config_dir, logs_dir, cert_dir, default_api_port
 
 
-_CONFIG_DIR, _LOGS_DIR, _CERT_DIR = _get_base_paths()
+_CONFIG_DIR, _LOGS_DIR, _CERT_DIR, _DEFAULT_API_PORT = _get_base_paths()
 
 # ##########
 # User Configurable Options
@@ -51,7 +54,7 @@ RTP_RECEIVER_PORT: int = int(os.getenv("RTP_RECEIVER_PORT", "40000"))
 """This is the port to receive RTP data at"""
 SINK_PORT: int = int(os.getenv("SINK_PORT", "4010"))
 """This is the port for a Scream Sink"""
-API_PORT: int = int(os.getenv("API_PORT", "443"))
+API_PORT: int = int(os.getenv("API_PORT", str(_DEFAULT_API_PORT)))
 """This is the port FastAPI runs on"""
 API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
 """This is the host FastAPI binds to"""
@@ -150,3 +153,20 @@ WAIT_FOR_CLOSES: bool = False
 KILL_AT_CLOSE: bool = True
 """Closes quickly but leaves lingering processes, doesn't reload any faster
    than disabling WAIT_FOR_CLOSES."""
+
+
+# Print configuration when module loads
+print("=" * 80)
+print("ScreamRouter Configuration:")
+print("=" * 80)
+print(f"Config Directory:     {_CONFIG_DIR}")
+print(f"Logs Directory:       {LOGS_DIR}")
+print(f"Certificate Dir:      {_CERT_DIR}")
+print(f"API Port:             {API_PORT}")
+print(f"API Host:             {API_HOST}")
+print(f"Config Path:          {CONFIG_PATH}")
+print(f"Equalizer Config:     {EQUALIZER_CONFIG_PATH}")
+print(f"Certificate:          {CERTIFICATE}")
+print(f"Certificate Key:      {CERTIFICATE_KEY}")
+print(f"Site Directory:       {SITE_DIR}")
+print("=" * 80)

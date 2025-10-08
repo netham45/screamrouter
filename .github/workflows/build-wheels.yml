@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
         manylinux-image: ['manylinux_2_28_x86_64']
     
     steps:
@@ -34,6 +34,7 @@ jobs:
             "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
             "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
             "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
+            "3.14") PYBIN="/opt/python/cp314-cp314/bin" ;;
           esac
           
           docker run --rm \
@@ -93,7 +94,7 @@ jobs:
     runs-on: [self-hosted, linux, arm64]
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
         manylinux-image: ['manylinux_2_28_aarch64']
     
     steps:
@@ -110,6 +111,7 @@ jobs:
             "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
             "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
             "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
+            "3.14") PYBIN="/opt/python/cp314-cp314/bin" ;;
           esac
           
           docker run --rm --platform linux/arm64 \
@@ -164,7 +166,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
     
     steps:
       - name: Checkout code
@@ -218,7 +220,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
     
     steps:
       - name: Checkout code
