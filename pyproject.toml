@@ -13,7 +13,7 @@ version = "0.3.4"
 description = "ScreamRouter audio routing system with web interface and C++ audio engine"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = ""}
+license = {text = "AGPL-3.0"}
 authors = [
     {name = "Netham45"}
 ]
