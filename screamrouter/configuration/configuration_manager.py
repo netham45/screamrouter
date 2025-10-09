@@ -730,6 +730,8 @@ class ConfigurationManager(threading.Thread):
         self.sink_descriptions = []
         self.source_descriptions = []
         self.route_descriptions = []
+        config_needs_save = False  # Track if we need to save due to missing config_ids
+        
         try:
             with open(constants.CONFIG_PATH, "r", encoding="UTF-8") as f:
                 savedata: dict = yaml.unsafe_load(f)
@@ -765,10 +767,11 @@ class ConfigurationManager(threading.Thread):
                             # Create the SinkDescription instance
                             sink_instance = SinkDescription(**item_data)
                             
-                            # Auto-generate config_id if missing (migration for old configs)
-                            if not sink_instance.config_id:
+                            # ALWAYS generate config_id if missing or null
+                            if not sink_instance.config_id or sink_instance.config_id == 'null' or sink_instance.config_id == 'None':
                                 sink_instance.config_id = str(uuid.uuid4())
                                 _logger.info(f"Auto-generated config_id {sink_instance.config_id} for sink '{sink_instance.name}'")
+                                config_needs_save = True  # Mark that we need to save
                             
                             self.sink_descriptions.append(sink_instance)
                         elif isinstance(item_data, SinkDescription):
@@ -809,10 +812,11 @@ class ConfigurationManager(threading.Thread):
                             # Create the SourceDescription instance
                             source_instance = SourceDescription(**item_data)
                             
-                            # Auto-generate config_id if missing (migration for old configs)
-                            if not source_instance.config_id:
+                            # ALWAYS generate config_id if missing or null
+                            if not source_instance.config_id or source_instance.config_id == 'null' or source_instance.config_id == 'None':
                                 source_instance.config_id = str(uuid.uuid4())
                                 _logger.info(f"Auto-generated config_id {source_instance.config_id} for source '{source_instance.name}'")
+                                config_needs_save = True  # Mark that we need to save
                             
                             self.source_descriptions.append(source_instance)
                         elif isinstance(item_data, SourceDescription):
@@ -853,10 +857,11 @@ class ConfigurationManager(threading.Thread):
                             # Create the RouteDescription instance
                             route_instance = RouteDescription(**item_data)
                             
-                            # Auto-generate config_id if missing (migration for old configs)
-                            if not route_instance.config_id:
+                            # ALWAYS generate config_id if missing or null
+                            if not route_instance.config_id or route_instance.config_id == 'null' or route_instance.config_id == 'None':
                                 route_instance.config_id = str(uuid.uuid4())
                                 _logger.info(f"Auto-generated config_id {route_instance.config_id} for route '{route_instance.name}'")
+                                config_needs_save = True  # Mark that we need to save
                             
                             self.route_descriptions.append(route_instance)
                         elif isinstance(item_data, RouteDescription):
@@ -887,6 +892,10 @@ class ConfigurationManager(threading.Thread):
             self.source_descriptions = []
             self.route_descriptions = []
 
+        # Save configuration if we generated any new config_ids
+        if config_needs_save:
+            _logger.info("[Configuration Manager] Saving configuration with newly generated config_ids")
+            self.__save_config()
 
         asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
                                                                 self.sink_descriptions,

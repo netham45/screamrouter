@@ -65,7 +65,7 @@ class APIWebsite():
         if constants.NPM_REACT_DEBUG_SITE:
             self.main_api.get("/site/{path:path}", name="site2")(self.proxy_npm_devsite)
         else:
-            self.main_api.get("/site/{path}", name="site")(self.serve_static_or_index)
+            self.main_api.get("/site/{path:path}", name="site")(self.serve_static_or_index)
             self.main_api.get("/site", name="site")(self.serve_index)
         self.main_api.get("/", name="site")(self.redirect_index)
 
