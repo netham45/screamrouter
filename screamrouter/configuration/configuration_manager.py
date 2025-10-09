@@ -176,6 +176,10 @@ class ConfigurationManager(threading.Thread):
     def add_sink(self, sink: SinkDescription) -> bool:
         """Adds a sink or sink group"""
         self.__verify_new_sink(sink)
+        # Ensure config_id is set
+        if not sink.config_id:
+            sink.config_id = str(uuid.uuid4())
+            _logger.info(f"Generated config_id {sink.config_id} for new sink '{sink.name}'")
         self.sink_descriptions.append(sink)
         self.__reload_configuration()
         return True
@@ -192,6 +196,10 @@ class ConfigurationManager(threading.Thread):
                 if sink.name == new_sink.name:
                     raise ValueError(f"Name {new_sink.name} already used")
         for field in new_sink.model_fields_set:
+            if field == "config_id":
+                # config_id should never be modified after creation
+                _logger.warning(f"Attempt to modify config_id for sink {old_sink_name} - ignoring this change")
+                continue
             if field == "equalizer":
                 is_eq_found = True
             elif field != "name":
@@ -246,6 +254,10 @@ class ConfigurationManager(threading.Thread):
     def add_source(self, source: SourceDescription) -> bool:
         """Add a source or source group"""
         self.__verify_new_source(source)
+        # Ensure config_id is set
+        if not source.config_id:
+            source.config_id = str(uuid.uuid4())
+            _logger.info(f"Generated config_id {source.config_id} for new source '{source.name}'")
         self.source_descriptions.append(source)
         self.__reload_configuration()
         return True
@@ -261,6 +273,10 @@ class ConfigurationManager(threading.Thread):
                 if source.name == new_source.name:
                     raise ValueError(f"Name {new_source.name} already used")
         for field in new_source.model_fields_set:
+            if field == "config_id":
+                # config_id should never be modified after creation
+                _logger.warning(f"Attempt to modify config_id for source {old_source_name} - ignoring this change")
+                continue
             if field == "equalizer":
                 is_eq_found = True
             elif field != "name":
@@ -309,6 +325,10 @@ class ConfigurationManager(threading.Thread):
     def add_route(self, route: RouteDescription) -> bool:
         """Adds a route"""
         self.__verify_new_route(route)
+        # Ensure config_id is set
+        if not route.config_id:
+            route.config_id = str(uuid.uuid4())
+            _logger.info(f"Generated config_id {route.config_id} for new route '{route.name}'")
         self.route_descriptions.append(route)
         self.__reload_configuration()
         return True
@@ -324,6 +344,10 @@ class ConfigurationManager(threading.Thread):
                 if route.name == new_route.name:
                     raise ValueError(f"Name {new_route.name} already used")
         for field in new_route.model_fields_set:
+            if field == "config_id":
+                # config_id should never be modified after creation
+                _logger.warning(f"Attempt to modify config_id for route {old_route_name} - ignoring this change")
+                continue
             if field == "equalizer":
                 is_eq_found = True
             elif field != "name":
@@ -737,7 +761,16 @@ class ConfigurationManager(threading.Thread):
                                     except Exception as e_sl_parse:
                                         _logger.error(f"Failed to parse SpeakerLayout data for key '{key_str}' in sink '{item_data.get('name', 'Unknown')}': {e_sl_parse}. Skipping.")
                                 item_data["speaker_layouts"] = corrected_layouts
-                            self.sink_descriptions.append(SinkDescription(**item_data))
+                            
+                            # Create the SinkDescription instance
+                            sink_instance = SinkDescription(**item_data)
+                            
+                            # Auto-generate config_id if missing (migration for old configs)
+                            if not sink_instance.config_id:
+                                sink_instance.config_id = str(uuid.uuid4())
+                                _logger.info(f"Auto-generated config_id {sink_instance.config_id} for sink '{sink_instance.name}'")
+                            
+                            self.sink_descriptions.append(sink_instance)
                         elif isinstance(item_data, SinkDescription):
                             self.sink_descriptions.append(SinkDescription(**item_data.model_dump()))
                         else:
@@ -772,7 +805,16 @@ class ConfigurationManager(threading.Thread):
                                     except Exception as e_sl_parse:
                                         _logger.error(f"Failed to parse SpeakerLayout data for key '{key_str}' in source '{item_data.get('name', 'Unknown')}': {e_sl_parse}. Skipping.")
                                 item_data["speaker_layouts"] = corrected_layouts
-                            self.source_descriptions.append(SourceDescription(**item_data))
+                            
+                            # Create the SourceDescription instance
+                            source_instance = SourceDescription(**item_data)
+                            
+                            # Auto-generate config_id if missing (migration for old configs)
+                            if not source_instance.config_id:
+                                source_instance.config_id = str(uuid.uuid4())
+                                _logger.info(f"Auto-generated config_id {source_instance.config_id} for source '{source_instance.name}'")
+                            
+                            self.source_descriptions.append(source_instance)
                         elif isinstance(item_data, SourceDescription):
                             self.source_descriptions.append(SourceDescription(**item_data.model_dump()))
                         else:
@@ -807,7 +849,16 @@ class ConfigurationManager(threading.Thread):
                                     except Exception as e_sl_parse:
                                         _logger.error(f"Failed to parse SpeakerLayout data for key '{key_str}' in route '{item_data.get('name', 'Unknown')}': {e_sl_parse}. Skipping.")
                                 item_data["speaker_layouts"] = corrected_layouts
-                            self.route_descriptions.append(RouteDescription(**item_data))
+                            
+                            # Create the RouteDescription instance
+                            route_instance = RouteDescription(**item_data)
+                            
+                            # Auto-generate config_id if missing (migration for old configs)
+                            if not route_instance.config_id:
+                                route_instance.config_id = str(uuid.uuid4())
+                                _logger.info(f"Auto-generated config_id {route_instance.config_id} for route '{route_instance.name}'")
+                            
+                            self.route_descriptions.append(route_instance)
                         elif isinstance(item_data, RouteDescription):
                             self.route_descriptions.append(RouteDescription(**item_data.model_dump()))
                         else:
@@ -1340,9 +1391,20 @@ class ConfigurationManager(threading.Thread):
                     ip)
         return hostname
 
-    def auto_add_source(self, ip: IPAddressType):
-        """Checks if VNC is available and adds a source by IP with the correct options"""
-        hostname: str = self.get_hostname_by_ip(ip)
+    def auto_add_source(self, ip: IPAddressType, service_info: dict = None):
+        """Checks if VNC is available and adds a source by IP with the correct options
+
+        Args:
+            ip: IP address of the source
+            service_info: Optional mDNS service info containing properties like channels, samplerates, etc.
+        """
+        # Use hostname from service_info if available, otherwise resolve it
+        if service_info and 'name' in service_info:
+            # Extract hostname from service name (e.g., "Device-Name._scream._udp.local" -> "Device-Name")
+            hostname = service_info['name'].split('.')[0] if '.' in service_info['name'] else service_info['name']
+        else:
+            hostname = self.get_hostname_by_ip(ip)
+
         try:
             original_hostname: str = hostname
             counter: int = 1
@@ -1351,45 +1413,63 @@ class ConfigurationManager(threading.Thread):
                 counter += 1
         except NameError:
             pass
-            
-        # Try to query settings to get config_id
+
+        # Extract settings from service_info if available
         config_id = None
-        try:
-            # Create a UDP socket for a direct query
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(1.0)  # 1 second timeout
-            
+        channels = None
+        samplerate = None
+
+        if service_info and 'properties' in service_info:
+            props = service_info['properties']
+            # Extract config_id if present
+            config_id = props.get('id') or props.get('config_id')
+            # Extract audio properties
+            channels = props.get('channels')
+            samplerates = props.get('samplerates', '').split(',')
+            if samplerates and samplerates[0]:
+                samplerate = int(samplerates[0])  # Use first available sample rate
+
+            _logger.info("[Configuration Manager] Using mDNS service info for source %s: channels=%s, samplerate=%s, config_id=%s",
+                        ip, channels, samplerate, config_id)
+
+        # If no service_info or missing config_id, try to query settings
+        if not config_id:
             try:
-                # Send a query to get settings including config_id
-                query_msg = "query_audio_settings".encode('ascii')
-                sock.sendto(query_msg, (str(ip), 5353))
+                # Create a UDP socket for a direct query
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(1.0)  # 1 second timeout
                 
-                # Try to receive a response
-                response, _ = sock.recvfrom(1500)
-                response_str = response.decode('utf-8', errors='ignore')
-                
-                _logger.debug("[Configuration Manager] Received settings response from source: %s", response_str)
-                
-                # Parse response - expected format is key=value pairs separated by semicolons
-                settings = {}
-                for pair in response_str.split(';'):
-                    if '=' in pair:
-                        key, value = pair.split('=', 1)
-                        settings[key.strip()] = value.strip()
-                
-                # Extract config_id if available
-                if 'id' in settings:
-                    config_id = settings['id']
-                    _logger.info("[Configuration Manager] Found config_id %s for source %s", 
-                                config_id, ip)
-            except socket.timeout:
-                _logger.debug("[Configuration Manager] No settings response from %s", ip)
+                try:
+                    # Send a query to get settings including config_id
+                    query_msg = "query_audio_settings".encode('ascii')
+                    sock.sendto(query_msg, (str(ip), 5353))
+                    
+                    # Try to receive a response
+                    response, _ = sock.recvfrom(1500)
+                    response_str = response.decode('utf-8', errors='ignore')
+                    
+                    _logger.debug("[Configuration Manager] Received settings response from source: %s", response_str)
+                    
+                    # Parse response - expected format is key=value pairs separated by semicolons
+                    settings = {}
+                    for pair in response_str.split(';'):
+                        if '=' in pair:
+                            key, value = pair.split('=', 1)
+                            settings[key.strip()] = value.strip()
+                    
+                    # Extract config_id if available
+                    if 'id' in settings:
+                        config_id = settings['id']
+                        _logger.info("[Configuration Manager] Found config_id %s for source %s", 
+                                    config_id, ip)
+                except socket.timeout:
+                    _logger.debug("[Configuration Manager] No settings response from %s", ip)
+                except Exception as e:
+                    _logger.debug("[Configuration Manager] Error in settings query: %s", str(e))
+                finally:
+                    sock.close()
             except Exception as e:
-                _logger.debug("[Configuration Manager] Error in settings query: %s", str(e))
-            finally:
-                sock.close()
-        except Exception as e:
-            _logger.warning("[Configuration Manager] Error querying source settings: %s", str(e))
+                _logger.warning("[Configuration Manager] Error querying source settings: %s", str(e))
             
         # Check if VNC is available
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1445,33 +1525,43 @@ class ConfigurationManager(threading.Thread):
         self.add_source(source)
         self.__reload_configuration()
 
-    def auto_add_sink(self, ip: IPAddressType):
-        """Adds a sink with settings queried from the device or defaults if query fails"""
-        hostname: str = str(ip)
-        try:
-            hostname = socket.gethostbyaddr(str(ip))[0].split(".")[0]
-            _logger.debug("[Configuration Manager] Adding sink %s got hostname %s via DNS",
-                          ip, hostname)
-        except socket.herror:
+    def auto_add_sink(self, ip: IPAddressType, service_info: dict = None):
+        """Adds a sink with settings queried from the device or defaults if query fails
+
+        Args:
+            ip: IP address of the sink
+            service_info: Optional mDNS service info containing properties like channels, samplerates, etc.
+        """
+        # Use hostname from service_info if available, otherwise resolve it
+        if service_info and 'name' in service_info:
+            # Extract hostname from service name (e.g., "Screamrouter-549BFD._scream._udp.local" -> "Screamrouter-549BFD")
+            hostname = service_info['name'].split('.')[0] if '.' in service_info['name'] else service_info['name']
+        else:
+            hostname = str(ip)
             try:
-                _logger.debug(
-                    "[Configuration Manager] Adding sink %s couldn't get DNS, trying mDNS",
-                    ip)
-                resolver: dns.resolver.Resolver = dns.resolver.Resolver()
-                resolver.nameservers = [str(ip)]
-                resolver.nameserver_ports = {str(ip): 5353}
-                answer = resolver.resolve_address(str(ip))
-                rrset: dns.rrset.RRset = answer.response.answer[0]
-                if isinstance(rrset[0], dns.rdtypes.ANY.PTR.PTR):
-                    ptr: dns.rdtypes.ANY.PTR.PTR = rrset[0] # type: ignore
-                    hostname = str(ptr.target).split(".", maxsplit=1)[0]
+                hostname = socket.gethostbyaddr(str(ip))[0].split(".")[0]
+                _logger.debug("[Configuration Manager] Adding sink %s got hostname %s via DNS",
+                              ip, hostname)
+            except socket.herror:
+                try:
                     _logger.debug(
-                        "[Configuration Manager] Adding sink %s got hostname %s via mDNS",
-                        ip, hostname)
-            except dns.resolver.LifetimeTimeout:
-                _logger.debug(
-                    "[Configuration Manager] Adding sink %s couldn't get hostname, using IP",
-                    ip)
+                        "[Configuration Manager] Adding sink %s couldn't get DNS, trying mDNS",
+                        ip)
+                    resolver: dns.resolver.Resolver = dns.resolver.Resolver()
+                    resolver.nameservers = [str(ip)]
+                    resolver.nameserver_ports = {str(ip): 5353}
+                    answer = resolver.resolve_address(str(ip))
+                    rrset: dns.rrset.RRset = answer.response.answer[0]
+                    if isinstance(rrset[0], dns.rdtypes.ANY.PTR.PTR):
+                        ptr: dns.rdtypes.ANY.PTR.PTR = rrset[0] # type: ignore
+                        hostname = str(ptr.target).split(".", maxsplit=1)[0]
+                        _logger.debug(
+                            "[Configuration Manager] Adding sink %s got hostname %s via mDNS",
+                            ip, hostname)
+                except dns.resolver.LifetimeTimeout:
+                    _logger.debug(
+                        "[Configuration Manager] Adding sink %s couldn't get hostname, using IP",
+                        ip)
         try:
             original_hostname: str = hostname
             counter: int = 1
@@ -1481,11 +1571,47 @@ class ConfigurationManager(threading.Thread):
         except NameError:
             pass
        
-        # Default audio settings
-        bit_depth: int = 16
-        sample_rate: int = 48000
-        channels: int = 2
-        channel_layout: str = "stereo"
+        # Extract settings from service_info if available
+        config_id = None
+        bit_depth: int = 16  # Default
+        sample_rate: int = 48000  # Default
+        channels: int = 2  # Default
+        channel_layout: str = "stereo"  # Default
+        port: int = 40000  # Default Scream port
+
+        if service_info:
+            # Use port from service info if available
+            port = service_info.get('port', 40000)
+
+            if 'properties' in service_info:
+                props = service_info['properties']
+                # Extract config_id if present
+                config_id = props.get('id') or props.get('config_id')
+
+                # Extract audio properties
+                if 'channels' in props:
+                    try:
+                        channels = int(props['channels'])
+                        # Set channel layout based on channel count
+                        if channels == 1:
+                            channel_layout = "mono"
+                        elif channels == 2:
+                            channel_layout = "stereo"
+                        else:
+                            channel_layout = f"{channels}ch"
+                    except ValueError:
+                        pass
+
+                if 'samplerates' in props:
+                    samplerates = props['samplerates'].split(',')
+                    if samplerates and samplerates[0]:
+                        try:
+                            sample_rate = int(samplerates[0])  # Use first available sample rate
+                        except ValueError:
+                            pass
+
+                _logger.info("[Configuration Manager] Using mDNS service info for sink %s: port=%s, channels=%s, samplerate=%s, config_id=%s",
+                            ip, port, channels, sample_rate, config_id)
         
         # Try to query audio settings using a simple UDP request
         try:
@@ -1547,11 +1673,12 @@ class ConfigurationManager(threading.Thread):
             _logger.debug("[Configuration Manager] Using default settings for sink %s", ip)
         
         _logger.debug("[Configuration Manager] Adding sink %s with settings: "
-                     "bit_depth=%d, sample_rate=%d, channels=%d, channel_layout=%s",
-                     ip, bit_depth, sample_rate, channels, channel_layout)
-        
+                     "port=%d, bit_depth=%d, sample_rate=%d, channels=%d, channel_layout=%s",
+                     ip, port, bit_depth, sample_rate, channels, channel_layout)
+
         sink_desc = SinkDescription(name=hostname,
                                    ip=ip,
+                                   port=port,
                                    bit_depth=bit_depth,
                                    sample_rate=sample_rate,
                                    channels=channels,
@@ -1615,16 +1742,18 @@ class ConfigurationManager(threading.Thread):
                 _logger.error("[Configuration Manager] Error getting seen tags from C++ Per-Process Receiver (port %d): %s", per_process_receiver_port, e)
         # --- End C++ Engine Based Auto Source Detection ---
         
-        # mDNS pinger for sources
+        # mDNS pinger for sources (senders)
         for ip in self.mdns_pinger.get_source_ips():
             if not str(ip) in known_source_ips:
-                _logger.info("[Configuration Manager] Adding new source from mDNS %s", ip)
-                self.auto_add_source(ip)
-        # mDNS pinger for sinks
+                service_info = self.mdns_pinger.get_service_info(ip)
+                _logger.info("[Configuration Manager] Adding new source (sender) from mDNS %s with info: %s", ip, service_info)
+                self.auto_add_source(ip, service_info)
+        # mDNS pinger for sinks (receivers)
         for ip in self.mdns_pinger.get_sink_ips():
             if not str(ip) in known_sink_ips:
-                _logger.info("[Configuration Manager] Adding new sink from mDNS %s", ip)
-                self.auto_add_sink(ip)
+                service_info = self.mdns_pinger.get_service_info(ip)
+                _logger.info("[Configuration Manager] Adding new sink (receiver) from mDNS %s with info: %s", ip, service_info)
+                self.auto_add_sink(ip, service_info)
         # Process sink settings
         known_source_config_ids: List[str] = [str(desc.config_id) for desc in self.source_descriptions if desc.config_id]
         

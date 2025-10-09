@@ -19,20 +19,39 @@ class ScreamListener(ServiceListener):
     def __init__(self):
         self.source_ips: Set[str] = set()
         self.sink_ips: Set[str] = set()
+        self.service_info: dict = {}  # Store full service info including TXT records
         
     def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         """Handle new services"""
         info = zc.get_service_info(type_, name)
         if info and info.addresses:
             ip = '.'.join(str(x) for x in info.addresses[0])
-            if "_source._scream._udp.local" in name:
+
+            # Parse TXT records to determine device type
+            properties = info.properties if info.properties else {}
+            mode = properties.get(b'mode', b'').decode('utf-8', errors='ignore')
+            device_type = properties.get(b'type', b'').decode('utf-8', errors='ignore')
+
+            # Store full service info
+            self.service_info[ip] = {
+                'name': name,
+                'port': info.port,
+                'properties': {k.decode('utf-8', errors='ignore'): v.decode('utf-8', errors='ignore')
+                              for k, v in properties.items()}
+            }
+
+            # Classify based on mode/type in TXT records
+            if mode == 'sender' or device_type == 'sender':
                 if ip not in self.source_ips:
-                    #logger.info(f"Discovered new source: {ip}")
+                    logger.info(f"Discovered new source (sender): {ip} - {name}")
                     self.source_ips.add(ip)
-            elif "_sink._scream._udp.local" in name:
+            elif mode == 'receiver' or device_type == 'receiver':
                 if ip not in self.sink_ips:
-                    #logger.info(f"Discovered new sink: {ip}")
+                    logger.info(f"Discovered new sink (receiver): {ip} - {name}")
                     self.sink_ips.add(ip)
+            else:
+                # If no clear mode/type, try to infer from name as fallback
+                logger.warning(f"Service {name} at {ip} has unclear mode/type. Properties: {properties}")
                     
     def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         """Handle service updates"""
@@ -64,26 +83,31 @@ class MDNSPinger:
         """Start the mDNS discovery"""
         if self.running:
             return
-            
+
         self.running = True
         self.zeroconf = Zeroconf()
-        
+
+        # Browse for _scream._udp services
+        self.browser = ServiceBrowser(self.zeroconf, "_scream._udp.local.", self.listener)
+
         # Start refresh thread
         self.thread = threading.Thread(target=self._run)
         self.thread.daemon = True
         self.thread.start()
-        
-        #logger.info("mDNS discovery started")
+
+        logger.info("mDNS discovery started for _scream._udp services")
         
     def stop(self):
         """Stop the mDNS discovery"""
         self.running = False
         if self.thread:
             self.thread.join()
+        if hasattr(self, 'browser'):
+            self.browser.cancel()
         if self.zeroconf:
             self.zeroconf.close()
             self.zeroconf = None
-        #logger.info("mDNS discovery stopped")
+        logger.info("mDNS discovery stopped")
         
     def get_source_ips(self) -> Set[str]:
         """Get set of discovered source IPs"""
@@ -92,6 +116,10 @@ class MDNSPinger:
     def get_sink_ips(self) -> Set[str]:
         """Get set of discovered sink IPs"""
         return self.listener.sink_ips.copy()
+
+    def get_service_info(self, ip: str) -> dict:
+        """Get full service info for an IP address"""
+        return self.listener.service_info.get(ip, {})
     
     def update_record(self, zeroconf: Zeroconf, now: float, record: DNSRecord) -> None:
         """Handle record updates from Zeroconf"""
@@ -154,15 +182,10 @@ class MDNSPinger:
                         
                         #logger.info(f"A record IP: {ip}")
                         
-                        # Add the IP to the appropriate set
-                        if "_source" in name:
-                            if ip not in self.pinger.listener.source_ips:
-                                #logger.info(f"Discovered new source via A record: {ip}")
-                                self.pinger.listener.source_ips.add(ip)
-                        elif "_sink" in name:
-                            if ip not in self.pinger.listener.sink_ips:
-                                #logger.info(f"Discovered new sink via A record: {ip}")
-                                self.pinger.listener.sink_ips.add(ip)
+                        # For A records from queries, we can't determine type without TXT records
+                        # ServiceBrowser will handle proper classification
+                        if "_scream" in name:
+                            logger.debug(f"Found A record for _scream service at {ip}, waiting for full service info")
         
         # Create and register the handler
         handler = ResponseHandler(self)
@@ -172,10 +195,9 @@ class MDNSPinger:
         """Main loop that sends queries"""
         while self.running:
             try:
-                # Send queries for source.scream and sink.scream
+                # Send query for _scream._udp services
                 if self.zeroconf:
-                    self._send_query("_source._scream._udp.local.")
-                    self._send_query("_sink._scream._udp.local.")
+                    self._send_query("_scream._udp.local.")
                 
                 # Wait for next interval
                 #logger.debug(f"Sleeping for {self.interval} seconds")

@@ -1,9 +1,10 @@
 """Contains models used by the configuration manager"""
 
+import uuid
 from copy import copy, deepcopy
 from typing import Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import screamrouter.screamrouter_types.annotations as annotations
 
@@ -243,11 +244,18 @@ class SinkDescription(BaseModel):
     time_sync_delay: int = 0
     """Delay for time sync in ms"""
     config_id: Optional[str] = None
-    """ID used by mDNS auto-configuration to sync client settings changes"""
+    """Unique GUID for this sink, auto-generated on creation if not provided"""
     use_tcp: bool = False
     enable_mp3: bool = True
     protocol: str = "scream"
     """The network protocol to use for the sink. Can be 'scream', 'rtp', or 'web_receiver'."""
+
+    @model_validator(mode='after')
+    def ensure_config_id(self):
+        """Auto-generate config_id if not provided"""
+        if self.config_id is None:
+            self.config_id = str(uuid.uuid4())
+        return self
 
     def __eq__(self, other):
         """Compares the name if a string.
@@ -334,7 +342,14 @@ class SourceDescription(BaseModel):
     is_process: bool = False
     """Is a process and should be grouped with a source by IP"""
     config_id: Optional[str] = None
-    """ID used by mDNS auto-configuration to sync client settings changes"""
+    """Unique GUID for this source, auto-generated on creation if not provided"""
+
+    @model_validator(mode='after')
+    def ensure_config_id(self):
+        """Auto-generate config_id if not provided"""
+        if self.config_id is None:
+            self.config_id = str(uuid.uuid4())
+        return self
 
     def __eq__(self, other):
         """Compares the name if a string.
@@ -406,6 +421,15 @@ class RouteDescription(BaseModel):
     """Timeshift backwards in seconds"""
     speaker_layouts: Dict[int, SpeakerLayout] = Field(default_factory=dict)
     """Speaker Layouts keyed by input channel count"""
+    config_id: Optional[str] = None
+    """Unique GUID for this route, auto-generated on creation if not provided"""
+
+    @model_validator(mode='after')
+    def ensure_config_id(self):
+        """Auto-generate config_id if not provided"""
+        if self.config_id is None:
+            self.config_id = str(uuid.uuid4())
+        return self
 
     def __eq__(self, other):
         """Compares the name if a string.
