@@ -50,6 +50,7 @@ export interface Source {
  */
 export interface Sink {
   name: string;
+  config_id?: string;  // Unique ID for C++ engine
   ip: string;
   port: number;
   enabled: boolean;

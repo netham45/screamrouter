@@ -552,7 +552,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       listener.pc.close();
       // Send DELETE request to WHEP endpoint
       try {
-        await fetch(`/api/whep/${sinkId}/${listener.listenerId}`, {
+        // Find the sink by name to get its config_id
+        const sink = sinks.find(s => s.name === sinkId);
+        const webrtcId = sink?.config_id || sinkId;
+        await fetch(`/api/whep/${webrtcId}/${listener.listenerId}`, {
           method: 'DELETE',
         });
         console.log(`[WebRTC:${sinkId}] Sent DELETE request to WHEP endpoint.`);
@@ -647,7 +650,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           sdpMid: candidateJson.sdpMid
         };
         if (listenerId) {
-          fetch(`/api/whep/${sinkId}/${listenerId}`, {
+          // Find the sink by name to get its config_id
+          const sink = sinks.find(s => s.name === sinkId);
+          const webrtcId = sink?.config_id || sinkId;
+          fetch(`/api/whep/${webrtcId}/${listenerId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -702,7 +708,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const listener = webrtcListenersRef.current.get(sinkId);
           if (listener) {
             try {
-              const response = await fetch(`/api/whep/${sinkId}/${listener.listenerId}`, { method: 'POST' });
+              // Find the sink by name to get its config_id
+              const sink = sinks.find(s => s.name === sinkId);
+              const webrtcId = sink?.config_id || sinkId;
+              const response = await fetch(`/api/whep/${webrtcId}/${listener.listenerId}`, { method: 'POST' });
               if (response.status === 404) {
                 console.error(`[WebRTC:${sinkId}] Heartbeat failed: session not found. Cleaning up.`);
                 await cleanupConnection(sinkId, "Heartbeat failed");
@@ -725,7 +734,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       offer.sdp = offer.sdp?.replace("useinbandfec=0", "useinbandfec=0;stereo=1;sprop-stereo=1");
       await pc.setLocalDescription(offer);
 
-      const response = await fetch(`/api/whep/${sinkId}`, {
+      // Find the sink by name to get its config_id
+      const sink = sinks.find(s => s.name === sinkId);
+      const webrtcId = sink?.config_id || sinkId; // Use config_id if available, fallback to name
+      console.log(`[WebRTC:${sinkId}] Using WebRTC ID: ${webrtcId} (config_id: ${sink?.config_id})`);
+
+      const response = await fetch(`/api/whep/${webrtcId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/sdp' },
         body: offer.sdp
@@ -753,7 +767,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             candidate: candidateJson.candidate,
             sdpMid: candidateJson.sdpMid
           };
-          fetch(`/api/whep/${sinkId}/${listenerId}`, {
+          // Find the sink by name to get its config_id
+          const sink = sinks.find(s => s.name === sinkId);
+          const webrtcId = sink?.config_id || sinkId;
+          fetch(`/api/whep/${webrtcId}/${listenerId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)

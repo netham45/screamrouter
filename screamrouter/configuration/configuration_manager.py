@@ -905,7 +905,7 @@ class ConfigurationManager(threading.Thread):
         """Saves the config to config.yaml"""
         save_data: dict = {"sinks": self.sink_descriptions, "sources": self.source_descriptions,
                            "routes": self.route_descriptions }
-        with open('config.yaml', 'w', encoding="UTF-8") as yaml_file:
+        with open(constants.CONFIG_PATH, 'w', encoding="UTF-8") as yaml_file:
             yaml.dump(save_data, yaml_file)
 
     def __save_config(self) -> None:
