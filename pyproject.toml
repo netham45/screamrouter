@@ -50,7 +50,6 @@ dependencies = [
     "starlette",
     "uvicorn",
     "websockets",
-    "websockify",
     "zeroconf",
 ]
 

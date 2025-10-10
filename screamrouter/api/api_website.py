@@ -1,18 +1,16 @@
 """Holds the API endpoints to serve files for html/javascript/css"""
 import mimetypes
-import multiprocessing
 import os
 from typing import List, Optional, Union
 
 import httpx
-import websockify
-import websockify.websocketproxy
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.templating import _TemplateResponse
+from starlette.websockets import WebSocketState
 
 from screamrouter.configuration.configuration_manager import ConfigurationManager
 from screamrouter.constants import constants
@@ -26,6 +24,7 @@ from screamrouter.screamrouter_types.configuration import (Equalizer, RouteDescr
 from screamrouter.screamrouter_types.website import (AddEditRouteInfo, AddEditSinkInfo,
                                             AddEditSourceInfo,
                                             EditEqualizerInfo)
+from screamrouter.api.api_vnc_websocket import handle_vnc_websocket
 
 logger = get_logger(__name__)
 
@@ -49,7 +48,10 @@ class APIWebsite():
         )
         self.main_api.get(f"{SITE_PREFIX}/vnc/{{source_name}}",
                           tags=["Site Resources"])(self.vnc)
-        self.main_api.mount("/site/noVNC", StaticFiles(directory=os.path.join(SITE_DIR, "noVNC")), name="noVNC")
+        self.main_api.websocket("/ws/vnc/{source_name}")(self.websocket_vnc_proxy)
+        # Mount noVNC from the repository's site/noVNC directory (not from within SITE_DIR)
+        novnc_path = os.path.join(os.path.dirname(SITE_DIR), "site", "noVNC")
+        self.main_api.mount("/site/noVNC", StaticFiles(directory=novnc_path), name="noVNC")
         self.main_api.mount("/site/static", StaticFiles(directory=os.path.join(SITE_DIR, "static")), name="static")
         self.main_api.get("/favicon.ico", tags=["Site Resources"])(self.favicon)
 
@@ -58,10 +60,6 @@ class APIWebsite():
         mimetypes.add_type('text/css', '.css')
         mimetypes.add_type('audio/mpeg', '.mp3')
         logger.info("[Website] Endpoints added")
-        self.vnc_websockifiys: List[multiprocessing.Process] = []
-        """Holds a list of websockify processes to kill"""
-        self.vnc_port: int = 5900
-        """Holds the current vnc port, gets incremented by one per connection"""
         if constants.NPM_REACT_DEBUG_SITE:
             self.main_api.get("/site/{path:path}", name="site2")(self.proxy_npm_devsite)
         else:
@@ -190,35 +188,71 @@ class APIWebsite():
 
     # VNC endpoint
     def vnc(self, request: Request, source_name: SourceNameType):
-        """Starts a Websockify proxy to the configured VNC host and returns the dialog for it"""
+        """Returns the VNC viewer dialog that uses the new WebSocket endpoint"""
+        # Get the source configuration to validate it exists and has VNC enabled
         source: SourceDescription = self.screamrouter_configuration.get_source_by_name(source_name)
-        port: int = self.vnc_port
-        self.vnc_port = self.vnc_port + 1
-        vnc_websocket = websockify.WebSocketProxy(
-                                          verbose=False,
-                                          listen_port=port,
-                                          target_host=str(source.vnc_ip),
-                                          target_port=source.vnc_port,
-                                          cert=constants.CERTIFICATE,
-                                          key=constants.CERTIFICATE_KEY,
-                                          run_once=True
-                                          )
-        logger.info("[Website] Starting VNC session, inbound port %s, target %s:%s",
-                    port,
-                    source.vnc_ip,
-                    source.vnc_port)
-        vnc_websocket_process = multiprocessing.Process(target=vnc_websocket.start_server)
-        vnc_websocket_process.start()
-        self.vnc_websockifiys.append(vnc_websocket_process)
-
+        
+        if not source:
+            raise HTTPException(status_code=404, detail=f"Source '{source_name}' not found")
+        
+        if not source.vnc_ip:
+            raise HTTPException(status_code=400, detail=f"VNC is not enabled for source '{source_name}'")
+        
+        logger.info("[Website] Returning VNC viewer for source: %s", source_name)
+        
+        # Return the VNC viewer template with the source name
+        # The template will construct the WebSocket URL using the source_name
         return self.return_template(request,
                 "dialog_views/vnc.html.jinja",
-                {"port": port})
+                {"source_name": source_name,
+                 "ws_path": f"/ws/vnc/{source_name}"})
+
+    async def websocket_vnc_proxy(self, websocket: WebSocket, source_name: str):
+        """
+        WebSocket endpoint for VNC proxy connections.
+        
+        This endpoint handles VNC connections through native FastAPI WebSocket
+        support, replacing the websockify subprocess-based approach.
+        
+        Args:
+            websocket: FastAPI WebSocket connection
+            source_name: Name of the source requesting VNC access
+        """
+        logger.info(f"VNC WebSocket connection requested for source: {source_name}")
+        
+        # Get the source configuration
+        source = self.screamrouter_configuration.get_source_by_name(source_name)
+        
+        if not source:
+            logger.error(f"Source '{source_name}' not found in configuration")
+            await websocket.close(code=1008, reason=f"Source '{source_name}' not found")
+            return
+        
+        # Check if VNC is enabled for this source
+        if not source.vnc_ip:
+            logger.error(f"VNC is not enabled for source '{source_name}'")
+            await websocket.close(code=1008, reason=f"VNC is not enabled for source '{source_name}'")
+            return
+        
+        # Get VNC configuration - ensure host is converted to string
+        vnc_config = {
+            "host": str(source.vnc_ip),
+            "port": int(source.vnc_port)
+        }
+        
+        logger.info(f"Starting VNC WebSocket proxy for source '{source_name}' to {vnc_config['host']}:{vnc_config['port']}")
+        
+        try:
+            # Handle the WebSocket connection through our proxy
+            await handle_vnc_websocket(websocket, source_name, vnc_config)
+        except Exception as e:
+            logger.error(f"Error in VNC WebSocket proxy for source '{source_name}': {e}")
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.close(code=1011, reason="Internal server error")
 
     def stop(self):
-        """Kills all websockify processes"""
-        for process in self.vnc_websockifiys:
-            process.kill()
+        """Clean up method - currently no cleanup needed"""
+        pass
 
     # Site resource endpoints
     def site_index(self, request: Request):

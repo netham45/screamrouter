@@ -5,10 +5,10 @@ permissions:
 
 on:
   push:
-    branches: [ main, master, windows_installer ]
+    branches: [ main, master ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main, master, windows_installer ]
+    branches: [ main, master ]
   workflow_dispatch:  # Allows manual triggering
 
 # Prevent concurrent builds of the same workflow
@@ -17,14 +17,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-deb:
-    uses: ./.github/workflows/build-debian-package.yml
-    
-  build-rpm:
-    uses: ./.github/workflows/build-rpm-package.yml
-
-  build-msi:
-    uses: ./.github/workflows/build-msi-package.yml
   
   # Build Python wheels for all platforms (Linux x86_64/ARM64, Windows x64/x86)
   # This produces 16 wheels total (4 platforms × 4 Python versions: 3.9-3.12)
@@ -32,7 +24,7 @@ jobs:
     uses: ./.github/workflows/build-wheels.yml
   
   create-release:
-    needs: [build-deb, build-rpm, build-msi, build-wheels]
+    needs: [build-wheels]
     runs-on: ubuntu-latest
     permissions:
       contents: write  # Needed for creating releases
@@ -45,25 +37,7 @@ jobs:
       - name: Get commit short SHA
         id: sha
         run: echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-        
-      - name: Download DEB artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: screamrouter-deb
-          path: ./artifacts
-          
-      - name: Download RPM artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: screamrouter-rpm
-          path: ./artifacts
-          
-      - name: Download MSI artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: screamrouter-msi # This should match the artifact name in build-msi-package.yml
-          path: ./artifacts
-      
+
       # Download Python wheels (16 wheels: 4 platforms × 4 Python versions)
       - name: Download Python wheels
         uses: actions/download-artifact@v4
@@ -92,9 +66,6 @@ jobs:
       
       - name: Display package files
         run: |
-          echo "=== DEB/RPM/MSI Packages ==="
-          ls -la ./artifacts/
-          echo ""
           echo "=== Python Wheels ==="
           ls -la ./artifacts/wheels/
           echo ""
@@ -104,9 +75,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ./artifacts/screamrouter_*.deb
-            ./artifacts/screamrouter-*.rpm
-            ./artifacts/screamrouter-*.msi
             ./artifacts/wheels/*.whl
           name: ${{ env.RELEASE_NAME }}
           tag_name: ${{ env.TAG_NAME }}

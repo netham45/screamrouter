@@ -11,7 +11,6 @@ setproctitle
 starlette
 uvicorn
 websockets
-websockify
 uvicorn
 zeroconf
 pybind11>=2.6

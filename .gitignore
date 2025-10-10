@@ -27,3 +27,4 @@ c_utils/**
 **/*.swp
 **/*.egg
 **/*.egg*
+screamrouter/site/*
