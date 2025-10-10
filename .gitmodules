@@ -1,9 +1,6 @@
 [submodule "site/noVNC"]
 	path = site/noVNC
 	url = https://github.com/novnc/noVNC.git
-[submodule "src/audio_engine/deps/lame"]
-	path = src/audio_engine/deps/lame
-	url = https://github.com/ffmpegwasm/lame.git
 [submodule "src/audio_engine/deps/r8brain-free-src"]
 	path = src/audio_engine/deps/r8brain-free-src
 	url = https://github.com/avaneev/r8brain-free-src.git
@@ -22,3 +19,6 @@
 [submodule "src/audio_engine/deps/libsamplerate"]
 	path = src/audio_engine/deps/libsamplerate
 	url = https://github.com/libsndfile/libsamplerate.git
+[submodule "src/audio_engine/deps/lame"]
+	path = src/audio_engine/deps/lame
+	url = https://github.com/ffmpegwasm/lame.git
