@@ -42,8 +42,9 @@ bool ConnectionManager::connect_source_sink(const std::string& source_instance_i
         return false;
     }
 
-    m_sink_manager->add_input_queue_to_sink(sink_id, source_instance_id, queue_it->second);
-    LOG_CPP_INFO("Connection successful: Source instance %s -> Sink %s", source_instance_id.c_str(), sink_id.c_str());
+    // Phase 5: Pass processor pointer for TimestampMapper access
+    m_sink_manager->add_input_queue_to_sink(sink_id, source_instance_id, queue_it->second, source_it->second.get());
+    LOG_CPP_INFO("Connection successful: Source instance %s -> Sink %s (with processor reference)", source_instance_id.c_str(), sink_id.c_str());
     return true;
 }
 

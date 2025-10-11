@@ -19,6 +19,7 @@
 
 namespace screamrouter {
 namespace audio {
+class SourceInputProcessor;  // Forward declaration
 using ChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using Mp3Queue = utils::ThreadSafeQueue<EncodedMP3Data>;
 
@@ -60,8 +61,10 @@ public:
      * @param sink_id The ID of the sink.
      * @param source_instance_id The ID of the source instance.
      * @param queue The chunk queue from the source.
+     * @param processor Optional pointer to the source processor (for Phase 5 timestamp mapping).
      */
-    void add_input_queue_to_sink(const std::string& sink_id, const std::string& source_instance_id, std::shared_ptr<ChunkQueue> queue);
+    void add_input_queue_to_sink(const std::string& sink_id, const std::string& source_instance_id,
+                                 std::shared_ptr<ChunkQueue> queue, SourceInputProcessor* processor = nullptr);
     /**
      * @brief Unsubscribes a sink from a source's output queue.
      * @param sink_id The ID of the sink.

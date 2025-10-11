@@ -87,6 +87,15 @@ struct TaggedAudioPacket {
     std::optional<uint32_t> rtp_timestamp;
     /** @brief List of SSRC and CSRCs from the RTP header. */
     std::vector<uint32_t> ssrcs;
+    
+    // NEW: Reference clock correlation
+    /** @brief Reference arrival time from ReferenceClockManager. */
+    std::chrono::steady_clock::time_point reference_arrival_time;
+    /** @brief Optional NTP timestamp from RTCP if available. */
+    std::optional<uint64_t> input_ntp_timestamp;
+    /** @brief Identifier for which TimestampMapper handles this stream. */
+    std::optional<std::string> timestamp_mapper_id;
+    
     // --- Audio Format Info ---
     /** @brief Number of audio channels in the payload. */
     int channels = 0;
@@ -112,6 +121,16 @@ struct ProcessedAudioChunk {
     std::vector<int32_t> audio_data;
     /** @brief SSRC and CSRCs, forwarded from the original packet. */
     std::vector<uint32_t> ssrcs;
+    
+    // NEW: Timing information for synchronized mixing
+    /** @brief First input RTP timestamp that contributed to this chunk. */
+    std::optional<uint32_t> original_input_rtp_timestamp;
+    /** @brief When this chunk should be mixed/played out. */
+    std::chrono::steady_clock::time_point expected_playout_time;
+    /** @brief Identifier of the SourceInputProcessor that created this. */
+    std::string source_processor_id;
+    /** @brief Measured processing latency for this chunk in milliseconds. */
+    double processing_latency_ms = 0.0;
 };
 
 /**
@@ -453,6 +472,34 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
      */
     inline void bind_audio_types(pybind11::module_ &m) {
         namespace py = pybind11;
+    
+        // Bind TaggedAudioPacket
+        py::class_<TaggedAudioPacket>(m, "TaggedAudioPacket", "Raw audio packet from network")
+            .def(py::init<>())
+            .def_readwrite("source_tag", &TaggedAudioPacket::source_tag, "Source identifier")
+            .def_readwrite("audio_data", &TaggedAudioPacket::audio_data, "Raw audio payload")
+            .def_readwrite("received_time", &TaggedAudioPacket::received_time, "Reception timestamp")
+            .def_readwrite("rtp_timestamp", &TaggedAudioPacket::rtp_timestamp, "Optional RTP timestamp")
+            .def_readwrite("ssrcs", &TaggedAudioPacket::ssrcs, "SSRC and CSRCs list")
+            .def_readwrite("reference_arrival_time", &TaggedAudioPacket::reference_arrival_time, "Reference clock arrival time")
+            .def_readwrite("input_ntp_timestamp", &TaggedAudioPacket::input_ntp_timestamp, "Optional NTP timestamp from RTCP")
+            .def_readwrite("timestamp_mapper_id", &TaggedAudioPacket::timestamp_mapper_id, "TimestampMapper identifier")
+            .def_readwrite("channels", &TaggedAudioPacket::channels, "Number of audio channels")
+            .def_readwrite("sample_rate", &TaggedAudioPacket::sample_rate, "Sample rate")
+            .def_readwrite("bit_depth", &TaggedAudioPacket::bit_depth, "Bit depth")
+            .def_readwrite("chlayout1", &TaggedAudioPacket::chlayout1, "Channel layout byte 1")
+            .def_readwrite("chlayout2", &TaggedAudioPacket::chlayout2, "Channel layout byte 2")
+            .def_readwrite("playback_rate", &TaggedAudioPacket::playback_rate, "Playback rate adjustment");
+        
+        // Bind ProcessedAudioChunk
+        py::class_<ProcessedAudioChunk>(m, "ProcessedAudioChunk", "Processed audio chunk")
+            .def(py::init<>())
+            .def_readwrite("audio_data", &ProcessedAudioChunk::audio_data, "Processed audio data")
+            .def_readwrite("ssrcs", &ProcessedAudioChunk::ssrcs, "SSRC and CSRCs")
+            .def_readwrite("original_input_rtp_timestamp", &ProcessedAudioChunk::original_input_rtp_timestamp, "Original input RTP timestamp")
+            .def_readwrite("expected_playout_time", &ProcessedAudioChunk::expected_playout_time, "Expected playout time")
+            .def_readwrite("source_processor_id", &ProcessedAudioChunk::source_processor_id, "Source processor identifier")
+            .def_readwrite("processing_latency_ms", &ProcessedAudioChunk::processing_latency_ms, "Processing latency in milliseconds");
     
         py::class_<SourceConfig>(m, "SourceConfig", "Configuration for an audio source")
             .def(py::init<>())

@@ -2,6 +2,7 @@
 #include "rtp_sender_registry.h"
 #include "../../utils/cpp_logger.h"
 #include "../../audio_constants.h" // For RTP constants
+#include "../../timing/reference_clock_manager.h"
 #include <stdexcept>
 #include <cstring>
 #include <random>
@@ -110,7 +111,8 @@ std::vector<int> get_channel_order_from_mask(uint8_t chlayout1, uint8_t chlayout
 
 } // end anonymous namespace
 
-RtpSender::RtpSender(const SinkMixerConfig& config)
+RtpSender::RtpSender(const SinkMixerConfig& config,
+                    std::shared_ptr<screamrouter::audio_engine::TimestampMapper> timestamp_mapper)
     : config_(config),
       udp_socket_fd_(PLATFORM_INVALID_SOCKET),
       sequence_number_(0),
@@ -121,7 +123,8 @@ RtpSender::RtpSender(const SinkMixerConfig& config)
       rtcp_thread_running_(false),
       packet_count_(0),
       octet_count_(0),
-      time_sync_delay_ms_(config.time_sync_enabled ? config.time_sync_delay_ms : 0) {  // Use config values
+      time_sync_delay_ms_(config.time_sync_enabled ? config.time_sync_delay_ms : 0),
+      timestamp_mapper_(timestamp_mapper) {  // Phase 5: Store timestamp mapper
 
     // IMMEDIATE LOGGING AT CONSTRUCTOR START
     LOG_CPP_ERROR("[RtpSender:%s] ===== CONSTRUCTOR START =====", config_.sink_id.c_str());
@@ -153,11 +156,14 @@ RtpSender::RtpSender(const SinkMixerConfig& config)
     sequence_number_ = dis16(gen);
     rtp_timestamp_ = dis32(gen);
     
-    // Store initial RTP timestamp and stream start time for synchronization
+    // Phase 5: Store initial RTP timestamp and stream start time using reference clock
     stream_start_rtp_timestamp_ = rtp_timestamp_;
+    auto& ref_clock = screamrouter::audio_engine::ReferenceClockManager::get_instance();
+    stream_start_time_ref_ = ref_clock.now();
+    // Keep system_clock version for compatibility
     stream_start_time_ = std::chrono::system_clock::now();
 
-    LOG_CPP_INFO("[RtpSender:%s] Initialized with SSRC=0x%08X, Seq=%u, TS=%u",
+    LOG_CPP_INFO("[RtpSender:%s] Initialized with SSRC=0x%08X, Seq=%u, TS=%u (ref_clock stored)",
                  config_.sink_id.c_str(), ssrc_, sequence_number_, rtp_timestamp_);
     
     // Log RTCP configuration
@@ -560,12 +566,22 @@ const int RTP_PAYLOAD_TYPE_L16_48K_STEREO = 127;
         // 8-bit samples (bytes_per_sample == 1) do not require byte order conversion.
     }
 
-    // Increment timestamp by number of samples in the packet
-    // A "frame" is a single sample from all channels.
-    size_t bytes_per_frame = (config_.output_bitdepth / 8) * config_.output_channels;
-    if (bytes_per_frame > 0) {
-        rtp_timestamp_ += payload_size / bytes_per_frame;
-    }
+    // Phase 5: Update RTP timestamp based on reference clock instead of byte count
+    // Calculate elapsed time since stream start and convert to samples
+    auto& ref_clock = screamrouter::audio_engine::ReferenceClockManager::get_instance();
+    auto now = ref_clock.now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - stream_start_time_ref_);
+    
+    // Convert elapsed time to samples at 48kHz
+    // samples = (elapsed_us * sample_rate) / 1000000
+    uint64_t elapsed_us = elapsed.count();
+    uint64_t samples_since_start = (elapsed_us * 48000) / 1000000;
+    
+    rtp_timestamp_ = stream_start_rtp_timestamp_ + static_cast<uint32_t>(samples_since_start);
+    
+    LOG_CPP_DEBUG("[RtpSender:%s] RTP timestamp from reference clock: %u (elapsed: %lld us, samples: %llu)",
+                 config_.sink_id.c_str(), rtp_timestamp_,
+                 (long long)elapsed_us, (unsigned long long)samples_since_start);
 
     size_t length = packet_buffer.size();
 
@@ -745,6 +761,36 @@ uint64_t RtpSender::get_ntp_timestamp_with_delay() {
                   (unsigned)seconds,
                   (unsigned)fraction,
                   time_sync_delay_ms_);
+    
+    return ntp_timestamp;
+}
+
+uint64_t RtpSender::get_synchronized_ntp_timestamp() {
+    auto& ref_clock = screamrouter::audio_engine::ReferenceClockManager::get_instance();
+    auto now = ref_clock.now();
+    
+    // Add measured pipeline latency from timestamp mapper
+    double measured_latency_ms = 0.0;
+    if (timestamp_mapper_) {
+        measured_latency_ms = timestamp_mapper_->get_average_processing_latency_ms();
+        LOG_CPP_DEBUG("[RtpSender:%s] Using measured pipeline latency: %.2f ms",
+                     config_.sink_id.c_str(), measured_latency_ms);
+    }
+    
+    // Add configured delay
+    measured_latency_ms += time_sync_delay_ms_;
+    
+    // Adjust time by measured latency
+    auto latency_adjusted_time = now +
+        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double, std::milli>(measured_latency_ms));
+    
+    uint64_t ntp_timestamp = ref_clock.reference_time_to_ntp(latency_adjusted_time);
+    
+    LOG_CPP_DEBUG("[RtpSender:%s] Synchronized NTP timestamp: 0x%016llX (total_latency=%.2f ms)",
+                  config_.sink_id.c_str(),
+                  (unsigned long long)ntp_timestamp,
+                  measured_latency_ms);
     
     return ntp_timestamp;
 }
@@ -970,8 +1016,8 @@ void RtpSender::send_rtcp_sr() {
     // Fill sender info
     sr.ssrc = htonl(ssrc_);
     
-    // Get NTP timestamp with delay
-    uint64_t ntp_ts = get_ntp_timestamp_with_delay();
+    // Phase 5: Use synchronized NTP timestamp (includes measured pipeline latency)
+    uint64_t ntp_ts = get_synchronized_ntp_timestamp();
     // NTP timestamp needs to be in network byte order
     uint32_t ntp_seconds = (ntp_ts >> 32) & 0xFFFFFFFF;
     uint32_t ntp_fraction = ntp_ts & 0xFFFFFFFF;

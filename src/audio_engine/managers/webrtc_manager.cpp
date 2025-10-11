@@ -82,19 +82,33 @@ bool WebRtcManager::add_webrtc_listener(
 }
 
 bool WebRtcManager::remove_webrtc_listener(const std::string& sink_id, const std::string& listener_id, bool running) {
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
-    if (!running) {
-        return true;
-    }
-
-    INetworkSender* existing_listener = m_sink_manager->get_listener_from_sink(sink_id, listener_id);
-    if (!existing_listener) {
-        LOG_CPP_DEBUG("[WebRtcManager] WebRTC listener %s already removed from sink %s", listener_id.c_str(), sink_id.c_str());
-        return true;
-    }
-
+    // Step 1: Check if we should proceed and validate listener exists (under lock)
+    {
+        std::lock_guard<std::mutex> lock(m_manager_mutex);
+        if (!running) {
+            return true;
+        }
+        
+        // Verify listener exists before proceeding
+        INetworkSender* existing_listener = m_sink_manager->get_listener_from_sink(sink_id, listener_id);
+        if (!existing_listener) {
+            LOG_CPP_DEBUG("[WebRtcManager] WebRTC listener %s already removed from sink %s", listener_id.c_str(), sink_id.c_str());
+            // Clean up our tracking map just in case
+            m_webrtc_listeners.erase(listener_id);
+            return true;
+        }
+    } // Release m_manager_mutex here to prevent deadlock
+    
+    // Step 2: Perform the actual removal WITHOUT holding m_manager_mutex
+    // This prevents deadlock with SinkAudioMixer's listener_senders_mutex_
     m_sink_manager->remove_listener_from_sink(sink_id, listener_id);
-    m_webrtc_listeners.erase(listener_id);
+    
+    // Step 3: Update our internal state (reacquire lock)
+    {
+        std::lock_guard<std::mutex> lock(m_manager_mutex);
+        m_webrtc_listeners.erase(listener_id);
+    }
+    
     LOG_CPP_INFO("[WebRtcManager] Removed WebRTC listener %s from sink %s", listener_id.c_str(), sink_id.c_str());
     return true;
 }

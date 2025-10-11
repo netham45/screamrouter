@@ -19,6 +19,7 @@
 #include "../senders/scream/scream_sender.h"
 #include "../senders/rtp/rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
+#include "../input_processor/source_input_processor.h"
 
 using namespace screamrouter::audio;
 using namespace screamrouter::audio::utils;
@@ -65,8 +66,9 @@ SinkAudioMixer::SinkAudioMixer(
     }
 
     if (config_.protocol == "rtp") {
-        LOG_CPP_INFO("[SinkMixer:%s] Creating RtpSender.", config_.sink_id.c_str());
-        network_sender_ = std::make_unique<RtpSender>(config_);
+        LOG_CPP_INFO("[SinkMixer:%s] Creating RtpSender (TimestampMapper will be set later).", config_.sink_id.c_str());
+        // Pass nullptr for now, will be updated when we have a processor
+        network_sender_ = std::make_unique<RtpSender>(config_, nullptr);
     } else if (config_.protocol == "scream") {
         LOG_CPP_INFO("[SinkMixer:%s] Creating ScreamSender.", config_.sink_id.c_str());
         network_sender_ = std::make_unique<ScreamSender>(config_);
@@ -146,7 +148,8 @@ void SinkAudioMixer::initialize_lame() {
  * @param instance_id The unique ID of the source processor instance.
  * @param queue A shared pointer to the source's output queue.
  */
-void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared_ptr<InputChunkQueue> queue) {
+void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared_ptr<InputChunkQueue> queue,
+                                     screamrouter::audio::SourceInputProcessor* processor) {
     if (!queue) {
         LOG_CPP_ERROR("[SinkMixer:%s] Attempted to add null input queue for instance: %s", config_.sink_id.c_str(), instance_id.c_str());
         return;
@@ -156,6 +159,30 @@ void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared
         input_queues_[instance_id] = queue;
         input_active_state_[instance_id] = false;
         source_buffers_[instance_id].audio_data.assign(SINK_MIXING_BUFFER_SAMPLES, 0);
+        
+        // Phase 5: Store processor reference and get TimestampMapper
+        if (processor) {
+            input_processors_[instance_id] = processor;
+            auto timestamp_mapper = processor->get_timestamp_mapper();
+            if (timestamp_mapper && !collected_timestamp_mapper_) {
+                collected_timestamp_mapper_ = timestamp_mapper;
+                LOG_CPP_INFO("[SinkMixer:%s] Collected TimestampMapper from processor %s",
+                            config_.sink_id.c_str(), instance_id.c_str());
+                
+                // Update RtpSender if it's an RTP sink
+                if (config_.protocol == "rtp" && network_sender_) {
+                    // Need to recreate RtpSender with TimestampMapper
+                    network_sender_->close();
+                    network_sender_ = std::make_unique<RtpSender>(config_, collected_timestamp_mapper_);
+                    if (is_running()) {
+                        network_sender_->setup();
+                    }
+                    LOG_CPP_INFO("[SinkMixer:%s] Recreated RtpSender with TimestampMapper",
+                                config_.sink_id.c_str());
+                }
+            }
+        }
+        
         LOG_CPP_INFO("[SinkMixer:%s] Added input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
     input_cv_.notify_one();
@@ -171,6 +198,7 @@ void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
         input_queues_.erase(instance_id);
         input_active_state_.erase(instance_id);
         source_buffers_.erase(instance_id);
+        input_processors_.erase(instance_id);  // Phase 5: Clean up processor reference
         LOG_CPP_INFO("[SinkMixer:%s] Removed input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
 }
@@ -459,6 +487,144 @@ bool SinkAudioMixer::wait_for_source_data() {
 }
 
 /**
+ * @brief Calculates the next mix time based on the earliest chunk across all input queues.
+ * @return The earliest expected_playout_time from all peeked chunks, or time_point::max() if no chunks available.
+ */
+std::chrono::steady_clock::time_point SinkAudioMixer::calculate_next_mix_time() {
+    auto earliest_time = std::chrono::steady_clock::time_point::max();
+    
+    std::lock_guard<std::mutex> lock(queues_mutex_);
+    for (auto const& [instance_id, queue_ptr] : input_queues_) {
+        ProcessedAudioChunk chunk;
+        if (queue_ptr->peek(chunk)) {
+            if (chunk.expected_playout_time < earliest_time) {
+                earliest_time = chunk.expected_playout_time;
+                LOG_CPP_DEBUG("[SinkMixer:%s] calculate_next_mix_time: Found earlier time from %s",
+                             config_.sink_id.c_str(), instance_id.c_str());
+            }
+        }
+    }
+    
+    return earliest_time;
+}
+
+/**
+ * @brief Performs a timestamp-based mixing cycle without grace period delays.
+ * @return true if mixing occurred, false if waiting for target time.
+ */
+bool SinkAudioMixer::scheduled_mix_cycle() {
+    auto now = std::chrono::steady_clock::now();
+    auto epoch = std::chrono::steady_clock::time_point();
+    
+    // Calculate when the next chunk should be mixed
+    auto target_mix_time = calculate_next_mix_time();
+    
+    // Check if timestamps are being used (if not at epoch, timestamps are valid)
+    bool timestamps_available = (target_mix_time != std::chrono::steady_clock::time_point::max() &&
+                                  target_mix_time != epoch);
+    
+    // If timestamps aren't available, fall back to the original wait_for_source_data behavior
+    if (!timestamps_available) {
+        LOG_CPP_DEBUG("[SinkMixer:%s] scheduled_mix_cycle: Timestamps not available, falling back to wait_for_source_data",
+                     config_.sink_id.c_str());
+        bool data_available = wait_for_source_data();
+        if (data_available) {
+            return true;
+        }
+        return false;
+    }
+    
+    // Timestamps are available - use timestamp-based mixing
+    if (target_mix_time > now) {
+        // Target time is in the future - sleep until then (no polling!)
+        auto sleep_duration = std::chrono::duration_cast<std::chrono::milliseconds>(target_mix_time - now);
+        LOG_CPP_DEBUG("[SinkMixer:%s] scheduled_mix_cycle: Sleeping %lld ms until target mix time",
+                     config_.sink_id.c_str(), sleep_duration.count());
+        std::this_thread::sleep_until(target_mix_time);
+        now = std::chrono::steady_clock::now();
+    }
+    
+    // Target time reached - collect all ready chunks (within tolerance)
+    std::lock_guard<std::mutex> lock(queues_mutex_);
+    const auto READY_TOLERANCE = std::chrono::milliseconds(5);
+    bool any_data_collected = false;
+    
+    for (auto const& [instance_id, queue_ptr] : input_queues_) {
+        ProcessedAudioChunk chunk;
+        if (queue_ptr->peek(chunk)) {
+            // Check if this chunk has valid timestamp
+            if (chunk.expected_playout_time == epoch) {
+                // No timestamp - just pop it immediately
+                if (queue_ptr->try_pop(chunk)) {
+                    if (chunk.audio_data.size() != SINK_MIXING_BUFFER_SAMPLES) {
+                        LOG_CPP_ERROR("[SinkMixer:%s] scheduled_mix_cycle: Chunk from %s has unexpected sample count: %zu. Discarding.",
+                                     config_.sink_id.c_str(), instance_id.c_str(), chunk.audio_data.size());
+                        input_active_state_[instance_id] = false;
+                    } else {
+                        m_total_chunks_mixed++;
+                        source_buffers_[instance_id] = std::move(chunk);
+                        input_active_state_[instance_id] = true;
+                        any_data_collected = true;
+                    }
+                }
+                continue;
+            }
+            
+            auto time_until_playout = chunk.expected_playout_time - now;
+            
+            // Check if chunk is ready (playout time is now or in the past, or within tolerance)
+            if (time_until_playout <= READY_TOLERANCE) {
+                // Chunk is ready - pop it and use it for mixing
+                if (queue_ptr->try_pop(chunk)) {
+                    if (chunk.audio_data.size() != SINK_MIXING_BUFFER_SAMPLES) {
+                        LOG_CPP_ERROR("[SinkMixer:%s] scheduled_mix_cycle: Chunk from %s has unexpected sample count: %zu. Discarding.",
+                                     config_.sink_id.c_str(), instance_id.c_str(), chunk.audio_data.size());
+                        input_active_state_[instance_id] = false;
+                    } else {
+                        LOG_CPP_DEBUG("[SinkMixer:%s] scheduled_mix_cycle: Chunk from %s is ready (playout in %lld ms)",
+                                     config_.sink_id.c_str(), instance_id.c_str(),
+                                     std::chrono::duration_cast<std::chrono::milliseconds>(time_until_playout).count());
+                        m_total_chunks_mixed++;
+                        source_buffers_[instance_id] = std::move(chunk);
+                        input_active_state_[instance_id] = true;
+                        any_data_collected = true;
+                    }
+                } else {
+                    LOG_CPP_WARNING("[SinkMixer:%s] scheduled_mix_cycle: Failed to pop chunk from %s after peek succeeded",
+                                   config_.sink_id.c_str(), instance_id.c_str());
+                    input_active_state_[instance_id] = false;
+                }
+            } else {
+                // Chunk is not ready yet - keep it in queue, reuse previous buffer
+                LOG_CPP_DEBUG("[SinkMixer:%s] scheduled_mix_cycle: Chunk from %s not ready (playout in %lld ms), reusing previous buffer",
+                             config_.sink_id.c_str(), instance_id.c_str(),
+                             std::chrono::duration_cast<std::chrono::milliseconds>(time_until_playout).count());
+                // Keep source active if it was active before (reuse its buffer)
+                // This allows continuous mixing even if one source is ahead
+            }
+        } else {
+            // No chunk available from this source
+            bool previously_active = input_active_state_.count(instance_id) ? input_active_state_[instance_id] : false;
+            input_active_state_[instance_id] = false;
+            if (previously_active) {
+                LOG_CPP_DEBUG("[SinkMixer:%s] scheduled_mix_cycle: No chunk available from previously active source %s",
+                             config_.sink_id.c_str(), instance_id.c_str());
+                m_buffer_underruns++;
+            }
+        }
+    }
+    
+    // Mix whatever's ready
+    if (any_data_collected || std::any_of(input_active_state_.begin(), input_active_state_.end(),
+                                          [](const auto& p) { return p.second; })) {
+        mix_buffers();
+        return true;
+    }
+    
+    return false;
+}
+
+/**
  * @brief Mixes audio from all active source buffers into the main mixing buffer.
  */
 void SinkAudioMixer::mix_buffers() {
@@ -734,26 +900,19 @@ void SinkAudioMixer::run() {
     LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Starting iteration.", config_.sink_id.c_str());
     while (!stop_flag_) {
         cleanup_closed_listeners();
-        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Waiting for source data...", config_.sink_id.c_str());
-        bool data_available = wait_for_source_data();
-        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Wait finished. Data available: %s", config_.sink_id.c_str(), (data_available ? "true" : "false"));
+        
+        // Use scheduled_mix_cycle instead of wait_for_source_data
+        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Calling scheduled_mix_cycle...", config_.sink_id.c_str());
+        bool mixed = scheduled_mix_cycle();
+        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: scheduled_mix_cycle returned: %s", config_.sink_id.c_str(), (mixed ? "true" : "false"));
 
         if (stop_flag_) {
-             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Stop flag checked after wait, breaking.", config_.sink_id.c_str());
+             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Stop flag checked after scheduled_mix_cycle, breaking.", config_.sink_id.c_str());
              break;
         }
 
-        std::unique_lock<std::mutex> lock(queues_mutex_);
-
-        if (data_available) {
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Data available or queues not empty, proceeding to mix.", config_.sink_id.c_str());
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing buffers...", config_.sink_id.c_str());
-            mix_buffers();
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing complete.", config_.sink_id.c_str());
-
-            lock.unlock();
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Queues mutex unlocked.", config_.sink_id.c_str());
-
+        if (mixed) {
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing occurred, processing output...", config_.sink_id.c_str());
             downscale_buffer();
 
             if (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
@@ -787,10 +946,6 @@ void SinkAudioMixer::run() {
                     }
                 }
             }
-        } else {
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No data available and input queues empty. Sleeping briefly.", config_.sink_id.c_str());
-            lock.unlock();
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: End of iteration.", config_.sink_id.c_str());
     }

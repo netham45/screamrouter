@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { useWebRTC } from '../../context/WebRTCContext';
+import { useAppContext } from '../../context/AppContext';
 
 const AudioPlayer: React.FC<{
   stream: MediaStream,
@@ -16,9 +16,10 @@ const AudioPlayer: React.FC<{
         }
         try {
           await audioRef.current.play();
+          console.log(`[AudioPlayer] Successfully playing audio for ${sinkId}`);
         } catch (error) {
           // Autoplay can be blocked by the browser. This is the required exception handler.
-          console.error("Audio play failed, triggering onPlaybackError:", error);
+          console.error(`[AudioPlayer] Audio play failed for ${sinkId}:`, error);
           onPlaybackError(sinkId, error as Error);
         }
       }
@@ -28,17 +29,16 @@ const AudioPlayer: React.FC<{
   }, [stream, sinkId, onPlaybackError]);
 
   // The audio element is rendered but not visible to the user.
-  return <audio ref={audioRef} autoPlay={true} controls={true} muted={false} style={{"display":"none"}} />;
+  return <audio ref={audioRef} autoPlay={true} controls={true} playsInline style={{"display":"none"}} />;
 };
 
 export const WebRTCAudioPlayers: React.FC = () => {
-  // This is a placeholder, we need to get the streams from the context.
-  // Let's assume AppContext provides a map of streams.
-  const { audioStreams, playbackError } = useWebRTC();
+  // FIX: Use useAppContext instead of useWebRTC to get the actual streams
+  const { audioStreams, onPlaybackError } = useAppContext();
 
   const handlePlaybackError = (sinkId: string, error: Error) => {
-    // The playbackError is now handled in the WebRTCContext
-    console.error(`Playback error for sink ${sinkId}:`, error);
+    console.error(`[WebRTCAudioPlayers] Playback error for sink ${sinkId}:`, error);
+    onPlaybackError(sinkId, error);
   };
 
   return (

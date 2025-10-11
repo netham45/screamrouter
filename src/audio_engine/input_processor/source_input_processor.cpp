@@ -1,5 +1,7 @@
 #include "source_input_processor.h"
 #include "../utils/cpp_logger.h" // For new C++ logger
+#include "../timing/reference_clock_manager.h"
+#include "../timing/timestamp_mapper.h"
 #include <iostream> // For logging (cpp_logger fallback)
 #include <stdexcept>
 #include <cstring> // For memcpy
@@ -51,12 +53,15 @@ SourceInputProcessor::SourceInputProcessor(
       m_current_ap_input_samplerate(0),
       m_current_ap_input_bitdepth(0)
 {
+    // Phase 5: Initialize TimestampMapper as shared_ptr for sharing with RtpSender
+    timestamp_mapper_ = std::make_shared<screamrouter::audio_engine::TimestampMapper>(config_.instance_id);
+    
     // current_speaker_layouts_map_ will be populated by set_speaker_layouts_config
     // or when AudioProcessor is created if SourceProcessorConfig is updated.
     // For now, it starts empty.
 
     // Use the new LOG macro which includes instance_id
-    LOG_CPP_INFO("[SourceProc:%s] Initializing...", config_.instance_id.c_str());
+    LOG_CPP_INFO("[SourceProc:%s] Initializing with TimestampMapper...", config_.instance_id.c_str());
     if (!input_queue_ || !output_queue_ || !command_queue_) {
         // Log before throwing
         LOG_CPP_ERROR("[SourceProc:%s] Initialization failed: Requires valid input, output, and command queues.", config_.instance_id.c_str());
@@ -311,6 +316,31 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
         // Copy the required number of samples
          output_chunk.audio_data.assign(process_buffer_.begin(), process_buffer_.begin() + required_samples);
          output_chunk.ssrcs = current_packet_ssrcs_;
+         
+         // Tag output chunk with timestamp information
+         output_chunk.original_input_rtp_timestamp = current_accumulation_first_rtp_ts_;
+         output_chunk.source_processor_id = config_.instance_id;
+         output_chunk.processing_latency_ms = current_processing_latency_ms_;
+         output_chunk.expected_playout_time = current_accumulation_start_time_; // Will be refined by jitter buffer
+         
+         // Record the mapping in TimestampMapper
+         if (timestamp_mapper_ && current_accumulation_first_rtp_ts_.has_value()) {
+             screamrouter::audio_engine::TimestampMapping mapping;
+             mapping.input_rtp_timestamp = current_accumulation_first_rtp_ts_.value();
+             mapping.output_rtp_timestamp = 0; // Not used yet (Phase 5)
+             mapping.input_arrival_time = current_accumulation_start_time_;
+             mapping.expected_output_time = output_chunk.expected_playout_time;
+             mapping.processing_latency_ms = current_processing_latency_ms_;
+             mapping.resampling_ratio = 1.0; // Will be calculated later if needed
+             timestamp_mapper_->add_mapping(mapping);
+             
+             LOG_CPP_DEBUG("[SourceProc:%s] Recorded timestamp mapping: input_rtp=%u, latency=%.2fms",
+                          config_.instance_id.c_str(), mapping.input_rtp_timestamp, mapping.processing_latency_ms);
+         }
+         
+         // Reset for next accumulation
+         current_accumulation_first_rtp_ts_.reset();
+         
          size_t pushed_samples = output_chunk.audio_data.size();
 
          // Push to the output queue
@@ -371,10 +401,27 @@ void SourceInputProcessor::input_loop() {
         if (packet_ok_for_processing && audio_processor_) {
             if (audio_payload_ptr && audio_payload_size == INPUT_CHUNK_BYTES) {
                 current_packet_ssrcs_ = timed_packet.ssrcs;
+                
+                // Track first input RTP timestamp per accumulation
+                if (!current_accumulation_first_rtp_ts_.has_value()) {
+                    if (timed_packet.rtp_timestamp.has_value()) {
+                        current_accumulation_first_rtp_ts_ = timed_packet.rtp_timestamp.value();
+                        current_accumulation_start_time_ = timed_packet.reference_arrival_time;
+                        LOG_CPP_DEBUG("[SourceProc:%s] Starting new accumulation with RTP timestamp: %u",
+                                     config_.instance_id.c_str(), current_accumulation_first_rtp_ts_.value());
+                    }
+                }
+                
                 std::vector<uint8_t> chunk_data_for_processing(audio_payload_ptr, audio_payload_ptr + audio_payload_size);
+                
+                // Measure processing latency
+                auto processing_start = screamrouter::audio_engine::ReferenceClockManager::get_instance().now();
                 
                 // This function now appends variable-sized output to our internal buffer
                 process_audio_chunk(chunk_data_for_processing);
+                
+                auto processing_end = screamrouter::audio_engine::ReferenceClockManager::get_instance().now();
+                current_processing_latency_ms_ = std::chrono::duration<double, std::milli>(processing_end - processing_start).count();
                 
                 // This function now deals out fixed-size chunks from the buffer
                 push_output_chunk_if_ready();

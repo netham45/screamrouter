@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include <set>
 #include "stream_clock.h"
 #include <map>
 #include <chrono>
@@ -67,6 +68,10 @@ struct StreamTimingState {
     double last_arrival_time_error_ms = 0.0; // For stats
     double target_buffer_level_ms = 0.0;
     double buffer_target_fill_percentage = 0.0;
+
+    // Phase 3: Unified jitter buffer - single delay for all outputs from same input
+    double unified_adaptive_delay_ms = 0.0;
+    std::set<std::string> consuming_processor_ids; // Track which processors consume this stream
 
     // Stats
     std::atomic<uint64_t> total_packets{0};

@@ -217,11 +217,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const webrtcListenersRef = useRef<Map<string, { pc: RTCPeerConnection, listenerId: string }>>(new Map());
   const heartbeatIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   const [audioStreams, setAudioStreams] = useState<Map<string, MediaStream>>(new Map());
-  const [mediaSessionSinkId, setMediaSessionSinkId] = useState<string | null>(null);
-  const mediaSessionAudioRef = useRef<HTMLAudioElement>(null);
   const silenceSessionAudioRef = useRef<HTMLAudioElement>(null);
-  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
-  const [audioSourceNode, setAudioSourceNode] = useState<MediaStreamAudioSourceNode | null>(null);
+  // Removed audioContext and audioSourceNode - not needed for Chrome audio playback
   const [visualizingSink, setVisualizingSink] = useState<Sink | null>(null);
   const [playbackError, setPlaybackError] = useState<Map<string, Error>>(new Map());
   const [sources, setSources] = useState<Source[]>([]);
@@ -455,36 +452,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [needsFullRefresh]);
 
-  useEffect(() => {
-    const audioUrl = silenceMP3;
-    if (mediaSessionAudioRef.current) {
-      mediaSessionAudioRef.current.src = audioUrl;
-      mediaSessionAudioRef.current.play().then(() => {
-        if (navigator.mediaSession) {
-          navigator.mediaSession.metadata = new MediaMetadata({
-            title: 'Imperial March',
-            artist: 'John Williams',
-            album: 'Star Wars',
-            artwork: [
-              { src: 'https://upload.wikimedia.org/wikipedia/en/3/32/Star_Wars_-_The_Empire_Strikes_Back_%28soundtrack%29.jpg', sizes: '512x512', type: 'image/jpeg' },
-            ]
-          });
-          navigator.mediaSession.setActionHandler('play', () => mediaSessionAudioRef.current?.play());
-          navigator.mediaSession.setActionHandler('pause', () => mediaSessionAudioRef.current?.pause());
-        }
-      }).catch(e => console.error("Audio play failed", e));
-    }
-  }, []);
-
-  useEffect(() => {
-    const audioUrl = silenceMP3;
-    if (mediaSessionAudioRef.current) {
-      mediaSessionAudioRef.current.src = audioUrl;
-      mediaSessionAudioRef.current.play().then(() => {
-
-      }).catch(e => console.error("Audio play failed", e));
-    }
-  }, []);
+  // Removed duplicate useEffect hooks that were setting mediaSessionAudioRef to silence MP3
+  // mediaSessionAudioRef should ONLY be used for WebRTC streams, not silence audio
   const fetchSources = async () => {
     try {
       const response = await ApiService.getSources();
@@ -570,27 +539,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       newMap.delete(sinkId);
       return newMap;
     });
-    if (audioSourceNode) {
-      audioSourceNode.disconnect();
-      setAudioSourceNode(null);
-    }
     setListeningStatus(prev => new Map(prev).set(sinkId, false));
-
-    // Clear media session if this was the active sink
-    if (sinkId === mediaSessionSinkId) {
-      if (mediaSessionAudioRef.current) {
-        mediaSessionAudioRef.current.pause();
-        mediaSessionAudioRef.current.srcObject = null;
-      }
-      if (navigator.mediaSession) {
-        navigator.mediaSession.metadata = null;
-        navigator.mediaSession.setActionHandler('play', null);
-        navigator.mediaSession.setActionHandler('pause', null);
-        navigator.mediaSession.setActionHandler('previoustrack', null);
-        navigator.mediaSession.setActionHandler('nexttrack', null);
-      }
-      setMediaSessionSinkId(null);
-    }
     console.log(`[WebRTC:${sinkId}] Connection cleanup complete.`);
   };
 
@@ -627,7 +576,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 2. Now, proceed with establishing the new connection.
     console.log(`[WebRTC:${sinkId}] Proceeding to establish new WHEP connection.`);
-    setMediaSessionSinkId(sinkId);
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -666,38 +614,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     pc.ontrack = (event) => {
       console.log(`[WebRTC:${sinkId}] Received remote audio track.`);
+      // Just store the stream - the WebRTCAudioPlayers component will handle playback
       setAudioStreams(prev => new Map(prev).set(sinkId, event.streams[0]));
-
-      let currentAudioContext = audioContext;
-      if (!currentAudioContext) {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const newAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-          setAudioContext(newAudioContext);
-          currentAudioContext = newAudioContext;
-        } catch (e) {
-          console.error("Web Audio API is not supported in this browser", e);
-          return;
-        }
-      }
-
-      if (currentAudioContext.state === 'suspended') {
-        currentAudioContext.resume().catch(e => console.error(`[WebRTC:${sinkId}] Failed to resume AudioContext:`, e));
-      }
-
-      if (audioSourceNode) {
-        audioSourceNode.disconnect();
-      }
-
-      const sourceNode = currentAudioContext.createMediaStreamSource(event.streams[0]);
-      sourceNode.connect(currentAudioContext.destination);
-      setAudioSourceNode(sourceNode);
-
-      if (mediaSessionAudioRef.current && sinkId === mediaSessionSinkId) {
-        mediaSessionAudioRef.current.srcObject = event.streams[0];
-        mediaSessionAudioRef.current.muted = false;
-        mediaSessionAudioRef.current.play().catch(e => console.error("Media Session audio play failed", e));
-      }
     };
 
     pc.oniceconnectionstatechange = async () => {

@@ -9,11 +9,13 @@
 
 #include "../i_network_sender.h"
 #include "../../output_mixer/sink_audio_mixer.h"
+#include "../../timing/timestamp_mapper.h"
 #include <rtc/rtp.hpp>
 #include <cstdint>
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <memory>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -42,8 +44,10 @@ public:
     /**
      * @brief Constructs an RtpSender.
      * @param config The configuration for the sink this sender is associated with.
+     * @param timestamp_mapper Optional shared pointer to TimestampMapper for synchronized timestamps.
      */
-    explicit RtpSender(const SinkMixerConfig& config);
+    explicit RtpSender(const SinkMixerConfig& config,
+                      std::shared_ptr<screamrouter::audio_engine::TimestampMapper> timestamp_mapper = nullptr);
     /**
      * @brief Destructor.
      */
@@ -69,6 +73,9 @@ private:
     uint32_t ssrc_;
     uint16_t sequence_number_;
     uint32_t rtp_timestamp_;
+    
+    // Phase 5: Timestamp synchronization
+    std::shared_ptr<screamrouter::audio_engine::TimestampMapper> timestamp_mapper_;
 
     // SAP announcement members
     socket_t sap_socket_fd_;
@@ -89,7 +96,8 @@ private:
     std::atomic<uint32_t> octet_count_;                    ///< Number of payload octets sent
 
     // Time synchronization variables
-    std::chrono::system_clock::time_point stream_start_time_;     ///< When the stream started
+    std::chrono::system_clock::time_point stream_start_time_;     ///< When the stream started (system_clock)
+    std::chrono::steady_clock::time_point stream_start_time_ref_; ///< When the stream started (reference clock) - Phase 5
     uint32_t stream_start_rtp_timestamp_;                         ///< Initial RTP timestamp at stream start
     int time_sync_delay_ms_;                                      ///< Delay to add to wall clock time (ms)
 
@@ -115,6 +123,12 @@ private:
      * @return 64-bit NTP timestamp (seconds in upper 32 bits, fraction in lower 32 bits).
      */
     uint64_t get_ntp_timestamp_with_delay();
+    
+    /**
+     * @brief Gets synchronized NTP timestamp including measured pipeline latency.
+     * @return 64-bit NTP timestamp adjusted for measured latency.
+     */
+    uint64_t get_synchronized_ntp_timestamp();
 
     /**
      * @brief Maps an NTP timestamp to the corresponding RTP timestamp.

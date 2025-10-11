@@ -91,6 +91,22 @@ public:
     }
 
     /**
+     * @brief Peeks at the front item without removing it from the queue.
+     * @details This method allows non-destructive inspection of the queue front.
+     *          It's thread-safe and does not modify the queue.
+     * @param item A reference to store a copy of the front item.
+     * @return `true` if an item was copied, `false` if the queue was empty.
+     */
+    bool peek(T& item) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (queue_.empty()) {
+            return false;
+        }
+        item = queue_.front();
+        return true;
+    }
+
+    /**
      * @brief Signals the queue to stop blocking operations.
      * @details This notifies all waiting threads to wake up. After `stop()` is called,
      *          `pop()` will return `false` once the queue becomes empty.
