@@ -44,7 +44,7 @@ public:
      * @param sink_manager A pointer to the SinkManager instance.
      * @param sink_configs A reference to the map of sink configurations.
      */
-    WebRtcManager(std::mutex& manager_mutex, SinkManager* sink_manager, std::map<std::string, SinkConfig>& sink_configs);
+    WebRtcManager(std::recursive_mutex& manager_mutex, SinkManager* sink_manager, std::map<std::string, SinkConfig>& sink_configs);
     /**
      * @brief Destructor.
      */
@@ -99,7 +99,7 @@ public:
     void add_webrtc_remote_ice_candidate(const std::string& sink_id, const std::string& listener_id, const std::string& candidate, const std::string& sdpMid, bool running);
 
 private:
-    std::mutex& m_manager_mutex;
+    std::recursive_mutex& m_manager_mutex;
     SinkManager* m_sink_manager;
     std::map<std::string, SinkConfig>& m_sink_configs;
     std::map<std::string, WebRtcListenerInfo> m_webrtc_listeners;

@@ -7,6 +7,12 @@ Build Requirements:
 - Node.js and npm (for building React frontend)
 - Python development headers
 - OpenSSL development libraries
+
+Parallel Build Support:
+- Automatically uses all CPU cores for compilation (configurable)
+- Override with: pip install -e . --config-settings="--build-option=--parallel=N"
+- Or set environment: export MAX_JOBS=N before building
+- Linux: Install ccache for faster incremental rebuilds
 """
 
 import os
@@ -100,9 +106,30 @@ class BuildReactCommand(_build):
 
 
 class BuildExtCommand(build_ext):
-    """Custom build_ext that uses our modular build system"""
-    
+    """
+    Custom build_ext that uses our modular build system.
+
+    Features:
+    - Builds C++ dependencies (OpenSSL, Opus, libdatachannel, etc.)
+    - Compiles screamrouter C++ extension in parallel (uses all CPU cores)
+    - Supports ccache for faster incremental builds on Linux
+    - Generates pybind11 type stubs automatically
+    """
+
     def run(self):
+        # Enable parallel compilation for faster builds
+        # Use all available CPU cores by default
+        if self.parallel is None:
+            self.parallel = os.cpu_count() or 1
+
+        print(f"Building with {self.parallel} parallel jobs...")
+
+        # Enable ccache for faster incremental builds on Linux
+        if sys.platform != "win32" and shutil.which("ccache"):
+            os.environ["CC"] = "ccache " + os.environ.get("CC", "gcc")
+            os.environ["CXX"] = "ccache " + os.environ.get("CXX", "g++")
+            print("Using ccache for faster incremental builds")
+
         # Build React frontend first
         print("Building React frontend before C++ extensions...")
         self.run_command('build_react')
@@ -191,9 +218,6 @@ class BuildExtCommand(build_ext):
         if not self.dry_run:
             print("Generating pybind11 stubs...")
             try:
-                import subprocess
-                import os
-                
                 env = os.environ.copy()
                 env["PYTHONPATH"] = self.build_lib + os.pathsep + env.get("PYTHONPATH", "")
                 

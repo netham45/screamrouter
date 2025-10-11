@@ -7,7 +7,7 @@ namespace screamrouter {
 namespace audio {
 
 ControlApiManager::ControlApiManager(
-    std::mutex& manager_mutex,
+    std::recursive_mutex& manager_mutex,
     std::map<std::string, std::shared_ptr<CommandQueue>>& command_queues,
     TimeshiftManager* timeshift_manager,
     std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources)
@@ -23,7 +23,7 @@ ControlApiManager::~ControlApiManager() {
 }
 
 void ControlApiManager::update_source_parameters(const std::string& instance_id, SourceParameterUpdates params, bool running) {
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    std::scoped_lock lock(m_manager_mutex);
     if (!running) return;
 
     if (params.volume.has_value()) {
@@ -52,7 +52,7 @@ void ControlApiManager::update_source_parameters(const std::string& instance_id,
 bool ControlApiManager::send_command_to_source(const std::string& instance_id, const ControlCommand& command, bool running) {
     std::shared_ptr<CommandQueue> target_queue;
     {
-        std::lock_guard<std::mutex> lock(m_manager_mutex);
+        std::scoped_lock lock(m_manager_mutex);
         if (!running) return false;
 
         auto it = m_command_queues.find(instance_id);

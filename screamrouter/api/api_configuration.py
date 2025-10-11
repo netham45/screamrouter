@@ -43,6 +43,8 @@ class APIConfiguration():
             self._configuration_controller.update_sink_equalizer)
         self._app.get("/sinks/{sink_name}/reorder/{new_index}", tags=["Sink Configuration"])(
             self._configuration_controller.update_sink_position)
+        self._app.get("/sinks/rtp_compatible", tags=["Sink Configuration"])(
+            self.get_rtp_compatible_sinks)
 
         # Source Configuration
         self._app.get("/sources", tags=["Source Configuration"])(
@@ -116,3 +118,22 @@ class APIConfiguration():
             status_code = 500,
             content = {"error": str(exception), "traceback": traceback.format_exc()}
         )
+    
+    def get_rtp_compatible_sinks(self):
+        """Get all configured sinks that are not groups and have protocol set to 'rtp'.
+        This is used by the frontend to populate a dropdown of available receivers."""
+        try:
+            # Get all sinks from the configuration controller
+            all_sinks = self._configuration_controller.get_sinks()
+            
+            # Filter for non-group sinks with RTP protocol
+            rtp_compatible_sinks = [
+                sink for sink in all_sinks
+                if not sink.is_group and sink.protocol == "rtp"
+            ]
+            
+            logger.info("[API] Returning %d RTP compatible sinks", len(rtp_compatible_sinks))
+            return rtp_compatible_sinks
+        except Exception as e:
+            logger.error("[API] Error getting RTP compatible sinks: %s", str(e))
+            raise

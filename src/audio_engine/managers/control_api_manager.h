@@ -39,7 +39,7 @@ public:
      * @param sources A reference to the map of active source processors.
      */
     ControlApiManager(
-        std::mutex& manager_mutex,
+        std::recursive_mutex& manager_mutex,
         std::map<std::string, std::shared_ptr<CommandQueue>>& command_queues,
         TimeshiftManager* timeshift_manager,
         std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources
@@ -99,7 +99,7 @@ private:
     void update_source_timeshift_nolock(const std::string& instance_id, float timeshift_sec);
     void update_source_speaker_layouts_map_nolock(const std::string& instance_id, const std::map<int, CppSpeakerLayout>& layouts_map);
 
-    std::mutex& m_manager_mutex;
+    std::recursive_mutex& m_manager_mutex;
     std::map<std::string, std::shared_ptr<CommandQueue>>& m_command_queues;
     TimeshiftManager* m_timeshift_manager;
     std::map<std::string, std::unique_ptr<SourceInputProcessor>>& m_sources;

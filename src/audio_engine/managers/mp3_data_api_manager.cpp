@@ -8,7 +8,7 @@ namespace screamrouter {
 namespace audio {
 
 MP3DataApiManager::MP3DataApiManager(
-    std::mutex& manager_mutex,
+    std::recursive_mutex& manager_mutex,
     std::map<std::string, std::shared_ptr<Mp3Queue>>& mp3_output_queues,
     std::map<std::string, SinkConfig>& sink_configs)
     : m_manager_mutex(manager_mutex),
@@ -24,7 +24,7 @@ MP3DataApiManager::~MP3DataApiManager() {
 std::vector<uint8_t> MP3DataApiManager::get_mp3_data(const std::string& sink_id, bool running) {
     std::shared_ptr<Mp3Queue> target_queue;
     {
-        std::lock_guard<std::mutex> lock(m_manager_mutex);
+        std::scoped_lock lock(m_manager_mutex);
         if (!running) return {};
 
         auto it = m_mp3_output_queues.find(sink_id);
@@ -44,7 +44,7 @@ std::vector<uint8_t> MP3DataApiManager::get_mp3_data(const std::string& sink_id,
 }
 
 std::vector<uint8_t> MP3DataApiManager::get_mp3_data_by_ip(const std::string& ip_address, bool running) {
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    std::scoped_lock lock(m_manager_mutex);
 
     if (!running) {
         return {};

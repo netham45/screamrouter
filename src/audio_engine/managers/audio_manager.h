@@ -264,7 +264,7 @@ public:
 
 private:
     std::atomic<bool> m_running{false};
-    std::mutex m_manager_mutex;
+    std::recursive_mutex m_manager_mutex;
     std::shared_ptr<AudioEngineSettings> m_settings;
 
     // --- Sub-Managers ---

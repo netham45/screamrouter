@@ -70,6 +70,12 @@ export interface Sink {
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
   protocol?: string;
   volume_normalization?: boolean;
+  multi_device_mode?: boolean;  // For RTP multi-device configuration
+  rtp_receiver_mappings?: Array<{  // RTP receiver channel mappings
+    receiver_sink_name: string;  // Changed to match backend field name
+    left_channel: number;
+    right_channel: number;
+  }>;
 }
 
 /**

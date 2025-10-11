@@ -21,6 +21,24 @@ namespace screamrouter {
 namespace config {
 
 /**
+ * @struct RtpReceiverConfig
+ * @brief Configuration for a single RTP receiver in multi-device mode.
+ * @details Holds the resolved details for a single receiver including IP, port, and channel mapping.
+ */
+struct RtpReceiverConfig {
+    /** @brief Unique identifier for this receiver. */
+    std::string receiver_id;
+    /** @brief IP address of the receiver. */
+    std::string ip_address;
+    /** @brief Port number for the receiver. */
+    uint16_t port;
+    /** @brief Channel mapping: [left_channel, right_channel] indices 0-7. */
+    uint8_t channel_map[2];
+    /** @brief Whether this receiver is enabled. */
+    bool enabled;
+};
+
+/**
  * @struct AppliedSourcePathParams
  * @brief Defines the parameters for a single audio path from a source to a sink.
  * @details This structure holds all configuration details for a specific processing
@@ -99,6 +117,23 @@ struct DesiredEngineState {
  */
 inline void bind_config_types(pybind11::module_ &m) {
     namespace py = pybind11;
+
+    py::class_<RtpReceiverConfig>(m, "RtpReceiverConfig", "Configuration for a single RTP receiver in multi-device mode")
+        .def(py::init<>())
+        .def_readwrite("receiver_id", &RtpReceiverConfig::receiver_id, "Unique identifier for this receiver")
+        .def_readwrite("ip_address", &RtpReceiverConfig::ip_address, "IP address of the receiver")
+        .def_readwrite("port", &RtpReceiverConfig::port, "Port number for the receiver")
+        .def_property("channel_map",
+            [](const RtpReceiverConfig& self) {
+                return py::make_tuple(self.channel_map[0], self.channel_map[1]);
+            },
+            [](RtpReceiverConfig& self, py::tuple t) {
+                if (t.size() != 2) throw std::runtime_error("channel_map must be a tuple of 2 elements");
+                self.channel_map[0] = t[0].cast<uint8_t>();
+                self.channel_map[1] = t[1].cast<uint8_t>();
+            },
+            "Channel mapping: (left_channel, right_channel) indices 0-7")
+        .def_readwrite("enabled", &RtpReceiverConfig::enabled, "Whether this receiver is enabled");
 
     py::class_<AppliedSourcePathParams>(m, "AppliedSourcePathParams", "Parameters for a specific source-to-sink audio path")
         .def(py::init<>())

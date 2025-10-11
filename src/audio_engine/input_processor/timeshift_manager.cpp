@@ -217,12 +217,6 @@ void TimeshiftManager::register_processor(
             LOG_CPP_INFO("[TimeshiftManager] Initial timeshift is 0 or buffer empty. Set next_packet_read_index to end of buffer: %zu", info.next_packet_read_index);
         }
         processor_targets_[source_tag][instance_id] = info;
-        
-        // Phase 3: Track this processor as a consumer of the stream
-        {
-            std::lock_guard<std::mutex> timing_lock(timing_mutex_);
-            stream_timing_states_[source_tag].consuming_processor_ids.insert(instance_id);
-        }
     }
     LOG_CPP_INFO("[TimeshiftManager] Processor %s registered for source_tag %s with read_idx %zu",
                  instance_id.c_str(), source_tag.c_str(), info.next_packet_read_index);
@@ -240,15 +234,6 @@ void TimeshiftManager::unregister_processor(const std::string& instance_id, cons
     std::lock_guard<std::mutex> lock(data_mutex_);
     auto& source_map = processor_targets_[source_tag];
     source_map.erase(instance_id);
-    
-    // Phase 3: Remove processor from consuming_processor_ids
-    {
-        std::lock_guard<std::mutex> timing_lock(timing_mutex_);
-        if (stream_timing_states_.count(source_tag)) {
-            stream_timing_states_[source_tag].consuming_processor_ids.erase(instance_id);
-        }
-    }
-    
     if (source_map.empty()) {
         processor_targets_.erase(source_tag);
         LOG_CPP_INFO("[TimeshiftManager] Source tag %s removed as no processors are listening to it.", source_tag.c_str());
@@ -370,31 +355,15 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
     auto current_steady_time = std::chrono::steady_clock::now();
 
     for (auto& [source_tag, source_map] : processor_targets_) {
-        // Phase 3: Calculate unified adaptive delay ONCE per stream (not per processor)
-        // Find the maximum static delay among all consuming processors for this stream
-        int max_static_delay_ms = 0;
-        for (const auto& [instance_id, target_info] : source_map) {
-            max_static_delay_ms = std::max(max_static_delay_ms, target_info.current_delay_ms);
-        }
-        
-        StreamTimingState* timing_state = nullptr;
-        double unified_adaptive_delay_ms = 0.0;
-        {
-            std::lock_guard<std::mutex> lock(timing_mutex_);
-            if (stream_timing_states_.count(source_tag) && stream_timing_states_.at(source_tag).clock) {
-                timing_state = &stream_timing_states_.at(source_tag);
-                // Calculate unified delay: max static delay + jitter safety margin
-                timing_state->unified_adaptive_delay_ms = max_static_delay_ms +
-                    (m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate);
-                unified_adaptive_delay_ms = timing_state->unified_adaptive_delay_ms;
-            }
-        }
-        
-        if (!timing_state) {
-            continue; // No timing state available for this stream
-        }
-        
         for (auto& [instance_id, target_info] : source_map) {
+            
+            StreamTimingState* timing_state = nullptr;
+            {
+                std::lock_guard<std::mutex> lock(timing_mutex_);
+                if (stream_timing_states_.count(source_tag) && stream_timing_states_.at(source_tag).clock) {
+                    timing_state = &stream_timing_states_.at(source_tag);
+                }
+            }
 
             while (target_info.next_packet_read_index < global_timeshift_buffer_.size()) {
                 const auto& candidate_packet = global_timeshift_buffer_[target_info.next_packet_read_index];
@@ -404,29 +373,30 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     continue;
                 }
 
+                if (!timing_state) {
+                    break;
+                }
+
                 if (!candidate_packet.rtp_timestamp.has_value() || candidate_packet.sample_rate == 0) {
                     target_info.next_packet_read_index++;
                     continue;
                 }
 
-                // --- Phase 3: Calculate playout time using unified delay ---
-                // All processors consuming this stream use the SAME calculated delay
-                std::chrono::steady_clock::time_point expected_arrival_time;
-                {
-                    std::lock_guard<std::mutex> lock(timing_mutex_);
-                    expected_arrival_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
-                }
+                // --- Playout Time Calculation ---
+                // 1. Get expected arrival time from the stable clock
+                auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
+
+                // 2. Add the adaptive playout delay
+                double adaptive_delay_ms = target_info.current_delay_ms +
+                                           (m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate);
                 
-                auto delay_duration = std::chrono::duration<double, std::milli>(unified_adaptive_delay_ms);
-                auto ideal_playout_time = expected_arrival_time +
-                    std::chrono::duration_cast<std::chrono::steady_clock::duration>(delay_duration);
+                auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(adaptive_delay_ms);
                 
                 auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - current_steady_time).count();
 
                 // Check if the packet is ready to be played
                 if (ideal_playout_time <= current_steady_time) {
                     if (-time_until_playout_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
-                        std::lock_guard<std::mutex> lock(timing_mutex_);
                         timing_state->late_packets_count++;
                     }
 
@@ -449,40 +419,32 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         size_t num_samples_per_channel = candidate_packet.audio_data.size() / (candidate_packet.channels * bytes_per_sample);
                         double packet_duration_ms = (static_cast<double>(num_samples_per_channel) * 1000.0) / static_cast<double>(candidate_packet.sample_rate);
                         
-                        std::lock_guard<std::mutex> lock(timing_mutex_);
                         timing_state->current_buffer_level_ms = available_packets * packet_duration_ms;
                     } else {
-                        std::lock_guard<std::mutex> lock(timing_mutex_);
                         timing_state->current_buffer_level_ms = 0;
                     }
 
                     // 2. Implement P-controller to adjust playback rate.
-                    // The target buffer level should be the same as our unified adaptive playout delay.
-                    {
-                        std::lock_guard<std::mutex> lock(timing_mutex_);
-                        timing_state->target_buffer_level_ms = timing_state->unified_adaptive_delay_ms;
-                        double error_ms = timing_state->target_buffer_level_ms - timing_state->current_buffer_level_ms;
+                    // The target buffer level should be the same as our adaptive playout delay.
+                    timing_state->target_buffer_level_ms = adaptive_delay_ms;
+                    double error_ms = timing_state->target_buffer_level_ms - timing_state->current_buffer_level_ms;
 
-                        if (timing_state->target_buffer_level_ms > 0) {
-                            timing_state->buffer_target_fill_percentage = (timing_state->current_buffer_level_ms / timing_state->target_buffer_level_ms) * 100.0;
-                        } else {
-                            timing_state->buffer_target_fill_percentage = 0.0;
-                        }
-
-                        double rate_adjustment = error_ms * m_settings->timeshift_tuning.proportional_gain_kp;
-
-                        // Adjust rate and clamp to a safe range (e.g., +/- 2%) to prevent audible artifacts.
-                        double new_rate = 1.0 - rate_adjustment;
-                        timing_state->current_playback_rate = std::max(m_settings->timeshift_tuning.min_playback_rate, std::min(m_settings->timeshift_tuning.max_playback_rate, new_rate));
-                        packet_to_send.playback_rate = timing_state->current_playback_rate;
+                    if (timing_state->target_buffer_level_ms > 0) {
+                        timing_state->buffer_target_fill_percentage = (timing_state->current_buffer_level_ms / timing_state->target_buffer_level_ms) * 100.0;
+                    } else {
+                        timing_state->buffer_target_fill_percentage = 0.0;
                     }
+
+                    double rate_adjustment = error_ms * m_settings->timeshift_tuning.proportional_gain_kp;
+
+                    // Adjust rate and clamp to a safe range (e.g., +/- 2%) to prevent audible artifacts.
+                    double new_rate = 1.0 - rate_adjustment;
+                    timing_state->current_playback_rate = std::max(m_settings->timeshift_tuning.min_playback_rate, std::min(m_settings->timeshift_tuning.max_playback_rate, new_rate));
+                    packet_to_send.playback_rate = timing_state->current_playback_rate;
 
                     target_info.target_queue->push(std::move(packet_to_send));
                     
-                    {
-                        std::lock_guard<std::mutex> lock(timing_mutex_);
-                        timing_state->last_played_rtp_timestamp = candidate_packet.rtp_timestamp.value();
-                    }
+                    timing_state->last_played_rtp_timestamp = candidate_packet.rtp_timestamp.value();
                     
                     target_info.next_packet_read_index++;
 
@@ -602,21 +564,9 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
                 continue;
             }
 
-            // Phase 3: Calculate wakeup time using unified delay
-            int max_static_delay_ms = 0;
-            if (processor_targets_.count(source_tag)) {
-                for (const auto& [proc_id, proc_info] : processor_targets_.at(source_tag)) {
-                    max_static_delay_ms = std::max(max_static_delay_ms, proc_info.current_delay_ms);
-                }
-            }
-            
-            double unified_delay_ms = max_static_delay_ms +
-                (m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate);
-            
             auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(next_packet.rtp_timestamp.value());
-            auto delay_duration = std::chrono::duration<double, std::milli>(unified_delay_ms);
-            auto ideal_playout_time = expected_arrival_time +
-                std::chrono::duration_cast<std::chrono::steady_clock::duration>(delay_duration);
+            double adaptive_delay_ms = target_info.current_delay_ms + (m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate);
+            auto ideal_playout_time = expected_arrival_time + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double, std::milli>(adaptive_delay_ms));
 
             if (ideal_playout_time < earliest_time) {
                 earliest_time = ideal_playout_time;
@@ -626,6 +576,7 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
 
     return std::min({earliest_time, next_cleanup_time, max_sleep_time});
 }
+
 
 } // namespace audio
 } // namespace screamrouter

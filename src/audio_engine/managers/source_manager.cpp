@@ -14,7 +14,7 @@ namespace audio {
 // Static counter for generating unique instance IDs, moved from audio_manager
 static std::atomic<uint64_t> instance_id_counter{0};
 
-SourceManager::SourceManager(std::mutex& manager_mutex, TimeshiftManager* timeshift_manager, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
+SourceManager::SourceManager(std::recursive_mutex& manager_mutex, TimeshiftManager* timeshift_manager, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
     : m_manager_mutex(manager_mutex), m_timeshift_manager(timeshift_manager), m_settings(settings) {
     LOG_CPP_INFO("SourceManager created.");
 }
@@ -75,7 +75,7 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
     }
 
     {
-        std::lock_guard<std::mutex> lock(m_manager_mutex);
+        std::scoped_lock lock(m_manager_mutex);
         m_rtp_to_source_queues[instance_id] = rtp_queue;
         m_source_to_sink_queues[instance_id] = sink_queue;
         m_command_queues[instance_id] = cmd_queue;
@@ -87,7 +87,7 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
         LOG_CPP_INFO("Registered instance %s with TimeshiftManager.", instance_id.c_str());
     } else {
         LOG_CPP_ERROR("TimeshiftManager is null. Cannot register source instance %s", instance_id.c_str());
-        std::lock_guard<std::mutex> lock(m_manager_mutex);
+        std::scoped_lock lock(m_manager_mutex);
         m_sources.erase(instance_id);
         m_rtp_to_source_queues.erase(instance_id);
         m_source_to_sink_queues.erase(instance_id);
@@ -105,7 +105,7 @@ bool SourceManager::remove_source(const std::string& instance_id) {
     std::string source_tag_for_removal;
 
     {
-        std::lock_guard<std::mutex> lock(m_manager_mutex);
+        std::scoped_lock lock(m_manager_mutex);
         auto it = m_sources.find(instance_id);
         if (it == m_sources.end()) {
             LOG_CPP_ERROR("Source processor instance not found: %s", instance_id.c_str());
@@ -155,7 +155,7 @@ std::map<std::string, std::shared_ptr<CommandQueue>>& SourceManager::get_command
 
 std::vector<SourceInputProcessor*> SourceManager::get_all_processors() {
     std::vector<SourceInputProcessor*> processors;
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    std::scoped_lock lock(m_manager_mutex);
     for (auto const& [id, proc] : m_sources) {
         processors.push_back(proc.get());
     }

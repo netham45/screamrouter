@@ -15,8 +15,6 @@
 #include "../audio_types.h"
 #include "../audio_processor/audio_processor.h"
 #include "../configuration/audio_engine_settings.h"
-#include "../timing/timestamp_mapper.h"
-#include "../timing/reference_clock_manager.h"
 
 #include <string>
 #include <vector>
@@ -120,14 +118,6 @@ public:
      * @return A struct containing the current stats.
      */
     SourceInputProcessorStats get_stats();
-    
-    /**
-     * @brief Gets the timestamp mapper for this processor (Phase 5).
-     * @return Shared pointer to the TimestampMapper, or nullptr if not available.
-     */
-    std::shared_ptr<screamrouter::audio_engine::TimestampMapper> get_timestamp_mapper() const {
-        return timestamp_mapper_;
-    }
 
 protected:
     /**
@@ -157,12 +147,6 @@ private:
 
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::mutex processor_config_mutex_;
-    
-    // Phase 2: Timestamp tracking (Phase 5: Changed to shared_ptr for sharing with RtpSender)
-    std::shared_ptr<screamrouter::audio_engine::TimestampMapper> timestamp_mapper_;
-    std::optional<uint32_t> current_accumulation_first_rtp_ts_;
-    std::chrono::steady_clock::time_point current_accumulation_start_time_;
-    double current_processing_latency_ms_ = 0.0;
 
     std::vector<int32_t> process_buffer_; // This will be repurposed as the resampler output buffer
     std::vector<uint32_t> current_packet_ssrcs_;

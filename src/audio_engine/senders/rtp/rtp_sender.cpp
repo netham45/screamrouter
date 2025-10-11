@@ -2,7 +2,6 @@
 #include "rtp_sender_registry.h"
 #include "../../utils/cpp_logger.h"
 #include "../../audio_constants.h" // For RTP constants
-#include "../../timing/reference_clock_manager.h"
 #include <stdexcept>
 #include <cstring>
 #include <random>
@@ -111,20 +110,16 @@ std::vector<int> get_channel_order_from_mask(uint8_t chlayout1, uint8_t chlayout
 
 } // end anonymous namespace
 
-RtpSender::RtpSender(const SinkMixerConfig& config,
-                    std::shared_ptr<screamrouter::audio_engine::TimestampMapper> timestamp_mapper)
+RtpSender::RtpSender(const SinkMixerConfig& config)
     : config_(config),
-      udp_socket_fd_(PLATFORM_INVALID_SOCKET),
-      sequence_number_(0),
-      rtp_timestamp_(0),
+      rtp_core_(nullptr),
       sap_socket_fd_(PLATFORM_INVALID_SOCKET),
       sap_thread_running_(false),
       rtcp_socket_fd_(PLATFORM_INVALID_SOCKET),
       rtcp_thread_running_(false),
       packet_count_(0),
       octet_count_(0),
-      time_sync_delay_ms_(config.time_sync_enabled ? config.time_sync_delay_ms : 0),
-      timestamp_mapper_(timestamp_mapper) {  // Phase 5: Store timestamp mapper
+      time_sync_delay_ms_(config.time_sync_enabled ? config.time_sync_delay_ms : 0) {  // Use config values
 
     // IMMEDIATE LOGGING AT CONSTRUCTOR START
     LOG_CPP_ERROR("[RtpSender:%s] ===== CONSTRUCTOR START =====", config_.sink_id.c_str());
@@ -150,21 +145,19 @@ RtpSender::RtpSender(const SinkMixerConfig& config,
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<uint32_t> dis32;
-    std::uniform_int_distribution<uint16_t> dis16;
 
     ssrc_ = dis32(gen);
-    sequence_number_ = dis16(gen);
     rtp_timestamp_ = dis32(gen);
     
-    // Phase 5: Store initial RTP timestamp and stream start time using reference clock
+    // Create RTP core with the generated SSRC
+    rtp_core_ = std::make_unique<RtpSenderCore>(ssrc_);
+    
+    // Store initial RTP timestamp and stream start time for synchronization
     stream_start_rtp_timestamp_ = rtp_timestamp_;
-    auto& ref_clock = screamrouter::audio_engine::ReferenceClockManager::get_instance();
-    stream_start_time_ref_ = ref_clock.now();
-    // Keep system_clock version for compatibility
     stream_start_time_ = std::chrono::system_clock::now();
 
-    LOG_CPP_INFO("[RtpSender:%s] Initialized with SSRC=0x%08X, Seq=%u, TS=%u (ref_clock stored)",
-                 config_.sink_id.c_str(), ssrc_, sequence_number_, rtp_timestamp_);
+    LOG_CPP_INFO("[RtpSender:%s] Initialized with SSRC=0x%08X, TS=%u",
+                 config_.sink_id.c_str(), ssrc_, rtp_timestamp_);
     
     // Log RTCP configuration
     LOG_CPP_INFO("[RtpSender:%s] RTCP Configuration: protocol=%s, time_sync_enabled=%s, time_sync_delay_ms=%d",
@@ -211,69 +204,9 @@ bool RtpSender::setup() {
                  config_.time_sync_enabled ? "true" : "false",
                  time_sync_delay_ms_);
     
-    udp_socket_fd_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (udp_socket_fd_ == PLATFORM_INVALID_SOCKET) {
-        LOG_CPP_ERROR("[RtpSender:%s] Failed to create UDP socket", config_.sink_id.c_str());
-        return false;
-    }
-
-#ifndef _WIN32
-    // Set socket priority for low latency on Linux
-    int priority = 6; // Corresponds to AC_VO (Access Category Voice)
-    if (setsockopt(udp_socket_fd_, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority)) < 0) {
-        LOG_CPP_WARNING("[RtpSender:%s] Failed to set socket priority on UDP socket.", config_.sink_id.c_str());
-    }
-    // Allow reusing the address to avoid issues with lingering sockets
-    int reuse = 1;
-    if (setsockopt(udp_socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-        LOG_CPP_WARNING("[RtpSender:%s] Failed to set SO_REUSEADDR on UDP socket.", config_.sink_id.c_str());
-    }
-#endif
-
-    // If the destination is a multicast address, configure the socket accordingly.
-    if (is_multicast(config_.output_ip)) {
-        LOG_CPP_INFO("[RtpSender:%s] Destination is a multicast address. Configuring socket for multicast.", config_.sink_id.c_str());
-
-        // Set the Time-To-Live (TTL) for multicast packets
-        int ttl = 64; // A reasonable TTL for multicast
-#ifdef _WIN32
-        if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_MULTICAST_TTL, (const char*)&ttl, sizeof(ttl)) < 0) {
-#else
-        if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl)) < 0) {
-#endif
-            LOG_CPP_WARNING("[RtpSender:%s] Failed to set multicast TTL on UDP socket.", config_.sink_id.c_str());
-        }
-
-        // Set the outgoing interface for multicast packets.
-        // This is important on multi-homed systems. We'll use the primary source IP.
-        struct in_addr local_interface;
-        std::string primary_ip = get_primary_source_ip();
-        if (inet_pton(AF_INET, primary_ip.c_str(), &local_interface) != 1) {
-            LOG_CPP_WARNING("[RtpSender:%s] Failed to parse primary IP for multicast interface: %s", config_.sink_id.c_str(), primary_ip.c_str());
-        } else {
-            if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_MULTICAST_IF, (char *)&local_interface, sizeof(local_interface)) < 0) {
-                LOG_CPP_WARNING("[RtpSender:%s] Failed to set multicast outgoing interface for %s.", config_.sink_id.c_str(), primary_ip.c_str());
-            }
-        }
-    }
-
-#ifndef _WIN32
-    int dscp = 46; // EF PHB for low latency audio
-    int tos_value = dscp << 2;
-    if (setsockopt(udp_socket_fd_, IPPROTO_IP, IP_TOS, &tos_value, sizeof(tos_value)) < 0) {
-        LOG_CPP_ERROR("[RtpSender:%s] Failed to set UDP socket TOS/DSCP", config_.sink_id.c_str());
-    }
-#else
-    LOG_CPP_WARNING("[RtpSender:%s] Skipping TOS/DSCP setting on Windows.", config_.sink_id.c_str());
-#endif
-
-    memset(&udp_dest_addr_, 0, sizeof(udp_dest_addr_));
-    udp_dest_addr_.sin_family = AF_INET;
-    udp_dest_addr_.sin_port = htons(config_.output_port);
-    if (inet_pton(AF_INET, config_.output_ip.c_str(), &udp_dest_addr_.sin_addr) <= 0) {
-        LOG_CPP_ERROR("[RtpSender:%s] Invalid UDP destination IP address: %s", config_.sink_id.c_str(), config_.output_ip.c_str());
-        platform_close_socket(udp_socket_fd_);
-        udp_socket_fd_ = PLATFORM_INVALID_SOCKET;
+    // Setup RTP core
+    if (!rtp_core_->setup(config_.output_ip, config_.output_port)) {
+        LOG_CPP_ERROR("[RtpSender:%s] Failed to setup RTP core", config_.sink_id.c_str());
         return false;
     }
 
@@ -484,10 +417,9 @@ void RtpSender::close() {
         sap_socket_fd_ = PLATFORM_INVALID_SOCKET;
     }
 
-    if (udp_socket_fd_ != PLATFORM_INVALID_SOCKET) {
-        LOG_CPP_INFO("[RtpSender:%s] Closing UDP socket", config_.sink_id.c_str());
-        platform_close_socket(udp_socket_fd_);
-        udp_socket_fd_ = PLATFORM_INVALID_SOCKET;
+    if (rtp_core_) {
+        LOG_CPP_INFO("[RtpSender:%s] Closing RTP core", config_.sink_id.c_str());
+        rtp_core_->close();
     }
     RtpSenderRegistry::get_instance().remove_ssrc(ssrc_);
 }
@@ -495,57 +427,19 @@ void RtpSender::close() {
 // As seen in rtp_receiver.cpp, this is a common payload type for this format.
 const int RTP_PAYLOAD_TYPE_L16_48K_STEREO = 127;
  
- void RtpSender::send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) {
-     if (payload_size == 0) {
-         return;
-     }
- 
-     const size_t csrc_count = (std::min)(csrcs.size(), (size_t)15); // Max 15 CSRCs - parentheses avoid Windows max macro
-     const size_t rtp_header_size = 12 + (csrc_count * 4);
-     std::vector<uint8_t> packet_buffer(rtp_header_size + payload_size);
- 
-     // Manually construct the RTP header
-     // Version (2 bits), Padding (1), Extension (1), CSRC Count (4)
-     packet_buffer[0] = (2 << 6) | (csrc_count & 0x0F); // Version 2, no padding, no extension
-     // Marker (1 bit), Payload Type (7)
-     packet_buffer[1] = static_cast<uint8_t>(RTP_PAYLOAD_TYPE_L16_48K_STEREO & 0x7F);
-    // Sequence Number (16 bits)
-    uint16_t seq_num_net = htons(sequence_number_++);
-    memcpy(&packet_buffer[2], &seq_num_net, 2);
-    // Timestamp (32 bits)
-    uint32_t ts_net = htonl(rtp_timestamp_);
-    memcpy(&packet_buffer[4], &ts_net, 4);
-    // SSRC (32 bits)
-    uint32_t ssrc_net = htonl(ssrc_);
-    memcpy(&packet_buffer[8], &ssrc_net, 4);
-
-    // Copy CSRCs
-    uint8_t* csrc_ptr = packet_buffer.data() + 12;
-    for (size_t i = 0; i < csrc_count; ++i) {
-        uint32_t csrc_net = htonl(csrcs[i]);
-        memcpy(csrc_ptr, &csrc_net, 4);
-        csrc_ptr += 4;
+void RtpSender::send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) {
+    if (payload_size == 0 || !rtp_core_) {
+        return;
     }
-
-    // For debugging, log the constructed header and packet details
-    char header_str[12 * 4 + 1] = {0};
-    for (int i = 0; i < 12; ++i) {
-        snprintf(header_str + i * 3, 4, "%02X ", packet_buffer[i]);
-    }
-    LOG_CPP_DEBUG("[RtpSender:%s] RTP Send: size=%zu, ts=%u, seq=%u, header=[%s]",
-                    config_.sink_id.c_str(), payload_size, rtp_timestamp_, sequence_number_ - 1, header_str);
-
-    // Copy payload data
-    memcpy(packet_buffer.data() + rtp_header_size, payload_data, payload_size);
 
     // Convert payload to network byte order
-    uint8_t* rtp_payload_ptr = packet_buffer.data() + rtp_header_size;
+    std::vector<uint8_t> network_payload(payload_size);
+    memcpy(network_payload.data(), payload_data, payload_size);
+    
     size_t bytes_per_sample = config_.output_bitdepth / 8;
-
-    if (bytes_per_sample > 0 && payload_size % bytes_per_sample != 0) {
-        LOG_CPP_WARNING("[RtpSender:%s] Payload size %zu is not a multiple of bytes per sample %zu for bit depth %d. Skipping byte order conversion for this packet.",
-                        config_.sink_id.c_str(), payload_size, bytes_per_sample, config_.output_bitdepth);
-    } else {
+    if (bytes_per_sample > 0 && payload_size % bytes_per_sample == 0) {
+        uint8_t* rtp_payload_ptr = network_payload.data();
+        
         if (config_.output_bitdepth == 16) {
             for (size_t i = 0; i < payload_size; i += bytes_per_sample) {
                 uint16_t* sample_ptr = reinterpret_cast<uint16_t*>(rtp_payload_ptr + i);
@@ -563,62 +457,28 @@ const int RTP_PAYLOAD_TYPE_L16_48K_STEREO = 127;
                 *sample_ptr = htonl(*sample_ptr);
             }
         }
-        // 8-bit samples (bytes_per_sample == 1) do not require byte order conversion.
     }
 
-    // Phase 5: Update RTP timestamp based on reference clock instead of byte count
-    // Calculate elapsed time since stream start and convert to samples
-    auto& ref_clock = screamrouter::audio_engine::ReferenceClockManager::get_instance();
-    auto now = ref_clock.now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - stream_start_time_ref_);
-    
-    // Convert elapsed time to samples at 48kHz
-    // samples = (elapsed_us * sample_rate) / 1000000
-    uint64_t elapsed_us = elapsed.count();
-    uint64_t samples_since_start = (elapsed_us * 48000) / 1000000;
-    
-    rtp_timestamp_ = stream_start_rtp_timestamp_ + static_cast<uint32_t>(samples_since_start);
-    
-    LOG_CPP_DEBUG("[RtpSender:%s] RTP timestamp from reference clock: %u (elapsed: %lld us, samples: %llu)",
-                 config_.sink_id.c_str(), rtp_timestamp_,
-                 (long long)elapsed_us, (unsigned long long)samples_since_start);
-
-    size_t length = packet_buffer.size();
-
-    if (udp_socket_fd_ != PLATFORM_INVALID_SOCKET) {
-#ifdef _WIN32
-        int sent_bytes = sendto(udp_socket_fd_,
-                                reinterpret_cast<const char*>(packet_buffer.data()),
-                                static_cast<int>(length),
-                                0,
-                                (struct sockaddr *)&udp_dest_addr_,
-                                sizeof(udp_dest_addr_));
-#else
-        int sent_bytes = sendto(udp_socket_fd_,
-                                packet_buffer.data(),
-                                length,
-                                0,
-                                (struct sockaddr *)&udp_dest_addr_,
-                                sizeof(udp_dest_addr_));
-#endif
-        if (sent_bytes < 0) {
-            LOG_CPP_ERROR("[RtpSender:%s] UDP sendto failed", config_.sink_id.c_str());
-        } else if (static_cast<size_t>(sent_bytes) != length) {
-            LOG_CPP_ERROR("[RtpSender:%s] UDP sendto sent partial data: %d/%zu", config_.sink_id.c_str(), sent_bytes, length);
-        } else {
-            // Update statistics for RTCP
-            uint32_t old_packet_count = packet_count_.fetch_add(1);
-            uint32_t old_octet_count = octet_count_.fetch_add(payload_size);
-            
-            // Log every 100th packet for debugging
-            if ((old_packet_count + 1) % 100 == 0) {
-                LOG_CPP_DEBUG("[RtpSender:%s] RTP Statistics: packets=%u, octets=%u, RTCP enabled=%s",
-                             config_.sink_id.c_str(),
-                             old_packet_count + 1,
-                             old_octet_count + payload_size,
-                             (rtcp_thread_running_.load() ? "true" : "false"));
-            }
+    // Send via RTP core
+    if (rtp_core_->send_rtp_packet(network_payload.data(), network_payload.size(), rtp_timestamp_, csrcs)) {
+        // Update statistics for RTCP
+        uint32_t old_packet_count = packet_count_.fetch_add(1);
+        uint32_t old_octet_count = octet_count_.fetch_add(payload_size);
+        
+        // Log every 100th packet for debugging
+        if ((old_packet_count + 1) % 100 == 0) {
+            LOG_CPP_DEBUG("[RtpSender:%s] RTP Statistics: packets=%u, octets=%u, RTCP enabled=%s",
+                         config_.sink_id.c_str(),
+                         old_packet_count + 1,
+                         old_octet_count + payload_size,
+                         (rtcp_thread_running_.load() ? "true" : "false"));
         }
+    }
+
+    // Increment timestamp by number of samples in the packet
+    size_t bytes_per_frame = (config_.output_bitdepth / 8) * config_.output_channels;
+    if (bytes_per_frame > 0) {
+        rtp_timestamp_ += payload_size / bytes_per_frame;
     }
 }
 
@@ -670,7 +530,7 @@ void RtpSender::sap_announcement_loop() {
             // SAP Header
             sap_packet[0] = 0x20; // V=1, A=0, R=0, T=0, E=0, C=0
             sap_packet[1] = 0;    // Auth len = 0 (no authentication)
-            uint16_t msg_id_hash = sequence_number_ % 65536;
+            uint16_t msg_id_hash = rtp_core_->get_sequence_number() % 65536;
             uint16_t msg_id_hash_net = htons(msg_id_hash);
             memcpy(&sap_packet[2], &msg_id_hash_net, 2);
             struct in_addr src_addr;
@@ -761,36 +621,6 @@ uint64_t RtpSender::get_ntp_timestamp_with_delay() {
                   (unsigned)seconds,
                   (unsigned)fraction,
                   time_sync_delay_ms_);
-    
-    return ntp_timestamp;
-}
-
-uint64_t RtpSender::get_synchronized_ntp_timestamp() {
-    auto& ref_clock = screamrouter::audio_engine::ReferenceClockManager::get_instance();
-    auto now = ref_clock.now();
-    
-    // Add measured pipeline latency from timestamp mapper
-    double measured_latency_ms = 0.0;
-    if (timestamp_mapper_) {
-        measured_latency_ms = timestamp_mapper_->get_average_processing_latency_ms();
-        LOG_CPP_DEBUG("[RtpSender:%s] Using measured pipeline latency: %.2f ms",
-                     config_.sink_id.c_str(), measured_latency_ms);
-    }
-    
-    // Add configured delay
-    measured_latency_ms += time_sync_delay_ms_;
-    
-    // Adjust time by measured latency
-    auto latency_adjusted_time = now +
-        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-            std::chrono::duration<double, std::milli>(measured_latency_ms));
-    
-    uint64_t ntp_timestamp = ref_clock.reference_time_to_ntp(latency_adjusted_time);
-    
-    LOG_CPP_DEBUG("[RtpSender:%s] Synchronized NTP timestamp: 0x%016llX (total_latency=%.2f ms)",
-                  config_.sink_id.c_str(),
-                  (unsigned long long)ntp_timestamp,
-                  measured_latency_ms);
     
     return ntp_timestamp;
 }
@@ -1016,8 +846,8 @@ void RtpSender::send_rtcp_sr() {
     // Fill sender info
     sr.ssrc = htonl(ssrc_);
     
-    // Phase 5: Use synchronized NTP timestamp (includes measured pipeline latency)
-    uint64_t ntp_ts = get_synchronized_ntp_timestamp();
+    // Get NTP timestamp with delay
+    uint64_t ntp_ts = get_ntp_timestamp_with_delay();
     // NTP timestamp needs to be in network byte order
     uint32_t ntp_seconds = (ntp_ts >> 32) & 0xFFFFFFFF;
     uint32_t ntp_fraction = ntp_ts & 0xFFFFFFFF;

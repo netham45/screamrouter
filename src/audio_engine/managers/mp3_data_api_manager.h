@@ -38,7 +38,7 @@ public:
      * @param sink_configs A reference to the map of sink configurations.
      */
     MP3DataApiManager(
-        std::mutex& manager_mutex,
+        std::recursive_mutex& manager_mutex,
         std::map<std::string, std::shared_ptr<Mp3Queue>>& mp3_output_queues,
         std::map<std::string, SinkConfig>& sink_configs
     );
@@ -64,7 +64,7 @@ public:
     std::vector<uint8_t> get_mp3_data_by_ip(const std::string& ip_address, bool running);
 
 private:
-    std::mutex& m_manager_mutex;
+    std::recursive_mutex& m_manager_mutex;
     std::map<std::string, std::shared_ptr<Mp3Queue>>& m_mp3_output_queues;
     std::map<std::string, SinkConfig>& m_sink_configs;
 };

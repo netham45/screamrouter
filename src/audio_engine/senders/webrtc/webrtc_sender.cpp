@@ -26,8 +26,9 @@ WebRtcSender::WebRtcSender(
       state_(rtc::PeerConnection::State::New),
       audio_track_(nullptr),
       current_timestamp_(0) {
-    LOG_CPP_INFO("[WebRtcSender] Created for sink: %s", config_.sink_id.c_str());
+    LOG_CPP_INFO("[WebRtcSender] DEADLOCK_DEBUG: Constructor START for sink: %s", config_.sink_id.c_str());
     initialize_opus_encoder();
+    LOG_CPP_INFO("[WebRtcSender] DEADLOCK_DEBUG: Constructor END for sink: %s", config_.sink_id.c_str());
 }
 
 WebRtcSender::~WebRtcSender() noexcept {
@@ -54,22 +55,28 @@ void WebRtcSender::initialize_opus_encoder() {
 }
 
 bool WebRtcSender::setup() {
+    LOG_CPP_INFO("[WebRtcSender:%s] DEADLOCK_DEBUG: setup() START", config_.sink_id.c_str());
     try {
         setup_peer_connection();
+        LOG_CPP_INFO("[WebRtcSender:%s] DEADLOCK_DEBUG: setup() END - success", config_.sink_id.c_str());
         return true;
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("[WebRtcSender:%s] Exception during setup: %s", config_.sink_id.c_str(), e.what());
+        LOG_CPP_INFO("[WebRtcSender:%s] DEADLOCK_DEBUG: setup() END - failed", config_.sink_id.c_str());
         return false;
     }
 }
 
 void WebRtcSender::setup_peer_connection() {
+    LOG_CPP_INFO("[WebRtcSender:%s] DEADLOCK_DEBUG: setup_peer_connection() START", config_.sink_id.c_str());
     rtc::Configuration rtc_config;
     rtc_config.iceServers.emplace_back("stun:stun.l.google.com:19302");
     rtc_config.iceServers.emplace_back("turn:screamrouter:screamrouter@192.168.3.201:3478");
     rtc_config.disableAutoNegotiation = true;
 
+    LOG_CPP_INFO("[WebRtcSender:%s] DEADLOCK_DEBUG: Creating PeerConnection", config_.sink_id.c_str());
     peer_connection_ = std::make_unique<rtc::PeerConnection>(rtc_config);
+    LOG_CPP_INFO("[WebRtcSender:%s] DEADLOCK_DEBUG: PeerConnection created", config_.sink_id.c_str());
 
     peer_connection_->onStateChange([this](rtc::PeerConnection::State state) {
         state_ = state;
@@ -146,11 +153,15 @@ void WebRtcSender::setup_peer_connection() {
     });
 
     peer_connection_->onLocalDescription([this](rtc::Description desc) {
+        LOG_CPP_ERROR("[WebRtcSender:%s] DEADLOCK_DEBUG: onLocalDescription triggered, type=%s",
+                      config_.sink_id.c_str(), desc.typeString().c_str());
         if (on_local_description_callback_) {
             std::string sdp_string = std::string(desc);
-            LOG_CPP_INFO("[WebRtcSender:%s] Generated local description (answer). Forwarding to Python.", config_.sink_id.c_str());
+            LOG_CPP_ERROR("[WebRtcSender:%s] DEADLOCK_DEBUG: About to acquire GIL and call Python callback", config_.sink_id.c_str());
             pybind11::gil_scoped_acquire acquire;
+            LOG_CPP_ERROR("[WebRtcSender:%s] DEADLOCK_DEBUG: GIL acquired, calling Python callback", config_.sink_id.c_str());
             on_local_description_callback_(sdp_string);
+            LOG_CPP_ERROR("[WebRtcSender:%s] DEADLOCK_DEBUG: Python callback completed", config_.sink_id.c_str());
         }
     });
 

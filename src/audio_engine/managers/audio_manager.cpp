@@ -19,7 +19,7 @@ AudioManager::~AudioManager() {
 }
 
 bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_duration_sec) {
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    std::scoped_lock lock(m_manager_mutex);
     if (m_running) {
         LOG_CPP_INFO("AudioManager already initialized.");
         return true;
@@ -64,7 +64,7 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
 }
 
 void AudioManager::shutdown() {
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    std::scoped_lock lock(m_manager_mutex);
     if (!m_running) {
         LOG_CPP_INFO("AudioManager already shut down.");
         return;
@@ -241,7 +241,7 @@ AudioEngineStats AudioManager::get_audio_engine_stats() {
 }
 
 AudioEngineSettings AudioManager::get_audio_settings() {
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    std::scoped_lock lock(m_manager_mutex);
     if (m_settings) {
         return *m_settings;
     }
@@ -249,7 +249,7 @@ AudioEngineSettings AudioManager::get_audio_settings() {
 }
 
 void AudioManager::set_audio_settings(const AudioEngineSettings& new_settings) {
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    std::scoped_lock lock(m_manager_mutex);
     if (m_settings) {
         *m_settings = new_settings;
     }

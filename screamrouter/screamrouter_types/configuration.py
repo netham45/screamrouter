@@ -9,6 +9,24 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 import screamrouter.screamrouter_types.annotations as annotations
 
 
+class RtpReceiverMapping(BaseModel):
+    """Holds mapping configuration for RTP receivers in multi-device mode"""
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
+    
+    receiver_sink_name: annotations.SinkNameType
+    """Name of the receiver sink to map to"""
+    left_channel: int = Field(default=0, ge=0, le=7)
+    """Left channel mapping (0-7)"""
+    right_channel: int = Field(default=1, ge=0, le=7)
+    """Right channel mapping (0-7)"""
+
+    def __hash__(self):
+        """Returns a hash of the mapping."""
+        return hash((self.receiver_sink_name, self.left_channel, self.right_channel))
+
+
 class Equalizer(BaseModel):
     """Holds data for an equalizer"""
     model_config = ConfigDict(from_attributes=True,
@@ -249,6 +267,10 @@ class SinkDescription(BaseModel):
     enable_mp3: bool = True
     protocol: str = "scream"
     """The network protocol to use for the sink. Can be 'scream', 'rtp', or 'web_receiver'."""
+    multi_device_mode: bool = False
+    """Enable multi-device RTP output mode"""
+    rtp_receiver_mappings: List[RtpReceiverMapping] = Field(default_factory=list)
+    """RTP receiver mappings for multi-device mode"""
 
     @model_validator(mode='after')
     def ensure_config_id(self):
@@ -295,6 +317,11 @@ class SinkDescription(BaseModel):
                 # Convert list to a sorted tuple to make it hashable
                 members_list = getattr(self, field_name, [])
                 values_to_hash.append(tuple(sorted(members_list)))
+            elif field_name == "rtp_receiver_mappings":
+                # Convert list of mappings to a tuple to make it hashable
+                mappings_list = getattr(self, field_name, [])
+                # Since RtpReceiverMapping is a Pydantic model, it should be hashable
+                values_to_hash.append(tuple(sorted(mappings_list, key=lambda m: m.receiver_sink_name)))
             else:
                 try:
                     values_to_hash.append(getattr(self, field_name))

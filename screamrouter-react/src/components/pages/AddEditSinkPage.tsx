@@ -25,11 +25,14 @@ import {
   Box,
   Heading,
   Container,
-  useColorModeValue
+  useColorModeValue,
+  Switch,
+  Text
 } from '@chakra-ui/react';
 import ApiService, { Sink } from '../../api/api';
 import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
+import MultiRtpReceiverManager, { RtpReceiverMapping } from './controls/MultiRtpReceiverManager';
 
 const AddEditSinkPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -51,6 +54,8 @@ const AddEditSinkPage: React.FC = () => {
   const [timeSyncDelay, setTimeSyncDelay] = useState('0');
   const [protocol, setProtocol] = useState('scream');
   const [volumeNormalization, setVolumeNormalization] = useState(false);
+  const [multiDeviceMode, setMultiDeviceMode] = useState(false);
+  const [rtpReceiverMappings, setRtpReceiverMappings] = useState<RtpReceiverMapping[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -81,6 +86,9 @@ const AddEditSinkPage: React.FC = () => {
             setTimeSyncDelay(sinkData.time_sync_delay?.toString() || '0');
             setProtocol(sinkData.protocol || 'scream');
             setVolumeNormalization(sinkData.volume_normalization || false);
+            // Set multi-device mode and mappings if they exist
+            setMultiDeviceMode(sinkData.multi_device_mode || false);
+            setRtpReceiverMappings(sinkData.rtp_receiver_mappings || []);
           } else {
             setError(`Sink "${sinkName}" not found.`);
           }
@@ -99,33 +107,110 @@ const AddEditSinkPage: React.FC = () => {
    * Validates input and sends the data to the API service.
    */
   const handleSubmit = async () => {
+    // Validate required fields
+    if (!name || !ip || !port) {
+      setError('Please fill in all required fields: Name, IP, and Port');
+      return;
+    }
+
+    // Ensure numeric values are valid
+    const portNum = parseInt(port);
+    const bitDepthNum = parseInt(bitDepth) || 32;
+    const sampleRateNum = parseInt(sampleRate) || 48000;
+    const channelsNum = parseInt(channels) || 2;
+    const timeSyncDelayNum = parseInt(timeSyncDelay) || 0;
+
+    if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+      setError('Port must be a valid number between 1 and 65535');
+      return;
+    }
+
+    if (isNaN(channelsNum) || channelsNum < 1 || channelsNum > 8) {
+      setError('Channels must be a number between 1 and 8');
+      return;
+    }
+
     const sinkData: Partial<Sink> = {
-      name,
-      ip,
-      port: parseInt(port),
-      bit_depth: parseInt(bitDepth),
-      sample_rate: parseInt(sampleRate),
-      channels: parseInt(channels),
-      channel_layout: channelLayout,
-      volume,
-      delay,
-      time_sync: timeSync,
-      time_sync_delay: parseInt(timeSyncDelay),
-      protocol: protocol,
-      volume_normalization: volumeNormalization,
+      name: name.trim(),
+      ip: ip.trim(),
+      port: portNum,
+      bit_depth: bitDepthNum,
+      sample_rate: sampleRateNum,
+      channels: channelsNum,
+      channel_layout: channelLayout || 'stereo',
+      volume: volume || 1,
+      delay: delay || 0,
+      time_sync: timeSync || false,
+      time_sync_delay: timeSyncDelayNum,
+      protocol: protocol || 'scream',
+      volume_normalization: volumeNormalization || false,
+      enabled: false,  // New sinks start disabled by default
+      is_group: false,
+      group_members: [],
+      equalizer: {
+        b1: 0, b2: 0, b3: 0, b4: 0, b5: 0, b6: 0,
+        b7: 0, b8: 0, b9: 0, b10: 0, b11: 0, b12: 0,
+        b13: 0, b14: 0, b15: 0, b16: 0, b17: 0, b18: 0
+      },
+      timeshift: 0
     };
+
+    // Add multi-device mode configuration if protocol is RTP
+    if (protocol === 'rtp') {
+      sinkData.multi_device_mode = multiDeviceMode;
+      if (multiDeviceMode && rtpReceiverMappings.length > 0) {
+        // Validate receiver mappings
+        const validMappings = rtpReceiverMappings.filter(mapping =>
+          mapping.receiver_sink_name && mapping.receiver_sink_name.trim() !== ''
+        );
+        if (validMappings.length > 0) {
+          sinkData.rtp_receiver_mappings = validMappings;
+        }
+      }
+    }
+
+    // Log the data being sent for debugging
+    console.log('Submitting sink data:', JSON.stringify(sinkData, null, 2));
 
     try {
       if (isEdit) {
-        await ApiService.updateSink(sinkName!, sinkData);
+        console.log(`Updating sink: ${sinkName}`);
+        // For updates, only send the fields that have changed or are being updated
+        const updateData: Partial<Sink> = {
+          name: sinkData.name,
+          ip: sinkData.ip,
+          port: sinkData.port,
+          bit_depth: sinkData.bit_depth,
+          sample_rate: sinkData.sample_rate,
+          channels: sinkData.channels,
+          channel_layout: sinkData.channel_layout,
+          volume: sinkData.volume,
+          delay: sinkData.delay,
+          time_sync: sinkData.time_sync,
+          time_sync_delay: sinkData.time_sync_delay,
+          protocol: sinkData.protocol,
+          volume_normalization: sinkData.volume_normalization,
+        };
+        
+        // Only add multi-device fields if protocol is RTP
+        if (protocol === 'rtp') {
+          updateData.multi_device_mode = sinkData.multi_device_mode;
+          updateData.rtp_receiver_mappings = sinkData.rtp_receiver_mappings;
+        }
+        
+        await ApiService.updateSink(sinkName!, updateData);
         setSuccess(`Sink "${name}" updated successfully.`);
+        setError(null);
       } else {
+        console.log('Adding new sink');
         await ApiService.addSink(sinkData as Sink);
         setSuccess(`Sink "${name}" added successfully.`);
+        setError(null);
       }
       
       // Clear form if adding a new sink
       if (!isEdit) {
+        // Reset all form fields
         setName('');
         setIp('');
         setPort('4010');
@@ -139,10 +224,65 @@ const AddEditSinkPage: React.FC = () => {
         setTimeSyncDelay('0');
         setProtocol('scream');
         setVolumeNormalization(false);
+        setMultiDeviceMode(false);
+        setRtpReceiverMappings([]);
+        
+        // Clear the success message after a delay
+        setTimeout(() => {
+          setSuccess(null);
+        }, 3000);
       }
-    } catch (error) {
-      console.error('Error submitting sink:', error);
-      setError('Failed to submit sink. Please try again.');
+    } catch (error: any) {
+      console.error('Full error object:', error);
+      console.error('Error response:', error.response);
+      console.error('Error response data:', error.response?.data);
+      
+      let errorMessage = 'Failed to submit sink. ';
+      
+      if (error.response?.data) {
+        const errorData = error.response.data;
+        console.error('Error data structure:', errorData);
+        
+        // Handle FastAPI validation error format
+        if (Array.isArray(errorData)) {
+          // Array of validation errors
+          const fieldErrors = errorData.map((err: any) => {
+            const field = err.loc ? err.loc[err.loc.length - 1] : 'unknown field';
+            const msg = err.msg || 'Field required';
+            return `${field}: ${msg}`;
+          });
+          errorMessage = 'Validation errors:\n' + fieldErrors.join('\n');
+        } else if (errorData.detail) {
+          if (typeof errorData.detail === 'string') {
+            errorMessage = errorData.detail;
+          } else if (Array.isArray(errorData.detail)) {
+            // Handle array of error details from FastAPI
+            const fieldErrors = errorData.detail.map((err: any) => {
+              if (err.loc && Array.isArray(err.loc)) {
+                const field = err.loc[err.loc.length - 1];
+                const msg = err.msg || 'Field required';
+                const type = err.type || '';
+                return `Field "${field}": ${msg}${type ? ` (${type})` : ''}`;
+              }
+              return err.msg || err.message || JSON.stringify(err);
+            });
+            errorMessage = 'The following fields have errors:\n' + fieldErrors.join('\n');
+          } else {
+            errorMessage = JSON.stringify(errorData.detail);
+          }
+        } else {
+          // Fallback to showing the raw error data
+          errorMessage = 'Raw error: ' + JSON.stringify(errorData);
+        }
+      } else if (error.message) {
+        errorMessage += error.message;
+      } else {
+        errorMessage += 'Unknown error occurred';
+      }
+      
+      console.error('Final error message:', errorMessage);
+      setError(errorMessage);
+      setSuccess(null);
     }
   };
 
@@ -287,6 +427,46 @@ const AddEditSinkPage: React.FC = () => {
               <option value="web_receiver">Web Receiver</option>
             </Select>
           </FormControl>
+
+          {/* Multi-Device Mode for RTP Protocol */}
+          {protocol === 'rtp' && (
+            <>
+              <FormControl>
+                <Flex alignItems="center">
+                  <FormLabel htmlFor="multi-device-mode" mb={0} mr={3}>
+                    Multi-Device Mode
+                  </FormLabel>
+                  <Switch
+                    id="multi-device-mode"
+                    isChecked={multiDeviceMode}
+                    onChange={(e) => {
+                      setMultiDeviceMode(e.target.checked);
+                      // Clear mappings when disabling multi-device mode
+                      if (!e.target.checked) {
+                        setRtpReceiverMappings([]);
+                      }
+                    }}
+                  />
+                </Flex>
+                <Text fontSize="sm" color="gray.500" mt={1}>
+                  Enable to send different channel pairs to multiple RTP receivers
+                </Text>
+              </FormControl>
+
+              {/* RTP Receiver Mappings */}
+              {multiDeviceMode && (
+                <FormControl>
+                  <FormLabel>RTP Receiver Mappings</FormLabel>
+                  <Box borderWidth="1px" borderRadius="md" p={4}>
+                    <MultiRtpReceiverManager
+                      receivers={rtpReceiverMappings}
+                      onReceiversChange={setRtpReceiverMappings}
+                    />
+                  </Box>
+                </FormControl>
+              )}
+            </>
+          )}
           
           <FormControl>
             <FormLabel>Volume</FormLabel>

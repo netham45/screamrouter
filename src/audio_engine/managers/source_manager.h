@@ -38,7 +38,7 @@ public:
      * @param manager_mutex A reference to the main AudioManager mutex for thread safety.
      * @param timeshift_manager A pointer to the TimeshiftManager for registering new processors.
      */
-    SourceManager(std::mutex& manager_mutex, TimeshiftManager* timeshift_manager, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
+    SourceManager(std::recursive_mutex& manager_mutex, TimeshiftManager* timeshift_manager, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
     /**
      * @brief Destructor.
      */
@@ -79,7 +79,7 @@ private:
      */
     std::string generate_unique_instance_id(const std::string& base_tag);
 
-    std::mutex& m_manager_mutex;
+    std::recursive_mutex& m_manager_mutex;
     TimeshiftManager* m_timeshift_manager;
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 

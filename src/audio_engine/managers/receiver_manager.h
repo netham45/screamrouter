@@ -37,7 +37,7 @@ public:
      * @param manager_mutex A reference to the main AudioManager mutex for thread safety.
      * @param timeshift_manager A pointer to the TimeshiftManager to which receivers will send packets.
      */
-    ReceiverManager(std::mutex& manager_mutex, TimeshiftManager* timeshift_manager);
+    ReceiverManager(std::recursive_mutex& manager_mutex, TimeshiftManager* timeshift_manager);
     /**
      * @brief Destructor.
      */
@@ -82,7 +82,7 @@ public:
     std::vector<std::string> get_per_process_scream_receiver_seen_tags(int listen_port);
 
 private:
-    std::mutex& m_manager_mutex;
+    std::recursive_mutex& m_manager_mutex;
     TimeshiftManager* m_timeshift_manager;
 
     std::unique_ptr<RtpReceiver> m_rtp_receiver;

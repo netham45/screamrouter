@@ -43,7 +43,7 @@ void StatsManager::stop() {
 }
 
 AudioEngineStats StatsManager::get_current_stats() {
-    std::lock_guard<std::mutex> lock(m_stats_mutex);
+    std::scoped_lock lock(m_stats_mutex);
     return m_stats;
 }
 
@@ -189,7 +189,7 @@ void StatsManager::collect_stats() {
     }
 
     {
-        std::lock_guard<std::mutex> lock(m_stats_mutex);
+        std::scoped_lock lock(m_stats_mutex);
         m_stats = new_stats;
     }
 }

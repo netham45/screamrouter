@@ -4,7 +4,7 @@
 namespace screamrouter {
 namespace audio {
 
-ReceiverManager::ReceiverManager(std::mutex& manager_mutex, TimeshiftManager* timeshift_manager)
+ReceiverManager::ReceiverManager(std::recursive_mutex& manager_mutex, TimeshiftManager* timeshift_manager)
     : m_manager_mutex(manager_mutex), m_timeshift_manager(timeshift_manager) {
     LOG_CPP_INFO("ReceiverManager created.");
 }

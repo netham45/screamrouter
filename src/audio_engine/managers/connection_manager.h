@@ -36,7 +36,7 @@ public:
      * @param sources A reference to the map of active source processors.
      */
     ConnectionManager(
-        std::mutex& manager_mutex,
+        std::recursive_mutex& manager_mutex,
         SourceManager* source_manager,
         SinkManager* sink_manager,
         std::map<std::string, std::shared_ptr<ChunkQueue>>& source_to_sink_queues,
@@ -65,7 +65,7 @@ public:
     bool disconnect_source_sink(const std::string& source_instance_id, const std::string& sink_id, bool running);
 
 private:
-    std::mutex& m_manager_mutex;
+    std::recursive_mutex& m_manager_mutex;
     SourceManager* m_source_manager;
     SinkManager* m_sink_manager;
     std::map<std::string, std::shared_ptr<ChunkQueue>>& m_source_to_sink_queues;

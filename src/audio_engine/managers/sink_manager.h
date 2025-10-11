@@ -19,7 +19,6 @@
 
 namespace screamrouter {
 namespace audio {
-class SourceInputProcessor;  // Forward declaration
 using ChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using Mp3Queue = utils::ThreadSafeQueue<EncodedMP3Data>;
 
@@ -36,7 +35,7 @@ public:
      * @brief Constructs a SinkManager.
      * @param manager_mutex A reference to the main AudioManager mutex for thread safety.
      */
-    SinkManager(std::mutex& manager_mutex, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
+    SinkManager(std::recursive_mutex& manager_mutex, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
     /**
      * @brief Destructor.
      */
@@ -61,10 +60,8 @@ public:
      * @param sink_id The ID of the sink.
      * @param source_instance_id The ID of the source instance.
      * @param queue The chunk queue from the source.
-     * @param processor Optional pointer to the source processor (for Phase 5 timestamp mapping).
      */
-    void add_input_queue_to_sink(const std::string& sink_id, const std::string& source_instance_id,
-                                 std::shared_ptr<ChunkQueue> queue, SourceInputProcessor* processor = nullptr);
+    void add_input_queue_to_sink(const std::string& sink_id, const std::string& source_instance_id, std::shared_ptr<ChunkQueue> queue);
     /**
      * @brief Unsubscribes a sink from a source's output queue.
      * @param sink_id The ID of the sink.
@@ -106,7 +103,7 @@ public:
     std::vector<SinkAudioMixer*> get_all_mixers();
 
 private:
-    std::mutex& m_manager_mutex;
+    std::recursive_mutex& m_manager_mutex;
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 
     std::map<std::string, std::unique_ptr<SinkAudioMixer>> m_sinks;

@@ -14,7 +14,9 @@
 // These headers include each other as needed, so we just need the top-level ones.
 #include "managers/audio_manager.h"
 #include "configuration/audio_engine_config_applier.h"
+#include "configuration/audio_engine_config_types.h"
 #include "utils/cpp_logger.h"
+#include "audio_types.h"
 
 // Note: audio_types.h and audio_engine_config_types.h are included by the headers above.
 

@@ -5,7 +5,7 @@
 namespace screamrouter {
 namespace audio {
 
-SinkManager::SinkManager(std::mutex& manager_mutex, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
+SinkManager::SinkManager(std::recursive_mutex& manager_mutex, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
     : m_manager_mutex(manager_mutex), m_settings(settings) {
     LOG_CPP_INFO("SinkManager created.");
 }
@@ -39,6 +39,8 @@ bool SinkManager::add_sink(const SinkConfig& config, bool running) {
         mixer_config.speaker_layout = config.speaker_layout;
         mixer_config.time_sync_enabled = config.time_sync_enabled;
         mixer_config.time_sync_delay_ms = config.time_sync_delay_ms;
+        mixer_config.rtp_receivers = config.rtp_receivers;
+        mixer_config.multi_device_mode = config.multi_device_mode;
         new_sink = std::make_unique<SinkAudioMixer>(mixer_config, mp3_queue, m_settings);
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("Failed to create SinkAudioMixer for %s: %s", config.id.c_str(), e.what());
@@ -46,7 +48,7 @@ bool SinkManager::add_sink(const SinkConfig& config, bool running) {
     }
 
     {
-        std::lock_guard<std::mutex> lock(m_manager_mutex);
+        std::scoped_lock lock(m_manager_mutex);
         if (m_sinks.count(config.id)) {
             LOG_CPP_ERROR("Sink ID already exists: %s", config.id.c_str());
             return false;
@@ -66,7 +68,7 @@ bool SinkManager::remove_sink(const std::string& sink_id) {
     std::unique_ptr<SinkAudioMixer> sink_to_remove;
 
     {
-        std::lock_guard<std::mutex> lock(m_manager_mutex);
+        std::scoped_lock lock(m_manager_mutex);
         auto it = m_sinks.find(sink_id);
         if (it == m_sinks.end()) {
             LOG_CPP_ERROR("Sink not found: %s", sink_id.c_str());
@@ -86,17 +88,18 @@ bool SinkManager::remove_sink(const std::string& sink_id) {
     return true;
 }
 
-void SinkManager::add_input_queue_to_sink(const std::string& sink_id, const std::string& source_instance_id,
-                                          std::shared_ptr<ChunkQueue> queue, SourceInputProcessor* processor) {
+void SinkManager::add_input_queue_to_sink(const std::string& sink_id, const std::string& source_instance_id, std::shared_ptr<ChunkQueue> queue) {
+    std::scoped_lock lock(m_manager_mutex);
     auto sink_it = m_sinks.find(sink_id);
     if (sink_it != m_sinks.end() && sink_it->second) {
-        sink_it->second->add_input_queue(source_instance_id, queue, processor);  // Phase 5: Pass processor
+        sink_it->second->add_input_queue(source_instance_id, queue);
     } else {
         LOG_CPP_ERROR("Sink not found or invalid: %s", sink_id.c_str());
     }
 }
 
 void SinkManager::remove_input_queue_from_sink(const std::string& sink_id, const std::string& source_instance_id) {
+    std::scoped_lock lock(m_manager_mutex);
     auto sink_it = m_sinks.find(sink_id);
     if (sink_it != m_sinks.end() && sink_it->second) {
         sink_it->second->remove_input_queue(source_instance_id);
@@ -106,6 +109,7 @@ void SinkManager::remove_input_queue_from_sink(const std::string& sink_id, const
 }
 
 void SinkManager::add_listener_to_sink(const std::string& sink_id, const std::string& listener_id, std::unique_ptr<INetworkSender> sender) {
+    std::scoped_lock lock(m_manager_mutex);
     auto sink_it = m_sinks.find(sink_id);
     if (sink_it != m_sinks.end() && sink_it->second) {
         sink_it->second->add_listener(listener_id, std::move(sender));
@@ -115,6 +119,7 @@ void SinkManager::add_listener_to_sink(const std::string& sink_id, const std::st
 }
 
 void SinkManager::remove_listener_from_sink(const std::string& sink_id, const std::string& listener_id) {
+    std::scoped_lock lock(m_manager_mutex);
     auto sink_it = m_sinks.find(sink_id);
     if (sink_it != m_sinks.end() && sink_it->second) {
         sink_it->second->remove_listener(listener_id);
@@ -124,6 +129,7 @@ void SinkManager::remove_listener_from_sink(const std::string& sink_id, const st
 }
 
 INetworkSender* SinkManager::get_listener_from_sink(const std::string& sink_id, const std::string& listener_id) {
+    std::scoped_lock lock(m_manager_mutex);
     auto sink_it = m_sinks.find(sink_id);
     if (sink_it != m_sinks.end() && sink_it->second) {
         return sink_it->second->get_listener(listener_id);
@@ -149,7 +155,7 @@ std::vector<std::string> SinkManager::get_sink_ids() {
 
 std::vector<SinkAudioMixer*> SinkManager::get_all_mixers() {
     std::vector<SinkAudioMixer*> mixers;
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    std::scoped_lock lock(m_manager_mutex);
     for (auto const& [id, mixer] : m_sinks) {
         mixers.push_back(mixer.get());
     }

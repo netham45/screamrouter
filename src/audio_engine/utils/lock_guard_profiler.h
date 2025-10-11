@@ -31,13 +31,13 @@ enum class LockType {
     WRITE  ///< An exclusive (write) lock.
 };
 
-// Define lock duration thresholds for logging
-const std::chrono::milliseconds WRITE_LOCK_THRESHOLD(20);
-const std::chrono::milliseconds READ_LOCK_THRESHOLD(1000);
+// Define lock duration thresholds for logging (tightened for faster detection)
+const std::chrono::milliseconds WRITE_LOCK_THRESHOLD(10);      // Changed from 20ms to 10ms
+const std::chrono::milliseconds READ_LOCK_THRESHOLD(100);      // Changed from 1000ms to 100ms
 
-// Define lock duration thresholds for the watchdog to terminate the program
-const std::chrono::milliseconds WRITE_LOCK_WATCHDOG_THRESHOLD(200);
-const std::chrono::milliseconds READ_LOCK_WATCHDOG_THRESHOLD(5000);
+// Define lock duration thresholds for the watchdog to terminate the program (tightened)
+const std::chrono::milliseconds WRITE_LOCK_WATCHDOG_THRESHOLD(100);   // Changed from 200ms to 100ms
+const std::chrono::milliseconds READ_LOCK_WATCHDOG_THRESHOLD(1000);   // Changed from 5000ms to 1000ms
 
 class LockGuardProfiler;
 
@@ -61,6 +61,9 @@ public:
 
     LockWatchdog(const LockWatchdog&) = delete;
     LockWatchdog& operator=(const LockWatchdog&) = delete;
+
+    /** @brief Dumps all currently held locks across all threads for debugging. */
+    void dumpAllHeldLocks();
 
 private:
     LockWatchdog();
@@ -121,6 +124,13 @@ private:
     std::unique_lock<std::shared_mutex> unique_lock_;
     std::shared_lock<std::shared_mutex> shared_lock_;
 };
+
+/**
+ * @brief Global function to dump all currently held locks for debugging.
+ * @details This function can be called from anywhere to get a snapshot of all
+ *          locks currently held by all threads in the application.
+ */
+void dumpAllHeldLocks();
 
 } // namespace utils
 } // namespace audio

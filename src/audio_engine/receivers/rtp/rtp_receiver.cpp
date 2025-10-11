@@ -1,7 +1,6 @@
 #include "rtp_receiver.h"
 #include "../../input_processor/timeshift_manager.h" // For TimeshiftManager operations
 #include "../../audio_constants.h"   // For SCREAM_PAYLOAD_TYPE_RTP, etc.
-#include "../../timing/reference_clock_manager.h" // For reference clock timing
 #include <rtc/rtp.hpp> // Added for libdatachannel
 #include <iostream>
 #include <vector>
@@ -300,9 +299,7 @@ void RtpReceiver::run() {
                     continue;
                 }
             
-                // Use reference clock for consistent timing across all components
-                auto& ref_clock = screamrouter::audio_engine::ReferenceClockManager::get_instance();
-                auto received_time = ref_clock.now();
+                auto received_time = std::chrono::steady_clock::now();
 
                 if (static_cast<size_t>(n_received) < sizeof(rtc::RtpHeader)) {
                     log_warning("Received packet too small to be an RTP packet (" + std::to_string(n_received) + " bytes). Source: " + std::string(inet_ntoa(cliaddr.sin_addr)));
@@ -566,7 +563,6 @@ void RtpReceiver::process_ready_packets_internal(uint32_t ssrc, const struct soc
         while (pcm_accumulator.size() >= TARGET_PCM_CHUNK_SIZE) {
             TaggedAudioPacket packet;
             packet.received_time = chunk_first_packet_received_time_[ssrc];
-            packet.reference_arrival_time = chunk_first_packet_received_time_[ssrc]; // Stamp with reference time
             packet.rtp_timestamp = chunk_first_packet_rtp_timestamp_[ssrc];
             
             size_t bytes_per_sample = props.bit_depth / 8;

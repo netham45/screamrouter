@@ -6,7 +6,7 @@ namespace screamrouter {
 namespace audio {
 
 ConnectionManager::ConnectionManager(
-    std::mutex& manager_mutex,
+    std::recursive_mutex& manager_mutex,
     SourceManager* source_manager,
     SinkManager* sink_manager,
     std::map<std::string, std::shared_ptr<ChunkQueue>>& source_to_sink_queues,
@@ -24,7 +24,7 @@ ConnectionManager::~ConnectionManager() {
 }
 
 bool ConnectionManager::connect_source_sink(const std::string& source_instance_id, const std::string& sink_id, bool running) {
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    std::scoped_lock lock(m_manager_mutex);
 
     if (!running) {
         return false;
@@ -42,14 +42,13 @@ bool ConnectionManager::connect_source_sink(const std::string& source_instance_i
         return false;
     }
 
-    // Phase 5: Pass processor pointer for TimestampMapper access
-    m_sink_manager->add_input_queue_to_sink(sink_id, source_instance_id, queue_it->second, source_it->second.get());
-    LOG_CPP_INFO("Connection successful: Source instance %s -> Sink %s (with processor reference)", source_instance_id.c_str(), sink_id.c_str());
+    m_sink_manager->add_input_queue_to_sink(sink_id, source_instance_id, queue_it->second);
+    LOG_CPP_INFO("Connection successful: Source instance %s -> Sink %s", source_instance_id.c_str(), sink_id.c_str());
     return true;
 }
 
 bool ConnectionManager::disconnect_source_sink(const std::string& source_instance_id, const std::string& sink_id, bool running) {
-    std::lock_guard<std::mutex> lock(m_manager_mutex);
+    std::scoped_lock lock(m_manager_mutex);
 
     if (!running) {
         return false;

@@ -24,16 +24,6 @@
 #include <lame/lame.h>
 #include <atomic>
 
-// Forward declarations
-namespace screamrouter {
-namespace audio {
-    class SourceInputProcessor;
-}
-namespace audio_engine {
-    class TimestampMapper;
-}
-}
-
 class AudioProcessor;
 
 namespace screamrouter {
@@ -102,10 +92,8 @@ public:
      * @brief Adds an input queue from a source processor.
      * @param instance_id The unique ID of the source processor instance.
      * @param queue A shared pointer to the source's output queue.
-     * @param processor Optional pointer to the source processor (for Phase 5 timestamp mapping).
      */
-    void add_input_queue(const std::string& instance_id, std::shared_ptr<InputChunkQueue> queue,
-                        screamrouter::audio::SourceInputProcessor* processor = nullptr);
+    void add_input_queue(const std::string& instance_id, std::shared_ptr<InputChunkQueue> queue);
 
     /**
      * @brief Removes an input queue.
@@ -164,10 +152,6 @@ private:
 
     std::map<std::string, bool> input_active_state_;
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
-    
-    // Phase 5: Store processor references to get TimestampMapper
-    std::map<std::string, screamrouter::audio::SourceInputProcessor*> input_processors_;
-    std::shared_ptr<screamrouter::audio_engine::TimestampMapper> collected_timestamp_mapper_;
 
     std::condition_variable input_cv_;
     std::mutex input_cv_mutex_;
@@ -196,8 +180,6 @@ private:
     void close_lame();
 
     bool wait_for_source_data();
-    std::chrono::steady_clock::time_point calculate_next_mix_time();
-    bool scheduled_mix_cycle();
     void mix_buffers();
     void downscale_buffer();
     size_t preprocess_for_listeners_and_mp3();
