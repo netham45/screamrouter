@@ -14,6 +14,7 @@
 #include <chrono>
 
 #ifdef _WIN32
+#define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
@@ -102,7 +103,7 @@ public:
      * @param packet_count Output parameter for the number of packets sent.
      * @param octet_count Output parameter for the number of octets sent.
      */
-    void get_statistics(uint32_t& packet_count, uint32_t& octet_count) const {
+    void get_statistics(uint32_t& packet_count, uint64_t& octet_count) const {
         packet_count = packet_count_.load();
         octet_count = octet_count_.load();
     }
@@ -122,7 +123,7 @@ private:
     
     // Statistics tracking
     std::atomic<uint32_t> packet_count_;
-    std::atomic<uint32_t> octet_count_;
+    std::atomic<uint64_t> octet_count_;
     
     std::string dest_ip_;
     uint16_t dest_port_;

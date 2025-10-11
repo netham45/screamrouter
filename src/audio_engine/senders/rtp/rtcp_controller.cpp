@@ -169,18 +169,19 @@ void RtcpController::send_rtcp_sr(const ManagedStream& stream) {
     
     // Get current RTP timestamp and statistics from the sender
     if (stream.info.sender) {
-        uint32_t packet_count, octet_count;
+        uint32_t packet_count;
+        uint64_t octet_count;
         stream.info.sender->get_statistics(packet_count, octet_count);
         
         // For RTP timestamp, we'd need to calculate based on elapsed time
         // This is simplified - in production, you'd track the actual RTP timestamps
         auto elapsed = std::chrono::system_clock::now() - stream.stream_start_time;
         auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
-        uint32_t rtp_timestamp = stream.stream_start_rtp_timestamp + (elapsed_ms * 48); // 48kHz sample rate
+        uint32_t rtp_timestamp = stream.stream_start_rtp_timestamp + static_cast<uint32_t>(elapsed_ms * 48); // 48kHz sample rate
         
         sr.rtp_timestamp = htonl(rtp_timestamp);
         sr.packet_count = htonl(packet_count);
-        sr.octet_count = htonl(octet_count);
+        sr.octet_count = htonl(static_cast<uint32_t>(octet_count));
     }
     
     // Send the RTCP packet

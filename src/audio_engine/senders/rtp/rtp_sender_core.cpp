@@ -197,7 +197,7 @@ bool RtpSenderCore::send_rtp_packet(const uint8_t* payload_data, size_t payload_
         return false;
     }
     
-    const size_t csrc_count = std::min(csrcs.size(), size_t(15)); // Max 15 CSRCs
+    const size_t csrc_count = (std::min)(csrcs.size(), size_t(15)); // Max 15 CSRCs
     const size_t rtp_header_size = 12 + (csrc_count * 4);
     std::vector<uint8_t> packet_buffer(rtp_header_size + payload_size);
     
