@@ -26,6 +26,7 @@ class CMakeBuilder(BaseBuilder):
     
     def configure(self) -> bool:
         """Configure using CMake"""
+        
         # Remove entire build directory if it exists to avoid stale cache
         if self.build_dir.exists():
             self.logger.debug(f"Removing stale build directory: {self.build_dir}")
@@ -40,6 +41,62 @@ class CMakeBuilder(BaseBuilder):
         
         # Add install prefix
         cmd.append(f"-DCMAKE_INSTALL_PREFIX={self.install_dir}")
+        
+        # Add cross-compilation support
+        host_triplet = self._detect_cross_compilation()
+        if host_triplet:
+            self.logger.info(f"Cross-compilation detected: target={host_triplet}")
+            
+            # CMake uses CMAKE_SYSTEM_NAME and CMAKE_SYSTEM_PROCESSOR
+            # Parse triplet: <arch>-<vendor>-<os>-<abi>
+            parts = host_triplet.split('-')
+            if len(parts) >= 2:
+                arch = parts[0]
+                # Find the OS part (usually 'linux', 'darwin', etc.)
+                os_name = None
+                for part in parts:
+                    if 'linux' in part.lower():
+                        os_name = 'linux'
+                        break
+                    elif 'darwin' in part.lower():
+                        os_name = 'darwin'
+                        break
+                
+                if os_name:
+                    # Map to CMake system names
+                    cmake_system = 'Linux' if os_name == 'linux' else os_name.capitalize()
+                    
+                    cmd.extend([
+                        f"-DCMAKE_SYSTEM_NAME={cmake_system}",
+                        f"-DCMAKE_SYSTEM_PROCESSOR={arch}"
+                    ])
+                    
+                    # Set compilers from environment (need full paths for cross-compilation)
+                    if os.environ.get('CC'):
+                        cc = os.environ.get('CC')
+                        # Remove ccache prefix if present
+                        if cc.startswith('ccache '):
+                            cc = cc[7:].strip()
+                        # Get full path to compiler
+                        cc_path = shutil.which(cc.split()[0])
+                        if cc_path:
+                            cmd.append(f"-DCMAKE_C_COMPILER={cc_path}")
+                        else:
+                            cmd.append(f"-DCMAKE_C_COMPILER={cc}")
+                    
+                    if os.environ.get('CXX'):
+                        cxx = os.environ.get('CXX')
+                        # Remove ccache prefix if present
+                        if cxx.startswith('ccache '):
+                            cxx = cxx[7:].strip()
+                        # Get full path to compiler
+                        cxx_path = shutil.which(cxx.split()[0])
+                        if cxx_path:
+                            cmd.append(f"-DCMAKE_CXX_COMPILER={cxx_path}")
+                        else:
+                            cmd.append(f"-DCMAKE_CXX_COMPILER={cxx}")
+                    
+                    self.logger.debug(f"CMake cross-compilation: system={cmake_system}, processor={arch}")
         
         # Add platform-specific options
         if self.platform == "windows":

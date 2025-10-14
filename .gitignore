@@ -30,3 +30,4 @@ c_utils/**
 screamrouter/site/**/*.js
 screamrouter/site/**/*.html
 screamrouter/site/**/*.txt
+dist/**

@@ -13,16 +13,34 @@ Parallel Build Support:
 - Override with: pip install -e . --config-settings="--build-option=--parallel=N"
 - Or set environment: export MAX_JOBS=N before building
 - Linux: Install ccache for faster incremental rebuilds
+
+Cross-Compilation Support:
+- Set CC and CXX to your cross-compiler
+- Set SCREAMROUTER_PLAT_NAME to override the wheel platform tag
+- Example: CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ SCREAMROUTER_PLAT_NAME=linux_aarch64 python3 setup.py bdist_wheel
 """
 
 import os
 import sys
 import shutil
 import subprocess
+import re
 from pathlib import Path
 from setuptools import setup, Extension, find_packages
 from setuptools.command.build_ext import build_ext
 from distutils.command.build import build as _build
+
+# Conditionally import bdist_wheel (not always installed)
+try:
+    from setuptools.command.bdist_wheel import bdist_wheel
+    HAVE_WHEEL = True
+except ImportError:
+    try:
+        from wheel.bdist_wheel import bdist_wheel
+        HAVE_WHEEL = True
+    except ImportError:
+        HAVE_WHEEL = False
+        bdist_wheel = None
 
 # Ensure we can import from the project directory
 project_root = Path(__file__).parent.resolve()
@@ -105,6 +123,80 @@ class BuildReactCommand(_build):
         print(f"React build completed successfully. Files copied to {package_site_dir}")
 
 
+def detect_cross_compile_platform():
+    """
+    Detect cross-compilation target from CC environment variable.
+    Returns platform tag like 'linux_aarch64' or None if native build.
+    """
+    cc = os.environ.get('CC', '')
+    
+    # Check if SCREAMROUTER_PLAT_NAME is explicitly set
+    explicit_plat = os.environ.get('SCREAMROUTER_PLAT_NAME')
+    if explicit_plat:
+        print(f"Using explicit platform tag from SCREAMROUTER_PLAT_NAME: {explicit_plat}")
+        return explicit_plat
+    
+    # Try to detect from CC
+    if not cc:
+        return None
+    
+    # Extract target triplet from compiler name
+    # Examples: aarch64-linux-gnu-gcc, arm-linux-gnueabihf-gcc, x86_64-w64-mingw32-gcc
+    match = re.match(r'^(?:ccache\s+)?([^-\s]+)-([^-]+)-([^-]+)(?:-([^-]+))?-(?:gcc|g\+\+|clang)', cc)
+    if not match:
+        return None
+    
+    arch = match.group(1)
+    os_name = match.group(3)
+    
+    # Map architecture names to Python wheel tags
+    arch_map = {
+        'aarch64': 'aarch64',
+        'arm': 'armv7l',
+        'armv7': 'armv7l',
+        'x86_64': 'x86_64',
+        'i686': 'i686',
+        'i386': 'i686',
+        'mips': 'mips',
+        'mipsel': 'mipsel',
+        'powerpc': 'ppc',
+        'powerpc64': 'ppc64',
+        'powerpc64le': 'ppc64le',
+        's390x': 's390x',
+    }
+    
+    # Map OS names
+    os_map = {
+        'linux': 'linux',
+        'darwin': 'darwin',
+        'mingw32': 'win',
+    }
+    
+    wheel_arch = arch_map.get(arch, arch)
+    wheel_os = os_map.get(os_name, os_name)
+    
+    platform_tag = f"{wheel_os}_{wheel_arch}"
+    print(f"Detected cross-compilation target from CC={cc}: {platform_tag}")
+    return platform_tag
+
+
+if HAVE_WHEEL:
+    class BdistWheelCommand(bdist_wheel):
+        """Custom bdist_wheel that supports cross-compilation platform tags"""
+        
+        def finalize_options(self):
+            super().finalize_options()
+            
+            # Override platform name if cross-compiling
+            cross_plat = detect_cross_compile_platform()
+            if cross_plat:
+                self.plat_name = cross_plat
+                self.plat_name_supplied = True
+                print(f"Building wheel for platform: {cross_plat}")
+else:
+    BdistWheelCommand = None
+
+
 class BuildExtCommand(build_ext):
     """
     Custom build_ext that uses our modular build system.
@@ -125,9 +217,15 @@ class BuildExtCommand(build_ext):
         print(f"Building with {self.parallel} parallel jobs...")
 
         # Enable ccache for faster incremental builds on Linux
+        # Preserve existing CC/CXX for cross-compilation
         if sys.platform != "win32" and shutil.which("ccache"):
-            os.environ["CC"] = "ccache " + os.environ.get("CC", "gcc")
-            os.environ["CXX"] = "ccache " + os.environ.get("CXX", "g++")
+            current_cc = os.environ.get("CC", "gcc")
+            current_cxx = os.environ.get("CXX", "g++")
+            # Only prepend ccache if not already there
+            if not current_cc.startswith("ccache"):
+                os.environ["CC"] = "ccache " + current_cc
+            if not current_cxx.startswith("ccache"):
+                os.environ["CXX"] = "ccache " + current_cxx
             print("Using ccache for faster incremental builds")
 
         # Build React frontend first
@@ -170,10 +268,19 @@ class BuildExtCommand(build_ext):
         # Get install directory
         install_dir = bs.install_dir
         
+        # Detect cross-compilation
+        is_cross_compiling = bool(detect_cross_compile_platform())
+        
         # Update extension paths
         for ext in self.extensions:
             # Add include directories
             ext.include_dirs.insert(0, str(install_dir / "include"))
+            
+            # When cross-compiling, ONLY use our built libraries
+            # Clear any system library paths that distutils may have added
+            if is_cross_compiling:
+                ext.library_dirs.clear()
+                ext.runtime_library_dirs = []
             
             # Add library directories
             # On Windows, use only 'lib' directory (32-bit and 64-bit both use lib)
@@ -182,7 +289,9 @@ class BuildExtCommand(build_ext):
                 ext.library_dirs.insert(0, str(install_dir / "lib"))
             else:
                 ext.library_dirs.insert(0, str(install_dir / "lib"))
-                ext.library_dirs.insert(0, str(install_dir / "lib64"))
+                lib64_path = install_dir / "lib64"
+                if lib64_path.exists():
+                    ext.library_dirs.insert(0, str(lib64_path))
             
             # Platform-specific adjustments
             if sys.platform == "win32":
@@ -292,7 +401,8 @@ setup(
     ext_modules=ext_modules,
     cmdclass={
         "build_react": BuildReactCommand,
-        "build_ext": BuildExtCommand
+        "build_ext": BuildExtCommand,
+        **({} if not HAVE_WHEEL else {"bdist_wheel": BdistWheelCommand}),
     },
     packages=find_packages(include=["screamrouter", "screamrouter.*"]),
     package_data={

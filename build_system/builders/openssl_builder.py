@@ -33,10 +33,19 @@ class OpenSSLBuilder(BaseBuilder):
             
             configure_cmd = ["perl", "Configure"]
         else:
-            # Linux - prefer 'config' over 'Configure' for auto-detection
-            configure_script = self.source_dir / "config"
-            if not configure_script.exists():
+            # Linux - check for cross-compilation first
+            cross_target = self._detect_cross_compilation()
+            
+            if cross_target:
+                # When cross-compiling, MUST use Configure with explicit platform target
+                # because 'config' auto-detects the build host, not the target
                 configure_script = self.source_dir / "Configure"
+                self.logger.info(f"Cross-compilation detected, using Configure script")
+            else:
+                # Native build - prefer 'config' over 'Configure' for auto-detection
+                configure_script = self.source_dir / "config"
+                if not configure_script.exists():
+                    configure_script = self.source_dir / "Configure"
             
             if not configure_script.exists():
                 self.logger.error("OpenSSL configure script not found")
@@ -48,15 +57,38 @@ class OpenSSLBuilder(BaseBuilder):
         # The 'config' script auto-detects the platform
         if self.platform == "linux" and configure_script.name == "Configure":
             platform_targets = self.build_config.get("platform_target", {})
-            machine = platform.machine().lower()
-            if machine in platform_targets:
-                target = platform_targets[machine]
-            elif "x86_64" in machine or "amd64" in machine:
-                target = platform_targets.get("x86_64", "linux-x86_64")
-            elif "aarch64" in machine or "arm64" in machine:
-                target = platform_targets.get("aarch64", "linux-aarch64")
+            
+            # Check for cross-compilation first
+            cross_target = self._detect_cross_compilation()
+            if cross_target:
+                # Extract architecture from cross-compilation target
+                # e.g., aarch64-linux-gnu -> aarch64
+                arch = cross_target.split('-')[0].lower()
+                self.logger.info(f"OpenSSL: Cross-compiling for {arch}")
+                
+                # Map to OpenSSL platform target
+                if arch in platform_targets:
+                    target = platform_targets[arch]
+                elif "aarch64" in arch or "arm64" in arch:
+                    target = platform_targets.get("aarch64", "linux-aarch64")
+                elif "arm" in arch:
+                    target = "linux-armv4"  # Generic ARM target
+                elif "x86_64" in arch or "amd64" in arch:
+                    target = platform_targets.get("x86_64", "linux-x86_64")
+                else:
+                    target = platform_targets.get("i686", "linux-generic32")
             else:
-                target = platform_targets.get("i686", "linux-generic32")
+                # Native build - use build host's architecture
+                machine = platform.machine().lower()
+                if machine in platform_targets:
+                    target = platform_targets[machine]
+                elif "x86_64" in machine or "amd64" in machine:
+                    target = platform_targets.get("x86_64", "linux-x86_64")
+                elif "aarch64" in machine or "arm64" in machine:
+                    target = platform_targets.get("aarch64", "linux-aarch64")
+                else:
+                    target = platform_targets.get("i686", "linux-generic32")
+            
             configure_cmd.append(target)
         elif self.platform == "windows":
             platform_targets = self.build_config.get("platform_target", {})
@@ -87,6 +119,16 @@ class OpenSSLBuilder(BaseBuilder):
         # Set environment for Linux
         env = self.env.copy()
         if self.platform == "linux":
+            # CRITICAL: OpenSSL's build system spawns subprocesses that ignore
+            # the platform target. We MUST explicitly set CC/CXX if cross-compiling.
+            cross_target = self._detect_cross_compilation()
+            if cross_target and "CC" in os.environ:
+                # Force OpenSSL to use our cross-compiler
+                env["CC"] = os.environ["CC"]
+                if "CXX" in os.environ:
+                    env["CXX"] = os.environ["CXX"]
+                self.logger.info(f"OpenSSL: Forcing CC={env['CC']}, CXX={env.get('CXX', 'N/A')}")
+            
             # Add environment variables from config
             env_vars = self.build_config.get("env_vars", {})
             for key, value in env_vars.items():
@@ -171,14 +213,15 @@ class OpenSSLBuilder(BaseBuilder):
         """Clean OpenSSL build artifacts"""
         super().clean()
         
-        # OpenSSL-specific clean
+        # OpenSSL-specific clean - use distclean to remove ALL cached config
         if (self.source_dir / "Makefile").exists():
             if self.platform == "windows":
                 make_cmd = self.build_config.get("make_command", "nmake")
             else:
                 make_cmd = self.build_config.get("make_command", "make")
             
-            self.run_command([make_cmd, "clean"], check=False)
+            # Use distclean instead of clean to remove configdata.pm and all cached state
+            self.run_command([make_cmd, "distclean"], check=False)
         
         # Remove OpenSSL-specific files
         openssl_files = [

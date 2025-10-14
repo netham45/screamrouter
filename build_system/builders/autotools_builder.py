@@ -56,6 +56,18 @@ class AutotoolsBuilder(BaseBuilder):
         configure_script_name = self.build_config.get("configure_script", "./configure")
         cmd = [configure_script_name]
         
+        # Add cross-compilation support
+        host_triplet = self._detect_cross_compilation()
+        if host_triplet:
+            self.logger.info(f"Cross-compilation detected: target={host_triplet}")
+            cmd.append(f"--host={host_triplet}")
+            
+            # Also add --build for clarity (current build system)
+            build_triplet = self._detect_build_triplet()
+            if build_triplet:
+                cmd.append(f"--build={build_triplet}")
+                self.logger.debug(f"Build system: {build_triplet}")
+        
         # Add configure arguments (check if prefix is already included)
         configure_args = self.build_config.get("configure_args", [])
         has_prefix = any("--prefix" in arg for arg in configure_args)
