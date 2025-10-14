@@ -11,6 +11,7 @@
 #include "../../output_mixer/sink_audio_mixer.h"
 #include "../../configuration/audio_engine_config_types.h"
 #include "rtp_sender_core.h"
+#include "rtcp_controller.h"
 #include <memory>
 #include <vector>
 #include <mutex>
@@ -67,7 +68,8 @@ private:
     struct ActiveReceiver {
         config::RtpReceiverConfig config;
         std::unique_ptr<RtpSenderCore> sender;
-        std::vector<int16_t> stereo_buffer; // Pre-allocated buffer for stereo extraction
+        std::vector<uint8_t> stereo_buffer;  // Pre-allocated buffer for stereo extraction
+        std::vector<uint8_t> network_buffer; // Pre-allocated buffer for network byte order
     };
     
     SinkMixerConfig config_;
@@ -80,6 +82,9 @@ private:
     // Statistics
     std::atomic<uint32_t> total_packets_sent_;
     std::atomic<uint32_t> total_bytes_sent_;
+    
+    // RTCP coordination for multi-stream synchronization
+    std::unique_ptr<RtcpController> rtcp_controller_;
     
     /**
      * @brief Extracts a stereo pair from 8-channel interleaved audio.

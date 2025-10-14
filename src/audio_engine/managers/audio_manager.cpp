@@ -1,5 +1,7 @@
 #include "audio_manager.h"
 #include "../utils/cpp_logger.h"
+#include "../synchronization/global_synchronization_clock.h"
+#include "../synchronization/sink_synchronization_coordinator.h"
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -105,15 +107,112 @@ void AudioManager::shutdown() {
     m_timeshift_manager.reset();
     m_stats_manager.reset();
 
+    // Clean up synchronization coordinators
+    sink_coordinators_.clear();
+    
+    // Clean up sync clocks
+    sync_clocks_.clear();
+    
     LOG_CPP_INFO("AudioManager shutdown complete.");
 }
 
+GlobalSynchronizationClock* AudioManager::get_or_create_sync_clock(int sample_rate) {
+    auto it = sync_clocks_.find(sample_rate);
+    if (it != sync_clocks_.end()) {
+        return it->second.get();
+    }
+    
+    // Create new clock for this sample rate
+    auto clock = std::make_unique<GlobalSynchronizationClock>(sample_rate);
+    auto* clock_ptr = clock.get();
+    sync_clocks_[sample_rate] = std::move(clock);
+    
+    LOG_CPP_INFO("[AudioManager] Created GlobalSyncClock for %d Hz", sample_rate);
+    return clock_ptr;
+}
+
 bool AudioManager::add_sink(SinkConfig config) {
-    return m_sink_manager ? m_sink_manager->add_sink(config, m_running) : false;
+    if (!m_sink_manager) {
+        return false;
+    }
+    
+    // First, create the sink through SinkManager
+    if (!m_sink_manager->add_sink(config, m_running)) {
+        return false;
+    }
+    
+    // Now add synchronization if enabled
+    if (m_settings && m_settings->synchronization.enable_multi_sink_sync) {
+        int output_rate = config.samplerate;
+        auto* global_clock = get_or_create_sync_clock(output_rate);
+        
+        // Get the mixer that was just created
+        auto mixers = m_sink_manager->get_all_mixers();
+        SinkAudioMixer* mixer = nullptr;
+        for (auto* m : mixers) {
+            if (m->get_config().sink_id == config.id) {
+                mixer = m;
+                break;
+            }
+        }
+        
+        if (mixer) {
+            // Create synchronization coordinator
+            auto coordinator = std::make_unique<SinkSynchronizationCoordinator>(
+                config.id,
+                mixer,
+                global_clock,
+                m_settings->synchronization_tuning.barrier_timeout_ms
+            );
+            
+            // Configure the mixer for coordination
+            mixer->set_coordination_mode(true);
+            mixer->set_coordinator(coordinator.get());
+            
+            // Initialize reference timestamp on first sink for this clock
+            if (global_clock->get_stats().active_sinks == 0) {
+                // Use current time as reference - actual RTP timestamp will be set when first audio arrives
+                global_clock->initialize_reference(0, std::chrono::steady_clock::now());
+                global_clock->set_enabled(true);
+            }
+            
+            // Register sink with global clock and enable coordinator
+            coordinator->enable();
+            
+            // Store the coordinator
+            sink_coordinators_[config.id] = std::move(coordinator);
+            
+            LOG_CPP_INFO("[AudioManager] Sink '%s' registered for synchronized playback at %d Hz",
+                         config.id.c_str(), output_rate);
+        } else {
+            LOG_CPP_ERROR("[AudioManager] Failed to get mixer for sink '%s' after creation",
+                          config.id.c_str());
+        }
+    }
+    
+    return true;
 }
 
 bool AudioManager::remove_sink(const std::string& sink_id) {
-    return m_sink_manager ? m_sink_manager->remove_sink(sink_id) : false;
+    if (!m_sink_manager) {
+        return false;
+    }
+    
+    // First, disable and remove the coordinator if it exists
+    auto coord_it = sink_coordinators_.find(sink_id);
+    if (coord_it != sink_coordinators_.end()) {
+        // Disable coordinator (this will unregister from global clock)
+        coord_it->second->disable();
+        
+        // Remove the coordinator (destructor will also unregister if needed)
+        sink_coordinators_.erase(coord_it);
+        
+        LOG_CPP_INFO("[AudioManager] Removed synchronization coordinator for sink '%s'",
+                     sink_id.c_str());
+    }
+    
+    // Now remove the sink through SinkManager
+    return m_sink_manager->remove_sink(sink_id);
 }
 
 std::string AudioManager::configure_source(SourceConfig config) {
@@ -253,6 +352,27 @@ void AudioManager::set_audio_settings(const AudioEngineSettings& new_settings) {
     if (m_settings) {
         *m_settings = new_settings;
     }
+}
+
+pybind11::dict AudioManager::get_sync_statistics() {
+    namespace py = pybind11;
+    std::scoped_lock lock(m_manager_mutex);
+    
+    py::dict stats;
+    
+    for (const auto& [rate, clock] : sync_clocks_) {
+        auto clock_stats = clock->get_stats();
+        py::dict rate_stats;
+        rate_stats["active_sinks"] = clock_stats.active_sinks;
+        rate_stats["current_playback_timestamp"] = clock_stats.current_playback_timestamp;
+        rate_stats["max_drift_ppm"] = clock_stats.max_drift_ppm;
+        rate_stats["avg_barrier_wait_ms"] = clock_stats.avg_barrier_wait_ms;
+        rate_stats["total_barrier_timeouts"] = clock_stats.total_barrier_timeouts;
+        
+        stats[py::cast(rate)] = rate_stats;
+    }
+    
+    return stats;
 }
 
 void AudioManager::process_notifications() {

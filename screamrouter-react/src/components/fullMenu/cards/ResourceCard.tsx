@@ -18,10 +18,11 @@ import {
   AccordionItem,
   AccordionButton,
   AccordionPanel,
-  AccordionIcon
+  AccordionIcon,
+  VStack
 } from '@chakra-ui/react';
-import { StarIcon, SettingsIcon } from '@chakra-ui/icons';
-import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower } from 'react-icons/fa';
+import { StarIcon, SettingsIcon, DeleteIcon } from '@chakra-ui/icons';
+import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower, FaProjectDiagram } from 'react-icons/fa';
 import { Source, Sink, Route } from '../../../api/api';
 import VolumeSlider from '../controls/VolumeSlider';
 import TimeshiftSlider from '../controls/TimeshiftSlider';
@@ -107,6 +108,16 @@ interface ResourceCardProps {
   onUpdateTimeshift?: (timeshift: number) => void;
   
   /**
+   * Handler for opening channel mapping dialog.
+   */
+  onChannelMapping?: () => void;
+  
+  /**
+   * Handler for deleting the item.
+   */
+  onDelete?: () => void;
+  
+  /**
    * All routes in the system, used to determine active and disabled routes
    */
   routes?: Route[];
@@ -163,6 +174,8 @@ const ResourceCard: React.FC<ResourceCardProps> = ({
   onVisualize,
   onUpdateVolume,
   onUpdateTimeshift,
+  onChannelMapping,
+  onDelete,
   routes = [],
   allSources = [],
   allSinks = [],
@@ -270,48 +283,63 @@ return (
     pr={2}
   >
     {/* Header section - always visible */}
-    <Flex p={5} justify="space-between" align="center" borderColor="transparent">
-      <Heading
-        as="h3"
-        size="md"
-        color={headingColor}
-        cursor={navigate ? "pointer" : "default"}
-        _hover={navigate ? { color: useColorModeValue('blue.600', 'blue.300') } : {}}
-        onClick={navigateToDetails || handleCardClick}
-      >
-        {item.name}
-      </Heading>
-      <HStack>
-        <IconButton
-          aria-label={isStarred ? 'Remove from favorites' : 'Add to favorites'}
-          title={isStarred ? 'Remove from favorites' : 'Add to favorites'}
-          icon={<StarIcon color={isStarred ? starredColor : 'gray.400'} />}
-          onClick={onStar}
-          variant="ghost"
-          size="sm"
-        />
-        {isSource(item) && (
+    <Box pt={5} pl={5}>
+      <Flex justify="space-between" align="flex-start" mb={0}>
+        <VStack>
+        <Heading
+          as="h3"
+          size="md"
+          color={headingColor}
+          cursor={navigate ? "pointer" : "default"}
+          _hover={navigate ? { color: useColorModeValue('blue.600', 'blue.300') } : {}}
+          onClick={navigateToDetails || handleCardClick}
+          flex="1"
+          mr={2}
+          minW="0"
+        >
+          {item.name}
+        </Heading>
+        <Flex wrap="wrap" justify="flex-end" minW="fit-content">
+          <HStack justify="flex-start" align="flex-start" wrap="wrap">
           <IconButton
-            aria-label={isActive ? 'Unmark as Primary Source' : 'Mark as Primary Source'}
-            title={isActive ? 'Unmark as Primary Source' : 'Mark as Primary Source'}
-            icon={
-              <Box
-                as={FaBroadcastTower}
-                color={isActive ? 'cyan.500' : 'gray.400'}
-                transition="all 0.2s"
-              />
-            }
-            onClick={(e) => {
-              e.stopPropagation();
-              if (onToggleActiveSource) {
-                onToggleActiveSource();
-              }
-            }}
+            aria-label={isStarred ? 'Remove from favorites' : 'Add to favorites'}
+            title={isStarred ? 'Remove from favorites' : 'Add to favorites'}
+            icon={<StarIcon color={isStarred ? starredColor : 'gray.400'} />}
+            onClick={onStar}
             variant="ghost"
             size="sm"
           />
-        )}
-        <>
+          {isSource(item) && (
+            <IconButton
+              aria-label={isActive ? 'Unmark as Primary Source' : 'Mark as Primary Source'}
+              title={isActive ? 'Unmark as Primary Source' : 'Mark as Primary Source'}
+              icon={
+                <Box
+                  as={FaBroadcastTower}
+                  color={isActive ? 'cyan.500' : 'gray.400'}
+                  transition="all 0.2s"
+                />
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onToggleActiveSource) {
+                  onToggleActiveSource();
+                }
+              }}
+              variant="ghost"
+              size="sm"
+            />
+          )}
+          {onChannelMapping && (
+            <IconButton
+              aria-label="Channel Mapping"
+              title="Open Channel Mapping"
+              icon={<Box as={FaProjectDiagram} />}
+              onClick={onChannelMapping}
+              variant="ghost"
+              size="sm"
+            />
+          )}
           {onEqualizer && (
             <IconButton
               aria-label="Equalizer"
@@ -343,12 +371,29 @@ return (
             variant="ghost"
             size="sm"
           />
-        </>
-      </HStack>
-    </Flex>
+          {onDelete && (
+            <IconButton
+              aria-label="Delete"
+              title="Delete"
+              icon={<DeleteIcon />}
+              onClick={() => {
+                if (window.confirm(`Are you sure you want to delete ${item.name}?`)) {
+                  onDelete();
+                }
+              }}
+              variant="ghost"
+              size="sm"
+              colorScheme="red"
+            />
+          )}
+          </HStack>
+        </Flex>
+        </VStack>
+      </Flex>
+    </Box>
     
     {/* Badges section - always visible */}
-    <Box px={5} pt={2}>
+    <Box px={5} pt={1}>
       <Flex mb={2} justify="flex-start" flexWrap="wrap" gap={1}>
         {/* Type badge - always first */}
         {isSource(item) && (
@@ -384,7 +429,7 @@ return (
         
         {isSink(item) && onListen && (
           <Badge
-            colorScheme={isActive ? "purple" : "gray"}
+            colorScheme={isActive ? "purple" : "blue"}
             mr={1}
             borderRadius="full"
             px={2}
@@ -392,10 +437,13 @@ return (
             userSelect="none"
             cursor="pointer"
             _hover={{ opacity: 0.8 }}
-            onClick={onListen}
-            title={isActive ? "Click to stop listening" : "Click to listen"}
+            onClick={() => {
+              // Open the listen page for this sink
+              window.open(`/site/listen/${encodeURIComponent(item.name)}`, '_blank');
+            }}
+            title="Click to open listen page"
           >
-            {isActive ? "Listening" : "Not Listening"}
+            {isActive ? "Listening" : "Listen"}
           </Badge>
         )}
         
@@ -433,39 +481,34 @@ return (
       )}
     </Box>
 
-    <Flex justify="flex-start" wrap="wrap" width="100%" justifyContent="center" gap={2} mb={3} minH="45px">
-      {isSource(item) && item.vnc_ip && (
-        <>
-          {/* Media controls for VNC sources */}
-          {onControlSource && (
-            <HStack spacing={1} ml={2}>
-              <IconButton
-                aria-label="Previous Track"
-                icon={<FaStepBackward />}
-                size="sm"
-                colorScheme="purple"
-                variant="outline"
-                onClick={(e) => { e.stopPropagation(); onControlSource('prevtrack'); }}
-              />
-              <IconButton
-                aria-label="Play/Pause"
-                icon={<FaPlay />}
-                size="sm"
-                colorScheme="purple"
-                variant="outline"
-                onClick={(e) => { e.stopPropagation(); onControlSource('play'); }}
-              />
-              <IconButton
-                aria-label="Next Track"
-                icon={<FaStepForward />}
-                size="sm"
-                colorScheme="purple"
-                variant="outline"
-                onClick={(e) => { e.stopPropagation(); onControlSource('nexttrack'); }}
-              />
-            </HStack>
-          )}
-        </>
+    <Flex justify="center" wrap="wrap" width="100%" gap={2} mb={3} minH="45px" align="center">
+      {isSource(item) && item.vnc_ip && onControlSource && (
+        <Flex gap={1} wrap="wrap" justify="center">
+          <IconButton
+            aria-label="Previous Track"
+            icon={<FaStepBackward />}
+            size="sm"
+            colorScheme="purple"
+            variant="outline"
+            onClick={(e) => { e.stopPropagation(); onControlSource('prevtrack'); }}
+          />
+          <IconButton
+            aria-label="Play/Pause"
+            icon={<FaPlay />}
+            size="sm"
+            colorScheme="purple"
+            variant="outline"
+            onClick={(e) => { e.stopPropagation(); onControlSource('play'); }}
+          />
+          <IconButton
+            aria-label="Next Track"
+            icon={<FaStepForward />}
+            size="sm"
+            colorScheme="purple"
+            variant="outline"
+            onClick={(e) => { e.stopPropagation(); onControlSource('nexttrack'); }}
+          />
+        </Flex>
       )}
       
       {isSink(item) && onVisualize && (
@@ -481,7 +524,6 @@ return (
           Visualize
         </Button>
       )}
-
     </Flex>
     
     {/* Accordion sections */}

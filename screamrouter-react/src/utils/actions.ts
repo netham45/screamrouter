@@ -118,6 +118,22 @@ export interface Actions {
    * @param {string} name - The name of the item to navigate to.
    */
   navigateToItem: (type: ItemType, name: string) => void;
+
+  /**
+   * Opens the channel mapping dialog for a source, sink, or route.
+   *
+   * @param {ItemType} type - The type of item ('sources', 'sinks', 'routes').
+   * @param {Source | Sink | Route} item - The item to open channel mapping for.
+   */
+  openChannelMapping: (type: ItemType, item: Source | Sink | Route) => void;
+
+  /**
+   * Navigate function for ResourceCard components.
+   *
+   * @param {ItemType} type - The type of item ('sources', 'sinks', 'routes').
+   * @param {string} name - The name of the item to navigate to.
+   */
+  navigate: (type: ItemType, name: string) => void;
 }
 
 /**
@@ -242,6 +258,11 @@ export const createActions = (
   listenToSink: onListenToSink,
   visualizeSink: onVisualizeSink,
   navigateToItem: onNavigateToItem,
+  openChannelMapping: (type, item) => {
+    // Open speaker layout standalone page for the item
+    window.open(`/site/speaker-layout-standalone?type=${type}&name=${encodeURIComponent(item.name)}`, '_blank');
+  },
+  navigate: onNavigateToItem,
 });
 
 export default createActions;

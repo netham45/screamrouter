@@ -44,12 +44,25 @@ struct ProcessorTuning {
     float dither_noise_shaping_factor = 0.25f;
 };
 
+struct SynchronizationSettings {
+    bool enable_multi_sink_sync = false;
+};
+
+struct SynchronizationTuning {
+    int barrier_timeout_ms = 50;
+    double sync_proportional_gain = 0.01;
+    double max_rate_adjustment = 0.02;
+    double sync_smoothing_factor = 0.9;
+};
+
 class AudioEngineSettings {
 public:
     TimeshiftTuning timeshift_tuning;
     MixerTuning mixer_tuning;
     SourceProcessorTuning source_processor_tuning;
-    ProcessorTuning processor_tuning; // New struct for AudioProcessor
+    ProcessorTuning processor_tuning;
+    SynchronizationSettings synchronization;
+    SynchronizationTuning synchronization_tuning;
 };
 
 } // namespace audio

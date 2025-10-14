@@ -44,6 +44,8 @@ const RoutesContent: React.FC<ContentProps> = ({
               onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
               onEdit={() => actions.editItem('routes', route)}
+              onChannelMapping={() => actions.openChannelMapping('routes', route)}
+              onDelete={() => actions.deleteItem('routes', route.name)}
               routes={routes}
               navigate={actions.navigate}
             />

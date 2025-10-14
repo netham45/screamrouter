@@ -13,6 +13,11 @@ import {
   Input,
   Button,
   Stack,
+  NumberInput,
+  NumberInputField,
+  NumberInputStepper,
+  NumberIncrementStepper,
+  NumberDecrementStepper,
   Alert,
   AlertIcon,
   Box,
@@ -25,6 +30,8 @@ import {
   VStack
 } from '@chakra-ui/react';
 import ApiService, { Source, Sink } from '../../api/api';
+import VolumeSlider from './controls/VolumeSlider';
+import TimeshiftSlider from './controls/TimeshiftSlider';
 
 const AddEditGroupPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -37,6 +44,9 @@ const AddEditGroupPage: React.FC = () => {
   const [name, setName] = useState('');
   const [enabled, setEnabled] = useState(true);
   const [members, setMembers] = useState<string[]>([]);
+  const [volume, setVolume] = useState(1);
+  const [delay, setDelay] = useState(0);
+  const [timeshift, setTimeshift] = useState(0);
   
   const [availableMembers, setAvailableMembers] = useState<(Source | Sink)[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +92,9 @@ const AddEditGroupPage: React.FC = () => {
               setName(sourceData.name);
               setEnabled(sourceData.enabled);
               setMembers(sourceData.group_members || []);
+              setVolume(sourceData.volume || 1);
+              setDelay(sourceData.delay || 0);
+              setTimeshift(sourceData.timeshift || 0);
             } else {
               setError(`Source group "${groupName}" not found.`);
             }
@@ -93,6 +106,9 @@ const AddEditGroupPage: React.FC = () => {
               setName(sinkData.name);
               setEnabled(sinkData.enabled);
               setMembers(sinkData.group_members || []);
+              setVolume(sinkData.volume || 1);
+              setDelay(sinkData.delay || 0);
+              setTimeshift(sinkData.timeshift || 0);
             } else {
               setError(`Sink group "${groupName}" not found.`);
             }
@@ -121,7 +137,10 @@ const AddEditGroupPage: React.FC = () => {
       name,
       enabled,
       is_group: true,
-      group_members: members
+      group_members: members,
+      volume,
+      delay,
+      timeshift
     };
 
     try {
@@ -146,6 +165,9 @@ const AddEditGroupPage: React.FC = () => {
         setName('');
         setEnabled(true);
         setMembers([]);
+        setVolume(1);
+        setDelay(0);
+        setTimeshift(0);
       }
     } catch (error) {
       console.error(`Error submitting ${groupType} group:`, error);
@@ -230,6 +252,33 @@ const AddEditGroupPage: React.FC = () => {
                 </VStack>
               </CheckboxGroup>
             </Box>
+          </FormControl>
+          
+          <FormControl>
+            <FormLabel>Volume</FormLabel>
+            <VolumeSlider value={volume} onChange={setVolume} />
+          </FormControl>
+          
+          <FormControl>
+            <FormLabel>Delay (ms)</FormLabel>
+            <NumberInput
+              value={delay}
+              onChange={(valueString) => setDelay(parseInt(valueString) || 0)}
+              min={0}
+              max={5000}
+              bg={inputBg}
+            >
+              <NumberInputField />
+              <NumberInputStepper>
+                <NumberIncrementStepper />
+                <NumberDecrementStepper />
+              </NumberInputStepper>
+            </NumberInput>
+          </FormControl>
+          
+          <FormControl>
+            <FormLabel>Timeshift</FormLabel>
+            <TimeshiftSlider value={timeshift} onChange={setTimeshift} />
           </FormControl>
         </Stack>
         

@@ -16,6 +16,7 @@ import { getRecents } from '../../utils/recents';
 import { MenuLevel, DesktopMenuActions } from './types';
 import { Heading } from '@chakra-ui/react'; // Removed Text
 import { createDesktopMenuActions } from './utils';
+import AddMenuDropdown from './controls/AddMenuDropdown';
 
 /**
  * The main DesktopMenu component optimized for the slide-out panel interface.
@@ -201,6 +202,41 @@ const DesktopMenu: React.FC = () => {
   // Function to open the full interface
   const openFullInterface = () => {
      window.open('/site/', 'FullView');
+  };
+
+  // Function to open a URL in a new window (similar to the pattern used elsewhere)
+  const openInNewWindow = (url: string, width: number = 800, height: number = 700) => {
+    const left = (window.screen.width - width) / 2;
+    const top = (window.screen.height - height) / 2;
+    const windowFeatures = `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,resizable=yes,scrollbars=yes,status=no`;
+    const newWindow = window.open(url, '_blank', windowFeatures);
+
+    if (newWindow) {
+      newWindow.focus();
+    } else {
+      setError('Failed to open new window. Please check your browser pop-up blocker settings.');
+    }
+  };
+
+  // Functions to open add pages
+  const handleAddSource = () => {
+    openInNewWindow('/site/add-source');
+  };
+
+  const handleAddSourceGroup = () => {
+    openInNewWindow('/site/add-group?type=source');
+  };
+
+  const handleAddSink = () => {
+    openInNewWindow('/site/add-sink');
+  };
+
+  const handleAddSinkGroup = () => {
+    openInNewWindow('/site/add-group?type=sink');
+  };
+
+  const handleAddRoute = () => {
+    openInNewWindow('/site/add-route');
   };
   
   const getRecentRoutes = () => {
@@ -504,7 +540,8 @@ const DesktopMenu: React.FC = () => {
           gap={1}
           width="100%"
         >
-          <HStack width="100%" justify="space-evenly">
+          {/* First Row - Starred/Primary buttons */}
+          <HStack width="100%" justify="center" mb={1}>
             <ButtonGroup variant="outline" isAttached spacing={0} size="sm">
               <Button
                 style={{
@@ -552,6 +589,34 @@ const DesktopMenu: React.FC = () => {
               </Button>
               <Button
                 style={{
+                  backgroundColor: currentMenu === MenuLevel.RecentlyUsed ? buttonBgActive : buttonBgInactive,
+                  color: currentMenu === MenuLevel.RecentlyUsed ? buttonTextActive : buttonTextInactive
+                }}
+                onClick={() => setCurrentMenu(MenuLevel.RecentlyUsed)}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                Recently Used
+              </Button>
+              <Button
+                style={{
+                  backgroundColor: buttonBgInactive,
+                  color: buttonTextInactive
+                }}
+                onClick={openFullInterface}
+                _hover={{ opacity: 0.8 }}
+                size="xs"
+              >
+                Full View
+              </Button>
+            </ButtonGroup>
+          </HStack>
+          
+          {/* Second Row - All other buttons including Add */}
+          <HStack width="100%" justify="center">
+            <ButtonGroup variant="outline" isAttached spacing={0} size="sm">
+              <Button
+                style={{
                   backgroundColor: currentMenu === MenuLevel.AllSources ? buttonBgActive : buttonBgInactive,
                   color: currentMenu === MenuLevel.AllSources ? buttonTextActive : buttonTextInactive
                 }}
@@ -583,28 +648,17 @@ const DesktopMenu: React.FC = () => {
               >
                 All Routes
               </Button>
-              <Button
-                style={{
-                  backgroundColor: buttonBgInactive,
-                  color: buttonTextInactive
-                }}
-                onClick={openFullInterface}
-                _hover={{ opacity: 0.8 }}
-                size="xs"
-              >
-                Full View
-              </Button>
-              <Button
-                style={{
-                  backgroundColor: currentMenu === MenuLevel.RecentlyUsed ? buttonBgActive : buttonBgInactive,
-                  color: currentMenu === MenuLevel.RecentlyUsed ? buttonTextActive : buttonTextInactive
-                }}
-                onClick={() => setCurrentMenu(MenuLevel.RecentlyUsed)}
-                _hover={{ opacity: 0.8 }}
-                size="xs"
-              >
-                Recently Used
-              </Button>
+              
+              {/* Add Menu Dropdown as part of the ButtonGroup */}
+              <AddMenuDropdown
+                buttonBgInactive={buttonBgInactive}
+                buttonTextInactive={buttonTextInactive}
+                onAddSource={handleAddSource}
+                onAddSourceGroup={handleAddSourceGroup}
+                onAddSink={handleAddSink}
+                onAddSinkGroup={handleAddSinkGroup}
+                onAddRoute={handleAddRoute}
+              />
             </ButtonGroup>
           </HStack>
         </Flex>

@@ -14,6 +14,11 @@ import {
   Select,
   Button,
   Stack,
+  NumberInput,
+  NumberInputField,
+  NumberInputStepper,
+  NumberIncrementStepper,
+  NumberDecrementStepper,
   Alert,
   AlertIcon,
   Box,
@@ -40,7 +45,7 @@ const AddEditRoutePage: React.FC = () => {
   const [source, setSource] = useState('');
   const [sink, setSink] = useState('');
   const [enabled, setEnabled] = useState(true);
-  const [volume, setVolume] = useState(100);
+  const [volume, setVolume] = useState(1);
   const [delay, setDelay] = useState(0);
   const [timeshift, setTimeshift] = useState(0);
   
@@ -106,7 +111,7 @@ const AddEditRoutePage: React.FC = () => {
             setSource(routeData.source);
             setSink(routeData.sink);
             setEnabled(routeData.enabled);
-            setVolume(routeData.volume || 100);
+            setVolume(routeData.volume || 1);
             setDelay(routeData.delay || 0);
             setTimeshift(routeData.timeshift || 0);
           } else {
@@ -170,7 +175,7 @@ const AddEditRoutePage: React.FC = () => {
         setSource('');
         setSink('');
         setEnabled(true);
-        setVolume(100);
+        setVolume(1);
         setDelay(0);
         setTimeshift(0);
       }
@@ -270,12 +275,24 @@ const AddEditRoutePage: React.FC = () => {
           
           <FormControl>
             <FormLabel>Volume</FormLabel>
-            <VolumeSlider value={volume} onChange={(val) => setVolume(val)} />
+            <VolumeSlider value={volume} onChange={setVolume} />
           </FormControl>
           
           <FormControl>
             <FormLabel>Delay (ms)</FormLabel>
-            <TimeshiftSlider value={delay} onChange={setDelay} />
+            <NumberInput
+              value={delay}
+              onChange={(valueString) => setDelay(parseInt(valueString) || 0)}
+              min={0}
+              max={5000}
+              bg={inputBg}
+            >
+              <NumberInputField />
+              <NumberInputStepper>
+                <NumberIncrementStepper />
+                <NumberDecrementStepper />
+              </NumberInputStepper>
+            </NumberInput>
           </FormControl>
           
           <FormControl>

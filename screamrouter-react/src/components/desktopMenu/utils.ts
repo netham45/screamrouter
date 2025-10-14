@@ -4,6 +4,7 @@
 import { Source, Sink, Route } from '../../api/api';
 import ApiService from '../../api/api';
 import { DesktopMenuActions } from './types';
+import { addToRecents } from '../../utils/recents';
 
 /**
  * Creates actions for the DesktopMenu component.
@@ -101,6 +102,9 @@ export const createDesktopMenuActions = (
         } else if (type === 'routes') {
           await ApiService.updateRouteVolume(name, value);
         }
+        
+        // Add to recents when volume is changed
+        addToRecents(type, name);
       } catch (error) {
         console.error(`Error updating ${type} volume:`, error);
         setError(`Error updating ${type} volume`);
@@ -168,6 +172,15 @@ export const createDesktopMenuActions = (
     
     navigate: (type: 'sources' | 'sinks' | 'routes', name: string) => {
       navigateToItem(type, name);
+    },
+    
+    // Placeholder functions that will be overridden in DesktopMenu.tsx
+    confirmDelete: (type: 'sources' | 'sinks' | 'routes', name: string) => {
+      console.warn('confirmDelete not implemented');
+    },
+    
+    showSpeakerLayoutPage: (type: 'sources' | 'sinks' | 'routes', item: Source | Sink | Route) => {
+      console.warn('showSpeakerLayoutPage not implemented');
     }
   };
 };

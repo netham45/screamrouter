@@ -21,6 +21,7 @@ const RouteContent: React.FC<ContentProps> = ({
   sinks,
   routes,
   starredRoutes,
+  listeningToSink,
   setCurrentCategory,
   handleStar,
   handleToggleRoute,
@@ -29,13 +30,15 @@ const RouteContent: React.FC<ContentProps> = ({
   handleOpenRouteEqualizer,
   handleOpenSourceEqualizer,
   handleOpenSinkEqualizer,
+  handleOpenVnc,
   handleUpdateRouteVolume,
   handleUpdateRouteTimeshift,
   handleUpdateSourceVolume,
   handleUpdateSourceTimeshift,
   handleUpdateSinkVolume,
   handleUpdateSinkTimeshift,
-  handleControlSource
+  handleControlSource,
+  actions
 }) => {
   // State to store the route name
   const [routeName, setRouteName] = useState<string | null>(null);
@@ -86,6 +89,8 @@ const RouteContent: React.FC<ContentProps> = ({
           onStar={() => handleStar('routes', route.name)}
           onActivate={() => handleToggleRoute(route.name)}
           onEqualizer={() => handleOpenRouteEqualizer(route.name)}
+          onChannelMapping={() => actions.openChannelMapping('routes', route)}
+          onDelete={() => actions.deleteItem('routes', route.name)}
           onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
           onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
           routes={routes}
@@ -130,6 +135,9 @@ const RouteContent: React.FC<ContentProps> = ({
               onStar={() => handleStar('sources', source.name)}
               onActivate={() => handleToggleSource(source.name)}
               onEqualizer={() => handleOpenSourceEqualizer(source.name)}
+              onVnc={source.vnc_ip && handleOpenVnc ? () => handleOpenVnc(source.name) : undefined}
+              onChannelMapping={() => actions.openChannelMapping('sources', source)}
+              onDelete={() => actions.deleteItem('sources', source.name)}
               onUpdateVolume={(volume) => handleUpdateSourceVolume(source.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateSourceTimeshift(source.name, timeshift)}
               onControlSource={source.vnc_ip && handleControlSource ? (action) => handleControlSource(source.name, action) : undefined}
@@ -179,10 +187,16 @@ const RouteContent: React.FC<ContentProps> = ({
               item={sink}
               type="sinks"
               isStarred={starredRoutes?.includes(sink.name) || false}
-              isActive={sink.enabled}
+              isActive={listeningToSink?.name === sink.name}
               onStar={() => handleStar('sinks', sink.name)}
               onActivate={() => handleToggleSink(sink.name)}
               onEqualizer={() => handleOpenSinkEqualizer(sink.name)}
+              onChannelMapping={() => actions.openChannelMapping('sinks', sink)}
+              onDelete={() => actions.deleteItem('sinks', sink.name)}
+              onListen={() => {
+                // Open the listen page for this sink
+                window.open(`/site/listen/${encodeURIComponent(sink.name)}`, '_blank');
+              }}
               onUpdateVolume={(volume) => handleUpdateSinkVolume(sink.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateSinkTimeshift(sink.name, timeshift)}
               routes={routes}

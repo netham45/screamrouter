@@ -15,7 +15,8 @@ MultiDeviceRtpSender::MultiDeviceRtpSender(const SinkMixerConfig& config)
     : config_(config),
       rtp_timestamp_(0),
       total_packets_sent_(0),
-      total_bytes_sent_(0) {
+      total_bytes_sent_(0),
+      rtcp_controller_(nullptr) {
     
     LOG_CPP_INFO("[MultiDeviceRtpSender:%s] Initializing with %zu receivers",
                  config_.sink_id.c_str(), config_.rtp_receivers.size());
@@ -25,6 +26,16 @@ MultiDeviceRtpSender::MultiDeviceRtpSender(const SinkMixerConfig& config)
     std::mt19937 gen(rd());
     std::uniform_int_distribution<uint32_t> dis32;
     rtp_timestamp_ = dis32(gen);
+    
+    // Create RTCP controller if time synchronization is enabled
+    if (config_.time_sync_enabled) {
+        LOG_CPP_INFO("[MultiDeviceRtpSender:%s] Creating RTCP controller (time_sync_delay=%dms)",
+                     config_.sink_id.c_str(), config_.time_sync_delay_ms);
+        rtcp_controller_ = std::make_unique<RtcpController>(config_.time_sync_delay_ms);
+    } else {
+        LOG_CPP_INFO("[MultiDeviceRtpSender:%s] RTCP disabled (time_sync_enabled=false)",
+                     config_.sink_id.c_str());
+    }
     
     // Pre-allocate receivers
     active_receivers_.reserve(config_.rtp_receivers.size());
@@ -65,8 +76,16 @@ bool MultiDeviceRtpSender::setup() {
             continue;
         }
         
-        // Pre-allocate stereo buffer (max expected frame count * 2 channels)
-        receiver.stereo_buffer.reserve(4096 * 2);
+        // Pre-allocate buffers (max expected frame count * 2 channels * bytes per sample)
+        const size_t max_frame_count = 4096;
+        const size_t bytes_per_sample = config_.output_bitdepth / 8;
+        const size_t max_stereo_bytes = max_frame_count * 2 * bytes_per_sample;
+        
+        // Allocate stereo buffer (host byte order)
+        receiver.stereo_buffer.resize(max_stereo_bytes);
+        
+        // Allocate network buffer (network byte order)
+        receiver.network_buffer.resize(max_stereo_bytes);
         
         active_receivers_.push_back(std::move(receiver));
         
@@ -80,6 +99,30 @@ bool MultiDeviceRtpSender::setup() {
                     receiver_config.channel_map[1]);
     }
     
+    // Register all streams with RTCP controller if enabled
+    if (rtcp_controller_) {
+        LOG_CPP_INFO("[MultiDeviceRtpSender:%s] Registering %zu streams with RTCP controller",
+                     config_.sink_id.c_str(), active_receivers_.size());
+        
+        for (const auto& receiver : active_receivers_) {
+            RtcpController::StreamInfo info;
+            info.stream_id = receiver.config.receiver_id;
+            info.dest_ip = receiver.config.ip_address;
+            info.rtcp_port = receiver.config.port + 1;  // RTCP uses RTP port + 1
+            info.ssrc = receiver.sender->get_ssrc();
+            info.sender = receiver.sender.get();  // Non-owning pointer
+            
+            rtcp_controller_->add_stream(info);
+            
+            LOG_CPP_DEBUG("[MultiDeviceRtpSender:%s] Registered stream %s (SSRC=0x%08X) for RTCP at %s:%d",
+                         config_.sink_id.c_str(),
+                         info.stream_id.c_str(),
+                         info.ssrc,
+                         info.dest_ip.c_str(),
+                         info.rtcp_port);
+        }
+    }
+    
     if (active_receivers_.empty()) {
         LOG_CPP_ERROR("[MultiDeviceRtpSender:%s] No active receivers configured",
                      config_.sink_id.c_str());
@@ -88,11 +131,32 @@ bool MultiDeviceRtpSender::setup() {
     
     LOG_CPP_INFO("[MultiDeviceRtpSender:%s] Successfully setup %zu active receivers",
                 config_.sink_id.c_str(), active_receivers_.size());
+    
+    // Start RTCP controller thread
+    if (rtcp_controller_) {
+        if (rtcp_controller_->start()) {
+            LOG_CPP_INFO("[MultiDeviceRtpSender:%s] Started RTCP controller for %zu streams",
+                         config_.sink_id.c_str(), active_receivers_.size());
+        } else {
+            LOG_CPP_ERROR("[MultiDeviceRtpSender:%s] Failed to start RTCP controller",
+                          config_.sink_id.c_str());
+        }
+    }
+    
     return true;
 }
 
 void MultiDeviceRtpSender::close() {
     LOG_CPP_INFO("[MultiDeviceRtpSender:%s] Closing all receivers", config_.sink_id.c_str());
+    
+    // Stop RTCP controller first (before closing receivers)
+    if (rtcp_controller_) {
+        LOG_CPP_INFO("[MultiDeviceRtpSender:%s] Stopping RTCP controller",
+                     config_.sink_id.c_str());
+        rtcp_controller_->stop();
+        LOG_CPP_DEBUG("[MultiDeviceRtpSender:%s] RTCP controller stopped",
+                      config_.sink_id.c_str());
+    }
     
     std::lock_guard<std::mutex> lock(receivers_mutex_);
     
@@ -129,33 +193,43 @@ void MultiDeviceRtpSender::send_payload(const uint8_t* payload_data, size_t payl
         return;
     }
     
-    // Get current RTP timestamp (shared across all streams for sync)
-    uint32_t current_timestamp = rtp_timestamp_.load();
-    
     std::lock_guard<std::mutex> lock(receivers_mutex_);
     
+    // Calculate stereo buffer size (needed for both phases)
+    const size_t stereo_bytes = frame_count * 2 * bytes_per_sample;
+    
+    // Phase 1: Process all streams (CPU work) - use pre-allocated buffers
     for (auto& receiver : active_receivers_) {
         if (!receiver.sender || !receiver.sender->is_ready()) {
             continue;
         }
         
-        // Prepare stereo buffer
-        const size_t stereo_bytes = frame_count * 2 * bytes_per_sample;
-        std::vector<uint8_t> stereo_data(stereo_bytes);
-        
-        // Extract stereo channels
-        extract_stereo_channels(payload_data, 
-                              stereo_data.data(),
+        // Extract stereo channels directly into pre-allocated buffer
+        extract_stereo_channels(payload_data,
+                              receiver.stereo_buffer.data(),
                               frame_count,
                               receiver.config.channel_map[0],
                               receiver.config.channel_map[1],
                               config_.output_bitdepth);
         
-        // Convert to network byte order
-        convert_to_network_byte_order(stereo_data.data(), stereo_bytes, config_.output_bitdepth);
+        // Copy to network buffer (we'll convert in-place)
+        memcpy(receiver.network_buffer.data(), receiver.stereo_buffer.data(), stereo_bytes);
         
-        // Send via RTP
-        if (receiver.sender->send_rtp_packet(stereo_data.data(), stereo_bytes, 
+        // Convert to network byte order in-place
+        convert_to_network_byte_order(receiver.network_buffer.data(), stereo_bytes, config_.output_bitdepth);
+    }
+    
+    // Capture timestamp AFTER all processing is complete
+    uint32_t current_timestamp = rtp_timestamp_.load();
+    
+    // Phase 2: Send all packets (I/O work) - now very fast, minimal per-stream delay
+    for (auto& receiver : active_receivers_) {
+        if (!receiver.sender || !receiver.sender->is_ready()) {
+            continue;
+        }
+        
+        // Send via RTP using pre-processed network buffer
+        if (receiver.sender->send_rtp_packet(receiver.network_buffer.data(), stereo_bytes,
                                             current_timestamp, csrcs)) {
             total_packets_sent_++;
             total_bytes_sent_ += stereo_bytes;

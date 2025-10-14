@@ -42,7 +42,7 @@ const AddEditSourcePage: React.FC = () => {
   const [enabled, setEnabled] = useState(true);
   const [isGroup, setIsGroup] = useState(false);
   const [groupMembers, setGroupMembers] = useState<string[]>([]);
-  const [volume, setVolume] = useState(100);
+  const [volume, setVolume] = useState(1);
   const [delay, setDelay] = useState(0);
   const [timeshift, setTimeshift] = useState(0);
   const [vncIp, setVncIp] = useState('');
@@ -69,7 +69,7 @@ const AddEditSourcePage: React.FC = () => {
             setEnabled(sourceData.enabled);
             setIsGroup(sourceData.is_group);
             setGroupMembers(sourceData.group_members || []);
-            setVolume(sourceData.volume || 100);
+            setVolume(sourceData.volume || 1);
             setDelay(sourceData.delay || 0);
             setTimeshift(sourceData.timeshift || 0);
             setVncIp(sourceData.vnc_ip || '');
@@ -121,7 +121,7 @@ const AddEditSourcePage: React.FC = () => {
         setEnabled(true);
         setIsGroup(false);
         setGroupMembers([]);
-        setVolume(100);
+        setVolume(1);
         setDelay(0);
         setTimeshift(0);
         setVncIp('');
@@ -197,7 +197,7 @@ const AddEditSourcePage: React.FC = () => {
           
           <FormControl>
             <FormLabel>Volume</FormLabel>
-            <VolumeSlider value={volume} onChange={(val) => setVolume(val)} />
+            <VolumeSlider value={volume} onChange={setVolume} />
           </FormControl>
           
           <FormControl>

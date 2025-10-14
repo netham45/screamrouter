@@ -32,6 +32,8 @@ namespace screamrouter {
 namespace audio {
 
 class SipManager;
+class GlobalSynchronizationClock;
+class SinkSynchronizationCoordinator;
 
 /**
  * @class AudioManager
@@ -262,6 +264,12 @@ public:
      */
     void set_audio_settings(const AudioEngineSettings& new_settings);
 
+    /**
+     * @brief Retrieves synchronization statistics for all active sync clocks.
+     * @return A Python dictionary mapping sample rates to their sync statistics.
+     */
+    pybind11::dict get_sync_statistics();
+
 private:
     std::atomic<bool> m_running{false};
     std::recursive_mutex m_manager_mutex;
@@ -281,10 +289,21 @@ private:
     std::shared_ptr<NotificationQueue> m_notification_queue;
     std::thread m_notification_thread;
 
+    // --- Multi-Rate Synchronization ---
+    std::map<int, std::unique_ptr<GlobalSynchronizationClock>> sync_clocks_;
+    std::map<std::string, std::unique_ptr<SinkSynchronizationCoordinator>> sink_coordinators_;
+
     /**
      * @brief Internal method to process notifications from other components.
      */
     void process_notifications();
+    
+    /**
+     * @brief Gets or creates a GlobalSynchronizationClock for the specified sample rate.
+     * @param sample_rate The sample rate in Hz (e.g., 48000, 44100).
+     * @return Pointer to the GlobalSynchronizationClock for this rate.
+     */
+    GlobalSynchronizationClock* get_or_create_sync_clock(int sample_rate);
 };
     
 /**
@@ -331,12 +350,25 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("normalization_decay_smoothing", &ProcessorTuning::normalization_decay_smoothing)
         .def_readwrite("dither_noise_shaping_factor", &ProcessorTuning::dither_noise_shaping_factor);
 
+    py::class_<SynchronizationSettings>(m, "SynchronizationSettings")
+        .def(py::init<>())
+        .def_readwrite("enable_multi_sink_sync", &SynchronizationSettings::enable_multi_sink_sync);
+
+    py::class_<SynchronizationTuning>(m, "SynchronizationTuning")
+        .def(py::init<>())
+        .def_readwrite("barrier_timeout_ms", &SynchronizationTuning::barrier_timeout_ms)
+        .def_readwrite("sync_proportional_gain", &SynchronizationTuning::sync_proportional_gain)
+        .def_readwrite("max_rate_adjustment", &SynchronizationTuning::max_rate_adjustment)
+        .def_readwrite("sync_smoothing_factor", &SynchronizationTuning::sync_smoothing_factor);
+
     py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
         .def(py::init<>())
         .def_readwrite("timeshift_tuning", &AudioEngineSettings::timeshift_tuning)
         .def_readwrite("mixer_tuning", &AudioEngineSettings::mixer_tuning)
         .def_readwrite("source_processor_tuning", &AudioEngineSettings::source_processor_tuning)
-        .def_readwrite("processor_tuning", &AudioEngineSettings::processor_tuning);
+        .def_readwrite("processor_tuning", &AudioEngineSettings::processor_tuning)
+        .def_readwrite("synchronization", &AudioEngineSettings::synchronization)
+        .def_readwrite("synchronization_tuning", &AudioEngineSettings::synchronization_tuning);
 
     py::class_<AudioManager, std::shared_ptr<AudioManager>>(m, "AudioManager", "Main class for managing the C++ audio engine")
         .def(py::init<>(), "Constructor")
@@ -439,7 +471,8 @@ inline void bind_audio_manager(pybind11::module_ &m) {
        .def("get_audio_engine_stats", &AudioManager::get_audio_engine_stats,
             "Retrieves a snapshot of all current audio engine statistics.")
        .def("get_audio_settings", &AudioManager::get_audio_settings, "Retrieves the current audio engine tuning settings.")
-       .def("set_audio_settings", &AudioManager::set_audio_settings, py::arg("settings"), "Updates the audio engine tuning settings.");
+       .def("set_audio_settings", &AudioManager::set_audio_settings, py::arg("settings"), "Updates the audio engine tuning settings.")
+       .def("get_sync_statistics", &AudioManager::get_sync_statistics, "Retrieves synchronization statistics for all active sync clocks.");
 }
 
 } // namespace audio

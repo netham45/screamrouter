@@ -16,6 +16,7 @@
 #include <set>
 #include <cmath> // For std::abs
 #include <limits> // For std::numeric_limits
+#include <pybind11/pybind11.h>
 
 using namespace screamrouter::audio;
 

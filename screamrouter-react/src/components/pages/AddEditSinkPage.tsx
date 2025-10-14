@@ -50,6 +50,7 @@ const AddEditSinkPage: React.FC = () => {
   const [channelLayout, setChannelLayout] = useState('stereo');
   const [volume, setVolume] = useState(1);
   const [delay, setDelay] = useState(0);
+  const [timeshift, setTimeshift] = useState(0);
   const [timeSync, setTimeSync] = useState(false);
   const [timeSyncDelay, setTimeSyncDelay] = useState('0');
   const [protocol, setProtocol] = useState('scream');
@@ -82,6 +83,7 @@ const AddEditSinkPage: React.FC = () => {
             setChannelLayout(sinkData.channel_layout || 'stereo');
             setVolume(sinkData.volume || 1);
             setDelay(sinkData.delay || 0);
+            setTimeshift(sinkData.timeshift || 0);
             setTimeSync(sinkData.time_sync || false);
             setTimeSyncDelay(sinkData.time_sync_delay?.toString() || '0');
             setProtocol(sinkData.protocol || 'scream');
@@ -152,7 +154,7 @@ const AddEditSinkPage: React.FC = () => {
         b7: 0, b8: 0, b9: 0, b10: 0, b11: 0, b12: 0,
         b13: 0, b14: 0, b15: 0, b16: 0, b17: 0, b18: 0
       },
-      timeshift: 0
+      timeshift: timeshift
     };
 
     // Add multi-device mode configuration if protocol is RTP
@@ -220,6 +222,7 @@ const AddEditSinkPage: React.FC = () => {
         setChannelLayout('stereo');
         setVolume(1);
         setDelay(0);
+        setTimeshift(0);
         setTimeSync(false);
         setTimeSyncDelay('0');
         setProtocol('scream');
@@ -474,8 +477,25 @@ const AddEditSinkPage: React.FC = () => {
           </FormControl>
           
           <FormControl>
+            <FormLabel>Delay (ms)</FormLabel>
+            <NumberInput
+              value={delay}
+              onChange={(valueString) => setDelay(parseInt(valueString) || 0)}
+              min={0}
+              max={5000}
+              bg={inputBg}
+            >
+              <NumberInputField />
+              <NumberInputStepper>
+                <NumberIncrementStepper />
+                <NumberDecrementStepper />
+              </NumberInputStepper>
+            </NumberInput>
+          </FormControl>
+          
+          <FormControl>
             <FormLabel>Timeshift</FormLabel>
-            <TimeshiftSlider value={delay} onChange={setDelay} />
+            <TimeshiftSlider value={timeshift} onChange={setTimeshift} />
           </FormControl>
 
           <FormControl>

@@ -80,6 +80,8 @@ const SinkContent: React.FC<ContentProps> = ({
           onStar={() => handleStar('sinks', sink.name)}
           onActivate={() => handleToggleSink(sink.name)}
           onEqualizer={() => handleOpenSinkEqualizer(sink.name)}
+          onChannelMapping={() => actions.openChannelMapping('sinks', sink)}
+          onDelete={() => actions.deleteItem('sinks', sink.name)}
           onListen={() => {
             // If this sink is already being listened to, pass null to stop listening
             if (listeningToSink?.name === sink.name) {

@@ -47,6 +47,8 @@ const SinksContent: React.FC<ContentProps> = ({
               onUpdateVolume={(volume) => handleUpdateSinkVolume(sink.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateSinkTimeshift(sink.name, timeshift)}
               onEdit={() => actions.editItem(sink.is_group ? 'group-sink' : 'sinks', sink)}
+              onChannelMapping={() => actions.openChannelMapping('sinks', sink)}
+              onDelete={() => actions.deleteItem('sinks', sink.name)}
               onListen={() => {
                 // If this sink is already being listened to, pass null to stop listening
                 if (listeningToSink?.name === sink.name) {

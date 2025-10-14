@@ -20,6 +20,7 @@
 #include "../senders/rtp/rtp_sender.h"
 #include "../senders/rtp/multi_device_rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
+#include "../synchronization/sink_synchronization_coordinator.h"
 
 using namespace screamrouter::audio;
 using namespace screamrouter::audio::utils;
@@ -297,6 +298,39 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
 
 const SinkMixerConfig& SinkAudioMixer::get_config() const {
     return config_;
+}
+
+/**
+ * @brief Enables or disables coordination mode for synchronized multi-sink playback.
+ * @param enable True to enable coordination, false to disable.
+ */
+void SinkAudioMixer::set_coordination_mode(bool enable) {
+    coordination_mode_ = enable;
+    LOG_CPP_INFO("[SinkMixer:%s] Coordination mode %s",
+                 config_.sink_id.c_str(),
+                 enable ? "ENABLED" : "DISABLED");
+}
+
+/**
+ * @brief Sets the synchronization coordinator for this mixer.
+ * @param coord Pointer to the coordinator (not owned by mixer, must outlive mixer).
+ */
+void SinkAudioMixer::set_coordinator(SinkSynchronizationCoordinator* coord) {
+    if (!coord) {
+        LOG_CPP_WARNING("[SinkMixer:%s] Attempted to set null coordinator",
+                        config_.sink_id.c_str());
+        return;
+    }
+    coordinator_ = coord;
+    LOG_CPP_INFO("[SinkMixer:%s] Coordinator set", config_.sink_id.c_str());
+}
+
+/**
+ * @brief Checks if coordination mode is currently enabled.
+ * @return True if coordination is enabled, false otherwise.
+ */
+bool SinkAudioMixer::is_coordination_enabled() const {
+    return coordination_mode_;
 }
 
 /**
@@ -765,6 +799,30 @@ void SinkAudioMixer::run() {
 
         if (data_available) {
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Data available or queues not empty, proceeding to mix.", config_.sink_id.c_str());
+            
+            // --- SYNCHRONIZATION COORDINATION POINT ---
+            // If coordination is enabled, call the coordinator BEFORE mixing
+            // This allows all sinks to wait at the barrier, then proceed together
+            if (coordination_mode_ && coordinator_) {
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination enabled, calling coordinator...", config_.sink_id.c_str());
+                double rate_adjustment = 1.0;  // Default to no adjustment
+                
+                // The coordinator handles barrier synchronization and returns rate adjustment
+                // For now, we store the rate but don't apply it (that's a future enhancement)
+                // The coordinator internally handles the dispatch coordination
+                bool coord_success = coordinator_->coordinate_dispatch();
+                
+                if (!coord_success) {
+                    LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordinator reported failure, skipping this cycle.", config_.sink_id.c_str());
+                    lock.unlock();
+                    continue;
+                }
+                
+                // Note: rate_adjustment application would happen here in future
+                // For now, the coordinator's coordinate_dispatch() handles everything
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination complete.", config_.sink_id.c_str());
+            }
+            
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing buffers...", config_.sink_id.c_str());
             mix_buffers();
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing complete.", config_.sink_id.c_str());

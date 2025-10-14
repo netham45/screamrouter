@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from screamrouter.configuration.configuration_manager import ConfigurationManager
-from screamrouter_audio_engine import AudioEngineSettings, TimeshiftTuning, MixerTuning, SourceProcessorTuning, ProcessorTuning
+from screamrouter_audio_engine import AudioEngineSettings, TimeshiftTuning, MixerTuning, SourceProcessorTuning, ProcessorTuning, SynchronizationSettings, SynchronizationTuning
 
 def stats_to_dict(stats):
     """Converts the AudioEngineStats pybind11 object to a dictionary."""
@@ -106,6 +106,15 @@ def settings_to_dict(settings: AudioEngineSettings):
             "normalization_attack_smoothing": settings.processor_tuning.normalization_attack_smoothing,
             "normalization_decay_smoothing": settings.processor_tuning.normalization_decay_smoothing,
             "dither_noise_shaping_factor": settings.processor_tuning.dither_noise_shaping_factor,
+        },
+        "synchronization": {
+            "enable_multi_sink_sync": settings.synchronization.enable_multi_sink_sync,
+        },
+        "synchronization_tuning": {
+            "barrier_timeout_ms": settings.synchronization_tuning.barrier_timeout_ms,
+            "sync_proportional_gain": settings.synchronization_tuning.sync_proportional_gain,
+            "max_rate_adjustment": settings.synchronization_tuning.max_rate_adjustment,
+            "sync_smoothing_factor": settings.synchronization_tuning.sync_smoothing_factor,
         }
     }
 
@@ -119,6 +128,10 @@ def dict_to_settings(settings_dict: dict, existing_settings: AudioEngineSettings
         setattr(existing_settings.source_processor_tuning, key, value)
     for key, value in settings_dict.get("processor_tuning", {}).items():
         setattr(existing_settings.processor_tuning, key, value)
+    for key, value in settings_dict.get("synchronization", {}).items():
+        setattr(existing_settings.synchronization, key, value)
+    for key, value in settings_dict.get("synchronization_tuning", {}).items():
+        setattr(existing_settings.synchronization_tuning, key, value)
     return existing_settings
 
 class APIStats:

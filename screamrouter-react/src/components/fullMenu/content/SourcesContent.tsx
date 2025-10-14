@@ -49,6 +49,8 @@ const SourcesContent: React.FC<ContentProps> = ({
               onUpdateVolume={(volume) => handleUpdateSourceVolume(source.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateSourceTimeshift(source.name, timeshift)}
               onEdit={() => actions.editItem(source.is_group ? 'group-source' : 'sources', source)}
+              onChannelMapping={() => actions.openChannelMapping('sources', source)}
+              onDelete={() => actions.deleteItem('sources', source.name)}
               routes={routes}
               allSources={sources}
               navigate={actions.navigate}

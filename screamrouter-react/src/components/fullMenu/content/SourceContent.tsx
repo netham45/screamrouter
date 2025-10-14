@@ -82,6 +82,8 @@ const SourceContent: React.FC<ContentProps> = ({
           onActivate={() => handleToggleSource(source.name)}
           onEqualizer={() => handleOpenSourceEqualizer(source.name)}
           onVnc={source.vnc_ip ? () => handleOpenVnc(source.name) : undefined}
+          onChannelMapping={() => actions.openChannelMapping('sources', source)}
+          onDelete={() => actions.deleteItem('sources', source.name)}
           onUpdateVolume={(volume) => handleUpdateSourceVolume(source.name, volume)}
           onUpdateTimeshift={(timeshift) => handleUpdateSourceTimeshift(source.name, timeshift)}
           onControlSource={source.vnc_ip && handleControlSource ? (action) => handleControlSource(source.name, action) : undefined}
@@ -137,7 +139,9 @@ const SourceContent: React.FC<ContentProps> = ({
               isActive={route.enabled}
               onStar={() => handleStar('routes', route.name)}
               onActivate={() => handleToggleRoute(route.name)}
-              onEqualizer={() => handleOpenSourceEqualizer(route.name)}
+              onEqualizer={() => actions.showEqualizer(true, 'routes', route)}
+              onChannelMapping={() => actions.openChannelMapping('routes', route)}
+              onDelete={() => actions.deleteItem('routes', route.name)}
               onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
               routes={routes}

@@ -29,6 +29,8 @@ class AudioProcessor;
 namespace screamrouter {
 namespace audio {
 
+class SinkSynchronizationCoordinator;
+
 /**
  * @struct SinkAudioMixerStats
  * @brief Holds raw statistics collected from the SinkAudioMixer.
@@ -133,6 +135,24 @@ public:
      * @return The sink mixer's configuration.
      */
     const SinkMixerConfig& get_config() const;
+
+    /**
+     * @brief Enables or disables coordination mode for synchronized multi-sink playback.
+     * @param enable True to enable coordination, false to disable.
+     */
+    void set_coordination_mode(bool enable);
+
+    /**
+     * @brief Sets the synchronization coordinator for this mixer.
+     * @param coord Pointer to the coordinator (not owned by mixer, must outlive mixer).
+     */
+    void set_coordinator(SinkSynchronizationCoordinator* coord);
+
+    /**
+     * @brief Checks if coordination mode is currently enabled.
+     * @return True if coordination is enabled, false otherwise.
+     */
+    bool is_coordination_enabled() const;
  
  protected:
      /** @brief The main processing loop for the mixer thread. */
@@ -175,6 +195,13 @@ private:
     std::atomic<uint64_t> m_buffer_underruns{0};
     std::atomic<uint64_t> m_buffer_overflows{0};
     std::atomic<uint64_t> m_mp3_buffer_overflows{0};
+
+    // --- Synchronization Coordination ---
+    /** @brief Whether coordination mode is enabled for synchronized dispatch. */
+    bool coordination_mode_ = false;
+    
+    /** @brief Pointer to the synchronization coordinator (not owned). */
+    SinkSynchronizationCoordinator* coordinator_ = nullptr;
 
     void initialize_lame();
     void close_lame();
