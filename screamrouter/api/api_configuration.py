@@ -20,7 +20,7 @@ class APIConfiguration():
 
         # Sink Configuration
         self._app.get("/sinks", tags=["Sink Configuration"])(
-            self._configuration_controller.get_sinks)
+            self._configuration_controller.get_permanent_sinks)
         self._app.post("/sinks", tags=["Sink Configuration"])(
             self._configuration_controller.add_sink)
         self._app.put("/sinks/{old_sink_name}", tags=["Sink Configuration"])(
@@ -88,7 +88,7 @@ class APIConfiguration():
 
         # Route Configuration
         self._app.get("/routes", tags=["Route Configuration"])(
-            self._configuration_controller.get_routes)
+            self._configuration_controller.get_permanent_routes)
         self._app.post("/routes", tags=["Route Configuration"])(
             self._configuration_controller.add_route)
         self._app.put("/routes/{old_route_name}", tags=["Route Configuration"])(

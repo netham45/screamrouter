@@ -207,6 +207,9 @@ const SourceItem: React.FC<SourceItemProps> = ({
               Speaker Layout
             </MenuItem>
             {/* --- End New MenuItem --- */}
+            <MenuItem onClick={() => window.open(`/site/listen/source/${encodeURIComponent(source.name)}`, '_blank')}>
+              🎧 Listen
+            </MenuItem>
             <MenuItem onClick={() => actions.confirmDelete('sources', source.name)}>
               Delete
             </MenuItem>

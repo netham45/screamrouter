@@ -66,8 +66,8 @@ class APIWebsocketConfig():
 
         # Convert current lists to dictionaries for easier comparison
         current_sources = {s.name: s for s in sources}
-        current_sinks = {s.name: s for s in sinks}
-        current_routes = {r.name: r for r in routes}
+        current_sinks = {s.name: s for s in sinks if not s.is_temporary}
+        current_routes = {r.name: r for r in routes if not r.is_temporary}
 
         # Check for additions and modifications
         for idx, source in current_sources.items():

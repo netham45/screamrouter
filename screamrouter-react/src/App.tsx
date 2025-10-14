@@ -143,7 +143,7 @@ const AppContent: React.FC = () => {
         <Route path="/edit-group" element={<AddEditGroupPage />} /> {/* Route to AddEditGroupPage component */}
         <Route path="/processes/:ip" element={<ProcessListPage />} /> {/* Route to ProcessListPage component with IP parameter */}
         <Route path="/speaker-layout-standalone" element={<SpeakerLayoutPage />} /> {/* Route to SpeakerLayoutPage component */}
-        <Route path="/listen/:sinkName" element={<ListenPage />} /> {/* Route to ListenPage component */}
+        <Route path="/listen/:entityType/:entityName" element={<ListenPage />} /> {/* Route to ListenPage component with entity type and name */}
         <Route path="/stats" element={<StatsPage />} /> {/* Route to StatsPage component */}
       </Routes>
       

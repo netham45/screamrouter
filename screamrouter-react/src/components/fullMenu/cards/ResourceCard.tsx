@@ -22,7 +22,7 @@ import {
   VStack
 } from '@chakra-ui/react';
 import { StarIcon, SettingsIcon, DeleteIcon } from '@chakra-ui/icons';
-import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower, FaProjectDiagram } from 'react-icons/fa';
+import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower, FaProjectDiagram, FaHeadphones } from 'react-icons/fa';
 import { Source, Sink, Route } from '../../../api/api';
 import VolumeSlider from '../controls/VolumeSlider';
 import TimeshiftSlider from '../controls/TimeshiftSlider';

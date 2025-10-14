@@ -234,10 +234,10 @@ const SinkItem: React.FC<SinkItemProps> = ({
                   Visualize
                 </MenuItem>
                 <MenuItem
-                  onClick={() => window.open(`/site/listen/${sink.name}`, '_blank')}
+                  onClick={() => window.open(`/site/listen/sink/${encodeURIComponent(sink.name)}`, '_blank')}
                   _active={{ bg: isListening ? 'blue.500' : undefined }}
                 >
-                  {isListening ? 'Stop Listening' : 'Listen'}
+                  🎧 {isListening ? 'Stop Listening' : 'Listen'}
                 </MenuItem>
                 {hasProcesses && (
                   <MenuItem onClick={openProcessList}>

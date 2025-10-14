@@ -1,54 +1,62 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAppContext } from '../../context/AppContext';
-import { Box, Heading, Text, Button, Center, VStack, Spinner } from '@chakra-ui/react';
+import { Box, Heading, Text, Button, Center, VStack, Spinner, Icon, Badge } from '@chakra-ui/react';
+import { FaVolumeUp, FaMicrophone, FaRoute } from 'react-icons/fa';
+
+type EntityType = 'sink' | 'source' | 'route';
 
 const ListenPage: React.FC = () => {
-  const { sinkName } = useParams<{ sinkName: string }>();
-  const { onListenToSink, listeningStatus, playbackError, silenceSessionAudioRef, isSilenceAudioPlaying, startedListeningSinks, setStartedListeningSinks } = useAppContext();
+  const { entityType, entityName } = useParams<{ entityType: string; entityName: string }>();
+  const { onListenToEntity, listeningStatus, playbackError, silenceSessionAudioRef, isSilenceAudioPlaying, startedListeningSinks, setStartedListeningSinks } = useAppContext();
 
-  const isListening = sinkName ? listeningStatus.get(sinkName) || false : false;
-  const startedListening = sinkName ? startedListeningSinks.get(sinkName) || false : false;
+  // Validate and cast entity type
+  const validEntityType = (entityType as EntityType) || 'sink';
+  const isValidType = ['sink', 'source', 'route'].includes(validEntityType);
+
+  const isListening = entityName ? listeningStatus.get(entityName) || false : false;
+  const startedListening = entityName ? startedListeningSinks.get(entityName) || false : false;
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'reconnecting'>('disconnected');
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
 
-  // Use a ref to hold the latest onListenToSink function without causing the effect to re-run.
-  const onListenToSinkRef = useRef(onListenToSink);
+  // Use a ref to hold the latest onListenToEntity function without causing the effect to re-run.
+  const onListenToEntityRef = useRef(onListenToEntity);
   useEffect(() => {
-    onListenToSinkRef.current = onListenToSink;
+    onListenToEntityRef.current = onListenToEntity;
   });
 
   useEffect(() => {
-    if (sinkName) {
-      document.title = isListening ? `Listening to ${sinkName}` : `Not listening to ${sinkName}`;
+    if (entityName && isValidType) {
+      const entityLabel = `${validEntityType} ${entityName}`;
+      document.title = isListening ? `Listening to ${entityLabel}` : `Not listening to ${entityLabel}`;
       if (isListening) {
         setConnectionStatus('connected');
         retryCountRef.current = 0; // Reset retry count on successful connection
       }
     }
-  }, [isListening, sinkName]);
+  }, [isListening, entityName, validEntityType, isValidType]);
 
   useEffect(() => {
-    // If there's a playback error for this sink, stop trying to listen.
-    if (sinkName && playbackError.has(sinkName)) {
-      setStartedListeningSinks(prev => new Map(prev).set(sinkName, false));
+    // If there's a playback error for this entity, stop trying to listen.
+    if (entityName && playbackError.has(entityName)) {
+      setStartedListeningSinks(prev => new Map(prev).set(entityName, false));
     }
-  }, [playbackError, sinkName]);
+  }, [playbackError, entityName, setStartedListeningSinks]);
 
   useEffect(() => {
     if (!isSilenceAudioPlaying) {
-      if (sinkName) {
-        setStartedListeningSinks(prev => new Map(prev).set(sinkName, false));
+      if (entityName) {
+        setStartedListeningSinks(prev => new Map(prev).set(entityName, false));
       }
     }
-  }, [isSilenceAudioPlaying, sinkName, setStartedListeningSinks]);
+  }, [isSilenceAudioPlaying, entityName, setStartedListeningSinks]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && startedListening && !isListening && sinkName && isSilenceAudioPlaying) {
+      if (document.visibilityState === 'visible' && startedListening && !isListening && entityName && isSilenceAudioPlaying && isValidType) {
         console.log("Page is visible again, trying to reconnect.");
-        onListenToSinkRef.current(sinkName);
+        onListenToEntityRef.current(validEntityType, entityName);
       }
     };
 
@@ -57,18 +65,18 @@ const ListenPage: React.FC = () => {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [startedListening, isListening, sinkName, isSilenceAudioPlaying]);
+  }, [startedListening, isListening, entityName, isSilenceAudioPlaying, isValidType, validEntityType]);
 
   useEffect(() => {
     // On initial load, try to start listening.
-    if (sinkName) {
-      setStartedListeningSinks(prev => new Map(prev).set(sinkName, true));
+    if (entityName && isValidType) {
+      setStartedListeningSinks(prev => new Map(prev).set(entityName, true));
     }
-  }, [sinkName]);
+  }, [entityName, isValidType, setStartedListeningSinks]);
 
   useEffect(() => {
     // This effect handles the retry logic.
-    if (startedListening && !isListening && sinkName) {
+    if (startedListening && !isListening && entityName && isValidType) {
       setConnectionStatus(retryCountRef.current > 0 ? 'reconnecting' : 'connecting');
       
       // Clear any existing retry timeout
@@ -77,10 +85,10 @@ const ListenPage: React.FC = () => {
       }
 
       const retryDelay = Math.min(1000 * (2 ** retryCountRef.current), 30000); // Exponential backoff
-      console.log(`Attempting to connect in ${retryDelay}ms`);
+      console.log(`Attempting to connect to ${validEntityType} in ${retryDelay}ms`);
 
       retryTimeoutRef.current = setTimeout(() => {
-        onListenToSinkRef.current(sinkName);
+        onListenToEntityRef.current(validEntityType, entityName);
         retryCountRef.current++;
       }, retryDelay);
 
@@ -95,18 +103,16 @@ const ListenPage: React.FC = () => {
             clearTimeout(retryTimeoutRef.current);
         }
     }
-  }, [startedListening, isListening, sinkName]);
+  }, [startedListening, isListening, entityName, validEntityType, isValidType]);
 
   const handleToggleListen = () => {
+    if (!isValidType || !entityName) return;
+
     if (isListening) {
       // If we are listening, we want to stop.
-      if (sinkName) {
-        setStartedListeningSinks(prev => new Map(prev).set(sinkName, false));
-      }
+      setStartedListeningSinks(prev => new Map(prev).set(entityName, false));
       silenceSessionAudioRef.current?.pause();
-      if (sinkName) {
-        onListenToSink(sinkName); // Stop immediately.
-      }
+      onListenToEntity(validEntityType, entityName); // Stop immediately.
       retryCountRef.current = 0;
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
@@ -114,53 +120,121 @@ const ListenPage: React.FC = () => {
     } else {
       // If we are not listening, we want to start.
       silenceSessionAudioRef.current?.play();
-      if (sinkName) {
-        setStartedListeningSinks(prev => new Map(prev).set(sinkName, true));
-      }
-      if (sinkName) {
-        onListenToSink(sinkName); // Try to connect immediately.
-      }
+      setStartedListeningSinks(prev => new Map(prev).set(entityName, true));
+      onListenToEntity(validEntityType, entityName); // Try to connect immediately.
     }
   };
 
-  if (!sinkName) {
+  // Get the appropriate icon and color based on entity type
+  const getEntityIcon = () => {
+    switch (validEntityType) {
+      case 'source':
+        return FaMicrophone;
+      case 'route':
+        return FaRoute;
+      case 'sink':
+      default:
+        return FaVolumeUp;
+    }
+  };
+
+  const getEntityColor = () => {
+    switch (validEntityType) {
+      case 'source':
+        return 'blue';
+      case 'route':
+        return 'purple';
+      case 'sink':
+      default:
+        return 'green';
+    }
+  };
+
+  const getEntityBgColor = () => {
+    switch (validEntityType) {
+      case 'source':
+        return 'blue.900';
+      case 'route':
+        return 'purple.900';
+      case 'sink':
+      default:
+        return 'gray.800';
+    }
+  };
+
+  if (!entityName || !isValidType) {
     return (
       <Center height="100vh" bg="gray.800" color="white">
-        <Heading>No sink specified.</Heading>
+        <VStack spacing={4}>
+          <Heading>Invalid entity specified.</Heading>
+          {!isValidType && <Text>Entity type must be one of: sink, source, or route</Text>}
+          {!entityName && <Text>No entity name provided</Text>}
+        </VStack>
       </Center>
     );
   }
 
+  const EntityIcon = getEntityIcon();
+  const entityColor = getEntityColor();
+  const bgColor = getEntityBgColor();
+
   return (
-    <Center height="100vh" bg="gray.800" color="white">
+    <Center height="100vh" bg={bgColor} color="white">
       <VStack spacing={8}>
         <Box textAlign="center">
           <Heading as="h1" size="2xl" mb={4}>
             ScreamRouter Listener
           </Heading>
+          
+          {/* Entity type badge with icon */}
+          <Badge
+            colorScheme={entityColor}
+            fontSize="lg"
+            px={4}
+            py={2}
+            mb={4}
+            display="inline-flex"
+            alignItems="center"
+            gap={2}
+          >
+            <Icon as={EntityIcon} />
+            {validEntityType.toUpperCase()}
+          </Badge>
+
           {startedListening ? (
             <VStack>
               <Text fontSize="xl">{connectionStatus === 'connected' ? "Listening to" : "Attempting to listen to"}</Text>
-              <Text fontSize="3xl" fontWeight="bold">{sinkName}</Text>
-              {connectionStatus !== 'disconnected' && <Spinner size="xl" color="green.300" mt={4} />}
+              <Box display="flex" alignItems="center" gap={3}>
+                <Icon as={EntityIcon} boxSize={8} color={`${entityColor}.300`} />
+                <Text fontSize="3xl" fontWeight="bold">{entityName}</Text>
+              </Box>
+              {connectionStatus !== 'disconnected' && (
+                <Spinner size="xl" color={`${entityColor}.300`} mt={4} />
+              )}
             </VStack>
           ) : (
             <VStack>
               <Text fontSize="xl">Not listening to</Text>
-              <Text fontSize="3xl" fontWeight="bold">{sinkName}</Text>
+              <Box display="flex" alignItems="center" gap={3}>
+                <Icon as={EntityIcon} boxSize={8} color={`${entityColor}.300`} />
+                <Text fontSize="3xl" fontWeight="bold">{entityName}</Text>
+              </Box>
             </VStack>
           )}
         </Box>
-        <Button 
-          colorScheme={isListening ? "red" : "green"} 
+        
+        <Button
+          colorScheme={isListening ? "red" : entityColor}
           onClick={handleToggleListen}
           size="lg"
           px={10}
           py={6}
+          leftIcon={<Icon as={EntityIcon} />}
         >
-          {startedListening ? 'Stop Listening' : `Listen to ${sinkName}`}
+          {startedListening ? 'Stop Listening' : `Listen to ${entityName}`}
         </Button>
-        <Text>
+        
+        <Text color={`${entityColor}.200`}>
           {connectionStatus === 'connecting' && "Connecting..."}
           {connectionStatus === 'connected' && "Connected"}
           {connectionStatus === 'reconnecting' && "Reconnecting..."}

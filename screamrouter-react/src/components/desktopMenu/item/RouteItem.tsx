@@ -128,6 +128,9 @@ const RouteItem: React.FC<RouteItemProps> = ({
               Speaker Layout
             </MenuItem>
             {/* --- End New MenuItem --- */}
+            <MenuItem onClick={() => window.open(`/site/listen/route/${encodeURIComponent(route.name)}`, '_blank')}>
+              🎧 Listen
+            </MenuItem>
             <MenuItem onClick={() => actions.confirmDelete('routes', route.name)}>
               Delete
             </MenuItem>

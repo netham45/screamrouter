@@ -371,7 +371,7 @@ def main():
     webstream: APIWebStream = APIWebStream(app, audio_manager) # Pass audio_manager
     websocket_config: APIWebsocketConfig = APIWebsocketConfig(app)
     websocket_debug: APIWebsocketDebug = APIWebsocketDebug(app)
-    webrtc_api: APIWebRTC = APIWebRTC(app, audio_manager)
+    # Note: webrtc_api will be initialized after configuration_manager is created
     plugin_manager: PluginManager = PluginManager(app, audio_manager_instance=audio_manager)
     plugin_manager.start_registered_plugins()
 
@@ -483,6 +483,9 @@ def main():
                                                                             plugin_manager,
                                                                             websocket_config,
                                                                             audio_manager)
+    
+    # Now initialize webrtc_api with configuration_manager
+    webrtc_api: APIWebRTC = APIWebRTC(app, audio_manager, screamrouter_configuration)
 
     api_controller = APIConfiguration(app, screamrouter_configuration)
     website: APIWebsite = APIWebsite(app, screamrouter_configuration)

@@ -271,6 +271,8 @@ class SinkDescription(BaseModel):
     """Enable multi-device RTP output mode"""
     rtp_receiver_mappings: List[RtpReceiverMapping] = Field(default_factory=list)
     """RTP receiver mappings for multi-device mode"""
+    is_temporary: bool = Field(default=False, exclude=True)
+    """Indicates if this sink is temporary and should not be persisted"""
 
     @model_validator(mode='after')
     def ensure_config_id(self):
@@ -450,6 +452,8 @@ class RouteDescription(BaseModel):
     """Speaker Layouts keyed by input channel count"""
     config_id: Optional[str] = None
     """Unique GUID for this route, auto-generated on creation if not provided"""
+    is_temporary: bool = Field(default=False, exclude=True)
+    """Indicates if this route is temporary and should not be persisted"""
 
     @model_validator(mode='after')
     def ensure_config_id(self):

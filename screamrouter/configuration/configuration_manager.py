@@ -47,6 +47,7 @@ import screamrouter.screamrouter_logger.screamrouter_logger as screamrouter_logg
 from screamrouter.api.api_websocket_config import APIWebsocketConfig
 from screamrouter.api.api_webstream import APIWebStream
 from screamrouter.configuration.configuration_solver import ConfigurationSolver
+from screamrouter.configuration.temporary_entity_manager import TemporaryEntityManager
 from screamrouter.plugin_manager.plugin_manager import PluginManager
 from screamrouter.screamrouter_types.annotations import (DelayType, IPAddressType,
                                                 RouteNameType, SinkNameType,
@@ -110,6 +111,14 @@ class ConfigurationManager(threading.Thread):
         """List of Sources the controller knows of"""
         self.route_descriptions: List[RouteDescription] = []
         """List of Routes the controller knows of"""
+        
+        # Temporary entity management
+        self.temp_entity_manager: TemporaryEntityManager = TemporaryEntityManager()
+        """Manages temporary sinks and routes for WebRTC listeners"""
+        self.active_temporary_sinks: List[SinkDescription] = []
+        """List of active temporary sinks"""
+        self.active_temporary_routes: List[RouteDescription] = []
+        """List of active temporary routes"""
         self.__api_webstream: APIWebStream = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
         self.active_configuration: ConfigurationSolver
@@ -163,13 +172,43 @@ class ConfigurationManager(threading.Thread):
 
         self.start()
 
+    def _safe_async_run(self, coro):
+        """Safely run an async coroutine, handling both sync and async contexts.
+        
+        This method checks if we're already in an async event loop and uses
+        the appropriate method to run the coroutine.
+        
+        Args:
+            coro: The coroutine to run
+        """
+        try:
+            # Check if we're already in an async context
+            loop = asyncio.get_running_loop()
+            # We're in an async context, create a task
+            task = asyncio.create_task(coro)
+            return task
+        except RuntimeError:
+            # We're not in an async context, use asyncio.run()
+            return asyncio.run(coro)
 
     # Public functions
 
     def get_sinks(self) -> List[SinkDescription]:
-        """Returns a list of all sinks"""
+        """Returns a list of all sinks (including temporary ones)"""
         _sinks: List[SinkDescription] = []
         for sink in self.sink_descriptions:
+            _sinks.append(copy(sink))
+        # Include temporary sinks
+        for temp_sink in self.active_temporary_sinks:
+            _sinks.append(copy(temp_sink))
+        return _sinks
+
+    def get_permanent_sinks(self) -> List[SinkDescription]:
+        """Returns a list of all sinks (excluding temporary ones)"""
+        _sinks: List[SinkDescription] = []
+        for sink in self.sink_descriptions:
+            if sink.is_temporary:
+                continue
             _sinks.append(copy(sink))
         return _sinks
 
@@ -319,8 +358,20 @@ class ConfigurationManager(threading.Thread):
         return True
 
     def get_routes(self) -> List[RouteDescription]:
-        """Returns a list of all routes"""
-        return copy(self.route_descriptions)
+        """Returns a list of all routes (including temporary ones)"""
+        all_routes = copy(self.route_descriptions)
+        # Include temporary routes
+        all_routes.extend(copy(self.active_temporary_routes))
+        return all_routes
+
+    def get_permanent_routes(self) -> List[RouteDescription]:
+        """Returns a list of all routes (including temporary ones)"""
+        _routes: List[RoutekDescription] = []
+        for route in self.route_descriptions:
+            if route.is_temporary:
+                continue
+            _routes.append(copy(route))
+        return _routes
 
     def add_route(self, route: RouteDescription) -> bool:
         """Adds a route"""
@@ -377,6 +428,77 @@ class ConfigurationManager(threading.Thread):
         route.enabled = False
         self.__reload_configuration()
         return True
+    
+    def add_temporary_sink(self, sink: SinkDescription) -> bool:
+        """Adds a temporary sink that won't be persisted to disk"""
+        self.__verify_new_sink(sink)
+        # Mark as temporary
+        sink.is_temporary = True
+        # Ensure config_id is set
+        if not sink.config_id:
+            sink.config_id = str(uuid.uuid4())
+            _logger.info(f"Generated config_id {sink.config_id} for temporary sink '{sink.name}'")
+        
+        # Add to active temporary sinks list
+        self.active_temporary_sinks.append(sink)
+        
+        # Apply configuration synchronously for temporary entities
+        # This ensures the C++ engine knows about the sink before WebRTC tries to use it
+        _logger.info(f"Applying temporary sink '{sink.name}' configuration synchronously")
+        self.__apply_temporary_configuration_sync()
+        return True
+    
+    def add_temporary_route(self, route: RouteDescription) -> bool:
+        """Adds a temporary route that won't be persisted to disk"""
+        self.__verify_new_route(route)
+        # Mark as temporary
+        route.is_temporary = True
+        # Ensure config_id is set
+        if not route.config_id:
+            route.config_id = str(uuid.uuid4())
+            _logger.info(f"Generated config_id {route.config_id} for temporary route '{route.name}'")
+        
+        # Add to active temporary routes list
+        self.active_temporary_routes.append(route)
+        
+        # Apply configuration synchronously for temporary entities
+        # This ensures the C++ engine knows about the route before it's used
+        _logger.info(f"Applying temporary route '{route.name}' configuration synchronously")
+        self.__apply_temporary_configuration_sync()
+        return True
+    
+    def remove_temporary_sink(self, sink_name: SinkNameType) -> bool:
+        """Removes a temporary sink"""
+        # Find and remove from active temporary sinks
+        for sink in self.active_temporary_sinks[:]:
+            if sink.name == sink_name:
+                self.active_temporary_sinks.remove(sink)
+                _logger.info(f"Removed temporary sink '{sink_name}'")
+                # Also remove any associated temporary routes
+                for route in self.active_temporary_routes[:]:
+                    if route.sink == sink_name:
+                        self.active_temporary_routes.remove(route)
+                        _logger.info(f"Removed associated temporary route '{route.name}'")
+                # Apply configuration synchronously for temporary entity removal
+                self.__apply_temporary_configuration_sync()
+                return True
+        
+        _logger.warning(f"Temporary sink '{sink_name}' not found")
+        return False
+    
+    def remove_temporary_route(self, route_name: RouteNameType) -> bool:
+        """Removes a temporary route"""
+        # Find and remove from active temporary routes
+        for route in self.active_temporary_routes[:]:
+            if route.name == route_name:
+                self.active_temporary_routes.remove(route)
+                _logger.info(f"Removed temporary route '{route_name}'")
+                # Apply configuration synchronously for temporary entity removal
+                self.__apply_temporary_configuration_sync()
+                return True
+        
+        _logger.warning(f"Temporary route '{route_name}' not found")
+        return False
 
     def update_source_equalizer(self, source_name: SourceNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a source or source group"""
@@ -592,6 +714,13 @@ class ConfigurationManager(threading.Thread):
         self.mdns_settings_pinger.stop()
         self.mdns_scream_advertiser.stop()
         _logger.debug("[Configuration Manager] mDNS stopped")
+        
+        # Clean up temporary entities
+        self.temp_entity_manager.cleanup_all_entities()
+        self.active_temporary_sinks.clear()
+        self.active_temporary_routes.clear()
+        _logger.debug("[Configuration Manager] Temporary entities cleaned up")
+        
         self.running = False
 
         if constants.WAIT_FOR_CLOSES:
@@ -616,29 +745,49 @@ class ConfigurationManager(threading.Thread):
         return source_locator[0]
 
     def get_sink_by_name(self, sink_name: SinkNameType) -> SinkDescription:
-        """Returns a SinkDescription by name"""
+        """Returns a SinkDescription by name (checks both permanent and temporary sinks)"""
+        # Check permanent sinks first
         sink_locator: List[SinkDescription] = [sink for sink in self.sink_descriptions
                                                     if sink.name == sink_name]
-        if len(sink_locator) == 0:
-            raise NameError(f"sink {sink_name} not found")
-        return sink_locator[0]
+        if len(sink_locator) > 0:
+            return sink_locator[0]
+        
+        # Check temporary sinks
+        temp_sink_locator: List[SinkDescription] = [sink for sink in self.active_temporary_sinks
+                                                         if sink.name == sink_name]
+        if len(temp_sink_locator) > 0:
+            return temp_sink_locator[0]
+        
+        raise NameError(f"sink {sink_name} not found")
 
     def get_route_by_name(self, route_name: RouteNameType) -> RouteDescription:
-        """Returns a RouteDescription by name"""
+        """Returns a RouteDescription by name (checks both permanent and temporary routes)"""
+        # Check permanent routes first
         route_locator: List[RouteDescription] = [route for route in self.route_descriptions
                                                     if route.name == route_name]
-        if len(route_locator) == 0:
-            raise NameError(f"Route {route_name} not found")
-        return route_locator[0]
+        if len(route_locator) > 0:
+            return route_locator[0]
+        
+        # Check temporary routes
+        temp_route_locator: List[RouteDescription] = [route for route in self.active_temporary_routes
+                                                           if route.name == route_name]
+        if len(temp_route_locator) > 0:
+            return temp_route_locator[0]
+        
+        raise NameError(f"Route {route_name} not found")
 
     def get_website_context(self):
         """Returns a tuple containing (List[SourceDescription],
                                        List[SinkDescription],
                                        List[RouteDescription])
-           with all of the known Sources, Sinks, and Routes
+           with all of the known Sources, Sinks, and Routes (including temporary ones)
         """
+        # Combine permanent and temporary entities
+        all_sinks = self.sink_descriptions + self.active_temporary_sinks
+        all_routes = self.route_descriptions + self.active_temporary_routes
+        
         data: Tuple[List[SourceDescription], List[SinkDescription], List[RouteDescription]]
-        data = (self.source_descriptions, self.sink_descriptions, self.route_descriptions)
+        data = (self.source_descriptions, all_sinks, all_routes)
         return data
 
     # Private Functions
@@ -648,7 +797,8 @@ class ConfigurationManager(threading.Thread):
     def __verify_new_sink(self, sink: SinkDescription) -> None:
         """Verifies all sink group members exist and the sink doesn't
            Throws exception on failure"""
-        for _sink in self.sink_descriptions:
+        # Check both permanent and temporary sinks for name conflicts
+        for _sink in self.sink_descriptions + self.active_temporary_sinks:
             if sink.name == _sink.name:
                 raise ValueError(f"Sink name '{sink.name}' already in use")
         for member in sink.group_members:
@@ -897,14 +1047,19 @@ class ConfigurationManager(threading.Thread):
             _logger.info("[Configuration Manager] Saving configuration with newly generated config_ids")
             self.__save_config()
 
-        asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
+        self._safe_async_run(self.websocket_config.broadcast_config_update(self.source_descriptions,
                                                                 self.sink_descriptions,
                                                                 self.route_descriptions))
 
     def __multiprocess_save(self):
-        """Saves the config to config.yaml"""
-        save_data: dict = {"sinks": self.sink_descriptions, "sources": self.source_descriptions,
-                           "routes": self.route_descriptions }
+        """Saves the config to config.yaml (excludes temporary entities)"""
+        # Filter out temporary entities before saving
+        permanent_sinks = [s for s in self.sink_descriptions if not getattr(s, 'is_temporary', False)]
+        permanent_sources = [s for s in self.source_descriptions if not getattr(s, 'is_temporary', False)]
+        permanent_routes = [r for r in self.route_descriptions if not getattr(r, 'is_temporary', False)]
+        
+        save_data: dict = {"sinks": permanent_sinks, "sources": permanent_sources,
+                           "routes": permanent_routes }
         with open(constants.CONFIG_PATH, 'w', encoding="UTF-8") as yaml_file:
             yaml.dump(save_data, yaml_file)
 
@@ -917,7 +1072,7 @@ class ConfigurationManager(threading.Thread):
         proc = threading.Thread(target=self.__multiprocess_save)
         proc.start()
         proc.join()
-        asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
+        self._safe_async_run(self.websocket_config.broadcast_config_update(self.source_descriptions,
                                                                 self.sink_descriptions,
                                                                 self.route_descriptions))
         self.configuration_semaphore.release()
@@ -953,11 +1108,14 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("[Config Translator] Solved config keys (Sinks): %s", list(solved_config.keys())) # Log the sink keys
 
         for py_sink_desc, py_source_desc_list in solved_config.items():
-            _logger.debug("[Config Translator] Processing Sink: %s", py_sink_desc.name)
+            is_temporary = getattr(py_sink_desc, 'is_temporary', False)
+            _logger.debug("[Config Translator] Processing Sink: %s (temporary=%s, protocol=%s)",
+                         py_sink_desc.name, is_temporary, py_sink_desc.protocol)
             
             # A. Create C++ AppliedSinkParams
             cpp_applied_sink = CppAppliedSinkParams()
             cpp_applied_sink.sink_id = py_sink_desc.config_id or py_sink_desc.name # Prefer config_id if available
+            _logger.debug("[Config Translator]   Using sink_id: %s", cpp_applied_sink.sink_id)
 
             # B. Create and populate the nested C++ SinkConfig
             cpp_sink_engine_config = CppSinkConfig()
@@ -1001,6 +1159,11 @@ class ConfigurationManager(threading.Thread):
             cpp_sink_engine_config.chlayout1 = chlayout1
             cpp_sink_engine_config.chlayout2 = chlayout2
             cpp_sink_engine_config.protocol = py_sink_desc.protocol
+            
+            # Log protocol being set for debugging WebRTC sinks
+            if py_sink_desc.protocol == "webrtc":
+                _logger.info("[Config Translator]   Setting protocol='webrtc' for sink '%s' (config_id=%s)",
+                            py_sink_desc.name, cpp_sink_engine_config.id)
             
             # Add time sync configuration
             cpp_sink_engine_config.time_sync_enabled = py_sink_desc.time_sync
@@ -1175,8 +1338,8 @@ class ConfigurationManager(threading.Thread):
             # E. Finalize AppliedSinkParams
             cpp_applied_sink.connected_source_path_ids = connected_path_ids_for_this_sink
             processed_sinks_list.append(cpp_applied_sink) # Add to temporary list
-            _logger.debug("[Config Translator]   Finished processing sink %s. Connected paths: %s", 
-                          cpp_applied_sink.sink_id, cpp_applied_sink.connected_source_path_ids)
+            _logger.debug("[Config Translator]   Finished processing sink %s (protocol=%s). Connected paths: %s",
+                          cpp_applied_sink.sink_id, py_sink_desc.protocol, cpp_applied_sink.connected_source_path_ids)
 
         # F. Populate the sinks and source_paths lists in DesiredEngineState AFTER the loop
         cpp_desired_state.sinks = processed_sinks_list
@@ -1264,6 +1427,11 @@ class ConfigurationManager(threading.Thread):
         """
 
         _logger.debug("[Configuration Manager] Processing new configuration")
+        
+        # Merge temporary entities with regular ones for solving
+        combined_sinks = self.sink_descriptions + self.active_temporary_sinks
+        combined_routes = self.route_descriptions + self.active_temporary_routes
+        
         # Add plugin sources, don't overwrite existing unless they were from the plugin
         plugin_permanent_sources: List[SourceDescription]
         plugin_permanent_sources = self.plugin_manager.get_permanent_sources()
@@ -1277,11 +1445,12 @@ class ConfigurationManager(threading.Thread):
             if not found:
                 self.source_descriptions.append(plugin_source)
 
-        # Get a new resolved configuration from the current state
-        _logger.debug("[Configuration Manager] Solving Configuration")
+        # Get a new resolved configuration from the current state (including temporary entities)
+        _logger.debug("[Configuration Manager] Solving Configuration (including %d temporary sinks and %d temporary routes)",
+                     len(self.active_temporary_sinks), len(self.active_temporary_routes))
         self.active_configuration = ConfigurationSolver(self.source_descriptions,
-                                                        self.sink_descriptions,
-                                                        self.route_descriptions)
+                                                        combined_sinks,
+                                                        combined_routes)
 
         _logger.debug("[Configuration Manager] Configuration solved, adding temporary sources")
         # Add temporary plugin sources
@@ -1358,7 +1527,7 @@ class ConfigurationManager(threading.Thread):
 
     def __reload_configuration(self) -> None:
         """Notifies the configuration manager to reload the configuration"""
-        asyncio.run(self.websocket_config.broadcast_config_update(self.source_descriptions,
+        self._safe_async_run(self.websocket_config.broadcast_config_update(self.source_descriptions,
                                                         self.sink_descriptions,
                                                         self.route_descriptions))
         _logger.debug("[Configuration Manager] Requesting config reload")
@@ -1373,10 +1542,70 @@ class ConfigurationManager(threading.Thread):
         self.reload_condition.release()
         self.reload_config = True
         _logger.debug("[Configuration Manager] Marking config for reload")
+    
+    def __reload_configuration_without_save(self) -> None:
+        """Notifies the configuration manager to reload the configuration without saving to disk"""
+        # Log temporary entities being processed
+        _logger.info("[Configuration Manager] Reloading configuration without save - Temporary sinks: %d, Temporary routes: %d",
+                     len(self.active_temporary_sinks), len(self.active_temporary_routes))
+        for sink in self.active_temporary_sinks:
+            _logger.debug("[Configuration Manager] Temporary sink: name='%s', config_id='%s', protocol='%s', enabled=%s",
+                         sink.name, sink.config_id, sink.protocol, sink.enabled)
+        
+        self._safe_async_run(self.websocket_config.broadcast_config_update(self.source_descriptions,
+                                                        self.sink_descriptions + self.active_temporary_sinks,
+                                                        self.route_descriptions + self.active_temporary_routes))
+        _logger.debug("[Configuration Manager] Requesting config reload (without save)")
+        if not self.reload_condition.acquire(timeout=10):
+            raise TimeoutError("Failed to get configuration reload condition")
+        try:
+            _logger.debug("[Configuration Manager] Requesting Reload (without save) - Got lock")
+            self.reload_condition.notify()
+        except RuntimeError:
+            pass
+        _logger.debug("[Configuration Manager] Requesting Reload (without save) - Released lock")
+        self.reload_condition.release()
+        self.reload_config = True
+        _logger.debug("[Configuration Manager] Marking config for reload (without save)")
 
     # Removed __reload_volume_eq_timeshift_delay_configuration as it now just calls __reload_configuration
 
     # Removed __process_and_apply_volume_eq_delay_timeshift as it's handled by full reload
+    
+    def __apply_temporary_configuration_sync(self) -> None:
+        """
+        Synchronously applies temporary configuration changes to the C++ engine.
+        This is used for temporary entities that need immediate availability (e.g., WebRTC sinks).
+        """
+        _logger.info("[Configuration Manager] Applying temporary configuration synchronously")
+        
+        # Process the configuration to update the active_configuration
+        self.__process_configuration()
+        
+        # Apply to C++ engine immediately
+        if self.cpp_config_applier:
+            _logger.info("[Configuration Manager] Applying temporary configuration to C++ engine")
+            cpp_desired_state = self._translate_config_to_cpp_desired_state()
+            if cpp_desired_state:
+                try:
+                    success = self.cpp_config_applier.apply_state(cpp_desired_state)
+                    if success:
+                        _logger.info("[Configuration Manager] Temporary configuration applied successfully to C++ engine")
+                    else:
+                        _logger.error("[Configuration Manager] Failed to apply temporary configuration to C++ engine")
+                except Exception as e:
+                    _logger.exception("[Configuration Manager] Exception applying temporary configuration: %s", e)
+            else:
+                _logger.error("[Configuration Manager] Failed to translate temporary configuration for C++ engine")
+        else:
+            _logger.warning("[Configuration Manager] C++ Config Applier not available for temporary configuration")
+        
+        # Update websocket clients
+        self._safe_async_run(self.websocket_config.broadcast_config_update(
+            self.source_descriptions,
+            self.sink_descriptions + self.active_temporary_sinks,
+            self.route_descriptions + self.active_temporary_routes
+        ))
 
     def __process_and_apply_configuration(self) -> None:
         """Process the configuration, get which sinks have changed and need reloaded,
@@ -1384,8 +1613,21 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("[Configuration Manager] Reloading configuration")
         
         self.__apply_cpp_engine_state()
-
-        self.__save_config()
+        
+        # Only save if there are no temporary entities being processed
+        # or if this is not a temporary-only reload
+        should_save = True
+        # Check if this reload was triggered by temporary entity changes
+        # We can determine this by checking if the configuration contains temporary entities
+        for sink in self.active_configuration.real_sinks_to_real_sources.keys():
+            if getattr(sink, 'is_temporary', False):
+                should_save = False
+                break
+        
+        if should_save:
+            self.__save_config()
+        else:
+            _logger.debug("[Configuration Manager] Skipping save due to temporary entities")
 
         try:
             self.reload_condition.release()

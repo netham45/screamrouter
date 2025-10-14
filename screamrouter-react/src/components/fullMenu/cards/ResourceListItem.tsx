@@ -23,7 +23,7 @@
    AccordionIcon
  } from '@chakra-ui/react';
  import { ChevronDownIcon, ChevronUpIcon, StarIcon, SettingsIcon } from '@chakra-ui/icons';
- import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower } from 'react-icons/fa';
+ import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower, FaHeadphones } from 'react-icons/fa';
  import { Source, Sink, Route } from '../../../api/api';
  import VolumeSlider from '../controls/VolumeSlider';
  import TimeshiftSlider from '../controls/TimeshiftSlider';
@@ -420,9 +420,10 @@ const ResourceListItem: React.FC<ResourceListItemProps> = ({
               {item.enabled ? 'Enabled' : 'Disabled'}
             </Badge>
             
-            {isSink(item) && onListen && (
+            {/* Listen badge for sources */}
+            {isSource(item) && (
               <Badge
-                colorScheme={isActive ? "purple" : "gray"}
+                colorScheme="teal"
                 mr={1}
                 borderRadius="full"
                 px={2}
@@ -430,10 +431,67 @@ const ResourceListItem: React.FC<ResourceListItemProps> = ({
                 userSelect="none"
                 cursor="pointer"
                 _hover={{ opacity: 0.8 }}
-                onClick={(e) => { e.stopPropagation(); onListen(); }}
-                title={isActive ? "Click to stop listening" : "Click to listen"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.open(`/site/listen/source/${encodeURIComponent(item.name)}`, '_blank');
+                }}
+                title="Click to open listen page for this source"
+                display="inline-flex"
+                alignItems="center"
+                gap={1}
               >
-                {isActive ? "Listening" : "Not Listening"}
+                <Box as={FaHeadphones} fontSize="xs" />
+                Listen
+              </Badge>
+            )}
+            
+            {/* Listen badge for routes */}
+            {isRoute(item) && (
+              <Badge
+                colorScheme="orange"
+                mr={1}
+                borderRadius="full"
+                px={2}
+                py={1}
+                userSelect="none"
+                cursor="pointer"
+                _hover={{ opacity: 0.8 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.open(`/site/listen/route/${encodeURIComponent(item.name)}`, '_blank');
+                }}
+                title="Click to open listen page for this route"
+                display="inline-flex"
+                alignItems="center"
+                gap={1}
+              >
+                <Box as={FaHeadphones} fontSize="xs" />
+                Listen
+              </Badge>
+            )}
+            
+            {/* Listen badge for sinks */}
+            {isSink(item) && onListen && (
+              <Badge
+                colorScheme={isActive ? "purple" : "blue"}
+                mr={1}
+                borderRadius="full"
+                px={2}
+                py={1}
+                userSelect="none"
+                cursor="pointer"
+                _hover={{ opacity: 0.8 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.open(`/site/listen/sink/${encodeURIComponent(item.name)}`, '_blank');
+                }}
+                title="Click to open listen page for this sink"
+                display="inline-flex"
+                alignItems="center"
+                gap={1}
+              >
+                <Box as={FaHeadphones} fontSize="xs" />
+                {isActive ? "Listening" : "Listen"}
               </Badge>
             )}
             
