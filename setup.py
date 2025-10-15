@@ -28,6 +28,7 @@ import re
 from pathlib import Path
 from setuptools import setup, Extension, find_packages
 from setuptools.command.build_ext import build_ext
+from setuptools.command.build_py import build_py
 from distutils.command.build import build as _build
 
 # Conditionally import bdist_wheel (not always installed)
@@ -180,6 +181,16 @@ def detect_cross_compile_platform():
     return platform_tag
 
 
+class BuildPyCommand(build_py):
+    """Custom build_py that builds React frontend before copying Python files"""
+    
+    def run(self):
+        # Build React frontend FIRST, before copying Python files
+        self.run_command('build_react')
+        # Now run the normal build_py
+        super().run()
+
+
 if HAVE_WHEEL:
     class BdistWheelCommand(bdist_wheel):
         """Custom bdist_wheel that supports cross-compilation platform tags"""
@@ -228,9 +239,6 @@ class BuildExtCommand(build_ext):
                 os.environ["CXX"] = "ccache " + current_cxx
             print("Using ccache for faster incremental builds")
 
-        # Build React frontend first
-        print("Building React frontend before C++ extensions...")
-        self.run_command('build_react')
         # Import BuildSystem here to avoid issues with pip's isolated build environment
         try:
             from build_system import BuildSystem
@@ -401,6 +409,7 @@ setup(
     ext_modules=ext_modules,
     cmdclass={
         "build_react": BuildReactCommand,
+        "build_py": BuildPyCommand,
         "build_ext": BuildExtCommand,
         **({} if not HAVE_WHEEL else {"bdist_wheel": BdistWheelCommand}),
     },
