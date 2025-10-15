@@ -161,6 +161,153 @@ jobs:
           path: dist/*.whl
           retention-days: 7
 
+  build-linux-x86_64-musl:
+    name: Build Linux x86_64 MUSL Wheels
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        musllinux-image: ['musllinux_1_2_x86_64']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build wheel in musllinux container
+        run: |
+          # Map Python version to musllinux Python binary
+          case "${{ matrix.python-version }}" in
+            "3.10") PYBIN="/opt/python/cp310-cp310/bin" ;;
+            "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
+            "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
+            "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
+            "3.14") PYBIN="/opt/python/cp314-cp314/bin" ;;
+          esac
+
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e PYBIN="${PYBIN}" \
+            quay.io/pypa/${{ matrix.musllinux-image }} \
+            sh -c "
+              set -e
+
+              # Install Node.js for Alpine/MUSL
+              apk add --no-cache nodejs npm
+
+              # Install system dependencies including perl for OpenSSL
+              apk add --no-cache wget curl perl cmake make g++ linux-headers
+
+              # Use the Python from musllinux
+              \${PYBIN}/python -m pip install --upgrade pip
+              \${PYBIN}/pip install pybind11 PyYAML wheel setuptools auditwheel
+
+              # Build the wheel
+              \${PYBIN}/python setup.py bdist_wheel
+
+              # Repair the wheel to make it musllinux compatible
+              for whl in dist/*linux_x86_64.whl; do
+                if [ -f \"\$whl\" ]; then
+                  auditwheel repair \"\$whl\" -w dist/
+                  rm -f \"\$whl\"
+                fi
+              done
+
+              # List the repaired wheels
+              echo 'Repaired wheels:'
+              ls -lh dist/
+            "
+
+      - name: Set up Python ${{ matrix.python-version }} for testing
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Test wheel installation
+        run: |
+          python -m pip install dist/*.whl
+          python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-x86_64-musl-py${{ matrix.python-version }}
+          path: dist/*.whl
+          retention-days: 7
+
+  build-linux-arm64-musl:
+    name: Build Linux ARM64 MUSL Wheels
+    runs-on: [self-hosted, linux, arm64]
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        musllinux-image: ['musllinux_1_2_aarch64']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build wheel in musllinux ARM64 container
+        run: |
+          # Map Python version to musllinux Python binary
+          case "${{ matrix.python-version }}" in
+            "3.10") PYBIN="/opt/python/cp310-cp310/bin" ;;
+            "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
+            "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
+            "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
+            "3.14") PYBIN="/opt/python/cp314-cp314/bin" ;;
+          esac
+
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            -e PYBIN="${PYBIN}" \
+            quay.io/pypa/${{ matrix.musllinux-image }} \
+            sh -c "
+              set -e
+
+              # Install Node.js for Alpine/MUSL
+              apk add --no-cache nodejs npm
+
+              # Install system dependencies including perl for OpenSSL
+              apk add --no-cache wget curl perl cmake make g++ linux-headers
+
+              # Use the Python from musllinux
+              \${PYBIN}/python -m pip install --upgrade pip
+              \${PYBIN}/pip install pybind11 PyYAML wheel setuptools auditwheel
+
+              # Build the wheel
+              \${PYBIN}/python setup.py bdist_wheel
+
+              # Repair the wheel to make it musllinux compatible
+              for whl in dist/*linux_aarch64.whl; do
+                if [ -f \"\$whl\" ]; then
+                  auditwheel repair \"\$whl\" -w dist/
+                  rm -f \"\$whl\"
+                fi
+              done
+
+              # List the repaired wheels
+              echo 'Repaired wheels:'
+              ls -lh dist/
+            "
+
+      - name: Test wheel installation
+        run: |
+          python${{ matrix.python-version }} -m pip install dist/*.whl
+          python${{ matrix.python-version }} -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-arm64-musl-py${{ matrix.python-version }}
+          path: dist/*.whl
+          retention-days: 7
+
   build-windows-x64:
     name: Build Windows x64 Wheels
     runs-on: windows-latest
@@ -272,7 +419,7 @@ jobs:
   collect-artifacts:
     name: Collect All Wheels
     runs-on: ubuntu-latest
-    needs: [build-linux-x86_64, build-linux-arm64, build-windows-x64, build-windows-x86]
+    needs: [build-linux-x86_64, build-linux-arm64, build-linux-x86_64-musl, build-linux-arm64-musl, build-windows-x64, build-windows-x86]
     
     steps:
       - name: Download all wheel artifacts
@@ -313,7 +460,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Platform | Count |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux x86_64 | $(ls python-wheels/*linux_x86_64.whl python-wheels/*manylinux*x86_64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux ARM64 | $(ls python-wheels/*linux_aarch64.whl python-wheels/*manylinux*aarch64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 (glibc) | $(ls python-wheels/*manylinux*x86_64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 (musl) | $(ls python-wheels/*musllinux*x86_64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 (glibc) | $(ls python-wheels/*manylinux*aarch64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 (musl) | $(ls python-wheels/*musllinux*aarch64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows x64 | $(ls python-wheels/*win_amd64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows x86 | $(ls python-wheels/*win32.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY

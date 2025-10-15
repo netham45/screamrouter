@@ -14,30 +14,31 @@ on:
   workflow_dispatch:  # Allows manual triggering
 
 jobs:
-  build-and-push:
+  build-amd64:
+    name: Build AMD64 Docker Image
     runs-on: ubuntu-latest
-    # Only run if the PyPI workflow succeeded or if triggered manually/by push/PR
+    # Only run if the PyPI workflow succeeded or if triggered manually
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: recursive
           
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
       
       - name: Login to Docker Hub
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       
       - name: Extract metadata for Docker
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: netham45/screamrouter
           tags: |
@@ -47,14 +48,142 @@ jobs:
             type=ref,event=pr
             type=sha,format=short
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+          flavor: |
+            suffix=-amd64,onlatest=true
       
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v4
+      - name: Build and push AMD64 Docker image
+        uses: docker/build-push-action@v5
         with:
           context: .
           file: ./docker/Dockerfile
+          platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+          provenance: false
+
+  build-arm64:
+    name: Build ARM64 Docker Image
+    runs-on: [self-hosted, linux, arm64]
+    # Only run if the PyPI workflow succeeded or if triggered manually
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: netham45/screamrouter
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+          flavor: |
+            suffix=-arm64,onlatest=true
+      
+      - name: Build and push ARM64 Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          platforms: linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+          provenance: false
+
+  create-manifest:
+    name: Create Multi-Platform Manifest
+    runs-on: ubuntu-latest
+    needs: [build-amd64, build-arm64]
+    if: ${{ github.event_name != 'pull_request' }}
+    
+    steps:
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Extract metadata for manifest tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: netham45/screamrouter
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+      
+      - name: Create and push multi-platform manifests
+        run: |
+          # Extract tags into array
+          TAGS=(${{ steps.meta.outputs.tags }})
+          
+          # For each tag, create a manifest combining amd64 and arm64
+          for TAG in "${TAGS[@]}"; do
+            echo "Creating manifest for: $TAG"
+            docker buildx imagetools create -t "$TAG" \
+              "${TAG}-amd64" \
+              "${TAG}-arm64"
+          done
+          
+          echo "Multi-platform manifests created successfully"
+      
+      - name: Verify manifests
+        run: |
+          TAGS=(${{ steps.meta.outputs.tags }})
+          
+          echo "Verifying multi-platform manifests:"
+          for TAG in "${TAGS[@]}"; do
+            echo ""
+            echo "=== Manifest for: $TAG ==="
+            docker buildx imagetools inspect "$TAG"
+          done
+      
+      - name: Generate build summary
+        run: |
+          echo "## 🐋 Docker Multi-Platform Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Successfully built and published multi-platform Docker images" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Supported Platforms:" >> $GITHUB_STEP_SUMMARY
+          echo "- 🖥️ **linux/amd64** (x86_64)" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔧 **linux/arm64** (aarch64)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Published Tags:" >> $GITHUB_STEP_SUMMARY
+          TAGS=(${{ steps.meta.outputs.tags }})
+          for TAG in "${TAGS[@]}"; do
+            echo "- \`$TAG\`" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Usage:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo 'docker pull netham45/screamrouter:latest' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Docker will automatically pull the correct image for your platform! 🎉" >> $GITHUB_STEP_SUMMARY

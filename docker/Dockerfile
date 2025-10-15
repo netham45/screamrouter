@@ -27,8 +27,5 @@ ENV CERTIFICATE_KEY=/app/cert/privkey.pem
 ENV CONFIG_PATH=/app/config/config.yaml
 ENV EQUALIZER_CONFIG_PATH=/app/config/equalizers.yaml
 
-# Copy SSL certificate generation script
-COPY docker/generate-certs.sh /app/
-
 # Start the application with certificate generation
-CMD ["/bin/bash", "-c", "/app/generate-certs.sh && python screamrouter.py"]
+CMD ["/bin/bash", "-c", "python screamrouter.py"]
