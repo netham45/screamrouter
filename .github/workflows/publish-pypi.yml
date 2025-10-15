@@ -56,43 +56,61 @@ jobs:
       
       - name: Clean dist directory
         run: |
-          # Remove any non-wheel files (like .egg files)
-          find dist/ -type f ! -name "*.whl" -delete
-          echo "Cleaned dist directory - keeping only .whl files"
+          # Remove any non-wheel/non-tarball files (like .egg files)
+          find dist/ -type f ! -name "*.whl" ! -name "*.tar.gz" -delete
+          echo "Cleaned dist directory - keeping .whl and .tar.gz files"
       
-      - name: List downloaded wheels
+      - name: List downloaded packages
         run: |
-          echo "Downloaded wheels:"
+          echo "Downloaded packages:"
           ls -lh dist/
           echo ""
           echo "Wheel count: $(ls dist/*.whl 2>/dev/null | wc -l)"
+          echo "Source distribution count: $(ls dist/*.tar.gz 2>/dev/null | wc -l)"
       
-      # Verify we have the expected number of wheels (20 total)
-      # 4 platforms × 5 Python versions = 20 wheels
-      - name: Verify wheel integrity
+      # Verify we have the expected number of packages
+      # 6 platforms × 5 Python versions = 30 wheels + 1 sdist = 31 total
+      - name: Verify package integrity
         run: |
           WHEEL_COUNT=$(ls dist/*.whl 2>/dev/null | wc -l)
+          SDIST_COUNT=$(ls dist/*.tar.gz 2>/dev/null | wc -l)
           echo "Found $WHEEL_COUNT wheels"
+          echo "Found $SDIST_COUNT source distribution(s)"
           
-          if [ "$WHEEL_COUNT" -ne 20 ]; then
-            echo "::warning::Expected 20 wheels but found $WHEEL_COUNT"
+          if [ "$WHEEL_COUNT" -ne 30 ]; then
+            echo "::warning::Expected 30 wheels but found $WHEEL_COUNT"
             echo "This may indicate a build failure for some platforms"
           fi
           
-          # List wheels by platform for verification
-          echo ""
-          echo "=== Wheel Inventory ==="
-          echo "Linux x86_64: $(ls dist/*linux_x86_64.whl dist/*manylinux*x86_64.whl 2>/dev/null | wc -l)"
-          echo "Linux ARM64:  $(ls dist/*linux_aarch64.whl dist/*manylinux*aarch64.whl 2>/dev/null | wc -l)"
-          echo "Windows x64:  $(ls dist/*win_amd64.whl 2>/dev/null | wc -l)"
-          echo "Windows x86:  $(ls dist/*win32.whl 2>/dev/null | wc -l)"
+          if [ "$SDIST_COUNT" -ne 1 ]; then
+            echo "::warning::Expected 1 source distribution but found $SDIST_COUNT"
+          fi
           
-          # Validate wheel naming
+          # List packages by platform for verification
+          echo ""
+          echo "=== Package Inventory ==="
+          echo "Linux x86_64 (glibc): $(ls dist/*manylinux*x86_64.whl 2>/dev/null | wc -l)"
+          echo "Linux x86_64 (musl):  $(ls dist/*musllinux*x86_64.whl 2>/dev/null | wc -l)"
+          echo "Linux ARM64 (glibc):  $(ls dist/*manylinux*aarch64.whl 2>/dev/null | wc -l)"
+          echo "Linux ARM64 (musl):   $(ls dist/*musllinux*aarch64.whl 2>/dev/null | wc -l)"
+          echo "Windows x64:          $(ls dist/*win_amd64.whl 2>/dev/null | wc -l)"
+          echo "Windows x86:          $(ls dist/*win32.whl 2>/dev/null | wc -l)"
+          echo "Source distribution:  $(ls dist/*.tar.gz 2>/dev/null | wc -l)"
+          
+          # Validate package naming
           echo ""
           echo "=== Wheel Files ==="
           for wheel in dist/*.whl; do
             if [ -f "$wheel" ]; then
               echo "✓ $(basename $wheel)"
+            fi
+          done
+          
+          echo ""
+          echo "=== Source Distribution ==="
+          for sdist in dist/*.tar.gz; do
+            if [ -f "$sdist" ]; then
+              echo "✓ $(basename $sdist)"
             fi
           done
       
@@ -134,18 +152,25 @@ jobs:
         run: |
           echo "## 📦 PyPI Publishing Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Successfully published wheels to **Production PyPI**" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Successfully published packages to **Production PyPI**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Total wheels published:** $(ls dist/*.whl 2>/dev/null | wc -l)" >> $GITHUB_STEP_SUMMARY
+          echo "**Source distribution published:** $(ls dist/*.tar.gz 2>/dev/null | wc -l)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Published Wheels:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Platform | Python Versions |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|----------------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux x86_64 | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux ARM64 | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 (glibc) | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 (musl) | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 (glibc) | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 (musl) | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows x64 | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows x86 | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Source Distribution:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ sdist (tar.gz) published - users can build from source with Node.js + C++ compiler" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📦 View on PyPI:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -161,4 +186,5 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- 🔐 Trusted Publisher authentication is configured for this repository" >> $GITHUB_STEP_SUMMARY
           echo "- 📦 Package supports Python 3.10, 3.11, 3.12, 3.13, and 3.14" >> $GITHUB_STEP_SUMMARY
-          echo "- 💻 Available for Linux x86_64, Linux ARM64, Windows x64, and Windows x86 platforms" >> $GITHUB_STEP_SUMMARY
+          echo "- 💻 Available for Linux (glibc/musl), Windows (x64/x86), and source distribution" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔨 Source distribution requires Node.js, npm, and C++ compiler to build" >> $GITHUB_STEP_SUMMARY
