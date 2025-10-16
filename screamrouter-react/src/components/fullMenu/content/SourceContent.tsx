@@ -34,7 +34,8 @@ const SourceContent: React.FC<ContentProps> = ({
   handleUpdateSourceTimeshift,
   handleUpdateRouteVolume,
   handleUpdateRouteTimeshift,
-  handleControlSource
+  handleControlSource,
+  actions
 }) => {
   // State to store the source name
   const [sourceName, setSourceName] = useState<string | null>(null);
@@ -84,6 +85,9 @@ const SourceContent: React.FC<ContentProps> = ({
           onVnc={source.vnc_ip ? () => handleOpenVnc(source.name) : undefined}
           onChannelMapping={() => actions.openChannelMapping('sources', source)}
           onDelete={() => actions.deleteItem('sources', source.name)}
+          onListen={() => {
+            window.open(`/site/listen/source/${encodeURIComponent(source.name)}`, '_blank');
+          }}
           onUpdateVolume={(volume) => handleUpdateSourceVolume(source.name, volume)}
           onUpdateTimeshift={(timeshift) => handleUpdateSourceTimeshift(source.name, timeshift)}
           onControlSource={source.vnc_ip && handleControlSource ? (action) => handleControlSource(source.name, action) : undefined}
@@ -142,6 +146,9 @@ const SourceContent: React.FC<ContentProps> = ({
               onEqualizer={() => actions.showEqualizer(true, 'routes', route)}
               onChannelMapping={() => actions.openChannelMapping('routes', route)}
               onDelete={() => actions.deleteItem('routes', route.name)}
+              onListen={() => {
+                window.open(`/site/listen/route/${encodeURIComponent(route.name)}`, '_blank');
+              }}
               onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
               routes={routes}

@@ -50,13 +50,7 @@ const SinksContent: React.FC<ContentProps> = ({
               onChannelMapping={() => actions.openChannelMapping('sinks', sink)}
               onDelete={() => actions.deleteItem('sinks', sink.name)}
               onListen={() => {
-                // If this sink is already being listened to, pass null to stop listening
-                if (listeningToSink?.name === sink.name) {
-                  actions.listenToSink(null);
-                } else {
-                  // Otherwise, start listening to this sink
-                  actions.listenToSink(sink);
-                }
+                window.open(`/site/listen/sink/${encodeURIComponent(sink.name)}`, '_blank');
               }}
               onVisualize={() => handleOpenVisualizer ? handleOpenVisualizer(sink) : undefined}
               routes={routes}
@@ -81,13 +75,7 @@ const SinksContent: React.FC<ContentProps> = ({
               onUpdateTimeshift={(timeshift) => handleUpdateSinkTimeshift(sink.name, timeshift)}
               onEdit={() => actions.editItem(sink.is_group ? 'group-sink' : 'sinks', sink)}
               onListen={() => {
-                // If this sink is already being listened to, pass null to stop listening
-                if (listeningToSink?.name === sink.name) {
-                  actions.listenToSink(null);
-                } else {
-                  // Otherwise, start listening to this sink
-                  actions.listenToSink(sink);
-                }
+                window.open(`/site/listen/sink/${encodeURIComponent(sink.name)}`, '_blank');
               }}
               onVisualize={() => handleOpenVisualizer ? handleOpenVisualizer(sink) : undefined}
               routes={routes}

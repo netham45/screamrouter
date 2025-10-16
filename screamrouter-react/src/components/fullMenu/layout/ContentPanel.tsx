@@ -10,6 +10,7 @@ import FavoritesContent from '../content/FavoritesContent';
 import SourceContent from '../content/SourceContent';
 import SinkContent from '../content/SinkContent';
 import RouteContent from '../content/RouteContent';
+import LogViewerContent from '../content/LogViewerContent';
 import StatsPage from '../../pages/StatsPage';
 import { ContentProps, ContentCategory, ViewMode } from '../types';
 import { Actions } from '../../../utils/actions';
@@ -76,8 +77,10 @@ const ContentPanel: React.FC<ContentPanelProps> = ({
         return <RouteContent {...completeProps} />;
      case 'stats':
        return <StatsPage />;
-      default:
-        return <DashboardContent {...completeProps} />;
+     case 'logs':
+       return <LogViewerContent />;
+     default:
+       return <DashboardContent {...completeProps} />;
     }
   };
 

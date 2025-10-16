@@ -51,6 +51,9 @@ const SourcesContent: React.FC<ContentProps> = ({
               onEdit={() => actions.editItem(source.is_group ? 'group-source' : 'sources', source)}
               onChannelMapping={() => actions.openChannelMapping('sources', source)}
               onDelete={() => actions.deleteItem('sources', source.name)}
+              onListen={() => {
+                window.open(`/site/listen/source/${encodeURIComponent(source.name)}`, '_blank');
+              }}
               routes={routes}
               allSources={sources}
               navigate={actions.navigate}

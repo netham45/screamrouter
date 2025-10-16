@@ -28,4 +28,4 @@ ENV CONFIG_PATH=/app/config/config.yaml
 ENV EQUALIZER_CONFIG_PATH=/app/config/equalizers.yaml
 
 # Start the application with certificate generation
-CMD ["/bin/bash", "-c", "python screamrouter.py"]
+CMD ["/bin/bash", "-c", "python -m screamrouter"]

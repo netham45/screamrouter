@@ -109,24 +109,27 @@ const FavoritesContent: React.FC<ContentProps> = ({
                     onUpdateTimeshift={(timeshift) => handleUpdateSourceTimeshift(source.name, timeshift)}
                     onControlSource={source.vnc_ip ? (action) => handleControlSource ? handleControlSource(source.name, action) : {} : undefined}
                     onToggleActiveSource={() => handleToggleSource(source.name)}
+                    onListen={() => {
+                      window.open(`/site/listen/source/${encodeURIComponent(source.name)}`, '_blank');
+                    }}
                     routes={routes}
                     allSources={sources}
                     allSinks={sinks}
                     navigateToDetails={() => {
                       localStorage.setItem('currentSourceName', source.name);
-                      window.location.hash = '#/source';
+                      setCurrentCategory('source');
                     }}
                     navigate={(type, name) => {
                       // Navigate to the appropriate detailed view
                       if (type === 'routes') {
                         localStorage.setItem('currentRouteName', name);
-                        window.location.hash = '#/route';
+                        setCurrentCategory('route');
                       } else if (type === 'sources' || type === 'group-source') {
                         localStorage.setItem('currentSourceName', name);
-                        window.location.hash = '#/source';
+                        setCurrentCategory('source');
                       } else if (type === 'sinks' || type === 'group-sink') {
                         localStorage.setItem('currentSinkName', name);
-                        window.location.hash = '#/sink';
+                        setCurrentCategory('sink');
                       }
                     }}
                   />
@@ -154,19 +157,19 @@ const FavoritesContent: React.FC<ContentProps> = ({
                     allSinks={sinks}
                     navigateToDetails={() => {
                       localStorage.setItem('currentSourceName', source.name);
-                      window.location.hash = '#/source';
+                      setCurrentCategory('source');
                     }}
                     navigate={(type, name) => {
                       // Navigate to the appropriate detailed view
                       if (type === 'routes') {
                         localStorage.setItem('currentRouteName', name);
-                        window.location.hash = '#/route';
+                        setCurrentCategory('route');
                       } else if (type === 'sources' || type === 'group-source') {
                         localStorage.setItem('currentSourceName', name);
-                        window.location.hash = '#/source';
+                        setCurrentCategory('source');
                       } else if (type === 'sinks' || type === 'group-sink') {
                         localStorage.setItem('currentSinkName', name);
-                        window.location.hash = '#/sink';
+                        setCurrentCategory('sink');
                       }
                     }}
                   />
@@ -206,7 +209,9 @@ const FavoritesContent: React.FC<ContentProps> = ({
                     onStar={() => handleStar('sinks', sink.name)}
                     onActivate={() => handleToggleSink(sink.name)}
                     onEqualizer={() => handleOpenSinkEqualizer(sink.name)}
-                    onListen={() => handleToggleSink(sink.name)}
+                    onListen={() => {
+                      window.open(`/site/listen/sink/${encodeURIComponent(sink.name)}`, '_blank');
+                    }}
                     onVisualize={() => handleOpenSinkEqualizer(sink.name)}
                     onUpdateVolume={(volume) => handleUpdateSinkVolume(sink.name, volume)}
                     onUpdateTimeshift={(timeshift) => handleUpdateSinkTimeshift(sink.name, timeshift)}
@@ -215,19 +220,19 @@ const FavoritesContent: React.FC<ContentProps> = ({
                     allSinks={sinks}
                     navigateToDetails={() => {
                       localStorage.setItem('currentSinkName', sink.name);
-                      window.location.hash = '#/sink';
+                      setCurrentCategory('sink');
                     }}
                     navigate={(type, name) => {
                       // Navigate to the appropriate detailed view
                       if (type === 'routes') {
                         localStorage.setItem('currentRouteName', name);
-                        window.location.hash = '#/route';
+                        setCurrentCategory('route');
                       } else if (type === 'sources' || type === 'group-source') {
                         localStorage.setItem('currentSourceName', name);
-                        window.location.hash = '#/source';
+                        setCurrentCategory('source');
                       } else if (type === 'sinks' || type === 'group-sink') {
                         localStorage.setItem('currentSinkName', name);
-                        window.location.hash = '#/sink';
+                        setCurrentCategory('sink');
                       }
                     }}
                   />
@@ -254,19 +259,19 @@ const FavoritesContent: React.FC<ContentProps> = ({
                     allSinks={sinks}
                     navigateToDetails={() => {
                       localStorage.setItem('currentSinkName', sink.name);
-                      window.location.hash = '#/sink';
+                      setCurrentCategory('sink');
                     }}
                     navigate={(type, name) => {
                       // Navigate to the appropriate detailed view
                       if (type === 'routes') {
                         localStorage.setItem('currentRouteName', name);
-                        window.location.hash = '#/route';
+                        setCurrentCategory('route');
                       } else if (type === 'sources' || type === 'group-source') {
                         localStorage.setItem('currentSourceName', name);
-                        window.location.hash = '#/source';
+                        setCurrentCategory('source');
                       } else if (type === 'sinks' || type === 'group-sink') {
                         localStorage.setItem('currentSinkName', name);
-                        window.location.hash = '#/sink';
+                        setCurrentCategory('sink');
                       }
                     }}
                   />
@@ -308,24 +313,27 @@ const FavoritesContent: React.FC<ContentProps> = ({
                     onEqualizer={() => handleOpenRouteEqualizer(route.name)}
                     onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
                     onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
+                    onListen={() => {
+                      window.open(`/site/listen/route/${encodeURIComponent(route.name)}`, '_blank');
+                    }}
                     routes={routes}
                     allSources={sources}
                     allSinks={sinks}
                     navigateToDetails={() => {
                       localStorage.setItem('currentRouteName', route.name);
-                      window.location.hash = '#/route';
+                      setCurrentCategory('route');
                     }}
                     navigate={(type, name) => {
                       // Navigate to the appropriate detailed view
                       if (type === 'routes') {
                         localStorage.setItem('currentRouteName', name);
-                        window.location.hash = '#/route';
+                        setCurrentCategory('route');
                       } else if (type === 'sources' || type === 'group-source') {
                         localStorage.setItem('currentSourceName', name);
-                        window.location.hash = '#/source';
+                        setCurrentCategory('source');
                       } else if (type === 'sinks' || type === 'group-sink') {
                         localStorage.setItem('currentSinkName', name);
-                        window.location.hash = '#/sink';
+                        setCurrentCategory('sink');
                       }
                     }}
                   />
@@ -350,19 +358,19 @@ const FavoritesContent: React.FC<ContentProps> = ({
                     allSinks={sinks}
                     navigateToDetails={() => {
                       localStorage.setItem('currentRouteName', route.name);
-                      window.location.hash = '#/route';
+                      setCurrentCategory('route');
                     }}
                     navigate={(type, name) => {
                       // Navigate to the appropriate detailed view
                       if (type === 'routes') {
                         localStorage.setItem('currentRouteName', name);
-                        window.location.hash = '#/route';
+                        setCurrentCategory('route');
                       } else if (type === 'sources' || type === 'group-source') {
                         localStorage.setItem('currentSourceName', name);
-                        window.location.hash = '#/source';
+                        setCurrentCategory('source');
                       } else if (type === 'sinks' || type === 'group-sink') {
                         localStorage.setItem('currentSinkName', name);
-                        window.location.hash = '#/sink';
+                        setCurrentCategory('sink');
                       }
                     }}
                   />

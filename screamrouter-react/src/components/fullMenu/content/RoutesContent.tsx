@@ -46,6 +46,9 @@ const RoutesContent: React.FC<ContentProps> = ({
               onEdit={() => actions.editItem('routes', route)}
               onChannelMapping={() => actions.openChannelMapping('routes', route)}
               onDelete={() => actions.deleteItem('routes', route.name)}
+              onListen={() => {
+                window.open(`/site/listen/route/${encodeURIComponent(route.name)}`, '_blank');
+              }}
               routes={routes}
               navigate={actions.navigate}
             />

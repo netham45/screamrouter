@@ -83,13 +83,7 @@ const SinkContent: React.FC<ContentProps> = ({
           onChannelMapping={() => actions.openChannelMapping('sinks', sink)}
           onDelete={() => actions.deleteItem('sinks', sink.name)}
           onListen={() => {
-            // If this sink is already being listened to, pass null to stop listening
-            if (listeningToSink?.name === sink.name) {
-              actions.listenToSink(null);
-            } else {
-              // Otherwise, start listening to this sink
-              actions.listenToSink(sink);
-            }
+            window.open(`/site/listen/sink/${encodeURIComponent(sink.name)}`, '_blank');
           }}
           onUpdateVolume={(volume) => handleUpdateSinkVolume(sink.name, volume)}
           onUpdateTimeshift={(timeshift) => handleUpdateSinkTimeshift(sink.name, timeshift)}
@@ -147,6 +141,9 @@ const SinkContent: React.FC<ContentProps> = ({
               onEqualizer={() => handleOpenSinkEqualizer(route.name)}
               onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
+              onListen={() => {
+                window.open(`/site/listen/route/${encodeURIComponent(route.name)}`, '_blank');
+              }}
               routes={routes}
               allSources={sources}
               allSinks={sinks}

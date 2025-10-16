@@ -196,6 +196,9 @@ const NowListeningContent: React.FC<ContentProps> = ({
               isActive={route.enabled}
               onStar={() => handleStar('routes', route.name)}
               onActivate={() => handleToggleRoute(route.name)}
+              onListen={() => {
+                window.open(`/site/listen/route/${encodeURIComponent(route.name)}`, '_blank');
+              }}
               onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
               routes={routes}

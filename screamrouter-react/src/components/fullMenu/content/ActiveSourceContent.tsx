@@ -75,6 +75,9 @@ const ActiveSourceContent: React.FC<ContentProps> = ({
           onControlSource={primarySource.vnc_ip && handleControlSource ? (action) => handleControlSource(primarySource.name, action) : undefined}
           onToggleActiveSource={() => handleToggleSource(primarySource.name)}
           routes={routes}
+          onListen={() => {
+            window.open(`/site/listen/source/${encodeURIComponent(primarySource.name)}`, '_blank');
+          }}
           allSources={sources}
           allSinks={sinks}
           navigateToDetails={undefined}
@@ -125,6 +128,9 @@ const ActiveSourceContent: React.FC<ContentProps> = ({
               onEqualizer={() => handleOpenSourceEqualizer(route.name)}
               onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
+              onListen={() => {
+                window.open(`/site/listen/source/${encodeURIComponent(primarySource.name)}`, '_blank');
+              }}
               routes={routes}
               allSources={sources}
               allSinks={sinks}

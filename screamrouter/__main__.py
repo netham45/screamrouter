@@ -54,6 +54,7 @@ except ImportError:
 import screamrouter.constants.constants as constants
 from screamrouter.api.api_configuration import APIConfiguration
 from screamrouter.api.api_equalizer import APIEqualizer
+from screamrouter.api.api_log_viewer import APILogViewer
 from screamrouter.api.api_stats import APIStats
 from screamrouter.api.api_webrtc import APIWebRTC
 from screamrouter.api.api_website import APIWebsite
@@ -339,6 +340,10 @@ def main():
             {
                 "name": "Stream",
                 "description": "HTTP media streams"
+            },
+            {
+                "name": "Logs",
+                "description": "Log file viewing and streaming"
             }
         ])
     set_process_name("SR Scream Router", "Scream Router Main Thread")
@@ -491,6 +496,7 @@ def main():
     website: APIWebsite = APIWebsite(app, screamrouter_configuration)
     equalizer: APIEqualizer = APIEqualizer(app)
     stats_api: APIStats = APIStats(app, screamrouter_configuration)
+    log_viewer: APILogViewer = APILogViewer(app)
 
     @app.on_event("startup")
     async def on_startup():

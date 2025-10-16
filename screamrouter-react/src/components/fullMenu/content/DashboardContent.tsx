@@ -149,6 +149,9 @@ const DashboardContent: React.FC<ContentProps> = ({
             onUpdateTimeshift={(timeshift) => handleUpdateSourceTimeshift(primarySource.name, timeshift)}
             onControlSource={primarySource.vnc_ip ? (action) => handleControlSource && handleControlSource(primarySource.name, action) : undefined}
             onToggleActiveSource={() => handleToggleSource(primarySource.name)}
+            onListen={() => {
+              window.open(`/site/listen/source/${encodeURIComponent(primarySource.name)}`, '_blank');
+            }}
             routes={routes}
             allSources={sources}
             allSinks={sinks}
@@ -218,6 +221,11 @@ const DashboardContent: React.FC<ContentProps> = ({
                 onUpdateTimeshift={(timeshift) => handleUpdateSourceTimeshift(source.name, timeshift)}
                 onControlSource={source.vnc_ip ? (action) => handleControlSource && handleControlSource(source.name, action) : undefined}
                 onToggleActiveSource={() => handleToggleSource(source.name)}
+                onListen={() => {
+                  window.open(`/site/listen/source/${encodeURIComponent(source.name)}`, '_blank');
+                }}
+
+
                 routes={routes}
                 allSources={sources}
                 allSinks={sinks}
@@ -256,13 +264,7 @@ const DashboardContent: React.FC<ContentProps> = ({
                 onActivate={() => handleToggleSink(sink.name)}
                 onEqualizer={() => handleOpenSinkEqualizer(sink.name)}
                 onListen={() => {
-                  // If this sink is already being listened to, pass null to stop listening
-                  if (listeningToSink?.name === sink.name) {
-                    actions.listenToSink(null);
-                  } else {
-                    // Otherwise, start listening to this sink
-                    actions.listenToSink(sink);
-                  }
+                  window.open(`/site/listen/sink/${encodeURIComponent(sink.name)}`, '_blank');
                 }}
                 onVisualize={() => handleOpenVisualizer ? handleOpenVisualizer(sink) : {}}
                 onUpdateVolume={(volume) => handleUpdateSinkVolume(sink.name, volume)}
@@ -306,6 +308,9 @@ const DashboardContent: React.FC<ContentProps> = ({
                 onEqualizer={() => handleOpenRouteEqualizer(route.name)}
                 onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
                 onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
+                onListen={() => {
+                  window.open(`/site/listen/route/${encodeURIComponent(route.name)}`, '_blank');
+                }}
                 routes={routes}
                 allSources={sources}
                 allSinks={sinks}
@@ -373,6 +378,9 @@ const DashboardContent: React.FC<ContentProps> = ({
               onUpdateTimeshift={(timeshift) => handleUpdateSourceTimeshift(source.name, timeshift)}
               onControlSource={source.vnc_ip ? (action) => handleControlSource && handleControlSource(source.name, action) : undefined}
               onToggleActiveSource={() => handleToggleSource(source.name)}
+              onListen={() => {
+                window.open(`/site/listen/source/${encodeURIComponent(source.name)}`, '_blank');
+              }}
               routes={routes}
               allSources={sources}
               allSinks={sinks}
@@ -434,13 +442,7 @@ const DashboardContent: React.FC<ContentProps> = ({
               onActivate={() => handleToggleSink(sink.name)}
               onEqualizer={() => handleOpenSinkEqualizer(sink.name)}
               onListen={() => {
-                // If this sink is already being listened to, pass null to stop listening
-                if (listeningToSink?.name === sink.name) {
-                  actions.listenToSink(null);
-                } else {
-                  // Otherwise, start listening to this sink
-                  actions.listenToSink(sink);
-                }
+                window.open(`/site/listen/sink/${encodeURIComponent(sink.name)}`, '_blank');
               }}
               onVisualize={() => handleOpenVisualizer ? handleOpenVisualizer(sink) : {}}
               onUpdateVolume={(volume) => handleUpdateSinkVolume(sink.name, volume)}
@@ -507,6 +509,9 @@ const DashboardContent: React.FC<ContentProps> = ({
               onEqualizer={() => handleOpenRouteEqualizer(route.name)}
               onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
+              onListen={() => {
+                window.open(`/site/listen/route/${encodeURIComponent(route.name)}`, '_blank');
+              }}
               routes={routes}
               allSources={sources}
               allSinks={sinks}

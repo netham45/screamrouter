@@ -264,6 +264,8 @@ const ResourceCard: React.FC<ResourceCardProps> = ({
         navigate('sinks', item.name);
       } else if (isRoute(item)) {
         navigate('routes', item.name);
+      } else {
+        console.log("I don't know what type of card this is");
       }
     }
   };
@@ -427,9 +429,9 @@ return (
           {item.enabled ? 'Enabled' : 'Disabled'}
         </Badge>
         
-        {isSink(item) && onListen && (
+        {onListen && (
           <Badge
-            colorScheme={isActive ? "purple" : "blue"}
+            colorScheme="teal"
             mr={1}
             borderRadius="full"
             px={2}
@@ -437,13 +439,10 @@ return (
             userSelect="none"
             cursor="pointer"
             _hover={{ opacity: 0.8 }}
-            onClick={() => {
-              // Open the listen page for this sink
-              window.open(`/site/listen/${encodeURIComponent(item.name)}`, '_blank');
-            }}
+            onClick={onListen}
             title="Click to open listen page"
           >
-            {isActive ? "Listening" : "Listen"}
+            Listen
           </Badge>
         )}
         

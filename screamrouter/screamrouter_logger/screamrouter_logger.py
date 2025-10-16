@@ -33,7 +33,7 @@ root_console.setFormatter(FORMATTER)
 MAIN_LOGGER.addHandler(root_console)
 
 if constants.LOG_TO_FILE:
-    all_rotating_handler = logging.handlers.RotatingFileHandler(f"{constants.LOGS_DIR}all.log",
+    all_rotating_handler = logging.handlers.RotatingFileHandler(os.path.join(constants.LOGS_DIR, "all.log"),
                                     maxBytes=10000000, backupCount=constants.LOG_ENTRIES_TO_RETAIN)
     all_rotating_handler.setLevel(logging.INFO)
     all_rotating_handler.setFormatter(FORMATTER)
@@ -46,6 +46,8 @@ if constants.LOG_TO_FILE:
 def get_logger(name: str) -> logging.Logger:
     """Creates a pre-configured logger"""
     logger = logging.getLogger(name)
+    if getattr(logger, "_screamrouter_configured", False):
+        return logger
     logger.propagate = False
     logger.setLevel(logging.DEBUG)  # Set base logger level to allow all messages through
 
@@ -65,7 +67,7 @@ def get_logger(name: str) -> logging.Logger:
     logger.addHandler(console)
 
     if constants.LOG_TO_FILE:
-        rotating_handler = logging.handlers.RotatingFileHandler(f"{constants.LOGS_DIR}{name}.log",
+        rotating_handler = logging.handlers.RotatingFileHandler(os.path.join(constants.LOGS_DIR, f"{name}.log"),
                                     maxBytes=100000, backupCount=constants.LOG_ENTRIES_TO_RETAIN)
         rotating_handler.setLevel(logging.DEBUG)
         rotating_handler.setFormatter(FORMATTER)
@@ -76,6 +78,7 @@ def get_logger(name: str) -> logging.Logger:
             rotating_handler.doRollover()
         except:
             pass
+    logger._screamrouter_configured = True
     return logger
 
 # --- C++ Log Handling ---
@@ -88,9 +91,21 @@ _cpp_log_retrieval_thread = None
 _stop_cpp_log_retrieval_thread = threading.Event()
 # Poll interval is effectively managed by the timeout in get_cpp_log_messages
 
+
+def _get_cpp_logger_for_file(cpp_filename: str) -> logging.Logger:
+    """Return a configured logger whose log file includes the C++ source file name."""
+    normalized_path = cpp_filename.replace("\\", "/")
+    base_filename = os.path.basename(normalized_path) or "unknown_cpp_source"
+    invalid_chars = '<>:"\\|?*'
+    safe_filename = "".join('_' if ch in invalid_chars else ch for ch in base_filename).strip()
+    if not safe_filename:
+        safe_filename = "unknown_cpp_source"
+    logger_name = f"{CPP_LOGGER_NAME}.{safe_filename}"
+    return get_logger(logger_name)
+
+
 def _cpp_log_retrieval_worker():
     """Worker thread that retrieves and processes C++ log messages."""
-    logger = logging.getLogger(CPP_LOGGER_NAME) # Get the pre-configured logger
 
     MAIN_LOGGER.info("C++ Log Retrieval Worker started.")
     while not _stop_cpp_log_retrieval_thread.is_set():
@@ -109,11 +124,12 @@ def _cpp_log_retrieval_worker():
             for entry_tuple in log_entries_tuples:
                 if len(entry_tuple) == 4:
                     cpp_level_from_c, message, cpp_filename, cpp_lineno = entry_tuple
-                    
+                    logger = _get_cpp_logger_for_file(cpp_filename)
+
                     python_level_int = _map_cpp_level_to_python(cpp_level_from_c)
 
                     record = logging.LogRecord(
-                        name=CPP_LOGGER_NAME,
+                        name=logger.name,
                         level=python_level_int,
                         pathname=cpp_filename,
                         lineno=cpp_lineno,
@@ -217,13 +233,13 @@ def _cleanup_cpp_log_forwarding():
         try:
             MAIN_LOGGER.info("Performing final drain of C++ log messages...")
             final_entries = screamrouter_audio_engine.get_cpp_log_messages(timeout_ms=50) # Short timeout
-            logger = logging.getLogger(CPP_LOGGER_NAME)
             for entry_tuple in final_entries:
                 if len(entry_tuple) == 4:
                     cpp_level, message, cpp_filename, cpp_lineno = entry_tuple
                     python_level = _map_cpp_level_to_python(cpp_level)
+                    logger = _get_cpp_logger_for_file(cpp_filename)
                     record = logging.LogRecord(
-                        name=CPP_LOGGER_NAME, level=python_level, pathname=cpp_filename,
+                        name=logger.name, level=python_level, pathname=cpp_filename,
                         lineno=cpp_lineno, msg=message, args=(), exc_info=None, func="N/A_CPP_FINAL_DRAIN")
                     logger.handle(record)
             MAIN_LOGGER.info(f"Drained {len(final_entries)} final C++ log messages.")

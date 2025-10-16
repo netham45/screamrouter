@@ -14,7 +14,7 @@ export type ColorMode = 'light' | 'dark' | 'system';
 /**
  * Type definition for content categories.
  */
-export type ContentCategory = 'dashboard' | 'active-source' | 'now-listening' | 'sources' | 'sinks' | 'routes' | 'favorites' | 'source' | 'sink' | 'route' | 'stats';
+export type ContentCategory = 'dashboard' | 'active-source' | 'now-listening' | 'sources' | 'sinks' | 'routes' | 'favorites' | 'source' | 'sink' | 'route' | 'stats' | 'logs';
 
 /**
  * Interface for the sort configuration.

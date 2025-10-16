@@ -91,6 +91,9 @@ const RouteContent: React.FC<ContentProps> = ({
           onEqualizer={() => handleOpenRouteEqualizer(route.name)}
           onChannelMapping={() => actions.openChannelMapping('routes', route)}
           onDelete={() => actions.deleteItem('routes', route.name)}
+          onListen={() => {
+            window.open(`/site/listen/route/${encodeURIComponent(route.name)}`, '_blank');
+          }}
           onUpdateVolume={(volume) => handleUpdateRouteVolume(route.name, volume)}
           onUpdateTimeshift={(timeshift) => handleUpdateRouteTimeshift(route.name, timeshift)}
           routes={routes}
@@ -138,6 +141,9 @@ const RouteContent: React.FC<ContentProps> = ({
               onVnc={source.vnc_ip && handleOpenVnc ? () => handleOpenVnc(source.name) : undefined}
               onChannelMapping={() => actions.openChannelMapping('sources', source)}
               onDelete={() => actions.deleteItem('sources', source.name)}
+              onListen={() => {
+                window.open(`/site/listen/source/${encodeURIComponent(source.name)}`, '_blank');
+              }}
               onUpdateVolume={(volume) => handleUpdateSourceVolume(source.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateSourceTimeshift(source.name, timeshift)}
               onControlSource={source.vnc_ip && handleControlSource ? (action) => handleControlSource(source.name, action) : undefined}
@@ -194,8 +200,7 @@ const RouteContent: React.FC<ContentProps> = ({
               onChannelMapping={() => actions.openChannelMapping('sinks', sink)}
               onDelete={() => actions.deleteItem('sinks', sink.name)}
               onListen={() => {
-                // Open the listen page for this sink
-                window.open(`/site/listen/${encodeURIComponent(sink.name)}`, '_blank');
+                window.open(`/site/listen/sink/${encodeURIComponent(sink.name)}`, '_blank');
               }}
               onUpdateVolume={(volume) => handleUpdateSinkVolume(sink.name, volume)}
               onUpdateTimeshift={(timeshift) => handleUpdateSinkTimeshift(sink.name, timeshift)}
