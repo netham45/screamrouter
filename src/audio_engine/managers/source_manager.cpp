@@ -103,25 +103,34 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
         return "";
     }
 
-    // Check if this is an ALSA capture source and activate the capture device
+    // Check if this is a system audio capture source and activate the capture device
     if (m_ensure_capture_callback && !config.tag.empty()) {
-        // Check if tag starts with "ac:" (ALSA capture prefix)
-        if (config.tag.rfind("ac:", 0) == 0) {
-            LOG_CPP_INFO("Source instance %s uses ALSA capture device: %s",
-                         instance_id.c_str(), config.tag.c_str());
-            
-            // Activate the ALSA capture device via callback
+        bool is_system_tag = false;
+        const char* backend_label = "ALSA";
+#if defined(_WIN32)
+        backend_label = "WASAPI";
+        is_system_tag = config.tag.rfind("wc:", 0) == 0 ||
+                        config.tag.rfind("ws:", 0) == 0;
+#else
+        is_system_tag = config.tag.rfind("ac:", 0) == 0;
+#endif
+
+        if (is_system_tag) {
+            LOG_CPP_INFO("Source instance %s uses %s capture device: %s",
+                         instance_id.c_str(), backend_label, config.tag.c_str());
+
             if (m_ensure_capture_callback(config.tag)) {
-                // Track this instance as using a capture device
                 std::scoped_lock lock(m_manager_mutex);
                 m_instance_to_capture_tag[instance_id] = config.tag;
-                LOG_CPP_INFO("ALSA capture device %s activated for instance %s",
-                             config.tag.c_str(), instance_id.c_str());
+                LOG_CPP_INFO("%s capture device %s activated for instance %s",
+                             backend_label,
+                             config.tag.c_str(),
+                             instance_id.c_str());
             } else {
-                LOG_CPP_ERROR("Failed to activate ALSA capture device %s for instance %s",
-                              config.tag.c_str(), instance_id.c_str());
-                // Continue anyway - the source processor is created,
-                // it just won't receive audio until the device is available
+                LOG_CPP_ERROR("Failed to activate %s capture device %s for instance %s",
+                              backend_label,
+                              config.tag.c_str(),
+                              instance_id.c_str());
             }
         }
     }
@@ -157,7 +166,7 @@ bool SourceManager::remove_source(const std::string& instance_id) {
         m_source_to_sink_queues.erase(instance_id);
         m_command_queues.erase(instance_id);
 
-        // Release ALSA capture device if this source was using one
+        // Release system audio capture device if this source was using one
         auto capture_it = m_instance_to_capture_tag.find(instance_id);
         if (capture_it != m_instance_to_capture_tag.end()) {
             std::string capture_tag = capture_it->second;
@@ -165,8 +174,14 @@ bool SourceManager::remove_source(const std::string& instance_id) {
             
             if (m_release_capture_callback) {
                 m_release_capture_callback(capture_tag);
-                LOG_CPP_INFO("Released ALSA capture device %s for instance %s",
-                             capture_tag.c_str(), instance_id.c_str());
+                const char* backend_label = "ALSA";
+#if defined(_WIN32)
+                backend_label = "WASAPI";
+#endif
+                LOG_CPP_INFO("Released %s capture device %s for instance %s",
+                             backend_label,
+                             capture_tag.c_str(),
+                             instance_id.c_str());
             }
         }
 

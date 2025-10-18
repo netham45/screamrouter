@@ -23,7 +23,7 @@ import ProcessListPage from './components/pages/ProcessListPage'; // Import the 
 import SpeakerLayoutPage from './components/pages/SpeakerLayoutPage'; // Import the SpeakerLayoutPage component
 import StatsPage from './components/pages/StatsPage'; // Import the StatsPage component
 import ListenPage from './components/pages/ListenPage'; // Import the ListenPage component
-import { DesktopMenu } from './components/desktopMenu'; // Import DesktopMenu
+import DesktopMenu from './components/DesktopMenu'; // Import DesktopMenu
 import { ColorProvider } from './components/desktopMenu/context/ColorContext'; // Import ColorProvider
 import FullMenu from './components/FullMenu'; // Import the FullMenu component
 import GlobalFunctionsComponent from './GlobalFunctionsComponent'; // Import the GlobalFunctionsComponent

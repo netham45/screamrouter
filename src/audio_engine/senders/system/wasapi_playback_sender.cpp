@@ -1,5 +1,7 @@
 #ifdef _WIN32
 
+#define NOMINMAX
+
 #include "wasapi_playback_sender.h"
 
 #include "../../utils/cpp_logger.h"
@@ -91,20 +93,20 @@ bool WasapiPlaybackSender::setup() {
     }
 
     if (!open_device()) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] Failed to open device.", config_.id.c_str());
+        LOG_CPP_ERROR("[WasapiPlayback:%s] Failed to open device.", config_.sink_id.c_str());
         close();
         return false;
     }
 
     if (!configure_audio_client()) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] Failed to configure audio client.", config_.id.c_str());
+        LOG_CPP_ERROR("[WasapiPlayback:%s] Failed to configure audio client.", config_.sink_id.c_str());
         close();
         return false;
     }
 
     HRESULT hr = audio_client_->Start();
     if (FAILED(hr)) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] Failed to start audio client: 0x%lx", config_.id.c_str(), hr);
+        LOG_CPP_ERROR("[WasapiPlayback:%s] Failed to start audio client: 0x%lx", config_.sink_id.c_str(), hr);
         close();
         return false;
     }
@@ -140,11 +142,11 @@ void WasapiPlaybackSender::close() {
 bool WasapiPlaybackSender::initialize_com() {
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (hr == RPC_E_CHANGED_MODE) {
-        LOG_CPP_WARNING("[WasapiPlayback:%s] COM already initialized on different mode.", config_.id.c_str());
+        LOG_CPP_WARNING("[WasapiPlayback:%s] COM already initialized on different mode.", config_.sink_id.c_str());
         return true;
     }
     if (FAILED(hr)) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] CoInitializeEx failed: 0x%lx", config_.id.c_str(), hr);
+        LOG_CPP_ERROR("[WasapiPlayback:%s] CoInitializeEx failed: 0x%lx", config_.sink_id.c_str(), hr);
         return false;
     }
     com_initialized_ = true;
@@ -161,25 +163,25 @@ void WasapiPlaybackSender::uninitialize_com() {
 bool WasapiPlaybackSender::open_device() {
     HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&device_enumerator_));
     if (FAILED(hr)) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] Failed to create MMDeviceEnumerator: 0x%lx", config_.id.c_str(), hr);
+        LOG_CPP_ERROR("[WasapiPlayback:%s] Failed to create MMDeviceEnumerator: 0x%lx", config_.sink_id.c_str(), hr);
         return false;
     }
 
     std::wstring endpoint_id;
     if (!resolve_endpoint_id(endpoint_id)) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] Unable to resolve endpoint id for tag %s.", config_.id.c_str(), config_.output_ip.c_str());
+        LOG_CPP_ERROR("[WasapiPlayback:%s] Unable to resolve endpoint id for tag %s.", config_.sink_id.c_str(), config_.output_ip.c_str());
         return false;
     }
 
     hr = device_enumerator_->GetDevice(endpoint_id.c_str(), &device_);
     if (FAILED(hr) || !device_) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] GetDevice failed: 0x%lx", config_.id.c_str(), hr);
+        LOG_CPP_ERROR("[WasapiPlayback:%s] GetDevice failed: 0x%lx", config_.sink_id.c_str(), hr);
         return false;
     }
 
     hr = device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &audio_client_);
     if (FAILED(hr) || !audio_client_) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] Activate IAudioClient failed: 0x%lx", config_.id.c_str(), hr);
+        LOG_CPP_ERROR("[WasapiPlayback:%s] Activate IAudioClient failed: 0x%lx", config_.sink_id.c_str(), hr);
         return false;
     }
     return true;
@@ -301,11 +303,11 @@ bool WasapiPlaybackSender::configure_audio_client() {
     } else if (hr == S_FALSE && closest) {
         choose_device_format(closest, true);
     } else {
-        LOG_CPP_WARNING("[WasapiPlayback:%s] Desired format unsupported, falling back to mix format.", config_.id.c_str());
+        LOG_CPP_WARNING("[WasapiPlayback:%s] Desired format unsupported, falling back to mix format.", config_.sink_id.c_str());
         WAVEFORMATEX* mix_format = nullptr;
         hr = audio_client_->GetMixFormat(&mix_format);
         if (FAILED(hr) || !mix_format) {
-            LOG_CPP_ERROR("[WasapiPlayback:%s] GetMixFormat failed: 0x%lx", config_.id.c_str(), hr);
+            LOG_CPP_ERROR("[WasapiPlayback:%s] GetMixFormat failed: 0x%lx", config_.sink_id.c_str(), hr);
             if (closest) {
                 CoTaskMemFree(closest);
             }
@@ -328,33 +330,33 @@ bool WasapiPlaybackSender::configure_audio_client() {
                                                 device_format_,
                                                 nullptr);
     if (FAILED(init_hr)) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] Initialize failed: 0x%lx", config_.id.c_str(), init_hr);
+        LOG_CPP_ERROR("[WasapiPlayback:%s] Initialize failed: 0x%lx", config_.sink_id.c_str(), init_hr);
         return false;
     }
 
     hr = audio_client_->GetBufferSize(&buffer_frames_);
     if (FAILED(hr)) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] GetBufferSize failed: 0x%lx", config_.id.c_str(), hr);
+        LOG_CPP_ERROR("[WasapiPlayback:%s] GetBufferSize failed: 0x%lx", config_.sink_id.c_str(), hr);
         return false;
     }
 
     hr = audio_client_->GetService(IID_PPV_ARGS(&render_client_));
     if (FAILED(hr)) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] GetService(IAudioRenderClient) failed: 0x%lx", config_.id.c_str(), hr);
+        LOG_CPP_ERROR("[WasapiPlayback:%s] GetService(IAudioRenderClient) failed: 0x%lx", config_.sink_id.c_str(), hr);
         return false;
     }
 
     if (!render_event_) {
         render_event_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
         if (!render_event_) {
-            LOG_CPP_ERROR("[WasapiPlayback:%s] Failed to create render event handle.", config_.id.c_str());
+            LOG_CPP_ERROR("[WasapiPlayback:%s] Failed to create render event handle.", config_.sink_id.c_str());
             return false;
         }
     }
 
     hr = audio_client_->SetEventHandle(render_event_);
     if (FAILED(hr)) {
-        LOG_CPP_ERROR("[WasapiPlayback:%s] SetEventHandle failed: 0x%lx", config_.id.c_str(), hr);
+        LOG_CPP_ERROR("[WasapiPlayback:%s] SetEventHandle failed: 0x%lx", config_.sink_id.c_str(), hr);
         return false;
     }
 
@@ -364,15 +366,15 @@ bool WasapiPlaybackSender::configure_audio_client() {
 }
 
 bool WasapiPlaybackSender::build_desired_format(WAVEFORMATEXTENSIBLE& desired) const {
-    if (config_.channels <= 0 || config_.samplerate <= 0 || (config_.bitdepth != 16 && config_.bitdepth != 24 && config_.bitdepth != 32)) {
+    if (config_.output_channels <= 0 || config_.output_samplerate <= 0 || (config_.output_bitdepth != 16 && config_.output_bitdepth != 24 && config_.output_bitdepth != 32)) {
         return false;
     }
 
     desired = {};
     desired.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-    desired.Format.nChannels = static_cast<WORD>(config_.channels);
-    desired.Format.nSamplesPerSec = static_cast<DWORD>(config_.samplerate);
-    desired.Format.wBitsPerSample = static_cast<WORD>(config_.bitdepth);
+    desired.Format.nChannels = static_cast<WORD>(config_.output_channels);
+    desired.Format.nSamplesPerSec = static_cast<DWORD>(config_.output_samplerate);
+    desired.Format.wBitsPerSample = static_cast<WORD>(config_.output_bitdepth);
     desired.Format.nBlockAlign = static_cast<WORD>((desired.Format.wBitsPerSample / 8) * desired.Format.nChannels);
     desired.Format.nAvgBytesPerSec = desired.Format.nBlockAlign * desired.Format.nSamplesPerSec;
     desired.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
@@ -394,14 +396,14 @@ void WasapiPlaybackSender::choose_device_format(WAVEFORMATEX* format, bool forma
     sample_rate_ = device_format_->nSamplesPerSec;
     device_bytes_per_frame_ = device_format_->nBlockAlign;
 
-    source_bits_per_sample_ = static_cast<unsigned int>(config_.bitdepth);
-    source_bytes_per_frame_ = static_cast<size_t>(config_.bitdepth / 8) * static_cast<size_t>(config_.channels);
+    source_bits_per_sample_ = static_cast<unsigned int>(config_.output_bitdepth);
+    source_bytes_per_frame_ = static_cast<size_t>(config_.output_bitdepth / 8) * static_cast<size_t>(config_.output_channels);
 
     if (!format_supported) {
         // We'll need conversion to device format.
         requires_conversion_ = true;
     } else {
-        requires_conversion_ = (device_bits_per_sample_ != source_bits_per_sample_) || (config_.channels != static_cast<int>(channels_));
+        requires_conversion_ = (device_bits_per_sample_ != source_bits_per_sample_) || (config_.output_channels != static_cast<int>(channels_));
     }
 }
 
@@ -467,7 +469,7 @@ void WasapiPlaybackSender::send_payload(const uint8_t* payload_data, size_t payl
         UINT32 padding = 0;
         HRESULT hr = audio_client_->GetCurrentPadding(&padding);
         if (FAILED(hr)) {
-            LOG_CPP_ERROR("[WasapiPlayback:%s] GetCurrentPadding failed: 0x%lx", config_.id.c_str(), hr);
+            LOG_CPP_ERROR("[WasapiPlayback:%s] GetCurrentPadding failed: 0x%lx", config_.sink_id.c_str(), hr);
             return;
         }
         UINT32 available = buffer_frames_ > padding ? buffer_frames_ - padding : 0;
@@ -480,11 +482,14 @@ void WasapiPlaybackSender::send_payload(const uint8_t* payload_data, size_t payl
             continue;
         }
 
-        UINT32 frames_to_write = static_cast<UINT32>(std::min<size_t>(available, total_frames - frames_written));
+        const size_t frames_available = static_cast<size_t>(available);
+        const size_t frames_remaining = total_frames - frames_written;
+        const size_t frames_to_write_sz = (std::min)(frames_available, frames_remaining);
+        UINT32 frames_to_write = static_cast<UINT32>(frames_to_write_sz);
         BYTE* buffer = nullptr;
         hr = render_client_->GetBuffer(frames_to_write, &buffer);
         if (FAILED(hr)) {
-            LOG_CPP_ERROR("[WasapiPlayback:%s] GetBuffer failed: 0x%lx", config_.id.c_str(), hr);
+            LOG_CPP_ERROR("[WasapiPlayback:%s] GetBuffer failed: 0x%lx", config_.sink_id.c_str(), hr);
             return;
         }
 
@@ -493,7 +498,7 @@ void WasapiPlaybackSender::send_payload(const uint8_t* payload_data, size_t payl
 
         hr = render_client_->ReleaseBuffer(frames_to_write, 0);
         if (FAILED(hr)) {
-            LOG_CPP_ERROR("[WasapiPlayback:%s] ReleaseBuffer failed: 0x%lx", config_.id.c_str(), hr);
+            LOG_CPP_ERROR("[WasapiPlayback:%s] ReleaseBuffer failed: 0x%lx", config_.sink_id.c_str(), hr);
             return;
         }
 

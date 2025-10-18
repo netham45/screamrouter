@@ -2,6 +2,15 @@
 #include "../utils/cpp_logger.h"
 #include "../synchronization/global_synchronization_clock.h"
 #include "../synchronization/sink_synchronization_coordinator.h"
+#include "../system_audio/system_audio_tags.h"
+
+#if defined(__linux__)
+#include "../system_audio/alsa_device_enumerator.h"
+#endif
+
+#ifdef _WIN32
+#include "../system_audio/wasapi_device_enumerator.h"
+#endif
 #include <algorithm>
 #include <stdexcept>
 #include <system_error>
@@ -35,7 +44,15 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
         m_timeshift_manager = std::make_unique<TimeshiftManager>(std::chrono::seconds(global_timeshift_buffer_duration_sec), m_settings);
         m_notification_queue = std::make_shared<NotificationQueue>();
 
-        m_system_device_enumerator = std::make_unique<system_audio::AlsaDeviceEnumerator>(m_notification_queue);
+        std::unique_ptr<system_audio::SystemDeviceEnumerator> enumerator;
+#if defined(__linux__)
+        enumerator.reset(new system_audio::AlsaDeviceEnumerator(m_notification_queue));
+#elif defined(_WIN32)
+        enumerator.reset(new system_audio::WasapiDeviceEnumerator(m_notification_queue));
+#else
+        enumerator.reset(nullptr);
+#endif
+        m_system_device_enumerator = std::move(enumerator);
         if (m_system_device_enumerator) {
             m_system_device_enumerator->start();
             std::lock_guard<std::mutex> device_lock(device_registry_mutex_);
@@ -44,13 +61,13 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
 
         m_source_manager = std::make_unique<SourceManager>(m_manager_mutex, m_timeshift_manager.get(), m_settings);
         
-        // Set up callbacks for ALSA capture device management
+        // Set up callbacks for system capture device management
         m_source_manager->set_capture_device_callbacks(
             [this](const std::string& tag) -> bool {
-                return this->ensure_alsa_capture_device(tag);
+                return this->ensure_system_capture_device(tag);
             },
             [this](const std::string& tag) {
-                this->release_alsa_capture_device(tag);
+                this->release_system_capture_device(tag);
             }
         );
         m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex, m_settings);
@@ -363,6 +380,18 @@ bool AudioManager::add_system_capture_reference(const std::string& device_tag, C
         }
     }
 
+#if defined(_WIN32)
+    if (params.endpoint_id.empty()) {
+        if (have_device_info && !device_info.endpoint_id.empty()) {
+            params.endpoint_id = device_info.endpoint_id;
+        } else if (device_tag.rfind("wp:", 0) == 0 ||
+                   device_tag.rfind("wc:", 0) == 0 ||
+                   device_tag.rfind("ws:", 0) == 0) {
+            params.endpoint_id = device_tag.substr(3);
+        }
+    }
+#endif
+
     auto clamp_within_caps = [](unsigned int requested,
                                 unsigned int cap_min,
                                 unsigned int cap_max,
@@ -432,10 +461,17 @@ bool AudioManager::add_system_capture_reference(const std::string& device_tag, C
         params.bit_depth = 16;
     }
 
+#if defined(__linux__)
     if (params.hw_id.empty()) {
         LOG_CPP_ERROR("AudioManager cannot resolve hw_id for capture device %s.", device_tag.c_str());
         return false;
     }
+#elif defined(_WIN32)
+    if (params.endpoint_id.empty()) {
+        LOG_CPP_ERROR("AudioManager cannot resolve endpoint id for capture device %s.", device_tag.c_str());
+        return false;
+    }
+#endif
 
     return m_receiver_manager->ensure_capture_receiver(device_tag, params);
 }
@@ -448,11 +484,11 @@ void AudioManager::remove_system_capture_reference(const std::string& device_tag
     m_receiver_manager->release_capture_receiver(device_tag);
 }
 
-bool AudioManager::ensure_alsa_capture_device(const std::string& device_tag) {
+bool AudioManager::ensure_system_capture_device(const std::string& device_tag) {
     return add_system_capture_reference(device_tag, CaptureParams{});
 }
 
-void AudioManager::release_alsa_capture_device(const std::string& device_tag) {
+void AudioManager::release_system_capture_device(const std::string& device_tag) {
     remove_system_capture_reference(device_tag);
 }
 
@@ -565,6 +601,12 @@ pybind11::dict AudioManager::get_sync_statistics() {
 }
 
 SystemDeviceRegistry AudioManager::list_system_devices() {
+    if (m_system_device_enumerator) {
+        auto snapshot = m_system_device_enumerator->get_registry_snapshot();
+        std::lock_guard<std::mutex> lock(device_registry_mutex_);
+        system_device_registry_ = std::move(snapshot);
+        return system_device_registry_;
+    }
     std::lock_guard<std::mutex> lock(device_registry_mutex_);
     return system_device_registry_;
 }
@@ -596,7 +638,8 @@ void AudioManager::process_notifications() {
             pending_device_events_.push_back(notification);
         }
 
-        const bool is_system_tag = notification.tag.rfind("ac:", 0) == 0 || notification.tag.rfind("ap:", 0) == 0;
+        const bool is_system_tag = system_audio::is_capture_tag(notification.tag) ||
+                                   system_audio::is_playback_tag(notification.tag);
         if (is_system_tag && m_system_device_enumerator) {
             auto snapshot = m_system_device_enumerator->get_registry_snapshot();
             std::lock_guard<std::mutex> lock(device_registry_mutex_);

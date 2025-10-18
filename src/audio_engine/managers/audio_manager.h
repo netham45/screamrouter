@@ -20,7 +20,7 @@
 #include "../input_processor/timeshift_manager.h"
 #include "stats_manager.h"
 #include "../configuration/audio_engine_settings.h"
-#include "../system_audio/alsa_device_enumerator.h"
+#include "../system_audio/system_device_enumerator.h"
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -172,7 +172,7 @@ public:
 
     /**
      * @brief Adds a reference to a system capture device, creating the receiver if needed.
-     * @param device_tag ALSA capture tag (ac:<card>.<device>).
+     * @param device_tag Platform-specific capture tag.
      * @param params Desired capture parameters.
      * @return true if the receiver is available and active.
      */
@@ -180,19 +180,19 @@ public:
 
     /**
      * @brief Removes a reference to a system capture device.
-     * @param device_tag ALSA capture tag (ac:<card>.<device>).
+     * @param device_tag Platform-specific capture tag previously registered.
      */
     void remove_system_capture_reference(const std::string& device_tag);
 
     /**
-     * @brief Backwards-compatible wrapper for add_system_capture_reference().
+     * @brief Convenience wrapper for add_system_capture_reference().
      */
-    bool ensure_alsa_capture_device(const std::string& device_tag);
+    bool ensure_system_capture_device(const std::string& device_tag);
 
     /**
-     * @brief Backwards-compatible wrapper for remove_system_capture_reference().
+     * @brief Convenience wrapper for remove_system_capture_reference().
      */
-    void release_alsa_capture_device(const std::string& device_tag);
+    void release_system_capture_device(const std::string& device_tag);
 
     /**
      * @brief Injects a plugin-generated audio packet into a specific source processor.
@@ -326,7 +326,7 @@ private:
     std::unique_ptr<WebRtcManager> m_webrtc_manager;
     std::unique_ptr<ReceiverManager> m_receiver_manager;
     std::unique_ptr<StatsManager> m_stats_manager;
-    std::unique_ptr<system_audio::AlsaDeviceEnumerator> m_system_device_enumerator;
+    std::unique_ptr<system_audio::SystemDeviceEnumerator> m_system_device_enumerator;
 
     std::shared_ptr<NotificationQueue> m_notification_queue;
     std::thread m_notification_thread;

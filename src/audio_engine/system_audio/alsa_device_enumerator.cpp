@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#if SCREAMROUTER_AUDIO_USE_ALSA
+#if defined(__linux__)
 extern "C" {
 #include <alsa/asoundlib.h>
 }
@@ -30,7 +30,7 @@ AlsaDeviceEnumerator::~AlsaDeviceEnumerator() {
 }
 
 void AlsaDeviceEnumerator::start() {
-#if SCREAMROUTER_AUDIO_USE_ALSA
+#if defined(__linux__)
     bool expected = false;
     if (!running_.compare_exchange_strong(expected, true)) {
         return;
@@ -42,7 +42,7 @@ void AlsaDeviceEnumerator::start() {
 }
 
 void AlsaDeviceEnumerator::stop() {
-#if SCREAMROUTER_AUDIO_USE_ALSA
+#if defined(__linux__)
     if (running_.exchange(false)) {
         if (monitor_thread_.joinable()) {
             monitor_thread_.join();
@@ -60,7 +60,7 @@ AlsaDeviceEnumerator::Registry AlsaDeviceEnumerator::get_registry_snapshot() con
     return registry_;
 }
 
-#if SCREAMROUTER_AUDIO_USE_ALSA
+#if defined(__linux__)
 
 namespace {
 constexpr int kPollTimeoutMs = 2000;
@@ -427,7 +427,7 @@ void AlsaDeviceEnumerator::close_control_handles(std::vector<ControlHandle>& han
     handles.clear();
 }
 
-#endif // SCREAMROUTER_AUDIO_USE_ALSA
+#endif // defined(__linux__)
 
 } // namespace system_audio
 } // namespace audio

@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import os
 import socket
+import sys
 import threading
 import traceback
 import uuid
@@ -1358,12 +1359,16 @@ class ConfigurationManager(threading.Thread):
                     device_index = inferred_device
 
             friendly_name = str(model_data.get("friendly_name", tag or ""))
+            hw_id = model_data.get("hw_id")
+            endpoint_id = model_data.get("endpoint_id")
             present = bool(model_data.get("present", False))
 
             devices.append(SystemAudioDeviceInfo(
                 tag=tag,
                 direction=direction,
                 friendly_name=friendly_name,
+                hw_id=hw_id if hw_id else None,
+                endpoint_id=endpoint_id if endpoint_id else None,
                 card_index=card_index,
                 device_index=device_index,
                 channels_supported=channels_supported,
@@ -1400,6 +1405,7 @@ class ConfigurationManager(threading.Thread):
         """Convert C++ SystemDeviceInfo snapshot object into Pydantic model."""
         friendly_name = str(getattr(info, "friendly_name", tag) or tag)
         hw_id = str(getattr(info, "hw_id", ""))
+        endpoint_id = str(getattr(info, "endpoint_id", ""))
         direction = self._normalize_device_direction(getattr(info, "direction", None))
 
         channels_supported: List[int] = []
@@ -1427,6 +1433,8 @@ class ConfigurationManager(threading.Thread):
             tag=tag,
             direction=direction,
             friendly_name=friendly_name,
+            hw_id=hw_id or None,
+            endpoint_id=endpoint_id or None,
             card_index=card_index,
             device_index=device_index,
             channels_supported=channels_supported,
@@ -1737,10 +1745,29 @@ class ConfigurationManager(threading.Thread):
 
             cpp_sink_engine_config.output_port = py_sink_desc.port if py_sink_desc.port else 0
 
-            if py_sink_desc.protocol == "alsa":
+            protocol_lower = (py_sink_desc.protocol or "").lower()
+            protocol_is_system = protocol_lower in {"system_audio", "alsa", "wasapi"}
+            if not protocol_is_system and isinstance(sink_address, str):
+                if sink_address.startswith(("ap:", "hw:", "wp:", "ws:")):
+                    protocol_is_system = True
+                    protocol_lower = "system_audio"
+                    try:
+                        py_sink_desc.protocol = "system_audio"
+                    except Exception:  # pylint: disable=broad-except
+                        pass
+
+            if protocol_is_system:
+                if protocol_lower != "system_audio":
+                    try:
+                        py_sink_desc.protocol = "system_audio"
+                        protocol_lower = "system_audio"
+                    except Exception:  # pylint: disable=broad-except
+                        pass
                 cpp_sink_engine_config.output_ip = sink_address
                 lookup_tag = sink_address
-                if lookup_tag.startswith("hw:"):
+                is_windows = sys.platform.startswith("win")
+
+                if not is_windows and lookup_tag.startswith("hw:"):
                     hw_body = lookup_tag[3:]
                     if "," in hw_body:
                         card_str, device_str = hw_body.split(",", 1)
@@ -1748,22 +1775,25 @@ class ConfigurationManager(threading.Thread):
 
                 if lookup_tag:
                     device_info = self._find_system_device_by_tag(lookup_tag)
+                    backend_label = "WASAPI" if (protocol_lower == "wasapi" or is_windows) else "ALSA"
                     if device_info:
                         if not device_info.present:
                             _logger.warning(
-                                "[Config Translator] ALSA sink '%s' references device %s which is currently offline.",
+                                "[Config Translator] System audio sink '%s' references %s device %s which is currently offline.",
                                 py_sink_desc.name,
+                                backend_label,
                                 lookup_tag,
                             )
                     else:
                         _logger.warning(
-                            "[Config Translator] ALSA sink '%s' references unknown device %s.",
+                            "[Config Translator] System audio sink '%s' references unknown %s device %s.",
                             py_sink_desc.name,
+                            backend_label,
                             lookup_tag,
                         )
                 else:
                     _logger.warning(
-                        "[Config Translator] ALSA sink '%s' missing device tag/address; playback may fail.",
+                        "[Config Translator] System audio sink '%s' missing device tag/address; playback may fail.",
                         py_sink_desc.name,
                     )
             else:
@@ -1804,7 +1834,10 @@ class ConfigurationManager(threading.Thread):
 
             cpp_sink_engine_config.chlayout1 = chlayout1
             cpp_sink_engine_config.chlayout2 = chlayout2
-            cpp_sink_engine_config.protocol = py_sink_desc.protocol
+            if protocol_is_system:
+                cpp_sink_engine_config.protocol = "system_audio"
+            else:
+                cpp_sink_engine_config.protocol = py_sink_desc.protocol
             
             # Log protocol being set for debugging WebRTC sinks
             if py_sink_desc.protocol == "webrtc":

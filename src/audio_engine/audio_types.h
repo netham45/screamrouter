@@ -189,6 +189,7 @@ struct SystemDeviceInfo {
     std::string tag;
     std::string friendly_name;
     std::string hw_id;
+    std::string endpoint_id;
     DeviceDirection direction = DeviceDirection::CAPTURE;
     DeviceCapabilityRange channels;
     DeviceCapabilityRange sample_rates;
@@ -198,6 +199,7 @@ struct SystemDeviceInfo {
         return tag == other.tag &&
                friendly_name == other.friendly_name &&
                hw_id == other.hw_id &&
+               endpoint_id == other.endpoint_id &&
                direction == other.direction &&
                channels == other.channels &&
                sample_rates == other.sample_rates &&
@@ -328,7 +330,7 @@ struct SinkConfig {
     uint8_t chlayout2 = 0x00;
     /** @brief Flag to enable the MP3 output queue for this sink. */
     bool enable_mp3 = false;
-    /** @brief Network protocol ("scream", "rtp", "web_receiver"). */
+    /** @brief Output protocol ("scream", "rtp", "web_receiver", "system_audio"). */
     std::string protocol = "scream";
     /** @brief Speaker layout configuration for this sink. */
     CppSpeakerLayout speaker_layout;
@@ -349,6 +351,8 @@ struct SinkConfig {
 struct CaptureParams {
     /** @brief ALSA hardware identifier (e.g., "hw:0,0"). */
     std::string hw_id;
+    /** @brief WASAPI endpoint identifier. */
+    std::string endpoint_id;
     /** @brief Desired channel count for capture. */
     unsigned int channels = 2;
     /** @brief Desired sample rate in Hz. */
@@ -359,6 +363,12 @@ struct CaptureParams {
     unsigned int buffer_frames = 0;
     /** @brief Bit depth per sample. Supported values: 16 or 32. */
     unsigned int bit_depth = 16;
+    /** @brief Request loopback capture (WASAPI). */
+    bool loopback = false;
+    /** @brief Request exclusive mode stream (WASAPI). */
+    bool exclusive_mode = false;
+    /** @brief Requested buffer duration in milliseconds (WASAPI shared mode). */
+    unsigned int buffer_duration_ms = 0;
 };
 
 /**
@@ -475,7 +485,7 @@ struct SinkMixerConfig {
     uint8_t output_chlayout1;
     /** @brief Scream header channel layout byte 2. */
     uint8_t output_chlayout2;
-    /** @brief Network protocol ("scream" or "rtp"). */
+    /** @brief Output protocol ("scream", "rtp", "web_receiver", "system_audio"). */
     std::string protocol = "scream";
     /** @brief Speaker layout for RTP channel mapping. */
     CppSpeakerLayout speaker_layout;
@@ -604,6 +614,7 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("tag", &SystemDeviceInfo::tag)
             .def_readwrite("friendly_name", &SystemDeviceInfo::friendly_name)
             .def_readwrite("hw_id", &SystemDeviceInfo::hw_id)
+            .def_readwrite("endpoint_id", &SystemDeviceInfo::endpoint_id)
             .def_readwrite("direction", &SystemDeviceInfo::direction)
             .def_readwrite("channels", &SystemDeviceInfo::channels)
             .def_readwrite("sample_rates", &SystemDeviceInfo::sample_rates)

@@ -185,11 +185,11 @@ const AddEditSinkPage: React.FC = () => {
             const rawIp = typeof sinkData.ip === 'string' ? sinkData.ip : '';
             const normalizedTag = normalizePlaybackTag(rawIp);
             const incomingProtocol = sinkData.protocol ? sinkData.protocol.toLowerCase() : '';
-            const resolvedProtocol = incomingProtocol === 'alsa'
-              ? 'alsa'
-              : incomingProtocol || (normalizedTag.startsWith('ap:') ? 'alsa' : 'scream');
+            const resolvedProtocol = incomingProtocol === 'system_audio'
+              ? 'system_audio'
+              : incomingProtocol || (normalizedTag ? 'system_audio' : 'scream');
 
-            if (resolvedProtocol === 'alsa') {
+            if (resolvedProtocol === 'system_audio') {
               const tagToUse = normalizedTag || rawIp;
               setSelectedPlaybackTag(tagToUse);
               setIp(tagToUse);
@@ -217,9 +217,9 @@ const AddEditSinkPage: React.FC = () => {
             setRtpReceiverMappings(sinkData.rtp_receiver_mappings || []);
 
             setPreviousNetworkConfig({
-              ip: resolvedProtocol === 'alsa' ? '' : rawIp,
-              port: resolvedProtocol === 'alsa' ? '4010' : (sinkData.port?.toString() || '4010'),
-              protocol: resolvedProtocol === 'alsa' ? 'scream' : (resolvedProtocol || 'scream'),
+              ip: resolvedProtocol === 'system_audio' ? '' : rawIp,
+              port: resolvedProtocol === 'system_audio' ? '4010' : (sinkData.port?.toString() || '4010'),
+              protocol: resolvedProtocol === 'system_audio' ? 'scream' : (resolvedProtocol || 'scream'),
             });
           } else {
             setError(`Sink "${sinkName}" not found.`);
@@ -415,11 +415,11 @@ const AddEditSinkPage: React.FC = () => {
    */
   useEffect(() => {
     if (outputMode === 'system') {
-      setProtocol('alsa');
+      setProtocol('system_audio');
       setPort('0');
       setIp(selectedPlaybackTag || '');
     } else {
-      setProtocol(prev => (prev === 'alsa' ? previousNetworkConfig.protocol || 'scream' : prev));
+      setProtocol(prev => (prev === 'system_audio' ? previousNetworkConfig.protocol || 'scream' : prev));
       setIp(previousNetworkConfig.ip || '');
       setPort(previousNetworkConfig.port || '4010');
     }
@@ -442,7 +442,7 @@ const AddEditSinkPage: React.FC = () => {
         return;
       }
     } else if (!selectedPlaybackTag) {
-      setError('Select an ALSA playback device for this sink.');
+      setError('Select a system audio playback device for this sink.');
       return;
     }
 
@@ -477,15 +477,16 @@ const AddEditSinkPage: React.FC = () => {
       delay: delay || 0,
       time_sync: timeSync || false,
       time_sync_delay: timeSyncDelayNum,
-      protocol: outputMode === 'system' ? 'alsa' : (protocol || 'scream'),
+      protocol: outputMode === 'system' ? 'system_audio' : (protocol || 'scream'),
       volume_normalization: volumeNormalization || false,
       enabled: false,  // New sinks start disabled by default
       is_group: false,
       group_members: [],
       equalizer: {
-        b1: 0, b2: 0, b3: 0, b4: 0, b5: 0, b6: 0,
-        b7: 0, b8: 0, b9: 0, b10: 0, b11: 0, b12: 0,
-        b13: 0, b14: 0, b15: 0, b16: 0, b17: 0, b18: 0
+        b1: 1, b2: 1, b3: 1, b4: 1, b5: 1, b6: 1,
+        b7: 1, b8: 1, b9: 1, b10: 1, b11: 1, b12: 1,
+        b13: 1, b14: 1, b15: 1, b16: 1, b17: 1, b18: 1,
+        normalization_enabled: false
       },
       timeshift: timeshift
     };
@@ -716,14 +717,14 @@ const AddEditSinkPage: React.FC = () => {
                   });
                 }
                 setOutputMode(nextMode);
-                if (nextMode === 'network' && protocol === 'alsa') {
+                if (nextMode === 'network' && protocol === 'system_audio') {
                   setProtocol(previousNetworkConfig.protocol || 'scream');
                 }
               }}
               bg={inputBg}
             >
               <option value="network">Network Sink (IP)</option>
-              <option value="system">System ALSA Device</option>
+              <option value="system">System Audio Device</option>
             </Select>
           </FormControl>
 
@@ -745,7 +746,7 @@ const AddEditSinkPage: React.FC = () => {
                 bg={inputBg}
                 flex="1"
                 isReadOnly={outputMode === 'system'}
-                placeholder={outputMode === 'system' ? 'Select an ALSA playback device' : 'Enter the sink address'}
+                placeholder={outputMode === 'system' ? 'Select a system audio playback device' : 'Enter the sink address'}
               />
               <Button
                 onClick={() => openMdnsModal('sinks')}
@@ -759,7 +760,7 @@ const AddEditSinkPage: React.FC = () => {
             </Stack>
             {outputMode === 'system' && systemPlaybackDevices.length === 0 && (
               <Text mt={2} fontSize="sm" color="orange.500">
-                No system playback devices detected. Connect an ALSA output to select it here.
+                No system playback devices detected. Connect a system audio output to select it here.
               </Text>
             )}
           </FormControl>
@@ -770,7 +771,7 @@ const AddEditSinkPage: React.FC = () => {
               <Select
                 value={selectedPlaybackTag}
                 onChange={(event) => setSelectedPlaybackTag(event.target.value)}
-                placeholder={systemPlaybackDevices.length > 0 ? 'Select an ALSA playback device' : 'No devices available'}
+                placeholder={systemPlaybackDevices.length > 0 ? 'Select a system audio playback device' : 'No devices available'}
                 bg={inputBg}
                 isDisabled={systemPlaybackDevices.length === 0}
               >
@@ -832,7 +833,7 @@ const AddEditSinkPage: React.FC = () => {
             </NumberInput>
             {outputMode === 'system' && (
               <Text mt={2} fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
-                ALSA sinks do not require a network port. The engine will manage the device directly.
+                System audio sinks do not require a network port. The engine will manage the device directly.
               </Text>
             )}
           </FormControl>
@@ -919,7 +920,7 @@ const AddEditSinkPage: React.FC = () => {
           ) : (
             <FormControl>
               <FormLabel>Protocol</FormLabel>
-              <Input value="alsa" isReadOnly bg={inputBg} />
+              <Input value="system_audio" isReadOnly bg={inputBg} />
             </FormControl>
           )}
 

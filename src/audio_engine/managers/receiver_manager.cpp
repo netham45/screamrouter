@@ -113,7 +113,6 @@ std::vector<std::string> ReceiverManager::get_per_process_scream_receiver_seen_t
 bool ReceiverManager::ensure_capture_receiver(const std::string& tag, const CaptureParams& params) {
     std::scoped_lock lock(m_manager_mutex);
 
-#if SCREAMROUTER_ALSA_CAPTURE_AVAILABLE
     auto usage_it = capture_receiver_usage_.find(tag);
     if (usage_it != capture_receiver_usage_.end()) {
         usage_it->second++;
@@ -121,50 +120,58 @@ bool ReceiverManager::ensure_capture_receiver(const std::string& tag, const Capt
         if (receiver_it != capture_receivers_.end() && receiver_it->second && !receiver_it->second->is_running()) {
             receiver_it->second->start();
             if (!receiver_it->second->is_running()) {
-                LOG_CPP_ERROR("ReceiverManager failed to restart ALSA capture receiver %s.", tag.c_str());
+                LOG_CPP_ERROR("ReceiverManager failed to restart capture receiver %s.", tag.c_str());
                 return false;
             }
         }
-        LOG_CPP_INFO("ReceiverManager ensured existing ALSA capture receiver %s (ref_count=%zu).",
+        LOG_CPP_INFO("ReceiverManager ensured existing capture receiver %s (ref_count=%zu).",
                      tag.c_str(), usage_it->second);
         return true;
     }
 
     if (!m_notification_queue) {
-        LOG_CPP_ERROR("ReceiverManager cannot create ALSA capture receiver %s without notification queue.", tag.c_str());
+        LOG_CPP_ERROR("ReceiverManager cannot create capture receiver %s without notification queue.", tag.c_str());
         return false;
     }
 
-    try {
-        auto receiver = std::make_unique<AlsaCaptureReceiver>(tag, params, m_notification_queue, m_timeshift_manager);
-        receiver->start();
-        if (!receiver->is_running()) {
-            LOG_CPP_ERROR("ReceiverManager created ALSA capture receiver %s but it failed to start.", tag.c_str());
-            return false;
-        }
-        capture_receiver_usage_[tag] = 1;
-        capture_receivers_[tag] = std::move(receiver);
-        LOG_CPP_INFO("ReceiverManager started ALSA capture receiver %s.", tag.c_str());
-        return true;
-    } catch (const std::exception& e) {
-        LOG_CPP_ERROR("Failed to start ALSA capture receiver %s: %s", tag.c_str(), e.what());
+    std::unique_ptr<NetworkAudioReceiver> receiver;
+
+#if SCREAMROUTER_ALSA_CAPTURE_AVAILABLE
+    if (system_audio::tag_has_prefix(tag, system_audio::kAlsaCapturePrefix)) {
+        receiver = std::make_unique<AlsaCaptureReceiver>(tag, params, m_notification_queue, m_timeshift_manager);
+    }
+#endif
+
+#if SCREAMROUTER_WASAPI_CAPTURE_AVAILABLE
+    if (!receiver && (system_audio::tag_has_prefix(tag, system_audio::kWasapiCapturePrefix) ||
+                      system_audio::tag_has_prefix(tag, system_audio::kWasapiLoopbackPrefix))) {
+        receiver = std::make_unique<system_audio::WasapiCaptureReceiver>(tag, params, m_notification_queue, m_timeshift_manager);
+    }
+#endif
+
+    if (!receiver) {
+        LOG_CPP_WARNING("ReceiverManager has no capture backend for tag %s.", tag.c_str());
         return false;
     }
-#else
-    (void)tag;
-    (void)params;
-    LOG_CPP_WARNING("ReceiverManager.ensure_capture_receiver called on platform without ALSA support.");
-    return false;
-#endif
+
+    receiver->start();
+    if (!receiver->is_running()) {
+        LOG_CPP_ERROR("ReceiverManager created capture receiver %s but it failed to start.", tag.c_str());
+        return false;
+    }
+
+    capture_receiver_usage_[tag] = 1;
+    capture_receivers_[tag] = std::move(receiver);
+    LOG_CPP_INFO("ReceiverManager started capture receiver %s.", tag.c_str());
+    return true;
 }
 
 void ReceiverManager::release_capture_receiver(const std::string& tag) {
     std::scoped_lock lock(m_manager_mutex);
 
-#if SCREAMROUTER_ALSA_CAPTURE_AVAILABLE
     auto usage_it = capture_receiver_usage_.find(tag);
     if (usage_it == capture_receiver_usage_.end()) {
-        LOG_CPP_WARNING("ReceiverManager release requested for unknown ALSA capture receiver %s.", tag.c_str());
+        LOG_CPP_WARNING("ReceiverManager release requested for unknown capture receiver %s.", tag.c_str());
         return;
     }
 
@@ -179,14 +186,11 @@ void ReceiverManager::release_capture_receiver(const std::string& tag) {
             capture_receivers_.erase(receiver_it);
         }
         capture_receiver_usage_.erase(usage_it);
-        LOG_CPP_INFO("ReceiverManager released ALSA capture receiver %s.", tag.c_str());
+        LOG_CPP_INFO("ReceiverManager released capture receiver %s.", tag.c_str());
     } else {
-        LOG_CPP_INFO("ReceiverManager decremented ALSA capture receiver %s (ref_count=%zu).",
+        LOG_CPP_INFO("ReceiverManager decremented capture receiver %s (ref_count=%zu).",
                      tag.c_str(), usage_it->second);
     }
-#else
-    (void)tag;
-#endif
 }
 
 } // namespace audio

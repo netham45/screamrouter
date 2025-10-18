@@ -101,6 +101,8 @@ export interface SystemAudioDeviceInfo {
   tag: string;
   direction: 'capture' | 'playback';
   friendly_name: string;
+  hw_id?: string;
+  endpoint_id?: string;
   card_index: number;
   device_index: number;
   channels_supported: number[];

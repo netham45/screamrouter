@@ -171,6 +171,7 @@ WasapiDeviceEnumerator::~WasapiDeviceEnumerator() {
 void WasapiDeviceEnumerator::start() {
     bool expected = false;
     if (!running_.compare_exchange_strong(expected, true)) {
+        LOG_CPP_WARNING("[WASAPI-Enumerator] start() called while already running.");
         return;
     }
 
@@ -186,6 +187,7 @@ void WasapiDeviceEnumerator::start() {
         return;
     }
 
+    LOG_CPP_INFO("[WASAPI-Enumerator] COM initialized, enumerating audio endpoints.");
     hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&device_enumerator_));
     if (FAILED(hr)) {
         LOG_CPP_ERROR("[WASAPI-Enumerator] Failed to create MMDeviceEnumerator: 0x%lx", hr);
@@ -206,6 +208,7 @@ void WasapiDeviceEnumerator::start() {
         return;
     }
 
+    LOG_CPP_INFO("[WASAPI-Enumerator] Device notification callback registered successfully.");
     RefreshRegistry(false);
 }
 
@@ -245,6 +248,7 @@ void WasapiDeviceEnumerator::HandleDeviceChange() {
 
 void WasapiDeviceEnumerator::RefreshRegistry(bool emit_notifications) {
     if (!device_enumerator_) {
+        LOG_CPP_WARNING("[WASAPI-Enumerator] RefreshRegistry called without an active device enumerator.");
         return;
     }
 
@@ -282,6 +286,8 @@ void WasapiDeviceEnumerator::RefreshRegistry(bool emit_notifications) {
             notification_queue_->push(note);
         }
     }
+
+    LOG_CPP_INFO("[WASAPI-Enumerator] Registry refreshed (%zu devices tracked).", registry_.size());
 }
 
 void WasapiDeviceEnumerator::EnumerateFlow(EDataFlow flow, bool loopback, Registry& out_registry) {
@@ -336,6 +342,11 @@ void WasapiDeviceEnumerator::EnumerateFlow(EDataFlow flow, bool loopback, Regist
         info.tag = tag;
         out_registry[tag] = info;
     }
+
+    LOG_CPP_INFO("[WASAPI-Enumerator] Enumerated %u endpoint(s) for flow %s%s.",
+                 count,
+                 (flow == eCapture) ? "Capture" : "Render",
+                 loopback ? " (Loopback)" : "");
 }
 
 SystemDeviceInfo WasapiDeviceEnumerator::BuildDeviceInfo(IMMDevice* device,

@@ -1,4 +1,5 @@
 #ifdef _WIN32
+#define NOMINMAX
 
 #include "wasapi_capture_receiver.h"
 
@@ -82,7 +83,7 @@ WasapiCaptureReceiver::WasapiCaptureReceiver(std::string device_tag,
 {
     loopback_mode_ = system_audio::tag_has_prefix(device_tag_, system_audio::kWasapiLoopbackPrefix) || capture_params_.loopback;
     exclusive_mode_ = capture_params_.exclusive_mode;
-    chunk_accumulator_.reserve(CHUNK_SIZE * 2);
+    chunk_accumulator_.reserve(kChunkSize * 2);
 }
 
 WasapiCaptureReceiver::~WasapiCaptureReceiver() noexcept {
@@ -104,7 +105,7 @@ void WasapiCaptureReceiver::close_socket() {
 }
 
 size_t WasapiCaptureReceiver::get_receive_buffer_size() const {
-    return CHUNK_SIZE;
+    return kChunkSize;
 }
 
 int WasapiCaptureReceiver::get_poll_timeout_ms() const {
@@ -274,7 +275,7 @@ bool WasapiCaptureReceiver::initialize_capture_format(WAVEFORMATEX* mix_format) 
         return false;
     }
 
-    chunk_bytes_ = CHUNK_SIZE;
+    chunk_bytes_ = kChunkSize;
     if (chunk_bytes_ % target_bytes_per_frame_ != 0) {
         const size_t frames = std::max<size_t>(1, chunk_bytes_ / target_bytes_per_frame_);
         chunk_bytes_ = frames * target_bytes_per_frame_;
@@ -412,7 +413,7 @@ void WasapiCaptureReceiver::process_packet(BYTE* data, UINT32 frames, DWORD flag
             }
         }
     } else {
-        const size_t copy_bytes = static_cast<size_t>(frames) * std::min(target_bytes_per_frame_, source_bytes_per_frame_);
+    const size_t copy_bytes = static_cast<size_t>(frames) * (std::min)(target_bytes_per_frame_, source_bytes_per_frame_);
         conversion_buffer_.assign(reinterpret_cast<uint8_t*>(data), reinterpret_cast<uint8_t*>(data) + copy_bytes);
         if (copy_bytes < total_target_bytes) {
             conversion_buffer_.resize(total_target_bytes, 0);

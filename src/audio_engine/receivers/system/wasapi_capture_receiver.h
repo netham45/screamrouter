@@ -21,6 +21,16 @@ namespace system_audio {
 
 class WasapiCaptureReceiver : public NetworkAudioReceiver {
 public:
+    enum class SampleFormat {
+        Int16,
+        Int24,
+        Int32,
+        Float32,
+        Unknown
+    };
+
+    static constexpr size_t kChunkSize = 1152;
+
     WasapiCaptureReceiver(std::string device_tag,
                           CaptureParams capture_params,
                           std::shared_ptr<NotificationQueue> notification_queue,
@@ -43,13 +53,6 @@ protected:
     int get_poll_timeout_ms() const override;
 
 private:
-    enum class SampleFormat {
-        Int16,
-        Int24,
-        Int32,
-        Float32,
-        Unknown
-    };
 
     bool open_device();
     void close_device();
@@ -86,7 +89,7 @@ private:
     unsigned int active_sample_rate_ = 48000;
     size_t source_bytes_per_frame_ = 0;
     size_t target_bytes_per_frame_ = 0;
-    size_t chunk_bytes_ = 0;
+    size_t chunk_bytes_ = kChunkSize;
 
     std::vector<uint8_t> chunk_accumulator_;
     std::vector<uint8_t> conversion_buffer_;

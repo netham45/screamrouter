@@ -88,7 +88,7 @@ const DeviceSection: React.FC<DeviceSectionProps> = ({ title, icon, devices }) =
       </HStack>
       {devices.length === 0 ? (
         <Text color={useColorModeValue('gray.600', 'gray.400')}>
-          No devices discovered yet. Connect an ALSA audio device to see it listed here.
+          No devices discovered yet. Connect a system audio device to see it listed here.
         </Text>
       ) : (
         <TableContainer>
@@ -152,9 +152,9 @@ const SystemDevicesContent: React.FC<ContentProps> = ({
           System Audio Devices
         </Heading>
         <Text color={descriptionColor}>
-          These ALSA devices are discovered automatically from the host. They can be referenced when creating
-          ALSA sources and sinks. Entries cannot be deleted manually; offline devices remain listed for reference
-          and will become active when reconnected.
+          These system audio devices are discovered automatically from the host (ALSA on Linux, WASAPI on Windows).
+          They can be referenced when creating local capture and playback endpoints. Entries cannot be deleted manually;
+          offline devices remain listed for reference and will become active when reconnected.
         </Text>
       </Box>
 
@@ -172,8 +172,8 @@ const SystemDevicesContent: React.FC<ContentProps> = ({
 
       <Divider />
       <Text fontSize="sm" color={descriptionColor}>
-        Tip: Use the ALSA device pickers in the add/edit dialogs to assign these `ac:` and `ap:` tags to your
-        routes. Routes referencing offline hardware will resume automatically once the device is available again.
+        Tip: Use the system audio device pickers in the add/edit dialogs to assign these tags to your routes. Routes referencing
+        offline hardware will resume automatically once the device is available again.
       </Text>
     </Stack>
   );

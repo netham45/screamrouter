@@ -267,7 +267,7 @@ const AddEditSourcePage: React.FC = () => {
       }
 
       if (inputMode === 'system' && !selectedCaptureTag) {
-        setError('Select a system capture device for the ALSA source.');
+        setError('Select a system audio capture device for this source.');
         return;
       }
     }
@@ -305,7 +305,7 @@ const AddEditSourcePage: React.FC = () => {
         sourceData.sample_rate = captureSampleRate;
         sourceData.bit_depth = captureBitDepth;
         sourceData.tag = selectedCaptureTag;
-        sourceData.ip = null; // clear existing network address if switching to ALSA
+        sourceData.ip = null; // clear existing network address if switching to system audio
       } else {
         sourceData.ip = ip.trim();
         sourceData.tag = null;
@@ -445,7 +445,7 @@ const AddEditSourcePage: React.FC = () => {
                 bg={inputBg}
               >
                 <option value="network">Network Source (IP)</option>
-                <option value="system">System ALSA Device</option>
+                <option value="system">System Audio Device</option>
               </Select>
             </FormControl>
           )}
@@ -468,7 +468,7 @@ const AddEditSourcePage: React.FC = () => {
                 bg={inputBg}
                 flex="1"
                 isReadOnly={inputMode === 'system'}
-                placeholder={inputMode === 'system' ? 'Select an ALSA capture device' : 'Enter the source address'}
+                placeholder={inputMode === 'system' ? 'Select a system audio capture device' : 'Enter the source address'}
               />
               <Button
                 onClick={() => openMdnsModal('sources')}
@@ -482,7 +482,7 @@ const AddEditSourcePage: React.FC = () => {
             </Stack>
             {inputMode === 'system' && systemCaptureDevices.length === 0 && (
               <Text mt={2} fontSize="sm" color="orange.500">
-                No system capture devices detected. Connect an ALSA source to select it here.
+                No system capture devices detected. Connect a system audio source to select it here.
               </Text>
             )}
           </FormControl>
@@ -494,7 +494,7 @@ const AddEditSourcePage: React.FC = () => {
                 <Select
                   value={selectedCaptureTag}
                   onChange={(event) => setSelectedCaptureTag(event.target.value)}
-                  placeholder={systemCaptureDevices.length > 0 ? 'Select an ALSA capture device' : 'No devices available'}
+                  placeholder={systemCaptureDevices.length > 0 ? 'Select a system audio capture device' : 'No devices available'}
                   bg={inputBg}
                   isDisabled={systemCaptureDevices.length === 0}
                 >

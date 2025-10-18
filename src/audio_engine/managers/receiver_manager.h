@@ -12,6 +12,8 @@
 #include "../receivers/scream/raw_scream_receiver.h"
 #include "../receivers/scream/per_process_scream_receiver.h"
 #include "../receivers/system/alsa_capture_receiver.h"
+#include "../receivers/system/wasapi_capture_receiver.h"
+#include "../system_audio/system_audio_tags.h"
 #include "../utils/thread_safe_queue.h"
 #include "../input_processor/timeshift_manager.h"
 #include "../audio_types.h"
@@ -109,7 +111,7 @@ private:
     std::unique_ptr<RtpReceiver> m_rtp_receiver;
     std::map<int, std::unique_ptr<RawScreamReceiver>> m_raw_scream_receivers;
     std::map<int, std::unique_ptr<PerProcessScreamReceiver>> m_per_process_scream_receivers;
-    std::unordered_map<std::string, std::unique_ptr<AlsaCaptureReceiver>> capture_receivers_;
+    std::unordered_map<std::string, std::unique_ptr<NetworkAudioReceiver>> capture_receivers_;
     std::unordered_map<std::string, size_t> capture_receiver_usage_;
     std::shared_ptr<NotificationQueue> m_notification_queue;
 };

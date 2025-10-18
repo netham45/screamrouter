@@ -21,6 +21,9 @@
 #include "../senders/rtp/multi_device_rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
 #include "../senders/system/alsa_playback_sender.h"
+#if defined(_WIN32)
+#include "../senders/system/wasapi_playback_sender.h"
+#endif
 #include "../synchronization/sink_synchronization_coordinator.h"
 
 using namespace screamrouter::audio;
@@ -79,10 +82,20 @@ SinkAudioMixer::SinkAudioMixer(
     } else if (config_.protocol == "scream") {
         LOG_CPP_INFO("[SinkMixer:%s] Creating ScreamSender.", config_.sink_id.c_str());
         network_sender_ = std::make_unique<ScreamSender>(config_);
-    } else if (config_.protocol == "alsa") {
+    } else if (config_.protocol == "system_audio") {
+#if defined(__linux__)
         LOG_CPP_INFO("[SinkMixer:%s] Creating AlsaPlaybackSender for device %s.",
                      config_.sink_id.c_str(), config_.output_ip.c_str());
         network_sender_ = std::make_unique<AlsaPlaybackSender>(config_);
+#elif defined(_WIN32)
+        LOG_CPP_INFO("[SinkMixer:%s] Creating WasapiPlaybackSender for endpoint %s.",
+                     config_.sink_id.c_str(), config_.output_ip.c_str());
+        network_sender_ = std::make_unique<screamrouter::audio::system_audio::WasapiPlaybackSender>(config_);
+#else
+        LOG_CPP_ERROR("[SinkMixer:%s] system_audio protocol requested, but no host backend is compiled in.",
+                      config_.sink_id.c_str());
+        network_sender_ = nullptr;
+#endif
     } else if (config_.protocol == "web_receiver") {
         LOG_CPP_INFO("[SinkMixer:%s] Protocol is 'web_receiver', skipping default sender creation.", config_.sink_id.c_str());
         network_sender_ = nullptr;
@@ -352,8 +365,8 @@ void SinkAudioMixer::start() {
 
     if (network_sender_ && !network_sender_->setup()) {
         LOG_CPP_ERROR("[SinkMixer:%s] Network sender setup failed. Cannot start mixer thread.", config_.sink_id.c_str());
-        if (config_.protocol == "alsa") {
-            throw std::runtime_error("Failed to setup ALSA playback sender");
+        if (config_.protocol == "system_audio") {
+            throw std::runtime_error("Failed to setup system audio playback sender");
         }
         return;
     }

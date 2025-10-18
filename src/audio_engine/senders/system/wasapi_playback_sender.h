@@ -2,6 +2,8 @@
 
 #ifdef _WIN32
 
+#define NOMINMAX
+
 #include "../i_network_sender.h"
 #include "../../audio_types.h"
 #include "../../system_audio/system_audio_tags.h"
@@ -20,6 +22,14 @@ namespace system_audio {
 
 class WasapiPlaybackSender : public INetworkSender {
 public:
+    enum class SampleFormat {
+        Int16,
+        Int24,
+        Int32,
+        Float32,
+        Unknown
+    };
+
     explicit WasapiPlaybackSender(const SinkMixerConfig& config);
     ~WasapiPlaybackSender() override;
 
@@ -28,13 +38,6 @@ public:
     void send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) override;
 
 private:
-    enum class SampleFormat {
-        Int16,
-        Int24,
-        Int32,
-        Float32,
-        Unknown
-    };
 
     bool initialize_com();
     void uninitialize_com();
@@ -78,4 +81,3 @@ private:
 } // namespace screamrouter
 
 #endif // _WIN32
-

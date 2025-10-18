@@ -6,7 +6,7 @@
 import React, { useEffect } from 'react';
 import { useColorMode } from '@chakra-ui/react';
 import './globalFunctions'; // Import the existing global functions
-import { DesktopMenuShow as ourDesktopMenuShow } from './components/desktopMenu';
+import { DesktopMenuShow as ourDesktopMenuShow } from './components/desktopMenu/index';
 
 /**
  * Component that connects the global functions to Chakra UI's hooks.

@@ -8,18 +8,7 @@
 #include <thread>
 #include <vector>
 #include "../audio_types.h"
-
-#if defined(__linux__) && defined(__has_include)
-#  if __has_include(<alsa/asoundlib.h>)
-#    define SCREAMROUTER_AUDIO_USE_ALSA 1
-#  else
-#    define SCREAMROUTER_AUDIO_USE_ALSA 0
-#  endif
-#elif defined(__linux__)
-#  define SCREAMROUTER_AUDIO_USE_ALSA 1
-#else
-#  define SCREAMROUTER_AUDIO_USE_ALSA 0
-#endif
+#include "system_device_enumerator.h"
 
 namespace screamrouter {
 namespace audio {
@@ -32,7 +21,7 @@ namespace system_audio {
  *          endpoints. Subscribes to ALSA control events so newly added or removed
  *          devices trigger discovery notifications for the audio manager.
  */
-class AlsaDeviceEnumerator {
+class AlsaDeviceEnumerator : public SystemDeviceEnumerator {
 public:
     using Registry = SystemDeviceRegistry;
 
@@ -50,21 +39,21 @@ public:
     /**
      * @brief Starts the monitoring thread (no-op on non-Linux platforms).
      */
-    void start();
+    void start() override;
 
     /**
      * @brief Stops the monitoring thread and clears internal state.
      */
-    void stop();
+    void stop() override;
 
     /**
      * @brief Gets a snapshot of the current device registry.
      * @return Copy of the cached registry keyed by device tags.
      */
-    Registry get_registry_snapshot() const;
+    Registry get_registry_snapshot() const override;
 
 private:
-#if SCREAMROUTER_AUDIO_USE_ALSA
+#if defined(__linux__)
     void monitor_loop();
     void enumerate_devices();
     struct ControlHandle {

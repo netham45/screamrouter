@@ -385,7 +385,14 @@ ext_modules = [
             "juice",
             "usrsctp",
             "srtp2",
-        ] + (["asound"] if sys.platform.startswith("linux") else []),
+        ]
+        + (["asound"] if sys.platform.startswith("linux") else [])
+        + (["ole32", "oleaut32", "avrt", "mmdevapi", "uuid", "propsys"] if sys.platform == "win32" else []),
+        extra_link_args=(
+            ["ole32.lib", "oleaut32.lib", "avrt.lib", "mmdevapi.lib", "uuid.lib", "propsys.lib"]
+            if sys.platform == "win32"
+            else []
+        ),
         language="c++",
         cxx_std=17
     )

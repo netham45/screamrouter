@@ -57,7 +57,7 @@ struct AppliedSourcePathParams {
     /** @brief A vector of gain values for each EQ band. */
     std::vector<float> eq_values;
     /** @brief Flag to enable/disable EQ normalization. */
-    bool eq_normalization = true;
+    bool eq_normalization = false;
     /** @brief Flag to enable/disable volume normalization. */
     bool volume_normalization = false;
     /** @brief Audio delay in milliseconds. */

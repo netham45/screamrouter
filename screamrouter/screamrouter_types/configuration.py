@@ -71,8 +71,8 @@ class Equalizer(BaseModel):
     """Set 16744Hz band gain."""
     b18: annotations.EqualizerBandType18 = float(1.0)
     """Set 20000Hz band gain."""
-    normalization_enabled: bool = True
-    """Enable or disable equalizer normalization."""
+    normalization_enabled: bool = False
+    """Enable or disable equalizer normalization (disabled by default)."""
 
     def __eq__(self, other):
         """Compares the name if a string.
@@ -226,6 +226,8 @@ class SystemAudioDeviceInfo(BaseModel):
     tag: str
     direction: Literal["capture", "playback"]
     friendly_name: str
+    hw_id: Optional[str] = None
+    endpoint_id: Optional[str] = None
     card_index: int
     device_index: int
     channels_supported: List[int]
@@ -282,13 +284,22 @@ class SinkDescription(BaseModel):
     use_tcp: bool = False
     enable_mp3: bool = True
     protocol: str = "scream"
-    """The network protocol to use for the sink. Can be 'scream', 'rtp', or 'web_receiver'."""
+    """Protocol selection for the sink. Use 'system_audio' for host playback or network protocols like 'scream', 'rtp', 'web_receiver'."""
     multi_device_mode: bool = False
     """Enable multi-device RTP output mode"""
     rtp_receiver_mappings: List[RtpReceiverMapping] = Field(default_factory=list)
     """RTP receiver mappings for multi-device mode"""
     is_temporary: bool = Field(default=False, exclude=True)
     """Indicates if this sink is temporary and should not be persisted"""
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_legacy_protocol(cls, data):
+        if isinstance(data, dict):
+            protocol = data.get('protocol')
+            if isinstance(protocol, str) and protocol.lower() in {"alsa", "wasapi"}:
+                data = {**data, 'protocol': 'system_audio'}
+        return data
 
     @model_validator(mode='after')
     def ensure_config_id(self):
@@ -299,17 +310,17 @@ class SinkDescription(BaseModel):
 
     @model_validator(mode='after')
     def normalize_port_for_protocol(self):
-        """Allow port 0 for ALSA sinks while keeping network sinks >=1."""
+        """Allow port 0 for system audio sinks while keeping network sinks >=1."""
         if getattr(self, 'is_group', False):
             return self
 
-        if self.protocol == "alsa":
+        if self.protocol == "system_audio":
             if self.port is None or self.port < 0:
                 self.port = 0
             return self
 
         if self.port is None or self.port < 1:
-            raise ValueError("port must be >= 1 for non-ALSA sinks")
+            raise ValueError("port must be >= 1 for non-system_audio sinks")
         return self
 
     def __eq__(self, other):
