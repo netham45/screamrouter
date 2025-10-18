@@ -115,6 +115,8 @@ class APIConfiguration():
             self._configuration_controller.update_route_position)
         self._app.post("/sinks/add-discovered", tags=["Sink Configuration"])(
             self.add_discovered_sink)
+        self._app.get("/system_audio_devices", tags=["System Audio"])(
+            self.get_system_audio_devices)
         self._app.add_exception_handler(Exception, self.__api_exception_handler)
         logger.info("[API] API loaded")
 
@@ -189,6 +191,14 @@ class APIConfiguration():
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Failed to add discovered sink")
             raise HTTPException(status_code=500, detail="Failed to add discovered sink") from exc
+
+    def get_system_audio_devices(self):
+        """Expose cached ALSA system devices for capture and playback."""
+        snapshot = self._configuration_controller.get_system_audio_device_snapshot()
+        return {
+            "system_capture_devices": [device.model_dump(mode="json") for device in snapshot["system_capture_devices"]],
+            "system_playback_devices": [device.model_dump(mode="json") for device in snapshot["system_playback_devices"]],
+        }
     
     def get_rtp_compatible_sinks(self):
         """Get all configured sinks that are not groups and have protocol set to 'rtp'.

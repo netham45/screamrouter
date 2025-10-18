@@ -153,7 +153,9 @@ void NetworkAudioReceiver::start() {
     }
 
     try {
-        component_thread_ = std::thread(&NetworkAudioReceiver::run, this);
+        component_thread_ = std::thread([this]() {
+            this->run();
+        });
         log_message("Receiver thread started.");
     } catch (const std::system_error& e) {
         log_error("Failed to start thread: " + std::string(e.what()));
@@ -284,7 +286,7 @@ void NetworkAudioReceiver::run() {
                     if (is_new_source) {
                         log_message("New source detected: " + source_tag);
                         if (notification_queue_) {
-                             notification_queue_->push(NewSourceNotification{source_tag});
+                             notification_queue_->push(DeviceDiscoveryNotification{source_tag, DeviceDirection::CAPTURE, true});
                         } else {
                             log_warning("Notification queue is null, cannot notify for new source: " + source_tag);
                         }

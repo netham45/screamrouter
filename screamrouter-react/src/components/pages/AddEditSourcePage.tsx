@@ -4,13 +4,14 @@
  * volume, delay, timeshift, and VNC settings.
  * It allows the user to either add a new source or update an existing one.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Flex,
   FormControl,
   FormLabel,
   Input,
+  Select,
   Button,
   Stack,
   NumberInput,
@@ -21,17 +22,21 @@ import {
   Alert,
   AlertIcon,
   Box,
+  Badge,
+  HStack,
   Heading,
   Container,
   useColorModeValue,
   Switch,
+  Text,
   Textarea
 } from '@chakra-ui/react';
-import ApiService, { Source } from '../../api/api';
+import ApiService, { Source, SystemAudioDeviceInfo } from '../../api/api';
 import { useTutorial } from '../../context/TutorialContext';
 import { useMdnsDiscovery } from '../../context/MdnsDiscoveryContext';
 import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
+import { useAppContext } from '../../context/AppContext';
 
 const AddEditSourcePage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -40,11 +45,14 @@ const AddEditSourcePage: React.FC = () => {
 
   const { completeStep, nextStep } = useTutorial();
   const { openModal: openMdnsModal, registerSelectionHandler } = useMdnsDiscovery();
+  const { systemCaptureDevices } = useAppContext();
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [source, setSource] = useState<Source | null>(null);
   const [name, setName] = useState('');
   const [ip, setIp] = useState('');
+  const [inputMode, setInputMode] = useState<'network' | 'system'>('network');
+  const [selectedCaptureTag, setSelectedCaptureTag] = useState('');
   const [enabled, setEnabled] = useState(true);
   const [isGroup, setIsGroup] = useState(false);
   const [groupMembers, setGroupMembers] = useState<string[]>([]);
@@ -62,6 +70,34 @@ const AddEditSourcePage: React.FC = () => {
   const borderColor = useColorModeValue('gray.200', 'gray.700');
   const inputBg = useColorModeValue('white', 'gray.700');
 
+  const selectedCaptureDevice = useMemo<SystemAudioDeviceInfo | undefined>(() => {
+    return systemCaptureDevices.find(device => device.tag === selectedCaptureTag);
+  }, [systemCaptureDevices, selectedCaptureTag]);
+
+  const formatChannelList = (channels?: number[]): string => {
+    if (!channels || channels.length === 0) {
+      return '—';
+    }
+    return channels.join(', ');
+  };
+
+  const formatSampleRateList = (rates?: number[]): string => {
+    if (!rates || rates.length === 0) {
+      return '—';
+    }
+    return rates
+      .slice()
+      .sort((a, b) => a - b)
+      .map(rate => {
+        if (rate >= 1000) {
+          const khz = rate / 1000;
+          return Number.isInteger(khz) ? `${khz} kHz` : `${khz.toFixed(1)} kHz`;
+        }
+        return `${rate} Hz`;
+      })
+      .join(', ');
+  };
+
   useEffect(() => {
     if (!name.trim()) {
       return;
@@ -75,6 +111,13 @@ const AddEditSourcePage: React.FC = () => {
     }
     completeStep('source-ip-input');
   }, [ip, completeStep]);
+
+  useEffect(() => {
+    if (isGroup) {
+      setInputMode('network');
+      setSelectedCaptureTag('');
+    }
+  }, [isGroup]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -111,7 +154,6 @@ const AddEditSourcePage: React.FC = () => {
           if (sourceData) {
             setSource(sourceData);
             setName(sourceData.name);
-            setIp(sourceData.ip || '');
             setEnabled(sourceData.enabled);
             setIsGroup(sourceData.is_group);
             setGroupMembers(sourceData.group_members || []);
@@ -121,6 +163,21 @@ const AddEditSourcePage: React.FC = () => {
             setTimeshift(sourceData.timeshift || 0);
             setVncIp(sourceData.vnc_ip || '');
             setVncPort(sourceData.vnc_port?.toString() || '5900');
+
+            const networkIp = (typeof sourceData.ip === 'string' ? sourceData.ip : '') || '';
+            const detectedCaptureTag = !sourceData.is_group && typeof sourceData.tag === 'string' && sourceData.tag.startsWith('ac:')
+              ? sourceData.tag
+              : (!sourceData.is_group && typeof sourceData.ip === 'string' && sourceData.ip.startsWith('ac:') ? sourceData.ip : '');
+
+            if (!sourceData.is_group && detectedCaptureTag) {
+              setInputMode('system');
+              setSelectedCaptureTag(detectedCaptureTag);
+              setIp('');
+            } else {
+              setInputMode('network');
+              setSelectedCaptureTag('');
+              setIp(networkIp);
+            }
           } else {
             setError(`Source "${sourceName}" not found.`);
           }
@@ -161,9 +218,26 @@ const AddEditSourcePage: React.FC = () => {
    * Validates input and sends the data to the API service.
    */
   const handleSubmit = async () => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError('Source name is required.');
+      return;
+    }
+
+    if (!isGroup) {
+      if (inputMode === 'network' && !ip.trim()) {
+        setError('Please provide an IP address for the source.');
+        return;
+      }
+
+      if (inputMode === 'system' && !selectedCaptureTag) {
+        setError('Select a system capture device for the ALSA source.');
+        return;
+      }
+    }
+
     const sourceData: Partial<Source> = {
-      name,
-      ip,
+      name: trimmedName,
       enabled,
       is_group: isGroup,
       group_members: groupMembers,
@@ -174,7 +248,22 @@ const AddEditSourcePage: React.FC = () => {
       vnc_port: vncIp ? parseInt(vncPort) : undefined
     };
 
+    if (!isGroup) {
+      if (inputMode === 'system') {
+        sourceData.tag = selectedCaptureTag;
+        sourceData.ip = null; // clear existing network address if switching to ALSA
+      } else {
+        sourceData.ip = ip.trim();
+        sourceData.tag = null;
+      }
+    } else {
+      sourceData.ip = null;
+      sourceData.tag = null;
+    }
+
     try {
+      setError(null);
+      setSuccess(null);
       if (isEdit) {
         await ApiService.updateSource(sourceName!, sourceData);
         setSuccess(`Source "${name}" updated successfully.`);
@@ -205,6 +294,8 @@ const AddEditSourcePage: React.FC = () => {
       if (!isEdit) {
         setName('');
         setIp('');
+        setInputMode('network');
+        setSelectedCaptureTag('');
         setEnabled(true);
         setIsGroup(false);
         setGroupMembers([]);
@@ -272,9 +363,29 @@ const AddEditSourcePage: React.FC = () => {
               bg={inputBg}
             />
           </FormControl>
-          
-          <FormControl isRequired>
-            <FormLabel>Source IP</FormLabel>
+
+          {!isGroup && (
+            <FormControl>
+              <FormLabel>Input Type</FormLabel>
+              <Select
+                value={inputMode}
+                onChange={(event) => {
+                  const mode = event.target.value as 'network' | 'system';
+                  setInputMode(mode);
+                  if (mode === 'network') {
+                    setSelectedCaptureTag('');
+                  }
+                }}
+                bg={inputBg}
+              >
+                <option value="network">Network Source (IP)</option>
+                <option value="system">System ALSA Device</option>
+              </Select>
+            </FormControl>
+          )}
+
+          <FormControl isRequired={!isGroup && inputMode === 'network'}>
+            <FormLabel>{inputMode === 'system' ? 'Source Tag' : 'Source IP'}</FormLabel>
             <Stack
               direction={{ base: 'column', md: 'row' }}
               spacing={2}
@@ -282,21 +393,82 @@ const AddEditSourcePage: React.FC = () => {
             >
               <Input
                 data-tutorial-id="source-ip-input"
-                value={ip}
-                onChange={(e) => setIp(e.target.value)}
+                value={inputMode === 'system' ? (selectedCaptureTag || '') : ip}
+                onChange={(e) => {
+                  if (inputMode === 'network') {
+                    setIp(e.target.value);
+                  }
+                }}
                 bg={inputBg}
                 flex="1"
+                isReadOnly={inputMode === 'system'}
+                placeholder={inputMode === 'system' ? 'Select an ALSA capture device' : 'Enter the source address'}
               />
               <Button
                 onClick={() => openMdnsModal('sources')}
                 variant="outline"
                 colorScheme="blue"
                 width={{ base: '100%', md: 'auto' }}
+                isDisabled={inputMode === 'system'}
               >
                 Discover Devices
               </Button>
             </Stack>
+            {inputMode === 'system' && systemCaptureDevices.length === 0 && (
+              <Text mt={2} fontSize="sm" color="orange.500">
+                No system capture devices detected. Connect an ALSA source to select it here.
+              </Text>
+            )}
           </FormControl>
+
+          {inputMode === 'system' && !isGroup && (
+            <FormControl isRequired>
+              <FormLabel>System Capture Device</FormLabel>
+              <Select
+                value={selectedCaptureTag}
+                onChange={(event) => setSelectedCaptureTag(event.target.value)}
+                placeholder={systemCaptureDevices.length > 0 ? 'Select an ALSA capture device' : 'No devices available'}
+                bg={inputBg}
+                isDisabled={systemCaptureDevices.length === 0}
+              >
+                {systemCaptureDevices.map(device => (
+                  <option key={device.tag} value={device.tag}>
+                    {device.friendly_name || device.tag} ({device.tag}){device.present ? '' : ' • offline'}
+                  </option>
+                ))}
+              </Select>
+              {selectedCaptureDevice && (
+                <Box
+                  mt={2}
+                  p={3}
+                  borderWidth="1px"
+                  borderRadius="md"
+                  bg={useColorModeValue('gray.50', 'gray.700')}
+                  borderColor={useColorModeValue('gray.200', 'gray.600')}
+                >
+                  <HStack spacing={3} align="center" mb={1}>
+                    <Badge colorScheme={selectedCaptureDevice.present ? 'green' : 'orange'}>
+                      {selectedCaptureDevice.present ? 'Online' : 'Offline'}
+                    </Badge>
+                    <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                      Tag: {selectedCaptureDevice.tag}
+                    </Text>
+                  </HStack>
+                  <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                    Channels: {formatChannelList(selectedCaptureDevice.channels_supported)}
+                  </Text>
+                  <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                    Sample Rates: {formatSampleRateList(selectedCaptureDevice.sample_rates)}
+                  </Text>
+                  {!selectedCaptureDevice.present && (
+                    <Text fontSize="sm" color="orange.500" mt={2}>
+                      This device is currently offline. Routes will activate automatically when it becomes available.
+                    </Text>
+                  )}
+                </Box>
+              )}
+            </FormControl>
+          )}
           
           <FormControl display="flex" alignItems="center">
             <FormLabel htmlFor="enabled" mb="0">

@@ -24,6 +24,8 @@ const FullMenu: React.FC = () => {
     sources,
     sinks,
     routes,
+    systemCaptureDevices,
+    systemPlaybackDevices,
     activeSource: contextActiveSource,
     listeningToSink,
     onListenToSink,
@@ -437,6 +439,8 @@ const FullMenu: React.FC = () => {
           sources={sources}
           sinks={sinks}
           routes={routes}
+          systemCaptureDevices={systemCaptureDevices}
+          systemPlaybackDevices={systemPlaybackDevices}
           starredSources={starredSources}
           starredSinks={starredSinks}
           starredRoutes={starredRoutes}
@@ -456,6 +460,8 @@ const FullMenu: React.FC = () => {
           sources={sources}
           sinks={sinks}
           routes={routes}
+          systemCaptureDevices={systemCaptureDevices}
+          systemPlaybackDevices={systemPlaybackDevices}
           starredSources={starredSources}
           starredSinks={starredSinks}
           starredRoutes={starredRoutes}

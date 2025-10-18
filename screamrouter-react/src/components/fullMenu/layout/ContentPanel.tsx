@@ -12,6 +12,7 @@ import SinkContent from '../content/SinkContent';
 import RouteContent from '../content/RouteContent';
 import LogViewerContent from '../content/LogViewerContent';
 import StatsPage from '../../pages/StatsPage';
+import SystemDevicesContent from '../content/SystemDevicesContent';
 import { ContentProps, ContentCategory, ViewMode } from '../types';
 import { Actions } from '../../../utils/actions';
 
@@ -75,6 +76,8 @@ const ContentPanel: React.FC<ContentPanelProps> = ({
         return <SinkContent {...completeProps} />;
       case 'route':
         return <RouteContent {...completeProps} />;
+      case 'system-devices':
+        return <SystemDevicesContent {...completeProps} />;
      case 'stats':
        return <StatsPage />;
      case 'logs':

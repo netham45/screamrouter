@@ -1,0 +1,312 @@
+#include "alsa_playback_sender.h"
+
+#include "../../utils/cpp_logger.h"
+
+#include <algorithm>
+#include <cstring>
+#include <sstream>
+
+namespace screamrouter {
+namespace audio {
+
+AlsaPlaybackSender::AlsaPlaybackSender(const SinkMixerConfig& config)
+#if defined(__linux__)
+    : config_(config),
+      device_tag_(config.output_ip)
+#else
+    : config_(config)
+#endif
+{
+#if defined(__linux__)
+    sample_rate_ = static_cast<unsigned int>(config.output_samplerate);
+    channels_ = static_cast<unsigned int>(config.output_channels);
+    bit_depth_ = config.output_bitdepth;
+#endif
+}
+
+AlsaPlaybackSender::~AlsaPlaybackSender() {
+    close();
+}
+
+bool AlsaPlaybackSender::setup() {
+#if defined(__linux__)
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (pcm_handle_) {
+        return true;
+    }
+    return configure_device();
+#else
+    LOG_CPP_WARNING("AlsaPlaybackSender setup called on unsupported platform.");
+    return false;
+#endif
+}
+
+void AlsaPlaybackSender::close() {
+#if defined(__linux__)
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    close_locked();
+#else
+    LOG_CPP_WARNING("AlsaPlaybackSender close called on unsupported platform.");
+#endif
+}
+
+void AlsaPlaybackSender::send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) {
+    (void)csrcs;
+#if defined(__linux__)
+    if (!payload_data || payload_size == 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (!pcm_handle_) {
+        if (!configure_device()) {
+            LOG_CPP_ERROR("[AlsaPlayback:%s] Unable to configure device before playback.", device_tag_.c_str());
+            return;
+        }
+    }
+
+    const unsigned int source_bit_depth = static_cast<unsigned int>(config_.output_bitdepth);
+    const size_t bytes_per_source_sample = source_bit_depth / 8;
+    if (bytes_per_source_sample == 0 || channels_ == 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Invalid source format: bitdepth=%u channels=%u",
+                      device_tag_.c_str(), source_bit_depth, channels_);
+        return;
+    }
+
+    const size_t source_frame_bytes = bytes_per_source_sample * channels_;
+    if (payload_size % source_frame_bytes != 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Payload size %zu not aligned with frame size %zu.",
+                      device_tag_.c_str(), payload_size, source_frame_bytes);
+        return;
+    }
+
+    const size_t frames_in_payload = payload_size / source_frame_bytes;
+    if (frames_in_payload == 0) {
+        return;
+    }
+
+    const size_t total_samples = frames_in_payload * channels_;
+    conversion_buffer_i32_.resize(total_samples);
+
+    const uint8_t* read_ptr = payload_data;
+    for (size_t i = 0; i < total_samples; ++i) {
+        int32_t value = 0;
+        switch (source_bit_depth) {
+            case 16: {
+                int16_t sample = static_cast<int16_t>((static_cast<int16_t>(read_ptr[0]) << 8) | read_ptr[1]);
+                value = static_cast<int32_t>(sample) << 16;
+                read_ptr += 2;
+                break;
+            }
+            case 24: {
+                int32_t msb = static_cast<int32_t>(static_cast<int8_t>(read_ptr[0]));
+                int32_t mid = static_cast<int32_t>(read_ptr[1]);
+                int32_t lsb = static_cast<int32_t>(read_ptr[2]);
+                value = (msb << 24) | (mid << 16) | (lsb << 8);
+                read_ptr += 3;
+                break;
+            }
+            case 32: {
+                value = (static_cast<int32_t>(read_ptr[0]) << 24) |
+                        (static_cast<int32_t>(read_ptr[1]) << 16) |
+                        (static_cast<int32_t>(read_ptr[2]) << 8) |
+                        static_cast<int32_t>(read_ptr[3]);
+                read_ptr += 4;
+                break;
+            }
+            default:
+                LOG_CPP_ERROR("[AlsaPlayback:%s] Unsupported source bit depth: %u", device_tag_.c_str(), source_bit_depth);
+                return;
+        }
+        conversion_buffer_i32_[i] = value;
+    }
+
+    bool write_result = false;
+    if (hardware_bit_depth_ == 32) {
+        write_result = write_frames(conversion_buffer_i32_.data(), frames_in_payload, bytes_per_frame_);
+    } else if (hardware_bit_depth_ == 16) {
+        conversion_buffer_i16_.resize(total_samples);
+        for (size_t i = 0; i < total_samples; ++i) {
+            int32_t value = conversion_buffer_i32_[i] >> 16;
+            value = std::clamp(value, static_cast<int32_t>(-32768), static_cast<int32_t>(32767));
+            conversion_buffer_i16_[i] = static_cast<int16_t>(value);
+        }
+        write_result = write_frames(conversion_buffer_i16_.data(), frames_in_payload, bytes_per_frame_);
+    } else {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Unsupported hardware bit depth: %u", device_tag_.c_str(), hardware_bit_depth_);
+        return;
+    }
+
+    if (!write_result) {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] Dropped audio chunk due to write failure.", device_tag_.c_str());
+    }
+#else
+    (void)payload_data;
+    (void)payload_size;
+    LOG_CPP_WARNING("AlsaPlaybackSender send_payload called on unsupported platform.");
+#endif
+}
+
+#if defined(__linux__)
+
+bool AlsaPlaybackSender::parse_device_tag(const std::string& tag, int& card, int& device) const {
+    if (tag.size() < 4 || tag.rfind("ap:", 0) != 0) {
+        return false;
+    }
+    const std::string body = tag.substr(3);
+    const auto dot_pos = body.find('.');
+    if (dot_pos == std::string::npos) {
+        return false;
+    }
+    try {
+        card = std::stoi(body.substr(0, dot_pos));
+        device = std::stoi(body.substr(dot_pos + 1));
+    } catch (const std::exception&) {
+        return false;
+    }
+    return true;
+}
+
+bool AlsaPlaybackSender::configure_device() {
+    if (pcm_handle_) {
+        return true;
+    }
+
+    int card = 0;
+    int device = 0;
+    if (device_tag_.rfind("hw:", 0) == 0) {
+        hw_device_name_ = device_tag_;
+    } else {
+        if (!parse_device_tag(device_tag_, card, device)) {
+            LOG_CPP_ERROR("[AlsaPlayback:%s] Invalid device tag. Expected ap:<card>.<device> or hw:<card>,<device>.", device_tag_.c_str());
+            return false;
+        }
+        std::ostringstream hw_name;
+        hw_name << "hw:" << card << "," << device;
+        hw_device_name_ = hw_name.str();
+    }
+
+    int err = snd_pcm_open(&pcm_handle_, hw_device_name_.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
+    if (err < 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] snd_pcm_open failed: %s", device_tag_.c_str(), snd_strerror(err));
+        pcm_handle_ = nullptr;
+        return false;
+    }
+
+    hardware_bit_depth_ = 32;
+    sample_format_ = SND_PCM_FORMAT_S32_LE;
+    bytes_per_frame_ = channels_ * sizeof(int32_t);
+
+    snd_pcm_hw_params_t* hw_params = nullptr;
+    snd_pcm_hw_params_malloc(&hw_params);
+    snd_pcm_hw_params_any(pcm_handle_, hw_params);
+    snd_pcm_hw_params_set_access(pcm_handle_, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+    err = snd_pcm_hw_params_set_format(pcm_handle_, hw_params, sample_format_);
+    if (err < 0) {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] S32_LE unsupported (%s), falling back to S16_LE.",
+                        device_tag_.c_str(), snd_strerror(err));
+        sample_format_ = SND_PCM_FORMAT_S16_LE;
+        hardware_bit_depth_ = 16;
+        bytes_per_frame_ = channels_ * sizeof(int16_t);
+        err = snd_pcm_hw_params_set_format(pcm_handle_, hw_params, sample_format_);
+        if (err < 0) {
+            LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to set sample format: %s", device_tag_.c_str(), snd_strerror(err));
+            snd_pcm_hw_params_free(hw_params);
+            close_locked();
+            return false;
+        }
+    } else {
+        hardware_bit_depth_ = 32;
+    }
+    snd_pcm_hw_params_set_channels(pcm_handle_, hw_params, channels_);
+    unsigned int rate = sample_rate_;
+    snd_pcm_hw_params_set_rate_near(pcm_handle_, hw_params, &rate, nullptr);
+    sample_rate_ = rate;
+
+    unsigned int period_time = 64000;
+    snd_pcm_hw_params_set_period_time_near(pcm_handle_, hw_params, &period_time, nullptr);
+    unsigned int buffer_time = period_time * 4;
+    snd_pcm_hw_params_set_buffer_time_near(pcm_handle_, hw_params, &buffer_time, nullptr);
+
+    err = snd_pcm_hw_params(pcm_handle_, hw_params);
+    if (err < 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to apply hw params: %s", device_tag_.c_str(), snd_strerror(err));
+        snd_pcm_hw_params_free(hw_params);
+        close_locked();
+        return false;
+    }
+
+    snd_pcm_hw_params_get_period_size(hw_params, &period_frames_, nullptr);
+    snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_frames_);
+
+    snd_pcm_hw_params_free(hw_params);
+
+    snd_pcm_sw_params_t* sw_params = nullptr;
+    snd_pcm_sw_params_malloc(&sw_params);
+    snd_pcm_sw_params_current(pcm_handle_, sw_params);
+    snd_pcm_sw_params_set_start_threshold(pcm_handle_, sw_params, buffer_frames_ / 2);
+    snd_pcm_sw_params_set_avail_min(pcm_handle_, sw_params, period_frames_);
+    snd_pcm_sw_params(pcm_handle_, sw_params);
+    snd_pcm_sw_params_free(sw_params);
+
+    err = snd_pcm_prepare(pcm_handle_);
+    if (err < 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to prepare PCM device: %s", device_tag_.c_str(), snd_strerror(err));
+        close_locked();
+        return false;
+    }
+
+    LOG_CPP_INFO("[AlsaPlayback:%s] Opened device %s (rate=%u Hz, channels=%u, period=%lu frames).",
+                 device_tag_.c_str(), hw_device_name_.c_str(), sample_rate_, channels_, period_frames_);
+
+    return true;
+}
+
+void AlsaPlaybackSender::close_locked() {
+    if (pcm_handle_) {
+        snd_pcm_drain(pcm_handle_);
+        snd_pcm_close(pcm_handle_);
+        pcm_handle_ = nullptr;
+    }
+}
+
+bool AlsaPlaybackSender::handle_write_error(int err) {
+    if (!pcm_handle_) {
+        return false;
+    }
+    err = snd_pcm_recover(pcm_handle_, err, 1);
+    if (err < 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to recover from write error: %s", device_tag_.c_str(), snd_strerror(err));
+        close_locked();
+        return false;
+    }
+    return true;
+}
+
+bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size_t bytes_per_frame) {
+    if (!pcm_handle_ || frame_count == 0) {
+        return false;
+    }
+
+    const uint8_t* byte_ptr = static_cast<const uint8_t*>(data);
+    size_t frames_remaining = frame_count;
+
+    while (frames_remaining > 0) {
+        snd_pcm_sframes_t written = snd_pcm_writei(pcm_handle_, byte_ptr, frames_remaining);
+        if (written < 0) {
+            if (!handle_write_error(static_cast<int>(written))) {
+                return false;
+            }
+            continue;
+        }
+        byte_ptr += static_cast<size_t>(written) * bytes_per_frame;
+        frames_remaining -= static_cast<size_t>(written);
+    }
+
+    return true;
+}
+
+#endif // __linux__
+
+} // namespace audio
+} // namespace screamrouter

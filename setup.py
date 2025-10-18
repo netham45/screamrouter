@@ -341,8 +341,7 @@ class BuildExtCommand(build_ext):
                 subprocess.run([
                     sys.executable, "-m", "pybind11_stubgen",
                     "screamrouter_audio_engine",
-                    "--output-dir", ".",
-                    "--no-setup-py-cmd"
+                    "--output-dir", "."
                 ], check=True, env=env)
                 
                 print("Successfully generated stubs for screamrouter_audio_engine.")
@@ -386,7 +385,7 @@ ext_modules = [
             "juice",
             "usrsctp",
             "srtp2",
-        ],
+        ] + (["asound"] if sys.platform.startswith("linux") else []),
         language="c++",
         cxx_std=17
     )

@@ -50,7 +50,7 @@ namespace audio {
 
 class TimeshiftManager;
 
-using NotificationQueue = screamrouter::audio::utils::ThreadSafeQueue<NewSourceNotification>;
+using NotificationQueue = screamrouter::audio::utils::ThreadSafeQueue<DeviceDiscoveryNotification>;
 
 /**
  * @class NetworkAudioReceiver

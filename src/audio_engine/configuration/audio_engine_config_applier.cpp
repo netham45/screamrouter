@@ -435,6 +435,7 @@ void AudioEngineConfigApplier::process_source_path_removals(const std::vector<st
         LOG_CPP_DEBUG("  - Removing path: %s", path_id.c_str());
         auto it = active_source_paths_.find(path_id);
         if (it != active_source_paths_.end()) {
+            const std::string source_tag = it->second.params.source_tag;
             const std::string& instance_id = it->second.params.generated_instance_id;
             if (!instance_id.empty()) {
                 if (audio_manager_.remove_source(instance_id)) {
@@ -444,6 +445,10 @@ void AudioEngineConfigApplier::process_source_path_removals(const std::vector<st
                 }
             } else {
                 LOG_CPP_ERROR("    Path %s marked for removal but has no generated_instance_id in active state.", path_id.c_str());
+            }
+            if (!source_tag.empty() && source_tag.rfind("ac:", 0) == 0) {
+                audio_manager_.remove_system_capture_reference(source_tag);
+                LOG_CPP_DEBUG("    Released system capture reference for %s", source_tag.c_str());
             }
             // Remove from internal state regardless of AudioManager success to avoid repeated attempts.
             active_source_paths_.erase(it);
@@ -483,6 +488,24 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
     cpp_source_config.target_output_channels = path_param_to_add.target_output_channels;
     cpp_source_config.target_output_samplerate = path_param_to_add.target_output_samplerate;
 
+    bool added_capture_reference = false;
+    if (!path_param_to_add.source_tag.empty() && path_param_to_add.source_tag.rfind("ac:", 0) == 0) {
+        audio::CaptureParams capture_params;
+        if (path_param_to_add.target_output_channels > 0) {
+            capture_params.channels = static_cast<unsigned int>(path_param_to_add.target_output_channels);
+        }
+        if (path_param_to_add.target_output_samplerate > 0) {
+            capture_params.sample_rate = static_cast<unsigned int>(path_param_to_add.target_output_samplerate);
+        }
+
+        if (audio_manager_.add_system_capture_reference(path_param_to_add.source_tag, capture_params)) {
+            added_capture_reference = true;
+            LOG_CPP_DEBUG("    Registered system capture reference for %s", path_param_to_add.source_tag.c_str());
+        } else {
+            LOG_CPP_WARNING("    Failed to register system capture reference for %s", path_param_to_add.source_tag.c_str());
+        }
+    }
+
     // 2. Call AudioManager to configure the source and get an instance ID.
     std::string instance_id = audio_manager_.configure_source(cpp_source_config);
 
@@ -491,6 +514,9 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
         LOG_CPP_ERROR("    AudioManager failed to configure source for path_id: %s with source_tag: %s",
                       path_param_to_add.path_id.c_str(), path_param_to_add.source_tag.c_str());
         path_param_to_add.generated_instance_id.clear(); // Ensure ID is empty on failure.
+        if (added_capture_reference) {
+            audio_manager_.remove_system_capture_reference(path_param_to_add.source_tag);
+        }
         return false;
     } else {
         LOG_CPP_DEBUG("    Successfully configured source for path_id: %s, got instance_id: %s",

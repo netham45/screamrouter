@@ -511,6 +511,7 @@ def main():
         """
         logger.info("Application starting up...")
         # Start background tasks that require a running event loop
+        screamrouter_configuration.start_background_tasks()
         webrtc_api.start_background_tasks()
         logger.info("WebRTC API background tasks started.")
 

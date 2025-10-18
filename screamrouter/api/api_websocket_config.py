@@ -1,14 +1,15 @@
 """API endpoints for websocket configuration updates that notify clients of changes"""
 import asyncio
 from copy import deepcopy
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 from fastapi import FastAPI, WebSocket
 
 from screamrouter.screamrouter_logger.screamrouter_logger import get_logger
 from screamrouter.screamrouter_types.configuration import (RouteDescription,
                                                   SinkDescription,
-                                                  SourceDescription)
+                                                  SourceDescription,
+                                                  SystemAudioDeviceInfo)
 
 _logger = get_logger(__name__)
 
@@ -28,6 +29,10 @@ class APIWebsocketConfig():
         """Last known state of sinks for change detection"""
         self._last_routes: Dict[str, RouteDescription] = {}
         """Last known state of routes for change detection"""
+        self._last_system_capture_devices: Dict[str, SystemAudioDeviceInfo] = {}
+        """Last known state of system capture devices keyed by tag"""
+        self._last_system_playback_devices: Dict[str, SystemAudioDeviceInfo] = {}
+        """Last known state of system playback devices keyed by tag"""
 
         app.websocket("/ws/config")(self._config_websocket)
         _logger.info("[WebSocket Config] Configuration WebSocket endpoint registered")
@@ -51,9 +56,11 @@ class APIWebsocketConfig():
         self._active_connections.remove(websocket)
         _logger.debug(f"[WebSocket Config] Client disconnected: {websocket.client.host if websocket.client else 'Unknown'}")
 
-    async def broadcast_config_update(self, sources: List[SourceDescription], 
+    async def broadcast_config_update(self, sources: List[SourceDescription],
                                     sinks: List[SinkDescription],
-                                    routes: List[RouteDescription]) -> None:
+                                    routes: List[RouteDescription],
+                                    system_capture_devices: Optional[List[SystemAudioDeviceInfo]] = None,
+                                    system_playback_devices: Optional[List[SystemAudioDeviceInfo]] = None) -> None:
         """Compare current config with last known state and broadcast changes
         
         Args:
@@ -61,13 +68,31 @@ class APIWebsocketConfig():
             sinks (List[SinkDescription]): Current list of sinks
             routes (List[RouteDescription]): Current list of routes
         """
-        updates: Dict = {"sources": {}, "sinks": {}, "routes": {}, "removals": {"sources": [], "sinks": [], "routes": []}}
+        system_capture_devices = system_capture_devices or []
+        system_playback_devices = system_playback_devices or []
+
+        updates: Dict = {
+            "sources": {},
+            "sinks": {},
+            "routes": {},
+            "system_capture_devices": {},
+            "system_playback_devices": {},
+            "removals": {
+                "sources": [],
+                "sinks": [],
+                "routes": [],
+                "system_capture_devices": [],
+                "system_playback_devices": [],
+            },
+        }
         do_update: bool = False
 
         # Convert current lists to dictionaries for easier comparison
         current_sources = {s.name: s for s in sources}
         current_sinks = {s.name: s for s in sinks if not s.is_temporary}
         current_routes = {r.name: r for r in routes if not r.is_temporary}
+        current_capture = {d.tag: d for d in system_capture_devices}
+        current_playback = {d.tag: d for d in system_playback_devices}
 
         # Check for additions and modifications
         for idx, source in current_sources.items():
@@ -86,6 +111,16 @@ class APIWebsocketConfig():
                 updates["routes"].update({idx: route.model_dump(mode='json')})
                 do_update = True
 
+        for tag, device in current_capture.items():
+            if self._last_system_capture_devices.get(tag, None) != device:
+                updates["system_capture_devices"].update({tag: device.model_dump(mode='json')})
+                do_update = True
+
+        for tag, device in current_playback.items():
+            if self._last_system_playback_devices.get(tag, None) != device:
+                updates["system_playback_devices"].update({tag: device.model_dump(mode='json')})
+                do_update = True
+
         # Check for removals
         for idx in self._last_sources:
             if idx not in current_sources:
@@ -102,10 +137,22 @@ class APIWebsocketConfig():
                 updates["removals"]["routes"].append(idx)
                 do_update = True
 
+        for tag in self._last_system_capture_devices:
+            if tag not in current_capture:
+                updates["removals"]["system_capture_devices"].append(tag)
+                do_update = True
+
+        for tag in self._last_system_playback_devices:
+            if tag not in current_playback:
+                updates["removals"]["system_playback_devices"].append(tag)
+                do_update = True
+
         # Update last known state
         self._last_sources = deepcopy(current_sources)
         self._last_sinks = deepcopy(current_sinks)
         self._last_routes = deepcopy(current_routes)
+        self._last_system_capture_devices = deepcopy(current_capture)
+        self._last_system_playback_devices = deepcopy(current_playback)
 
         # Only broadcast if there are changes
         if do_update:

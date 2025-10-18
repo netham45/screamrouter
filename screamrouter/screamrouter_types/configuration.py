@@ -217,6 +217,22 @@ class AudioManagerConfig(BaseModel):
     # Add other AudioManager specific configurations here if needed in the future.
 
 
+class SystemAudioDeviceInfo(BaseModel):
+    """Represents a system-level audio endpoint discovered on the host."""
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
+
+    tag: str
+    direction: Literal["capture", "playback"]
+    friendly_name: str
+    card_index: int
+    device_index: int
+    channels_supported: List[int]
+    sample_rates: List[int]
+    present: bool
+
+
 class SinkDescription(BaseModel):
     """
     Holds either a sink IP and Port or a group of sink names
@@ -227,9 +243,9 @@ class SinkDescription(BaseModel):
 
     name: annotations.SinkNameType = ""
     """Sink Name, Endpoint and Group"""
-    ip: Optional[annotations.IPAddressType] = None
+    ip: Optional[Union[annotations.IPAddressType, str]] = None
     """Sink IP, Endpoint Only"""
-    port: Optional[annotations.PortType] = 4010
+    port: Optional[int] = Field(4010, ge=0, le=65535)
     """Sink port number, Endpoint Only"""
     is_group: bool = False
     """Sink Is Group"""
@@ -279,6 +295,21 @@ class SinkDescription(BaseModel):
         """Auto-generate config_id if not provided"""
         if self.config_id is None:
             self.config_id = str(uuid.uuid4())
+        return self
+
+    @model_validator(mode='after')
+    def normalize_port_for_protocol(self):
+        """Allow port 0 for ALSA sinks while keeping network sinks >=1."""
+        if getattr(self, 'is_group', False):
+            return self
+
+        if self.protocol == "alsa":
+            if self.port is None or self.port < 0:
+                self.port = 0
+            return self
+
+        if self.port is None or self.port < 1:
+            raise ValueError("port must be >= 1 for non-ALSA sinks")
         return self
 
     def __eq__(self, other):
@@ -500,3 +531,16 @@ class RouteDescription(BaseModel):
                 except AttributeError:
                     values_to_hash.append(self.model_fields[field_name].default)
         return hash(tuple(values_to_hash))
+
+
+class ConfigurationState(BaseModel):
+    """Aggregated configuration snapshot used for serialization and APIs."""
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
+
+    sources: List[SourceDescription] = Field(default_factory=list)
+    sinks: List[SinkDescription] = Field(default_factory=list)
+    routes: List[RouteDescription] = Field(default_factory=list)
+    system_capture_devices: List[SystemAudioDeviceInfo] = Field(default_factory=list)
+    system_playback_devices: List[SystemAudioDeviceInfo] = Field(default_factory=list)

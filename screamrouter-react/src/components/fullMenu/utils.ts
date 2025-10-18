@@ -126,6 +126,8 @@ export const getCategoryTitle = (currentCategory: ContentCategory): string => {
       return 'Routes';
     case 'favorites':
       return 'Favorites';
+    case 'system-devices':
+      return 'System Audio Devices';
     default:
       return 'ScreamRouter';
   }

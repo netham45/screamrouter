@@ -1,4 +1,4 @@
-import { Source, Sink, Route } from '../../api/api';
+import { Source, Sink, Route, SystemAudioDeviceInfo } from '../../api/api';
 import { Actions } from '../../utils/actions';
 
 /**
@@ -14,7 +14,7 @@ export type ColorMode = 'light' | 'dark' | 'system';
 /**
  * Type definition for content categories.
  */
-export type ContentCategory = 'dashboard' | 'active-source' | 'now-listening' | 'sources' | 'sinks' | 'routes' | 'favorites' | 'source' | 'sink' | 'route' | 'stats' | 'logs';
+export type ContentCategory = 'dashboard' | 'active-source' | 'now-listening' | 'sources' | 'sinks' | 'routes' | 'favorites' | 'source' | 'sink' | 'route' | 'stats' | 'logs' | 'system-devices';
 
 /**
  * Interface for the sort configuration.
@@ -31,6 +31,8 @@ export interface ContentProps {
   sources: Source[];
   sinks: Sink[];
   routes: Route[];
+  systemCaptureDevices: SystemAudioDeviceInfo[];
+  systemPlaybackDevices: SystemAudioDeviceInfo[];
   starredSources: string[];
   starredSinks: string[];
   starredRoutes: string[];
@@ -87,6 +89,8 @@ export interface SidebarProps {
   sources: Source[];
   sinks: Sink[];
   routes: Route[];
+  systemCaptureDevices: SystemAudioDeviceInfo[];
+  systemPlaybackDevices: SystemAudioDeviceInfo[];
   starredSources: string[];
   starredSinks: string[];
   starredRoutes: string[];

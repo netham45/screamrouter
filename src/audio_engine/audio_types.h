@@ -160,12 +160,59 @@ struct ControlCommand {
 };
 
 /**
- * @struct NewSourceNotification
- * @brief Notification sent from a receiver to AudioManager when a new source is detected.
+ * @enum DeviceDirection
+ * @brief Indicates whether a system device is an input (capture) or output (playback).
  */
-struct NewSourceNotification {
-    /** @brief Identifier (e.g., IP address) of the new source. */
-    std::string source_tag;
+enum class DeviceDirection {
+    CAPTURE,
+    PLAYBACK
+};
+
+/**
+ * @struct DeviceCapabilityRange
+ * @brief Describes the supported range for a particular device capability.
+ */
+struct DeviceCapabilityRange {
+    unsigned int min = 0;
+    unsigned int max = 0;
+
+    bool operator==(const DeviceCapabilityRange& other) const {
+        return min == other.min && max == other.max;
+    }
+};
+
+/**
+ * @struct SystemDeviceInfo
+ * @brief Metadata describing a discoverable system audio endpoint.
+ */
+struct SystemDeviceInfo {
+    std::string tag;
+    std::string friendly_name;
+    std::string hw_id;
+    DeviceDirection direction = DeviceDirection::CAPTURE;
+    DeviceCapabilityRange channels;
+    DeviceCapabilityRange sample_rates;
+    bool present = false;
+
+    bool operator==(const SystemDeviceInfo& other) const {
+        return tag == other.tag &&
+               friendly_name == other.friendly_name &&
+               hw_id == other.hw_id &&
+               direction == other.direction &&
+               channels == other.channels &&
+               sample_rates == other.sample_rates &&
+               present == other.present;
+    }
+};
+
+/**
+ * @struct DeviceDiscoveryNotification
+ * @brief Notification emitted when a discoverable system audio device changes state.
+ */
+struct DeviceDiscoveryNotification {
+    std::string tag;
+    DeviceDirection direction = DeviceDirection::CAPTURE;
+    bool present = false;
 };
 
 /**
@@ -293,6 +340,25 @@ struct SinkConfig {
     std::vector<config::RtpReceiverConfig> rtp_receivers;
     /** @brief Enable multi-device RTP mode. */
     bool multi_device_mode = false;
+};
+
+/**
+ * @struct CaptureParams
+ * @brief Configuration parameters for a system capture endpoint.
+ */
+struct CaptureParams {
+    /** @brief ALSA hardware identifier (e.g., "hw:0,0"). */
+    std::string hw_id;
+    /** @brief Desired channel count for capture. */
+    unsigned int channels = 2;
+    /** @brief Desired sample rate in Hz. */
+    unsigned int sample_rate = 48000;
+    /** @brief Desired period size in frames (0 = use driver default). */
+    unsigned int period_frames = 1024;
+    /** @brief Desired buffer size in frames (0 = derive from period size). */
+    unsigned int buffer_frames = 0;
+    /** @brief Bit depth per sample. Supported values: 16 or 32. */
+    unsigned int bit_depth = 16;
 };
 
 /**
@@ -455,8 +521,10 @@ using ChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
 /** @brief A thread-safe queue for passing encoded MP3 data. */
 using Mp3Queue = utils::ThreadSafeQueue<EncodedMP3Data>;
-/** @brief A thread-safe queue for notifying about new audio sources. */
-using NotificationQueue = utils::ThreadSafeQueue<NewSourceNotification>;
+/** @brief Registry mapping device tags to their metadata. */
+using SystemDeviceRegistry = std::map<std::string, SystemDeviceInfo>;
+/** @brief A thread-safe queue for system device discovery notifications. */
+using NotificationQueue = utils::ThreadSafeQueue<DeviceDiscoveryNotification>;
 /** @brief A type definition for a request to remove a listener, containing a source and sink ID pair. */
 using ListenerRemovalRequest = std::pair<std::string, std::string>;
 /** @brief A thread-safe queue for handling requests to remove listeners. */
@@ -520,6 +588,32 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .value("SET_VOLUME_NORMALIZATION", CommandType::SET_VOLUME_NORMALIZATION)
             .value("SET_SPEAKER_MIX", CommandType::SET_SPEAKER_MIX)
             .export_values();
+
+        py::enum_<DeviceDirection>(m, "DeviceDirection", "Direction for system audio devices")
+            .value("CAPTURE", DeviceDirection::CAPTURE)
+            .value("PLAYBACK", DeviceDirection::PLAYBACK)
+            .export_values();
+
+        py::class_<DeviceCapabilityRange>(m, "DeviceCapabilityRange", "Range description for device capabilities")
+            .def(py::init<>())
+            .def_readwrite("min", &DeviceCapabilityRange::min)
+            .def_readwrite("max", &DeviceCapabilityRange::max);
+
+        py::class_<SystemDeviceInfo>(m, "SystemDeviceInfo", "Metadata for a discoverable system audio device")
+            .def(py::init<>())
+            .def_readwrite("tag", &SystemDeviceInfo::tag)
+            .def_readwrite("friendly_name", &SystemDeviceInfo::friendly_name)
+            .def_readwrite("hw_id", &SystemDeviceInfo::hw_id)
+            .def_readwrite("direction", &SystemDeviceInfo::direction)
+            .def_readwrite("channels", &SystemDeviceInfo::channels)
+            .def_readwrite("sample_rates", &SystemDeviceInfo::sample_rates)
+            .def_readwrite("present", &SystemDeviceInfo::present);
+
+        py::class_<DeviceDiscoveryNotification>(m, "DeviceDiscoveryNotification", "Notification emitted when a system device changes state")
+            .def(py::init<>())
+            .def_readwrite("tag", &DeviceDiscoveryNotification::tag)
+            .def_readwrite("direction", &DeviceDiscoveryNotification::direction)
+            .def_readwrite("present", &DeviceDiscoveryNotification::present);
     
         py::class_<SourceParameterUpdates>(m, "SourceParameterUpdates", "Holds optional parameter updates for a source")
             .def(py::init<>())
