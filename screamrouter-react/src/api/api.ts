@@ -41,7 +41,9 @@ export interface Source {
   is_primary?: boolean;
   is_process?: boolean;
   tag?: string | null;
-  channels?: number; // Added for Source
+  channels?: number | null; // Added for Source
+  sample_rate?: number | null;
+  bit_depth?: number | null;
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
   metadata?: SourceMetadata;
 }

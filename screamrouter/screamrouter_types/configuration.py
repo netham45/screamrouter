@@ -377,8 +377,12 @@ class SourceDescription(BaseModel):
     """Source IP, Endpoint Only"""
     tag: Optional[str] = None
     """Tag if no IP is specified"""
-    channels: Optional[int] = None # Added for Task 13
-    """Source Channel Count, Endpoint Only. If None, typically assumed to be 2."""
+    channels: Optional[annotations.ChannelsType] = None
+    """Preferred input channel count for capture sources (e.g., ALSA)."""
+    sample_rate: Optional[annotations.SampleRateType] = None
+    """Preferred input sample rate for capture sources."""
+    bit_depth: Optional[annotations.BitDepthType] = None
+    """Preferred input bit depth for capture sources."""
     is_group: bool = False
     """Source Is Group"""
     enabled: bool = True

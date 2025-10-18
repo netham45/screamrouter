@@ -204,10 +204,25 @@ bool AlsaCaptureReceiver::open_device_locked() {
     }
 
     if ((err = snd_pcm_hw_params_set_channels(pcm_handle_, hw_params, active_channels_)) < 0) {
-        LOG_CPP_ERROR("[AlsaCapture:%s] Failed to set channel count: %s", device_tag_.c_str(), snd_strerror(err));
-        snd_pcm_hw_params_free(hw_params);
-        close_device_locked();
-        return false;
+        if (active_channels_ != 1) {
+            LOG_CPP_WARNING("[AlsaCapture:%s] Requested %u channels unsupported (%s). Retrying as mono.",
+                            device_tag_.c_str(), active_channels_, snd_strerror(err));
+            unsigned int fallback_channels = 1;
+            int fallback_err = snd_pcm_hw_params_set_channels(pcm_handle_, hw_params, fallback_channels);
+            if (fallback_err == 0) {
+                active_channels_ = fallback_channels;
+            } else {
+                LOG_CPP_ERROR("[AlsaCapture:%s] Failed to set fallback mono capture: %s", device_tag_.c_str(), snd_strerror(fallback_err));
+                snd_pcm_hw_params_free(hw_params);
+                close_device_locked();
+                return false;
+            }
+        } else {
+            LOG_CPP_ERROR("[AlsaCapture:%s] Failed to set channel count: %s", device_tag_.c_str(), snd_strerror(err));
+            snd_pcm_hw_params_free(hw_params);
+            close_device_locked();
+            return false;
+        }
     }
 
     unsigned int requested_rate = active_sample_rate_;
@@ -318,16 +333,8 @@ void AlsaCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data) {
         return;
     }
 
-    if (active_bit_depth_ == 16) {
-        for (size_t i = 0; i < chunk_data.size(); i += 2) {
-            std::swap(chunk_data[i], chunk_data[i + 1]);
-        }
-    } else if (active_bit_depth_ == 32) {
-        for (size_t i = 0; i < chunk_data.size(); i += 4) {
-            std::swap(chunk_data[i], chunk_data[i + 3]);
-            std::swap(chunk_data[i + 1], chunk_data[i + 2]);
-        }
-    }
+    // Scream protocol uses little-endian, same as ALSA
+    // No byte swapping needed - data is already in the correct format
 
     TaggedAudioPacket packet;
     packet.source_tag = device_tag_;

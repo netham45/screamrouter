@@ -366,6 +366,9 @@ bool compare_applied_source_path_params(const AppliedSourcePathParams& a, const 
            timeshift_equal &&
            a.target_output_channels == b.target_output_channels &&
            a.target_output_samplerate == b.target_output_samplerate &&
+           a.source_input_channels == b.source_input_channels &&
+           a.source_input_samplerate == b.source_input_samplerate &&
+           a.source_input_bitdepth == b.source_input_bitdepth &&
            layouts_equal;
 }
 
@@ -491,11 +494,18 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
     bool added_capture_reference = false;
     if (!path_param_to_add.source_tag.empty() && path_param_to_add.source_tag.rfind("ac:", 0) == 0) {
         audio::CaptureParams capture_params;
-        if (path_param_to_add.target_output_channels > 0) {
+        if (path_param_to_add.source_input_channels > 0) {
+            capture_params.channels = static_cast<unsigned int>(path_param_to_add.source_input_channels);
+        } else if (path_param_to_add.target_output_channels > 0) {
             capture_params.channels = static_cast<unsigned int>(path_param_to_add.target_output_channels);
         }
-        if (path_param_to_add.target_output_samplerate > 0) {
+        if (path_param_to_add.source_input_samplerate > 0) {
+            capture_params.sample_rate = static_cast<unsigned int>(path_param_to_add.source_input_samplerate);
+        } else if (path_param_to_add.target_output_samplerate > 0) {
             capture_params.sample_rate = static_cast<unsigned int>(path_param_to_add.target_output_samplerate);
+        }
+        if (path_param_to_add.source_input_bitdepth > 0) {
+            capture_params.bit_depth = static_cast<unsigned int>(path_param_to_add.source_input_bitdepth);
         }
 
         if (audio_manager_.add_system_capture_reference(path_param_to_add.source_tag, capture_params)) {
@@ -568,7 +578,10 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
         bool fundamental_change =
             current_path_state.params.source_tag != desired_path_param.source_tag ||
             current_path_state.params.target_output_channels != desired_path_param.target_output_channels ||
-            current_path_state.params.target_output_samplerate != desired_path_param.target_output_samplerate;
+            current_path_state.params.target_output_samplerate != desired_path_param.target_output_samplerate ||
+            current_path_state.params.source_input_channels != desired_path_param.source_input_channels ||
+            current_path_state.params.source_input_samplerate != desired_path_param.source_input_samplerate ||
+            current_path_state.params.source_input_bitdepth != desired_path_param.source_input_bitdepth;
 
         if (fundamental_change) {
             LOG_CPP_DEBUG("    Fundamental change detected for path %s. Re-creating SourceInputProcessor.", path_id.c_str());

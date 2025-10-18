@@ -21,7 +21,6 @@
 namespace screamrouter {
 namespace audio {
 
-
 class TimeshiftManager;
 
 /**
@@ -37,8 +36,18 @@ public:
      * @brief Constructs a SourceManager.
      * @param manager_mutex A reference to the main AudioManager mutex for thread safety.
      * @param timeshift_manager A pointer to the TimeshiftManager for registering new processors.
+     * @param settings Shared pointer to audio engine settings.
      */
     SourceManager(std::recursive_mutex& manager_mutex, TimeshiftManager* timeshift_manager, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
+    
+    /**
+     * @brief Sets callbacks for managing ALSA capture devices.
+     * @param ensure_callback Callback to activate an ALSA capture device.
+     * @param release_callback Callback to release an ALSA capture device.
+     */
+    void set_capture_device_callbacks(
+        std::function<bool(const std::string&)> ensure_callback,
+        std::function<void(const std::string&)> release_callback);
     /**
      * @brief Destructor.
      */
@@ -87,6 +96,11 @@ private:
     std::map<std::string, std::shared_ptr<PacketQueue>> m_rtp_to_source_queues;
     std::map<std::string, std::shared_ptr<ChunkQueue>> m_source_to_sink_queues;
     std::map<std::string, std::shared_ptr<CommandQueue>> m_command_queues;
+    std::map<std::string, std::string> m_instance_to_capture_tag;  // Maps instance_id -> ALSA capture device tag
+    
+    // Callbacks for ALSA capture device management
+    std::function<bool(const std::string&)> m_ensure_capture_callback;
+    std::function<void(const std::string&)> m_release_capture_callback;
 };
 
 } // namespace audio

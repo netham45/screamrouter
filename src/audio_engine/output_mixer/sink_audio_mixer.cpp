@@ -51,7 +51,7 @@ SinkAudioMixer::SinkAudioMixer(
       network_sender_(nullptr),
       mixing_buffer_(SINK_MIXING_BUFFER_SAMPLES, 0),
       stereo_buffer_(SINK_MIXING_BUFFER_SAMPLES * 2, 0),
-      payload_buffer_(SINK_CHUNK_SIZE_BYTES * 2, 0),
+      payload_buffer_(SINK_CHUNK_SIZE_BYTES * 8, 0),
       lame_global_flags_(nullptr),
       stereo_preprocessor_(nullptr),
       mp3_encode_buffer_(SINK_MP3_BUFFER_SIZE)
@@ -840,7 +840,9 @@ void SinkAudioMixer::run() {
 
             downscale_buffer();
 
-            if (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
+            // Send data in chunks when we have enough accumulated
+            // This loop ensures we drain the buffer properly even with high bit depths
+            while (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
                 if (network_sender_) {
                     std::lock_guard<std::mutex> lock(csrc_mutex_);
                     network_sender_->send_payload(payload_buffer_.data(), SINK_CHUNK_SIZE_BYTES, current_csrcs_);
@@ -851,6 +853,8 @@ void SinkAudioMixer::run() {
                     memmove(payload_buffer_.data(), payload_buffer_.data() + SINK_CHUNK_SIZE_BYTES, bytes_remaining);
                 }
                 payload_buffer_write_pos_ = bytes_remaining;
+                
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Sent chunk, remaining bytes in buffer: %zu", config_.sink_id.c_str(), payload_buffer_write_pos_);
             }
 
             bool has_listeners;

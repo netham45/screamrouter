@@ -45,9 +45,6 @@ private:
     snd_pcm_uframes_t buffer_frames_ = 0;
     size_t bytes_per_frame_ = 0;
 
-    std::vector<int16_t> conversion_buffer_i16_;
-    std::vector<int32_t> conversion_buffer_i32_;
-
     std::mutex state_mutex_;
 #else
     SinkMixerConfig config_;

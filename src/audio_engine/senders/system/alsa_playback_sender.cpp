@@ -65,6 +65,8 @@ void AlsaPlaybackSender::send_payload(const uint8_t* payload_data, size_t payloa
         }
     }
 
+    // The sink audio mixer already outputs data in the correct bit depth and little-endian format
+    // We just need to write it directly to ALSA
     const unsigned int source_bit_depth = static_cast<unsigned int>(config_.output_bitdepth);
     const size_t bytes_per_source_sample = source_bit_depth / 8;
     if (bytes_per_source_sample == 0 || channels_ == 0) {
@@ -85,57 +87,8 @@ void AlsaPlaybackSender::send_payload(const uint8_t* payload_data, size_t payloa
         return;
     }
 
-    const size_t total_samples = frames_in_payload * channels_;
-    conversion_buffer_i32_.resize(total_samples);
-
-    const uint8_t* read_ptr = payload_data;
-    for (size_t i = 0; i < total_samples; ++i) {
-        int32_t value = 0;
-        switch (source_bit_depth) {
-            case 16: {
-                int16_t sample = static_cast<int16_t>((static_cast<int16_t>(read_ptr[0]) << 8) | read_ptr[1]);
-                value = static_cast<int32_t>(sample) << 16;
-                read_ptr += 2;
-                break;
-            }
-            case 24: {
-                int32_t msb = static_cast<int32_t>(static_cast<int8_t>(read_ptr[0]));
-                int32_t mid = static_cast<int32_t>(read_ptr[1]);
-                int32_t lsb = static_cast<int32_t>(read_ptr[2]);
-                value = (msb << 24) | (mid << 16) | (lsb << 8);
-                read_ptr += 3;
-                break;
-            }
-            case 32: {
-                value = (static_cast<int32_t>(read_ptr[0]) << 24) |
-                        (static_cast<int32_t>(read_ptr[1]) << 16) |
-                        (static_cast<int32_t>(read_ptr[2]) << 8) |
-                        static_cast<int32_t>(read_ptr[3]);
-                read_ptr += 4;
-                break;
-            }
-            default:
-                LOG_CPP_ERROR("[AlsaPlayback:%s] Unsupported source bit depth: %u", device_tag_.c_str(), source_bit_depth);
-                return;
-        }
-        conversion_buffer_i32_[i] = value;
-    }
-
-    bool write_result = false;
-    if (hardware_bit_depth_ == 32) {
-        write_result = write_frames(conversion_buffer_i32_.data(), frames_in_payload, bytes_per_frame_);
-    } else if (hardware_bit_depth_ == 16) {
-        conversion_buffer_i16_.resize(total_samples);
-        for (size_t i = 0; i < total_samples; ++i) {
-            int32_t value = conversion_buffer_i32_[i] >> 16;
-            value = std::clamp(value, static_cast<int32_t>(-32768), static_cast<int32_t>(32767));
-            conversion_buffer_i16_[i] = static_cast<int16_t>(value);
-        }
-        write_result = write_frames(conversion_buffer_i16_.data(), frames_in_payload, bytes_per_frame_);
-    } else {
-        LOG_CPP_ERROR("[AlsaPlayback:%s] Unsupported hardware bit depth: %u", device_tag_.c_str(), hardware_bit_depth_);
-        return;
-    }
+    // Write directly to ALSA - no conversion needed
+    bool write_result = write_frames(payload_data, frames_in_payload, source_frame_bytes);
 
     if (!write_result) {
         LOG_CPP_WARNING("[AlsaPlayback:%s] Dropped audio chunk due to write failure.", device_tag_.c_str());
@@ -193,9 +146,32 @@ bool AlsaPlaybackSender::configure_device() {
         return false;
     }
 
-    hardware_bit_depth_ = 32;
-    sample_format_ = SND_PCM_FORMAT_S32_LE;
-    bytes_per_frame_ = channels_ * sizeof(int32_t);
+    // Use the bit depth from the sink mixer configuration
+    switch (bit_depth_) {
+        case 16:
+            sample_format_ = SND_PCM_FORMAT_S16_LE;
+            hardware_bit_depth_ = 16;
+            bytes_per_frame_ = channels_ * sizeof(int16_t);
+            break;
+        case 24:
+            sample_format_ = SND_PCM_FORMAT_S24_LE;
+            hardware_bit_depth_ = 24;
+            bytes_per_frame_ = channels_ * 3;
+            break;
+        case 32:
+            sample_format_ = SND_PCM_FORMAT_S32_LE;
+            hardware_bit_depth_ = 32;
+            bytes_per_frame_ = channels_ * sizeof(int32_t);
+            break;
+        default:
+            LOG_CPP_ERROR("[AlsaPlayback:%s] Unsupported bit depth %d, defaulting to 16-bit.",
+                          device_tag_.c_str(), bit_depth_);
+            sample_format_ = SND_PCM_FORMAT_S16_LE;
+            hardware_bit_depth_ = 16;
+            bytes_per_frame_ = channels_ * sizeof(int16_t);
+            bit_depth_ = 16;
+            break;
+    }
 
     snd_pcm_hw_params_t* hw_params = nullptr;
     snd_pcm_hw_params_malloc(&hw_params);
@@ -203,20 +179,11 @@ bool AlsaPlaybackSender::configure_device() {
     snd_pcm_hw_params_set_access(pcm_handle_, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
     err = snd_pcm_hw_params_set_format(pcm_handle_, hw_params, sample_format_);
     if (err < 0) {
-        LOG_CPP_WARNING("[AlsaPlayback:%s] S32_LE unsupported (%s), falling back to S16_LE.",
-                        device_tag_.c_str(), snd_strerror(err));
-        sample_format_ = SND_PCM_FORMAT_S16_LE;
-        hardware_bit_depth_ = 16;
-        bytes_per_frame_ = channels_ * sizeof(int16_t);
-        err = snd_pcm_hw_params_set_format(pcm_handle_, hw_params, sample_format_);
-        if (err < 0) {
-            LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to set sample format: %s", device_tag_.c_str(), snd_strerror(err));
-            snd_pcm_hw_params_free(hw_params);
-            close_locked();
-            return false;
-        }
-    } else {
-        hardware_bit_depth_ = 32;
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to set %d-bit format (%s), device may not support this bit depth.",
+                      device_tag_.c_str(), bit_depth_, snd_strerror(err));
+        snd_pcm_hw_params_free(hw_params);
+        close_locked();
+        return false;
     }
     snd_pcm_hw_params_set_channels(pcm_handle_, hw_params, channels_);
     unsigned int rate = sample_rate_;
@@ -256,8 +223,8 @@ bool AlsaPlaybackSender::configure_device() {
         return false;
     }
 
-    LOG_CPP_INFO("[AlsaPlayback:%s] Opened device %s (rate=%u Hz, channels=%u, period=%lu frames).",
-                 device_tag_.c_str(), hw_device_name_.c_str(), sample_rate_, channels_, period_frames_);
+    LOG_CPP_INFO("[AlsaPlayback:%s] Opened device %s (rate=%u Hz, channels=%u, bit_depth=%d, period=%lu frames).",
+                 device_tag_.c_str(), hw_device_name_.c_str(), sample_rate_, channels_, bit_depth_, period_frames_);
 
     return true;
 }

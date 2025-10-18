@@ -2,6 +2,7 @@
 #include "../utils/cpp_logger.h"
 #include "../synchronization/global_synchronization_clock.h"
 #include "../synchronization/sink_synchronization_coordinator.h"
+#include <algorithm>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -42,6 +43,16 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
         }
 
         m_source_manager = std::make_unique<SourceManager>(m_manager_mutex, m_timeshift_manager.get(), m_settings);
+        
+        // Set up callbacks for ALSA capture device management
+        m_source_manager->set_capture_device_callbacks(
+            [this](const std::string& tag) -> bool {
+                return this->ensure_alsa_capture_device(tag);
+            },
+            [this](const std::string& tag) {
+                this->release_alsa_capture_device(tag);
+            }
+        );
         m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex, m_settings);
         m_receiver_manager = std::make_unique<ReceiverManager>(m_manager_mutex, m_timeshift_manager.get());
         m_webrtc_manager = std::make_unique<WebRtcManager>(m_manager_mutex, m_sink_manager.get(), m_sink_manager->get_sink_configs());
@@ -317,25 +328,105 @@ bool AudioManager::add_system_capture_reference(const std::string& device_tag, C
         return false;
     }
 
-    if (params.hw_id.empty()) {
+    constexpr unsigned int kDefaultChannels = 2;
+    constexpr unsigned int kDefaultSampleRate = 48000;
+
+    SystemDeviceInfo device_info{};
+    bool have_device_info = false;
+    {
         std::lock_guard<std::mutex> device_lock(device_registry_mutex_);
         auto it = system_device_registry_.find(device_tag);
         if (it != system_device_registry_.end()) {
-            params.hw_id = it->second.hw_id;
-            if (params.channels == 0) {
-                params.channels = it->second.channels.min ? it->second.channels.min : it->second.channels.max;
-            }
-            if (params.sample_rate == 0) {
-                params.sample_rate = it->second.sample_rates.min ? it->second.sample_rates.min : it->second.sample_rates.max;
+            device_info = it->second;
+            have_device_info = true;
+            if (params.hw_id.empty()) {
+                params.hw_id = device_info.hw_id;
             }
         }
     }
 
+    if (params.hw_id.empty()) {
+        if (device_tag.rfind("hw:", 0) == 0) {
+            params.hw_id = device_tag;
+        } else if (device_tag.rfind("ac:", 0) == 0) {
+            const std::string body = device_tag.substr(3);
+            const auto dot_pos = body.find('.');
+            if (dot_pos != std::string::npos) {
+                try {
+                    int card = std::stoi(body.substr(0, dot_pos));
+                    int device = std::stoi(body.substr(dot_pos + 1));
+                    params.hw_id = "hw:" + std::to_string(card) + "," + std::to_string(device);
+                } catch (const std::exception&) {
+                    LOG_CPP_WARNING("AudioManager failed to derive hw_id from capture tag %s.", device_tag.c_str());
+                }
+            }
+        }
+    }
+
+    auto clamp_within_caps = [](unsigned int requested,
+                                unsigned int cap_min,
+                                unsigned int cap_max,
+                                unsigned int fallback) {
+        unsigned int min_val = cap_min;
+        unsigned int max_val = cap_max;
+
+        if (min_val == 0 && max_val == 0) {
+            unsigned int value = requested ? requested : fallback;
+            bool changed = (value != requested);
+            return std::make_pair(value, changed);
+        }
+
+        if (min_val == 0) {
+            min_val = max_val;
+        }
+        if (max_val == 0) {
+            max_val = min_val;
+        }
+        if (min_val > max_val) {
+            std::swap(min_val, max_val);
+        }
+
+        unsigned int effective = requested ? requested : min_val;
+        unsigned int clamped = std::clamp(effective, min_val, max_val);
+        bool changed = requested && (clamped != requested);
+        return std::make_pair(clamped, changed);
+    };
+
+    if (have_device_info) {
+        unsigned int original_channels = params.channels;
+        auto [adjusted_channels, channel_changed] = clamp_within_caps(
+            original_channels,
+            device_info.channels.min,
+            device_info.channels.max,
+            kDefaultChannels);
+        if (channel_changed) {
+            LOG_CPP_INFO("AudioManager adjusted capture channel count for %s from %u to %u to match device capabilities.",
+                         device_tag.c_str(),
+                         static_cast<unsigned int>(original_channels),
+                         adjusted_channels);
+        }
+        params.channels = adjusted_channels;
+
+        unsigned int original_rate = params.sample_rate;
+        auto [adjusted_rate, rate_changed] = clamp_within_caps(
+            original_rate,
+            device_info.sample_rates.min,
+            device_info.sample_rates.max,
+            kDefaultSampleRate);
+        if (rate_changed) {
+            LOG_CPP_INFO("AudioManager adjusted capture sample rate for %s from %u Hz to %u Hz to match device capabilities.",
+                         device_tag.c_str(),
+                         static_cast<unsigned int>(original_rate),
+                         adjusted_rate);
+        }
+        params.sample_rate = adjusted_rate;
+    }
+
     if (params.channels == 0) {
-        params.channels = 2;
+        params.channels = kDefaultChannels;
     }
     if (params.sample_rate == 0) {
-        params.sample_rate = 48000;
+        params.sample_rate = kDefaultSampleRate;
     }
     if (params.bit_depth != 16 && params.bit_depth != 32) {
         params.bit_depth = 16;

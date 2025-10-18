@@ -30,6 +30,9 @@ from ipaddress import IPv4Address
 from typing import Any, Dict, List, Optional, Tuple
 from subprocess import TimeoutExpired
 
+_CAPTURE_ALLOWED_SAMPLE_RATES = {44100, 48000, 96000}
+_CAPTURE_DEFAULT_SAMPLE_RATE = 48000
+
 import dns.nameserver
 import dns.rdtypes
 import dns.rdtypes.ANY
@@ -1971,6 +1974,34 @@ class ConfigurationManager(threading.Thread):
                     # Get target format from the *sink* description
                     cpp_source_path.target_output_channels = py_sink_desc.channels
                     cpp_source_path.target_output_samplerate = py_sink_desc.sample_rate
+
+                    preferred_input_channels = py_source_desc.channels
+                    if preferred_input_channels is None:
+                        preferred_input_channels = py_sink_desc.channels
+                    cpp_source_path.source_input_channels = int(preferred_input_channels or 0)
+
+                    preferred_input_samplerate = None
+                    if py_source_desc.sample_rate in _CAPTURE_ALLOWED_SAMPLE_RATES:
+                        preferred_input_samplerate = int(py_source_desc.sample_rate)
+
+                    fallback_capture_rate = None
+                    if py_sink_desc.sample_rate in _CAPTURE_ALLOWED_SAMPLE_RATES:
+                        fallback_capture_rate = int(py_sink_desc.sample_rate)
+
+                    effective_capture_rate = (
+                        preferred_input_samplerate
+                        if preferred_input_samplerate is not None
+                        else fallback_capture_rate
+                    )
+                    if effective_capture_rate is None:
+                        effective_capture_rate = _CAPTURE_DEFAULT_SAMPLE_RATE
+
+                    cpp_source_path.source_input_samplerate = int(effective_capture_rate)
+
+                    preferred_input_bitdepth = py_source_desc.bit_depth
+                    if preferred_input_bitdepth is None:
+                        preferred_input_bitdepth = py_sink_desc.bit_depth
+                    cpp_source_path.source_input_bitdepth = int(preferred_input_bitdepth or 0)
                     
                     # generated_instance_id remains empty - C++ will fill it
                     

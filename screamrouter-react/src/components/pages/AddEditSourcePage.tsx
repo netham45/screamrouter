@@ -14,6 +14,7 @@ import {
   Select,
   Button,
   Stack,
+  SimpleGrid,
   NumberInput,
   NumberInputField,
   NumberInputStepper,
@@ -38,6 +39,12 @@ import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
 import { useAppContext } from '../../context/AppContext';
 
+const CAPTURE_SAMPLE_RATE_OPTIONS = [44100, 48000, 96000];
+const CAPTURE_BIT_DEPTH_OPTIONS = [16, 24, 32];
+const CAPTURE_DEFAULT_CHANNELS = 2;
+const CAPTURE_DEFAULT_SAMPLE_RATE = 48000;
+const CAPTURE_DEFAULT_BIT_DEPTH = 32;
+
 const AddEditSourcePage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const sourceName = searchParams.get('name');
@@ -60,6 +67,9 @@ const AddEditSourcePage: React.FC = () => {
   const [volume, setVolume] = useState(1);
   const [delay, setDelay] = useState(0);
   const [timeshift, setTimeshift] = useState(0);
+  const [captureChannels, setCaptureChannels] = useState<number>(CAPTURE_DEFAULT_CHANNELS);
+  const [captureSampleRate, setCaptureSampleRate] = useState<number>(CAPTURE_DEFAULT_SAMPLE_RATE);
+  const [captureBitDepth, setCaptureBitDepth] = useState<number>(CAPTURE_DEFAULT_BIT_DEPTH);
   const [vncIp, setVncIp] = useState('');
   const [vncPort, setVncPort] = useState('5900');
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +83,27 @@ const AddEditSourcePage: React.FC = () => {
   const selectedCaptureDevice = useMemo<SystemAudioDeviceInfo | undefined>(() => {
     return systemCaptureDevices.find(device => device.tag === selectedCaptureTag);
   }, [systemCaptureDevices, selectedCaptureTag]);
+
+  useEffect(() => {
+    if (!selectedCaptureDevice) {
+      return;
+    }
+
+    if (selectedCaptureDevice.channels_supported?.length) {
+      const supportedChannels = selectedCaptureDevice.channels_supported;
+      const suggestedChannels = supportedChannels[0];
+      if (suggestedChannels && !supportedChannels.includes(captureChannels)) {
+        setCaptureChannels(suggestedChannels);
+      }
+    }
+
+    const allowedDeviceRates = (selectedCaptureDevice.sample_rates || []).filter(rate =>
+      CAPTURE_SAMPLE_RATE_OPTIONS.includes(rate)
+    );
+    if (allowedDeviceRates.length > 0 && !CAPTURE_SAMPLE_RATE_OPTIONS.includes(captureSampleRate)) {
+      setCaptureSampleRate(allowedDeviceRates[0]);
+    }
+  }, [selectedCaptureDevice, captureChannels, captureSampleRate]);
 
   const formatChannelList = (channels?: number[]): string => {
     if (!channels || channels.length === 0) {
@@ -161,6 +192,11 @@ const AddEditSourcePage: React.FC = () => {
             setVolume(sourceData.volume || 1);
             setDelay(sourceData.delay || 0);
             setTimeshift(sourceData.timeshift || 0);
+            setCaptureChannels(typeof sourceData.channels === 'number' ? sourceData.channels : CAPTURE_DEFAULT_CHANNELS);
+            setCaptureSampleRate(typeof sourceData.sample_rate === 'number' && CAPTURE_SAMPLE_RATE_OPTIONS.includes(sourceData.sample_rate)
+              ? sourceData.sample_rate
+              : CAPTURE_DEFAULT_SAMPLE_RATE);
+            setCaptureBitDepth(typeof sourceData.bit_depth === 'number' ? sourceData.bit_depth : CAPTURE_DEFAULT_BIT_DEPTH);
             setVncIp(sourceData.vnc_ip || '');
             setVncPort(sourceData.vnc_port?.toString() || '5900');
 
@@ -250,15 +286,39 @@ const AddEditSourcePage: React.FC = () => {
 
     if (!isGroup) {
       if (inputMode === 'system') {
+        if (captureChannels < 1 || captureChannels > 8) {
+          setError('Capture channels must be between 1 and 8.');
+          return;
+        }
+
+        if (!CAPTURE_SAMPLE_RATE_OPTIONS.includes(captureSampleRate)) {
+          setError('Select a valid capture sample rate (44.1 kHz, 48 kHz, or 96 kHz).');
+          return;
+        }
+
+        if (!CAPTURE_BIT_DEPTH_OPTIONS.includes(captureBitDepth)) {
+          setError('Select a valid capture bit depth.');
+          return;
+        }
+
+        sourceData.channels = captureChannels;
+        sourceData.sample_rate = captureSampleRate;
+        sourceData.bit_depth = captureBitDepth;
         sourceData.tag = selectedCaptureTag;
         sourceData.ip = null; // clear existing network address if switching to ALSA
       } else {
         sourceData.ip = ip.trim();
         sourceData.tag = null;
+        sourceData.channels = null;
+        sourceData.sample_rate = null;
+        sourceData.bit_depth = null;
       }
     } else {
       sourceData.ip = null;
       sourceData.tag = null;
+      sourceData.channels = null;
+      sourceData.sample_rate = null;
+      sourceData.bit_depth = null;
     }
 
     try {
@@ -305,6 +365,9 @@ const AddEditSourcePage: React.FC = () => {
         setTimeshift(0);
         setVncIp('');
         setVncPort('5900');
+        setCaptureChannels(CAPTURE_DEFAULT_CHANNELS);
+        setCaptureSampleRate(CAPTURE_DEFAULT_SAMPLE_RATE);
+        setCaptureBitDepth(CAPTURE_DEFAULT_BIT_DEPTH);
       }
       if (window.opener) {
         setTimeout(() => {
@@ -374,6 +437,9 @@ const AddEditSourcePage: React.FC = () => {
                   setInputMode(mode);
                   if (mode === 'network') {
                     setSelectedCaptureTag('');
+                    setCaptureChannels(CAPTURE_DEFAULT_CHANNELS);
+                    setCaptureSampleRate(CAPTURE_DEFAULT_SAMPLE_RATE);
+                    setCaptureBitDepth(CAPTURE_DEFAULT_BIT_DEPTH);
                   }
                 }}
                 bg={inputBg}
@@ -422,52 +488,119 @@ const AddEditSourcePage: React.FC = () => {
           </FormControl>
 
           {inputMode === 'system' && !isGroup && (
-            <FormControl isRequired>
-              <FormLabel>System Capture Device</FormLabel>
-              <Select
-                value={selectedCaptureTag}
-                onChange={(event) => setSelectedCaptureTag(event.target.value)}
-                placeholder={systemCaptureDevices.length > 0 ? 'Select an ALSA capture device' : 'No devices available'}
-                bg={inputBg}
-                isDisabled={systemCaptureDevices.length === 0}
-              >
-                {systemCaptureDevices.map(device => (
-                  <option key={device.tag} value={device.tag}>
-                    {device.friendly_name || device.tag} ({device.tag}){device.present ? '' : ' • offline'}
-                  </option>
-                ))}
-              </Select>
-              {selectedCaptureDevice && (
-                <Box
-                  mt={2}
-                  p={3}
-                  borderWidth="1px"
-                  borderRadius="md"
-                  bg={useColorModeValue('gray.50', 'gray.700')}
-                  borderColor={useColorModeValue('gray.200', 'gray.600')}
+            <>
+              <FormControl isRequired>
+                <FormLabel>System Capture Device</FormLabel>
+                <Select
+                  value={selectedCaptureTag}
+                  onChange={(event) => setSelectedCaptureTag(event.target.value)}
+                  placeholder={systemCaptureDevices.length > 0 ? 'Select an ALSA capture device' : 'No devices available'}
+                  bg={inputBg}
+                  isDisabled={systemCaptureDevices.length === 0}
                 >
-                  <HStack spacing={3} align="center" mb={1}>
-                    <Badge colorScheme={selectedCaptureDevice.present ? 'green' : 'orange'}>
-                      {selectedCaptureDevice.present ? 'Online' : 'Offline'}
-                    </Badge>
+                  {systemCaptureDevices.map(device => (
+                    <option key={device.tag} value={device.tag}>
+                      {device.friendly_name || device.tag} ({device.tag}){device.present ? '' : ' • offline'}
+                    </option>
+                  ))}
+                </Select>
+                {selectedCaptureDevice && (
+                  <Box
+                    mt={2}
+                    p={3}
+                    borderWidth="1px"
+                    borderRadius="md"
+                    bg={useColorModeValue('gray.50', 'gray.700')}
+                    borderColor={useColorModeValue('gray.200', 'gray.600')}
+                  >
+                    <HStack spacing={3} align="center" mb={1}>
+                      <Badge colorScheme={selectedCaptureDevice.present ? 'green' : 'orange'}>
+                        {selectedCaptureDevice.present ? 'Online' : 'Offline'}
+                      </Badge>
+                      <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                        Tag: {selectedCaptureDevice.tag}
+                      </Text>
+                    </HStack>
                     <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
-                      Tag: {selectedCaptureDevice.tag}
+                      Channels: {formatChannelList(selectedCaptureDevice.channels_supported)}
                     </Text>
-                  </HStack>
-                  <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
-                    Channels: {formatChannelList(selectedCaptureDevice.channels_supported)}
-                  </Text>
-                  <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
-                    Sample Rates: {formatSampleRateList(selectedCaptureDevice.sample_rates)}
-                  </Text>
-                  {!selectedCaptureDevice.present && (
-                    <Text fontSize="sm" color="orange.500" mt={2}>
-                      This device is currently offline. Routes will activate automatically when it becomes available.
+                    <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                      Sample Rates: {formatSampleRateList(selectedCaptureDevice.sample_rates)}
                     </Text>
-                  )}
-                </Box>
-              )}
-            </FormControl>
+                    {!selectedCaptureDevice.present && (
+                      <Text fontSize="sm" color="orange.500" mt={2}>
+                        This device is currently offline. Routes will activate automatically when it becomes available.
+                      </Text>
+                    )}
+                  </Box>
+                )}
+              </FormControl>
+
+              <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={4}>
+                <FormControl>
+                  <FormLabel>Capture Channels</FormLabel>
+                  <NumberInput
+                    value={captureChannels}
+                    onChange={(_, valueNumber) => {
+                      if (Number.isNaN(valueNumber)) {
+                        setCaptureChannels(CAPTURE_DEFAULT_CHANNELS);
+                        return;
+                      }
+                      const clamped = Math.min(Math.max(Math.round(valueNumber), 1), 8);
+                      setCaptureChannels(clamped);
+                    }}
+                    min={1}
+                    max={8}
+                    step={1}
+                    bg={inputBg}
+                  >
+                    <NumberInputField />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper />
+                      <NumberDecrementStepper />
+                    </NumberInputStepper>
+                  </NumberInput>
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel>Capture Sample Rate</FormLabel>
+                  <Select
+                    value={captureSampleRate.toString()}
+                    onChange={(event) => {
+                      const parsed = Number.parseInt(event.target.value, 10);
+                      if (CAPTURE_SAMPLE_RATE_OPTIONS.includes(parsed)) {
+                        setCaptureSampleRate(parsed);
+                      }
+                    }}
+                    bg={inputBg}
+                  >
+                    {CAPTURE_SAMPLE_RATE_OPTIONS.map((rate) => (
+                      <option key={rate} value={rate.toString()}>
+                        {rate === 44100 ? '44.1 kHz' : `${rate / 1000} kHz`}
+                      </option>
+                    ))}
+                  </Select>
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel>Capture Bit Depth</FormLabel>
+                  <Select
+                    value={captureBitDepth.toString()}
+                    onChange={(event) => {
+                      const parsed = Number.parseInt(event.target.value, 10);
+                      if (CAPTURE_BIT_DEPTH_OPTIONS.includes(parsed)) {
+                        setCaptureBitDepth(parsed);
+                      }
+                    }}
+                    bg={inputBg}
+                  >
+                    {CAPTURE_BIT_DEPTH_OPTIONS.map((depth) => (
+                      <option key={depth} value={depth.toString()}>{depth}-bit</option>
+                    ))}
+                  </Select>
+                </FormControl>
+              </SimpleGrid>
+            </>
           )}
           
           <FormControl display="flex" alignItems="center">
