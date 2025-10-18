@@ -62,6 +62,12 @@ public:
     RtpReceiver(RtpReceiver&&) = delete;
     RtpReceiver& operator=(RtpReceiver&&) = delete;
 
+    /**
+     * @brief Retrieves the currently known SAP announcements processed by this receiver.
+     * @return A vector of SAP announcements containing stream metadata.
+     */
+    std::vector<SapAnnouncement> get_sap_announcements();
+
 protected:
     /** @brief The main processing loop using epoll to handle multiple sockets. */
     void run() override;

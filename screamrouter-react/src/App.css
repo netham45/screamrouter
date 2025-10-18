@@ -794,7 +794,3 @@ iframe {
   border-radius: 3px;
 }
 
-
-.chakra-modal__content-container, .chakra-modal__overlay {
-  pointer-events: none;
-}

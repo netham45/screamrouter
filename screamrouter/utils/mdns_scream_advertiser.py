@@ -3,7 +3,7 @@ import logging
 import socket
 import threading
 import uuid
-from typing import Optional
+from typing import Optional, Sequence
 
 from zeroconf import ServiceInfo, Zeroconf, IPVersion
 
@@ -23,7 +23,19 @@ class ScreamAdvertiser(threading.Thread):
     Compatible with ESP32-Scream devices and other Scream protocol clients.
     """
     
-    def __init__(self, port: int = 40000):
+    def __init__(
+        self,
+        port: int = 40000,
+        *,
+        sample_rates: Optional[Sequence[int]] = None,
+        bit_depths: Optional[Sequence[int]] = None,
+        sample_rate: Optional[int] = None,
+        bit_depth: Optional[int] = None,
+        channels: int = 8,
+        channel_layout: Optional[str] = None,
+        protocol: str = "scream",
+        codecs: str = "lpcm",
+    ):
         """
         Initialize the Scream service advertiser.
         
@@ -37,14 +49,47 @@ class ScreamAdvertiser(threading.Thread):
         self.zeroconf: Optional[Zeroconf] = None
         self.service_info: Optional[ServiceInfo] = None
         self._should_stop = threading.Event()
-        
+
         # Service configuration
         self.service_type = "_scream._udp.local."
         self.mac_address = self._get_mac_address()
         self.hostname = self._format_hostname()
         self.service_name = f"{self.hostname}.{self.service_type}"
-        
-        logger.info(f"ScreamAdvertiser initialized. Port: {port}, MAC: {self.mac_address}, Hostname: {self.hostname}")
+
+        # Audio capability metadata advertised via TXT records
+        self.sample_rates = tuple(sample_rates) if sample_rates else (44100, 48000)
+        self.sample_rate = sample_rate or (self.sample_rates[-1] if self.sample_rates else 48000)
+
+        self.bit_depths = tuple(bit_depths) if bit_depths else (16, 24, 32)
+        self.bit_depth = bit_depth or (self.bit_depths[-1] if self.bit_depths else 32)
+
+        self.channels = channels if channels > 0 else 2
+        if channel_layout:
+            self.channel_layout = channel_layout
+        else:
+            layout_map = {
+                1: "mono",
+                2: "stereo",
+                4: "quad",
+                6: "5.1",
+                7: "6.1",
+                8: "7.1",
+            }
+            self.channel_layout = layout_map.get(self.channels, f"{self.channels}ch")
+
+        self.protocol = protocol or "scream"
+        self.codecs = codecs or "lpcm"
+
+        logger.info(
+            "ScreamAdvertiser initialized. Port: %s, MAC: %s, Hostname: %s, Channels: %s, SampleRates: %s, BitDepths: %s, Protocol: %s",
+            port,
+            self.mac_address,
+            self.hostname,
+            self.channels,
+            self.sample_rates,
+            self.bit_depths,
+            self.protocol,
+        )
     
     def _get_mac_address(self) -> str:
         """
@@ -162,15 +207,39 @@ class ScreamAdvertiser(threading.Thread):
         local_ip = self._get_local_ip()
         
         # TXT record properties
+        sample_rates_csv = ",".join(str(rate) for rate in self.sample_rates) if self.sample_rates else str(self.sample_rate)
+        bit_depths_csv = ",".join(str(depth) for depth in self.bit_depths) if self.bit_depths else str(self.bit_depth)
+
         properties = {
             "mode": "receiver",
             "type": "receiver",
             "mac": self.mac_address,
-            "samplerates": "44100,48000",
-            "codecs": "lpcm",
-            "channels": "8"
+            "protocol": self.protocol,
+            "protocols": self.protocol,
+            "transport": self.protocol,
+            "format": self.protocol,
+            "codecs": self.codecs,
+            "channels": str(self.channels),
+            "channel_count": str(self.channels),
+            "channelCount": str(self.channels),
+            "channel_layout": self.channel_layout,
+            "channelLayout": self.channel_layout,
+            "sample_rate": str(self.sample_rate),
+            "sample_rates": sample_rates_csv,
+            "samplerates": sample_rates_csv,
+            "supported_sample_rates": sample_rates_csv,
+            "supportedSampleRates": sample_rates_csv,
+            "sampleRate": str(self.sample_rate),
+            "sample_rate_hz": str(self.sample_rate),
+            "bit_depth": str(self.bit_depth),
+            "bit_depths": bit_depths_csv,
+            "supported_bit_depths": bit_depths_csv,
+            "supportedBitDepths": bit_depths_csv,
+            "bitdepth": str(self.bit_depth),
+            "bitDepth": str(self.bit_depth),
+            "identifier": self.hostname,
         }
-        
+
         # Create service info
         service_info = ServiceInfo(
             type_=self.service_type,

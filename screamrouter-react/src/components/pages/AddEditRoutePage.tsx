@@ -28,6 +28,7 @@ import {
   Switch
 } from '@chakra-ui/react';
 import ApiService, { Route, Source, Sink } from '../../api/api';
+import { useTutorial } from '../../context/TutorialContext';
 import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
 
@@ -37,6 +38,8 @@ const AddEditRoutePage: React.FC = () => {
   const preselectedSource = searchParams.get('source');
   const preselectedSink = searchParams.get('sink');
   const isEdit = !!routeName;
+
+  const { completeStep, nextStep } = useTutorial();
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [route, setRoute] = useState<Route | null>(null);
@@ -58,6 +61,52 @@ const AddEditRoutePage: React.FC = () => {
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
   const inputBg = useColorModeValue('white', 'gray.700');
+
+  useEffect(() => {
+    if (!name.trim()) {
+      return;
+    }
+    completeStep('route-name-input');
+  }, [name, completeStep]);
+
+  useEffect(() => {
+    if (!source) {
+      return;
+    }
+    completeStep('route-source-select');
+  }, [source, completeStep]);
+
+  useEffect(() => {
+    if (!sink) {
+      return;
+    }
+    completeStep('route-sink-select');
+  }, [sink, completeStep]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const handleBeforeUnload = () => {
+      try {
+        const targetOrigin = window.location.origin;
+        window.opener?.postMessage(
+          {
+            type: 'FORM_WINDOW_CLOSING',
+            form: 'route',
+          },
+          targetOrigin
+        );
+      } catch (error) {
+        console.error('Failed to announce route form closing', error);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   // Fetch sources and sinks
   useEffect(() => {
@@ -168,7 +217,25 @@ const AddEditRoutePage: React.FC = () => {
         await ApiService.addRoute(routeData as Route);
         setSuccess(`Route "${name}" added successfully.`);
       }
-      
+
+      completeStep('route-submit');
+      nextStep();
+
+      try {
+        const targetOrigin = window.location.origin;
+        window.opener?.postMessage(
+          {
+            type: 'RESOURCE_ADDED',
+            resourceType: 'route',
+            action: isEdit ? 'updated' : 'added',
+            name,
+          },
+          targetOrigin
+        );
+      } catch (messageError) {
+        console.error('Failed to post resource update message', messageError);
+      }
+
       // Clear form if adding a new route
       if (!isEdit) {
         setName('');
@@ -178,6 +245,16 @@ const AddEditRoutePage: React.FC = () => {
         setVolume(1);
         setDelay(0);
         setTimeshift(0);
+      }
+
+      if (window.opener) {
+        setTimeout(() => {
+          try {
+            window.close();
+          } catch (closeError) {
+            console.error('Failed to close window after route submission', closeError);
+          }
+        }, 200);
       }
     } catch (error) {
       console.error('Error submitting route:', error);
@@ -221,6 +298,7 @@ const AddEditRoutePage: React.FC = () => {
           <FormControl isRequired>
             <FormLabel>Route Name</FormLabel>
             <Input
+              data-tutorial-id="route-name-input"
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
@@ -233,6 +311,7 @@ const AddEditRoutePage: React.FC = () => {
           <FormControl isRequired>
             <FormLabel>Source</FormLabel>
             <Select
+              data-tutorial-id="route-source-select"
               value={source}
               onChange={(e) => setSource(e.target.value)}
               bg={inputBg}
@@ -249,6 +328,7 @@ const AddEditRoutePage: React.FC = () => {
           <FormControl isRequired>
             <FormLabel>Sink</FormLabel>
             <Select
+              data-tutorial-id="route-sink-select"
               value={sink}
               onChange={(e) => setSink(e.target.value)}
               bg={inputBg}
@@ -275,14 +355,22 @@ const AddEditRoutePage: React.FC = () => {
           
           <FormControl>
             <FormLabel>Volume</FormLabel>
-            <VolumeSlider value={volume} onChange={setVolume} />
+            <VolumeSlider
+              value={volume}
+              onChange={setVolume}
+              dataTutorialId="route-volume-slider"
+            />
           </FormControl>
-          
+
           <FormControl>
             <FormLabel>Delay (ms)</FormLabel>
             <NumberInput
+              data-tutorial-id="route-delay-input"
               value={delay}
-              onChange={(valueString) => setDelay(parseInt(valueString) || 0)}
+              onChange={(valueString) => {
+                const parsed = Number.parseInt(valueString, 10);
+                setDelay(Number.isNaN(parsed) ? 0 : parsed);
+              }}
               min={0}
               max={5000}
               bg={inputBg}
@@ -297,12 +385,20 @@ const AddEditRoutePage: React.FC = () => {
           
           <FormControl>
             <FormLabel>Timeshift</FormLabel>
-            <TimeshiftSlider value={timeshift} onChange={setTimeshift} />
+            <TimeshiftSlider
+              value={timeshift}
+              onChange={setTimeshift}
+              dataTutorialId="route-timeshift-slider"
+            />
           </FormControl>
         </Stack>
         
         <Flex mt={8} gap={3} justifyContent="flex-end">
-          <Button colorScheme="blue" onClick={handleSubmit}>
+          <Button
+            colorScheme="blue"
+            onClick={handleSubmit}
+            data-tutorial-id="route-submit-button"
+          >
             {isEdit ? 'Update Route' : 'Add Route'}
           </Button>
           <Button variant="outline" onClick={handleClose}>

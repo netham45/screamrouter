@@ -41,7 +41,7 @@ class AudioSettings:
         self.channel_layout = channel_layout
         self.receiver_id = receiver_id
         self.ip = ip
-    
+
     def __eq__(self, other):
         """Check if two AudioSettings objects are equal"""
         if not isinstance(other, AudioSettings):
@@ -61,6 +61,17 @@ class AudioSettings:
             f"channels={self.channels}, "
             f"channel_layout={self.channel_layout})"
         )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize settings for API responses."""
+        return {
+            "receiver_id": self.receiver_id,
+            "ip": self.ip,
+            "bit_depth": self.bit_depth,
+            "sample_rate": self.sample_rate,
+            "channels": self.channels,
+            "channel_layout": self.channel_layout,
+        }
 
 class SourceSettings:
     """Class to hold source settings"""
@@ -86,7 +97,7 @@ class SourceSettings:
         self.tag = tag
         self.vnc_ip = vnc_ip
         self.vnc_port = vnc_port
-    
+
     def __eq__(self, other):
         """Check if two SourceSettings objects are equal"""
         if not isinstance(other, SourceSettings):
@@ -109,6 +120,16 @@ class SourceSettings:
             f"vnc_port={self.vnc_port})"
         )
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize settings for API responses."""
+        return {
+            "source_id": self.source_id,
+            "ip": self.ip,
+            "tag": self.tag,
+            "vnc_ip": self.vnc_ip,
+            "vnc_port": self.vnc_port,
+        }
+
 class MDNSSettingsPinger:
     """Discovers and syncs settings using mDNS TXT records"""
     def __init__(self, configuration_manager=None, interval: float = 5.0):
@@ -128,6 +149,7 @@ class MDNSSettingsPinger:
         self.current_handler = None
         self.known_sink_settings: List[AudioSettings] = []
         self.known_source_settings: List[SourceSettings] = []
+        self._lock = threading.RLock()
         
         logger.debug("Initializing Zeroconf mDNS Settings handler")
         
@@ -184,42 +206,43 @@ class MDNSSettingsPinger:
                 config_id = settings['id']
                 
                 # Check if settings have changed since last time
-                if (config_id in self.last_sink_settings and
-                    self.last_sink_settings[config_id] == settings):
-                    return
-                    
-                # Store the latest settings
-                self.last_sink_settings[config_id] = settings
-                
-                # Create AudioSettings object and add/update in known_sink_settings
-                if 'ip' in settings:
-                    audio_settings = AudioSettings(receiver_id=settings.get('id', None),
-                        ip=settings.get('ip', None),
-                        bit_depth=int(settings.get('bit_depth', 32)),
-                        sample_rate=int(settings.get('sample_rate', 48000)),
-                        channels=int(settings.get('channels', 8)),
-                        channel_layout=settings.get('channel_layout', '7.1'),
-                    )
-                    
-                    # Check if we already have settings with this receiver_id
-                    updated = False
-                    for i, existing in enumerate(self.known_sink_settings):
-                        if hasattr(existing, 'receiver_id') and existing.receiver_id == config_id:
-                            # Update existing settings
-                            self.known_sink_settings[i] = audio_settings
+                with self._lock:
+                    if (config_id in self.last_sink_settings and
+                        self.last_sink_settings[config_id] == settings):
+                        return
+
+                    # Store the latest settings
+                    self.last_sink_settings[config_id] = settings
+
+                    # Create AudioSettings object and add/update in known_sink_settings
+                    if 'ip' in settings:
+                        audio_settings = AudioSettings(receiver_id=settings.get('id', None),
+                            ip=settings.get('ip', None),
+                            bit_depth=int(settings.get('bit_depth', 32)),
+                            sample_rate=int(settings.get('sample_rate', 48000)),
+                            channels=int(settings.get('channels', 8)),
+                            channel_layout=settings.get('channel_layout', '7.1'),
+                        )
+
+                        # Check if we already have settings with this receiver_id
+                        updated = False
+                        for i, existing in enumerate(self.known_sink_settings):
+                            if hasattr(existing, 'receiver_id') and existing.receiver_id == config_id:
+                                # Update existing settings
+                                self.known_sink_settings[i] = audio_settings
+                                # Add receiver_id attribute to the audio_settings
+                                audio_settings.receiver_id = config_id
+                                logger.info(f"Updated settings for sink receiver_id: {config_id}")
+                                updated = True
+                                break
+
+                        if not updated:
                             # Add receiver_id attribute to the audio_settings
                             audio_settings.receiver_id = config_id
-                            logger.info(f"Updated settings for sink receiver_id: {config_id}")
-                            updated = True
-                            break
-                    
-                    if not updated:
-                        # Add receiver_id attribute to the audio_settings
-                        audio_settings.receiver_id = config_id
-                        # Add new settings
-                        self.known_sink_settings.append(audio_settings)
-                        logger.info(f"Added new settings for sink receiver_id: {config_id}")
-                    
+                            # Add new settings
+                            self.known_sink_settings.append(audio_settings)
+                            logger.info(f"Added new settings for sink receiver_id: {config_id}")
+
                 logger.info(f"Processed settings for sink config_id: {config_id}")
             else:
                 logger.warning("Received sink settings TXT record without an ID")
@@ -240,7 +263,6 @@ class MDNSSettingsPinger:
 
             if txt_data[:1] == "P":
                 txt_data = txt_data[1:]
-            print(txt_data)
                 
             # Parse the TXT record content
             settings_str = txt_data.strip('"')
@@ -257,38 +279,39 @@ class MDNSSettingsPinger:
                 source_id = settings['id']
                 
                 # Check if settings have changed since last time
-                if (source_id in self.last_source_settings and
-                    self.last_source_settings[source_id] == settings):
-                    return
-                    
-                # Store the latest settings
-                self.last_source_settings[source_id] = settings
-                
-                # Create SourceSettings object and add/update in known_source_settings
-                if 'ip' in settings:
-                    source_settings = SourceSettings(
-                        source_id=source_id,
-                        ip=settings.get('ip', None),
-                        tag=settings.get('tag', None),
-                        vnc_ip=settings.get('vnc_ip', None),
-                        vnc_port=int(settings.get('vnc_port', 5900)) if 'vnc_port' in settings else None
-                    )
-                    
-                    # Check if we already have settings with this source_id
-                    updated = False
-                    for i, existing in enumerate(self.known_source_settings):
-                        if existing.source_id == source_id:
-                            # Update existing settings
-                            self.known_source_settings[i] = source_settings
-                            logger.info(f"Updated settings for source_id: {source_id}")
-                            updated = True
-                            break
-                    
-                    if not updated:
-                        # Add new settings
-                        self.known_source_settings.append(source_settings)
-                        logger.info(f"Added new settings for source_id: {source_id}")
-                    
+                with self._lock:
+                    if (source_id in self.last_source_settings and
+                        self.last_source_settings[source_id] == settings):
+                        return
+
+                    # Store the latest settings
+                    self.last_source_settings[source_id] = settings
+
+                    # Create SourceSettings object and add/update in known_source_settings
+                    if 'ip' in settings:
+                        source_settings = SourceSettings(
+                            source_id=source_id,
+                            ip=settings.get('ip', None),
+                            tag=settings.get('tag', None),
+                            vnc_ip=settings.get('vnc_ip', None),
+                            vnc_port=int(settings.get('vnc_port', 5900)) if 'vnc_port' in settings else None
+                        )
+
+                        # Check if we already have settings with this source_id
+                        updated = False
+                        for i, existing in enumerate(self.known_source_settings):
+                            if existing.source_id == source_id:
+                                # Update existing settings
+                                self.known_source_settings[i] = source_settings
+                                logger.info(f"Updated settings for source_id: {source_id}")
+                                updated = True
+                                break
+
+                        if not updated:
+                            # Add new settings
+                            self.known_source_settings.append(source_settings)
+                            logger.info(f"Added new settings for source_id: {source_id}")
+
                 logger.info(f"Processed settings for source_id: {source_id}")
             else:
                 logger.warning("Received source settings TXT record without an ID")
@@ -305,9 +328,10 @@ class MDNSSettingsPinger:
         Returns:
             AudioSettings or None if not found
         """
-        for settings in self.known_sink_settings:
-            if hasattr(settings, 'receiver_id') and settings.receiver_id == receiver_id:
-                return settings
+        with self._lock:
+            for settings in self.known_sink_settings:
+                if hasattr(settings, 'receiver_id') and settings.receiver_id == receiver_id:
+                    return settings
         return None
     
     def get_all_sink_settings(self) -> List[AudioSettings]:
@@ -316,7 +340,8 @@ class MDNSSettingsPinger:
         Returns:
             List of AudioSettings objects
         """
-        return self.known_sink_settings.copy()
+        with self._lock:
+            return self.known_sink_settings.copy()
         
     def get_source_settings_by_id(self, source_id: str) -> Optional[SourceSettings]:
         """Get source settings by source ID
@@ -327,9 +352,10 @@ class MDNSSettingsPinger:
         Returns:
             SourceSettings or None if not found
         """
-        for settings in self.known_source_settings:
-            if settings.source_id == source_id:
-                return settings
+        with self._lock:
+            for settings in self.known_source_settings:
+                if settings.source_id == source_id:
+                    return settings
         return None
     
     def get_all_source_settings(self) -> List[SourceSettings]:
@@ -338,7 +364,8 @@ class MDNSSettingsPinger:
         Returns:
             List of SourceSettings objects
         """
-        return self.known_source_settings.copy()
+        with self._lock:
+            return self.known_source_settings.copy()
         
     def get_all_settings(self) -> List[AudioSettings]:
         """Get all known sink settings (legacy method for backward compatibility)
@@ -346,7 +373,18 @@ class MDNSSettingsPinger:
         Returns:
             List of AudioSettings objects
         """
-        return self.known_sink_settings.copy()
+        with self._lock:
+            return self.known_sink_settings.copy()
+
+    def serialize_sink_settings(self) -> List[Dict[str, Any]]:
+        """Return sink settings as simple dictionaries."""
+        with self._lock:
+            return [settings.to_dict() for settings in self.known_sink_settings]
+
+    def serialize_source_settings(self) -> List[Dict[str, Any]]:
+        """Return source settings as simple dictionaries."""
+        with self._lock:
+            return [settings.to_dict() for settings in self.known_source_settings]
     
     def _send_queries(self) -> None:
         """Send mDNS queries for sink and source settings TXT records"""

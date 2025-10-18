@@ -24,9 +24,12 @@ import {
   Heading,
   Container,
   useColorModeValue,
-  Switch
+  Switch,
+  Textarea
 } from '@chakra-ui/react';
 import ApiService, { Source } from '../../api/api';
+import { useTutorial } from '../../context/TutorialContext';
+import { useMdnsDiscovery } from '../../context/MdnsDiscoveryContext';
 import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
 
@@ -35,6 +38,9 @@ const AddEditSourcePage: React.FC = () => {
   const sourceName = searchParams.get('name');
   const isEdit = !!sourceName;
 
+  const { completeStep, nextStep } = useTutorial();
+  const { openModal: openMdnsModal, registerSelectionHandler } = useMdnsDiscovery();
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [source, setSource] = useState<Source | null>(null);
   const [name, setName] = useState('');
@@ -42,6 +48,7 @@ const AddEditSourcePage: React.FC = () => {
   const [enabled, setEnabled] = useState(true);
   const [isGroup, setIsGroup] = useState(false);
   const [groupMembers, setGroupMembers] = useState<string[]>([]);
+  const [groupMembersText, setGroupMembersText] = useState('');
   const [volume, setVolume] = useState(1);
   const [delay, setDelay] = useState(0);
   const [timeshift, setTimeshift] = useState(0);
@@ -54,6 +61,45 @@ const AddEditSourcePage: React.FC = () => {
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
   const inputBg = useColorModeValue('white', 'gray.700');
+
+  useEffect(() => {
+    if (!name.trim()) {
+      return;
+    }
+    completeStep('source-name-input');
+  }, [name, completeStep]);
+
+  useEffect(() => {
+    if (!ip.trim()) {
+      return;
+    }
+    completeStep('source-ip-input');
+  }, [ip, completeStep]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const handleBeforeUnload = () => {
+      try {
+        const targetOrigin = window.location.origin;
+        window.opener?.postMessage(
+          {
+            type: 'FORM_WINDOW_CLOSING',
+            form: 'source',
+          },
+          targetOrigin
+        );
+      } catch (error) {
+        console.error('Failed to announce form window closing', error);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   // Fetch source data if editing
   useEffect(() => {
@@ -69,6 +115,7 @@ const AddEditSourcePage: React.FC = () => {
             setEnabled(sourceData.enabled);
             setIsGroup(sourceData.is_group);
             setGroupMembers(sourceData.group_members || []);
+            setGroupMembersText((sourceData.group_members || []).join(', '));
             setVolume(sourceData.volume || 1);
             setDelay(sourceData.delay || 0);
             setTimeshift(sourceData.timeshift || 0);
@@ -86,6 +133,28 @@ const AddEditSourcePage: React.FC = () => {
 
     fetchSource();
   }, [sourceName]);
+
+  useEffect(() => {
+    const unregister = registerSelectionHandler(device => {
+      if (device.name) {
+        setName(prev => prev || device.name);
+      }
+      if (device.ip) {
+        setIp(device.ip);
+      }
+    });
+
+    return unregister;
+  }, [registerSelectionHandler]);
+
+  const handleGroupMembersChange = (value: string) => {
+    setGroupMembersText(value);
+    const members = value
+      .split(',')
+      .map(member => member.trim())
+      .filter(member => member.length > 0);
+    setGroupMembers(members);
+  };
 
   /**
    * Handles form submission to add or update a source.
@@ -113,7 +182,25 @@ const AddEditSourcePage: React.FC = () => {
         await ApiService.addSource(sourceData as Source);
         setSuccess(`Source "${name}" added successfully.`);
       }
-      
+
+      completeStep('source-submit');
+      nextStep();
+
+      try {
+        const targetOrigin = window.location.origin;
+        window.opener?.postMessage(
+          {
+            type: 'RESOURCE_ADDED',
+            resourceType: 'source',
+            action: isEdit ? 'updated' : 'added',
+            name,
+          },
+          targetOrigin
+        );
+      } catch (messageError) {
+        console.error('Failed to post resource update message', messageError);
+      }
+
       // Clear form if adding a new source
       if (!isEdit) {
         setName('');
@@ -121,11 +208,21 @@ const AddEditSourcePage: React.FC = () => {
         setEnabled(true);
         setIsGroup(false);
         setGroupMembers([]);
+        setGroupMembersText('');
         setVolume(1);
         setDelay(0);
         setTimeshift(0);
         setVncIp('');
         setVncPort('5900');
+      }
+      if (window.opener) {
+        setTimeout(() => {
+          try {
+            window.close();
+          } catch (closeError) {
+            console.error('Failed to close window after source submission', closeError);
+          }
+        }, 200);
       }
     } catch (error) {
       console.error('Error submitting source:', error);
@@ -169,6 +266,7 @@ const AddEditSourcePage: React.FC = () => {
           <FormControl isRequired>
             <FormLabel>Source Name</FormLabel>
             <Input
+              data-tutorial-id="source-name-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
               bg={inputBg}
@@ -177,11 +275,27 @@ const AddEditSourcePage: React.FC = () => {
           
           <FormControl isRequired>
             <FormLabel>Source IP</FormLabel>
-            <Input
-              value={ip}
-              onChange={(e) => setIp(e.target.value)}
-              bg={inputBg}
-            />
+            <Stack
+              direction={{ base: 'column', md: 'row' }}
+              spacing={2}
+              align={{ base: 'stretch', md: 'center' }}
+            >
+              <Input
+                data-tutorial-id="source-ip-input"
+                value={ip}
+                onChange={(e) => setIp(e.target.value)}
+                bg={inputBg}
+                flex="1"
+              />
+              <Button
+                onClick={() => openMdnsModal('sources')}
+                variant="outline"
+                colorScheme="blue"
+                width={{ base: '100%', md: 'auto' }}
+              >
+                Discover Devices
+              </Button>
+            </Stack>
           </FormControl>
           
           <FormControl display="flex" alignItems="center">
@@ -197,14 +311,22 @@ const AddEditSourcePage: React.FC = () => {
           
           <FormControl>
             <FormLabel>Volume</FormLabel>
-            <VolumeSlider value={volume} onChange={setVolume} />
+            <VolumeSlider
+              value={volume}
+              onChange={setVolume}
+              dataTutorialId="source-volume-slider"
+            />
           </FormControl>
-          
+
           <FormControl>
             <FormLabel>Delay (ms)</FormLabel>
             <NumberInput
+              data-tutorial-id="source-delay-input"
               value={delay}
-              onChange={(valueString) => setDelay(parseInt(valueString))}
+              onChange={(valueString) => {
+                const parsed = Number.parseInt(valueString, 10);
+                setDelay(Number.isNaN(parsed) ? 0 : parsed);
+              }}
               min={0}
               max={5000}
               bg={inputBg}
@@ -219,9 +341,13 @@ const AddEditSourcePage: React.FC = () => {
           
           <FormControl>
             <FormLabel>Timeshift</FormLabel>
-            <TimeshiftSlider value={timeshift} onChange={setTimeshift} />
+            <TimeshiftSlider
+              value={timeshift}
+              onChange={setTimeshift}
+              dataTutorialId="source-timeshift-slider"
+            />
           </FormControl>
-          
+
           <Heading as="h3" size="md" mt={4} mb={2}>
             VNC Settings (Optional)
           </Heading>
@@ -229,16 +355,18 @@ const AddEditSourcePage: React.FC = () => {
           <FormControl>
             <FormLabel>VNC IP</FormLabel>
             <Input
+              data-tutorial-id="source-vnc-ip-input"
               value={vncIp}
               onChange={(e) => setVncIp(e.target.value)}
               bg={inputBg}
               placeholder="Leave empty if not using VNC"
             />
           </FormControl>
-          
+
           <FormControl>
             <FormLabel>VNC Port</FormLabel>
             <NumberInput
+              data-tutorial-id="source-vnc-port-input"
               value={vncPort}
               onChange={(valueString) => setVncPort(valueString)}
               min={1}
@@ -256,7 +384,11 @@ const AddEditSourcePage: React.FC = () => {
         </Stack>
         
         <Flex mt={8} gap={3} justifyContent="flex-end">
-          <Button colorScheme="blue" onClick={handleSubmit}>
+          <Button
+            colorScheme="blue"
+            onClick={handleSubmit}
+            data-tutorial-id="source-submit-button"
+          >
             {isEdit ? 'Update Source' : 'Add Source'}
           </Button>
           <Button variant="outline" onClick={handleClose}>

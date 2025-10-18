@@ -87,6 +87,16 @@ std::vector<uint32_t> SapListener::get_known_ssrcs() {
     return known_ssrcs;
 }
 
+std::vector<SapAnnouncement> SapListener::get_announcements() {
+    std::lock_guard<std::mutex> lock(ip_map_mutex_);
+    std::vector<SapAnnouncement> announcements;
+    announcements.reserve(announcements_by_stream_ip_.size());
+    for (const auto& entry : announcements_by_stream_ip_) {
+        announcements.push_back(entry.second);
+    }
+    return announcements;
+}
+
 void SapListener::set_session_callback(SessionCallback callback) {
     session_callback_ = std::move(callback);
 }
@@ -366,12 +376,13 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         LOG_CPP_WARNING("%s c-line not found in SAP packet", logger_prefix_.c_str());
     }
 
+    int port = 0;
+
     // Find media port from m= line
     size_t m_pos = sdp_data.find("m=audio ");
     if (m_pos != std::string::npos) {
         std::string m_line = sdp_data.substr(m_pos);
         m_line = m_line.substr(0, m_line.find('\n'));
-        int port = 0;
         int items_scanned = sscanf(m_line.c_str(), "m=audio %d", &port);
         if (items_scanned == 1 && port > 0) {
             if (session_callback_ && !connection_ip.empty()) {
@@ -418,11 +429,22 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
             props.endianness = Endianness::BIG; // default
         }
 
+        props.port = port;
+
         std::lock_guard<std::mutex> lock(ssrc_map_mutex_);
         ssrc_to_properties_[ssrc] = props;
         
         std::lock_guard<std::mutex> lock2(ip_map_mutex_);
         ip_to_properties_[source_ip] = props;
+        if (!connection_ip.empty()) {
+            ip_to_properties_[connection_ip] = props;
+            SapAnnouncement announcement;
+            announcement.stream_ip = connection_ip;
+            announcement.announcer_ip = source_ip;
+            announcement.port = port;
+            announcement.properties = props;
+            announcements_by_stream_ip_[connection_ip] = announcement;
+        }
 
         LOG_CPP_DEBUG("%s Updated stream properties for SSRC %u from %s: %d Hz, %d channels, %d bits",
             logger_prefix_.c_str(), ssrc, source_ip.c_str(), props.sample_rate, props.channels, props.bit_depth);

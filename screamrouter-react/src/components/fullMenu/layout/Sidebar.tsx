@@ -204,6 +204,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 label="Starred Items"
                 isActive={currentCategory === 'favorites'}
                 badge={starredSources.length + starredSinks.length + starredRoutes.length}
+                dataTutorialId="favorites-nav-item"
                 onClick={() => {
                   setCurrentCategory('favorites');
                   if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile

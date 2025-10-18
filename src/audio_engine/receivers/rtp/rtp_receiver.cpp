@@ -84,6 +84,13 @@ RtpReceiver::~RtpReceiver() noexcept {
     
 }
 
+std::vector<SapAnnouncement> RtpReceiver::get_sap_announcements() {
+    if (sap_listener_) {
+        return sap_listener_->get_announcements();
+    }
+    return {};
+}
+
 
 // Helper function to generate a unique key for each source
 std::string RtpReceiver::get_source_key(const struct sockaddr_in& addr) const {

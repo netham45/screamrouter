@@ -69,6 +69,11 @@ public:
      */
     std::vector<std::string> get_rtp_receiver_seen_tags();
     /**
+     * @brief Gets the list of SAP announcements detected by the main RTP receiver.
+     * @return A vector of SAP announcements with stream metadata.
+     */
+    std::vector<SapAnnouncement> get_rtp_sap_announcements();
+    /**
      * @brief Gets the list of source tags seen by a specific Raw Scream receiver.
      * @param listen_port The port of the receiver to query.
      * @return A vector of source tag strings.

@@ -83,6 +83,8 @@ CONFIG_PATH = os.getenv("CONFIG_PATH", os.path.join(_CONFIG_DIR, "config.yaml"))
 """Path to the configuration file"""
 EQUALIZER_CONFIG_PATH = os.getenv("EQUALIZER_CONFIG_PATH", os.path.join(_CONFIG_DIR, "equalizers.yaml"))
 """Path to the equalizer configurations file"""
+PREFERENCES_PATH = os.getenv("PREFERENCES_PATH", os.path.join(_CONFIG_DIR, "preferences.json"))
+"""Path to the user preferences file"""
 
 
 def get_package_data_dir() -> str:

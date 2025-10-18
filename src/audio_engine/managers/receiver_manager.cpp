@@ -77,6 +77,13 @@ std::vector<std::string> ReceiverManager::get_rtp_receiver_seen_tags() {
     return {};
 }
 
+std::vector<SapAnnouncement> ReceiverManager::get_rtp_sap_announcements() {
+    if (m_rtp_receiver) {
+        return m_rtp_receiver->get_sap_announcements();
+    }
+    return {};
+}
+
 std::vector<std::string> ReceiverManager::get_raw_scream_receiver_seen_tags(int listen_port) {
     auto it = m_raw_scream_receivers.find(listen_port);
     if (it != m_raw_scream_receivers.end() && it->second) {

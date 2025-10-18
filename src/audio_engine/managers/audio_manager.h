@@ -150,6 +150,12 @@ public:
     std::vector<std::string> get_rtp_receiver_seen_tags();
 
     /**
+     * @brief Retrieves SAP announcements detected by the main RTP receiver.
+     * @return A Python list of dictionaries describing each SAP announcement.
+     */
+    pybind11::list get_rtp_sap_announcements();
+
+    /**
      * @brief Retrieves seen source tags from a Raw Scream receiver.
      * @param listen_port The port of the Raw Scream receiver.
      * @return A vector of source tags, or an empty vector if the receiver is not found.
@@ -407,6 +413,8 @@ inline void bind_audio_manager(pybind11::module_ &m) {
             "Retrieves a chunk of MP3 data (as bytes) from a sink identified by its output IP address.")
         .def("get_rtp_receiver_seen_tags", &AudioManager::get_rtp_receiver_seen_tags,
              "Retrieves the list of seen source tags from the main RTP receiver.")
+        .def("get_rtp_sap_announcements", &AudioManager::get_rtp_sap_announcements,
+             "Retrieves the list of SAP announcements detected by the RTP receiver.")
         .def("get_raw_scream_receiver_seen_tags", &AudioManager::get_raw_scream_receiver_seen_tags,
              py::arg("listen_port"),
              "Retrieves the list of seen source tags from a specific Raw Scream receiver.")

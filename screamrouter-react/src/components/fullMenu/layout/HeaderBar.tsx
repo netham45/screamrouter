@@ -9,7 +9,7 @@ import {
   HStack,
   Tooltip
 } from '@chakra-ui/react';
-import { RepeatIcon, SettingsIcon, SunIcon, MoonIcon, HamburgerIcon } from '@chakra-ui/icons';
+import { RepeatIcon, SettingsIcon, SunIcon, MoonIcon, HamburgerIcon, QuestionIcon } from '@chakra-ui/icons';
 import { FaPlay, FaStepBackward, FaStepForward } from 'react-icons/fa';
 import { HeaderBarProps } from '../types';
 import SearchBox from '../search/SearchBox';
@@ -29,7 +29,8 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
   toggleSidebar,
   activeSource,
   controlSource,
-  updateVolume
+  updateVolume,
+  onStartTutorial,
 }) => {
   const { toggleColorMode } = useColorMode();
   // Define colors based on color mode
@@ -141,6 +142,16 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
       </Box>
       
       <HStack spacing={2}>
+        <Tooltip label="Start guided tutorial">
+          <IconButton
+            aria-label="Start tutorial"
+            icon={<QuestionIcon />}
+            variant="ghost"
+            color="white"
+            _hover={{ bg: buttonHoverBg }}
+            onClick={onStartTutorial}
+          />
+        </Tooltip>
         <IconButton
           aria-label="Refresh"
           icon={<RepeatIcon />}

@@ -59,6 +59,21 @@ struct StreamProperties {
     int channels;         ///< The number of audio channels.
     int bit_depth;        ///< The bit depth of the audio samples.
     Endianness endianness;///< The byte order of the audio samples.
+    int port;             ///< The media port announced for the stream.
+
+    StreamProperties()
+        : sample_rate(0),
+          channels(0),
+          bit_depth(0),
+          endianness(Endianness::BIG),
+          port(0) {}
+};
+
+struct SapAnnouncement {
+    std::string stream_ip;     ///< IP where the RTP stream is expected.
+    std::string announcer_ip;  ///< IP address that sent the SAP announcement.
+    int port;                  ///< RTP port announced for the stream.
+    StreamProperties properties; ///< Parsed audio properties for the stream.
 };
 
 /**
@@ -115,6 +130,12 @@ public:
      */
     std::vector<uint32_t> get_known_ssrcs();
 
+    /**
+     * @brief Returns the currently known SAP announcements keyed by stream IP.
+     * @return A vector containing the discovered SAP announcements.
+     */
+    std::vector<SapAnnouncement> get_announcements();
+
     std::string logger_prefix_;
     /** @brief The main loop for the listener thread. */
     void run();
@@ -145,6 +166,7 @@ public:
     
     std::mutex ip_map_mutex_;
     std::unordered_map<std::string, StreamProperties> ip_to_properties_;
+    std::unordered_map<std::string, SapAnnouncement> announcements_by_stream_ip_;
 
 private:
     SessionCallback session_callback_;

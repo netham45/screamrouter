@@ -5,6 +5,7 @@
  */
 
 import axios from 'axios';
+import { Preferences, PreferencesUpdatePayload, UnifiedDiscoverySnapshot } from '../types/preferences';
 
 /**
  * Interface for Source object
@@ -398,6 +399,15 @@ const ApiService = {
   updateEqualizer: (type: 'sources' | 'sinks' | 'routes', name: string, equalizer: Equalizer) => {
     return axios.post(`/equalizers/${type}/${name}`, equalizer);
   },
+
+  // --- Preferences ---
+  getPreferences: () => axios.get<Preferences>('/preferences'),
+  updatePreferences: (payload: PreferencesUpdatePayload) => axios.put<Preferences>('/preferences', payload),
+
+  // --- Discovery ---
+  getDiscoverySnapshot: () => axios.get<UnifiedDiscoverySnapshot>('/discovery/snapshot'),
+  addDiscoveredSource: (deviceKey: string) => axios.post('/sources/add-discovered', { device_key: deviceKey }),
+  addDiscoveredSink: (deviceKey: string) => axios.post('/sinks/add-discovered', { device_key: deviceKey }),
 
   // --- Speaker Layout Update Methods ---
   updateSourceSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {

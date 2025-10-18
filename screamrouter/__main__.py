@@ -54,7 +54,9 @@ except ImportError:
 import screamrouter.constants.constants as constants
 from screamrouter.api.api_configuration import APIConfiguration
 from screamrouter.api.api_equalizer import APIEqualizer
+from screamrouter.api.api_mdns import APIMdns
 from screamrouter.api.api_log_viewer import APILogViewer
+from screamrouter.api.api_preferences import APIPreferences
 from screamrouter.api.api_stats import APIStats
 from screamrouter.api.api_webrtc import APIWebRTC
 from screamrouter.api.api_website import APIWebsite
@@ -63,6 +65,7 @@ from screamrouter.api.api_websocket_debug import APIWebsocketDebug
 from screamrouter.api.api_webstream import APIWebStream
 from screamrouter.configuration.configuration_manager import ConfigurationManager
 from screamrouter.plugin_manager.plugin_manager import PluginManager
+from screamrouter.preferences.preferences_manager import PreferencesManager
 from screamrouter.screamrouter_types.configuration import AudioManagerConfig
 from screamrouter.utils.mdns_ptr_responder import ManualPTRResponder  # mDNS
 from screamrouter.utils.ntp_server import NTPServerProcess  # NTP Server
@@ -495,8 +498,11 @@ def main():
     api_controller = APIConfiguration(app, screamrouter_configuration)
     website: APIWebsite = APIWebsite(app, screamrouter_configuration)
     equalizer: APIEqualizer = APIEqualizer(app)
+    mdns_api: APIMdns = APIMdns(app, screamrouter_configuration)
     stats_api: APIStats = APIStats(app, screamrouter_configuration)
     log_viewer: APILogViewer = APILogViewer(app)
+    preferences_manager = PreferencesManager()
+    preferences_api: APIPreferences = APIPreferences(app, preferences_manager)
 
     @app.on_event("startup")
     async def on_startup():

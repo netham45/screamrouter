@@ -86,7 +86,7 @@ public:
     void stop() override;
 
     /**
-     * @brief Gets a list of all unique source tags seen by this receiver.
+     * @brief Gets the set of source tags observed since the last call and clears the cache.
      * @return A vector of strings, each representing a source tag.
      */
     std::vector<std::string> get_seen_tags();

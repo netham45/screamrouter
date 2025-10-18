@@ -9,6 +9,7 @@ import HeaderBar from './layout/HeaderBar';
 import Sidebar from './layout/Sidebar';
 import ContentPanel from './layout/ContentPanel';
 import '../../styles/FullMenu.css';
+import { useTutorial } from '../../context/TutorialContext';
 
 /**
  * FullMenu component.
@@ -28,7 +29,8 @@ const FullMenu: React.FC = () => {
     onListenToSink,
     onVisualizeSink,
     onToggleActiveSource,
-    controlSource
+    controlSource,
+    refreshAppContext
   } = useAppContext();
 
   /**
@@ -77,6 +79,8 @@ const FullMenu: React.FC = () => {
    */
   const { colorMode } = useColorMode();
 
+  const { currentStep: tutorialStep, isActive: tutorialActive, startTutorial } = useTutorial();
+
   /**
    * State to manage the sidebar visibility on mobile.
    */
@@ -114,6 +118,36 @@ const FullMenu: React.FC = () => {
   useEffect(() => {
     document.body.classList.toggle('dark-mode', colorMode === 'dark');
   }, [colorMode]);
+
+  useEffect(() => {
+    if (!tutorialActive || !tutorialStep?.categoryHint) {
+      return;
+    }
+    setCurrentCategory(prev => (prev === tutorialStep.categoryHint ? prev : tutorialStep.categoryHint));
+  }, [tutorialActive, tutorialStep?.categoryHint]);
+
+  useEffect(() => {
+    if (!refreshAppContext) {
+      return;
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || typeof data !== 'object') {
+        return;
+      }
+      if (data.type === 'RESOURCE_ADDED') {
+        void refreshAppContext().catch(error => {
+          console.error('Failed to refresh data after resource update', error);
+        });
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [refreshAppContext]);
 
   /**
    * Function to open the desktop menu in a new window.
@@ -393,6 +427,7 @@ const FullMenu: React.FC = () => {
         activeSource={contextActiveSource}
         controlSource={controlSource}
         updateVolume={fullMenuActions.updateVolume}
+        onStartTutorial={startTutorial}
       />
       
       <div className="main-content">

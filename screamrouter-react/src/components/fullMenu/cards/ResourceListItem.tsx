@@ -335,6 +335,7 @@ const ResourceListItem: React.FC<ResourceListItemProps> = ({
             variant="ghost"
             mr={2}
             onClick={(e) => { e.stopPropagation(); onStar(); }}
+            data-tutorial-id="resource-favorite-toggle"
           />
           
           {isSource(item) && (
@@ -357,6 +358,7 @@ const ResourceListItem: React.FC<ResourceListItemProps> = ({
               variant="ghost"
               size="sm"
               mr={2}
+              data-tutorial-id="resource-primary-toggle"
             />
           )}
           

@@ -310,6 +310,7 @@ return (
             onClick={onStar}
             variant="ghost"
             size="sm"
+            data-tutorial-id="resource-favorite-toggle"
           />
           {isSource(item) && (
             <IconButton
@@ -330,6 +331,7 @@ return (
               }}
               variant="ghost"
               size="sm"
+              data-tutorial-id="resource-primary-toggle"
             />
           )}
           {onChannelMapping && (
@@ -340,6 +342,7 @@ return (
               onClick={onChannelMapping}
               variant="ghost"
               size="sm"
+              data-tutorial-id="resource-channel-mapping-button"
             />
           )}
           {onEqualizer && (
@@ -350,6 +353,7 @@ return (
               onClick={onEqualizer}
               variant="ghost"
               size="sm"
+              data-tutorial-id="resource-equalizer-button"
             />
           )}
           <IconButton
@@ -425,6 +429,7 @@ return (
           _hover={{ opacity: 0.8 }}
           onClick={onActivate}
           title={item.enabled ? 'Click to disable' : 'Click to enable'}
+          data-tutorial-id="resource-enable-toggle"
         >
           {item.enabled ? 'Enabled' : 'Disabled'}
         </Badge>
@@ -441,6 +446,7 @@ return (
             _hover={{ opacity: 0.8 }}
             onClick={onListen}
             title="Click to open listen page"
+            data-tutorial-id="resource-listen-control"
           >
             Listen
           </Badge>
@@ -475,6 +481,7 @@ return (
           <VolumeSlider
             value={isRoute(item) ? (item.volume || 100) : (item.volume)}
             onChange={(value) => onUpdateVolume && onUpdateVolume(value)}
+            dataTutorialId="resource-volume-slider"
           />
         </Box>
       )}

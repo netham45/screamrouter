@@ -4,10 +4,10 @@ import asyncio
 import concurrent.futures
 import os
 import socket
-import sys
 import threading
 import traceback
 import uuid
+from datetime import datetime, timezone
 
 import screamrouter.screamrouter_logger.screamrouter_logger as screamrouter_logger
 
@@ -27,9 +27,8 @@ except ImportError as e:
    then runs audio controllers for each source"""
 from copy import copy, deepcopy
 from ipaddress import IPv4Address
+from typing import Any, Dict, List, Optional, Tuple
 from subprocess import TimeoutExpired
-from typing import Optional  # For type hinting Optional C++ objects
-from typing import List, Tuple
 
 import dns.nameserver
 import dns.rdtypes
@@ -57,6 +56,9 @@ from screamrouter.screamrouter_types.configuration import (Equalizer, RouteDescr
                                                   SinkDescription,
                                                   SourceDescription,
                                                   SpeakerLayout)
+from screamrouter.screamrouter_types.mdns import (DiscoveredDevice,
+                                          MdnsSnapshot,
+                                          UnifiedDiscoverySnapshot)
 from screamrouter.screamrouter_types.exceptions import InUseError
 from screamrouter.utils.mdns_pinger import MDNSPinger
 from screamrouter.utils.mdns_responder import MDNSResponder
@@ -65,6 +67,8 @@ from screamrouter.utils.mdns_scream_advertiser import ScreamAdvertiser
 
 # Import and initialize logger *before* the try block that might use it
 _logger = screamrouter_logger.get_logger(__name__)
+
+from screamrouter.utils.simple_vnc_client import SimpleVNCClient
 
 # --- C++ Engine Import ---
 try:
@@ -141,6 +145,14 @@ class ConfigurationManager(threading.Thread):
         """Websocket Config Update Notifier"""
         self.plugin_manager: PluginManager = plugin_manager
 
+        self.discovered_devices: Dict[str, DiscoveredDevice] = {}
+        """Stores the latest set of discovered devices keyed by discovery method"""
+
+        self._hostname_cache: Dict[str, str] = {}
+        """Caches hostname lookups keyed by IP string"""
+        self._hostname_cache_lock: threading.Lock = threading.Lock()
+        """Synchronizes access to the hostname cache"""
+
         # --- C++ Engine Initialization (using the passed AudioManager) ---
         if self.cpp_audio_manager and screamrouter_audio_engine: # Check if AudioManager was provided and import succeeded
             # The AudioManager instance is already initialized by the main script.
@@ -197,10 +209,12 @@ class ConfigurationManager(threading.Thread):
         """Returns a list of all sinks (including temporary ones)"""
         _sinks: List[SinkDescription] = []
         for sink in self.sink_descriptions:
-            _sinks.append(copy(sink))
+            sink_copy = copy(sink)
+            _sinks.append(self._apply_hostname_to_entity(sink_copy))
         # Include temporary sinks
         for temp_sink in self.active_temporary_sinks:
-            _sinks.append(copy(temp_sink))
+            temp_sink_copy = copy(temp_sink)
+            _sinks.append(self._apply_hostname_to_entity(temp_sink_copy))
         return _sinks
 
     def get_permanent_sinks(self) -> List[SinkDescription]:
@@ -209,7 +223,8 @@ class ConfigurationManager(threading.Thread):
         for sink in self.sink_descriptions:
             if sink.is_temporary:
                 continue
-            _sinks.append(copy(sink))
+            sink_copy = copy(sink)
+            _sinks.append(self._apply_hostname_to_entity(sink_copy))
         return _sinks
 
     def add_sink(self, sink: SinkDescription) -> bool:
@@ -283,7 +298,126 @@ class ConfigurationManager(threading.Thread):
 
     def get_sources(self) -> List[SourceDescription]:
         """Get a list of all sources"""
-        return copy(self.source_descriptions)
+        sources: List[SourceDescription] = []
+        for source in self.source_descriptions:
+            source_copy = copy(source)
+            sources.append(self._apply_hostname_to_entity(source_copy))
+        return sources
+
+    def get_mdns_snapshot(self) -> Dict[str, Any]:
+        """Aggregate discovery information from the mDNS pingers."""
+        devices = self.mdns_pinger.serialize_devices()
+        sink_settings = self.mdns_settings_pinger.serialize_sink_settings()
+        source_settings = self.mdns_settings_pinger.serialize_source_settings()
+
+        snapshot = MdnsSnapshot(
+            devices=devices,
+            sink_settings=sink_settings,
+            source_settings=source_settings,
+        )
+
+        return snapshot.model_dump(mode="json")
+
+    def _update_discovered_device_last_seen(self, method: str, identifier: str, **kwargs) -> bool:
+        """Refresh last_seen and optional metadata for an existing discovered device."""
+        key = f"{method}:{identifier}"
+        existing_device: Optional[DiscoveredDevice] = self.discovered_devices.get(key)
+        if not existing_device:
+            return False
+
+        updates: Dict[str, Any] = {"last_seen": datetime.now(timezone.utc).isoformat()}
+
+        if "ip" in kwargs and kwargs["ip"]:
+            updates["ip"] = str(kwargs["ip"])
+        if "port" in kwargs and kwargs["port"] is not None:
+            updates["port"] = kwargs["port"]
+        if "name" in kwargs and kwargs["name"]:
+            updates["name"] = kwargs["name"]
+        if "tag" in kwargs and kwargs["tag"]:
+            updates["tag"] = kwargs["tag"]
+        if "device_type" in kwargs and kwargs["device_type"]:
+            updates["device_type"] = kwargs["device_type"]
+
+        incoming_properties = kwargs.get("properties")
+        if isinstance(incoming_properties, dict) and incoming_properties:
+            merged_properties = dict(existing_device.properties)
+            merged_properties.update(incoming_properties)
+            updates["properties"] = merged_properties
+
+        self.discovered_devices[key] = existing_device.model_copy(update=updates)
+        return True
+
+    def _store_discovered_device(self, method: str, role: str, identifier: str, **kwargs) -> None:
+        """Persist discovery metadata for later presentation and manual addition."""
+        key = f"{method}:{identifier}"
+        existing_device: Optional[DiscoveredDevice] = self.discovered_devices.get(key)
+        properties: Dict[str, Any] = {}
+        if existing_device:
+            properties.update(existing_device.properties)
+        incoming_properties = kwargs.get("properties") or {}
+        if isinstance(incoming_properties, dict):
+            properties.update(incoming_properties)
+        tag = kwargs.get("tag") or (existing_device.tag if existing_device else None)
+        if tag:
+            properties.setdefault("tag", tag)
+        properties.setdefault("identifier", identifier)
+
+        ip = kwargs.get("ip") or (existing_device.ip if existing_device else None)
+        if not ip:
+            _logger.debug("[Configuration Manager] Skipping discovered device %s - no IP available", key)
+            return
+
+        ip_str = str(ip)
+
+        port = kwargs.get("port") if "port" in kwargs else (existing_device.port if existing_device else None)
+        name = kwargs.get("name") if "name" in kwargs else (existing_device.name if existing_device else None)
+        device_type = kwargs.get("device_type") if "device_type" in kwargs else (existing_device.device_type if existing_device else None)
+
+        if not name or name == ip_str:
+            resolved_name = self.get_hostname_by_ip(ip_str)
+            if resolved_name:
+                name = resolved_name
+
+        last_seen = datetime.now(timezone.utc).isoformat()
+
+        device_data = {
+            "discovery_method": method,
+            "role": role,
+            "ip": ip_str,
+            "port": port,
+            "name": name,
+            "tag": tag,
+            "properties": properties,
+            "last_seen": last_seen,
+            "device_type": device_type,
+        }
+
+        if existing_device:
+            device = existing_device.model_copy(update=device_data)
+        else:
+            device = DiscoveredDevice(**device_data)
+            _logger.info("[Configuration Manager] Discovered %s via %s: %s", role, method, device.ip)
+
+        self.discovered_devices[key] = device
+
+    def get_discovery_snapshot(self) -> Dict[str, Any]:
+        """Return the consolidated discovery state for all mechanisms."""
+        sink_settings = self.mdns_settings_pinger.serialize_sink_settings()
+        source_settings = self.mdns_settings_pinger.serialize_source_settings()
+
+        discovered_devices = sorted(
+            self.discovered_devices.values(),
+            key=lambda device: device.last_seen,
+            reverse=True,
+        )
+
+        snapshot = UnifiedDiscoverySnapshot(
+            discovered_devices=discovered_devices,
+            sink_settings=sink_settings,
+            source_settings=source_settings,
+        )
+
+        return snapshot.model_dump(mode="json")
     
     def get_processes_by_ip(self, ip: IPAddressType) -> List[SourceDescription]:
         """Get a list of all processes for a specific IP"""
@@ -535,12 +669,74 @@ class ConfigurationManager(threading.Thread):
         self.__reload_configuration() # Trigger full reload
         return True
 
+    _VNC_MEDIA_KEYCODES: Dict[str, int] = {
+        "play_pause": 0x1008FF14,
+        "next_track": 0x1008FF17,
+        "previous_track": 0x1008FF16,
+    }
+
+    def _send_vnc_key_for_source(self, source: SourceDescription, key: str) -> bool:
+        """Send a single key press to the configured VNC endpoint."""
+
+        if not source.vnc_ip:
+            raise RuntimeError(
+                f"Source '{source.name}' does not have a VNC IP configured"
+            )
+
+        keycode = self._VNC_MEDIA_KEYCODES.get(key)
+        if keycode is None:
+            raise RuntimeError(f"Unsupported VNC media key '{key}'")
+
+        # Default to the standard VNC port when none is supplied.
+        port = 5900
+        if source.vnc_port:
+            try:
+                port = int(source.vnc_port)
+            except (TypeError, ValueError):
+                _logger.warning(
+                    "[Controller Manager] Invalid VNC port '%s' for source %s, using %s",
+                    source.vnc_port,
+                    source.name,
+                    port,
+                )
+
+        target_host = str(source.vnc_ip)
+        address = f"{target_host}::{port}"
+
+        _logger.info(
+            "[Controller Manager] Sending VNC key '%s' (keycode=0x%X) to %s (%s)",
+            key,
+            keycode,
+            source.name,
+            address,
+        )
+
+        client = SimpleVNCClient(target_host, port=port, timeout=5.0)
+
+        try:
+            client.connect()
+            client.send_key(keycode, pressed=True)
+            client.send_key(keycode, pressed=False)
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.error(
+                "[Controller Manager] Failed to send VNC key '%s' to %s (%s): %s",
+                key,
+                source.name,
+                address,
+                exc,
+            )
+            raise RuntimeError(
+                f"Failed to send VNC key '{key}' to source '{source.name}'"
+            ) from exc
+        finally:
+            client.close()
+
+        return True
+
     def source_next_track(self, source_name: SourceNameType) -> bool:
         """Send a Next Track command to the source"""
         source: SourceDescription = self.get_source_by_name(source_name)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.sendto("n".encode("ascii"), (str(source.vnc_ip), 9999))
-        return True
+        return self._send_vnc_key_for_source(source, "next_track")
 
     async def source_self_previous_track(self, request: Request) -> bool:
         """Send a Previous Track command to the source that made the request"""
@@ -597,17 +793,15 @@ class ConfigurationManager(threading.Thread):
     def source_previous_track(self, source_name: SourceNameType) -> bool:
         """Send a Previous Track command to the source"""
         source: SourceDescription = self.get_source_by_name(source_name)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.sendto("p".encode("ascii"), (str(source.vnc_ip), 9999))
-        return True
+        return self._send_vnc_key_for_source(source, "previous_track")
 
     def source_play(self, source_name: SourceNameType) -> bool:
-        """Send a Next Track command to the source"""
+        """Send a Play/Pause media command to the source"""
         source: SourceDescription = self.get_source_by_name(source_name)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        _logger.info("[Controller Manager] Sending Play/Pause to %s", source.vnc_ip)
-        sock.sendto("P".encode("ascii"), (str(source.vnc_ip), 9999))
-        return True
+        _logger.info(
+            "[Controller Manager] Sending Play/Pause via VNC to %s", source.vnc_ip
+        )
+        return self._send_vnc_key_for_source(source, "play_pause")
 
     def update_sink_equalizer(self, sink_name: SinkNameType, equalizer: Equalizer) -> bool:
         """Set the equalizer for a sink or sink group"""
@@ -1654,32 +1848,100 @@ class ConfigurationManager(threading.Thread):
 
     def get_hostname_by_ip(self, ip: IPAddressType) -> str:
         """Gets a hostname by IP"""
-        hostname: str = str(ip)
-        try:
-            hostname = socket.gethostbyaddr(str(ip))[0].split(".")[0]
-            _logger.debug("[Configuration Manager] Adding source %s got hostname %s via DNS",
-                          ip, hostname)
-        except socket.herror:
+        ip_str = str(ip)
+        with self._hostname_cache_lock:
+            cached = self._hostname_cache.get(ip_str)
+        if cached:
+            return cached
+
+        hostname: str = ip_str
+        mdns_name = self._lookup_mdns_name(ip_str)
+        if mdns_name:
+            hostname = mdns_name
+        else:
             try:
-                _logger.debug(
-                    "[Configuration Manager] Adding source %s couldn't get DNS, trying mDNS",
-                    ip)
-                resolver = dns.resolver.Resolver()
-                resolver.nameservers = [str(ip)]
-                resolver.nameserver_ports = {str(ip): 5353}
-                answer = resolver.resolve_address(str(ip))
-                rrset: dns.rrset.RRset = answer.response.answer[0]
-                if isinstance(rrset[0], dns.rdtypes.ANY.PTR.PTR):
-                    ptr: dns.rdtypes.ANY.PTR.PTR = rrset[0] # type: ignore
-                    hostname = str(ptr.target).split(".", maxsplit=1)[0]
+                hostname = socket.gethostbyaddr(ip_str)[0].split(".")[0]
+                _logger.debug("[Configuration Manager] Adding source %s got hostname %s via DNS",
+                              ip, hostname)
+            except socket.herror:
+                try:
                     _logger.debug(
-                        "[Configuration Manager] Adding source %s got hostname %s via mDNS",
-                        ip, hostname)
-            except dns.resolver.LifetimeTimeout:
-                _logger.debug(
-                    "[Configuration Manager] Adding source %s couldn't get hostname, using IP",
-                    ip)
+                        "[Configuration Manager] Adding source %s couldn't get DNS, trying mDNS",
+                        ip)
+                    resolver = dns.resolver.Resolver()
+                    resolver.nameservers = [ip_str]
+                    resolver.nameserver_ports = {ip_str: 5353}
+                    answer = resolver.resolve_address(ip_str)
+                    rrset: dns.rrset.RRset = answer.response.answer[0]
+                    if isinstance(rrset[0], dns.rdtypes.ANY.PTR.PTR):
+                        ptr: dns.rdtypes.ANY.PTR.PTR = rrset[0]  # type: ignore
+                        hostname = str(ptr.target).split(".", maxsplit=1)[0]
+                        _logger.debug(
+                            "[Configuration Manager] Adding source %s got hostname %s via mDNS",
+                            ip, hostname)
+                except dns.resolver.LifetimeTimeout:
+                    _logger.debug(
+                        "[Configuration Manager] Adding source %s couldn't get hostname, using IP",
+                        ip)
+
+        with self._hostname_cache_lock:
+            self._hostname_cache[ip_str] = hostname
         return hostname
+
+    def _lookup_mdns_name(self, ip_str: str) -> Optional[str]:
+        """Attempt to derive a friendly hostname from cached mDNS data."""
+        if not ip_str:
+            return None
+
+        listener = getattr(self.mdns_pinger, "listener", None)
+        if not listener:
+            return None
+
+        try:
+            service_info = listener.get_service_info(ip_str)
+        except Exception:  # pylint: disable=broad-except
+            return None
+
+        if not service_info:
+            return None
+
+        raw_name = service_info.get('name')
+        if not raw_name:
+            return None
+
+        name_str = str(raw_name)
+        if not name_str:
+            return None
+
+        # Strip trailing dot(s) and service suffixes
+        if name_str.endswith('.local.'):
+            name_str = name_str[:-7]
+        elif name_str.endswith('.local'):
+            name_str = name_str[:-6]
+
+        if '._' in name_str:
+            name_str = name_str.split('._', 1)[0]
+        elif '.' in name_str:
+            name_str = name_str.split('.', 1)[0]
+
+        return name_str or None
+
+    def _apply_hostname_to_entity(self, entity: Any) -> Any:
+        """Ensure entity has a hostname-based name when only an IP was provided."""
+        if not hasattr(entity, "ip") or not hasattr(entity, "name"):
+            return entity
+
+        ip_value = getattr(entity, "ip", None)
+        current_name = getattr(entity, "name", None)
+        if not ip_value:
+            return entity
+
+        ip_str = str(ip_value)
+        if not current_name or current_name == ip_str:
+            resolved_name = self.get_hostname_by_ip(ip_value)
+            if resolved_name:
+                entity.name = resolved_name
+        return entity
 
     def auto_add_source(self, ip: IPAddressType, service_info: dict = None):
         """Checks if VNC is available and adds a source by IP with the correct options
@@ -1998,10 +2260,36 @@ class ConfigurationManager(threading.Thread):
             try:
                 rtp_seen_tags = self.cpp_audio_manager.get_rtp_receiver_seen_tags()
                 for ip_str in rtp_seen_tags:
-                    if ip_str and ip_str not in known_source_ips: # Check if ip_str is not empty
-                        _logger.info("[Configuration Manager] Auto-adding new source from C++ RTP Receiver: %s", ip_str)
-                        self.auto_add_source(IPAddressType(ip_str))
-                        known_source_ips.append(ip_str) 
+                    ip_value = str(ip_str)
+                    if not ip_value:
+                        continue
+
+                    rtp_properties = {"source": "cpp_engine"}
+                    if self._update_discovered_device_last_seen(
+                        method="rtp",
+                        identifier=ip_value,
+                        ip=ip_value,
+                        device_type="rtp_stream",
+                        properties=rtp_properties,
+                    ):
+                        continue
+
+                    is_new_source = ip_value not in known_source_ips
+                    if is_new_source:
+                        _logger.info(
+                            "[Configuration Manager] Discovered new source from C++ RTP Receiver: %s",
+                            ip_value,
+                        )
+                        known_source_ips.append(ip_value)
+
+                    self._store_discovered_device(
+                        method="rtp",
+                        role="source",
+                        identifier=ip_value,
+                        ip=ip_value,
+                        device_type="rtp_stream",
+                        properties=rtp_properties,
+                    )
             except Exception as e:
                 _logger.error("[Configuration Manager] Error getting seen tags from C++ RTP Receiver: %s", e)
 
@@ -2012,10 +2300,39 @@ class ConfigurationManager(threading.Thread):
                 try:
                     raw_seen_tags = self.cpp_audio_manager.get_raw_scream_receiver_seen_tags(port)
                     for ip_str in raw_seen_tags:
-                        if ip_str and ip_str not in known_source_ips:
-                            _logger.info("[Configuration Manager] Auto-adding new source from C++ Raw Scream Receiver (port %d): %s", port, ip_str)
-                            self.auto_add_source(IPAddressType(ip_str))
-                            known_source_ips.append(ip_str)
+                        ip_value = str(ip_str)
+                        if not ip_value:
+                            continue
+
+                        raw_properties = {"receiver_port": port, "source": "cpp_engine"}
+                        if self._update_discovered_device_last_seen(
+                            method="raw_scream",
+                            identifier=ip_value,
+                            ip=ip_value,
+                            port=port,
+                            device_type="raw_scream_receiver",
+                            properties=raw_properties,
+                        ):
+                            continue
+
+                        is_new_source = ip_value not in known_source_ips
+                        if is_new_source:
+                            _logger.info(
+                                "[Configuration Manager] Discovered new source from C++ Raw Scream Receiver (port %d): %s",
+                                port,
+                                ip_value,
+                            )
+                            known_source_ips.append(ip_value)
+
+                        self._store_discovered_device(
+                            method="raw_scream",
+                            role="source",
+                            identifier=ip_value,
+                            ip=ip_value,
+                            port=port,
+                            device_type="raw_scream_receiver",
+                            properties=raw_properties,
+                        )
                 except Exception as e:
                     _logger.error("[Configuration Manager] Error getting seen tags from C++ Raw Scream Receiver (port %d): %s", port, e)
 
@@ -2024,26 +2341,138 @@ class ConfigurationManager(threading.Thread):
             try:
                 per_process_seen_tags = self.cpp_audio_manager.get_per_process_scream_receiver_seen_tags(per_process_receiver_port)
                 for tag_str in per_process_seen_tags:
-                    if tag_str and tag_str not in known_source_tags:
-                        _logger.info("[Configuration Manager] Auto-adding new source from C++ Per-Process Receiver (port %d): %s", per_process_receiver_port, tag_str)
-                        self.auto_add_process_source(tag_str) # Use auto_add_process_source for these tags
-                        known_source_tags.append(tag_str)
+                    identifier = str(tag_str)
+                    if not identifier:
+                        continue
+
+                    ip_segment = identifier[:15].strip()
+                    try:
+                        parsed_ip = str(IPAddressType(ip_segment))
+                    except Exception:  # pylint: disable=broad-except
+                        parsed_ip = ip_segment
+
+                    per_process_properties = {
+                        "receiver_port": per_process_receiver_port,
+                        "source": "cpp_engine",
+                    }
+                    if self._update_discovered_device_last_seen(
+                        method="per_process",
+                        identifier=identifier,
+                        ip=parsed_ip,
+                        tag=identifier,
+                        device_type="per_process",
+                        properties=per_process_properties,
+                    ):
+                        continue
+
+                    is_new_source = identifier not in known_source_tags
+                    if is_new_source:
+                        _logger.info(
+                            "[Configuration Manager] Discovered new per-process source from C++ Receiver (port %d): %s",
+                            per_process_receiver_port,
+                            identifier,
+                        )
+                        known_source_tags.append(identifier)
+
+                        self._store_discovered_device(
+                            method="per_process",
+                            role="process",
+                            identifier=identifier,
+                            ip=parsed_ip,
+                            tag=identifier,
+                            device_type="per_process",
+                            properties=per_process_properties,
+                        )
             except Exception as e:
                 _logger.error("[Configuration Manager] Error getting seen tags from C++ Per-Process Receiver (port %d): %s", per_process_receiver_port, e)
+
+            # SAP Announcements (metadata-driven sources)
+            try:
+                if hasattr(self.cpp_audio_manager, "get_rtp_sap_announcements"):
+                    sap_announcements = self.cpp_audio_manager.get_rtp_sap_announcements() or []
+                    for announcement in sap_announcements:
+                        if not isinstance(announcement, dict):
+                            continue
+
+                        ip_value = str(announcement.get("ip") or announcement.get("stream_ip") or "").strip()
+                        if not ip_value:
+                            continue
+
+                        port_value = announcement.get("port")
+                        identifier = f"{ip_value}:{port_value}" if port_value else ip_value
+
+                        properties = {
+                            "source": "cpp_engine",
+                            "discovery": "sap",
+                        }
+                        for key in ("sample_rate", "channels", "bit_depth", "endianness", "announcer_ip"):
+                            value = announcement.get(key)
+                            if value is not None:
+                                properties[key] = value
+
+                        if ip_value not in known_source_ips:
+                            _logger.info(
+                                "[Configuration Manager] Discovered SAP-announced source from C++ RTP Receiver: %s:%s",
+                                ip_value,
+                                port_value if port_value else "unknown",
+                            )
+                            known_source_ips.append(ip_value)
+
+                        self._store_discovered_device(
+                            method="sap",
+                            role="source",
+                            identifier=identifier,
+                            ip=ip_value,
+                            port=port_value,
+                            device_type="rtp_stream",
+                            properties=properties,
+                        )
+            except Exception as e:
+                _logger.error("[Configuration Manager] Error processing SAP announcements from C++ RTP Receiver: %s", e)
         # --- End C++ Engine Based Auto Source Detection ---
-        
+
         # mDNS pinger for sources (senders)
         for ip in self.mdns_pinger.get_source_ips():
-            if not str(ip) in known_source_ips:
-                service_info = self.mdns_pinger.get_service_info(ip)
-                _logger.info("[Configuration Manager] Adding new source (sender) from mDNS %s with info: %s", ip, service_info)
-                self.auto_add_source(ip, service_info)
+            ip_value = str(ip)
+            service_info = self.mdns_pinger.get_service_info(ip)
+            properties = service_info.get('properties', {}) if isinstance(service_info, dict) else {}
+
+            self._store_discovered_device(
+                method="mdns",
+                role="source",
+                identifier=ip_value,
+                ip=ip_value,
+                name=service_info.get('name') if isinstance(service_info, dict) else None,
+                port=service_info.get('port') if isinstance(service_info, dict) else None,
+                tag=properties.get('tag') if isinstance(properties, dict) else None,
+                properties=properties if isinstance(properties, dict) else {},
+                device_type=properties.get('type') if isinstance(properties, dict) else None,
+            )
+
+            if ip_value not in known_source_ips:
+                _logger.info("[Configuration Manager] Discovered new source (sender) from mDNS %s with info: %s", ip, service_info)
+                known_source_ips.append(ip_value)
         # mDNS pinger for sinks (receivers)
         for ip in self.mdns_pinger.get_sink_ips():
-            if not str(ip) in known_sink_ips:
-                service_info = self.mdns_pinger.get_service_info(ip)
-                _logger.info("[Configuration Manager] Adding new sink (receiver) from mDNS %s with info: %s", ip, service_info)
-                self.auto_add_sink(ip, service_info)
+            ip_value = str(ip)
+            service_info = self.mdns_pinger.get_service_info(ip)
+            properties = service_info.get('properties', {}) if isinstance(service_info, dict) else {}
+
+            self._store_discovered_device(
+                method="mdns",
+                role="sink",
+                identifier=ip_value,
+                ip=ip_value,
+                name=service_info.get('name') if isinstance(service_info, dict) else None,
+                port=service_info.get('port') if isinstance(service_info, dict) else None,
+                tag=properties.get('tag') if isinstance(properties, dict) else None,
+                properties=properties if isinstance(properties, dict) else {},
+                device_type=properties.get('type') if isinstance(properties, dict) else None,
+            )
+
+            if ip_value not in known_sink_ips:
+                _logger.info("[Configuration Manager] Discovered new sink (receiver) from mDNS %s with info: %s", ip, service_info)
+                known_sink_ips.append(ip_value)
         # Process sink settings
         known_source_config_ids: List[str] = [str(desc.config_id) for desc in self.source_descriptions if desc.config_id]
         

@@ -1,11 +1,13 @@
 """API endpoints to the configuration manager"""
 import traceback
+from typing import Dict
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 from screamrouter.configuration.configuration_manager import ConfigurationManager
 from screamrouter.screamrouter_logger.screamrouter_logger import get_logger
+from screamrouter.screamrouter_types.annotations import IPAddressType
 
 logger = get_logger(__name__)
 
@@ -75,6 +77,8 @@ class APIConfiguration():
             self._configuration_controller.source_previous_track)
         self._app.get("/sources/{source_name}/reorder/{new_index}", tags=["Source Configuration"])(
             self._configuration_controller.update_source_position)
+        self._app.post("/sources/add-discovered", tags=["Source Configuration"])(
+            self.add_discovered_source)
 
         # Self Source Configuration
         self._app.get("/sources_self/volume/{volume}", tags=["Source Configuration"])(
@@ -109,6 +113,8 @@ class APIConfiguration():
             self._configuration_controller.update_route_equalizer)
         self._app.get("/routes/{route_name}/reorder/{new_index}", tags=["Route Configuration"])(
             self._configuration_controller.update_route_position)
+        self._app.post("/sinks/add-discovered", tags=["Sink Configuration"])(
+            self.add_discovered_sink)
         self._app.add_exception_handler(Exception, self.__api_exception_handler)
         logger.info("[API] API loaded")
 
@@ -118,6 +124,71 @@ class APIConfiguration():
             status_code = 500,
             content = {"error": str(exception), "traceback": traceback.format_exc()}
         )
+
+    async def add_discovered_source(self, payload: Dict[str, str]):
+        """Add a discovered source to the configuration."""
+        device_key = payload.get("device_key") if payload else None
+        if not device_key:
+            raise HTTPException(status_code=400, detail="device_key is required")
+
+        device = self._configuration_controller.discovered_devices.get(device_key)
+        if not device:
+            raise HTTPException(status_code=404, detail="Discovered device not found")
+        if device.role != "source":
+            raise HTTPException(status_code=400, detail="Discovered device is not a source")
+
+        try:
+            if device.device_type == "per_process" or device.discovery_method == "cpp_per_process":
+                if not device.tag:
+                    raise HTTPException(status_code=400, detail="Per-process source missing tag")
+                self._configuration_controller.auto_add_process_source(device.tag)
+            else:
+                if not device.ip:
+                    raise HTTPException(status_code=400, detail="Discovered source missing IP")
+                service_info = {
+                    "name": device.name,
+                    "port": device.port,
+                    "properties": device.properties or {},
+                }
+                self._configuration_controller.auto_add_source(IPAddressType(device.ip), service_info)
+
+            self._configuration_controller.discovered_devices.pop(device_key, None)
+            return {"status": "ok"}
+        except HTTPException:
+            raise
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception("Failed to add discovered source")
+            raise HTTPException(status_code=500, detail="Failed to add discovered source") from exc
+
+    async def add_discovered_sink(self, payload: Dict[str, str]):
+        """Add a discovered sink to the configuration."""
+        device_key = payload.get("device_key") if payload else None
+        if not device_key:
+            raise HTTPException(status_code=400, detail="device_key is required")
+
+        device = self._configuration_controller.discovered_devices.get(device_key)
+        if not device:
+            raise HTTPException(status_code=404, detail="Discovered device not found")
+        if device.role != "sink":
+            raise HTTPException(status_code=400, detail="Discovered device is not a sink")
+
+        if not device.ip:
+            raise HTTPException(status_code=400, detail="Discovered sink missing IP")
+
+        try:
+            service_info = {
+                "name": device.name,
+                "port": device.port,
+                "properties": device.properties or {},
+            }
+            self._configuration_controller.auto_add_sink(IPAddressType(device.ip), service_info)
+            self._configuration_controller.discovered_devices.pop(device_key, None)
+            return {"status": "ok"}
+        except HTTPException:
+            raise
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception("Failed to add discovered sink")
+            raise HTTPException(status_code=500, detail="Failed to add discovered sink") from exc
     
     def get_rtp_compatible_sinks(self):
         """Get all configured sinks that are not groups and have protocol set to 'rtp'.

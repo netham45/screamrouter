@@ -266,21 +266,20 @@ void NetworkAudioReceiver::run() {
                 auto received_time = std::chrono::steady_clock::now();
 
                 if (process_and_validate_payload(receive_buffer.data(), bytes_received, client_addr, received_time, packet, source_tag)) {
-                    // Check if source is new
+                    // Check if source is new and always track it for discovery polling
                     bool is_new_source = false;
-                    { // Scope for known_tags_mutex_ lock
+                    {
                         std::lock_guard<std::mutex> lock(known_tags_mutex_);
-                        if (known_source_tags_.find(source_tag) == known_source_tags_.end()) {
-                            known_source_tags_.insert(source_tag);
-                            is_new_source = true;
+                        auto insert_result = known_source_tags_.insert(source_tag);
+                        is_new_source = insert_result.second;
+                    }
 
-                            // Add to seen_tags_ if not already present
-                            std::lock_guard<std::mutex> seen_lock(seen_tags_mutex_);
-                            if (std::find(seen_tags_.begin(), seen_tags_.end(), source_tag) == seen_tags_.end()) {
-                                seen_tags_.push_back(source_tag);
-                            }
+                    {
+                        std::lock_guard<std::mutex> seen_lock(seen_tags_mutex_);
+                        if (std::find(seen_tags_.begin(), seen_tags_.end(), source_tag) == seen_tags_.end()) {
+                            seen_tags_.push_back(source_tag);
                         }
-                    } // known_tags_mutex_ and seen_tags_mutex_ (if taken) released here
+                    }
 
                     if (is_new_source) {
                         log_message("New source detected: " + source_tag);
@@ -319,7 +318,9 @@ void NetworkAudioReceiver::run() {
 
 std::vector<std::string> NetworkAudioReceiver::get_seen_tags() {
     std::lock_guard<std::mutex> lock(seen_tags_mutex_);
-    return seen_tags_; // Return a copy
+    std::vector<std::string> tags;
+    tags.swap(seen_tags_); // Return collected tags and clear for next poll
+    return tags;
 }
 
 } // namespace audio

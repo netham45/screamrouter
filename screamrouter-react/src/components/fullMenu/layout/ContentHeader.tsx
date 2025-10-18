@@ -11,6 +11,7 @@ import {
 import { ContentHeaderProps } from '../types';
 import { getCategoryTitle, openAddPage } from '../utils';
 import { ViewModeToggle, SortDropdown } from '../controls';
+import { useTutorial } from '../../../context/TutorialContext';
 
 /**
  * ContentHeader component for the FullMenu.
@@ -24,6 +25,8 @@ const ContentHeader: React.FC<ContentHeaderProps> = ({
   sortConfig,
   onSort
 }) => {
+  const { completeStep } = useTutorial();
+
   // Define colors based on color mode
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
@@ -36,12 +39,15 @@ const ContentHeader: React.FC<ContentHeaderProps> = ({
     switch (currentCategory) {
       case 'sources':
         openAddPage('sources');
+        completeStep('add-source-button', true); // Auto-advance after opening window
         break;
       case 'sinks':
         openAddPage('sinks');
+        completeStep('add-sink-button', true); // Auto-advance after opening window
         break;
       case 'routes':
         openAddPage('routes');
+        completeStep('add-route-button', true); // Auto-advance after opening window
         break;
       default:
         break;
@@ -66,7 +72,12 @@ const ContentHeader: React.FC<ContentHeaderProps> = ({
   const sortOptions = [
     { key: 'name', label: 'Name' },
     { key: 'enabled', label: 'Status' },
-    ...(currentCategory !== 'routes' ? [{ key: 'active', label: 'Active' }] : []),
+    ...(currentCategory === 'routes'
+      ? [
+          { key: 'source', label: 'Source' },
+          { key: 'sink', label: 'Sink' }
+        ]
+      : [{ key: 'active', label: 'Active' }]),
     { key: 'favorite', label: 'Favorite' }
   ];
 
@@ -99,6 +110,7 @@ const ContentHeader: React.FC<ContentHeaderProps> = ({
               colorScheme="blue"
               leftIcon={<i className="fas fa-plus"></i>}
               onClick={handleAddItem}
+              data-tutorial-id={showAddButton ? `add-${currentCategory}-button` : undefined}
             >
               Add {currentCategory === 'sources' ? 'Source' : currentCategory === 'sinks' ? 'Sink' : 'Route'}
             </Button>
@@ -109,6 +121,7 @@ const ContentHeader: React.FC<ContentHeaderProps> = ({
                 colorScheme="purple"
                 leftIcon={<i className="fas fa-object-group"></i>}
                 onClick={handleAddGroup}
+                data-tutorial-id={`add-${currentCategory}-group-button`}
               >
                 Add {currentCategory === 'sources' ? 'Source' : 'Sink'} Group
               </Button>

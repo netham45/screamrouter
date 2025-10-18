@@ -75,6 +75,7 @@ export interface HeaderBarProps {
   activeSource: string | null;
   controlSource?: (sourceName: string, action: 'prevtrack' | 'play' | 'nexttrack') => Promise<void>;
   updateVolume?: (type: 'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source', name: string, volume: number) => Promise<void>;
+  onStartTutorial: () => void;
 }
 
 /**

@@ -27,6 +27,10 @@ interface TimeshiftSliderProps {
    * Callback function to handle changes in the timeshift value.
    */
   onChange: (value: number) => void;
+  /**
+   * Optional tutorial identifier used to highlight this control.
+   */
+  dataTutorialId?: string;
 }
 
 /**
@@ -35,7 +39,7 @@ interface TimeshiftSliderProps {
  * @param {TimeshiftSliderProps} props - The props passed to the component.
  * @returns {JSX.Element} The rendered JSX element.
  */
-const TimeshiftSlider: React.FC<TimeshiftSliderProps> = ({ value, onChange }) => {
+const TimeshiftSlider: React.FC<TimeshiftSliderProps> = ({ value, onChange, dataTutorialId }) => {
   /**
    * State variable to store the local value of the timeshift slider.
    */
@@ -104,7 +108,7 @@ const TimeshiftSlider: React.FC<TimeshiftSliderProps> = ({ value, onChange }) =>
   };
 
   return (
-    <Box width="100%" maxWidth="300px">
+    <Box width="100%" maxWidth="300px" data-tutorial-id={dataTutorialId}>
       <Flex direction="column" width="100%">
         <Slider
           id="timeshift-slider"

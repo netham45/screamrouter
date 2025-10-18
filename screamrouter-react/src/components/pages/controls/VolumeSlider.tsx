@@ -29,6 +29,10 @@ interface VolumeSliderProps {
    * Callback function to handle changes in the volume value.
    */
   onChange: (value: number) => void;
+  /**
+   * Optional tutorial identifier used to highlight this control.
+   */
+  dataTutorialId?: string;
 }
 
 /**
@@ -41,7 +45,7 @@ interface VolumeSliderProps {
  * @param {VolumeSliderProps} props - The props passed to the component.
  * @returns {JSX.Element} The rendered JSX element.
  */
-const VolumeSlider: React.FC<VolumeSliderProps> = ({ value, onChange }) => {
+const VolumeSlider: React.FC<VolumeSliderProps> = ({ value, onChange, dataTutorialId }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   
   // Color values for light/dark mode
@@ -51,7 +55,7 @@ const VolumeSlider: React.FC<VolumeSliderProps> = ({ value, onChange }) => {
   const textColor = useColorModeValue('gray.700', 'gray.200');
   
   return (
-    <Box width="100%" maxWidth="300px">
+    <Box width="100%" maxWidth="300px" data-tutorial-id={dataTutorialId}>
       <Flex direction="column" width="100%">
         <Slider
           id="volume-slider"

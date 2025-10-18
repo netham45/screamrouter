@@ -37,6 +37,11 @@ interface NavItemProps {
   badge?: number;
   
   /**
+   * Optional tutorial target identifier.
+   */
+  dataTutorialId?: string;
+  
+  /**
    * Click handler for the navigation item.
    */
   onClick: () => void;
@@ -53,6 +58,7 @@ const NavItem: React.FC<NavItemProps> = ({
   label,
   isActive = false,
   badge,
+  dataTutorialId,
   onClick
 }) => {
   // Define colors based on color mode and active state
@@ -79,6 +85,7 @@ const NavItem: React.FC<NavItemProps> = ({
       onClick={onClick}
       aria-current={isActive ? 'page' : undefined}
       leftIcon={<i className={`fas fa-${icon}`} aria-hidden="true"></i>}
+      data-tutorial-id={dataTutorialId}
     >
       <Flex width="100%" justify="space-between" align="center">
         <Text>{label}</Text>
