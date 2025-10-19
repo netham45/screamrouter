@@ -19,6 +19,14 @@ SourceManager::SourceManager(std::recursive_mutex& manager_mutex, TimeshiftManag
     LOG_CPP_INFO("SourceManager created.");
 }
 
+void SourceManager::set_capture_device_callbacks(
+    std::function<bool(const std::string&)> ensure_callback,
+    std::function<void(const std::string&)> release_callback) {
+    m_ensure_capture_callback = ensure_callback;
+    m_release_capture_callback = release_callback;
+    LOG_CPP_INFO("SourceManager capture device callbacks set.");
+}
+
 SourceManager::~SourceManager() {
     LOG_CPP_INFO("SourceManager destroyed.");
 }
@@ -95,6 +103,38 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
         return "";
     }
 
+    // Check if this is a system audio capture source and activate the capture device
+    if (m_ensure_capture_callback && !config.tag.empty()) {
+        bool is_system_tag = false;
+        const char* backend_label = "ALSA";
+#if defined(_WIN32)
+        backend_label = "WASAPI";
+        is_system_tag = config.tag.rfind("wc:", 0) == 0 ||
+                        config.tag.rfind("ws:", 0) == 0;
+#else
+        is_system_tag = config.tag.rfind("ac:", 0) == 0;
+#endif
+
+        if (is_system_tag) {
+            LOG_CPP_INFO("Source instance %s uses %s capture device: %s",
+                         instance_id.c_str(), backend_label, config.tag.c_str());
+
+            if (m_ensure_capture_callback(config.tag)) {
+                std::scoped_lock lock(m_manager_mutex);
+                m_instance_to_capture_tag[instance_id] = config.tag;
+                LOG_CPP_INFO("%s capture device %s activated for instance %s",
+                             backend_label,
+                             config.tag.c_str(),
+                             instance_id.c_str());
+            } else {
+                LOG_CPP_ERROR("Failed to activate %s capture device %s for instance %s",
+                              backend_label,
+                              config.tag.c_str(),
+                              instance_id.c_str());
+            }
+        }
+    }
+
     m_sources.at(instance_id)->start();
     LOG_CPP_INFO("Source instance %s (tag: %s) configured and started successfully.", instance_id.c_str(), config.tag.c_str());
     return instance_id;
@@ -125,6 +165,25 @@ bool SourceManager::remove_source(const std::string& instance_id) {
         m_rtp_to_source_queues.erase(instance_id);
         m_source_to_sink_queues.erase(instance_id);
         m_command_queues.erase(instance_id);
+
+        // Release system audio capture device if this source was using one
+        auto capture_it = m_instance_to_capture_tag.find(instance_id);
+        if (capture_it != m_instance_to_capture_tag.end()) {
+            std::string capture_tag = capture_it->second;
+            m_instance_to_capture_tag.erase(capture_it);
+            
+            if (m_release_capture_callback) {
+                m_release_capture_callback(capture_tag);
+                const char* backend_label = "ALSA";
+#if defined(_WIN32)
+                backend_label = "WASAPI";
+#endif
+                LOG_CPP_INFO("Released %s capture device %s for instance %s",
+                             backend_label,
+                             capture_tag.c_str(),
+                             instance_id.c_str());
+            }
+        }
 
         if (m_timeshift_manager && !source_tag_for_removal.empty()) {
             m_timeshift_manager->unregister_processor(instance_id, source_tag_for_removal);

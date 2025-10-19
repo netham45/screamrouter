@@ -27,7 +27,7 @@ export interface SourceMetadata {
 
 export interface Source {
   name: string;
-  ip: string;
+  ip?: string | null;
   enabled: boolean;
   is_group: boolean;
   group_members: string[];
@@ -40,8 +40,10 @@ export interface Source {
   favorite?: boolean;
   is_primary?: boolean;
   is_process?: boolean;
-  tag?: string;
-  channels?: number; // Added for Source
+  tag?: string | null;
+  channels?: number | null; // Added for Source
+  sample_rate?: number | null;
+  bit_depth?: number | null;
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
   metadata?: SourceMetadata;
 }
@@ -93,6 +95,19 @@ export interface Route {
   timeshift: number;
   favorite?: boolean;
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
+}
+
+export interface SystemAudioDeviceInfo {
+  tag: string;
+  direction: 'capture' | 'playback';
+  friendly_name: string;
+  hw_id?: string;
+  endpoint_id?: string;
+  card_index: number;
+  device_index: number;
+  channels_supported: number[];
+  sample_rates: number[];
+  present: boolean;
 }
 
 /**
@@ -214,10 +229,14 @@ export interface WebSocketUpdate {
   sources?: Record<string, Source>;
   sinks?: Record<string, Sink>;
   routes?: Record<string, Route>;
+  system_capture_devices?: Record<string, SystemAudioDeviceInfo> | SystemAudioDeviceInfo[];
+  system_playback_devices?: Record<string, SystemAudioDeviceInfo> | SystemAudioDeviceInfo[];
   removals?: {
     sources?: string[];
     sinks?: string[];
     routes?: string[];
+    system_capture_devices?: string[];
+    system_playback_devices?: string[];
   };
 }
 
@@ -307,11 +326,40 @@ const setupWebSocket = async (handler: WebSocketMessageHandler) => {
       axios.get<Record<string, Route>>('/routes')
     ]);
 
+    let systemCaptureDevices: SystemAudioDeviceInfo[] = [];
+    let systemPlaybackDevices: SystemAudioDeviceInfo[] = [];
+
+    try {
+      const systemDevicesRes = await axios.get<{
+        system_capture_devices?: SystemAudioDeviceInfo[] | Record<string, SystemAudioDeviceInfo>;
+        system_playback_devices?: SystemAudioDeviceInfo[] | Record<string, SystemAudioDeviceInfo>;
+      }>('/system_audio_devices');
+
+      const capturePayload = systemDevicesRes.data.system_capture_devices;
+      const playbackPayload = systemDevicesRes.data.system_playback_devices;
+
+      if (Array.isArray(capturePayload)) {
+        systemCaptureDevices = capturePayload;
+      } else if (capturePayload) {
+        systemCaptureDevices = Object.values(capturePayload);
+      }
+
+      if (Array.isArray(playbackPayload)) {
+        systemPlaybackDevices = playbackPayload;
+      } else if (playbackPayload) {
+        systemPlaybackDevices = Object.values(playbackPayload);
+      }
+    } catch (error) {
+      console.warn('Failed to fetch system audio devices:', error);
+    }
+
     // Send initial state through handler
     handler({
       sources: sourcesRes.data,
       sinks: sinksRes.data,
-      routes: routesRes.data
+      routes: routesRes.data,
+      system_capture_devices: systemCaptureDevices,
+      system_playback_devices: systemPlaybackDevices
     });
   } catch (error) {
     console.error('Error fetching initial state:', error);
@@ -329,6 +377,10 @@ const ApiService = {
   getSources: () => axios.get<Record<string, Source>>('/sources'),
   getSinks: () => axios.get<Record<string, Sink>>('/sinks'),
   getRoutes: () => axios.get<Record<string, Route>>('/routes'),
+  getSystemAudioDevices: () => axios.get<{
+    system_capture_devices?: SystemAudioDeviceInfo[] | Record<string, SystemAudioDeviceInfo>;
+    system_playback_devices?: SystemAudioDeviceInfo[] | Record<string, SystemAudioDeviceInfo>;
+  }>('/system_audio_devices'),
 
   // POST requests for adding new items
   addSource: (data: Source) => axios.post<Source>('/sources', data),

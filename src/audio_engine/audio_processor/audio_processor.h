@@ -139,7 +139,7 @@ private:
 
     // --- Normalization Flags ---
     bool volume_normalization_enabled_ = false;
-    bool eq_normalization_enabled_ = true;
+    bool eq_normalization_enabled_ = false;
     float current_gain_ = 1.0f;
 
     // --- Internal Buffers ---

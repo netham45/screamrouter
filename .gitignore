@@ -21,6 +21,7 @@ site/**/*.txt
 **/*.lib
 tasks/**
 **/*.so
+**/*.o
 **/*.mp3
 !**/output_silence.mp3
 **/*.tar.gz

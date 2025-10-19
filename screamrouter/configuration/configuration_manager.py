@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import os
 import socket
+import sys
 import threading
 import traceback
 import uuid
@@ -30,6 +31,9 @@ from ipaddress import IPv4Address
 from typing import Any, Dict, List, Optional, Tuple
 from subprocess import TimeoutExpired
 
+_CAPTURE_ALLOWED_SAMPLE_RATES = {44100, 48000, 96000}
+_CAPTURE_DEFAULT_SAMPLE_RATE = 48000
+
 import dns.nameserver
 import dns.rdtypes
 import dns.rdtypes.ANY
@@ -55,7 +59,8 @@ from screamrouter.screamrouter_types.annotations import (DelayType, IPAddressTyp
 from screamrouter.screamrouter_types.configuration import (Equalizer, RouteDescription,
                                                   SinkDescription,
                                                   SourceDescription,
-                                                  SpeakerLayout)
+                                                  SpeakerLayout,
+                                                  SystemAudioDeviceInfo)
 from screamrouter.screamrouter_types.mdns import (DiscoveredDevice,
                                           MdnsSnapshot,
                                           UnifiedDiscoverySnapshot)
@@ -84,6 +89,10 @@ except ImportError as e:
 
 class ConfigurationManager(threading.Thread):
     """Tracks configuration and loading the main receiver/sinks based off of it"""
+    @staticmethod
+    def _sanitize_screamrouter_label(label: str) -> str:
+        return ''.join(c.lower() if c.isalnum() or c in ('-', '_') else '_' for c in label)
+
     def __init__(self, websocket: APIWebStream,
                  plugin_manager: PluginManager,
                  websocket_config: APIWebsocketConfig,
@@ -153,6 +162,17 @@ class ConfigurationManager(threading.Thread):
         self._hostname_cache_lock: threading.Lock = threading.Lock()
         """Synchronizes access to the hostname cache"""
 
+        self.system_capture_devices: List[SystemAudioDeviceInfo] = []
+        """Cached metadata for system capture endpoints."""
+        self.system_playback_devices: List[SystemAudioDeviceInfo] = []
+        """Cached metadata for system playback endpoints."""
+        self._system_device_lock: threading.Lock = threading.Lock()
+        """Protects system device metadata during updates."""
+        self._system_device_poll_interval: float = 3.0
+        """Polling interval (seconds) for system device notifications."""
+        self._device_notification_task: Optional[asyncio.Task] = None
+        """Asyncio task handle for system device watcher."""
+
         # --- C++ Engine Initialization (using the passed AudioManager) ---
         if self.cpp_audio_manager and screamrouter_audio_engine: # Check if AudioManager was provided and import succeeded
             # The AudioManager instance is already initialized by the main script.
@@ -175,6 +195,7 @@ class ConfigurationManager(threading.Thread):
         # --- End C++ Engine Initialization ---
 
         self.__load_config() # Load YAML config
+        self._initialize_system_device_registry()
 
         _logger.info("------------------------------------------------------------------------")
         _logger.info("  ScreamRouter")
@@ -202,6 +223,16 @@ class ConfigurationManager(threading.Thread):
         except RuntimeError:
             # We're not in an async context, use asyncio.run()
             return asyncio.run(coro)
+
+    def _broadcast_full_configuration(self):
+        """Return coroutine to broadcast current configuration and device metadata."""
+        return self.websocket_config.broadcast_config_update(
+            self.source_descriptions,
+            self.sink_descriptions,
+            self.route_descriptions,
+            self.system_capture_devices,
+            self.system_playback_devices,
+        )
 
     # Public functions
 
@@ -1074,6 +1105,8 @@ class ConfigurationManager(threading.Thread):
         self.sink_descriptions = []
         self.source_descriptions = []
         self.route_descriptions = []
+        self.system_capture_devices = []
+        self.system_playback_devices = []
         config_needs_save = False  # Track if we need to save due to missing config_ids
         
         try:
@@ -1214,7 +1247,19 @@ class ConfigurationManager(threading.Thread):
                             _logger.warning(f"Skipping unexpected route data type: {type(item_data)} for data: {item_data}")
                     except Exception as e:
                         _logger.error(f"Failed to parse route data: {item_data}. Error: {e}")
-                
+                raw_capture_devices = savedata.get("system_capture_devices")
+                raw_playback_devices = savedata.get("system_playback_devices")
+
+                if raw_capture_devices is None:
+                    raw_capture_devices = []
+                    config_needs_save = True
+                if raw_playback_devices is None:
+                    raw_playback_devices = []
+                    config_needs_save = True
+
+                self.system_capture_devices = self._parse_system_device_list(raw_capture_devices, "capture")
+                self.system_playback_devices = self._parse_system_device_list(raw_playback_devices, "playback")
+
                 # The Pydantic models now have default_factory=dict for speaker_layouts,
                 # so the old check loop for None speaker_layout is no longer needed.
 
@@ -1241,9 +1286,388 @@ class ConfigurationManager(threading.Thread):
             _logger.info("[Configuration Manager] Saving configuration with newly generated config_ids")
             self.__save_config()
 
-        self._safe_async_run(self.websocket_config.broadcast_config_update(self.source_descriptions,
-                                                                self.sink_descriptions,
-                                                                self.route_descriptions))
+        self._safe_async_run(self._broadcast_full_configuration())
+
+    def _infer_card_device_from_tag(self, tag: str, hw_id: Optional[str] = None) -> Tuple[int, int]:
+        """Extract card and device indexes from a system device tag or hw_id."""
+        try:
+            if ":" in tag:
+                _, body = tag.split(":", 1)
+            else:
+                body = tag
+            if "." in body:
+                card_str, device_str = body.split(".", 1)
+                return int(card_str), int(device_str)
+        except (ValueError, TypeError):
+            pass
+
+        if hw_id:
+            try:
+                if hw_id.startswith("hw:"):
+                    hw_body = hw_id[3:]
+                else:
+                    hw_body = hw_id
+                if "," in hw_body:
+                    card_str, device_str = hw_body.split(",", 1)
+                    return int(card_str), int(device_str)
+            except (ValueError, TypeError):
+                pass
+        return -1, -1
+
+    def _parse_system_device_list(self, raw_devices: Optional[List[Any]], direction_hint: Optional[str] = None) -> List[SystemAudioDeviceInfo]:
+        """Coerce persisted device metadata into SystemAudioDeviceInfo models."""
+        devices: List[SystemAudioDeviceInfo] = []
+        if not raw_devices:
+            return devices
+
+        for item in raw_devices:
+            model_data: Dict[str, Any]
+            if isinstance(item, SystemAudioDeviceInfo):
+                devices.append(item)
+                continue
+
+            if hasattr(item, "model_dump"):
+                try:
+                    model_data = item.model_dump()
+                except Exception:  # pylint: disable=broad-except
+                    model_data = dict(item)
+            elif isinstance(item, dict):
+                model_data = dict(item)
+            else:
+                continue
+
+            tag = str(model_data.get("tag", "")).strip()
+            direction = str(model_data.get("direction", direction_hint or "capture")).lower()
+            if direction not in ("capture", "playback"):
+                direction = direction_hint or "capture"
+
+            channels_supported_raw = model_data.get("channels_supported", [])
+            if isinstance(channels_supported_raw, list):
+                channels_supported = [int(c) for c in channels_supported_raw if isinstance(c, (int, float))]
+            else:
+                channels_supported = []
+
+            sample_rates_raw = model_data.get("sample_rates", [])
+            if isinstance(sample_rates_raw, list):
+                sample_rates = [int(r) for r in sample_rates_raw if isinstance(r, (int, float))]
+            else:
+                sample_rates = []
+
+            card_index = int(model_data.get("card_index", -1))
+            device_index = int(model_data.get("device_index", -1))
+            if card_index < 0 or device_index < 0:
+                inferred_card, inferred_device = self._infer_card_device_from_tag(tag, model_data.get("hw_id"))
+                if card_index < 0:
+                    card_index = inferred_card
+                if device_index < 0:
+                    device_index = inferred_device
+
+            friendly_name = str(model_data.get("friendly_name", tag or ""))
+            hw_id = model_data.get("hw_id")
+            endpoint_id = model_data.get("endpoint_id")
+            present = bool(model_data.get("present", False))
+
+            devices.append(SystemAudioDeviceInfo(
+                tag=tag,
+                direction=direction,
+                friendly_name=friendly_name,
+                hw_id=hw_id if hw_id else None,
+                endpoint_id=endpoint_id if endpoint_id else None,
+                card_index=card_index,
+                device_index=device_index,
+                channels_supported=channels_supported,
+                sample_rates=sample_rates,
+                present=present,
+            ))
+
+        return devices
+
+    def _normalize_device_direction(self, direction_obj: Any, default: str = "capture") -> str:
+        """Normalize C++ direction enums/values to capture/playback strings."""
+        if hasattr(direction_obj, "name"):
+            value = str(direction_obj.name).lower()
+        elif isinstance(direction_obj, str):
+            value = direction_obj.lower()
+        else:
+            value = str(direction_obj).lower()
+
+        if "playback" in value:
+            return "playback"
+        if "capture" in value:
+            return "capture"
+        try:
+            numeric = int(direction_obj)
+            if numeric == 1:
+                return "playback"
+            if numeric == 0:
+                return "capture"
+        except (TypeError, ValueError):
+            pass
+        return default
+
+    def _build_device_from_snapshot(self, tag: str, info: Any) -> SystemAudioDeviceInfo:
+        """Convert C++ SystemDeviceInfo snapshot object into Pydantic model."""
+        friendly_name = str(getattr(info, "friendly_name", tag) or tag)
+        hw_id = str(getattr(info, "hw_id", ""))
+        endpoint_id = str(getattr(info, "endpoint_id", ""))
+        direction = self._normalize_device_direction(getattr(info, "direction", None))
+
+        channels_supported: List[int] = []
+        channel_range = getattr(info, "channels", None)
+        if channel_range is not None:
+            for attr in ("min", "max"):
+                value = getattr(channel_range, attr, 0)
+                if isinstance(value, (int, float)) and value > 0:
+                    channels_supported.append(int(value))
+        channels_supported = sorted(set(channels_supported))
+
+        sample_rates: List[int] = []
+        rate_range = getattr(info, "sample_rates", None)
+        if rate_range is not None:
+            for attr in ("min", "max"):
+                value = getattr(rate_range, attr, 0)
+                if isinstance(value, (int, float)) and value > 0:
+                    sample_rates.append(int(value))
+        sample_rates = sorted(set(sample_rates))
+
+        card_index, device_index = self._infer_card_device_from_tag(tag, hw_id)
+        present = bool(getattr(info, "present", True))
+        bit_depth_value = getattr(info, "bit_depth", None)
+        try:
+            bit_depth_value = int(bit_depth_value) if bit_depth_value not in (None, "") else None
+        except Exception:  # pylint: disable=broad-except
+            bit_depth_value = None
+
+        return SystemAudioDeviceInfo(
+            tag=tag,
+            direction=direction,
+            friendly_name=friendly_name,
+            hw_id=hw_id or None,
+            endpoint_id=endpoint_id or None,
+            card_index=card_index,
+            device_index=device_index,
+            channels_supported=channels_supported,
+            sample_rates=sample_rates,
+            bit_depth=bit_depth_value,
+            present=present,
+        )
+
+    def _merge_system_device_snapshot(self, snapshot: Any) -> bool:
+        """Merge engine snapshot into cached device lists."""
+        if not snapshot:
+            _logger.debug("[Configuration Manager] Received empty system device snapshot.")
+            return False
+
+        try:
+            items = list(snapshot.items())
+        except AttributeError:
+            try:
+                items = [(key, snapshot[key]) for key in snapshot]
+            except Exception:  # pylint: disable=broad-except
+                _logger.exception("[Configuration Manager] Failed to iterate system device snapshot")
+                return False
+
+        _logger.debug("[Configuration Manager] Merging system device snapshot with %d entries", len(items))
+
+        changed = False
+        with self._system_device_lock:
+            capture_map = {device.tag: device for device in self.system_capture_devices}
+            playback_map = {device.tag: device for device in self.system_playback_devices}
+            seen_capture: set[str] = set()
+            seen_playback: set[str] = set()
+
+            for tag_obj, info in items:
+                try:
+                    tag = str(tag_obj)
+                except Exception:  # pylint: disable=broad-except
+                    continue
+
+                device_model = self._build_device_from_snapshot(tag, info)
+                if device_model.direction == "capture":
+                    existing = capture_map.get(tag)
+                    if not existing or existing != device_model:
+                        _logger.debug("[Configuration Manager] Capture device set: %s -> %s", tag, device_model.friendly_name)
+                        capture_map[tag] = device_model
+                        changed = True
+                    seen_capture.add(tag)
+                else:
+                    existing = playback_map.get(tag)
+                    if not existing or existing != device_model:
+                        _logger.debug("[Configuration Manager] Playback device set: %s -> %s", tag, device_model.friendly_name)
+                        playback_map[tag] = device_model
+                        changed = True
+                    seen_playback.add(tag)
+
+            for tag, device in list(capture_map.items()):
+                if tag not in seen_capture and device.present:
+                    capture_map[tag] = device.model_copy(update={"present": False})
+                    changed = True
+
+            for tag, device in list(playback_map.items()):
+                if tag not in seen_playback and device.present:
+                    playback_map[tag] = device.model_copy(update={"present": False})
+                    changed = True
+
+            new_capture = sorted(capture_map.values(), key=lambda d: (d.card_index, d.device_index, d.tag))
+            new_playback = sorted(playback_map.values(), key=lambda d: (d.card_index, d.device_index, d.tag))
+
+            if new_capture != self.system_capture_devices:
+                self.system_capture_devices = new_capture
+                _logger.info("[Configuration Manager] Updated system capture device cache (%d devices)", len(new_capture))
+                changed = True
+            if new_playback != self.system_playback_devices:
+                self.system_playback_devices = new_playback
+                _logger.info("[Configuration Manager] Updated system playback device cache (%d devices)", len(new_playback))
+                changed = True
+
+        return changed
+
+    def _apply_device_presence_notifications(self, notifications: List[Any]) -> bool:
+        """Update cached presence flags based on notification list."""
+        if not notifications:
+            return False
+
+        changed = False
+        with self._system_device_lock:
+            for note in notifications:
+                try:
+                    tag = str(getattr(note, "tag", ""))
+                except Exception:  # pylint: disable=broad-except
+                    continue
+                if not tag:
+                    continue
+
+                direction = self._normalize_device_direction(getattr(note, "direction", None))
+                present = bool(getattr(note, "present", False))
+                target_list = self.system_capture_devices if direction == "capture" else self.system_playback_devices
+
+                updated = False
+                for idx, device in enumerate(target_list):
+                    if device.tag == tag:
+                        if device.present != present:
+                            _logger.debug("[Configuration Manager] Updating presence for %s (direction=%s) -> %s", tag, direction, present)
+                            target_list[idx] = device.model_copy(update={"present": present})
+                            changed = True
+                        updated = True
+                        break
+
+                if not updated and present:
+                    inferred_card, inferred_device = self._infer_card_device_from_tag(tag)
+                    _logger.debug("[Configuration Manager] Creating placeholder device for notification: %s", tag)
+                    new_device = SystemAudioDeviceInfo(
+                        tag=tag,
+                        direction=direction,
+                        friendly_name=tag,
+                        card_index=inferred_card,
+                        device_index=inferred_device,
+                        channels_supported=[],
+                        sample_rates=[],
+                        present=True,
+                    )
+                    target_list.append(new_device)
+                    changed = True
+
+            if changed:
+                _logger.debug("[Configuration Manager] Presence notifications triggered resort of device caches")
+                self.system_capture_devices = sorted(self.system_capture_devices, key=lambda d: (d.card_index, d.device_index, d.tag))
+                self.system_playback_devices = sorted(self.system_playback_devices, key=lambda d: (d.card_index, d.device_index, d.tag))
+
+        return changed
+
+    def _find_system_device_by_tag(self, tag: str) -> Optional[SystemAudioDeviceInfo]:
+        """Lookup cached device information by tag."""
+        with self._system_device_lock:
+            for device in self.system_capture_devices:
+                if device.tag == tag:
+                    return device
+            for device in self.system_playback_devices:
+                if device.tag == tag:
+                    return device
+        return None
+
+    async def _system_device_monitor_loop(self):
+        """Periodic task to process system device notifications."""
+        _logger.info("[Configuration Manager] System device monitor started")
+        try:
+            while self.running:
+                try:
+                    changed = await self._poll_system_device_notifications()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # pylint: disable=broad-except
+                    _logger.exception("[Configuration Manager] System device poller error: %s", exc)
+                    changed = False
+
+                if changed:
+                    await self._broadcast_full_configuration()
+
+                await asyncio.sleep(self._system_device_poll_interval)
+        except asyncio.CancelledError:
+            _logger.info("[Configuration Manager] System device monitor cancelled")
+            raise
+        finally:
+            _logger.info("[Configuration Manager] System device monitor stopped")
+
+    async def _poll_system_device_notifications(self) -> bool:
+        """Drain notifications from C++ audio manager and update caches."""
+        if not self.cpp_audio_manager or not screamrouter_audio_engine:
+            return False
+
+        notifications: List[Any]
+        try:
+            notifications = self.cpp_audio_manager.drain_device_notifications()
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.exception("[Configuration Manager] Failed to drain device notifications: %s", exc)
+            return False
+
+        if not notifications:
+            return False
+
+        changed = False
+        if any(bool(getattr(note, "present", False)) for note in notifications):
+            try:
+                snapshot = self.cpp_audio_manager.list_system_devices()
+            except Exception as exc:  # pylint: disable=broad-except
+                _logger.exception("[Configuration Manager] Failed to list system devices: %s", exc)
+                snapshot = None
+            if snapshot is not None:
+                changed |= self._merge_system_device_snapshot(snapshot)
+
+        changed |= self._apply_device_presence_notifications(notifications)
+        return changed
+
+    def start_background_tasks(self) -> None:
+        """Start asyncio background tasks that depend on a running event loop."""
+        if not self.cpp_audio_manager or not screamrouter_audio_engine:
+            _logger.debug("[Configuration Manager] Skipping system device monitor startup; audio manager unavailable")
+            return
+        if self._device_notification_task and not self._device_notification_task.done():
+            return
+        self._device_notification_task = asyncio.create_task(self._system_device_monitor_loop())
+
+    def get_system_audio_device_snapshot(self) -> dict[str, list[SystemAudioDeviceInfo]]:
+        """Thread-safe deep copy of cached system capture/playback devices for API responses."""
+        with self._system_device_lock:
+            capture = [device.model_copy(deep=True) for device in self.system_capture_devices]
+            playback = [device.model_copy(deep=True) for device in self.system_playback_devices]
+        return {
+            "system_capture_devices": capture,
+            "system_playback_devices": playback,
+        }
+
+    def _initialize_system_device_registry(self) -> None:
+        """Populate system device caches from the audio manager on startup."""
+        if not self.cpp_audio_manager or not screamrouter_audio_engine:
+            return
+        try:
+            snapshot = self.cpp_audio_manager.list_system_devices()
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.warning("[Configuration Manager] Failed to fetch system device snapshot: %s", exc)
+            return
+        if snapshot:
+            changed = self._merge_system_device_snapshot(snapshot)
+            if changed:
+                self._safe_async_run(self._broadcast_full_configuration())
 
     def __multiprocess_save(self):
         """Saves the config to config.yaml (excludes temporary entities)"""
@@ -1251,9 +1675,18 @@ class ConfigurationManager(threading.Thread):
         permanent_sinks = [s for s in self.sink_descriptions if not getattr(s, 'is_temporary', False)]
         permanent_sources = [s for s in self.source_descriptions if not getattr(s, 'is_temporary', False)]
         permanent_routes = [r for r in self.route_descriptions if not getattr(r, 'is_temporary', False)]
-        
-        save_data: dict = {"sinks": permanent_sinks, "sources": permanent_sources,
-                           "routes": permanent_routes }
+
+        with self._system_device_lock:
+            capture_devices = [device.model_copy(deep=True) for device in self.system_capture_devices]
+            playback_devices = [device.model_copy(deep=True) for device in self.system_playback_devices]
+
+        save_data: dict = {
+            "sinks": permanent_sinks,
+            "sources": permanent_sources,
+            "routes": permanent_routes,
+            "system_capture_devices": capture_devices,
+            "system_playback_devices": playback_devices,
+        }
         with open(constants.CONFIG_PATH, 'w', encoding="UTF-8") as yaml_file:
             yaml.dump(save_data, yaml_file)
 
@@ -1266,9 +1699,7 @@ class ConfigurationManager(threading.Thread):
         proc = threading.Thread(target=self.__multiprocess_save)
         proc.start()
         proc.join()
-        self._safe_async_run(self.websocket_config.broadcast_config_update(self.source_descriptions,
-                                                                self.sink_descriptions,
-                                                                self.route_descriptions))
+        self._safe_async_run(self._broadcast_full_configuration())
         self.configuration_semaphore.release()
 
     # --- C++ State Translation (Task 04_02) ---
@@ -1314,11 +1745,98 @@ class ConfigurationManager(threading.Thread):
             # B. Create and populate the nested C++ SinkConfig
             cpp_sink_engine_config = CppSinkConfig()
             cpp_sink_engine_config.id = cpp_applied_sink.sink_id # Use the same ID
-            cpp_sink_engine_config.output_ip = str(py_sink_desc.ip) if py_sink_desc.ip else ""
+            sink_ip_value = py_sink_desc.ip
+            if isinstance(sink_ip_value, str):
+                sink_address = sink_ip_value
+            elif sink_ip_value is not None:
+                sink_address = str(sink_ip_value)
+            else:
+                sink_address = ""
+
+            if isinstance(sink_address, str) and sink_address.startswith("sr_in:"):
+                label = sink_address[len("sr_in:"):]
+                sanitized_label = self._sanitize_screamrouter_label(label)
+                if sanitized_label and sanitized_label != label:
+                    sink_address = f"sr_in:{sanitized_label}"
+                    try:
+                        py_sink_desc.ip = sink_address
+                    except Exception:  # pylint: disable=broad-except
+                        pass
+
             cpp_sink_engine_config.output_port = py_sink_desc.port if py_sink_desc.port else 0
+
+            protocol_lower = (py_sink_desc.protocol or "").lower()
+            protocol_is_system = protocol_lower in {"system_audio", "alsa", "wasapi"}
+            if not protocol_is_system and isinstance(sink_address, str):
+                if sink_address.startswith(("ap:", "hw:", "wp:", "ws:", "sr_in:")):
+                    protocol_is_system = True
+                    protocol_lower = "system_audio"
+                    try:
+                        py_sink_desc.protocol = "system_audio"
+                    except Exception:  # pylint: disable=broad-except
+                        pass
+
+            if protocol_is_system:
+                if protocol_lower != "system_audio":
+                    try:
+                        py_sink_desc.protocol = "system_audio"
+                        protocol_lower = "system_audio"
+                    except Exception:  # pylint: disable=broad-except
+                        pass
+                cpp_sink_engine_config.output_ip = sink_address
+                lookup_tag = sink_address
+                is_windows = sys.platform.startswith("win")
+
+                if not is_windows and lookup_tag.startswith("hw:"):
+                    hw_body = lookup_tag[3:]
+                    if "," in hw_body:
+                        card_str, device_str = hw_body.split(",", 1)
+                        lookup_tag = f"ap:{card_str}.{device_str}"
+
+                if lookup_tag:
+                    device_info = self._find_system_device_by_tag(lookup_tag)
+                    backend_label = "WASAPI" if (protocol_lower == "wasapi" or is_windows) else "ALSA"
+                    if device_info:
+                        if not device_info.present:
+                            _logger.warning(
+                                "[Config Translator] System audio sink '%s' references %s device %s which is currently offline.",
+                                py_sink_desc.name,
+                                backend_label,
+                                lookup_tag,
+                            )
+                    else:
+                        _logger.warning(
+                            "[Config Translator] System audio sink '%s' references unknown %s device %s.",
+                            py_sink_desc.name,
+                            backend_label,
+                            lookup_tag,
+                        )
+                else:
+                    _logger.warning(
+                        "[Config Translator] System audio sink '%s' missing device tag/address; playback may fail.",
+                        py_sink_desc.name,
+                    )
+            else:
+                cpp_sink_engine_config.output_ip = sink_address
             cpp_sink_engine_config.bitdepth = py_sink_desc.bit_depth
             cpp_sink_engine_config.samplerate = py_sink_desc.sample_rate
             cpp_sink_engine_config.channels = py_sink_desc.channels
+
+            if protocol_is_system and isinstance(sink_address, str) and sink_address.startswith("sr_in:"):
+                device_info = self._find_system_device_by_tag(sink_address)
+                if device_info:
+                    if device_info.hw_id:
+                        cpp_sink_engine_config.output_ip = device_info.hw_id
+                    if device_info.sample_rates:
+                        cpp_sink_engine_config.samplerate = int(device_info.sample_rates[0])
+                    if device_info.channels_supported:
+                        cpp_sink_engine_config.channels = int(device_info.channels_supported[0])
+                    if device_info.bit_depth:
+                        cpp_sink_engine_config.bitdepth = int(device_info.bit_depth)
+                        try:
+                            py_sink_desc.bit_depth = int(device_info.bit_depth)
+                        except Exception:  # pylint: disable=broad-except
+                            pass
 
             # Define a mapping for channel layout strings to byte values
             channel_layout_map = {
@@ -1352,7 +1870,10 @@ class ConfigurationManager(threading.Thread):
 
             cpp_sink_engine_config.chlayout1 = chlayout1
             cpp_sink_engine_config.chlayout2 = chlayout2
-            cpp_sink_engine_config.protocol = py_sink_desc.protocol
+            if protocol_is_system:
+                cpp_sink_engine_config.protocol = "system_audio"
+            else:
+                cpp_sink_engine_config.protocol = py_sink_desc.protocol
             
             # Log protocol being set for debugging WebRTC sinks
             if py_sink_desc.protocol == "webrtc":
@@ -1522,6 +2043,34 @@ class ConfigurationManager(threading.Thread):
                     # Get target format from the *sink* description
                     cpp_source_path.target_output_channels = py_sink_desc.channels
                     cpp_source_path.target_output_samplerate = py_sink_desc.sample_rate
+
+                    preferred_input_channels = py_source_desc.channels
+                    if preferred_input_channels is None:
+                        preferred_input_channels = py_sink_desc.channels
+                    cpp_source_path.source_input_channels = int(preferred_input_channels or 0)
+
+                    preferred_input_samplerate = None
+                    if py_source_desc.sample_rate in _CAPTURE_ALLOWED_SAMPLE_RATES:
+                        preferred_input_samplerate = int(py_source_desc.sample_rate)
+
+                    fallback_capture_rate = None
+                    if py_sink_desc.sample_rate in _CAPTURE_ALLOWED_SAMPLE_RATES:
+                        fallback_capture_rate = int(py_sink_desc.sample_rate)
+
+                    effective_capture_rate = (
+                        preferred_input_samplerate
+                        if preferred_input_samplerate is not None
+                        else fallback_capture_rate
+                    )
+                    if effective_capture_rate is None:
+                        effective_capture_rate = _CAPTURE_DEFAULT_SAMPLE_RATE
+
+                    cpp_source_path.source_input_samplerate = int(effective_capture_rate)
+
+                    preferred_input_bitdepth = py_source_desc.bit_depth
+                    if preferred_input_bitdepth is None:
+                        preferred_input_bitdepth = py_sink_desc.bit_depth
+                    cpp_source_path.source_input_bitdepth = int(preferred_input_bitdepth or 0)
                     
                     # generated_instance_id remains empty - C++ will fill it
                     
@@ -1721,9 +2270,7 @@ class ConfigurationManager(threading.Thread):
 
     def __reload_configuration(self) -> None:
         """Notifies the configuration manager to reload the configuration"""
-        self._safe_async_run(self.websocket_config.broadcast_config_update(self.source_descriptions,
-                                                        self.sink_descriptions,
-                                                        self.route_descriptions))
+        self._safe_async_run(self._broadcast_full_configuration())
         _logger.debug("[Configuration Manager] Requesting config reload")
         if not self.reload_condition.acquire(timeout=10):
             raise TimeoutError("Failed to get configuration reload condition")
@@ -1746,9 +2293,13 @@ class ConfigurationManager(threading.Thread):
             _logger.debug("[Configuration Manager] Temporary sink: name='%s', config_id='%s', protocol='%s', enabled=%s",
                          sink.name, sink.config_id, sink.protocol, sink.enabled)
         
-        self._safe_async_run(self.websocket_config.broadcast_config_update(self.source_descriptions,
-                                                        self.sink_descriptions + self.active_temporary_sinks,
-                                                        self.route_descriptions + self.active_temporary_routes))
+        self._safe_async_run(self.websocket_config.broadcast_config_update(
+            self.source_descriptions,
+            self.sink_descriptions + self.active_temporary_sinks,
+            self.route_descriptions + self.active_temporary_routes,
+            self.system_capture_devices,
+            self.system_playback_devices,
+        ))
         _logger.debug("[Configuration Manager] Requesting config reload (without save)")
         if not self.reload_condition.acquire(timeout=10):
             raise TimeoutError("Failed to get configuration reload condition")
@@ -1798,7 +2349,9 @@ class ConfigurationManager(threading.Thread):
         self._safe_async_run(self.websocket_config.broadcast_config_update(
             self.source_descriptions,
             self.sink_descriptions + self.active_temporary_sinks,
-            self.route_descriptions + self.active_temporary_routes
+            self.route_descriptions + self.active_temporary_routes,
+            self.system_capture_devices,
+            self.system_playback_devices,
         ))
 
     def __process_and_apply_configuration(self) -> None:

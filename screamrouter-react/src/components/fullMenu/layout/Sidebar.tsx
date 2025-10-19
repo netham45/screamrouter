@@ -22,6 +22,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   sources,
   sinks,
   routes,
+  systemCaptureDevices,
+  systemPlaybackDevices,
   starredSources,
   starredSinks,
   starredRoutes,
@@ -33,6 +35,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const borderColor = useColorModeValue('gray.200', 'gray.700');
   const headingColor = useColorModeValue('gray.700', 'gray.100');
   const sectionHeadingColor = useColorModeValue('gray.500', 'gray.400');
+  const totalSystemDevices = systemCaptureDevices.length + systemPlaybackDevices.length;
 
   return (
     <>
@@ -181,6 +184,16 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => {
                   setCurrentCategory('routes');
                   if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile
+                }}
+              />
+              <NavItem
+                icon="plug"
+                label="System Audio"
+                isActive={currentCategory === 'system-devices'}
+                badge={totalSystemDevices || undefined}
+                onClick={() => {
+                  setCurrentCategory('system-devices');
+                  if (window.innerWidth < 768) toggleSidebar();
                 }}
               />
             </VStack>

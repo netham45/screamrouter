@@ -52,7 +52,8 @@ interface EqualizerProps {
  */
 const defaultEqualizer: EqualizerType = {
   b1: 1, b2: 1, b3: 1, b4: 1, b5: 1, b6: 1, b7: 1, b8: 1, b9: 1,
-  b10: 1, b11: 1, b12: 1, b13: 1, b14: 1, b15: 1, b16: 1, b17: 1, b18: 1
+  b10: 1, b11: 1, b12: 1, b13: 1, b14: 1, b15: 1, b16: 1, b17: 1, b18: 1,
+  normalization_enabled: false
 };
 
 /**
@@ -142,7 +143,7 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
    * State to keep track of the current equalizer settings.
    */
   const [equalizer, setEqualizer] = useState<EqualizerType>(item.equalizer);
-  const [eqNormalization, setEqNormalization] = useState(item.equalizer.normalization_enabled ?? true);
+  const [eqNormalization, setEqNormalization] = useState(item.equalizer.normalization_enabled ?? false);
 
   /**
    * State to keep track of any error messages.
@@ -268,7 +269,12 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     const selectedPreset = event.target.value;
     setPreset(selectedPreset);
     if (selectedPreset !== 'Custom') {
-      setEqualizer({ ...musicPresets[selectedPreset], ...customEqualizers[selectedPreset] });
+      const presetMap = { ...musicPresets, ...customEqualizers };
+      const presetEq = presetMap[selectedPreset];
+      if (presetEq) {
+        setEqualizer({ ...presetEq });
+        setEqNormalization(presetEq.normalization_enabled ?? false);
+      }
     }
   };
 
@@ -309,8 +315,9 @@ const Equalizer: React.FC<EqualizerProps> = ({ item, type, onClose, onDataChange
     }
     try {
       setError(null);
-      await ApiService.saveEqualizer(newPresetName, equalizer);
-      setCustomEqualizers(prev => ({ ...prev, [`🛠️${newPresetName}`]: equalizer }));
+      const payload = { ...equalizer, normalization_enabled: eqNormalization };
+      await ApiService.saveEqualizer(newPresetName, payload);
+      setCustomEqualizers(prev => ({ ...prev, [`🛠️${newPresetName}`]: payload }));
       setPreset(`🛠️${newPresetName}`);
       closeSaveModal();
     } catch (error) {

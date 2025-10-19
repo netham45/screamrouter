@@ -42,7 +42,7 @@ AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputB
       merged_buffer(CHUNK_SIZE * MAX_CHANNELS * 4 * m_settings->processor_tuning.oversampling_factor), // Larger for resampling
       processed_buffer(CHUNK_SIZE * MAX_CHANNELS * 4), // Final output size related
       isProcessingRequiredCache(false), isProcessingRequiredCacheSet(false), // Initialize cache flags
-      volume_normalization_enabled_(false), eq_normalization_enabled_(true),
+      volume_normalization_enabled_(false), eq_normalization_enabled_(false),
       playback_rate_(1.0),
       m_upsampler(nullptr), m_downsampler(nullptr)
 {

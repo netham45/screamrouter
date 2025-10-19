@@ -20,6 +20,7 @@
 #include "../input_processor/timeshift_manager.h"
 #include "stats_manager.h"
 #include "../configuration/audio_engine_settings.h"
+#include "../system_audio/system_device_enumerator.h"
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -170,6 +171,30 @@ public:
     std::vector<std::string> get_per_process_scream_receiver_seen_tags(int listen_port);
 
     /**
+     * @brief Adds a reference to a system capture device, creating the receiver if needed.
+     * @param device_tag Platform-specific capture tag.
+     * @param params Desired capture parameters.
+     * @return true if the receiver is available and active.
+     */
+    bool add_system_capture_reference(const std::string& device_tag, CaptureParams params);
+
+    /**
+     * @brief Removes a reference to a system capture device.
+     * @param device_tag Platform-specific capture tag previously registered.
+     */
+    void remove_system_capture_reference(const std::string& device_tag);
+
+    /**
+     * @brief Convenience wrapper for add_system_capture_reference().
+     */
+    bool ensure_system_capture_device(const std::string& device_tag);
+
+    /**
+     * @brief Convenience wrapper for remove_system_capture_reference().
+     */
+    void release_system_capture_device(const std::string& device_tag);
+
+    /**
      * @brief Injects a plugin-generated audio packet into a specific source processor.
      * @param source_instance_tag The unique ID of the target SourceInputProcessor.
      * @param audio_payload The raw audio data.
@@ -276,6 +301,16 @@ public:
      */
     pybind11::dict get_sync_statistics();
 
+    /**
+     * @brief Lists cached system audio devices discovered by platform watchers.
+     */
+    SystemDeviceRegistry list_system_devices();
+
+    /**
+     * @brief Returns pending device discovery notifications and clears the queue.
+     */
+    std::vector<DeviceDiscoveryNotification> drain_device_notifications();
+
 private:
     std::atomic<bool> m_running{false};
     std::recursive_mutex m_manager_mutex;
@@ -291,9 +326,15 @@ private:
     std::unique_ptr<WebRtcManager> m_webrtc_manager;
     std::unique_ptr<ReceiverManager> m_receiver_manager;
     std::unique_ptr<StatsManager> m_stats_manager;
+    std::unique_ptr<system_audio::SystemDeviceEnumerator> m_system_device_enumerator;
 
     std::shared_ptr<NotificationQueue> m_notification_queue;
     std::thread m_notification_thread;
+
+    mutable std::mutex device_registry_mutex_;
+    SystemDeviceRegistry system_device_registry_;
+    std::mutex pending_device_events_mutex_;
+    std::vector<DeviceDiscoveryNotification> pending_device_events_;
 
     // --- Multi-Rate Synchronization ---
     std::map<int, std::unique_ptr<GlobalSynchronizationClock>> sync_clocks_;
@@ -480,7 +521,9 @@ inline void bind_audio_manager(pybind11::module_ &m) {
             "Retrieves a snapshot of all current audio engine statistics.")
        .def("get_audio_settings", &AudioManager::get_audio_settings, "Retrieves the current audio engine tuning settings.")
        .def("set_audio_settings", &AudioManager::set_audio_settings, py::arg("settings"), "Updates the audio engine tuning settings.")
-       .def("get_sync_statistics", &AudioManager::get_sync_statistics, "Retrieves synchronization statistics for all active sync clocks.");
+        .def("get_sync_statistics", &AudioManager::get_sync_statistics, "Retrieves synchronization statistics for all active sync clocks.")
+        .def("list_system_devices", &AudioManager::list_system_devices, "Returns the cached registry of system audio devices.")
+        .def("drain_device_notifications", &AudioManager::drain_device_notifications, "Retrieves and clears pending device discovery notifications.");
 }
 
 } // namespace audio

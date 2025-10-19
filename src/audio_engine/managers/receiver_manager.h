@@ -11,14 +11,19 @@
 #include "../receivers/rtp/rtp_receiver.h"
 #include "../receivers/scream/raw_scream_receiver.h"
 #include "../receivers/scream/per_process_scream_receiver.h"
+#include "../receivers/system/alsa_capture_receiver.h"
+#include "../receivers/system/screamrouter_fifo_receiver.h"
+#include "../receivers/system/wasapi_capture_receiver.h"
+#include "../system_audio/system_audio_tags.h"
 #include "../utils/thread_safe_queue.h"
 #include "../input_processor/timeshift_manager.h"
 #include "../audio_types.h"
 #include <map>
 #include <memory>
-#include <string>
-#include <vector>
 #include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace screamrouter {
 namespace audio {
@@ -86,6 +91,20 @@ public:
      */
     std::vector<std::string> get_per_process_scream_receiver_seen_tags(int listen_port);
 
+    /**
+     * @brief Ensures an ALSA capture receiver is active for the requested device tag.
+     * @param tag ALSA capture tag (ac:<card>.<device>).
+     * @param params Capture configuration parameters describing the desired stream.
+     * @return true if the receiver exists or was started successfully.
+     */
+    bool ensure_capture_receiver(const std::string& tag, const CaptureParams& params);
+
+    /**
+     * @brief Releases a reference to a capture receiver.
+     * @param tag ALSA capture tag previously passed to ensure_capture_receiver().
+     */
+    void release_capture_receiver(const std::string& tag);
+
 private:
     std::recursive_mutex& m_manager_mutex;
     TimeshiftManager* m_timeshift_manager;
@@ -93,6 +112,9 @@ private:
     std::unique_ptr<RtpReceiver> m_rtp_receiver;
     std::map<int, std::unique_ptr<RawScreamReceiver>> m_raw_scream_receivers;
     std::map<int, std::unique_ptr<PerProcessScreamReceiver>> m_per_process_scream_receivers;
+    std::unordered_map<std::string, std::unique_ptr<NetworkAudioReceiver>> capture_receivers_;
+    std::unordered_map<std::string, size_t> capture_receiver_usage_;
+    std::shared_ptr<NotificationQueue> m_notification_queue;
 };
 
 } // namespace audio

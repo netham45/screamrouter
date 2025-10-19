@@ -2,6 +2,16 @@
 #include "../utils/cpp_logger.h"
 #include "../synchronization/global_synchronization_clock.h"
 #include "../synchronization/sink_synchronization_coordinator.h"
+#include "../system_audio/system_audio_tags.h"
+
+#if defined(__linux__)
+#include "../system_audio/alsa_device_enumerator.h"
+#endif
+
+#ifdef _WIN32
+#include "../system_audio/wasapi_device_enumerator.h"
+#endif
+#include <algorithm>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -34,7 +44,32 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
         m_timeshift_manager = std::make_unique<TimeshiftManager>(std::chrono::seconds(global_timeshift_buffer_duration_sec), m_settings);
         m_notification_queue = std::make_shared<NotificationQueue>();
 
+        std::unique_ptr<system_audio::SystemDeviceEnumerator> enumerator;
+#if defined(__linux__)
+        enumerator.reset(new system_audio::AlsaDeviceEnumerator(m_notification_queue));
+#elif defined(_WIN32)
+        enumerator.reset(new system_audio::WasapiDeviceEnumerator(m_notification_queue));
+#else
+        enumerator.reset(nullptr);
+#endif
+        m_system_device_enumerator = std::move(enumerator);
+        if (m_system_device_enumerator) {
+            m_system_device_enumerator->start();
+            std::lock_guard<std::mutex> device_lock(device_registry_mutex_);
+            system_device_registry_ = m_system_device_enumerator->get_registry_snapshot();
+        }
+
         m_source_manager = std::make_unique<SourceManager>(m_manager_mutex, m_timeshift_manager.get(), m_settings);
+        
+        // Set up callbacks for system capture device management
+        m_source_manager->set_capture_device_callbacks(
+            [this](const std::string& tag) -> bool {
+                return this->ensure_system_capture_device(tag);
+            },
+            [this](const std::string& tag) {
+                this->release_system_capture_device(tag);
+            }
+        );
         m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex, m_settings);
         m_receiver_manager = std::make_unique<ReceiverManager>(m_manager_mutex, m_timeshift_manager.get());
         m_webrtc_manager = std::make_unique<WebRtcManager>(m_manager_mutex, m_sink_manager.get(), m_sink_manager->get_sink_configs());
@@ -75,6 +110,10 @@ void AudioManager::shutdown() {
 
     LOG_CPP_INFO("Shutting down AudioManager...");
 
+    if (m_system_device_enumerator) {
+        m_system_device_enumerator->stop();
+    }
+
     if (m_notification_queue) {
         m_notification_queue->stop();
     }
@@ -94,7 +133,7 @@ void AudioManager::shutdown() {
     if (m_stats_manager) {
         m_stats_manager->stop();
     }
-    
+
     // The managers will be destroyed automatically via unique_ptr,
     // which will stop any components they own.
     m_receiver_manager.reset();
@@ -106,13 +145,23 @@ void AudioManager::shutdown() {
     m_source_manager.reset();
     m_timeshift_manager.reset();
     m_stats_manager.reset();
+    m_system_device_enumerator.reset();
 
     // Clean up synchronization coordinators
     sink_coordinators_.clear();
-    
+
     // Clean up sync clocks
     sync_clocks_.clear();
-    
+
+    {
+        std::lock_guard<std::mutex> device_lock(device_registry_mutex_);
+        system_device_registry_.clear();
+    }
+    {
+        std::lock_guard<std::mutex> event_lock(pending_device_events_mutex_);
+        pending_device_events_.clear();
+    }
+
     LOG_CPP_INFO("AudioManager shutdown complete.");
 }
 
@@ -289,6 +338,171 @@ std::vector<std::string> AudioManager::get_per_process_scream_receiver_seen_tags
     return m_receiver_manager ? m_receiver_manager->get_per_process_scream_receiver_seen_tags(listen_port) : std::vector<std::string>();
 }
 
+bool AudioManager::add_system_capture_reference(const std::string& device_tag, CaptureParams params) {
+    std::scoped_lock lock(m_manager_mutex);
+    if (!m_receiver_manager) {
+        LOG_CPP_ERROR("AudioManager add_system_capture_reference called before receiver manager initialization.");
+        return false;
+    }
+
+    constexpr unsigned int kDefaultChannels = 2;
+    constexpr unsigned int kDefaultSampleRate = 48000;
+
+    SystemDeviceInfo device_info{};
+    bool have_device_info = false;
+    {
+        std::lock_guard<std::mutex> device_lock(device_registry_mutex_);
+        auto it = system_device_registry_.find(device_tag);
+        if (it != system_device_registry_.end()) {
+            device_info = it->second;
+            have_device_info = true;
+            if (params.hw_id.empty()) {
+                params.hw_id = device_info.hw_id;
+            }
+        }
+    }
+
+    if (params.hw_id.empty()) {
+        if (device_tag.rfind("hw:", 0) == 0) {
+            params.hw_id = device_tag;
+        } else if (device_tag.rfind("ac:", 0) == 0) {
+            const std::string body = device_tag.substr(3);
+            const auto dot_pos = body.find('.');
+            if (dot_pos != std::string::npos) {
+                try {
+                    int card = std::stoi(body.substr(0, dot_pos));
+                    int device = std::stoi(body.substr(dot_pos + 1));
+                    params.hw_id = "hw:" + std::to_string(card) + "," + std::to_string(device);
+                } catch (const std::exception&) {
+                    LOG_CPP_WARNING("AudioManager failed to derive hw_id from capture tag %s.", device_tag.c_str());
+                }
+            }
+        }
+    }
+
+#if defined(__linux__)
+    if (system_audio::tag_has_prefix(device_tag, system_audio::kScreamrouterCapturePrefix) && params.hw_id.empty()) {
+        LOG_CPP_ERROR("AudioManager cannot resolve FIFO path for capture device %s.", device_tag.c_str());
+        return false;
+    }
+#endif
+
+#if defined(_WIN32)
+    if (params.endpoint_id.empty()) {
+        if (have_device_info && !device_info.endpoint_id.empty()) {
+            params.endpoint_id = device_info.endpoint_id;
+        } else if (device_tag.rfind("wp:", 0) == 0 ||
+                   device_tag.rfind("wc:", 0) == 0 ||
+                   device_tag.rfind("ws:", 0) == 0) {
+            params.endpoint_id = device_tag.substr(3);
+        }
+    }
+#endif
+
+    auto clamp_within_caps = [](unsigned int requested,
+                                unsigned int cap_min,
+                                unsigned int cap_max,
+                                unsigned int fallback) {
+        unsigned int min_val = cap_min;
+        unsigned int max_val = cap_max;
+
+        if (min_val == 0 && max_val == 0) {
+            unsigned int value = requested ? requested : fallback;
+            bool changed = (value != requested);
+            return std::make_pair(value, changed);
+        }
+
+        if (min_val == 0) {
+            min_val = max_val;
+        }
+        if (max_val == 0) {
+            max_val = min_val;
+        }
+        if (min_val > max_val) {
+            std::swap(min_val, max_val);
+        }
+
+        unsigned int effective = requested ? requested : min_val;
+        unsigned int clamped = std::clamp(effective, min_val, max_val);
+        bool changed = requested && (clamped != requested);
+        return std::make_pair(clamped, changed);
+    };
+
+    if (have_device_info) {
+        unsigned int original_channels = params.channels;
+        auto [adjusted_channels, channel_changed] = clamp_within_caps(
+            original_channels,
+            device_info.channels.min,
+            device_info.channels.max,
+            kDefaultChannels);
+        if (channel_changed) {
+            LOG_CPP_INFO("AudioManager adjusted capture channel count for %s from %u to %u to match device capabilities.",
+                         device_tag.c_str(),
+                         static_cast<unsigned int>(original_channels),
+                         adjusted_channels);
+        }
+        params.channels = adjusted_channels;
+
+        unsigned int original_rate = params.sample_rate;
+        auto [adjusted_rate, rate_changed] = clamp_within_caps(
+            original_rate,
+            device_info.sample_rates.min,
+            device_info.sample_rates.max,
+            kDefaultSampleRate);
+        if (rate_changed) {
+            LOG_CPP_INFO("AudioManager adjusted capture sample rate for %s from %u Hz to %u Hz to match device capabilities.",
+                         device_tag.c_str(),
+                         static_cast<unsigned int>(original_rate),
+                         adjusted_rate);
+        }
+        params.sample_rate = adjusted_rate;
+
+        if (device_info.bit_depth > 0) {
+            params.bit_depth = device_info.bit_depth;
+        }
+    }
+
+    if (params.channels == 0) {
+        params.channels = kDefaultChannels;
+    }
+    if (params.sample_rate == 0) {
+        params.sample_rate = kDefaultSampleRate;
+    }
+    if (params.bit_depth != 16 && params.bit_depth != 32) {
+        params.bit_depth = 16;
+    }
+
+#if defined(__linux__)
+    if (params.hw_id.empty()) {
+        LOG_CPP_ERROR("AudioManager cannot resolve hw_id for capture device %s.", device_tag.c_str());
+        return false;
+    }
+#elif defined(_WIN32)
+    if (params.endpoint_id.empty()) {
+        LOG_CPP_ERROR("AudioManager cannot resolve endpoint id for capture device %s.", device_tag.c_str());
+        return false;
+    }
+#endif
+
+    return m_receiver_manager->ensure_capture_receiver(device_tag, params);
+}
+
+void AudioManager::remove_system_capture_reference(const std::string& device_tag) {
+    std::scoped_lock lock(m_manager_mutex);
+    if (!m_receiver_manager) {
+        return;
+    }
+    m_receiver_manager->release_capture_receiver(device_tag);
+}
+
+bool AudioManager::ensure_system_capture_device(const std::string& device_tag) {
+    return add_system_capture_reference(device_tag, CaptureParams{});
+}
+
+void AudioManager::release_system_capture_device(const std::string& device_tag) {
+    remove_system_capture_reference(device_tag);
+}
+
 bool AudioManager::write_plugin_packet(
     const std::string& source_instance_tag,
     const std::vector<uint8_t>& audio_payload,
@@ -397,18 +611,52 @@ pybind11::dict AudioManager::get_sync_statistics() {
     return stats;
 }
 
+SystemDeviceRegistry AudioManager::list_system_devices() {
+    if (m_system_device_enumerator) {
+        auto snapshot = m_system_device_enumerator->get_registry_snapshot();
+        std::lock_guard<std::mutex> lock(device_registry_mutex_);
+        system_device_registry_ = std::move(snapshot);
+        return system_device_registry_;
+    }
+    std::lock_guard<std::mutex> lock(device_registry_mutex_);
+    return system_device_registry_;
+}
+
+std::vector<DeviceDiscoveryNotification> AudioManager::drain_device_notifications() {
+    std::lock_guard<std::mutex> lock(pending_device_events_mutex_);
+    std::vector<DeviceDiscoveryNotification> events;
+    events.swap(pending_device_events_);
+    return events;
+}
+
 void AudioManager::process_notifications() {
     LOG_CPP_INFO("Notification processing thread started.");
-    while (m_running) {
-        NewSourceNotification notification;
-        if (!m_notification_queue || !m_notification_queue->pop(notification)) {
+    while (true) {
+        if (!m_notification_queue) {
+            LOG_CPP_ERROR("Notification queue not available. Exiting notification loop.");
+            break;
+        }
+
+        DeviceDiscoveryNotification notification;
+        if (!m_notification_queue->pop(notification)) {
             if (m_running) {
                 LOG_CPP_ERROR("Notification queue pop failed unexpectedly.");
             }
             break;
         }
-        if (!m_running) break;
-        LOG_CPP_DEBUG("Received notification for source_tag: %s. (Informational only)", notification.source_tag.c_str());
+        {
+            std::lock_guard<std::mutex> lock(pending_device_events_mutex_);
+            pending_device_events_.push_back(notification);
+        }
+
+        const bool is_system_tag = system_audio::is_capture_tag(notification.tag) ||
+                                   system_audio::is_playback_tag(notification.tag);
+        if (is_system_tag && m_system_device_enumerator) {
+            auto snapshot = m_system_device_enumerator->get_registry_snapshot();
+            std::lock_guard<std::mutex> lock(device_registry_mutex_);
+            system_device_registry_ = std::move(snapshot);
+        }
+        LOG_CPP_DEBUG("Device notification received: %s present=%d", notification.tag.c_str(), notification.present ? 1 : 0);
     }
     LOG_CPP_INFO("Notification processing thread finished.");
 }

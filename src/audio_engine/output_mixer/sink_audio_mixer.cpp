@@ -20,6 +20,13 @@
 #include "../senders/rtp/rtp_sender.h"
 #include "../senders/rtp/multi_device_rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
+#include "../senders/system/alsa_playback_sender.h"
+#if defined(__linux__)
+#include "../senders/system/screamrouter_fifo_sender.h"
+#endif
+#if defined(_WIN32)
+#include "../senders/system/wasapi_playback_sender.h"
+#endif
 #include "../synchronization/sink_synchronization_coordinator.h"
 
 using namespace screamrouter::audio;
@@ -50,7 +57,7 @@ SinkAudioMixer::SinkAudioMixer(
       network_sender_(nullptr),
       mixing_buffer_(SINK_MIXING_BUFFER_SAMPLES, 0),
       stereo_buffer_(SINK_MIXING_BUFFER_SAMPLES * 2, 0),
-      payload_buffer_(SINK_CHUNK_SIZE_BYTES * 2, 0),
+      payload_buffer_(SINK_CHUNK_SIZE_BYTES * 8, 0),
       lame_global_flags_(nullptr),
       stereo_preprocessor_(nullptr),
       mp3_encode_buffer_(SINK_MP3_BUFFER_SIZE)
@@ -78,6 +85,30 @@ SinkAudioMixer::SinkAudioMixer(
     } else if (config_.protocol == "scream") {
         LOG_CPP_INFO("[SinkMixer:%s] Creating ScreamSender.", config_.sink_id.c_str());
         network_sender_ = std::make_unique<ScreamSender>(config_);
+    } else if (config_.protocol == "system_audio") {
+#if defined(__linux__)
+        const bool is_fifo_path = !config_.output_ip.empty() &&
+                                  config_.output_ip.rfind("/var/run/screamrouter/", 0) == 0;
+        const bool is_fifo_tag = !config_.output_ip.empty() &&
+                                 config_.output_ip.rfind("sr_in:", 0) == 0;
+        if (is_fifo_path || is_fifo_tag) {
+            LOG_CPP_INFO("[SinkMixer:%s] Creating ScreamrouterFifoSender for FIFO %s.",
+                         config_.sink_id.c_str(), config_.output_ip.c_str());
+            network_sender_ = std::make_unique<ScreamrouterFifoSender>(config_);
+        } else {
+            LOG_CPP_INFO("[SinkMixer:%s] Creating AlsaPlaybackSender for device %s.",
+                         config_.sink_id.c_str(), config_.output_ip.c_str());
+            network_sender_ = std::make_unique<AlsaPlaybackSender>(config_);
+        }
+#elif defined(_WIN32)
+        LOG_CPP_INFO("[SinkMixer:%s] Creating WasapiPlaybackSender for endpoint %s.",
+                     config_.sink_id.c_str(), config_.output_ip.c_str());
+        network_sender_ = std::make_unique<screamrouter::audio::system_audio::WasapiPlaybackSender>(config_);
+#else
+        LOG_CPP_ERROR("[SinkMixer:%s] system_audio protocol requested, but no host backend is compiled in.",
+                      config_.sink_id.c_str());
+        network_sender_ = nullptr;
+#endif
     } else if (config_.protocol == "web_receiver") {
         LOG_CPP_INFO("[SinkMixer:%s] Protocol is 'web_receiver', skipping default sender creation.", config_.sink_id.c_str());
         network_sender_ = nullptr;
@@ -347,6 +378,9 @@ void SinkAudioMixer::start() {
 
     if (network_sender_ && !network_sender_->setup()) {
         LOG_CPP_ERROR("[SinkMixer:%s] Network sender setup failed. Cannot start mixer thread.", config_.sink_id.c_str());
+        if (config_.protocol == "system_audio") {
+            throw std::runtime_error("Failed to setup system audio playback sender");
+        }
         return;
     }
 
@@ -832,7 +866,9 @@ void SinkAudioMixer::run() {
 
             downscale_buffer();
 
-            if (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
+            // Send data in chunks when we have enough accumulated
+            // This loop ensures we drain the buffer properly even with high bit depths
+            while (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
                 if (network_sender_) {
                     std::lock_guard<std::mutex> lock(csrc_mutex_);
                     network_sender_->send_payload(payload_buffer_.data(), SINK_CHUNK_SIZE_BYTES, current_csrcs_);
@@ -843,6 +879,8 @@ void SinkAudioMixer::run() {
                     memmove(payload_buffer_.data(), payload_buffer_.data() + SINK_CHUNK_SIZE_BYTES, bytes_remaining);
                 }
                 payload_buffer_write_pos_ = bytes_remaining;
+                
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Sent chunk, remaining bytes in buffer: %zu", config_.sink_id.c_str(), payload_buffer_write_pos_);
             }
 
             bool has_listeners;

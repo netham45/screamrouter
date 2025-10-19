@@ -4,7 +4,7 @@
  * port, bit depth, sample rate, channels, channel layout, volume, delay, time sync settings, and more.
  * It allows the user to either add a new sink or update an existing one.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Flex,
@@ -23,18 +23,21 @@ import {
   Alert,
   AlertIcon,
   Box,
+  Badge,
   Heading,
   Container,
   useColorModeValue,
   Switch,
-  Text
+  Text,
+  HStack
 } from '@chakra-ui/react';
-import ApiService, { Sink } from '../../api/api';
+import ApiService, { Sink, SystemAudioDeviceInfo } from '../../api/api';
 import { useTutorial } from '../../context/TutorialContext';
 import { useMdnsDiscovery } from '../../context/MdnsDiscoveryContext';
 import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
 import MultiRtpReceiverManager, { RtpReceiverMapping } from './controls/MultiRtpReceiverManager';
+import { useAppContext } from '../../context/AppContext';
 
 const AddEditSinkPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -43,6 +46,7 @@ const AddEditSinkPage: React.FC = () => {
 
   const { completeStep, nextStep } = useTutorial();
   const { openModal: openMdnsModal, registerSelectionHandler } = useMdnsDiscovery();
+  const { systemPlaybackDevices } = useAppContext();
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [sink, setSink] = useState<Sink | null>(null);
@@ -59,6 +63,13 @@ const AddEditSinkPage: React.FC = () => {
   const [timeSync, setTimeSync] = useState(false);
   const [timeSyncDelay, setTimeSyncDelay] = useState('0');
   const [protocol, setProtocol] = useState('scream');
+  const [selectedPlaybackTag, setSelectedPlaybackTag] = useState('');
+  const [outputMode, setOutputMode] = useState<'network' | 'system'>('network');
+  const [previousNetworkConfig, setPreviousNetworkConfig] = useState<{ ip: string; port: string; protocol: string }>({
+    ip: '',
+    port: '4010',
+    protocol: 'scream',
+  });
   const [volumeNormalization, setVolumeNormalization] = useState(false);
   const [multiDeviceMode, setMultiDeviceMode] = useState(false);
   const [rtpReceiverMappings, setRtpReceiverMappings] = useState<RtpReceiverMapping[]>([]);
@@ -69,6 +80,51 @@ const AddEditSinkPage: React.FC = () => {
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
   const inputBg = useColorModeValue('white', 'gray.700');
+
+  const selectedPlaybackDevice = useMemo<SystemAudioDeviceInfo | undefined>(() => {
+    return systemPlaybackDevices.find(device => device.tag === selectedPlaybackTag);
+  }, [systemPlaybackDevices, selectedPlaybackTag]);
+
+  const normalizePlaybackTag = (value?: string | null): string => {
+    if (!value) {
+      return '';
+    }
+    if (value.startsWith('ap:')) {
+      return value;
+    }
+    if (value.startsWith('hw:')) {
+      const body = value.substring(3);
+      if (body.includes(',')) {
+        const [card, device] = body.split(',', 2);
+        return `ap:${card}.${device}`;
+      }
+    }
+    return value;
+  };
+
+  const formatChannelList = (channels?: number[]): string => {
+    if (!channels || channels.length === 0) {
+      return '—';
+    }
+    return channels.join(', ');
+  };
+
+  const formatSampleRateList = (rates?: number[]): string => {
+    if (!rates || rates.length === 0) {
+      return '—';
+    }
+    return rates
+      .slice()
+      .sort((a, b) => a - b)
+      .map(rate => {
+        if (rate >= 1000) {
+          const khz = rate / 1000;
+          return Number.isInteger(khz) ? `${khz} kHz` : `${khz.toFixed(1)} kHz`;
+        }
+        return `${rate} Hz`;
+      })
+      .join(', ');
+  };
 
   useEffect(() => {
     if (!name.trim()) {
@@ -126,8 +182,25 @@ const AddEditSinkPage: React.FC = () => {
           if (sinkData) {
             setSink(sinkData);
             setName(sinkData.name);
-            setIp(sinkData.ip || '');
-            setPort(sinkData.port?.toString() || '4010');
+            const rawIp = typeof sinkData.ip === 'string' ? sinkData.ip : '';
+            const normalizedTag = normalizePlaybackTag(rawIp);
+            const incomingProtocol = sinkData.protocol ? sinkData.protocol.toLowerCase() : '';
+            const resolvedProtocol = incomingProtocol === 'system_audio'
+              ? 'system_audio'
+              : incomingProtocol || (normalizedTag ? 'system_audio' : 'scream');
+
+            if (resolvedProtocol === 'system_audio') {
+              const tagToUse = normalizedTag || rawIp;
+              setSelectedPlaybackTag(tagToUse);
+              setIp(tagToUse);
+              setPort('0');
+              setOutputMode('system');
+            } else {
+              setSelectedPlaybackTag('');
+              setIp(rawIp);
+              setPort(sinkData.port?.toString() || '4010');
+              setOutputMode('network');
+            }
             setBitDepth(sinkData.bit_depth?.toString() || '32');
             setSampleRate(sinkData.sample_rate?.toString() || '48000');
             setChannels(sinkData.channels?.toString() || '2');
@@ -137,11 +210,17 @@ const AddEditSinkPage: React.FC = () => {
             setTimeshift(sinkData.timeshift || 0);
             setTimeSync(sinkData.time_sync || false);
             setTimeSyncDelay(sinkData.time_sync_delay?.toString() || '0');
-            setProtocol(sinkData.protocol || 'scream');
+            setProtocol(resolvedProtocol);
             setVolumeNormalization(sinkData.volume_normalization || false);
             // Set multi-device mode and mappings if they exist
             setMultiDeviceMode(sinkData.multi_device_mode || false);
             setRtpReceiverMappings(sinkData.rtp_receiver_mappings || []);
+
+            setPreviousNetworkConfig({
+              ip: resolvedProtocol === 'system_audio' ? '' : rawIp,
+              port: resolvedProtocol === 'system_audio' ? '4010' : (sinkData.port?.toString() || '4010'),
+              protocol: resolvedProtocol === 'system_audio' ? 'scream' : (resolvedProtocol || 'scream'),
+            });
           } else {
             setError(`Sink "${sinkName}" not found.`);
           }
@@ -334,23 +413,51 @@ const AddEditSinkPage: React.FC = () => {
    * Handles form submission to add or update a sink.
    * Validates input and sends the data to the API service.
    */
+  useEffect(() => {
+    if (outputMode === 'system') {
+      setProtocol('system_audio');
+      setPort('0');
+      setIp(selectedPlaybackTag || '');
+    } else {
+      setProtocol(prev => (prev === 'system_audio' ? previousNetworkConfig.protocol || 'scream' : prev));
+      setIp(previousNetworkConfig.ip || '');
+      setPort(previousNetworkConfig.port || '4010');
+    }
+  }, [outputMode, previousNetworkConfig, selectedPlaybackTag]);
+
   const handleSubmit = async () => {
-    // Validate required fields
-    if (!name || !ip || !port) {
-      setError('Please fill in all required fields: Name, IP, and Port');
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setError('Sink name is required.');
+      return;
+    }
+
+    if (outputMode === 'network') {
+      if (!ip.trim()) {
+        setError('Please provide an IP address for the sink.');
+        return;
+      }
+      if (!port.trim()) {
+        setError('Port is required for network sinks.');
+        return;
+      }
+    } else if (!selectedPlaybackTag) {
+      setError('Select a system audio playback device for this sink.');
       return;
     }
 
     // Ensure numeric values are valid
-    const portNum = parseInt(port);
+    const portNum = outputMode === 'system' ? 0 : parseInt(port);
     const bitDepthNum = parseInt(bitDepth) || 32;
     const sampleRateNum = parseInt(sampleRate) || 48000;
     const channelsNum = parseInt(channels) || 2;
     const timeSyncDelayNum = parseInt(timeSyncDelay) || 0;
 
-    if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-      setError('Port must be a valid number between 1 and 65535');
-      return;
+    if (outputMode === 'network') {
+      if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+        setError('Port must be a valid number between 1 and 65535');
+        return;
+      }
     }
 
     if (isNaN(channelsNum) || channelsNum < 1 || channelsNum > 8) {
@@ -359,8 +466,8 @@ const AddEditSinkPage: React.FC = () => {
     }
 
     const sinkData: Partial<Sink> = {
-      name: name.trim(),
-      ip: ip.trim(),
+      name: trimmedName,
+      ip: outputMode === 'system' ? selectedPlaybackTag : ip.trim(),
       port: portNum,
       bit_depth: bitDepthNum,
       sample_rate: sampleRateNum,
@@ -370,21 +477,22 @@ const AddEditSinkPage: React.FC = () => {
       delay: delay || 0,
       time_sync: timeSync || false,
       time_sync_delay: timeSyncDelayNum,
-      protocol: protocol || 'scream',
+      protocol: outputMode === 'system' ? 'system_audio' : (protocol || 'scream'),
       volume_normalization: volumeNormalization || false,
       enabled: false,  // New sinks start disabled by default
       is_group: false,
       group_members: [],
       equalizer: {
-        b1: 0, b2: 0, b3: 0, b4: 0, b5: 0, b6: 0,
-        b7: 0, b8: 0, b9: 0, b10: 0, b11: 0, b12: 0,
-        b13: 0, b14: 0, b15: 0, b16: 0, b17: 0, b18: 0
+        b1: 1, b2: 1, b3: 1, b4: 1, b5: 1, b6: 1,
+        b7: 1, b8: 1, b9: 1, b10: 1, b11: 1, b12: 1,
+        b13: 1, b14: 1, b15: 1, b16: 1, b17: 1, b18: 1,
+        normalization_enabled: false
       },
       timeshift: timeshift
     };
 
     // Add multi-device mode configuration if protocol is RTP
-    if (protocol === 'rtp') {
+    if (protocol === 'rtp' && outputMode === 'network') {
       sinkData.multi_device_mode = multiDeviceMode;
       if (multiDeviceMode && rtpReceiverMappings.length > 0) {
         // Validate receiver mappings
@@ -418,13 +526,9 @@ const AddEditSinkPage: React.FC = () => {
           time_sync_delay: sinkData.time_sync_delay,
           protocol: sinkData.protocol,
           volume_normalization: sinkData.volume_normalization,
+          multi_device_mode: sinkData.multi_device_mode,
+          rtp_receiver_mappings: sinkData.rtp_receiver_mappings,
         };
-        
-        // Only add multi-device fields if protocol is RTP
-        if (protocol === 'rtp') {
-          updateData.multi_device_mode = sinkData.multi_device_mode;
-          updateData.rtp_receiver_mappings = sinkData.rtp_receiver_mappings;
-        }
         
         await ApiService.updateSink(sinkName!, updateData);
         setSuccess(`Sink "${name}" updated successfully.`);
@@ -438,6 +542,16 @@ const AddEditSinkPage: React.FC = () => {
 
       completeStep('sink-submit');
       nextStep();
+
+      if (outputMode === 'network') {
+        setPreviousNetworkConfig({
+          ip: (sinkData.ip as string) || '',
+          port: sinkData.port?.toString() || '4010',
+          protocol: sinkData.protocol || 'scream',
+        });
+      } else {
+        setPreviousNetworkConfig({ ip: '', port: '4010', protocol: 'scream' });
+      }
 
       try {
         const targetOrigin = window.location.origin;
@@ -470,6 +584,9 @@ const AddEditSinkPage: React.FC = () => {
         setTimeSync(false);
         setTimeSyncDelay('0');
         setProtocol('scream');
+        setOutputMode('network');
+        setSelectedPlaybackTag('');
+        setPreviousNetworkConfig({ ip: '', port: '4010', protocol: 'scream' });
         setVolumeNormalization(false);
         setMultiDeviceMode(false);
         setRtpReceiverMappings([]);
@@ -586,8 +703,33 @@ const AddEditSinkPage: React.FC = () => {
             />
           </FormControl>
           
-          <FormControl isRequired>
-            <FormLabel>Sink IP</FormLabel>
+          <FormControl>
+            <FormLabel>Output Type</FormLabel>
+            <Select
+              value={outputMode}
+              onChange={(event) => {
+                const nextMode = event.target.value as 'network' | 'system';
+                if (nextMode === 'system') {
+                  setPreviousNetworkConfig({
+                    ip,
+                    port,
+                    protocol,
+                  });
+                }
+                setOutputMode(nextMode);
+                if (nextMode === 'network' && protocol === 'system_audio') {
+                  setProtocol(previousNetworkConfig.protocol || 'scream');
+                }
+              }}
+              bg={inputBg}
+            >
+              <option value="network">Network Sink (IP)</option>
+              <option value="system">System Audio Device</option>
+            </Select>
+          </FormControl>
+
+          <FormControl isRequired={outputMode === 'network'}>
+            <FormLabel>{outputMode === 'system' ? 'Playback Tag' : 'Sink IP'}</FormLabel>
             <Stack
               direction={{ base: 'column', md: 'row' }}
               spacing={2}
@@ -595,31 +737,93 @@ const AddEditSinkPage: React.FC = () => {
             >
               <Input
                 data-tutorial-id="sink-ip-input"
-                value={ip}
-                onChange={(e) => setIp(e.target.value)}
+                value={outputMode === 'system' ? (selectedPlaybackTag || '') : ip}
+                onChange={(e) => {
+                  if (outputMode === 'network') {
+                    setIp(e.target.value);
+                  }
+                }}
                 bg={inputBg}
                 flex="1"
+                isReadOnly={outputMode === 'system'}
+                placeholder={outputMode === 'system' ? 'Select a system audio playback device' : 'Enter the sink address'}
               />
               <Button
                 onClick={() => openMdnsModal('sinks')}
                 variant="outline"
                 colorScheme="blue"
                 width={{ base: '100%', md: 'auto' }}
+                isDisabled={outputMode === 'system'}
               >
                 Discover Devices
               </Button>
             </Stack>
+            {outputMode === 'system' && systemPlaybackDevices.length === 0 && (
+              <Text mt={2} fontSize="sm" color="orange.500">
+                No system playback devices detected. Connect a system audio output to select it here.
+              </Text>
+            )}
           </FormControl>
+
+          {outputMode === 'system' && (
+            <FormControl isRequired>
+              <FormLabel>System Playback Device</FormLabel>
+              <Select
+                value={selectedPlaybackTag}
+                onChange={(event) => setSelectedPlaybackTag(event.target.value)}
+                placeholder={systemPlaybackDevices.length > 0 ? 'Select a system audio playback device' : 'No devices available'}
+                bg={inputBg}
+                isDisabled={systemPlaybackDevices.length === 0}
+              >
+                {systemPlaybackDevices.map(device => (
+                  <option key={device.tag} value={device.tag}>
+                    {device.friendly_name || device.tag} ({device.tag}){device.present ? '' : ' • offline'}
+                  </option>
+                ))}
+              </Select>
+              {selectedPlaybackDevice && (
+                <Box
+                  mt={2}
+                  p={3}
+                  borderWidth="1px"
+                  borderRadius="md"
+                  bg={useColorModeValue('gray.50', 'gray.700')}
+                  borderColor={useColorModeValue('gray.200', 'gray.600')}
+                >
+                  <HStack spacing={3} align="center" mb={1}>
+                    <Badge colorScheme={selectedPlaybackDevice.present ? 'green' : 'orange'}>
+                      {selectedPlaybackDevice.present ? 'Online' : 'Offline'}
+                    </Badge>
+                    <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                      Tag: {selectedPlaybackDevice.tag}
+                    </Text>
+                  </HStack>
+                  <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                    Channels: {formatChannelList(selectedPlaybackDevice.channels_supported)}
+                  </Text>
+                  <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                    Sample Rates: {formatSampleRateList(selectedPlaybackDevice.sample_rates)}
+                  </Text>
+                  {!selectedPlaybackDevice.present && (
+                    <Text fontSize="sm" color="orange.500" mt={2}>
+                      This device is currently offline. Routes will activate automatically when it becomes available.
+                    </Text>
+                  )}
+                </Box>
+              )}
+            </FormControl>
+          )}
           
-          <FormControl isRequired>
+          <FormControl isRequired={outputMode === 'network'}>
             <FormLabel>Sink Port</FormLabel>
             <NumberInput
               data-tutorial-id="sink-port-input"
               value={port}
               onChange={(valueString) => setPort(valueString)}
-              min={1}
+              min={outputMode === 'system' ? 0 : 1}
               max={65535}
               bg={inputBg}
+              isDisabled={outputMode === 'system'}
             >
               <NumberInputField />
               <NumberInputStepper>
@@ -627,6 +831,11 @@ const AddEditSinkPage: React.FC = () => {
                 <NumberDecrementStepper />
               </NumberInputStepper>
             </NumberInput>
+            {outputMode === 'system' && (
+              <Text mt={2} fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                System audio sinks do not require a network port. The engine will manage the device directly.
+              </Text>
+            )}
           </FormControl>
           
           <FormControl>
@@ -694,22 +903,29 @@ const AddEditSinkPage: React.FC = () => {
             </Select>
           </FormControl>
 
-          <FormControl>
-            <FormLabel>Protocol</FormLabel>
-            <Select
-              data-tutorial-id="sink-protocol-select"
-              value={protocol}
-              onChange={(e) => setProtocol(e.target.value)}
-              bg={inputBg}
-            >
-              <option value="scream">Scream</option>
-              <option value="rtp">RTP</option>
-              <option value="web_receiver">Web Receiver</option>
-            </Select>
-          </FormControl>
+          {outputMode === 'network' ? (
+            <FormControl>
+              <FormLabel>Protocol</FormLabel>
+              <Select
+                data-tutorial-id="sink-protocol-select"
+                value={protocol}
+                onChange={(e) => setProtocol(e.target.value)}
+                bg={inputBg}
+              >
+                <option value="scream">Scream</option>
+                <option value="rtp">RTP</option>
+                <option value="web_receiver">Web Receiver</option>
+              </Select>
+            </FormControl>
+          ) : (
+            <FormControl>
+              <FormLabel>Protocol</FormLabel>
+              <Input value="system_audio" isReadOnly bg={inputBg} />
+            </FormControl>
+          )}
 
           {/* Multi-Device Mode for RTP Protocol */}
-          {protocol === 'rtp' && (
+          {protocol === 'rtp' && outputMode === 'network' && (
             <>
               <FormControl>
                 <Flex alignItems="center">

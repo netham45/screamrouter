@@ -1,0 +1,55 @@
+#pragma once
+
+#include "../i_network_sender.h"
+#include "../../audio_types.h"
+
+#include <string>
+#include <vector>
+#include <mutex>
+
+#if defined(__linux__)
+#include <alsa/asoundlib.h>
+#endif
+
+namespace screamrouter {
+namespace audio {
+
+class AlsaPlaybackSender : public INetworkSender {
+public:
+    explicit AlsaPlaybackSender(const SinkMixerConfig& config);
+    ~AlsaPlaybackSender() override;
+
+    bool setup() override;
+    void close() override;
+    void send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) override;
+
+private:
+#if defined(__linux__)
+    bool parse_device_tag(const std::string& tag, int& card, int& device) const;
+    bool configure_device();
+    bool handle_write_error(int err);
+    bool write_frames(const void* data, size_t frame_count, size_t bytes_per_frame);
+    void close_locked();
+
+    SinkMixerConfig config_;
+    std::string device_tag_;
+    std::string hw_device_name_;
+
+    snd_pcm_t* pcm_handle_ = nullptr;
+    unsigned int sample_rate_ = 0;
+    unsigned int channels_ = 0;
+    int bit_depth_ = 0;
+    unsigned int hardware_bit_depth_ = 0;
+    snd_pcm_format_t sample_format_ = SND_PCM_FORMAT_UNKNOWN;
+    snd_pcm_uframes_t period_frames_ = 0;
+    snd_pcm_uframes_t buffer_frames_ = 0;
+    size_t bytes_per_frame_ = 0;
+
+    std::mutex state_mutex_;
+#else
+    SinkMixerConfig config_;
+#endif
+};
+
+} // namespace audio
+} // namespace screamrouter

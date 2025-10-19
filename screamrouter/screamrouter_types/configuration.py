@@ -71,8 +71,8 @@ class Equalizer(BaseModel):
     """Set 16744Hz band gain."""
     b18: annotations.EqualizerBandType18 = float(1.0)
     """Set 20000Hz band gain."""
-    normalization_enabled: bool = True
-    """Enable or disable equalizer normalization."""
+    normalization_enabled: bool = False
+    """Enable or disable equalizer normalization (disabled by default)."""
 
     def __eq__(self, other):
         """Compares the name if a string.
@@ -217,6 +217,25 @@ class AudioManagerConfig(BaseModel):
     # Add other AudioManager specific configurations here if needed in the future.
 
 
+class SystemAudioDeviceInfo(BaseModel):
+    """Represents a system-level audio endpoint discovered on the host."""
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
+
+    tag: str
+    direction: Literal["capture", "playback"]
+    friendly_name: str
+    hw_id: Optional[str] = None
+    endpoint_id: Optional[str] = None
+    card_index: int
+    device_index: int
+    channels_supported: List[int]
+    sample_rates: List[int]
+    bit_depth: Optional[int] = None
+    present: bool
+
+
 class SinkDescription(BaseModel):
     """
     Holds either a sink IP and Port or a group of sink names
@@ -227,9 +246,9 @@ class SinkDescription(BaseModel):
 
     name: annotations.SinkNameType = ""
     """Sink Name, Endpoint and Group"""
-    ip: Optional[annotations.IPAddressType] = None
+    ip: Optional[Union[annotations.IPAddressType, str]] = None
     """Sink IP, Endpoint Only"""
-    port: Optional[annotations.PortType] = 4010
+    port: Optional[int] = Field(4010, ge=0, le=65535)
     """Sink port number, Endpoint Only"""
     is_group: bool = False
     """Sink Is Group"""
@@ -266,7 +285,7 @@ class SinkDescription(BaseModel):
     use_tcp: bool = False
     enable_mp3: bool = True
     protocol: str = "scream"
-    """The network protocol to use for the sink. Can be 'scream', 'rtp', or 'web_receiver'."""
+    """Protocol selection for the sink. Use 'system_audio' for host playback or network protocols like 'scream', 'rtp', 'web_receiver'."""
     multi_device_mode: bool = False
     """Enable multi-device RTP output mode"""
     rtp_receiver_mappings: List[RtpReceiverMapping] = Field(default_factory=list)
@@ -274,11 +293,35 @@ class SinkDescription(BaseModel):
     is_temporary: bool = Field(default=False, exclude=True)
     """Indicates if this sink is temporary and should not be persisted"""
 
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_legacy_protocol(cls, data):
+        if isinstance(data, dict):
+            protocol = data.get('protocol')
+            if isinstance(protocol, str) and protocol.lower() in {"alsa", "wasapi"}:
+                data = {**data, 'protocol': 'system_audio'}
+        return data
+
     @model_validator(mode='after')
     def ensure_config_id(self):
         """Auto-generate config_id if not provided"""
         if self.config_id is None:
             self.config_id = str(uuid.uuid4())
+        return self
+
+    @model_validator(mode='after')
+    def normalize_port_for_protocol(self):
+        """Allow port 0 for system audio sinks while keeping network sinks >=1."""
+        if getattr(self, 'is_group', False):
+            return self
+
+        if self.protocol == "system_audio":
+            if self.port is None or self.port < 0:
+                self.port = 0
+            return self
+
+        if self.port is None or self.port < 1:
+            raise ValueError("port must be >= 1 for non-system_audio sinks")
         return self
 
     def __eq__(self, other):
@@ -346,8 +389,12 @@ class SourceDescription(BaseModel):
     """Source IP, Endpoint Only"""
     tag: Optional[str] = None
     """Tag if no IP is specified"""
-    channels: Optional[int] = None # Added for Task 13
-    """Source Channel Count, Endpoint Only. If None, typically assumed to be 2."""
+    channels: Optional[annotations.ChannelsType] = None
+    """Preferred input channel count for capture sources (e.g., ALSA)."""
+    sample_rate: Optional[annotations.SampleRateType] = None
+    """Preferred input sample rate for capture sources."""
+    bit_depth: Optional[annotations.BitDepthType] = None
+    """Preferred input bit depth for capture sources."""
     is_group: bool = False
     """Source Is Group"""
     enabled: bool = True
@@ -500,3 +547,16 @@ class RouteDescription(BaseModel):
                 except AttributeError:
                     values_to_hash.append(self.model_fields[field_name].default)
         return hash(tuple(values_to_hash))
+
+
+class ConfigurationState(BaseModel):
+    """Aggregated configuration snapshot used for serialization and APIs."""
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
+
+    sources: List[SourceDescription] = Field(default_factory=list)
+    sinks: List[SinkDescription] = Field(default_factory=list)
+    routes: List[RouteDescription] = Field(default_factory=list)
+    system_capture_devices: List[SystemAudioDeviceInfo] = Field(default_factory=list)
+    system_playback_devices: List[SystemAudioDeviceInfo] = Field(default_factory=list)

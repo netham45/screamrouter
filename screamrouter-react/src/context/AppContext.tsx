@@ -2,7 +2,7 @@
  * React context and provider for managing the application state.
  */
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { Sink, Source, Route, WebSocketUpdate } from '../api/api';
+import { Sink, Source, Route, SystemAudioDeviceInfo, WebSocketUpdate } from '../api/api';
 import ApiService from '../api/api';
 const silenceMP3 = "/site/static/output_silence.mp3";
 
@@ -41,6 +41,14 @@ interface AppContextType {
    * List of all routes.
    */
   routes: Route[];
+  /**
+   * List of system capture devices discovered on the host.
+   */
+  systemCaptureDevices: SystemAudioDeviceInfo[];
+  /**
+   * List of system playback devices discovered on the host.
+   */
+  systemPlaybackDevices: SystemAudioDeviceInfo[];
   /**
    * Toggles the Primary Source.
    * @param sourceName - The name of the source to toggle.
@@ -230,6 +238,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [sources, setSources] = useState<Source[]>([]);
   const [sinks, setSinks] = useState<Sink[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
+  const [systemCaptureDevices, setSystemCaptureDevices] = useState<SystemAudioDeviceInfo[]>([]);
+  const [systemPlaybackDevices, setSystemPlaybackDevices] = useState<SystemAudioDeviceInfo[]>([]);
   const [selectedItem, setSelectedItem] = useState<ItemType | null>(null);
   const [showEqualizerModal, setShowEqualizerModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -243,6 +253,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [manuallyPausedSinks, setManuallyPausedSinks] = useState<Set<string>>(new Set());
   const [isSilenceAudioPlaying, setIsSilenceAudioPlaying] = useState(true);
   const [startedListeningSinks, setStartedListeningSinks] = useState<Map<string, boolean>>(new Map());
+
+  const sortSystemDevices = (devices: SystemAudioDeviceInfo[]): SystemAudioDeviceInfo[] => {
+    return [...devices].sort((a, b) => {
+      if (a.card_index !== b.card_index) {
+        return a.card_index - b.card_index;
+      }
+      if (a.device_index !== b.device_index) {
+        return a.device_index - b.device_index;
+      }
+      return a.tag.localeCompare(b.tag);
+    });
+  };
+
+  const normalizeDevicePayload = (
+    payload?: Record<string, SystemAudioDeviceInfo> | SystemAudioDeviceInfo[]
+  ): SystemAudioDeviceInfo[] => {
+    if (!payload) {
+      return [];
+    }
+    return Array.isArray(payload) ? payload : Object.values(payload);
+  };
+
+  const mergeSystemDeviceUpdate = (
+    prev: SystemAudioDeviceInfo[],
+    payload?: Record<string, SystemAudioDeviceInfo> | SystemAudioDeviceInfo[],
+    removals?: string[]
+  ): SystemAudioDeviceInfo[] => {
+    const deviceMap = new Map(prev.map(device => [device.tag, device]));
+    normalizeDevicePayload(payload).forEach(device => {
+      deviceMap.set(device.tag, device);
+    });
+    removals?.forEach(tag => {
+      deviceMap.delete(tag);
+    });
+    return sortSystemDevices(Array.from(deviceMap.values()));
+  };
 
   /**
    * Opens a new window with the specified URL.
@@ -271,6 +317,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setSources(Object.values(sourcesResponse.data));
       setSinks(Object.values(sinksResponse.data));
       setRoutes(Object.values(routesResponse.data));
+
+      try {
+        const systemDevicesResponse = await ApiService.getSystemAudioDevices();
+        const captureDevices = normalizeDevicePayload(systemDevicesResponse.data.system_capture_devices);
+        const playbackDevices = normalizeDevicePayload(systemDevicesResponse.data.system_playback_devices);
+        setSystemCaptureDevices(sortSystemDevices(captureDevices));
+        setSystemPlaybackDevices(sortSystemDevices(playbackDevices));
+      } catch (systemError) {
+        console.warn('Failed to fetch system audio device metadata:', systemError);
+      }
+
       console.log("Initial data fetched successfully");
       setNeedsFullRefresh(false);
       setInitialDataLoaded(true);
@@ -383,6 +440,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Convert the map back to an array
         return Array.from(nameToRouteMap.values());
       });
+    }
+
+    const captureDeviceRemovals = update.removals?.system_capture_devices;
+    const playbackDeviceRemovals = update.removals?.system_playback_devices;
+
+    if (update.system_capture_devices || (captureDeviceRemovals && captureDeviceRemovals.length > 0)) {
+      setSystemCaptureDevices(prev => mergeSystemDeviceUpdate(prev, update.system_capture_devices, captureDeviceRemovals));
+    }
+
+    if (update.system_playback_devices || (playbackDeviceRemovals && playbackDeviceRemovals.length > 0)) {
+      setSystemPlaybackDevices(prev => mergeSystemDeviceUpdate(prev, update.system_playback_devices, playbackDeviceRemovals));
     }
     
     // Handle removals if present in the update
@@ -1038,6 +1106,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       sources,
       sinks,
       routes,
+      systemCaptureDevices,
+      systemPlaybackDevices,
       onToggleActiveSource,
       onTranscribeSink,
       onListenToSink,
