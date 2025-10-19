@@ -25,7 +25,8 @@ public:
 
 private:
 #if defined(__linux__)
-    bool parse_device_tag(const std::string& tag, int& card, int& device) const;
+    bool parse_legacy_card_device(const std::string& value, int& card, int& device) const;
+    std::string resolve_alsa_device_name() const;
     bool configure_device();
     bool handle_write_error(int err);
     bool write_frames(const void* data, size_t frame_count, size_t bytes_per_frame);

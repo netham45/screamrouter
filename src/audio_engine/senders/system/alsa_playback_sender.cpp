@@ -102,22 +102,38 @@ void AlsaPlaybackSender::send_payload(const uint8_t* payload_data, size_t payloa
 
 #if defined(__linux__)
 
-bool AlsaPlaybackSender::parse_device_tag(const std::string& tag, int& card, int& device) const {
-    if (tag.size() < 4 || tag.rfind("ap:", 0) != 0) {
-        return false;
-    }
-    const std::string body = tag.substr(3);
-    const auto dot_pos = body.find('.');
+bool AlsaPlaybackSender::parse_legacy_card_device(const std::string& value, int& card, int& device) const {
+    const auto dot_pos = value.find('.');
     if (dot_pos == std::string::npos) {
         return false;
     }
     try {
-        card = std::stoi(body.substr(0, dot_pos));
-        device = std::stoi(body.substr(dot_pos + 1));
+        card = std::stoi(value.substr(0, dot_pos));
+        device = std::stoi(value.substr(dot_pos + 1));
     } catch (const std::exception&) {
         return false;
     }
     return true;
+}
+
+std::string AlsaPlaybackSender::resolve_alsa_device_name() const {
+    if (device_tag_.empty()) {
+        return {};
+    }
+
+    if (device_tag_.rfind("ap:", 0) == 0) {
+        const std::string body = device_tag_.substr(3);
+        int card = 0;
+        int device = 0;
+        if (parse_legacy_card_device(body, card, device)) {
+            std::ostringstream oss;
+            oss << "hw:" << card << "," << device;
+            return oss.str();
+        }
+        return body;
+    }
+
+    return device_tag_;
 }
 
 bool AlsaPlaybackSender::configure_device() {
@@ -125,18 +141,10 @@ bool AlsaPlaybackSender::configure_device() {
         return true;
     }
 
-    int card = 0;
-    int device = 0;
-    if (device_tag_.rfind("hw:", 0) == 0) {
-        hw_device_name_ = device_tag_;
-    } else {
-        if (!parse_device_tag(device_tag_, card, device)) {
-            LOG_CPP_ERROR("[AlsaPlayback:%s] Invalid device tag. Expected ap:<card>.<device> or hw:<card>,<device>.", device_tag_.c_str());
-            return false;
-        }
-        std::ostringstream hw_name;
-        hw_name << "hw:" << card << "," << device;
-        hw_device_name_ = hw_name.str();
+    hw_device_name_ = resolve_alsa_device_name();
+    if (hw_device_name_.empty()) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Invalid device tag. Expected ap:<alsa_device> (e.g. ap:hw:0,0) or any ALSA device string.", device_tag_.c_str());
+        return false;
     }
 
     int err = snd_pcm_open(&pcm_handle_, hw_device_name_.c_str(), SND_PCM_STREAM_PLAYBACK, 0);

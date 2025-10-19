@@ -374,8 +374,10 @@ bool AudioManager::add_system_capture_reference(const std::string& device_tag, C
                     int device = std::stoi(body.substr(dot_pos + 1));
                     params.hw_id = "hw:" + std::to_string(card) + "," + std::to_string(device);
                 } catch (const std::exception&) {
-                    LOG_CPP_WARNING("AudioManager failed to derive hw_id from capture tag %s.", device_tag.c_str());
+                    params.hw_id = body;
                 }
+            } else {
+                params.hw_id = body;
             }
         }
     }
