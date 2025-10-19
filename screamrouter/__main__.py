@@ -518,7 +518,6 @@ def main():
     config = uvicorn.Config(app=app,
                             port=constants.API_PORT,
                             host=constants.API_HOST,
-                            log_config=constants.UVICORN_LOG_CONFIG_PATH if constants.LOG_TO_FILE else None,
                             timeout_keep_alive=30,
                             ssl_keyfile=constants.CERTIFICATE_KEY,
                             ssl_certfile=constants.CERTIFICATE)

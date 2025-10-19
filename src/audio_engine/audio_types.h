@@ -190,9 +190,12 @@ struct SystemDeviceInfo {
     std::string friendly_name;
     std::string hw_id;
     std::string endpoint_id;
+    int card_index = -1;
+    int device_index = -1;
     DeviceDirection direction = DeviceDirection::CAPTURE;
     DeviceCapabilityRange channels;
     DeviceCapabilityRange sample_rates;
+    unsigned int bit_depth = 0;
     bool present = false;
 
     bool operator==(const SystemDeviceInfo& other) const {
@@ -200,9 +203,12 @@ struct SystemDeviceInfo {
                friendly_name == other.friendly_name &&
                hw_id == other.hw_id &&
                endpoint_id == other.endpoint_id &&
+               card_index == other.card_index &&
+               device_index == other.device_index &&
                direction == other.direction &&
                channels == other.channels &&
                sample_rates == other.sample_rates &&
+               bit_depth == other.bit_depth &&
                present == other.present;
     }
 };
@@ -615,9 +621,12 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("friendly_name", &SystemDeviceInfo::friendly_name)
             .def_readwrite("hw_id", &SystemDeviceInfo::hw_id)
             .def_readwrite("endpoint_id", &SystemDeviceInfo::endpoint_id)
+            .def_readwrite("card_index", &SystemDeviceInfo::card_index)
+            .def_readwrite("device_index", &SystemDeviceInfo::device_index)
             .def_readwrite("direction", &SystemDeviceInfo::direction)
             .def_readwrite("channels", &SystemDeviceInfo::channels)
             .def_readwrite("sample_rates", &SystemDeviceInfo::sample_rates)
+            .def_readwrite("bit_depth", &SystemDeviceInfo::bit_depth)
             .def_readwrite("present", &SystemDeviceInfo::present);
 
         py::class_<DeviceDiscoveryNotification>(m, "DeviceDiscoveryNotification", "Notification emitted when a system device changes state")

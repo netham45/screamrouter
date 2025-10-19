@@ -12,6 +12,9 @@
 #include <algorithm> // For std::find_if, std::find
 #include <vector>
 #include <string>
+#include <cctype>
+#include <sstream>
+
 #include <map>
 #include <set>
 #include <cmath> // For std::abs
@@ -22,6 +25,22 @@ using namespace screamrouter::audio;
 
 namespace screamrouter {
 namespace config {
+
+namespace {
+std::string sanitize_screamrouter_label(const std::string& label) {
+    std::string out;
+    out.reserve(label.size());
+    for (char c : label) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') {
+            out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        } else {
+            out.push_back('_');
+        }
+    }
+    return out;
+}
+}
+
 
 // --- Constructor & Destructor ---
 
@@ -449,7 +468,7 @@ void AudioEngineConfigApplier::process_source_path_removals(const std::vector<st
             } else {
                 LOG_CPP_ERROR("    Path %s marked for removal but has no generated_instance_id in active state.", path_id.c_str());
             }
-            if (!source_tag.empty() && source_tag.rfind("ac:", 0) == 0) {
+            if (!source_tag.empty() && (source_tag.rfind("ac:", 0) == 0 || source_tag.rfind("sr_out:", 0) == 0 || source_tag.rfind("hw:", 0) == 0)) {
                 audio_manager_.remove_system_capture_reference(source_tag);
                 LOG_CPP_DEBUG("    Released system capture reference for %s", source_tag.c_str());
             }
@@ -477,7 +496,21 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
     
     // 1. Create C++ SourceConfig from the provided parameters.
     audio::SourceConfig cpp_source_config;
-    cpp_source_config.tag = path_param_to_add.source_tag;
+    std::string source_tag = path_param_to_add.source_tag;
+    const bool is_alsa_capture_tag = !source_tag.empty() && source_tag.rfind("ac:", 0) == 0;
+    const bool is_fifo_capture_tag = !source_tag.empty() && source_tag.rfind("sr_out:", 0) == 0;
+    const bool is_hw_capture_tag = !source_tag.empty() && source_tag.rfind("hw:", 0) == 0;
+
+    if (is_fifo_capture_tag) {
+        std::string label = source_tag.substr(7);
+        std::string sanitized = sanitize_screamrouter_label(label);
+        if (!sanitized.empty()) {
+            source_tag = "sr_out:" + sanitized;
+            path_param_to_add.source_tag = source_tag;
+        }
+    }
+
+    cpp_source_config.tag = source_tag;
     cpp_source_config.initial_volume = path_param_to_add.volume;
     // Ensure EQ values are correctly sized.
     if (path_param_to_add.eq_values.size() != EQ_BANDS) {
@@ -492,7 +525,8 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
     cpp_source_config.target_output_samplerate = path_param_to_add.target_output_samplerate;
 
     bool added_capture_reference = false;
-    if (!path_param_to_add.source_tag.empty() && path_param_to_add.source_tag.rfind("ac:", 0) == 0) {
+
+    if (!source_tag.empty() && (is_alsa_capture_tag || is_fifo_capture_tag || is_hw_capture_tag)) {
         audio::CaptureParams capture_params;
         if (path_param_to_add.source_input_channels > 0) {
             capture_params.channels = static_cast<unsigned int>(path_param_to_add.source_input_channels);
@@ -506,6 +540,30 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
         }
         if (path_param_to_add.source_input_bitdepth > 0) {
             capture_params.bit_depth = static_cast<unsigned int>(path_param_to_add.source_input_bitdepth);
+        }
+
+        if (is_alsa_capture_tag || is_fifo_capture_tag) {
+            try {
+                const auto registry = audio_manager_.list_system_devices();
+                auto info_it = registry.find(path_param_to_add.source_tag);
+                if (info_it != registry.end()) {
+                    const auto& info = info_it->second;
+                    if (!info.hw_id.empty()) {
+                        capture_params.hw_id = info.hw_id;
+                    }
+                    if (info.channels.min > 0) {
+                        capture_params.channels = info.channels.min;
+                    }
+                    if (info.sample_rates.min > 0) {
+                        capture_params.sample_rate = info.sample_rates.min;
+                    }
+                    if (info.bit_depth > 0) {
+                        capture_params.bit_depth = info.bit_depth;
+                    }
+                }
+            } catch (const std::exception& ex) {
+                LOG_CPP_WARNING("    Failed to resolve device info for %s: %s", path_param_to_add.source_tag.c_str(), ex.what());
+            }
         }
 
         if (audio_manager_.add_system_capture_reference(path_param_to_add.source_tag, capture_params)) {

@@ -21,6 +21,9 @@
 #include "../senders/rtp/multi_device_rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
 #include "../senders/system/alsa_playback_sender.h"
+#if defined(__linux__)
+#include "../senders/system/screamrouter_fifo_sender.h"
+#endif
 #if defined(_WIN32)
 #include "../senders/system/wasapi_playback_sender.h"
 #endif
@@ -84,9 +87,19 @@ SinkAudioMixer::SinkAudioMixer(
         network_sender_ = std::make_unique<ScreamSender>(config_);
     } else if (config_.protocol == "system_audio") {
 #if defined(__linux__)
-        LOG_CPP_INFO("[SinkMixer:%s] Creating AlsaPlaybackSender for device %s.",
-                     config_.sink_id.c_str(), config_.output_ip.c_str());
-        network_sender_ = std::make_unique<AlsaPlaybackSender>(config_);
+        const bool is_fifo_path = !config_.output_ip.empty() &&
+                                  config_.output_ip.rfind("/var/run/screamrouter/", 0) == 0;
+        const bool is_fifo_tag = !config_.output_ip.empty() &&
+                                 config_.output_ip.rfind("sr_in:", 0) == 0;
+        if (is_fifo_path || is_fifo_tag) {
+            LOG_CPP_INFO("[SinkMixer:%s] Creating ScreamrouterFifoSender for FIFO %s.",
+                         config_.sink_id.c_str(), config_.output_ip.c_str());
+            network_sender_ = std::make_unique<ScreamrouterFifoSender>(config_);
+        } else {
+            LOG_CPP_INFO("[SinkMixer:%s] Creating AlsaPlaybackSender for device %s.",
+                         config_.sink_id.c_str(), config_.output_ip.c_str());
+            network_sender_ = std::make_unique<AlsaPlaybackSender>(config_);
+        }
 #elif defined(_WIN32)
         LOG_CPP_INFO("[SinkMixer:%s] Creating WasapiPlaybackSender for endpoint %s.",
                      config_.sink_id.c_str(), config_.output_ip.c_str());

@@ -12,6 +12,7 @@
 #include "../receivers/scream/raw_scream_receiver.h"
 #include "../receivers/scream/per_process_scream_receiver.h"
 #include "../receivers/system/alsa_capture_receiver.h"
+#include "../receivers/system/screamrouter_fifo_receiver.h"
 #include "../receivers/system/wasapi_capture_receiver.h"
 #include "../system_audio/system_audio_tags.h"
 #include "../utils/thread_safe_queue.h"

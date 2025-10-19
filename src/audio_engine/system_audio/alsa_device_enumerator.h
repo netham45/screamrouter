@@ -5,6 +5,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 #include "../audio_types.h"
@@ -62,6 +64,13 @@ private:
     };
     std::vector<ControlHandle> open_control_handles();
     void close_control_handles(std::vector<ControlHandle>& handles);
+    void setup_fifo_watch();
+    void teardown_fifo_watch();
+    bool drain_fifo_watch_events();
+    void append_screamrouter_runtime_devices(Registry& registry);
+    std::optional<SystemDeviceInfo> parse_screamrouter_fifo_entry(const std::string& filename) const;
+    int inotify_fd_ = -1;
+    int inotify_watch_fd_ = -1;
 #endif
 
     std::shared_ptr<NotificationQueue> notification_queue_;

@@ -136,8 +136,14 @@ bool ReceiverManager::ensure_capture_receiver(const std::string& tag, const Capt
 
     std::unique_ptr<NetworkAudioReceiver> receiver;
 
+#if SCREAMROUTER_FIFO_CAPTURE_AVAILABLE
+    if (!receiver && system_audio::tag_has_prefix(tag, system_audio::kScreamrouterCapturePrefix)) {
+        receiver = std::make_unique<ScreamrouterFifoReceiver>(tag, params, m_notification_queue, m_timeshift_manager);
+    }
+#endif
+
 #if SCREAMROUTER_ALSA_CAPTURE_AVAILABLE
-    if (system_audio::tag_has_prefix(tag, system_audio::kAlsaCapturePrefix)) {
+    if (!receiver && system_audio::tag_has_prefix(tag, system_audio::kAlsaCapturePrefix)) {
         receiver = std::make_unique<AlsaCaptureReceiver>(tag, params, m_notification_queue, m_timeshift_manager);
     }
 #endif

@@ -380,6 +380,13 @@ bool AudioManager::add_system_capture_reference(const std::string& device_tag, C
         }
     }
 
+#if defined(__linux__)
+    if (system_audio::tag_has_prefix(device_tag, system_audio::kScreamrouterCapturePrefix) && params.hw_id.empty()) {
+        LOG_CPP_ERROR("AudioManager cannot resolve FIFO path for capture device %s.", device_tag.c_str());
+        return false;
+    }
+#endif
+
 #if defined(_WIN32)
     if (params.endpoint_id.empty()) {
         if (have_device_info && !device_info.endpoint_id.empty()) {
@@ -449,6 +456,10 @@ bool AudioManager::add_system_capture_reference(const std::string& device_tag, C
                          adjusted_rate);
         }
         params.sample_rate = adjusted_rate;
+
+        if (device_info.bit_depth > 0) {
+            params.bit_depth = device_info.bit_depth;
+        }
     }
 
     if (params.channels == 0) {

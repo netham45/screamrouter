@@ -89,6 +89,10 @@ except ImportError as e:
 
 class ConfigurationManager(threading.Thread):
     """Tracks configuration and loading the main receiver/sinks based off of it"""
+    @staticmethod
+    def _sanitize_screamrouter_label(label: str) -> str:
+        return ''.join(c.lower() if c.isalnum() or c in ('-', '_') else '_' for c in label)
+
     def __init__(self, websocket: APIWebStream,
                  plugin_manager: PluginManager,
                  websocket_config: APIWebsocketConfig,
@@ -1428,6 +1432,11 @@ class ConfigurationManager(threading.Thread):
 
         card_index, device_index = self._infer_card_device_from_tag(tag, hw_id)
         present = bool(getattr(info, "present", True))
+        bit_depth_value = getattr(info, "bit_depth", None)
+        try:
+            bit_depth_value = int(bit_depth_value) if bit_depth_value not in (None, "") else None
+        except Exception:  # pylint: disable=broad-except
+            bit_depth_value = None
 
         return SystemAudioDeviceInfo(
             tag=tag,
@@ -1439,6 +1448,7 @@ class ConfigurationManager(threading.Thread):
             device_index=device_index,
             channels_supported=channels_supported,
             sample_rates=sample_rates,
+            bit_depth=bit_depth_value,
             present=present,
         )
 
@@ -1743,12 +1753,22 @@ class ConfigurationManager(threading.Thread):
             else:
                 sink_address = ""
 
+            if isinstance(sink_address, str) and sink_address.startswith("sr_in:"):
+                label = sink_address[len("sr_in:"):]
+                sanitized_label = self._sanitize_screamrouter_label(label)
+                if sanitized_label and sanitized_label != label:
+                    sink_address = f"sr_in:{sanitized_label}"
+                    try:
+                        py_sink_desc.ip = sink_address
+                    except Exception:  # pylint: disable=broad-except
+                        pass
+
             cpp_sink_engine_config.output_port = py_sink_desc.port if py_sink_desc.port else 0
 
             protocol_lower = (py_sink_desc.protocol or "").lower()
             protocol_is_system = protocol_lower in {"system_audio", "alsa", "wasapi"}
             if not protocol_is_system and isinstance(sink_address, str):
-                if sink_address.startswith(("ap:", "hw:", "wp:", "ws:")):
+                if sink_address.startswith(("ap:", "hw:", "wp:", "ws:", "sr_in:")):
                     protocol_is_system = True
                     protocol_lower = "system_audio"
                     try:
@@ -1801,6 +1821,22 @@ class ConfigurationManager(threading.Thread):
             cpp_sink_engine_config.bitdepth = py_sink_desc.bit_depth
             cpp_sink_engine_config.samplerate = py_sink_desc.sample_rate
             cpp_sink_engine_config.channels = py_sink_desc.channels
+
+            if protocol_is_system and isinstance(sink_address, str) and sink_address.startswith("sr_in:"):
+                device_info = self._find_system_device_by_tag(sink_address)
+                if device_info:
+                    if device_info.hw_id:
+                        cpp_sink_engine_config.output_ip = device_info.hw_id
+                    if device_info.sample_rates:
+                        cpp_sink_engine_config.samplerate = int(device_info.sample_rates[0])
+                    if device_info.channels_supported:
+                        cpp_sink_engine_config.channels = int(device_info.channels_supported[0])
+                    if device_info.bit_depth:
+                        cpp_sink_engine_config.bitdepth = int(device_info.bit_depth)
+                        try:
+                            py_sink_desc.bit_depth = int(device_info.bit_depth)
+                        except Exception:  # pylint: disable=broad-except
+                            pass
 
             # Define a mapping for channel layout strings to byte values
             channel_layout_map = {

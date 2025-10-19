@@ -232,6 +232,7 @@ class SystemAudioDeviceInfo(BaseModel):
     device_index: int
     channels_supported: List[int]
     sample_rates: List[int]
+    bit_depth: Optional[int] = None
     present: bool
 
 

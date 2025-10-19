@@ -64,6 +64,7 @@ private:
     WAVEFORMATEX* device_format_ = nullptr;
 
     SampleFormat device_sample_format_ = SampleFormat::Unknown;
+    SampleFormat source_sample_format_ = SampleFormat::Unknown;
     unsigned int device_bits_per_sample_ = 0;
     unsigned int source_bits_per_sample_ = 0;
     unsigned int channels_ = 0;
