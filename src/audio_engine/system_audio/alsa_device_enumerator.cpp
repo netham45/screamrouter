@@ -195,12 +195,19 @@ std::string clean_description(const std::string& description) {
     return trim_whitespace(cleaned);
 }
 
+bool is_probe_safe(const std::string& device_name) {
+    if (device_name.rfind("hw:", 0) == 0) {
+        return true;
+    }
+    if (device_name.rfind("plughw:", 0) == 0) {
+        return true;
+    }
+    return false;
+}
+
 void populate_pcm_capabilities(SystemDeviceInfo& info, snd_pcm_stream_t stream) {
     snd_pcm_t* pcm_handle = nullptr;
     int open_err = snd_pcm_open(&pcm_handle, info.hw_id.c_str(), stream, SND_PCM_NONBLOCK);
-    if (open_err < 0) {
-        open_err = snd_pcm_open(&pcm_handle, info.hw_id.c_str(), stream, 0);
-    }
     if (open_err < 0) {
         LOG_CPP_DEBUG("[ALSA-Enumerator] Unable to open %s for capability query: %s", info.hw_id.c_str(), snd_strerror(open_err));
         return;
@@ -245,21 +252,28 @@ void populate_pcm_capabilities(SystemDeviceInfo& info, snd_pcm_stream_t stream) 
 }
 
 SystemDeviceInfo create_hint_device_info(
+    const std::string& tag,
     const std::string& device_name,
     DeviceDirection direction,
     const std::string& description,
     const std::optional<int>& card_index,
-    const std::optional<int>& device_index)
+    const std::optional<int>& device_index,
+    const SystemDeviceInfo* previous_info)
 {
     SystemDeviceInfo info;
     info.direction = direction;
-    const char* prefix = (direction == DeviceDirection::CAPTURE) ? kAlsaCapturePrefix : kAlsaPlaybackPrefix;
-    info.tag = std::string(prefix) + device_name;
+    info.tag = tag;
     info.hw_id = device_name;
     info.endpoint_id = device_name;
     info.present = true;
     info.card_index = card_index.value_or(-1);
     info.device_index = device_index.value_or(-1);
+
+    if (previous_info && previous_info->hw_id == info.hw_id) {
+        info.channels = previous_info->channels;
+        info.sample_rates = previous_info->sample_rates;
+        info.bit_depth = previous_info->bit_depth;
+    }
 
     std::string friendly = clean_description(description);
     if (friendly.empty()) {
@@ -271,7 +285,13 @@ SystemDeviceInfo create_hint_device_info(
     info.friendly_name = friendly;
 
     const snd_pcm_stream_t stream = (direction == DeviceDirection::CAPTURE) ? SND_PCM_STREAM_CAPTURE : SND_PCM_STREAM_PLAYBACK;
-    populate_pcm_capabilities(info, stream);
+
+    bool need_probe = !previous_info || previous_info->hw_id != info.hw_id ||
+                      previous_info->channels.min == 0 || previous_info->sample_rates.min == 0;
+
+    if (need_probe && is_probe_safe(device_name)) {
+        populate_pcm_capabilities(info, stream);
+    }
 
     return info;
 }
@@ -393,6 +413,12 @@ void AlsaDeviceEnumerator::enumerate_devices() {
     LOG_CPP_INFO("[ALSA-Enumerator] Starting full ALSA device enumeration pass.");
     Registry scanned_registry;
 
+    Registry previous_registry;
+    {
+        std::lock_guard<std::mutex> lock(registry_mutex_);
+        previous_registry = registry_;
+    }
+
     size_t processed_hints = 0;
     void** hints = nullptr;
     int err = snd_device_name_hint(-1, "pcm", &hints);
@@ -463,7 +489,15 @@ void AlsaDeviceEnumerator::enumerate_devices() {
             auto device_index = resolve_device_index(device_token);
 
             for (DeviceDirection direction : directions) {
-                SystemDeviceInfo info = create_hint_device_info(device_name, direction, description, card_index, device_index);
+                const char* prefix = (direction == DeviceDirection::CAPTURE) ? kAlsaCapturePrefix : kAlsaPlaybackPrefix;
+                std::string tag = std::string(prefix) + device_name;
+                const SystemDeviceInfo* previous_info = nullptr;
+                auto prev_it = previous_registry.find(tag);
+                if (prev_it != previous_registry.end()) {
+                    previous_info = &prev_it->second;
+                }
+
+                SystemDeviceInfo info = create_hint_device_info(tag, device_name, direction, description, card_index, device_index, previous_info);
                 LOG_CPP_INFO("[ALSA-Enumerator]   Discovered %s -> %s", info.tag.c_str(), info.friendly_name.c_str());
                 LOG_CPP_DEBUG("[ALSA-Enumerator]    alsa_id=%s channels=%u-%u rates=%u-%u",
                                info.hw_id.c_str(),
@@ -500,8 +534,8 @@ void AlsaDeviceEnumerator::enumerate_devices() {
 
     {
         std::lock_guard<std::mutex> lock(registry_mutex_);
-        Registry previous = registry_;
-        Registry updated = previous;
+        Registry previous = std::move(previous_registry);
+        Registry updated = registry_;
 
         for (const auto& [tag, info] : scanned_registry) {
             auto prev_it = previous.find(tag);
