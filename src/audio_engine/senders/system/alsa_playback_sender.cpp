@@ -179,11 +179,8 @@ bool AlsaPlaybackSender::configure_device() {
     snd_pcm_hw_params_set_access(pcm_handle_, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
     err = snd_pcm_hw_params_set_format(pcm_handle_, hw_params, sample_format_);
     if (err < 0) {
-        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to set %d-bit format (%s), device may not support this bit depth.",
-                      device_tag_.c_str(), bit_depth_, snd_strerror(err));
-        snd_pcm_hw_params_free(hw_params);
-        close_locked();
-        return false;
+        LOG_CPP_WARNING("[AlsaPlayback:%s] Failed to set %d-bit format (%s); continuing without applying format override.",
+                        device_tag_.c_str(), bit_depth_, snd_strerror(err));
     }
     snd_pcm_hw_params_set_channels(pcm_handle_, hw_params, channels_);
     unsigned int rate = sample_rate_;

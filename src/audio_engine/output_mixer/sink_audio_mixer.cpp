@@ -379,9 +379,11 @@ void SinkAudioMixer::start() {
     if (network_sender_ && !network_sender_->setup()) {
         LOG_CPP_ERROR("[SinkMixer:%s] Network sender setup failed. Cannot start mixer thread.", config_.sink_id.c_str());
         if (config_.protocol == "system_audio") {
-            throw std::runtime_error("Failed to setup system audio playback sender");
+            LOG_CPP_WARNING("[SinkMixer:%s] System audio playback sender setup failed; continuing anyway.",
+                            config_.sink_id.c_str());
+        } else {
+            return;
         }
-        return;
     }
 
     try {
