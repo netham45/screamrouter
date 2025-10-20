@@ -353,6 +353,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
     }
 
     auto current_steady_time = std::chrono::steady_clock::now();
+    const double max_catchup_lag_ms = m_settings->timeshift_tuning.max_catchup_lag_ms;
 
     for (auto& [source_tag, source_map] : processor_targets_) {
         for (auto& [instance_id, target_info] : source_map) {
@@ -396,8 +397,21 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                 // Check if the packet is ready to be played
                 if (ideal_playout_time <= current_steady_time) {
-                    if (-time_until_playout_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
+                    const double lateness_ms = -time_until_playout_ms;
+                    if (lateness_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
                         timing_state->late_packets_count++;
+                    }
+
+                    if (max_catchup_lag_ms > 0.0 && lateness_ms > max_catchup_lag_ms) {
+                        timing_state->tm_packets_discarded++;
+                        LOG_CPP_DEBUG(
+                            "[TimeshiftManager] Dropping late packet for source '%s'. Lateness=%.2f ms exceeds catchup limit=%.2f ms.",
+                            target_info.source_tag_filter.c_str(),
+                            lateness_ms,
+                            max_catchup_lag_ms);
+
+                        target_info.next_packet_read_index++;
+                        continue;
                     }
 
                     TaggedAudioPacket packet_to_send = candidate_packet;

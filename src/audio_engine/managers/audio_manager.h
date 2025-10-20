@@ -371,7 +371,8 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("proportional_gain_kp", &TimeshiftTuning::proportional_gain_kp)
         .def_readwrite("min_playback_rate", &TimeshiftTuning::min_playback_rate)
         .def_readwrite("max_playback_rate", &TimeshiftTuning::max_playback_rate)
-        .def_readwrite("loop_max_sleep_ms", &TimeshiftTuning::loop_max_sleep_ms);
+        .def_readwrite("loop_max_sleep_ms", &TimeshiftTuning::loop_max_sleep_ms)
+        .def_readwrite("max_catchup_lag_ms", &TimeshiftTuning::max_catchup_lag_ms);
 
     py::class_<MixerTuning>(m, "MixerTuning")
         .def(py::init<>())
