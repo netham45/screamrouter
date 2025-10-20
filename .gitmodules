@@ -13,12 +13,12 @@
 [submodule "src/audio_engine/deps/opus"]
 	path = src/audio_engine/deps/opus
 	url = https://github.com/xiph/opus.git
-[submodule "src/audio_engine/deps/--force"]
-	path = src/audio_engine/deps/--force
-	url = https://github.com/netham45/lame.git
 [submodule "src/audio_engine/deps/libsamplerate"]
 	path = src/audio_engine/deps/libsamplerate
 	url = https://github.com/libsndfile/libsamplerate.git
 [submodule "src/audio_engine/deps/lame"]
 	path = src/audio_engine/deps/lame
 	url = https://github.com/ffmpegwasm/lame.git
+[submodule "src/audio_engine/deps/r8brain"]
+	path = src/audio_engine/deps/r8brain
+	url = https://github.com/avaneev/r8brain-free-src

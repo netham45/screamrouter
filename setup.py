@@ -50,7 +50,7 @@ if str(project_root) not in sys.path:
 
 # Import pybind11 first (it's installed via pip)
 try:
-    from pybind11.setup_helpers import Pybind11Extension
+    import pybind11
 except ImportError:
     print("Error: pybind11 not found. Please install it using 'pip install pybind11>=2.6'", file=sys.stderr)
     sys.exit(1)
@@ -214,7 +214,8 @@ class BuildExtCommand(build_ext):
 
     Features:
     - Builds C++ dependencies (OpenSSL, Opus, libdatachannel, etc.)
-    - Compiles screamrouter C++ extension in parallel (uses all CPU cores)
+    - Delegates the screamrouter C++ extension build to CMake/Ninja for
+      true multi-core compilation
     - Supports ccache for faster incremental builds on Linux
     - Generates pybind11 type stubs automatically
     """
@@ -246,156 +247,155 @@ class BuildExtCommand(build_ext):
             print(f"Error importing build_system: {e}", file=sys.stderr)
             print("Make sure the build_system directory exists in the project root.", file=sys.stderr)
             raise
-        
+
         # Initialize build system
-        bs = BuildSystem(
+        self.build_system = BuildSystem(
             root_dir=Path.cwd(),
             verbose=self.verbose > 0
         )
-        
+
         # Show build info
         if self.verbose:
-            bs.show_info()
-        
+            self.build_system.show_info()
+
         # Check prerequisites
         print("Checking build prerequisites...")
-        if not bs.check_prerequisites():
+        if not self.build_system.check_prerequisites():
             raise RuntimeError(
                 "Missing build prerequisites. Please install required packages.\n"
                 "See the error messages above for details."
             )
-        
+
         # Build all dependencies
         print("Building C++ dependencies...")
-        if not bs.build_all():
+        if not self.build_system.build_all():
             raise RuntimeError(
                 "Failed to build one or more dependencies.\n"
                 "See the error messages above for details."
             )
-        
-        # Get install directory
-        install_dir = bs.install_dir
-        
-        # Detect cross-compilation
-        is_cross_compiling = bool(detect_cross_compile_platform())
-        
-        # Update extension paths
-        for ext in self.extensions:
-            # Add include directories
-            ext.include_dirs.insert(0, str(install_dir / "include"))
-            
-            # When cross-compiling, ONLY use our built libraries
-            # Clear any system library paths that distutils may have added
-            if is_cross_compiling:
-                ext.library_dirs.clear()
-                ext.runtime_library_dirs = []
-            
-            # Add library directories
-            # On Windows, use only 'lib' directory (32-bit and 64-bit both use lib)
-            # On Linux, check both lib and lib64
-            if sys.platform == "win32":
-                ext.library_dirs.insert(0, str(install_dir / "lib"))
-            else:
-                ext.library_dirs.insert(0, str(install_dir / "lib"))
-                lib64_path = install_dir / "lib64"
-                if lib64_path.exists():
-                    ext.library_dirs.insert(0, str(lib64_path))
-            
-            # Platform-specific adjustments
-            if sys.platform == "win32":
-                # Windows-specific flags
-                ext.extra_compile_args.extend([
-                    "/std:c++17", "/O2", "/W3", "/EHsc",
-                    "/D_CRT_SECURE_NO_WARNINGS", "/MP",
-                    # Define static linking for libdatachannel
-                    "/DRTC_STATIC"
-                ])
-                # Add Windows system libraries required by OpenSSL and libjuice
-                ext.libraries.extend([
-                    "advapi32",  # Event logging, registry, crypto
-                    "crypt32",   # Certificate store
-                    "user32",    # MessageBox, window station
-                    "bcrypt",    # BCryptGenRandom
-                    "ws2_32",    # Winsock (network)
-                    "iphlpapi",  # IP Helper (network)
-                ])
-            else:
-                # Linux-specific flags
-                ext.extra_compile_args.extend([
-                    "-std=c++17", "-O2", "-Wall", "-fPIC"
-                ])
-                ext.extra_link_args.extend([
-                    "-lpthread", "-ldl"
-                ])
-        
-        # Run normal build
+
+        # Capture paths used during CMake builds
+        self.install_dir = self.build_system.install_dir
+        self.cross_target = detect_cross_compile_platform()
+        self.is_cross_compiling = bool(self.cross_target)
+
+        self.cmake_executable = shutil.which("cmake")
+        if not self.cmake_executable:
+            raise RuntimeError("cmake not found in PATH. Please install CMake >= 3.14")
+
+        self.pybind11_cmake_dir = Path(pybind11.get_cmake_dir())
+        self._built_extensions = []
+
+        # Run the standard build_ext flow which now delegates to CMake
         super().run()
-        
-        # Generate pybind11 stubs
+
         if not self.dry_run:
-            print("Generating pybind11 stubs...")
-            try:
-                env = os.environ.copy()
-                env["PYTHONPATH"] = self.build_lib + os.pathsep + env.get("PYTHONPATH", "")
-                
-                subprocess.run([
-                    sys.executable, "-m", "pybind11_stubgen",
-                    "screamrouter_audio_engine",
-                    "--output-dir", "."
-                ], check=True, env=env)
-                
-                print("Successfully generated stubs for screamrouter_audio_engine.")
-            except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                print(f"WARNING: Failed to generate pybind11 stubs: {e}", file=sys.stderr)
+            self._generate_stubs()
 
+    # --- Helpers -------------------------------------------------
 
-# Find source files
-src_root = Path("src")
-source_files = []
-for root, dirs, files in os.walk(str(src_root)):
-    # Exclude deps directories
-    if 'deps' in dirs:
-        dirs.remove('deps')
-    for file in files:
-        if file.endswith(".cpp"):
-            source_files.append(str(Path(root) / file))
+    def build_extension(self, ext):
+        """Build the pybind11 module via CMake instead of distutils."""
+        if ext.name != "screamrouter_audio_engine":
+            raise RuntimeError(f"Unsupported extension '{ext.name}'")
 
-# Sort for consistent ordering
-source_files.sort()
+        cmake_source_dir = project_root / "src" / "audio_engine"
+        build_dir = Path(self.build_temp) / ext.name
+        build_dir.mkdir(parents=True, exist_ok=True)
 
-# Create extension
-ext_modules = [
-    Pybind11Extension(
-        "screamrouter_audio_engine",
-        sources=source_files,
-        include_dirs=[
-            "src/audio_engine",
-            "src/audio_engine/json/include",  # If json headers are needed
-        ],
-        libraries=[
-            # Core dependencies
-            "mp3lame",
-            "opus",
-            "samplerate",
-            "datachannel",
-            # OpenSSL (libssl/libcrypto on Windows, ssl/crypto on Linux)
-            "libssl" if sys.platform == "win32" else "ssl",
-            "libcrypto" if sys.platform == "win32" else "crypto",
-            # libdatachannel dependencies
-            "juice",
-            "usrsctp",
-            "srtp2",
+        ext_fullpath = Path(self.get_ext_fullpath(ext.name)).resolve()
+        output_dir = ext_fullpath.parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        build_type = "Debug" if self.debug else "Release"
+
+        cmake_args = [
+            self.cmake_executable,
+            "-S", str(cmake_source_dir),
+            "-B", str(build_dir),
+            f"-DSCREAMROUTER_DEPS_PREFIX={self.install_dir}",
+            f"-DSCREAMROUTER_MODULE_OUTPUT_DIR={output_dir}",
+            f"-Dpybind11_DIR={self.pybind11_cmake_dir}",
         ]
-        + (["asound"] if sys.platform.startswith("linux") else [])
-        + (["ole32", "oleaut32", "avrt", "mmdevapi", "uuid", "propsys"] if sys.platform == "win32" else []),
-        extra_link_args=(
-            ["ole32.lib", "oleaut32.lib", "avrt.lib", "mmdevapi.lib", "uuid.lib", "propsys.lib"]
-            if sys.platform == "win32"
-            else []
-        ),
-        language="c++",
-        cxx_std=17
-    )
+
+        # Set build type for single-config generators (ignored by multi-config)
+        cmake_args.append(f"-DCMAKE_BUILD_TYPE={build_type}")
+
+        if self.is_cross_compiling and self.cross_target:
+            system_part, _, arch_part = self.cross_target.partition("_")
+            system_map = {
+                "linux": "Linux",
+                "darwin": "Darwin",
+                "win": "Windows",
+                "windows": "Windows",
+            }
+            if system_part:
+                cmake_args.append(f"-DCMAKE_SYSTEM_NAME={system_map.get(system_part, system_part)}")
+            if arch_part:
+                cmake_args.append(f"-DCMAKE_SYSTEM_PROCESSOR={arch_part}")
+
+        env = os.environ.copy()
+        # Help CMake locate dependencies and pybind11
+        prefix_paths = [str(self.install_dir), str(self.pybind11_cmake_dir)]
+        existing_prefix = env.get("CMAKE_PREFIX_PATH")
+        if existing_prefix:
+            prefix_paths.append(existing_prefix)
+        env["CMAKE_PREFIX_PATH"] = os.pathsep.join(prefix_paths)
+        env.setdefault("CMAKE_BUILD_PARALLEL_LEVEL", str(self.parallel))
+
+        print("Configuring CMake project...")
+        subprocess.run(cmake_args, cwd=str(project_root), check=True, env=env)
+
+        build_cmd = [
+            self.cmake_executable,
+            "--build", str(build_dir),
+        ]
+
+        if sys.platform == "win32":
+            build_cmd.extend(["--config", build_type])
+
+        if self.parallel:
+            build_cmd.extend(["--parallel", str(self.parallel)])
+
+        print("Building screamrouter_audio_engine via CMake...")
+        subprocess.run(build_cmd, cwd=str(project_root), check=True, env=env)
+
+        expected_name = Path(self.get_ext_filename(ext.name)).name
+        built_path = output_dir / expected_name
+
+        if not built_path.exists():
+            candidates = list(output_dir.glob(f"{ext.name}*"))
+            if not candidates:
+                raise RuntimeError(
+                    f"Failed to locate built module for {ext.name} in {output_dir}"
+                )
+            shutil.copy2(candidates[0], built_path)
+
+        if built_path != ext_fullpath:
+            shutil.copy2(built_path, ext_fullpath)
+
+        self._built_extensions.append(ext.name)
+
+    def _generate_stubs(self) -> None:
+        print("Generating pybind11 stubs...")
+        try:
+            env = os.environ.copy()
+            env["PYTHONPATH"] = self.build_lib + os.pathsep + env.get("PYTHONPATH", "")
+
+            subprocess.run([
+                sys.executable, "-m", "pybind11_stubgen",
+                "screamrouter_audio_engine",
+                "--output-dir", "."
+            ], check=True, env=env)
+
+            print("Successfully generated stubs for screamrouter_audio_engine.")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print(f"WARNING: Failed to generate pybind11 stubs: {e}", file=sys.stderr)
+
+
+# Create extension metadata (actual build handled by CMake)
+ext_modules = [
+    Extension("screamrouter_audio_engine", sources=[])
 ]
 
 # Read README for long description
