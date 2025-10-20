@@ -213,6 +213,19 @@ private:
     void dispatch_to_listeners(size_t samples_to_dispatch);
     void encode_and_push_mp3(size_t samples_to_encode);
     void cleanup_closed_listeners();
+
+    // --- Profiling ---
+    void reset_profiler_counters();
+    void maybe_log_profiler();
+    std::chrono::steady_clock::time_point profiling_last_log_time_;
+    uint64_t profiling_cycles_{0};
+    uint64_t profiling_data_ready_cycles_{0};
+    uint64_t profiling_chunks_sent_{0};
+    uint64_t profiling_payload_bytes_sent_{0};
+    size_t profiling_ready_sources_sum_{0};
+    size_t profiling_lagging_sources_sum_{0};
+    size_t profiling_samples_count_{0};
+    size_t profiling_max_payload_buffer_bytes_{0};
 };
 
 } // namespace audio

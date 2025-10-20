@@ -26,7 +26,8 @@ namespace audio {
 TimeshiftManager::TimeshiftManager(std::chrono::seconds max_buffer_duration, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
     : max_buffer_duration_sec_(max_buffer_duration),
       m_settings(settings),
-      last_cleanup_time_(std::chrono::steady_clock::now()) {
+      last_cleanup_time_(std::chrono::steady_clock::now()),
+      profiling_last_log_time_(std::chrono::steady_clock::now()) {
     LOG_CPP_INFO("[TimeshiftManager] Initializing with max buffer duration: %llds", (long long)max_buffer_duration_sec_.count());
 }
 
@@ -51,6 +52,10 @@ void TimeshiftManager::start() {
     }
     LOG_CPP_INFO("[TimeshiftManager] Starting...");
     stop_flag_ = false;
+    {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        reset_profiler_counters_unlocked(std::chrono::steady_clock::now());
+    }
     try {
         component_thread_ = std::thread(&TimeshiftManager::run, this);
         LOG_CPP_INFO("[TimeshiftManager] Component thread launched.");
@@ -401,9 +406,14 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     if (lateness_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
                         timing_state->late_packets_count++;
                     }
+                    if (lateness_ms > 0.0) {
+                        profiling_total_lateness_ms_ += lateness_ms;
+                        profiling_packets_late_count_++;
+                    }
 
                     if (max_catchup_lag_ms > 0.0 && lateness_ms > max_catchup_lag_ms) {
                         timing_state->tm_packets_discarded++;
+                        profiling_packets_dropped_++;
                         LOG_CPP_DEBUG(
                             "[TimeshiftManager] Dropping late packet for source '%s'. Lateness=%.2f ms exceeds catchup limit=%.2f ms.",
                             target_info.source_tag_filter.c_str(),
@@ -457,6 +467,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     packet_to_send.playback_rate = timing_state->current_playback_rate;
 
                     target_info.target_queue->push(std::move(packet_to_send));
+                    profiling_packets_dispatched_++;
                     
                     timing_state->last_played_rtp_timestamp = candidate_packet.rtp_timestamp.value();
                     
@@ -470,6 +481,73 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
             }
         }
     }
+
+    if (m_settings->profiler.enabled) {
+        maybe_log_profiler_unlocked(std::chrono::steady_clock::now());
+    }
+}
+
+void TimeshiftManager::reset_profiler_counters_unlocked(std::chrono::steady_clock::time_point now) {
+    profiling_last_log_time_ = now;
+    profiling_packets_dispatched_ = 0;
+    profiling_packets_dropped_ = 0;
+    profiling_packets_late_count_ = 0;
+    profiling_total_lateness_ms_ = 0.0;
+}
+
+void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::time_point now) {
+    if (!m_settings || !m_settings->profiler.enabled) {
+        return;
+    }
+
+    long interval_ms = m_settings->profiler.log_interval_ms;
+    if (interval_ms <= 0) {
+        interval_ms = 1000;
+    }
+    auto interval = std::chrono::milliseconds(interval_ms);
+    if (now - profiling_last_log_time_ < interval) {
+        return;
+    }
+
+    const size_t buffer_size = global_timeshift_buffer_.size();
+    size_t total_targets = 0;
+    size_t total_backlog = 0;
+    size_t max_backlog = 0;
+
+    for (const auto& [source_tag, source_map] : processor_targets_) {
+        (void)source_tag;
+        for (const auto& [instance_id, target_info] : source_map) {
+            (void)instance_id;
+            total_targets++;
+            size_t backlog = 0;
+            if (target_info.next_packet_read_index < global_timeshift_buffer_.size()) {
+                backlog = global_timeshift_buffer_.size() - target_info.next_packet_read_index;
+            }
+            total_backlog += backlog;
+            if (backlog > max_backlog) {
+                max_backlog = backlog;
+            }
+        }
+    }
+
+    const double avg_backlog = total_targets > 0 ? static_cast<double>(total_backlog) / static_cast<double>(total_targets) : 0.0;
+    const double avg_late_ms = profiling_packets_late_count_ > 0
+                                    ? (profiling_total_lateness_ms_ / static_cast<double>(profiling_packets_late_count_))
+                                    : 0.0;
+
+    LOG_CPP_INFO(
+        "[Profiler][Timeshift] buffer=%zu targets=%zu avg_backlog=%.2f max_backlog=%zu dispatched=%llu dropped=%llu late_count=%llu avg_late_ms=%.2f late_ms_sum=%.2f",
+        buffer_size,
+        total_targets,
+        avg_backlog,
+        max_backlog,
+        static_cast<unsigned long long>(profiling_packets_dispatched_),
+        static_cast<unsigned long long>(profiling_packets_dropped_),
+        static_cast<unsigned long long>(profiling_packets_late_count_),
+        avg_late_ms,
+        profiling_total_lateness_ms_);
+
+    reset_profiler_counters_unlocked(now);
 }
 
 /**

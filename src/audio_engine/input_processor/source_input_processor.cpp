@@ -38,6 +38,7 @@ SourceInputProcessor::SourceInputProcessor(
       output_queue_(output_queue),
       command_queue_(command_queue),
       m_settings(settings),
+      profiling_last_log_time_(std::chrono::steady_clock::now()),
       current_volume_(config_.initial_volume), // Initialize from moved config_
       current_eq_(config_.initial_eq),
       current_delay_ms_(config_.initial_delay_ms),
@@ -139,6 +140,7 @@ void SourceInputProcessor::start() {
     process_buffer_.clear();
     // Implementation for start: set flag, launch thread
     stop_flag_ = false; // Reset stop flag before launching threads
+    reset_profiler_counters();
     try {
         // Only launch the main component thread here.
         // run() will launch the worker threads.
@@ -283,6 +285,7 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
             process_buffer_.insert(process_buffer_.end(),
                                    processor_output_buffer.begin(),
                                    processor_output_buffer.begin() + samples_to_insert);
+            profiling_peak_process_buffer_samples_ = std::max(profiling_peak_process_buffer_samples_, process_buffer_.size());
         } catch (const std::bad_alloc& e) {
              LOG_CPP_ERROR("[SourceProc:%s] Failed to insert into process_buffer_: %s", config_.instance_id.c_str(), e.what());
              // Handle allocation failure, maybe clear buffer or stop processing?
@@ -319,6 +322,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
              LOG_CPP_ERROR("[SourceProc:%s] PushOutput: Mismatch between pushed samples (%zu) and required samples (%zu).", config_.instance_id.c_str(), pushed_samples, required_samples);
          }
          output_queue_->push(std::move(output_chunk));
+         profiling_chunks_pushed_++;
 
          // Remove the copied samples from the process buffer
         process_buffer_.erase(process_buffer_.begin(), process_buffer_.begin() + required_samples);
@@ -328,6 +332,75 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
     }
 }
 
+void SourceInputProcessor::reset_profiler_counters() {
+    profiling_last_log_time_ = std::chrono::steady_clock::now();
+    profiling_packets_received_ = 0;
+    profiling_chunks_pushed_ = 0;
+    profiling_discarded_packets_ = 0;
+    profiling_processing_ns_ = 0;
+    profiling_processing_samples_ = 0;
+    profiling_peak_process_buffer_samples_ = process_buffer_.size();
+    profiling_input_queue_sum_ = 0;
+    profiling_output_queue_sum_ = 0;
+    profiling_queue_samples_ = 0;
+}
+
+void SourceInputProcessor::maybe_log_profiler() {
+    if (!m_settings || !m_settings->profiler.enabled) {
+        return;
+    }
+
+    long interval_ms = m_settings->profiler.log_interval_ms;
+    if (interval_ms <= 0) {
+        interval_ms = 1000;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    auto interval = std::chrono::milliseconds(interval_ms);
+    if (now - profiling_last_log_time_ < interval) {
+        return;
+    }
+
+    size_t current_process_buffer = process_buffer_.size();
+    size_t input_queue_size = input_queue_ ? input_queue_->size() : 0;
+    size_t output_queue_size = output_queue_ ? output_queue_->size() : 0;
+
+    double avg_loop_ms = profiling_processing_samples_ > 0
+                              ? (static_cast<double>(profiling_processing_ns_) / (1'000'000.0 * static_cast<double>(profiling_processing_samples_)))
+                              : 0.0;
+    double avg_input_queue = profiling_queue_samples_ > 0
+                                 ? static_cast<double>(profiling_input_queue_sum_) / static_cast<double>(profiling_queue_samples_)
+                                 : static_cast<double>(input_queue_size);
+    double avg_output_queue = profiling_queue_samples_ > 0
+                                  ? static_cast<double>(profiling_output_queue_sum_) / static_cast<double>(profiling_queue_samples_)
+                                  : static_cast<double>(output_queue_size);
+
+    LOG_CPP_INFO(
+        "[Profiler][SourceProc:%s] packets=%llu chunks=%llu discarded=%llu avg_loop_ms=%.3f input_q(avg/current)=(%.2f/%zu) output_q(avg/current)=(%.2f/%zu) buffer_samples(current/peak)=(%zu/%zu)",
+        config_.instance_id.c_str(),
+        static_cast<unsigned long long>(profiling_packets_received_),
+        static_cast<unsigned long long>(profiling_chunks_pushed_),
+        static_cast<unsigned long long>(profiling_discarded_packets_),
+        avg_loop_ms,
+        avg_input_queue,
+        input_queue_size,
+        avg_output_queue,
+        output_queue_size,
+        current_process_buffer,
+        profiling_peak_process_buffer_samples_);
+
+    profiling_last_log_time_ = now;
+    profiling_packets_received_ = 0;
+    profiling_chunks_pushed_ = 0;
+    profiling_discarded_packets_ = 0;
+    profiling_processing_ns_ = 0;
+    profiling_processing_samples_ = 0;
+    profiling_peak_process_buffer_samples_ = current_process_buffer;
+    profiling_input_queue_sum_ = 0;
+    profiling_output_queue_sum_ = 0;
+    profiling_queue_samples_ = 0;
+}
+
 // --- New/Modified Thread Loops ---
 
 void SourceInputProcessor::input_loop() {
@@ -335,6 +408,8 @@ void SourceInputProcessor::input_loop() {
     TaggedAudioPacket timed_packet;
     while (!stop_flag_ && input_queue_ && input_queue_->pop(timed_packet)) {
         m_total_packets_processed++;
+        profiling_packets_received_++;
+        auto loop_start = std::chrono::steady_clock::now();
 
         // --- Discontinuity Detection ---
         auto now = std::chrono::steady_clock::now();
@@ -379,11 +454,24 @@ void SourceInputProcessor::input_loop() {
                 // This function now deals out fixed-size chunks from the buffer
                 push_output_chunk_if_ready();
             } else {
+                profiling_discarded_packets_++;
                 LOG_CPP_ERROR("[SourceProc:%s] Audio payload invalid after check_format_and_reconfigure. Size: %zu", config_.instance_id.c_str(), audio_payload_size);
             }
-        } else if (!packet_ok_for_processing) {
+        } else {
+            profiling_discarded_packets_++;
             LOG_CPP_WARNING("[SourceProc:%s] Packet discarded by input_loop due to format/size issues or no audio processor.", config_.instance_id.c_str());
         }
+
+        size_t input_queue_size_snapshot = input_queue_ ? input_queue_->size() : 0;
+        size_t output_queue_size_snapshot = output_queue_ ? output_queue_->size() : 0;
+        profiling_input_queue_sum_ += input_queue_size_snapshot;
+        profiling_output_queue_sum_ += output_queue_size_snapshot;
+        profiling_queue_samples_++;
+
+        auto loop_end = std::chrono::steady_clock::now();
+        profiling_processing_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(loop_end - loop_start).count();
+        profiling_processing_samples_++;
+        maybe_log_profiler();
     }
     LOG_CPP_INFO("[SourceProc:%s] Input loop exiting. StopFlag=%d", config_.instance_id.c_str(), stop_flag_.load());
 }

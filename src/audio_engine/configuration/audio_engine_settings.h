@@ -18,6 +18,11 @@ struct TimeshiftTuning {
     double max_catchup_lag_ms = 12.0;
 };
 
+struct ProfilerSettings {
+    bool enabled = false;
+    long log_interval_ms = 1000;
+};
+
 struct MixerTuning {
     long grace_period_timeout_ms = 12;
     long grace_period_poll_interval_ms = 1;
@@ -59,6 +64,7 @@ struct SynchronizationTuning {
 class AudioEngineSettings {
 public:
     TimeshiftTuning timeshift_tuning;
+    ProfilerSettings profiler;
     MixerTuning mixer_tuning;
     SourceProcessorTuning source_processor_tuning;
     ProcessorTuning processor_tuning;

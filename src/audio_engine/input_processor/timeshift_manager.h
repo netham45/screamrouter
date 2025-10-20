@@ -190,6 +190,15 @@ private:
 
     std::atomic<uint64_t> m_state_version_{0};
     std::atomic<uint64_t> m_total_packets_added{0};
+
+    // --- Profiling ---
+    void reset_profiler_counters_unlocked(std::chrono::steady_clock::time_point now);
+    void maybe_log_profiler_unlocked(std::chrono::steady_clock::time_point now);
+    std::chrono::steady_clock::time_point profiling_last_log_time_;
+    uint64_t profiling_packets_dispatched_{0};
+    uint64_t profiling_packets_dropped_{0};
+    uint64_t profiling_packets_late_count_{0};
+    double profiling_total_lateness_ms_{0.0};
 };
 
 } // namespace audio

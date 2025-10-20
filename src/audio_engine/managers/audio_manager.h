@@ -374,6 +374,11 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("loop_max_sleep_ms", &TimeshiftTuning::loop_max_sleep_ms)
         .def_readwrite("max_catchup_lag_ms", &TimeshiftTuning::max_catchup_lag_ms);
 
+    py::class_<ProfilerSettings>(m, "ProfilerSettings")
+        .def(py::init<>())
+        .def_readwrite("enabled", &ProfilerSettings::enabled)
+        .def_readwrite("log_interval_ms", &ProfilerSettings::log_interval_ms);
+
     py::class_<MixerTuning>(m, "MixerTuning")
         .def(py::init<>())
         .def_readwrite("grace_period_timeout_ms", &MixerTuning::grace_period_timeout_ms)
@@ -412,6 +417,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
     py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
         .def(py::init<>())
         .def_readwrite("timeshift_tuning", &AudioEngineSettings::timeshift_tuning)
+        .def_readwrite("profiler", &AudioEngineSettings::profiler)
         .def_readwrite("mixer_tuning", &AudioEngineSettings::mixer_tuning)
         .def_readwrite("source_processor_tuning", &AudioEngineSettings::source_processor_tuning)
         .def_readwrite("processor_tuning", &AudioEngineSettings::processor_tuning)
