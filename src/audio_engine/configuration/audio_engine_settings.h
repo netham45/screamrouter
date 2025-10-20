@@ -15,11 +15,11 @@ struct TimeshiftTuning {
     double min_playback_rate = 0.98;
     double max_playback_rate = 1.02;
     long loop_max_sleep_ms = 10;
-    double max_catchup_lag_ms = 12.0;
+    double max_catchup_lag_ms = 20.0;
 };
 
 struct ProfilerSettings {
-    bool enabled = false;
+    bool enabled = true;
     long log_interval_ms = 1000;
 };
 
