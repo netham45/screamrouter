@@ -320,13 +320,13 @@ void AudioProcessor::initializeSampler() {
     }
 
     // Create upsampler
-    m_upsampler = src_new(SRC_SINC_BEST_QUALITY, inputChannels, &error);
+    m_upsampler = src_new(SRC_SINC_MEDIUM_QUALITY, inputChannels, &error);
     if (m_upsampler == nullptr) {
         LOG_CPP_ERROR("[AudioProc] Error creating libsamplerate upsampler: %s", src_strerror(error));
     }
 
     // Create downsampler
-    m_downsampler = src_new(SRC_SINC_BEST_QUALITY, outputChannels, &error);
+    m_downsampler = src_new(SRC_SINC_MEDIUM_QUALITY, outputChannels, &error);
     if (m_downsampler == nullptr) {
         LOG_CPP_ERROR("[AudioProc] Error creating libsamplerate downsampler: %s", src_strerror(error));
     }

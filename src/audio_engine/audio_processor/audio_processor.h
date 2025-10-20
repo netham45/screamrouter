@@ -15,14 +15,12 @@
 #include <vector>
 #include <map>
 #include <mutex>
-#include <memory>
 #include "../audio_constants.h"
 #include "../configuration/audio_engine_config_types.h"
 #include "../configuration/audio_engine_settings.h"
 
-namespace r8b {
-class CDSPResampler24;
-}
+// libsamplerate include
+#include <samplerate.h>
 
 /**
  * @def CHUNK_SIZE
@@ -147,6 +145,10 @@ private:
     // --- Internal Buffers ---
     std::vector<uint8_t> receive_buffer;
     std::vector<int32_t> scaled_buffer;
+    std::vector<int32_t> resampled_buffer;
+    std::vector<std::vector<int32_t>> channel_buffers;
+    std::vector<std::vector<int32_t>> remixed_channel_buffers;
+    std::vector<int32_t> merged_buffer;
     std::vector<int32_t> processed_buffer;
     std::vector<float> scaled_float_buffer_;
     std::vector<std::vector<float>> channel_float_buffers_;
@@ -167,16 +169,9 @@ private:
     size_t resample_buffer_pos = 0;
     size_t channel_buffer_pos = 0;
 
-    // --- r8brain Resampler Members ---
-    std::vector<std::unique_ptr<r8b::CDSPResampler24>> upsamplers_;
-    std::vector<std::unique_ptr<r8b::CDSPResampler24>> downsamplers_;
-    double current_resampler_playback_rate_ = 0.0;
-    double current_upsample_dst_rate_ = 0.0;
-    double current_downsample_src_rate_ = 0.0;
-    int resampler_max_input_frames_ = 0;
-    std::vector<double> resampler_temp_input_;
-
-    bool resamplers_need_update_ = true;
+    // --- libsamplerate Resampler Members ---
+    SRC_STATE* m_upsampler;
+    SRC_STATE* m_downsampler;
 
     // --- Filters ---
     Biquad* filters[screamrouter::audio::MAX_CHANNELS][screamrouter::audio::EQ_BANDS];
@@ -189,7 +184,7 @@ private:
 
     // --- Private Methods for Audio Pipeline Stages ---
     void setupBiquad();
-    void initializeResamplersIfNeeded();
+    void initializeSampler();
     void scaleBuffer();
     void volumeAdjust();
     float softClip(float sample);
