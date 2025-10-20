@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "screamrouter"
-version = "0.3.33"
+version = "0.3.34"
 description = "ScreamRouter audio routing system with web interface and C++ audio engine"
 readme = "README.md"
 requires-python = ">=3.12"

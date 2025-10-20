@@ -150,10 +150,17 @@ private:
     std::vector<std::vector<int32_t>> remixed_channel_buffers;
     std::vector<int32_t> merged_buffer;
     std::vector<int32_t> processed_buffer;
+    std::vector<float> scaled_float_buffer_;
+    std::vector<std::vector<float>> channel_float_buffers_;
+    std::vector<std::vector<float>> remixed_float_buffers_;
+    std::vector<float> merged_float_buffer_;
     std::vector<float> resample_float_in_buffer_;
     std::vector<float> resample_float_out_buffer_;
     std::vector<float> downsample_float_in_buffer_;
     std::vector<float> downsample_float_out_buffer_;
+    std::vector<float> eq_temp_buffer_;
+    std::vector<float> eq_processed_buffer_;
+    std::vector<float> dc_temp_buffer_;
 
     // --- Buffer Position Trackers ---
     size_t scale_buffer_pos = 0;
@@ -169,6 +176,11 @@ private:
     // --- Filters ---
     Biquad* filters[screamrouter::audio::MAX_CHANNELS][screamrouter::audio::EQ_BANDS];
     Biquad* dcFilters[screamrouter::audio::MAX_CHANNELS];
+    struct MixTap {
+        uint8_t input_index;
+        float gain_scaled;
+    };
+    std::vector<MixTap> mix_taps_[screamrouter::audio::MAX_CHANNELS];
 
     // --- Private Methods for Audio Pipeline Stages ---
     void setupBiquad();
@@ -188,6 +200,7 @@ private:
     bool isProcessingRequired();
     bool isProcessingRequiredCheck();
     void monitorBuffers();
+    void rebuild_mix_taps_locked();
 
     // --- Buffer Monitoring Thread ---
     std::thread monitor_thread;
