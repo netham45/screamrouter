@@ -12,6 +12,7 @@
 #include <new> // Include for std::bad_alloc
 #include <sstream> // For logging matrix (will be replaced)
 #include <iomanip> // For std::fixed and std::setprecision (will be replaced)
+#include <limits>
 
 using namespace screamrouter::audio;
 
@@ -437,20 +438,42 @@ void AudioProcessor::resample() {
         return;
     }
 
-    std::vector<float> float_in_buffer(scale_buffer_pos);
-    src_int_to_float_array(scaled_buffer.data(), float_in_buffer.data(), scale_buffer_pos);
-
     double current_playback_rate = playback_rate_.load();
     double effective_oversampled_rate = static_cast<double>(outputSampleRate * m_settings->processor_tuning.oversampling_factor) * current_playback_rate;
     double ratio = effective_oversampled_rate / inputSampleRate;
 
-    std::vector<float> float_out_buffer(static_cast<size_t>(scale_buffer_pos * ratio) + 10);
+    if (std::abs(ratio - 1.0) <= std::numeric_limits<double>::epsilon()) {
+        size_t samples_to_copy = scale_buffer_pos;
+        if (samples_to_copy > scaled_buffer.size()) {
+            LOG_CPP_ERROR("[AudioProc] Error: scale_buffer_pos (%zu) exceeds scaled_buffer size (%zu) in unity resample path.", samples_to_copy, scaled_buffer.size());
+            samples_to_copy = scaled_buffer.size();
+        }
+        if (resampled_buffer.size() < samples_to_copy) {
+            try { resampled_buffer.resize(samples_to_copy); }
+            catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resampled_buffer (unity path): %s", e.what()); resample_buffer_pos = 0; return; }
+        }
+        memcpy(resampled_buffer.data(), scaled_buffer.data(), samples_to_copy * sizeof(int32_t));
+        resample_buffer_pos = samples_to_copy;
+        return;
+    }
+
+    if (resample_float_in_buffer_.size() < scale_buffer_pos) {
+        try { resample_float_in_buffer_.resize(scale_buffer_pos); }
+        catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resample_float_in_buffer_: %s", e.what()); resample_buffer_pos = 0; return; }
+    }
+    src_int_to_float_array(scaled_buffer.data(), resample_float_in_buffer_.data(), scale_buffer_pos);
+
+    size_t estimated_output_samples = static_cast<size_t>(scale_buffer_pos * ratio) + (inputChannels * 10);
+    if (resample_float_out_buffer_.size() < estimated_output_samples) {
+        try { resample_float_out_buffer_.resize(estimated_output_samples); }
+        catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resample_float_out_buffer_: %s", e.what()); resample_buffer_pos = 0; return; }
+    }
 
     SRC_DATA src_data = {0};
-    src_data.data_in = float_in_buffer.data();
+    src_data.data_in = resample_float_in_buffer_.data();
     src_data.input_frames = scale_buffer_pos / inputChannels;
-    src_data.data_out = float_out_buffer.data();
-    src_data.output_frames = float_out_buffer.size() / inputChannels;
+    src_data.data_out = resample_float_out_buffer_.data();
+    src_data.output_frames = resample_float_out_buffer_.size() / inputChannels;
     src_data.src_ratio = ratio;
 
     int error = src_process(m_upsampler, &src_data);
@@ -466,7 +489,7 @@ void AudioProcessor::resample() {
         catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resampled_buffer for output: %s", e.what()); resample_buffer_pos = 0; return; }
     }
 
-    src_float_to_int_array(float_out_buffer.data(), resampled_buffer.data(), output_samples);
+    src_float_to_int_array(resample_float_out_buffer_.data(), resampled_buffer.data(), output_samples);
     resample_buffer_pos = output_samples;
 }
 
@@ -492,20 +515,42 @@ void AudioProcessor::downsample() {
         return;
     }
 
-    std::vector<float> float_in_buffer(merged_buffer_pos);
-    src_int_to_float_array(merged_buffer.data(), float_in_buffer.data(), merged_buffer_pos);
-
     double current_playback_rate = playback_rate_.load();
     double effective_oversampled_rate = static_cast<double>(outputSampleRate * m_settings->processor_tuning.oversampling_factor) * current_playback_rate;
     double ratio = static_cast<double>(outputSampleRate) / effective_oversampled_rate;
 
-    std::vector<float> float_out_buffer(static_cast<size_t>(merged_buffer_pos * ratio) + 10);
+    if (std::abs(ratio - 1.0) <= std::numeric_limits<double>::epsilon()) {
+        size_t samples_to_copy = merged_buffer_pos;
+        if (samples_to_copy > merged_buffer.size()) {
+            LOG_CPP_ERROR("[AudioProc] Error: merged_buffer_pos (%zu) exceeds merged_buffer size (%zu) in unity downsample path.", samples_to_copy, merged_buffer.size());
+            samples_to_copy = merged_buffer.size();
+        }
+        if (processed_buffer.size() < samples_to_copy) {
+            try { processed_buffer.resize(samples_to_copy); }
+            catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing processed_buffer (unity path): %s", e.what()); process_buffer_pos = 0; return; }
+        }
+        memcpy(processed_buffer.data(), merged_buffer.data(), samples_to_copy * sizeof(int32_t));
+        process_buffer_pos = samples_to_copy;
+        return;
+    }
+
+    if (downsample_float_in_buffer_.size() < merged_buffer_pos) {
+        try { downsample_float_in_buffer_.resize(merged_buffer_pos); }
+        catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing downsample_float_in_buffer_: %s", e.what()); process_buffer_pos = 0; return; }
+    }
+    src_int_to_float_array(merged_buffer.data(), downsample_float_in_buffer_.data(), merged_buffer_pos);
+
+    size_t estimated_output_samples = static_cast<size_t>(merged_buffer_pos * ratio) + (outputChannels * 10);
+    if (downsample_float_out_buffer_.size() < estimated_output_samples) {
+        try { downsample_float_out_buffer_.resize(estimated_output_samples); }
+        catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing downsample_float_out_buffer_: %s", e.what()); process_buffer_pos = 0; return; }
+    }
 
     SRC_DATA src_data = {0};
-    src_data.data_in = float_in_buffer.data();
+    src_data.data_in = downsample_float_in_buffer_.data();
     src_data.input_frames = merged_buffer_pos / outputChannels;
-    src_data.data_out = float_out_buffer.data();
-    src_data.output_frames = float_out_buffer.size() / outputChannels;
+    src_data.data_out = downsample_float_out_buffer_.data();
+    src_data.output_frames = downsample_float_out_buffer_.size() / outputChannels;
     src_data.src_ratio = ratio;
 
     int error = src_process(m_downsampler, &src_data);
@@ -521,7 +566,7 @@ void AudioProcessor::downsample() {
         catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing processed_buffer for output: %s", e.what()); process_buffer_pos = 0; return; }
     }
 
-    src_float_to_int_array(float_out_buffer.data(), processed_buffer.data(), output_samples);
+    src_float_to_int_array(downsample_float_out_buffer_.data(), processed_buffer.data(), output_samples);
     process_buffer_pos = output_samples;
 }
 

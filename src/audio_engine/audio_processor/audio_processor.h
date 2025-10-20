@@ -150,6 +150,10 @@ private:
     std::vector<std::vector<int32_t>> remixed_channel_buffers;
     std::vector<int32_t> merged_buffer;
     std::vector<int32_t> processed_buffer;
+    std::vector<float> resample_float_in_buffer_;
+    std::vector<float> resample_float_out_buffer_;
+    std::vector<float> downsample_float_in_buffer_;
+    std::vector<float> downsample_float_out_buffer_;
 
     // --- Buffer Position Trackers ---
     size_t scale_buffer_pos = 0;
