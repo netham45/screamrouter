@@ -177,8 +177,8 @@ private:
     std::condition_variable input_cv_;
     std::mutex input_cv_mutex_;
 
-    const std::chrono::milliseconds GRACE_PERIOD_TIMEOUT{12};
-    const std::chrono::milliseconds GRACE_PERIOD_POLL_INTERVAL{1};
+    std::chrono::microseconds mix_period_{std::chrono::microseconds(12000)};
+    std::chrono::steady_clock::time_point next_mix_time_{};
 
     std::vector<int32_t> mixing_buffer_;
     std::vector<int32_t> stereo_buffer_;
@@ -230,6 +230,9 @@ private:
     size_t profiling_lagging_sources_sum_{0};
     size_t profiling_samples_count_{0};
     size_t profiling_max_payload_buffer_bytes_{0};
+
+    std::chrono::microseconds calculate_mix_period() const;
+    void wait_for_next_mix_tick();
 };
 
 } // namespace audio

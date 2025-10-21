@@ -378,6 +378,8 @@ void SinkAudioMixer::start() {
     stop_flag_ = false;
     payload_buffer_write_pos_ = 0;
     reset_profiler_counters();
+    mix_period_ = calculate_mix_period();
+    next_mix_time_ = std::chrono::steady_clock::now();
 
     if (network_sender_ && !network_sender_->setup()) {
         LOG_CPP_ERROR("[SinkMixer:%s] Network sender setup failed. Cannot start mixer thread.", config_.sink_id.c_str());
@@ -459,8 +461,7 @@ bool SinkAudioMixer::wait_for_source_data() {
 
     bool data_actually_popped_this_cycle = false;
     std::map<std::string, bool> ready_this_cycle;
-    std::vector<std::string> lagging_active_sources;
-    size_t initial_lagging_sources = 0;
+    size_t lagging_sources = 0;
 
     bool had_any_active_sources = false;
     for (const auto& [instance_id, is_active] : input_active_state_) {
@@ -473,18 +474,19 @@ bool SinkAudioMixer::wait_for_source_data() {
 
     bool was_holding_silence = underrun_silence_active_;
 
-    LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Initial non-blocking check...", config_.sink_id.c_str());
+    LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Polling input queues.", config_.sink_id.c_str());
     for (auto const& [instance_id, queue_ptr] : input_queues_) {
         ProcessedAudioChunk chunk;
         bool previously_active = input_active_state_.count(instance_id) ? input_active_state_[instance_id] : false;
 
         if (queue_ptr->try_pop(chunk)) {
             if (chunk.audio_data.size() != SINK_MIXING_BUFFER_SAMPLES) {
-                LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
-                              config_.sink_id.c_str(), instance_id.c_str(), chunk.audio_data.size());
+                LOG_CPP_ERROR(
+                    "[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
+                    config_.sink_id.c_str(), instance_id.c_str(), chunk.audio_data.size());
                 ready_this_cycle[instance_id] = false;
+                input_active_state_[instance_id] = false;
             } else {
-                LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Pop SUCCESS (Initial) for instance %s", config_.sink_id.c_str(), instance_id.c_str());
                 m_total_chunks_mixed++;
                 source_buffers_[instance_id] = std::move(chunk);
                 ready_this_cycle[instance_id] = true;
@@ -497,75 +499,12 @@ bool SinkAudioMixer::wait_for_source_data() {
         } else {
             ready_this_cycle[instance_id] = false;
             if (previously_active) {
-                LOG_CPP_DEBUG(
-                    "[SinkMixer:%s] WaitForData: Pop FAILED (Initial) for ACTIVE instance %s. Adding to grace period check.",
-                    config_.sink_id.c_str(), instance_id.c_str());
-                lagging_active_sources.push_back(instance_id);
-            } else {
+                LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Instance %s did not provide a chunk this cycle, marking inactive.",
+                              config_.sink_id.c_str(), instance_id.c_str());
                 input_active_state_[instance_id] = false;
+                m_buffer_underruns++;
+                lagging_sources++;
             }
-        }
-    }
-
-    initial_lagging_sources = lagging_active_sources.size();
-
-    if (!lagging_active_sources.empty()) {
-        LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Entering grace period check for %zu sources.", config_.sink_id.c_str(),
-                      lagging_active_sources.size());
-        auto grace_period_start = std::chrono::steady_clock::now();
-        long elapsed_us = 0;
-
-        while (!lagging_active_sources.empty() &&
-               elapsed_us <= m_settings->mixer_tuning.grace_period_timeout_ms * 1000) {
-            std::this_thread::sleep_for(
-                std::chrono::milliseconds(m_settings->mixer_tuning.grace_period_poll_interval_ms));
-
-            for (auto it = lagging_active_sources.begin(); it != lagging_active_sources.end();) {
-                const std::string& instance_id = *it;
-                auto queue_it = input_queues_.find(instance_id);
-                if (queue_it == input_queues_.end()) {
-                    it = lagging_active_sources.erase(it);
-                    continue;
-                }
-
-                ProcessedAudioChunk chunk;
-                if (queue_it->second->try_pop(chunk)) {
-                    if (chunk.audio_data.size() != SINK_MIXING_BUFFER_SAMPLES) {
-                        LOG_CPP_ERROR(
-                            "[SinkMixer:%s] WaitForData: Received chunk (Grace Period) from instance %s with unexpected sample count: %zu. Discarding.",
-                            config_.sink_id.c_str(), instance_id.c_str(), chunk.audio_data.size());
-                    } else {
-                        LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Pop SUCCESS (Grace Period) for instance %s",
-                                      config_.sink_id.c_str(), instance_id.c_str());
-                        m_total_chunks_mixed++;
-                        source_buffers_[instance_id] = std::move(chunk);
-                        ready_this_cycle[instance_id] = true;
-                        data_actually_popped_this_cycle = true;
-                    }
-                    it = lagging_active_sources.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-            elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - grace_period_start)
-                             .count();
-        }
-
-        if (!lagging_active_sources.empty()) {
-            LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Grace period ended. %zu instances still lagging.",
-                          config_.sink_id.c_str(), lagging_active_sources.size());
-            for (const auto& instance_id : lagging_active_sources) {
-                if (input_active_state_.count(instance_id) && input_active_state_[instance_id]) {
-                    LOG_CPP_DEBUG("[SinkMixer:%s] Input instance %s timed out grace period, marking inactive.",
-                                  config_.sink_id.c_str(), instance_id.c_str());
-                    input_active_state_[instance_id] = false;
-                    m_buffer_underruns++;
-                }
-            }
-        } else {
-            LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Grace period ended. All lagging sources caught up.",
-                          config_.sink_id.c_str());
         }
     }
 
@@ -606,9 +545,8 @@ bool SinkAudioMixer::wait_for_source_data() {
                      config_.sink_id.c_str(), hold_ms);
     } else if (was_holding_silence && !underrun_silence_active_) {
         if (data_actually_popped_this_cycle) {
-            LOG_CPP_INFO(
-                "[SinkMixer:%s] Underrun cleared. Audio resumed before silence window elapsed.",
-                config_.sink_id.c_str());
+            LOG_CPP_INFO("[SinkMixer:%s] Underrun cleared. Audio resumed before silence window elapsed.",
+                         config_.sink_id.c_str());
         } else if (hold_window_expired) {
             LOG_CPP_INFO("[SinkMixer:%s] Underrun silence window expired without new audio.",
                          config_.sink_id.c_str());
@@ -626,7 +564,7 @@ bool SinkAudioMixer::wait_for_source_data() {
     }
 
     profiling_ready_sources_sum_ += ready_count;
-    profiling_lagging_sources_sum_ += initial_lagging_sources;
+    profiling_lagging_sources_sum_ += lagging_sources;
     profiling_samples_count_++;
     if (data_actually_popped_this_cycle) {
         profiling_data_ready_cycles_++;
@@ -966,6 +904,29 @@ void SinkAudioMixer::maybe_log_profiler() {
     profiling_max_payload_buffer_bytes_ = payload_buffer_write_pos_;
 }
 
+std::chrono::microseconds SinkAudioMixer::calculate_mix_period() const {
+    int samplerate = config_.output_samplerate > 0 ? config_.output_samplerate : 48000;
+    samplerate = std::max(1, samplerate);
+
+    const long long numerator = static_cast<long long>(SINK_MIXING_BUFFER_SAMPLES) * 1000000LL;
+    long long period_us = numerator / static_cast<long long>(samplerate);
+    if (period_us <= 0) {
+        period_us = 12000; // Fallback to ~12ms if calculation underflows.
+    }
+
+    return std::chrono::microseconds(period_us);
+}
+
+void SinkAudioMixer::wait_for_next_mix_tick() {
+    next_mix_time_ += mix_period_;
+    auto now = std::chrono::steady_clock::now();
+    if (next_mix_time_ > now) {
+        std::this_thread::sleep_until(next_mix_time_);
+    } else {
+        next_mix_time_ = now;
+    }
+}
+
 void SinkAudioMixer::cleanup_closed_listeners() {
     std::vector<std::string> listeners_to_remove;
     {
@@ -998,111 +959,105 @@ void SinkAudioMixer::cleanup_closed_listeners() {
  */
 void SinkAudioMixer::run() {
     LOG_CPP_INFO("[SinkMixer:%s] Entering run loop.", config_.sink_id.c_str());
+    next_mix_time_ = std::chrono::steady_clock::now();
 
-    LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Starting iteration.", config_.sink_id.c_str());
     while (!stop_flag_) {
         profiling_cycles_++;
         cleanup_closed_listeners();
-        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Waiting for source data...", config_.sink_id.c_str());
+
         bool data_available = wait_for_source_data();
-        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Wait finished. Data available: %s", config_.sink_id.c_str(), (data_available ? "true" : "false"));
+        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Poll complete. Data available this cycle: %s",
+                      config_.sink_id.c_str(), data_available ? "true" : "false");
 
         if (stop_flag_) {
-             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Stop flag checked after wait, breaking.", config_.sink_id.c_str());
-             break;
+            break;
         }
 
         std::unique_lock<std::mutex> lock(queues_mutex_);
-        bool should_inject_silence = !data_available && underrun_silence_active_;
-
-        if (data_available || should_inject_silence) {
-            if (should_inject_silence) {
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No data but underrun hold active. Injecting silence.",
-                              config_.sink_id.c_str());
-            } else {
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Data available or queues not empty, proceeding to mix.",
-                              config_.sink_id.c_str());
+        bool has_active_sources = false;
+        for (const auto& [instance_id, is_active] : input_active_state_) {
+            (void)instance_id;
+            if (is_active) {
+                has_active_sources = true;
+                break;
             }
-            
-            // --- SYNCHRONIZATION COORDINATION POINT ---
-            // If coordination is enabled, call the coordinator BEFORE mixing
-            // This allows all sinks to wait at the barrier, then proceed together
-            if (coordination_mode_ && coordinator_) {
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination enabled, calling coordinator...", config_.sink_id.c_str());
-                bool coord_success = coordinator_->coordinate_dispatch();
-                
-                if (!coord_success) {
-                    LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordinator reported failure, skipping this cycle.", config_.sink_id.c_str());
-                    lock.unlock();
-                    maybe_log_profiler();
-                    continue;
-                }
-                
-                // Note: rate_adjustment application would happen here in future
-                // For now, the coordinator's coordinate_dispatch() handles everything
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination complete.", config_.sink_id.c_str());
-            }
-            
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing buffers...", config_.sink_id.c_str());
-            mix_buffers();
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing complete.", config_.sink_id.c_str());
-
-            lock.unlock();
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Queues mutex unlocked.", config_.sink_id.c_str());
-
-            downscale_buffer();
-
-            // Send data in chunks when we have enough accumulated
-            // This loop ensures we drain the buffer properly even with high bit depths
-            while (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
-                if (network_sender_) {
-                    std::lock_guard<std::mutex> lock(csrc_mutex_);
-                    network_sender_->send_payload(payload_buffer_.data(), SINK_CHUNK_SIZE_BYTES, current_csrcs_);
-                }
-                profiling_chunks_sent_++;
-                profiling_payload_bytes_sent_ += SINK_CHUNK_SIZE_BYTES;
-
-                size_t bytes_remaining = payload_buffer_write_pos_ - SINK_CHUNK_SIZE_BYTES;
-                if (bytes_remaining > 0) {
-                    memmove(payload_buffer_.data(), payload_buffer_.data() + SINK_CHUNK_SIZE_BYTES, bytes_remaining);
-                }
-                payload_buffer_write_pos_ = bytes_remaining;
-                
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Sent chunk, remaining bytes in buffer: %zu", config_.sink_id.c_str(), payload_buffer_write_pos_);
-            }
-
-            bool has_listeners;
-            {
-                std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-                has_listeners = !listener_senders_.empty();
-            }
-            bool mp3_enabled = (mp3_output_queue_ != nullptr);
-
-            if (has_listeners || mp3_enabled) {
-                size_t processed_samples = preprocess_for_listeners_and_mp3();
-                if (processed_samples > 0) {
-                    if (has_listeners) {
-                        dispatch_to_listeners(processed_samples);
-                    }
-                    if (mp3_enabled) {
-                        encode_and_push_mp3(processed_samples);
-                    }
-                }
-            }
-
-            if (should_inject_silence) {
-                uint32_t samplerate = config_.output_samplerate > 0 ? config_.output_samplerate : 48000;
-                auto chunk_duration_us = static_cast<long long>(SINK_MIXING_BUFFER_SAMPLES) * 1000000LL /
-                                         static_cast<long long>(samplerate);
-                std::this_thread::sleep_for(std::chrono::microseconds(chunk_duration_us));
-            }
-        } else {
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No data available and input queues empty. Sleeping briefly.", config_.sink_id.c_str());
-            lock.unlock();
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: End of iteration.", config_.sink_id.c_str());
+
+        bool should_mix = has_active_sources || underrun_silence_active_;
+
+        if (!should_mix) {
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No active sources and no underrun hold. Skipping mix.",
+                          config_.sink_id.c_str());
+            lock.unlock();
+            maybe_log_profiler();
+            wait_for_next_mix_tick();
+            continue;
+        }
+
+        // --- SYNCHRONIZATION COORDINATION POINT ---
+        if (coordination_mode_ && coordinator_) {
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination enabled, calling coordinator...", config_.sink_id.c_str());
+            bool coord_success = coordinator_->coordinate_dispatch();
+
+            if (!coord_success) {
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordinator reported failure, skipping this cycle.",
+                              config_.sink_id.c_str());
+                lock.unlock();
+                maybe_log_profiler();
+                wait_for_next_mix_tick();
+                continue;
+            }
+
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination complete.", config_.sink_id.c_str());
+        }
+
+        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing buffers...", config_.sink_id.c_str());
+        mix_buffers();
+        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing complete.", config_.sink_id.c_str());
+
+        lock.unlock();
+
+        downscale_buffer();
+
+        while (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
+            if (network_sender_) {
+                std::lock_guard<std::mutex> lock(csrc_mutex_);
+                network_sender_->send_payload(payload_buffer_.data(), SINK_CHUNK_SIZE_BYTES, current_csrcs_);
+            }
+            profiling_chunks_sent_++;
+            profiling_payload_bytes_sent_ += SINK_CHUNK_SIZE_BYTES;
+
+            size_t bytes_remaining = payload_buffer_write_pos_ - SINK_CHUNK_SIZE_BYTES;
+            if (bytes_remaining > 0) {
+                memmove(payload_buffer_.data(), payload_buffer_.data() + SINK_CHUNK_SIZE_BYTES, bytes_remaining);
+            }
+            payload_buffer_write_pos_ = bytes_remaining;
+
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Sent chunk, remaining bytes in buffer: %zu",
+                          config_.sink_id.c_str(), payload_buffer_write_pos_);
+        }
+
+        bool has_listeners;
+        {
+            std::lock_guard<std::mutex> lock(listener_senders_mutex_);
+            has_listeners = !listener_senders_.empty();
+        }
+        bool mp3_enabled = (mp3_output_queue_ != nullptr);
+
+        if (has_listeners || mp3_enabled) {
+            size_t processed_samples = preprocess_for_listeners_and_mp3();
+            if (processed_samples > 0) {
+                if (has_listeners) {
+                    dispatch_to_listeners(processed_samples);
+                }
+                if (mp3_enabled) {
+                    encode_and_push_mp3(processed_samples);
+                }
+            }
+        }
+
         maybe_log_profiler();
+        wait_for_next_mix_tick();
     }
 
     LOG_CPP_INFO("[SinkMixer:%s] Exiting run loop.", config_.sink_id.c_str());
