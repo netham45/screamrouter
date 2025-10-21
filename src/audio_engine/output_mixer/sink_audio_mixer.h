@@ -25,6 +25,7 @@
 #include <lame/lame.h>
 #include <atomic>
 #include <chrono>
+#include <limits>
 
 class AudioProcessor;
 
@@ -240,6 +241,21 @@ private:
     size_t profiling_lagging_sources_sum_{0};
     size_t profiling_samples_count_{0};
     size_t profiling_max_payload_buffer_bytes_{0};
+    double profiling_chunk_dwell_sum_ms_{0.0};
+    double profiling_chunk_dwell_max_ms_{0.0};
+    double profiling_chunk_dwell_min_ms_{std::numeric_limits<double>::infinity()};
+    double profiling_last_chunk_dwell_ms_{0.0};
+    uint64_t profiling_chunk_dwell_samples_{0};
+    std::chrono::steady_clock::time_point profiling_underrun_active_since_{};
+    double profiling_underrun_hold_time_ms_{0.0};
+    double profiling_last_underrun_hold_ms_{0.0};
+    uint64_t profiling_underrun_events_{0};
+    std::chrono::steady_clock::time_point profiling_last_chunk_send_time_{};
+    double profiling_send_gap_sum_ms_{0.0};
+    double profiling_send_gap_max_ms_{0.0};
+    double profiling_send_gap_min_ms_{std::numeric_limits<double>::infinity()};
+    double profiling_last_send_gap_ms_{0.0};
+    uint64_t profiling_send_gap_samples_{0};
 
     std::chrono::microseconds calculate_mix_period() const;
     void register_mix_timer();

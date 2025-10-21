@@ -26,6 +26,9 @@ void StreamClock::reset() {
     m_p[0][1] = 0.0;
     m_p[1][0] = 0.0;
     m_p[1][1] = INITIAL_UNCERTAINTY;
+    m_last_innovation = 0.0;
+    m_last_measured_offset = 0.0;
+    m_last_update_time = {};
 }
 
 void StreamClock::update(uint32_t rtp_timestamp, std::chrono::steady_clock::time_point arrival_time) {
@@ -37,6 +40,8 @@ void StreamClock::update(uint32_t rtp_timestamp, std::chrono::steady_clock::time
         m_drift = 0.0;
         m_last_update_time = arrival_time;
         m_is_initialized = true;
+        m_last_measured_offset = m_offset;
+        m_last_innovation = 0.0;
         return;
     }
 
@@ -82,6 +87,9 @@ void StreamClock::update(uint32_t rtp_timestamp, std::chrono::steady_clock::time
     m_p[0][1] -= K[0] * p01_temp;
     m_p[1][0] -= K[1] * p00_temp;
     m_p[1][1] -= K[1] * p01_temp;
+
+    m_last_innovation = innovation;
+    m_last_measured_offset = measured_offset;
 }
 
 std::chrono::steady_clock::time_point StreamClock::get_expected_arrival_time(uint32_t rtp_timestamp) const {
@@ -91,6 +99,30 @@ std::chrono::steady_clock::time_point StreamClock::get_expected_arrival_time(uin
     double rtp_time_sec = static_cast<double>(rtp_timestamp) / m_sample_rate;
     double expected_arrival_sec = rtp_time_sec + m_offset;
     return std::chrono::steady_clock::time_point(std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(expected_arrival_sec)));
+}
+
+bool StreamClock::is_initialized() const {
+    return m_is_initialized;
+}
+
+double StreamClock::get_offset_seconds() const {
+    return m_offset;
+}
+
+double StreamClock::get_drift_ppm() const {
+    return m_drift * 1'000'000.0;
+}
+
+double StreamClock::get_last_innovation_seconds() const {
+    return m_last_innovation;
+}
+
+double StreamClock::get_last_measured_offset_seconds() const {
+    return m_last_measured_offset;
+}
+
+std::chrono::steady_clock::time_point StreamClock::get_last_update_time() const {
+    return m_last_update_time;
 }
 
 } // namespace audio

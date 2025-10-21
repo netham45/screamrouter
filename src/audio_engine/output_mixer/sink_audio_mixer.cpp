@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <thread>
+#include <limits>
 #include "../audio_processor/audio_processor.h"
 #include "../senders/scream/scream_sender.h"
 #include "../senders/rtp/rtp_sender.h"
@@ -493,6 +494,20 @@ bool SinkAudioMixer::wait_for_source_data() {
                 ready_this_cycle[instance_id] = false;
                 input_active_state_[instance_id] = false;
             } else {
+                auto pop_time = std::chrono::steady_clock::now();
+                if (chunk.produced_time.time_since_epoch().count() != 0) {
+                    double dwell_ms = std::chrono::duration<double, std::milli>(pop_time - chunk.produced_time).count();
+                    profiling_last_chunk_dwell_ms_ = dwell_ms;
+                    profiling_chunk_dwell_sum_ms_ += dwell_ms;
+                    profiling_chunk_dwell_samples_++;
+                    if (profiling_chunk_dwell_samples_ == 1) {
+                        profiling_chunk_dwell_min_ms_ = dwell_ms;
+                        profiling_chunk_dwell_max_ms_ = dwell_ms;
+                    } else {
+                        profiling_chunk_dwell_min_ms_ = std::min(profiling_chunk_dwell_min_ms_, dwell_ms);
+                        profiling_chunk_dwell_max_ms_ = std::max(profiling_chunk_dwell_max_ms_, dwell_ms);
+                    }
+                }
                 m_total_chunks_mixed++;
                 source_buffers_[instance_id] = std::move(chunk);
                 ready_this_cycle[instance_id] = true;
@@ -549,7 +564,15 @@ bool SinkAudioMixer::wait_for_source_data() {
         long hold_ms = std::max<long>(0, m_settings->mixer_tuning.underrun_hold_timeout_ms);
         LOG_CPP_INFO("[SinkMixer:%s] Underrun detected. Injecting silence for up to %ld ms.",
                      config_.sink_id.c_str(), hold_ms);
+        profiling_underrun_events_++;
+        profiling_underrun_active_since_ = now;
     } else if (was_holding_silence && !underrun_silence_active_) {
+        if (profiling_underrun_active_since_.time_since_epoch().count() != 0) {
+            double hold_duration_ms = std::chrono::duration<double, std::milli>(now - profiling_underrun_active_since_).count();
+            profiling_underrun_hold_time_ms_ += hold_duration_ms;
+            profiling_last_underrun_hold_ms_ = hold_duration_ms;
+            profiling_underrun_active_since_ = {};
+        }
         if (data_actually_popped_this_cycle) {
             LOG_CPP_INFO("[SinkMixer:%s] Underrun cleared. Audio resumed before silence window elapsed.",
                          config_.sink_id.c_str());
@@ -830,6 +853,25 @@ void SinkAudioMixer::reset_profiler_counters() {
     profiling_lagging_sources_sum_ = 0;
     profiling_samples_count_ = 0;
     profiling_max_payload_buffer_bytes_ = payload_buffer_write_pos_;
+    profiling_chunk_dwell_sum_ms_ = 0.0;
+    profiling_chunk_dwell_max_ms_ = 0.0;
+    profiling_chunk_dwell_min_ms_ = std::numeric_limits<double>::infinity();
+    profiling_last_chunk_dwell_ms_ = 0.0;
+    profiling_chunk_dwell_samples_ = 0;
+    profiling_underrun_hold_time_ms_ = 0.0;
+    profiling_last_underrun_hold_ms_ = 0.0;
+    profiling_underrun_events_ = 0;
+    if (underrun_silence_active_) {
+        profiling_underrun_active_since_ = std::chrono::steady_clock::now();
+    } else {
+        profiling_underrun_active_since_ = {};
+    }
+    profiling_send_gap_sum_ms_ = 0.0;
+    profiling_send_gap_max_ms_ = 0.0;
+    profiling_send_gap_min_ms_ = std::numeric_limits<double>::infinity();
+    profiling_last_send_gap_ms_ = 0.0;
+    profiling_send_gap_samples_ = 0;
+    profiling_last_chunk_send_time_ = std::chrono::steady_clock::now();
 }
 
 void SinkAudioMixer::maybe_log_profiler() {
@@ -879,9 +921,28 @@ void SinkAudioMixer::maybe_log_profiler() {
                                      ? static_cast<double>(profiling_lagging_sources_sum_) / static_cast<double>(profiling_samples_count_)
                                      : 0.0;
     double payload_kib = profiling_payload_bytes_sent_ / 1024.0;
+    double avg_dwell_ms = profiling_chunk_dwell_samples_ > 0
+                              ? profiling_chunk_dwell_sum_ms_ / static_cast<double>(profiling_chunk_dwell_samples_)
+                              : 0.0;
+    double min_dwell_ms = (profiling_chunk_dwell_samples_ > 0 && std::isfinite(profiling_chunk_dwell_min_ms_))
+                               ? profiling_chunk_dwell_min_ms_
+                               : 0.0;
+    double max_dwell_ms = profiling_chunk_dwell_samples_ > 0 ? profiling_chunk_dwell_max_ms_ : 0.0;
+    double avg_send_gap_ms = profiling_send_gap_samples_ > 0
+                                 ? profiling_send_gap_sum_ms_ / static_cast<double>(profiling_send_gap_samples_)
+                                 : 0.0;
+    double min_send_gap_ms = (profiling_send_gap_samples_ > 0 && std::isfinite(profiling_send_gap_min_ms_))
+                                  ? profiling_send_gap_min_ms_
+                                  : 0.0;
+    double max_send_gap_ms = profiling_send_gap_samples_ > 0 ? profiling_send_gap_max_ms_ : 0.0;
+    double active_hold_ms = 0.0;
+    if (underrun_silence_active_ && profiling_underrun_active_since_.time_since_epoch().count() != 0) {
+        active_hold_ms = std::chrono::duration<double, std::milli>(now - profiling_underrun_active_since_).count();
+    }
+    double total_hold_ms = profiling_underrun_hold_time_ms_ + active_hold_ms;
 
     LOG_CPP_INFO(
-        "[Profiler][SinkMixer:%s] cycles=%llu data_cycles=%llu chunks_sent=%llu payload_kib=%.2f active_inputs=%zu/%zu avg_ready=%.2f avg_lagging=%.2f avg_queue=%.2f max_queue=%zu buffer_bytes(current/peak)=(%zu/%zu) underruns=%llu overflows=%llu mp3_overflows=%llu",
+        "[Profiler][SinkMixer:%s] cycles=%llu data_cycles=%llu chunks_sent=%llu payload_kib=%.2f active_inputs=%zu/%zu avg_ready=%.2f avg_lagging=%.2f avg_queue=%.2f max_queue=%zu buffer_bytes(current/peak)=(%zu/%zu) underruns=%llu overflows=%llu mp3_overflows=%llu dwell_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu send_gap_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu underrun_hold_ms(total=%.2f active=%.2f last=%.2f events=%llu active=%s)",
         config_.sink_id.c_str(),
         static_cast<unsigned long long>(profiling_cycles_),
         static_cast<unsigned long long>(profiling_data_ready_cycles_),
@@ -897,17 +958,29 @@ void SinkAudioMixer::maybe_log_profiler() {
         profiling_max_payload_buffer_bytes_,
         m_buffer_underruns.load(),
         m_buffer_overflows.load(),
-        m_mp3_buffer_overflows.load());
+        m_mp3_buffer_overflows.load(),
+        profiling_last_chunk_dwell_ms_,
+        avg_dwell_ms,
+        max_dwell_ms,
+        min_dwell_ms,
+        static_cast<unsigned long long>(profiling_chunk_dwell_samples_),
+        profiling_last_send_gap_ms_,
+        avg_send_gap_ms,
+        max_send_gap_ms,
+        min_send_gap_ms,
+        static_cast<unsigned long long>(profiling_send_gap_samples_),
+        total_hold_ms,
+        active_hold_ms,
+        profiling_last_underrun_hold_ms_,
+        static_cast<unsigned long long>(profiling_underrun_events_),
+        underrun_silence_active_ ? "true" : "false");
 
+    reset_profiler_counters();
     profiling_last_log_time_ = now;
-    profiling_cycles_ = 0;
-    profiling_data_ready_cycles_ = 0;
-    profiling_chunks_sent_ = 0;
-    profiling_payload_bytes_sent_ = 0;
-    profiling_ready_sources_sum_ = 0;
-    profiling_lagging_sources_sum_ = 0;
-    profiling_samples_count_ = 0;
-    profiling_max_payload_buffer_bytes_ = payload_buffer_write_pos_;
+    profiling_last_chunk_send_time_ = now;
+    if (underrun_silence_active_) {
+        profiling_underrun_active_since_ = now;
+    }
 }
 
 std::chrono::microseconds SinkAudioMixer::calculate_mix_period() const {
@@ -1153,6 +1226,21 @@ void SinkAudioMixer::run() {
         downscale_buffer();
 
         while (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
+            auto send_time = std::chrono::steady_clock::now();
+            if (profiling_last_chunk_send_time_.time_since_epoch().count() != 0) {
+                double gap_ms = std::chrono::duration<double, std::milli>(send_time - profiling_last_chunk_send_time_).count();
+                profiling_last_send_gap_ms_ = gap_ms;
+                profiling_send_gap_sum_ms_ += gap_ms;
+                profiling_send_gap_samples_++;
+                if (profiling_send_gap_samples_ == 1) {
+                    profiling_send_gap_min_ms_ = gap_ms;
+                    profiling_send_gap_max_ms_ = gap_ms;
+                } else {
+                    profiling_send_gap_min_ms_ = std::min(profiling_send_gap_min_ms_, gap_ms);
+                    profiling_send_gap_max_ms_ = std::max(profiling_send_gap_max_ms_, gap_ms);
+                }
+            }
+            profiling_last_chunk_send_time_ = send_time;
             if (network_sender_) {
                 std::lock_guard<std::mutex> lock(csrc_mutex_);
                 network_sender_->send_payload(payload_buffer_.data(), SINK_CHUNK_SIZE_BYTES, current_csrcs_);

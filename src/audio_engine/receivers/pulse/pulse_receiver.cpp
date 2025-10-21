@@ -1071,7 +1071,12 @@ void PulseAudioReceiver::Impl::Connection::handle_clock_tick(uint32_t stream_ind
                                  pending.play_time);
 
             packet.audio_data = std::move(pending.audio_data);
-            packet.received_time = pending.play_time;
+            auto now_stamped = std::chrono::steady_clock::now();
+            if (pending.play_time.time_since_epoch().count() == 0 || pending.play_time > now_stamped) {
+                packet.received_time = now_stamped;
+            } else {
+                packet.received_time = pending.play_time;
+            }
             packet.rtp_timestamp = static_cast<uint32_t>(pending.start_frame & 0xFFFFFFFFu);
             stream.next_rtp_frame = pending.start_frame + pending.chunk_frames;
             stream.has_rtp_frame = true;
@@ -1084,7 +1089,7 @@ void PulseAudioReceiver::Impl::Connection::handle_clock_tick(uint32_t stream_ind
                                  0,
                                  now);
             packet.audio_data.assign(CHUNK_SIZE, 0);
-            packet.received_time = now;
+            packet.received_time = std::chrono::steady_clock::now();
             if (!stream.has_rtp_frame) {
                 stream.has_rtp_frame = true;
             }

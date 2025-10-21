@@ -104,6 +104,67 @@ void StatsManager::collect_stats() {
             new_stats.stream_stats[tag].buffer_target_fill_percentage = val;
         }
 
+        for (auto const& [tag, val] : tm_stats.stream_avg_arrival_error_ms) {
+            new_stats.stream_stats[tag].avg_arrival_error_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_avg_abs_arrival_error_ms) {
+            new_stats.stream_stats[tag].avg_abs_arrival_error_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_max_arrival_error_ms) {
+            new_stats.stream_stats[tag].max_arrival_error_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_min_arrival_error_ms) {
+            new_stats.stream_stats[tag].min_arrival_error_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_arrival_error_sample_count) {
+            new_stats.stream_stats[tag].arrival_error_sample_count = val;
+        }
+
+        for (auto const& [tag, val] : tm_stats.stream_avg_playout_deviation_ms) {
+            new_stats.stream_stats[tag].avg_playout_deviation_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_avg_abs_playout_deviation_ms) {
+            new_stats.stream_stats[tag].avg_abs_playout_deviation_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_max_playout_deviation_ms) {
+            new_stats.stream_stats[tag].max_playout_deviation_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_min_playout_deviation_ms) {
+            new_stats.stream_stats[tag].min_playout_deviation_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_playout_deviation_sample_count) {
+            new_stats.stream_stats[tag].playout_deviation_sample_count = val;
+        }
+
+        for (auto const& [tag, val] : tm_stats.stream_avg_head_playout_lag_ms) {
+            new_stats.stream_stats[tag].avg_head_playout_lag_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_max_head_playout_lag_ms) {
+            new_stats.stream_stats[tag].max_head_playout_lag_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_head_playout_lag_sample_count) {
+            new_stats.stream_stats[tag].head_playout_lag_sample_count = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_last_head_playout_lag_ms) {
+            new_stats.stream_stats[tag].last_head_playout_lag_ms = val;
+        }
+
+        for (auto const& [tag, val] : tm_stats.stream_clock_offset_ms) {
+            new_stats.stream_stats[tag].clock_offset_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_clock_drift_ppm) {
+            new_stats.stream_stats[tag].clock_drift_ppm = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_clock_last_innovation_ms) {
+            new_stats.stream_stats[tag].clock_last_innovation_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_clock_avg_abs_innovation_ms) {
+            new_stats.stream_stats[tag].clock_avg_abs_innovation_ms = val;
+        }
+        for (auto const& [tag, val] : tm_stats.stream_clock_last_measured_offset_ms) {
+            new_stats.stream_stats[tag].clock_last_measured_offset_ms = val;
+        }
+
         for (auto const& [tag, total_packets] : tm_stats.stream_total_packets) {
             uint64_t last_packets = m_last_stream_packets.count(tag) ? m_last_stream_packets[tag] : 0;
             if (last_packets > 0) {

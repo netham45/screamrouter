@@ -15,6 +15,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <cmath>
 
 namespace screamrouter {
 namespace audio {
@@ -117,9 +118,9 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
  
      // 3. Calculate jitter based on the stable clock
      if (!state.is_first_packet) {
-         auto expected_arrival_time = state.clock->get_expected_arrival_time(packet.rtp_timestamp.value());
-         auto arrival_error = packet.received_time - expected_arrival_time;
-         double arrival_error_ms = std::chrono::duration<double, std::milli>(arrival_error).count();
+        auto expected_arrival_time = state.clock->get_expected_arrival_time(packet.rtp_timestamp.value());
+        auto arrival_error = packet.received_time - expected_arrival_time;
+        double arrival_error_ms = std::chrono::duration<double, std::milli>(arrival_error).count();
 
           // Inter-arrival jitter calculation (RFC 3550)
           // D(i,j) = (Rj - Ri) - (Sj - Si) = (Rj - Sj) - (Ri - Si)
@@ -136,8 +137,23 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
          state.jitter_estimate += jitter_diff / m_settings->timeshift_tuning.jitter_smoothing_factor;
          state.jitter_estimate = std::max(1.0, state.jitter_estimate); // Enforce a minimum jitter of 1.0ms
          state.last_arrival_time_error_ms = arrival_error_ms;
+
+         state.arrival_error_ms_sum += arrival_error_ms;
+         state.arrival_error_ms_abs_sum += std::abs(arrival_error_ms);
+         state.arrival_error_ms_max = std::max(state.arrival_error_ms_max, arrival_error_ms);
+         state.arrival_error_ms_min = std::min(state.arrival_error_ms_min, arrival_error_ms);
+         state.arrival_error_samples++;
+
+         if (state.clock->is_initialized()) {
+             state.last_clock_offset_ms = state.clock->get_offset_seconds() * 1000.0;
+             state.last_clock_drift_ppm = state.clock->get_drift_ppm();
+             state.last_clock_innovation_ms = state.clock->get_last_innovation_seconds() * 1000.0;
+             state.last_clock_measured_offset_ms = state.clock->get_last_measured_offset_seconds() * 1000.0;
+             state.clock_innovation_abs_sum_ms += std::abs(state.last_clock_innovation_ms);
+             state.clock_innovation_samples++;
+         }
      }
- 
+
      state.is_first_packet = false;
      state.last_rtp_timestamp = packet.rtp_timestamp.value();
      state.last_wallclock = packet.received_time;
@@ -172,6 +188,52 @@ TimeshiftManagerStats TimeshiftManager::get_stats() {
             stats.stream_last_arrival_time_error_ms[source_tag] = timing_state.last_arrival_time_error_ms;
             stats.stream_target_buffer_level_ms[source_tag] = timing_state.target_buffer_level_ms;
             stats.stream_buffer_target_fill_percentage[source_tag] = timing_state.buffer_target_fill_percentage;
+
+            if (timing_state.arrival_error_samples > 0) {
+                stats.stream_avg_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_sum / static_cast<double>(timing_state.arrival_error_samples);
+                stats.stream_avg_abs_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_abs_sum / static_cast<double>(timing_state.arrival_error_samples);
+                stats.stream_max_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_max;
+                stats.stream_min_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_min;
+            } else {
+                stats.stream_avg_arrival_error_ms[source_tag] = 0.0;
+                stats.stream_avg_abs_arrival_error_ms[source_tag] = 0.0;
+                stats.stream_max_arrival_error_ms[source_tag] = 0.0;
+                stats.stream_min_arrival_error_ms[source_tag] = 0.0;
+            }
+            stats.stream_arrival_error_sample_count[source_tag] = timing_state.arrival_error_samples;
+
+            if (timing_state.playout_deviation_samples > 0) {
+                stats.stream_avg_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_sum / static_cast<double>(timing_state.playout_deviation_samples);
+                stats.stream_avg_abs_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_abs_sum / static_cast<double>(timing_state.playout_deviation_samples);
+                stats.stream_max_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_max;
+                stats.stream_min_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_min;
+            } else {
+                stats.stream_avg_playout_deviation_ms[source_tag] = 0.0;
+                stats.stream_avg_abs_playout_deviation_ms[source_tag] = 0.0;
+                stats.stream_max_playout_deviation_ms[source_tag] = 0.0;
+                stats.stream_min_playout_deviation_ms[source_tag] = 0.0;
+            }
+            stats.stream_playout_deviation_sample_count[source_tag] = timing_state.playout_deviation_samples;
+
+            if (timing_state.head_playout_lag_samples > 0) {
+                stats.stream_avg_head_playout_lag_ms[source_tag] = timing_state.head_playout_lag_ms_sum / static_cast<double>(timing_state.head_playout_lag_samples);
+                stats.stream_max_head_playout_lag_ms[source_tag] = timing_state.head_playout_lag_ms_max;
+            } else {
+                stats.stream_avg_head_playout_lag_ms[source_tag] = 0.0;
+                stats.stream_max_head_playout_lag_ms[source_tag] = 0.0;
+            }
+            stats.stream_head_playout_lag_sample_count[source_tag] = timing_state.head_playout_lag_samples;
+            stats.stream_last_head_playout_lag_ms[source_tag] = timing_state.last_head_playout_lag_ms;
+
+            stats.stream_clock_offset_ms[source_tag] = timing_state.last_clock_offset_ms;
+            stats.stream_clock_drift_ppm[source_tag] = timing_state.last_clock_drift_ppm;
+            stats.stream_clock_last_innovation_ms[source_tag] = timing_state.last_clock_innovation_ms;
+            stats.stream_clock_last_measured_offset_ms[source_tag] = timing_state.last_clock_measured_offset_ms;
+            if (timing_state.clock_innovation_samples > 0) {
+                stats.stream_clock_avg_abs_innovation_ms[source_tag] = timing_state.clock_innovation_abs_sum_ms / static_cast<double>(timing_state.clock_innovation_samples);
+            } else {
+                stats.stream_clock_avg_abs_innovation_ms[source_tag] = 0.0;
+            }
         }
     }
 
@@ -400,6 +462,14 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 
                 auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - current_steady_time).count();
 
+                if (timing_state) {
+                    double head_lag_ms = std::max(-time_until_playout_ms, 0.0);
+                    timing_state->last_head_playout_lag_ms = head_lag_ms;
+                    timing_state->head_playout_lag_ms_sum += head_lag_ms;
+                    timing_state->head_playout_lag_ms_max = std::max(timing_state->head_playout_lag_ms_max, head_lag_ms);
+                    timing_state->head_playout_lag_samples++;
+                }
+
                 // Check if the packet is ready to be played
                 if (ideal_playout_time <= current_steady_time) {
                     const double lateness_ms = -time_until_playout_ms;
@@ -409,6 +479,14 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     if (lateness_ms > 0.0) {
                         profiling_total_lateness_ms_ += lateness_ms;
                         profiling_packets_late_count_++;
+                    }
+
+                    if (timing_state) {
+                        timing_state->playout_deviation_ms_sum += lateness_ms;
+                        timing_state->playout_deviation_ms_abs_sum += std::abs(lateness_ms);
+                        timing_state->playout_deviation_ms_max = std::max(timing_state->playout_deviation_ms_max, lateness_ms);
+                        timing_state->playout_deviation_ms_min = std::min(timing_state->playout_deviation_ms_min, lateness_ms);
+                        timing_state->playout_deviation_samples++;
                     }
 
                     if (max_catchup_lag_ms > 0.0 && lateness_ms > max_catchup_lag_ms) {
@@ -536,7 +614,7 @@ void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::ti
                                     : 0.0;
 
     LOG_CPP_INFO(
-        "[Profiler][Timeshift] buffer=%zu targets=%zu avg_backlog=%.2f max_backlog=%zu dispatched=%llu dropped=%llu late_count=%llu avg_late_ms=%.2f late_ms_sum=%.2f",
+        "[Profiler][Timeshift][Global] buffer=%zu targets=%zu avg_backlog=%.2f max_backlog=%zu dispatched=%llu dropped=%llu late_count=%llu avg_late_ms=%.2f late_ms_sum=%.2f",
         buffer_size,
         total_targets,
         avg_backlog,
@@ -546,6 +624,63 @@ void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::ti
         static_cast<unsigned long long>(profiling_packets_late_count_),
         avg_late_ms,
         profiling_total_lateness_ms_);
+
+    {
+        std::lock_guard<std::mutex> timing_lock(timing_mutex_);
+        for (const auto& [source_tag, timing_state] : stream_timing_states_) {
+            const double arrival_avg = timing_state.arrival_error_samples > 0
+                                            ? (timing_state.arrival_error_ms_sum / static_cast<double>(timing_state.arrival_error_samples))
+                                            : 0.0;
+            const double arrival_abs_avg = timing_state.arrival_error_samples > 0
+                                                ? (timing_state.arrival_error_ms_abs_sum / static_cast<double>(timing_state.arrival_error_samples))
+                                                : 0.0;
+            const double playout_avg = timing_state.playout_deviation_samples > 0
+                                            ? (timing_state.playout_deviation_ms_sum / static_cast<double>(timing_state.playout_deviation_samples))
+                                            : 0.0;
+            const double playout_abs_avg = timing_state.playout_deviation_samples > 0
+                                                 ? (timing_state.playout_deviation_ms_abs_sum / static_cast<double>(timing_state.playout_deviation_samples))
+                                                 : 0.0;
+            const double head_avg = timing_state.head_playout_lag_samples > 0
+                                           ? (timing_state.head_playout_lag_ms_sum / static_cast<double>(timing_state.head_playout_lag_samples))
+                                           : 0.0;
+            double clock_update_age_ms = 0.0;
+            if (timing_state.clock && timing_state.clock->is_initialized()) {
+                auto last_update = timing_state.clock->get_last_update_time();
+                if (last_update != std::chrono::steady_clock::time_point{}) {
+                    clock_update_age_ms = std::chrono::duration<double, std::milli>(now - last_update).count();
+                }
+            }
+
+            LOG_CPP_INFO(
+                "[Profiler][Timeshift][Stream %s] jitter=%.2fms clk_offset=%.3fms drift=%.3fppm clk_innov_last=%.3fms clk_innov_avg_abs=%.3fms clk_update_age=%.2fms clk_meas_offset=%.3fms arrival(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) playout_dev(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) head_lag(last=%.3fms avg=%.3fms max=%.3fms samples=%llu) buffer(cur=%.3fms target=%.3fms fill=%.1f%% playback_rate=%.6f)",
+                source_tag.c_str(),
+                timing_state.jitter_estimate,
+                timing_state.last_clock_offset_ms,
+                timing_state.last_clock_drift_ppm,
+                timing_state.last_clock_innovation_ms,
+                timing_state.clock_innovation_samples > 0 ? (timing_state.clock_innovation_abs_sum_ms / static_cast<double>(timing_state.clock_innovation_samples)) : 0.0,
+                clock_update_age_ms,
+                timing_state.last_clock_measured_offset_ms,
+                arrival_avg,
+                arrival_abs_avg,
+                timing_state.arrival_error_samples > 0 ? timing_state.arrival_error_ms_max : 0.0,
+                timing_state.arrival_error_samples > 0 ? timing_state.arrival_error_ms_min : 0.0,
+                static_cast<unsigned long long>(timing_state.arrival_error_samples),
+                playout_avg,
+                playout_abs_avg,
+                timing_state.playout_deviation_samples > 0 ? timing_state.playout_deviation_ms_max : 0.0,
+                timing_state.playout_deviation_samples > 0 ? timing_state.playout_deviation_ms_min : 0.0,
+                static_cast<unsigned long long>(timing_state.playout_deviation_samples),
+                timing_state.last_head_playout_lag_ms,
+                head_avg,
+                timing_state.head_playout_lag_samples > 0 ? timing_state.head_playout_lag_ms_max : 0.0,
+                static_cast<unsigned long long>(timing_state.head_playout_lag_samples),
+                timing_state.current_buffer_level_ms,
+                timing_state.target_buffer_level_ms,
+                timing_state.buffer_target_fill_percentage,
+                timing_state.current_playback_rate);
+        }
+    }
 
     reset_profiler_counters_unlocked(now);
 }

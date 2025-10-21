@@ -314,6 +314,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
         // Copy the required number of samples
          output_chunk.audio_data.assign(process_buffer_.begin(), process_buffer_.begin() + required_samples);
          output_chunk.ssrcs = current_packet_ssrcs_;
+         output_chunk.produced_time = std::chrono::steady_clock::now();
          size_t pushed_samples = output_chunk.audio_data.size();
 
          // Push to the output queue

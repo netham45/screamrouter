@@ -38,6 +38,36 @@ public:
      */
     void reset();
 
+    /**
+     * @brief Whether the clock has received enough data to produce estimates.
+     */
+    bool is_initialized() const;
+
+    /**
+     * @brief Returns the most recent estimate of the RTP to steady clock offset in seconds.
+     */
+    double get_offset_seconds() const;
+
+    /**
+     * @brief Returns the estimated relative drift expressed in parts-per-million.
+     */
+    double get_drift_ppm() const;
+
+    /**
+     * @brief Returns the last innovation (prediction error) observed during update in seconds.
+     */
+    double get_last_innovation_seconds() const;
+
+    /**
+     * @brief Returns the last measured offset (arrival - RTP) in seconds.
+     */
+    double get_last_measured_offset_seconds() const;
+
+    /**
+     * @brief Returns the time the clock state was most recently updated.
+     */
+    std::chrono::steady_clock::time_point get_last_update_time() const;
+
 private:
     // The sample rate of the RTP clock.
     const double m_sample_rate;
@@ -58,6 +88,9 @@ private:
     // Timestamp of the last update to calculate delta_t
     std::chrono::steady_clock::time_point m_last_update_time;
     bool m_is_initialized;
+
+    double m_last_innovation;
+    double m_last_measured_offset;
 };
 
 } // namespace audio
