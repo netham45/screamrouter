@@ -170,7 +170,9 @@ public:
      */
     std::vector<std::string> get_per_process_scream_receiver_seen_tags(int listen_port);
 #if !defined(_WIN32)
+#if !defined(_WIN32)
     std::vector<std::string> get_pulse_receiver_seen_tags();
+#endif
 #endif
 
     /**
@@ -473,6 +475,10 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def("get_per_process_scream_receiver_seen_tags", &AudioManager::get_per_process_scream_receiver_seen_tags,
              py::arg("listen_port"),
              "Retrieves the list of seen source tags from a specific Per-Process Scream receiver.")
+#if !defined(_WIN32)
+        .def("get_pulse_receiver_seen_tags", &AudioManager::get_pulse_receiver_seen_tags,
+             "Retrieves the list of seen source tags from the PulseAudio receiver.")
+#endif
         .def("write_plugin_packet",
              [](AudioManager &self,
                 const std::string& source_instance_id,

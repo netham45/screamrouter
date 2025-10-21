@@ -27,8 +27,9 @@ except ImportError as e:
 """This manages the target state of sinks, sources, and routes
    then runs audio controllers for each source"""
 from copy import copy, deepcopy
+import ipaddress
 from ipaddress import IPv4Address
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from subprocess import TimeoutExpired
 
 _CAPTURE_ALLOWED_SAMPLE_RATES = {44100, 48000, 96000}
@@ -92,6 +93,15 @@ class ConfigurationManager(threading.Thread):
     @staticmethod
     def _sanitize_screamrouter_label(label: str) -> str:
         return ''.join(c.lower() if c.isalnum() or c in ('-', '_') else '_' for c in label)
+
+    @staticmethod
+    def _normalize_process_tag(tag: Any) -> str:
+        """Coerce discovery tags to clean strings without embedded NULs."""
+        try:
+            value = str(tag)
+        except Exception:  # pylint: disable=broad-except
+            return ""
+        return value.replace("\x00", "")
 
     def __init__(self, websocket: APIWebStream,
                  plugin_manager: PluginManager,
@@ -307,7 +317,15 @@ class ConfigurationManager(threading.Thread):
         """Deletes a sink by name"""
         _logger.debug(f"Deleting {sink_name}")
         sink: SinkDescription = self.get_sink_by_name(sink_name)
-        self.__verify_sink_unused(sink)
+        removed_groups = self.__remove_sink_from_groups(sink.name)
+        if removed_groups:
+            _logger.debug("Removed sink '%s' from groups %s", sink.name, list(removed_groups.keys()))
+        try:
+            self.__verify_sink_unused(sink)
+        except InUseError as exc:
+            if removed_groups:
+                self.__restore_sink_memberships(removed_groups)
+            raise exc
         self.sink_descriptions.remove(sink)
         self.delete_route_by_sink(sink)
         self.__reload_configuration()
@@ -502,7 +520,15 @@ class ConfigurationManager(threading.Thread):
     def delete_source(self, source_name: SourceNameType) -> bool:
         """Deletes a source by name"""
         source: SourceDescription = self.get_source_by_name(source_name)
-        self.__verify_source_unused(source)
+        removed_groups = self.__remove_source_from_groups(source.name)
+        if removed_groups:
+            _logger.debug("Removed source '%s' from groups %s", source.name, list(removed_groups.keys()))
+        try:
+            self.__verify_source_unused(source)
+        except InUseError as exc:
+            if removed_groups:
+                self.__restore_source_memberships(removed_groups)
+            raise exc
         self.source_descriptions.remove(source)
         self.delete_route_by_source(source)
         self.__reload_configuration()
@@ -963,6 +989,7 @@ class ConfigurationManager(threading.Thread):
 
     def get_source_by_name(self, source_name: SourceNameType) -> SourceDescription:
         """Returns a SourceDescription by name"""
+        print(self.source_descriptions)
         source_locator: List[SourceDescription] = [source for source in self.source_descriptions
                                                     if source.name == source_name]
         if len(source_locator) == 0:
@@ -1047,34 +1074,89 @@ class ConfigurationManager(threading.Thread):
         self.get_sink_by_name(route.sink)
         self.get_source_by_name(route.source)
 
+    def __remove_sink_from_groups(self, sink_name: SinkNameType) -> Dict[SinkNameType, List[SinkNameType]]:
+        """Remove the sink from every group that references it."""
+        groups_updated: Dict[SinkNameType, List[SinkNameType]] = {}
+        for group in self.sink_descriptions + self.active_temporary_sinks:
+            if not group.is_group or group.name == sink_name:
+                continue
+            if sink_name in group.group_members:
+                groups_updated[group.name] = list(group.group_members)
+                group.group_members = [member for member in group.group_members if member != sink_name]
+        return groups_updated
+
+    def __remove_source_from_groups(self, source_name: SourceNameType) -> Dict[SourceNameType, List[SourceNameType]]:
+        """Remove the source from every group that references it."""
+        groups_updated: Dict[SourceNameType, List[SourceNameType]] = {}
+        for group in self.source_descriptions:
+            if not group.is_group or group.name == source_name:
+                continue
+            if source_name in group.group_members:
+                groups_updated[group.name] = list(group.group_members)
+                group.group_members = [member for member in group.group_members if member != source_name]
+        return groups_updated
+
+    def __restore_sink_memberships(self, original_memberships: Dict[SinkNameType, List[SinkNameType]]) -> None:
+        """Restore group membership state when deletion cannot proceed."""
+        for group in self.sink_descriptions + self.active_temporary_sinks:
+            if group.name in original_memberships:
+                group.group_members = original_memberships[group.name]
+
+    def __restore_source_memberships(self, original_memberships: Dict[SourceNameType, List[SourceNameType]]) -> None:
+        """Restore group membership state when deletion cannot proceed."""
+        for group in self.source_descriptions:
+            if group.name in original_memberships:
+                group.group_members = original_memberships[group.name]
+
+    def __collect_sink_groups_for_member(self, member_name: SinkNameType, visited: Optional[Set[str]] = None) -> List[SinkDescription]:
+        """Return all groups that include the member (directly or indirectly)."""
+        if visited is None:
+            visited = set()
+        sink_groups: List[SinkDescription] = []
+        for group in self.sink_descriptions + self.active_temporary_sinks:
+            if not group.is_group or group.name in visited:
+                continue
+            if member_name in group.group_members:
+                visited.add(group.name)
+                sink_groups.append(group)
+                sink_groups.extend(self.__collect_sink_groups_for_member(group.name, visited))
+        return sink_groups
+
+    def __collect_source_groups_for_member(self, member_name: SourceNameType, visited: Optional[Set[str]] = None) -> List[SourceDescription]:
+        """Return all groups that include the member (directly or indirectly)."""
+        if visited is None:
+            visited = set()
+        source_groups: List[SourceDescription] = []
+        for group in self.source_descriptions:
+            if not group.is_group or group.name in visited:
+                continue
+            if member_name in group.group_members:
+                visited.add(group.name)
+                source_groups.append(group)
+                source_groups.extend(self.__collect_source_groups_for_member(group.name, visited))
+        return source_groups
+
     def __verify_source_unused(self, source: SourceDescription) -> None:
         """Verifies a source is unused by any routes, throws exception if not"""
-        groups: List[SourceDescription]
-        groups = self.active_configuration.get_source_groups_from_member(source)
-        if len(groups) > 0:
-            group_names: List[str] = []
-            for group in groups:
-                group_names.append(group.name)
+        groups: List[SourceDescription] = self.__collect_source_groups_for_member(source.name)
+        if groups:
+            group_names = [group.name for group in groups]
             raise InUseError(f"Source: {source.name} is in use by Groups {group_names}")
-        routes: List[RouteDescription] = []
-        routes = self.active_configuration.get_routes_by_source(source)
-        for route in routes:
-            if route.source == source.name and route.enabled:
-                raise InUseError(f"Source: {source.name} is in use by Route {route.name}")
+        enabled_routes = [route.name for route in self.route_descriptions if route.enabled and route.source == source.name]
+        if enabled_routes:
+            routes_str = ", ".join(enabled_routes)
+            raise InUseError(f"Source: {source.name} is in use by Route(s) {routes_str}")
 
     def __verify_sink_unused(self, sink: SinkDescription) -> None:
         """Verifies a sink is unused by any routes, throws exception if not"""
-        groups: List[SinkDescription] = self.active_configuration.get_sink_groups_from_member(sink)
-        if len(groups) > 0:
-            group_names: List[str] = []
-            for group in groups:
-                group_names.append(group.name)
+        groups: List[SinkDescription] = self.__collect_sink_groups_for_member(sink.name)
+        if groups:
+            group_names = [group.name for group in groups]
             raise InUseError(f"Sink: {sink.name} is in use by Groups {group_names}")
-        routes: List[RouteDescription] = []
-        routes = self.active_configuration.get_routes_by_sink(sink)
-        for route in routes:
-            if route.sink == sink.name and route.enabled:
-                raise InUseError(f"Sink: {sink.name} is in use by Route {route.name}")
+        enabled_routes = [route.name for route in self.route_descriptions if route.enabled and route.sink == sink.name]
+        if enabled_routes:
+            routes_str = ", ".join(enabled_routes)
+            raise InUseError(f"Sink: {sink.name} is in use by Route(s) {routes_str}")
             
     def delete_route_by_source(self, source: SourceDescription) -> None:
         """Deletes all routes associated with a given Source"""
@@ -2604,10 +2686,98 @@ class ConfigurationManager(threading.Thread):
 
     def auto_add_process_source(self, tag: str):
         """Auto Add Process per Source"""
-        ip: IPAddressType = IPAddressType(tag[:15].strip())
-        hostname: str = self.get_hostname_by_ip(ip)
-        process: str = tag[15:]
-        sourcename: str = f"{hostname} - {process}"
+        if not tag:
+            _logger.debug("[Configuration Manager] Skipping auto add for empty process tag")
+            return
+
+        raw_tag = self._normalize_process_tag(tag)
+        normalized_tag = raw_tag.strip()
+        if not normalized_tag:
+            _logger.debug("[Configuration Manager] Skipping auto add for whitespace-only process tag")
+            return
+
+        device_lookup_keys = [f"per_process:{raw_tag}"]
+        if raw_tag != normalized_tag:
+            device_lookup_keys.append(f"per_process:{normalized_tag}")
+
+        discovered_device = None
+        for key in device_lookup_keys:
+            discovered_device = self.discovered_devices.get(key)
+            if discovered_device:
+                break
+
+        def _valid_ip(candidate: Optional[str]) -> Optional[str]:
+            if candidate is None:
+                return None
+            candidate_str = str(candidate).strip()
+            if not candidate_str:
+                return None
+            try:
+                ipaddress.ip_address(candidate_str)
+            except ValueError:
+                return None
+            return candidate_str
+
+        def _split_tag_components(tag_str: str) -> Tuple[str, str]:
+            if not tag_str:
+                return "", ""
+
+            for separator in ("::", " - ", "\t", "  "):
+                if separator in tag_str:
+                    prefix, suffix = tag_str.split(separator, 1)
+                    return prefix.strip(), suffix.strip()
+
+            parts = tag_str.split(None, 1)
+            if len(parts) == 2:
+                return parts[0].strip(), parts[1].strip()
+            if parts:
+                return "", parts[0].strip()
+            return "", ""
+
+        ip_candidate: Optional[str] = _valid_ip(raw_tag[:15].strip())
+        if not ip_candidate and discovered_device and discovered_device.ip:
+            ip_candidate = _valid_ip(discovered_device.ip)
+        if not ip_candidate:
+            for token in normalized_tag.replace("::", " ").replace("|", " ").split():
+                ip_candidate = _valid_ip(token)
+                if ip_candidate:
+                    break
+
+        host_component, process_component = _split_tag_components(normalized_tag)
+
+        hostname = host_component
+        if ip_candidate:
+            try:
+                hostname = self.get_hostname_by_ip(ip_candidate) or ip_candidate
+            except Exception:  # pylint: disable=broad-except
+                hostname = ip_candidate
+        elif discovered_device and discovered_device.ip:
+            hostname = hostname or str(discovered_device.ip).strip()
+
+        if not hostname:
+            hostname = "Process Source"
+
+        process = process_component
+        if not process:
+            if ip_candidate and normalized_tag:
+                remainder = normalized_tag
+                if normalized_tag.startswith(ip_candidate):
+                    remainder = normalized_tag[len(ip_candidate):].strip()
+                else:
+                    remainder = remainder.replace(ip_candidate, "", 1).strip()
+                process = remainder
+            if not process:
+                process = normalized_tag if hostname != normalized_tag else "Process"
+
+        hostname = hostname.strip()
+        process = process.strip()
+
+        if hostname and process and hostname == process:
+            process = "Process"
+
+        name_parts = [part for part in (hostname, process) if part]
+        sourcename = " - ".join(name_parts) if name_parts else normalized_tag
+
         try:
             original_sourcename: str = sourcename
             counter: int = 1
@@ -2616,17 +2786,31 @@ class ConfigurationManager(threading.Thread):
                 counter += 1
         except NameError:
             pass
+
         _logger.info("[Configuration Manager] Adding Source Process %s - %s", hostname, process)
-        source: SourceDescription = SourceDescription(name=sourcename, tag=tag, is_process=True)
+
+        source = SourceDescription(
+            name=sourcename,
+            tag=raw_tag,
+            is_process=True,
+        )
+
         source_group_search: List[SourceDescription]
-        source_group_search = [source for source in self.source_descriptions if source.tag == f"{hostname} All Processes"]
-        source_group: SourceDescription
+        group_tag = f"{hostname} All Processes" if hostname else "Process Sources"
+        source_group_search = [desc for desc in self.source_descriptions if desc.tag == group_tag]
         if not source_group_search:
-            source_group = SourceDescription(name=f"{hostname} All Processes", tag=f"{hostname} All Processes", ip=source.ip, is_group=True)
+            source_group = SourceDescription(
+                name=group_tag,
+                tag=group_tag,
+                is_group=True,
+            )
             self.add_source(source_group)
         else:
             source_group = source_group_search[0]
-        source_group.group_members.append(source.name)
+
+        if source.name not in source_group.group_members:
+            source_group.group_members.append(source.name)
+
         self.add_source(source)
         self.__reload_configuration()
 
@@ -2894,7 +3078,7 @@ class ConfigurationManager(threading.Thread):
             try:
                 per_process_seen_tags = self.cpp_audio_manager.get_per_process_scream_receiver_seen_tags(per_process_receiver_port)
                 for tag_str in per_process_seen_tags:
-                    identifier = str(tag_str)
+                    identifier = self._normalize_process_tag(tag_str)
                     if not identifier:
                         continue
 
@@ -2936,8 +3120,91 @@ class ConfigurationManager(threading.Thread):
                             device_type="per_process",
                             properties=per_process_properties,
                         )
+
+                        try:
+                            self.auto_add_process_source(identifier)
+                        except Exception as auto_exc:  # pylint: disable=broad-except
+                            _logger.error(
+                                "[Configuration Manager] Failed to auto add process source for tag %s: %s",
+                                identifier,
+                                auto_exc,
+                            )
             except Exception as e:
                 _logger.error("[Configuration Manager] Error getting seen tags from C++ Per-Process Receiver (port %d): %s", per_process_receiver_port, e)
+
+            # PulseAudio Receiver (process-style sources)
+            if hasattr(self.cpp_audio_manager, "get_pulse_receiver_seen_tags"):
+                try:
+                    pulse_seen_tags = self.cpp_audio_manager.get_pulse_receiver_seen_tags()
+                    for tag_str in pulse_seen_tags:
+                        identifier = self._normalize_process_tag(tag_str)
+                        if not identifier:
+                            continue
+
+                        ip_candidate: Optional[str] = None
+                        ip_segment = identifier[:15].strip()
+                        try:
+                            ip_candidate = str(IPAddressType(ip_segment))
+                        except Exception:  # pylint: disable=broad-except
+                            ip_candidate = None
+
+                        pulse_properties = {"source": "pulse"}
+                        store_ip = ip_candidate
+                        if not store_ip:
+                            parts = identifier.strip().split(None, 1)
+                            if parts:
+                                store_ip = parts[0]
+                        if not store_ip:
+                            store_ip = identifier
+
+                        if self._update_discovered_device_last_seen(
+                            method="pulse",
+                            identifier=identifier,
+                            ip=store_ip,
+                            tag=identifier,
+                            device_type="pulse_process",
+                            properties=pulse_properties,
+                        ):
+                            continue
+
+                        is_new_pulse_source = identifier not in known_source_tags
+                        if is_new_pulse_source:
+                            _logger.info(
+                                "[Configuration Manager] Discovered new PulseAudio source: %s",
+                                identifier,
+                            )
+                            known_source_tags.append(identifier)
+
+                            self._store_discovered_device(
+                                method="pulse",
+                                role="process",
+                                identifier=identifier,
+                                ip=store_ip,
+                                tag=identifier,
+                                device_type="pulse_process",
+                                properties=pulse_properties,
+                            )
+
+                            try:
+                                self.auto_add_process_source(identifier)
+                            except Exception as auto_exc:  # pylint: disable=broad-except
+                                _logger.error(
+                                    "[Configuration Manager] Failed to auto add PulseAudio process source for tag %s: %s",
+                                    identifier,
+                                    auto_exc,
+                                )
+                        else:
+                            self._store_discovered_device(
+                                method="pulse",
+                                role="process",
+                                identifier=identifier,
+                                ip=store_ip,
+                                tag=identifier,
+                                device_type="pulse_process",
+                                properties=pulse_properties,
+                            )
+                except Exception as e:  # pylint: disable=broad-except
+                    _logger.error("[Configuration Manager] Error getting seen tags from PulseAudio Receiver: %s", e)
 
             # SAP Announcements (metadata-driven sources)
             try:
@@ -3121,26 +3388,32 @@ class ConfigurationManager(threading.Thread):
             try:
                 if not self.reload_condition.acquire(timeout=1):
                     raise TimeoutError("Failed to get configuration reload condition")
-                if self.reload_condition.wait(timeout=.3) or self.plugin_manager.wants_reload(False):
-                    # This will get set to true if something else wants to reload the configuration
-                    # while it's already reloading
-                    if self.plugin_manager.wants_reload():
+
+                try:
+                    notified = self.reload_condition.wait(timeout=.3)
+                    plugin_requests_reload = self.plugin_manager.wants_reload(False)
+
+                    if plugin_requests_reload and self.plugin_manager.wants_reload():
                         _logger.info("[Configuration Manager] Plugin Manager requests reload.")
                         self.reload_config = True
-                    if self.reload_config:
-                        self.reload_config = False
-                        _logger.info("[Configuration Manager] Reloading the configuration")
-                        if not self.__process_and_apply_configuration_with_timeout():
-                            _logger.error("Configuration reload aborted due to errors or timeout.")
-                            continue  # Skip the rest of the loop iteration
-                else:
+
+                    if notified or plugin_requests_reload or self.reload_config:
+                        self.reload_config = True if self.reload_config or plugin_requests_reload else False
+                        if self.reload_config:
+                            self.reload_config = False
+                            _logger.info("[Configuration Manager] Reloading the configuration")
+                            if not self.__process_and_apply_configuration_with_timeout():
+                                _logger.error("Configuration reload aborted due to errors or timeout.")
+                                continue  # Skip the rest of the loop iteration
+                finally:
                     try:
                         self.reload_condition.release()
-                    except:
+                    except RuntimeError:
                         pass
+
                 # Removed check/call for __process_and_apply_volume_eq_delay_timeshift
                 self.check_autodetected_sinks_sources()
-            except:
+            except Exception:  # pylint: disable=broad-except
                 pass
 
     def update_source_speaker_layout(self, source_name: SourceNameType, input_channel_key: int, speaker_layout_for_key: SpeakerLayout) -> bool:

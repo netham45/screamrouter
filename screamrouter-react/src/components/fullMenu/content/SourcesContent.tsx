@@ -25,8 +25,11 @@ const SourcesContent: React.FC<ContentProps> = ({
   routes,
   handleControlSource
 }) => {
+  // Filter to show only non-process sources in the Sources view
+  const nonProcessSources = sources.filter(source => !source.is_process);
+
   // Sort sources based on the current sort configuration
-  const sortedSources = sortSources(sources, sortConfig, starredSources, contextActiveSource);
+  const sortedSources = sortSources(nonProcessSources, sortConfig, starredSources, contextActiveSource);
   
   // Define colors based on color mode
   const bgColor = useColorModeValue('white', 'gray.800');

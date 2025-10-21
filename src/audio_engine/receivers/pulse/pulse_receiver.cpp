@@ -65,6 +65,7 @@ constexpr uint32_t kDefaultBufferLength = 48 * 1024; // 1 second @ 48kHz, 8ch, 3
 constexpr uint32_t kDefaultMinReq = 4096;
 constexpr uint32_t kDefaultPrebuf = 0;
 constexpr uint32_t kDefaultMaxLength = kDefaultBufferLength * 2;
+constexpr int64_t kMaxCatchupUsecPerChunk = 2000; // limit to 2ms of catch-up per chunk to avoid pops
 constexpr uint32_t kProgramTagLength = 30;
 constexpr uint32_t kPaddedIpLength = 15;
 constexpr uint32_t kVolumeNorm = 0x10000u;
@@ -145,6 +146,10 @@ inline std::string pad_or_truncate(const std::string& value, std::size_t width) 
     std::string result(width, ' ');
     std::copy(value.begin(), value.end(), result.begin());
     return result;
+}
+
+inline void strip_nuls(std::string& value) {
+    value.erase(std::remove(value.begin(), value.end(), '\0'), value.end());
 }
 
 void apply_proplist_update(std::unordered_map<std::string, std::string>& target,
@@ -327,10 +332,12 @@ struct PulseAudioReceiver::Impl {
     bool load_cookie();
 
     void note_tag_seen(const std::string& tag) {
-        if (known_tags.insert(tag).second) {
-            seen_tags.push_back(tag);
+        std::string clean_tag = tag;
+        strip_nuls(clean_tag);
+        if (known_tags.insert(clean_tag).second) {
+            seen_tags.push_back(clean_tag);
             if (notification_queue) {
-                notification_queue->push(DeviceDiscoveryNotification{tag, DeviceDirection::CAPTURE, true});
+                notification_queue->push(DeviceDiscoveryNotification{clean_tag, DeviceDirection::CAPTURE, true});
             }
         }
     }
@@ -351,6 +358,22 @@ struct PulseAudioReceiver::Impl::Connection {
 
     std::vector<uint8_t> read_buffer;
     std::deque<std::vector<uint8_t>> write_queue;
+
+    struct ProfilingData {
+        uint64_t chunks = 0;
+        uint64_t chunk_bytes = 0;
+        uint64_t frames = 0;
+        uint64_t requests = 0;
+        uint64_t request_bytes = 0;
+        uint64_t catchup_events = 0;
+        uint64_t catchup_usec = 0;
+        uint64_t memfd_chunks = 0;
+        uint64_t tcp_chunks = 0;
+        uint64_t converted_chunks = 0;
+        uint64_t latency_queries = 0;
+        std::chrono::steady_clock::time_point window_start{};
+        std::chrono::steady_clock::time_point last_log{};
+    };
 
     struct StreamState {
         uint32_t local_index = 0;
@@ -377,6 +400,7 @@ struct PulseAudioReceiver::Impl::Connection {
         bool playback_started = false;
         std::chrono::steady_clock::time_point playback_start_time{};
         uint64_t underrun_usec = 0;
+        ProfilingData profile;
     };
 
     struct MemfdPool {
@@ -458,6 +482,18 @@ struct PulseAudioReceiver::Impl::Connection {
     uint32_t effective_request_bytes(const StreamState& stream) const;
     void process_due_requests();
     std::optional<std::chrono::steady_clock::time_point> next_due_request() const;
+    void record_chunk_metrics(StreamState& stream,
+                              size_t chunk_bytes,
+                              uint64_t frames,
+                              bool from_memfd,
+                              bool converted,
+                              uint64_t catchup_usec,
+                              std::chrono::steady_clock::time_point now);
+    void record_request_metrics(uint32_t stream_index, uint32_t bytes);
+    void record_latency_query(StreamState& stream);
+    void maybe_log_stream_profile(uint32_t stream_index,
+                                  StreamState& stream,
+                                  std::chrono::steady_clock::time_point now);
 
     short desired_poll_events() const {
         short events = POLLIN;
@@ -785,11 +821,142 @@ void PulseAudioReceiver::Impl::Connection::enqueue_request(uint32_t stream_index
     if (bytes == 0) {
         return;
     }
+    record_request_metrics(stream_index, bytes);
     TagWriter writer;
     writer.put_command(Command::Request, static_cast<uint32_t>(-1));
     writer.put_u32(stream_index);
     writer.put_u32(bytes);
     enqueue_tagstruct(writer);
+}
+
+void PulseAudioReceiver::Impl::Connection::record_chunk_metrics(StreamState& stream,
+                                                                size_t chunk_bytes,
+                                                                uint64_t frames,
+                                                                bool from_memfd,
+                                                                bool converted,
+                                                                uint64_t catchup_usec,
+                                                                std::chrono::steady_clock::time_point now) {
+    if (!owner->debug_packets) {
+        return;
+    }
+    auto& profile = stream.profile;
+    if (profile.window_start == std::chrono::steady_clock::time_point{}) {
+        profile.window_start = now;
+        profile.last_log = now;
+    }
+    profile.chunks += 1;
+    profile.chunk_bytes += chunk_bytes;
+    profile.frames += frames;
+    if (from_memfd) {
+        profile.memfd_chunks += 1;
+    } else {
+        profile.tcp_chunks += 1;
+    }
+    if (converted) {
+        profile.converted_chunks += 1;
+    }
+    if (catchup_usec > 0) {
+        profile.catchup_events += 1;
+        profile.catchup_usec += catchup_usec;
+    }
+}
+
+void PulseAudioReceiver::Impl::Connection::record_request_metrics(uint32_t stream_index, uint32_t bytes) {
+    if (!owner->debug_packets) {
+        return;
+    }
+    auto it = streams.find(stream_index);
+    if (it == streams.end()) {
+        return;
+    }
+    auto& profile = it->second.profile;
+    auto now = std::chrono::steady_clock::now();
+    if (profile.window_start == std::chrono::steady_clock::time_point{}) {
+        profile.window_start = now;
+        profile.last_log = now;
+    }
+    profile.requests += 1;
+    profile.request_bytes += bytes;
+}
+
+void PulseAudioReceiver::Impl::Connection::record_latency_query(StreamState& stream) {
+    if (!owner->debug_packets) {
+        return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    auto& profile = stream.profile;
+    if (profile.window_start == std::chrono::steady_clock::time_point{}) {
+        profile.window_start = now;
+        profile.last_log = now;
+    }
+    profile.latency_queries += 1;
+}
+
+void PulseAudioReceiver::Impl::Connection::maybe_log_stream_profile(uint32_t stream_index,
+                                                                    StreamState& stream,
+                                                                    std::chrono::steady_clock::time_point now) {
+    if (!owner->debug_packets) {
+        return;
+    }
+    auto& profile = stream.profile;
+    if (profile.window_start == std::chrono::steady_clock::time_point{}) {
+        return;
+    }
+    if (profile.chunks == 0 && profile.requests == 0 && profile.catchup_events == 0 && profile.latency_queries == 0) {
+        profile.window_start = now;
+        profile.last_log = now;
+        return;
+    }
+    const auto elapsed = now - profile.window_start;
+    if (elapsed < std::chrono::seconds(5) && profile.catchup_events < 3) {
+        return;
+    }
+    if (profile.catchup_events >= 3 && elapsed < std::chrono::milliseconds(200)) {
+        return;
+    }
+
+    double seconds = std::chrono::duration<double>(elapsed).count();
+    if (seconds <= 0.0) {
+        seconds = 1.0;
+    }
+
+    const double chunk_rate = static_cast<double>(profile.chunks) / seconds;
+    const double frame_rate = static_cast<double>(profile.frames) / seconds;
+    const double request_rate = static_cast<double>(profile.request_bytes) / seconds;
+
+    std::ostringstream oss;
+    oss << "Profile stream=" << stream_index
+        << " chunks=" << profile.chunks
+        << " bytes=" << profile.chunk_bytes
+        << " frames=" << profile.frames
+        << " reqs=" << profile.requests
+        << " req_bytes=" << profile.request_bytes
+        << " chunk_rate=" << std::fixed << std::setprecision(2) << chunk_rate << "/s"
+        << " frame_rate=" << std::fixed << std::setprecision(2) << frame_rate << "/s"
+        << " req_rate=" << std::fixed << std::setprecision(2) << request_rate << " B/s"
+        << " catchup_events=" << profile.catchup_events
+        << " catchup_usec=" << profile.catchup_usec
+        << " latency_queries=" << profile.latency_queries
+        << " memfd_chunks=" << profile.memfd_chunks
+        << " tcp_chunks=" << profile.tcp_chunks
+        << " converted_chunks=" << profile.converted_chunks
+        << " underrun_total=" << stream.underrun_usec;
+
+    owner->log_debug(oss.str());
+
+    profile.chunks = 0;
+    profile.chunk_bytes = 0;
+    profile.frames = 0;
+    profile.requests = 0;
+    profile.request_bytes = 0;
+    profile.catchup_events = 0;
+    profile.catchup_usec = 0;
+    profile.memfd_chunks = 0;
+    profile.tcp_chunks = 0;
+    profile.converted_chunks = 0;
+    profile.latency_queries = 0;
+    profile.window_start = now;
+    profile.last_log = now;
 }
 
 void PulseAudioReceiver::Impl::Connection::enqueue_shm_release(uint32_t block_id) {
@@ -1388,6 +1555,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     stream.volume = config.volume;
     stream.corked = muted;
     stream.composite_tag = composite_tag_for_stream(config.proplist);
+    strip_nuls(stream.composite_tag);
     stream.proplist = config.proplist;
     stream.adjust_latency = adjust_latency_flag;
     stream.early_requests = early_requests_flag;
@@ -1604,6 +1772,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_get_playback_latency(uint32_t 
     }
 
     auto& stream = it->second;
+    record_latency_query(stream);
     const uint32_t bit_depth = sample_format_bit_depth(stream.sample_spec.format);
     const uint32_t bytes_per_sample = std::max<uint32_t>(bit_depth / 8, 1);
     const uint32_t bytes_per_frame = stream.sample_spec.channels * bytes_per_sample;
@@ -1692,6 +1861,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_get_playback_latency(uint32_t 
         writer.put_u64(playing_for_usec);
     }
     enqueue_tagstruct(writer);
+    maybe_log_stream_profile(*channel, stream, now_steady);
     return true;
 }
 
@@ -1931,6 +2101,8 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
     const size_t frame_bytes = channels * bytes_per_sample;
     size_t processed_frames = 0;
     uint64_t frames_produced = 0;
+    const bool from_memfd = (flags & kDescriptorFlagShmData) != 0;
+    const bool converted_format = (stream.sample_spec.format == kSampleFormatFloat32LE);
 
     if (!active_payload->empty()) {
         stream.pending_payload.insert(stream.pending_payload.end(),
@@ -1951,13 +2123,15 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
             chunk = convert_float_chunk_to_s32(chunk);
         }
 
-        const uint64_t chunk_frames = frame_bytes > 0 ? static_cast<uint64_t>(chunk.size() / frame_bytes) : 0;
+        const size_t chunk_bytes = chunk.size();
+        const uint64_t chunk_frames = frame_bytes > 0 ? static_cast<uint64_t>(chunk_bytes / frame_bytes) : 0;
         if (chunk_frames > 0) {
             stream.frame_cursor += chunk_frames;
             processed_frames += static_cast<size_t>(chunk_frames);
             frames_produced += chunk_frames;
 
             std::chrono::steady_clock::time_point chunk_start_time = now;
+            uint64_t catchup_for_chunk = 0;
             if (stream.sample_spec.rate > 0) {
                 if (!stream.has_last_delivery) {
                     stream.last_delivery_time = now;
@@ -1967,8 +2141,16 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
                     auto underrun = std::chrono::duration_cast<std::chrono::microseconds>(now - stream.last_delivery_time);
                     if (underrun.count() > 0) {
                         stream.underrun_usec += static_cast<uint64_t>(underrun.count());
+
+                        const int64_t catch_up = std::min<int64_t>(underrun.count(), kMaxCatchupUsecPerChunk);
+                        stream.last_delivery_time += std::chrono::microseconds(catch_up);
+                        if (stream.last_delivery_time > now) {
+                            stream.last_delivery_time = now;
+                        }
+                        if (catch_up > 0) {
+                            catchup_for_chunk += static_cast<uint64_t>(catch_up);
+                        }
                     }
-                    stream.last_delivery_time = now;
                 }
 
                 chunk_start_time = stream.last_delivery_time;
@@ -1980,6 +2162,14 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
                     stream.playback_start_time = now;
                 }
             }
+
+            record_chunk_metrics(stream,
+                                  chunk_bytes,
+                                  chunk_frames,
+                                  from_memfd,
+                                  converted_format,
+                                  catchup_for_chunk,
+                                  now);
 
             if (owner->timeshift_manager) {
                 TaggedAudioPacket packet;
@@ -2015,6 +2205,8 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
     const uint32_t request_bytes = effective_request_bytes(stream);
     stream.pending_request_bytes = std::max(stream.pending_request_bytes, request_bytes);
 
+    maybe_log_stream_profile(stream_index, stream, std::chrono::steady_clock::now());
+
     return true;
 }
 
@@ -2027,11 +2219,18 @@ std::string PulseAudioReceiver::Impl::Connection::composite_tag_for_stream(const
     if (program.empty()) {
         program = client_app_name.empty() ? "PulseClient" : client_app_name;
     }
+    strip_nuls(program);
     program = trim_string(program);
     program = pad_or_truncate(program, kProgramTagLength);
 
-    std::string base = pad_or_truncate(peer_identity, kPaddedIpLength);
-    return base + program;
+    std::string base = peer_identity;
+    strip_nuls(base);
+    base = trim_string(base);
+    base = pad_or_truncate(base, kPaddedIpLength);
+
+    std::string composite = base + program;
+    strip_nuls(composite);
+    return composite;
 }
 
 void PulseAudioReceiver::Impl::Connection::process_due_requests() {
@@ -2040,14 +2239,13 @@ void PulseAudioReceiver::Impl::Connection::process_due_requests() {
     }
     const auto now = std::chrono::steady_clock::now();
     for (auto& [stream_index, stream] : streams) {
-        if (stream.pending_request_bytes == 0) {
-            continue;
-        }
-        if (stream.next_request_time > now) {
+        if (stream.pending_request_bytes == 0 || stream.next_request_time > now) {
+            maybe_log_stream_profile(stream_index, stream, now);
             continue;
         }
         enqueue_request(stream_index, stream.pending_request_bytes);
         stream.pending_request_bytes = 0;
+        maybe_log_stream_profile(stream_index, stream, now);
     }
 }
 

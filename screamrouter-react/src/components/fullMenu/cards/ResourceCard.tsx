@@ -22,11 +22,11 @@ import {
   VStack
 } from '@chakra-ui/react';
 import { StarIcon, SettingsIcon, DeleteIcon } from '@chakra-ui/icons';
-import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower, FaProjectDiagram, FaHeadphones } from 'react-icons/fa';
+import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower, FaProjectDiagram, FaHeadphones, FaListUl } from 'react-icons/fa';
 import { Source, Sink, Route } from '../../../api/api';
 import VolumeSlider from '../controls/VolumeSlider';
 import TimeshiftSlider from '../controls/TimeshiftSlider';
-import { openEditPage } from '../utils';
+import { openEditPage, getProcessGroupIp } from '../utils';
 
 /**
  * Type for the different resource types.
@@ -189,6 +189,9 @@ const ResourceCard: React.FC<ResourceCardProps> = ({
   const isSink = (item: ResourceItem): item is Sink => type === 'sinks';
   const isRoute = (item: ResourceItem): item is Route => type === 'routes';
 
+  // Determine whether this source represents a process group
+  const processGroupIp = isSource(item) ? getProcessGroupIp(item, allSources) : null;
+
   // Function to get active routes for a source or sink
   const getActiveRoutes = (): string[] => {
     if (isSource(item)) {
@@ -343,6 +346,23 @@ return (
               variant="ghost"
               size="sm"
               data-tutorial-id="resource-channel-mapping-button"
+            />
+          )}
+          {isSource(item) && processGroupIp && (
+            <IconButton
+              aria-label="View Processes"
+              title="View Processes"
+              icon={<Box as={FaListUl} />}
+              onClick={(e) => {
+                e.stopPropagation();
+                window.open(
+  `/site/processes/${processGroupIp}`,
+  'process-window',
+  'popup=yes,noopener,noreferrer,toolbar=no,location=no,menubar=no,status=no,scrollbars=yes,resizable=yes,width=900,height=700'
+);
+              }}
+              variant="ghost"
+              size="sm"
             />
           )}
           {onEqualizer && (

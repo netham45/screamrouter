@@ -125,7 +125,11 @@ const SourceItem: React.FC<SourceItemProps> = ({
   
   // Function to open process list page
   const openProcessList = () => {
-    window.open(`/site/processes/${source.ip}`, '_blank');
+    window.open(
+  `/site/processes/${source.ip}`,
+  'process-window',
+  'popup=yes,noopener,noreferrer,toolbar=no,location=no,menubar=no,status=no,scrollbars=yes,resizable=yes,width=900,height=700'
+);
   };
   
   return (
