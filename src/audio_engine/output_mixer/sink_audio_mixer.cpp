@@ -381,6 +381,8 @@ void SinkAudioMixer::start() {
     mix_period_ = calculate_mix_period();
     next_mix_time_ = std::chrono::steady_clock::now();
 
+    clear_pending_audio();
+
     if (network_sender_ && !network_sender_->setup()) {
         LOG_CPP_ERROR("[SinkMixer:%s] Network sender setup failed. Cannot start mixer thread.", config_.sink_id.c_str());
         if (config_.protocol == "system_audio") {
@@ -391,11 +393,14 @@ void SinkAudioMixer::start() {
         }
     }
 
+    register_mix_timer();
+
     try {
         component_thread_ = std::thread(&SinkAudioMixer::run, this);
         LOG_CPP_INFO("[SinkMixer:%s] Thread started.", config_.sink_id.c_str());
     } catch (const std::system_error& e) {
         LOG_CPP_ERROR("[SinkMixer:%s] Failed to start thread: %s", config_.sink_id.c_str(), e.what());
+        unregister_mix_timer();
         if (network_sender_) {
             network_sender_->close();
         }
@@ -415,6 +420,7 @@ void SinkAudioMixer::stop() {
     stop_flag_ = true;
 
     input_cv_.notify_all();
+    unregister_mix_timer();
 
     if (mp3_output_queue_ && lame_global_flags_) {
         LOG_CPP_INFO("[SinkMixer:%s] Flushing LAME buffer...", config_.sink_id.c_str());
@@ -907,24 +913,123 @@ void SinkAudioMixer::maybe_log_profiler() {
 std::chrono::microseconds SinkAudioMixer::calculate_mix_period() const {
     int samplerate = config_.output_samplerate > 0 ? config_.output_samplerate : 48000;
     samplerate = std::max(1, samplerate);
+    int channels = std::max(1, config_.output_channels);
+    int bit_depth = config_.output_bitdepth > 0 ? config_.output_bitdepth : 16;
+    if ((bit_depth % 8) != 0) {
+        bit_depth = 16;
+    }
 
-    const long long numerator = static_cast<long long>(SINK_MIXING_BUFFER_SAMPLES) * 1000000LL;
+    const std::size_t bytes_per_sample = static_cast<std::size_t>(bit_depth) / 8;
+    const std::size_t frame_bytes = bytes_per_sample * static_cast<std::size_t>(channels);
+    if (frame_bytes == 0) {
+        return std::chrono::microseconds(6000);
+    }
+
+    const std::size_t frames_per_chunk = SINK_CHUNK_SIZE_BYTES / frame_bytes;
+    if (frames_per_chunk == 0) {
+        return std::chrono::microseconds(6000);
+    }
+
+    const long long numerator = static_cast<long long>(frames_per_chunk) * 1000000LL;
     long long period_us = numerator / static_cast<long long>(samplerate);
     if (period_us <= 0) {
-        period_us = 12000; // Fallback to ~12ms if calculation underflows.
+        period_us = 6000;
     }
 
     return std::chrono::microseconds(period_us);
 }
 
-void SinkAudioMixer::wait_for_next_mix_tick() {
-    next_mix_time_ += mix_period_;
-    auto now = std::chrono::steady_clock::now();
-    if (next_mix_time_ > now) {
-        std::this_thread::sleep_until(next_mix_time_);
-    } else {
-        next_mix_time_ = now;
+void SinkAudioMixer::register_mix_timer() {
+    {
+        std::lock_guard<std::mutex> lock(input_cv_mutex_);
+        pending_mix_ticks_ = 0;
     }
+    clock_callback_id_ = 0;
+    clock_manager_enabled_.store(false, std::memory_order_release);
+
+    timer_sample_rate_ = config_.output_samplerate > 0 ? config_.output_samplerate : 48000;
+    timer_channels_ = std::clamp(config_.output_channels, 1, 8);
+    timer_bit_depth_ = config_.output_bitdepth > 0 ? config_.output_bitdepth : 16;
+    if ((timer_bit_depth_ % 8) != 0) {
+        timer_bit_depth_ = 16;
+    }
+
+    if (!clock_manager_) {
+        try {
+            clock_manager_ = std::make_unique<ClockManager>();
+        } catch (const std::exception& ex) {
+            LOG_CPP_ERROR("[SinkMixer:%s] Failed to create ClockManager: %s",
+                          config_.sink_id.c_str(), ex.what());
+            return;
+        }
+    }
+
+    auto callback = [this]() { this->handle_mix_tick(); };
+    try {
+        clock_callback_id_ = clock_manager_->register_clock(
+            timer_sample_rate_, timer_channels_, timer_bit_depth_, std::move(callback));
+        clock_manager_enabled_.store(true, std::memory_order_release);
+        LOG_CPP_DEBUG("[SinkMixer:%s] Registered clock-managed mix timer (sr=%d ch=%d bit=%d)",
+                      config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_);
+    } catch (const std::exception& ex) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to register mix timer with ClockManager: %s. Falling back to internal pacing.",
+                      config_.sink_id.c_str(), ex.what());
+        clock_callback_id_ = 0;
+        clock_manager_enabled_.store(false, std::memory_order_release);
+    }
+}
+
+void SinkAudioMixer::unregister_mix_timer() {
+    if (clock_manager_enabled_.load(std::memory_order_acquire) && clock_manager_ && clock_callback_id_ != 0) {
+        try {
+            clock_manager_->unregister_clock(timer_sample_rate_, timer_channels_, timer_bit_depth_, clock_callback_id_);
+        } catch (const std::exception& ex) {
+            LOG_CPP_WARNING("[SinkMixer:%s] Failed to unregister mix timer: %s",
+                            config_.sink_id.c_str(), ex.what());
+        }
+    }
+
+    clock_callback_id_ = 0;
+    clock_manager_enabled_.store(false, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(input_cv_mutex_);
+        pending_mix_ticks_ = 0;
+    }
+    timer_sample_rate_ = 0;
+    timer_channels_ = 0;
+    timer_bit_depth_ = 0;
+}
+
+void SinkAudioMixer::handle_mix_tick() {
+    {
+        std::lock_guard<std::mutex> lock(input_cv_mutex_);
+        pending_mix_ticks_++;
+    }
+    input_cv_.notify_one();
+}
+
+bool SinkAudioMixer::wait_for_mix_tick() {
+    if (!clock_manager_enabled_.load(std::memory_order_acquire)) {
+        next_mix_time_ += mix_period_;
+        auto now = std::chrono::steady_clock::now();
+        if (next_mix_time_ > now) {
+            std::this_thread::sleep_until(next_mix_time_);
+        } else {
+            next_mix_time_ = now;
+        }
+        return !stop_flag_;
+    }
+
+    std::unique_lock<std::mutex> lock(input_cv_mutex_);
+    input_cv_.wait(lock, [this]() { return stop_flag_ || pending_mix_ticks_ > 0; });
+    if (stop_flag_) {
+        return false;
+    }
+    if (pending_mix_ticks_ == 0) {
+        return false;
+    }
+    pending_mix_ticks_--;
+    return true;
 }
 
 void SinkAudioMixer::cleanup_closed_listeners() {
@@ -954,6 +1059,28 @@ void SinkAudioMixer::cleanup_closed_listeners() {
     }
 }
 
+void SinkAudioMixer::clear_pending_audio() {
+    std::lock_guard<std::mutex> lock(queues_mutex_);
+
+    for (auto& [instance_id, queue_ptr] : input_queues_) {
+        if (!queue_ptr) {
+            continue;
+        }
+
+        ProcessedAudioChunk discarded;
+        while (queue_ptr->try_pop(discarded)) {
+            // Discard buffered audio accumulated while the mixer was stopped.
+        }
+
+        input_active_state_[instance_id] = false;
+        source_buffers_[instance_id] = ProcessedAudioChunk{};
+    }
+
+    underrun_silence_active_ = false;
+    payload_buffer_write_pos_ = 0;
+    profiling_max_payload_buffer_bytes_ = 0;
+}
+
 /**
  * @brief The main processing loop for the mixer thread.
  */
@@ -962,6 +1089,14 @@ void SinkAudioMixer::run() {
     next_mix_time_ = std::chrono::steady_clock::now();
 
     while (!stop_flag_) {
+        if (!wait_for_mix_tick()) {
+            continue;
+        }
+
+        if (stop_flag_) {
+            break;
+        }
+
         profiling_cycles_++;
         cleanup_closed_listeners();
 
@@ -990,7 +1125,6 @@ void SinkAudioMixer::run() {
                           config_.sink_id.c_str());
             lock.unlock();
             maybe_log_profiler();
-            wait_for_next_mix_tick();
             continue;
         }
 
@@ -1004,7 +1138,6 @@ void SinkAudioMixer::run() {
                               config_.sink_id.c_str());
                 lock.unlock();
                 maybe_log_profiler();
-                wait_for_next_mix_tick();
                 continue;
             }
 
@@ -1057,7 +1190,6 @@ void SinkAudioMixer::run() {
         }
 
         maybe_log_profiler();
-        wait_for_next_mix_tick();
     }
 
     LOG_CPP_INFO("[SinkMixer:%s] Exiting run loop.", config_.sink_id.c_str());
