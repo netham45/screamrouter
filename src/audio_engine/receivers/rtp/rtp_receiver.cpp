@@ -59,15 +59,20 @@ const int RTP_BITS_PER_SAMPLE_L16_48K_STEREO = 16;
 RtpReceiver::RtpReceiver(
     RtpReceiverConfig config,
     std::shared_ptr<NotificationQueue> notification_queue,
-    TimeshiftManager* timeshift_manager)
+    TimeshiftManager* timeshift_manager,
+    ClockManager* clock_manager)
     : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, "[RtpReceiver]"),
       config_(config),
+      clock_manager_(clock_manager),
       #ifdef _WIN32
           max_fd_(NAR_INVALID_SOCKET_VALUE),
       #else
           epoll_fd_(NAR_INVALID_SOCKET_VALUE),
       #endif
       last_rtp_timestamp_(0), last_chunk_remainder_samples_(0) {
+    if (!clock_manager_) {
+        throw std::runtime_error("RtpReceiver requires a valid ClockManager instance");
+    }
     #ifdef _WIN32
         FD_ZERO(&master_read_fds_);
     #endif
@@ -81,7 +86,7 @@ RtpReceiver::RtpReceiver(
 }
 
 RtpReceiver::~RtpReceiver() noexcept {
-    
+    clear_all_streams();
 }
 
 std::vector<SapAnnouncement> RtpReceiver::get_sap_announcements() {
@@ -184,6 +189,7 @@ void RtpReceiver::close_socket() {
    }
 
     std::lock_guard<std::mutex> lock(socket_fds_mutex_);
+    clear_all_streams();
 
     #ifdef _WIN32
         FD_ZERO(&master_read_fds_);
@@ -571,7 +577,7 @@ void RtpReceiver::process_ready_packets_internal(uint32_t ssrc, const struct soc
             TaggedAudioPacket packet;
             packet.received_time = chunk_first_packet_received_time_[ssrc];
             packet.rtp_timestamp = chunk_first_packet_rtp_timestamp_[ssrc];
-            
+
             size_t bytes_per_sample = props.bit_depth / 8;
             if (bytes_per_sample > 0 && props.channels > 0) {
                 size_t samples_in_chunk = (TARGET_PCM_CHUNK_SIZE / bytes_per_sample) / props.channels;
@@ -583,8 +589,9 @@ void RtpReceiver::process_ready_packets_internal(uint32_t ssrc, const struct soc
 
             char client_ip_str[INET_ADDRSTRLEN];
             inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
-            packet.source_tag = client_ip_str;
-            
+            std::string source_tag = client_ip_str;
+            packet.source_tag = source_tag;
+
             packet.channels = props.channels;
             packet.sample_rate = props.sample_rate;
             packet.bit_depth = props.bit_depth;
@@ -593,28 +600,219 @@ void RtpReceiver::process_ready_packets_internal(uint32_t ssrc, const struct soc
 
             packet.audio_data.assign(pcm_accumulator.begin(), pcm_accumulator.begin() + TARGET_PCM_CHUNK_SIZE);
             pcm_accumulator.erase(pcm_accumulator.begin(), pcm_accumulator.begin() + TARGET_PCM_CHUNK_SIZE);
-            
+
             is_accumulating_chunk_[ssrc] = false;
 
-            if (timeshift_manager_) {
-                timeshift_manager_->add_packet(std::move(packet));
-            }
+            enqueue_chunk(std::move(packet));
 
             bool new_tag = false;
             {
                 std::lock_guard<std::mutex> lock(seen_tags_mutex_);
-                if (std::find(seen_tags_.begin(), seen_tags_.end(), packet.source_tag) == seen_tags_.end()) {
-                    seen_tags_.push_back(packet.source_tag);
+                if (std::find(seen_tags_.begin(), seen_tags_.end(), source_tag) == seen_tags_.end()) {
+                    seen_tags_.push_back(source_tag);
                     new_tag = true;
                 }
             }
             if (new_tag && notification_queue_) {
-                notification_queue_->push({packet.source_tag});
+                notification_queue_->push({source_tag});
             }
         }
     }
 }
 
+
+uint32_t RtpReceiver::calculate_samples_per_chunk(int channels, int bit_depth) {
+    if (channels <= 0 || bit_depth <= 0 || (bit_depth % 8) != 0) {
+        return 0;
+    }
+
+    const std::size_t bytes_per_frame = static_cast<std::size_t>(channels) * static_cast<std::size_t>(bit_depth / 8);
+    if (bytes_per_frame == 0 || (TARGET_PCM_CHUNK_SIZE % bytes_per_frame) != 0) {
+        return 0;
+    }
+
+    return static_cast<uint32_t>(TARGET_PCM_CHUNK_SIZE / bytes_per_frame);
+}
+
+std::shared_ptr<RtpReceiver::StreamState> RtpReceiver::get_or_create_stream_state(const TaggedAudioPacket& packet) {
+    auto it = stream_states_.find(packet.source_tag);
+
+    if (it == stream_states_.end()) {
+        auto state = std::make_shared<StreamState>();
+        state->source_tag = packet.source_tag;
+        state->sample_rate = packet.sample_rate;
+        state->channels = packet.channels;
+        state->bit_depth = packet.bit_depth;
+        state->chlayout1 = packet.chlayout1;
+        state->chlayout2 = packet.chlayout2;
+        state->samples_per_chunk = calculate_samples_per_chunk(packet.channels, packet.bit_depth);
+        state->next_rtp_timestamp = 0;
+
+        if (state->samples_per_chunk == 0) {
+            log_error("Unsupported RTP format for scheduled delivery from " + packet.source_tag);
+            return nullptr;
+        }
+
+        auto inserted = stream_states_.emplace(packet.source_tag, state);
+        it = inserted.first;
+
+        if (clock_manager_) {
+            auto callback = [this, tag = state->source_tag]() { this->handle_clock_tick(tag); };
+            try {
+                state->callback_id = clock_manager_->register_clock(
+                    state->sample_rate, state->channels, state->bit_depth, std::move(callback));
+            } catch (const std::exception& ex) {
+                log_error("Failed to register clock for " + state->source_tag + ": " + ex.what());
+                stream_states_.erase(it);
+                return nullptr;
+            }
+        }
+
+        return state;
+    }
+
+    auto state = it->second;
+    if (!state) {
+        state = std::make_shared<StreamState>();
+        state->source_tag = packet.source_tag;
+        it->second = state;
+    }
+
+    bool format_changed = (state->sample_rate != packet.sample_rate) ||
+                          (state->channels != packet.channels) ||
+                          (state->bit_depth != packet.bit_depth);
+
+    if (format_changed) {
+        if (clock_manager_ && state->callback_id != 0) {
+            try {
+                clock_manager_->unregister_clock(state->sample_rate, state->channels, state->bit_depth, state->callback_id);
+            } catch (const std::exception& ex) {
+                log_error("Failed to unregister clock for " + state->source_tag + ": " + ex.what());
+            }
+            state->callback_id = 0;
+        }
+
+        state->sample_rate = packet.sample_rate;
+        state->channels = packet.channels;
+        state->bit_depth = packet.bit_depth;
+        state->chlayout1 = packet.chlayout1;
+        state->chlayout2 = packet.chlayout2;
+        state->samples_per_chunk = calculate_samples_per_chunk(packet.channels, packet.bit_depth);
+        state->next_rtp_timestamp = 0;
+        state->pending_chunks.clear();
+
+        if (state->samples_per_chunk == 0) {
+            log_error("Unsupported RTP format for scheduled delivery from " + packet.source_tag);
+            stream_states_.erase(it);
+            return nullptr;
+        }
+
+        if (clock_manager_) {
+            auto callback = [this, tag = state->source_tag]() { this->handle_clock_tick(tag); };
+            try {
+                state->callback_id = clock_manager_->register_clock(
+                    state->sample_rate, state->channels, state->bit_depth, std::move(callback));
+            } catch (const std::exception& ex) {
+                log_error("Failed to register clock for " + state->source_tag + ": " + ex.what());
+                stream_states_.erase(it);
+                return nullptr;
+            }
+        }
+    }
+
+    state->last_ssrcs = packet.ssrcs;
+    return state;
+}
+
+void RtpReceiver::enqueue_chunk(TaggedAudioPacket&& packet) {
+    if (!clock_manager_) {
+        NetworkAudioReceiver::dispatch_ready_packet(std::move(packet));
+        return;
+    }
+
+    bool fallback = false;
+    {
+        std::lock_guard<std::mutex> lock(stream_state_mutex_);
+        auto state = get_or_create_stream_state(packet);
+        if (!state) {
+            fallback = true;
+        } else {
+            state->pending_chunks.push_back(std::move(packet));
+            state->last_ssrcs = state->pending_chunks.back().ssrcs;
+        }
+    }
+
+    if (fallback) {
+        NetworkAudioReceiver::dispatch_ready_packet(std::move(packet));
+    }
+}
+
+void RtpReceiver::handle_clock_tick(const std::string& source_tag) {
+    TaggedAudioPacket packet;
+
+    {
+        std::lock_guard<std::mutex> lock(stream_state_mutex_);
+        auto it = stream_states_.find(source_tag);
+        if (it == stream_states_.end() || !it->second) {
+            return;
+        }
+
+        auto& state = *it->second;
+        const auto now = std::chrono::steady_clock::now();
+
+        if (!state.pending_chunks.empty()) {
+            packet = std::move(state.pending_chunks.front());
+            state.pending_chunks.pop_front();
+            packet.received_time = now;
+            state.last_ssrcs = packet.ssrcs;
+
+            if (state.samples_per_chunk > 0) {
+                if (packet.rtp_timestamp.has_value()) {
+                    state.next_rtp_timestamp = packet.rtp_timestamp.value();
+                } else {
+                    state.next_rtp_timestamp += state.samples_per_chunk;
+                    packet.rtp_timestamp = state.next_rtp_timestamp;
+                }
+            }
+        } else {
+            packet.source_tag = state.source_tag;
+            packet.audio_data.assign(TARGET_PCM_CHUNK_SIZE, 0);
+            packet.received_time = now;
+            packet.sample_rate = state.sample_rate;
+            packet.channels = state.channels;
+            packet.bit_depth = state.bit_depth;
+            packet.chlayout1 = state.chlayout1;
+            packet.chlayout2 = state.chlayout2;
+            packet.ssrcs = state.last_ssrcs;
+
+            if (state.samples_per_chunk > 0) {
+                state.next_rtp_timestamp += state.samples_per_chunk;
+                packet.rtp_timestamp = state.next_rtp_timestamp;
+            } else {
+                packet.rtp_timestamp.reset();
+            }
+        }
+    }
+
+    NetworkAudioReceiver::dispatch_ready_packet(std::move(packet));
+}
+
+void RtpReceiver::clear_all_streams() {
+    std::lock_guard<std::mutex> lock(stream_state_mutex_);
+    if (clock_manager_) {
+        for (auto& [tag, state] : stream_states_) {
+            if (state && state->callback_id != 0) {
+                try {
+                    clock_manager_->unregister_clock(state->sample_rate, state->channels, state->bit_depth, state->callback_id);
+                } catch (const std::exception& ex) {
+                    log_error("Failed to unregister clock for " + tag + ": " + ex.what());
+                }
+                state->callback_id = 0;
+            }
+        }
+    }
+    stream_states_.clear();
+}
 
 // --- Dummied/Simplified NetworkAudioReceiver Pure Virtual Method Implementations ---
  

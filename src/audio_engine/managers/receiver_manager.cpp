@@ -1,11 +1,18 @@
 #include "receiver_manager.h"
 #include "../utils/cpp_logger.h"
+#include <exception>
 
 namespace screamrouter {
 namespace audio {
 
 ReceiverManager::ReceiverManager(std::recursive_mutex& manager_mutex, TimeshiftManager* timeshift_manager)
     : m_manager_mutex(manager_mutex), m_timeshift_manager(timeshift_manager) {
+    try {
+        m_clock_manager = std::make_unique<ClockManager>();
+    } catch (const std::exception& ex) {
+        LOG_CPP_ERROR("Failed to create ClockManager: %s", ex.what());
+        throw;
+    }
     LOG_CPP_INFO("ReceiverManager created.");
 }
 
@@ -18,26 +25,26 @@ bool ReceiverManager::initialize_receivers(int rtp_listen_port, std::shared_ptr<
         m_notification_queue = notification_queue;
         RtpReceiverConfig rtp_config;
         rtp_config.listen_port = rtp_listen_port;
-        m_rtp_receiver = std::make_unique<RtpReceiver>(rtp_config, notification_queue, m_timeshift_manager);
+        m_rtp_receiver = std::make_unique<RtpReceiver>(rtp_config, notification_queue, m_timeshift_manager, m_clock_manager.get());
 
         RawScreamReceiverConfig raw_config_1;
         raw_config_1.listen_port = 4010;
-        m_raw_scream_receivers[4010] = std::make_unique<RawScreamReceiver>(raw_config_1, notification_queue, m_timeshift_manager, "RawScreamReceiver-4010");
+        m_raw_scream_receivers[4010] = std::make_unique<RawScreamReceiver>(raw_config_1, notification_queue, m_timeshift_manager, m_clock_manager.get(), "RawScreamReceiver-4010");
 
         RawScreamReceiverConfig raw_config_2;
         raw_config_2.listen_port = 16401;
-        m_raw_scream_receivers[16401] = std::make_unique<RawScreamReceiver>(raw_config_2, notification_queue, m_timeshift_manager, "RawScreamReceiver-16401");
+        m_raw_scream_receivers[16401] = std::make_unique<RawScreamReceiver>(raw_config_2, notification_queue, m_timeshift_manager, m_clock_manager.get(), "RawScreamReceiver-16401");
 
         PerProcessScreamReceiverConfig per_process_config;
         per_process_config.listen_port = 16402;
-        m_per_process_scream_receivers[16402] = std::make_unique<PerProcessScreamReceiver>(per_process_config, notification_queue, m_timeshift_manager, "PerProcessScreamReceiver-16402");
+        m_per_process_scream_receivers[16402] = std::make_unique<PerProcessScreamReceiver>(per_process_config, notification_queue, m_timeshift_manager, m_clock_manager.get(), "PerProcessScreamReceiver-16402");
 
 #if !defined(_WIN32)
         pulse::PulseReceiverConfig pulse_config;
         pulse_config.tcp_listen_port = 4713;
         pulse_config.unix_socket_path = "/tmp/screamrouter-pulse.sock";
         pulse_config.require_auth_cookie = false;
-        m_pulse_receiver = std::make_unique<pulse::PulseAudioReceiver>(pulse_config, notification_queue, m_timeshift_manager, "PulseAudioReceiver");
+        m_pulse_receiver = std::make_unique<pulse::PulseAudioReceiver>(pulse_config, notification_queue, m_timeshift_manager, m_clock_manager.get(), "PulseAudioReceiver");
 #endif
 
     } catch (const std::exception& e) {

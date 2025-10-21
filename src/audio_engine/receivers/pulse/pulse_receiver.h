@@ -9,6 +9,7 @@
 #include "../../utils/audio_component.h"
 #include "../../utils/thread_safe_queue.h"
 #include "../../audio_types.h"
+#include "../clock_manager.h"
 
 namespace screamrouter {
 namespace audio {
@@ -35,6 +36,7 @@ public:
     PulseAudioReceiver(PulseReceiverConfig config,
                        std::shared_ptr<NotificationQueue> notification_queue,
                        TimeshiftManager* timeshift_manager,
+                       ClockManager* clock_manager,
                        std::string logger_prefix = "PulseAudioReceiver");
 
     ~PulseAudioReceiver() override;

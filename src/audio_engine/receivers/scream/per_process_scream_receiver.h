@@ -9,9 +9,12 @@
 #define PER_PROCESS_SCREAM_RECEIVER_H
 
 #include "../network_audio_receiver.h"
+#include "../clock_manager.h"
 #include "../../audio_types.h"
 
 #include <map>
+#include <deque>
+#include <memory>
 #include <mutex>
 #include <cstdint>
 #include <string>
@@ -40,6 +43,7 @@ public:
         PerProcessScreamReceiverConfig config,
         std::shared_ptr<NotificationQueue> notification_queue,
         TimeshiftManager* timeshift_manager,
+        ClockManager* clock_manager,
         std::string logger_prefix
     );
 
@@ -55,10 +59,8 @@ public:
     int get_listen_port() const { return config_.listen_port; }
 
 protected:
-    /** @brief Validates the basic structure of a per-process Scream packet. */
     bool is_valid_packet_structure(const uint8_t* buffer, int size, const struct sockaddr_in& client_addr) override;
-    
-    /** @brief Processes a valid per-process Scream packet, extracting audio data and metadata. */
+
     bool process_and_validate_payload(
         const uint8_t* buffer,
         int size,
@@ -67,26 +69,35 @@ protected:
         TaggedAudioPacket& out_packet,
         std::string& out_source_tag
     ) override;
-    
-    /** @brief Returns the recommended receive buffer size. */
+    void dispatch_ready_packet(TaggedAudioPacket&& packet) override;
+
     size_t get_receive_buffer_size() const override;
-    /** @brief Returns the poll timeout for the receive loop. */
     int get_poll_timeout_ms() const override;
 
 private:
-    PerProcessScreamReceiverConfig config_;
-    std::map<std::string, uint32_t> stream_timestamps_;
-    std::mutex timestamps_mutex_;
+    struct StreamState {
+        std::string source_tag;
+        int sample_rate = 0;
+        int channels = 0;
+        int bit_depth = 0;
+        uint8_t chlayout1 = 0;
+        uint8_t chlayout2 = 0;
+        uint32_t samples_per_chunk = 0;
+        uint32_t next_rtp_timestamp = 0;
+        ClockManager::CallbackId callback_id = 0;
+        std::deque<TaggedAudioPacket> pending_packets;
+    };
 
-    /**
-     * @brief Validates the content of a per-process Scream packet.
-     * @param buffer The packet data.
-     * @param size The size of the packet data.
-     * @param sender_ip The IP address of the sender.
-     * @param out_packet The `TaggedAudioPacket` to populate.
-     * @param out_composite_source_tag The composite source tag to be created.
-     * @return true if the content is valid, false otherwise.
-     */
+    static uint32_t calculate_samples_per_chunk(int channels, int bit_depth);
+    void handle_clock_tick(const std::string& source_tag);
+    std::shared_ptr<StreamState> get_or_create_stream_state(const TaggedAudioPacket& packet);
+    void clear_all_streams();
+
+    PerProcessScreamReceiverConfig config_;
+    ClockManager* clock_manager_;
+    std::mutex stream_state_mutex_;
+    std::map<std::string, std::shared_ptr<StreamState>> stream_states_;
+
     bool validate_per_process_scream_content(const uint8_t* buffer, int size, const std::string& sender_ip, TaggedAudioPacket& out_packet, std::string& out_composite_source_tag);
 };
 

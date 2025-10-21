@@ -292,12 +292,8 @@ void NetworkAudioReceiver::run() {
                         }
                     }
 
-                    // Send packet to TimeshiftManager
-                    if (timeshift_manager_) {
-                        timeshift_manager_->add_packet(std::move(packet));
-                    } else {
-                        log_error("TimeshiftManager is null. Cannot add packet for source: " + source_tag);
-                    }
+                    // Let derived classes decide how to dispatch validated packets.
+                    dispatch_ready_packet(std::move(packet));
                 } else {
                     // process_and_validate_payload should log specific reasons for failure
                     // log_warning("Failed to process/validate payload from " + std::string(inet_ntoa(client_addr.sin_addr)));
@@ -318,12 +314,20 @@ void NetworkAudioReceiver::run() {
     log_message("Receiver thread exiting run loop.");
 }
 
+void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
+    if (timeshift_manager_) {
+        timeshift_manager_->add_packet(std::move(packet));
+    } else {
+        log_error("TimeshiftManager is null. Cannot add packet for source: " + packet.source_tag);
+    }
+}
+
 std::vector<std::string> NetworkAudioReceiver::get_seen_tags() {
     std::lock_guard<std::mutex> lock(seen_tags_mutex_);
     std::vector<std::string> tags;
     tags.swap(seen_tags_); // Return collected tags and clear for next poll
     return tags;
 }
-
 } // namespace audio
 } // namespace screamrouter
+

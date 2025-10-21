@@ -125,6 +125,13 @@ protected:
     ) = 0;
 
     /**
+     * @brief Called when a packet has been validated and is ready for dispatch.
+     * @param packet The packet to dispatch.
+     * @note Default implementation forwards directly to TimeshiftManager.
+     */
+    virtual void dispatch_ready_packet(TaggedAudioPacket&& packet);
+
+    /**
      * @brief Gets the recommended size for the receive buffer.
      * @return The size of the receive buffer in bytes.
      */

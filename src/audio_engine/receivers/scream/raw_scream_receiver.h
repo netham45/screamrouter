@@ -8,9 +8,12 @@
 #define RAW_SCREAM_RECEIVER_H
 
 #include "../network_audio_receiver.h"
+#include "../clock_manager.h"
 #include "../../audio_types.h"
 
 #include <map>
+#include <deque>
+#include <memory>
 #include <mutex>
 #include <cstdint>
 
@@ -37,6 +40,7 @@ public:
         RawScreamReceiverConfig config,
         std::shared_ptr<NotificationQueue> notification_queue,
         TimeshiftManager* timeshift_manager,
+        ClockManager* clock_manager,
         std::string logger_prefix
     );
 
@@ -52,10 +56,8 @@ public:
     int get_listen_port() const { return config_.listen_port; }
 
 protected:
-    /** @brief Validates the basic structure of a raw Scream packet. */
     bool is_valid_packet_structure(const uint8_t* buffer, int size, const struct sockaddr_in& client_addr) override;
-    
-    /** @brief Processes a valid raw Scream packet, extracting audio data and metadata. */
+
     bool process_and_validate_payload(
         const uint8_t* buffer,
         int size,
@@ -64,24 +66,35 @@ protected:
         TaggedAudioPacket& out_packet,
         std::string& out_source_tag
     ) override;
-    
-    /** @brief Returns the recommended receive buffer size. */
+    void dispatch_ready_packet(TaggedAudioPacket&& packet) override;
+
     size_t get_receive_buffer_size() const override;
-    /** @brief Returns the poll timeout for the receive loop. */
     int get_poll_timeout_ms() const override;
 
 private:
-    RawScreamReceiverConfig config_;
-    std::map<std::string, uint32_t> stream_timestamps_;
-    std::mutex timestamps_mutex_;
+    struct StreamState {
+        std::string source_tag;
+        int sample_rate = 0;
+        int channels = 0;
+        int bit_depth = 0;
+        uint8_t chlayout1 = 0;
+        uint8_t chlayout2 = 0;
+        uint32_t samples_per_chunk = 0;
+        uint32_t next_rtp_timestamp = 0;
+        ClockManager::CallbackId callback_id = 0;
+        std::deque<TaggedAudioPacket> pending_packets;
+    };
 
-    /**
-     * @brief Validates the content of a raw Scream packet header.
-     * @param buffer The packet data, starting at the header.
-     * @param size The size of the packet data.
-     * @param out_packet The `TaggedAudioPacket` to populate with format info from the header.
-     * @return true if the header content is valid, false otherwise.
-     */
+    static uint32_t calculate_samples_per_chunk(int channels, int bit_depth);
+    void handle_clock_tick(const std::string& source_tag);
+    std::shared_ptr<StreamState> get_or_create_stream_state(const TaggedAudioPacket& packet);
+    void clear_all_streams();
+
+    RawScreamReceiverConfig config_;
+    ClockManager* clock_manager_;
+    std::mutex stream_state_mutex_;
+    std::map<std::string, std::shared_ptr<StreamState>> stream_states_;
+
     bool validate_raw_scream_content(const uint8_t* buffer, int size, TaggedAudioPacket& out_packet);
 };
 

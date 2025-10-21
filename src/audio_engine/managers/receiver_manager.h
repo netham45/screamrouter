@@ -9,6 +9,7 @@
 #define RECEIVER_MANAGER_H
 
 #include "../receivers/rtp/rtp_receiver.h"
+#include "../receivers/clock_manager.h"
 #include "../receivers/scream/raw_scream_receiver.h"
 #include "../receivers/scream/per_process_scream_receiver.h"
 #if !defined(_WIN32)
@@ -114,6 +115,7 @@ public:
 private:
     std::recursive_mutex& m_manager_mutex;
     TimeshiftManager* m_timeshift_manager;
+    std::unique_ptr<ClockManager> m_clock_manager;
 
     std::unique_ptr<RtpReceiver> m_rtp_receiver;
     std::map<int, std::unique_ptr<RawScreamReceiver>> m_raw_scream_receivers;
