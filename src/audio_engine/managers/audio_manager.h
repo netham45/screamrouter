@@ -169,6 +169,9 @@ public:
      * @return A vector of composite source tags, or an empty vector if the receiver is not found.
      */
     std::vector<std::string> get_per_process_scream_receiver_seen_tags(int listen_port);
+#if !defined(_WIN32)
+    std::vector<std::string> get_pulse_receiver_seen_tags();
+#endif
 
     /**
      * @brief Adds a reference to a system capture device, creating the receiver if needed.
@@ -385,7 +388,8 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("grace_period_poll_interval_ms", &MixerTuning::grace_period_poll_interval_ms)
         .def_readwrite("mp3_bitrate_kbps", &MixerTuning::mp3_bitrate_kbps)
         .def_readwrite("mp3_vbr_enabled", &MixerTuning::mp3_vbr_enabled)
-        .def_readwrite("mp3_output_queue_max_size", &MixerTuning::mp3_output_queue_max_size);
+        .def_readwrite("mp3_output_queue_max_size", &MixerTuning::mp3_output_queue_max_size)
+        .def_readwrite("underrun_hold_timeout_ms", &MixerTuning::underrun_hold_timeout_ms);
 
     py::class_<SourceProcessorTuning>(m, "SourceProcessorTuning")
         .def(py::init<>())

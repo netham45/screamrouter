@@ -23,6 +23,7 @@
 #include <condition_variable>
 #include <lame/lame.h>
 #include <atomic>
+#include <chrono>
 
 class AudioProcessor;
 
@@ -195,6 +196,9 @@ private:
     std::atomic<uint64_t> m_buffer_underruns{0};
     std::atomic<uint64_t> m_buffer_overflows{0};
     std::atomic<uint64_t> m_mp3_buffer_overflows{0};
+
+    bool underrun_silence_active_ = false;
+    std::chrono::steady_clock::time_point underrun_silence_deadline_{};
 
     // --- Synchronization Coordination ---
     /** @brief Whether coordination mode is enabled for synchronized dispatch. */

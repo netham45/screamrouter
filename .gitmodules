@@ -22,3 +22,6 @@
 [submodule "src/audio_engine/deps/r8brain"]
 	path = src/audio_engine/deps/r8brain
 	url = https://github.com/avaneev/r8brain-free-src
+[submodule "src/audio_engine/deps/pulsecore"]
+	path = src/audio_engine/deps/pulsecore
+	url = https://gitlab.freedesktop.org/pulseaudio/pulseaudio.git

@@ -29,6 +29,7 @@ struct MixerTuning {
     int mp3_bitrate_kbps = 192;
     bool mp3_vbr_enabled = false;
     int mp3_output_queue_max_size = 10;
+    long underrun_hold_timeout_ms = 250;
 };
 
 struct SourceProcessorTuning {

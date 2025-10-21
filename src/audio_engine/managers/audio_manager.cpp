@@ -338,6 +338,12 @@ std::vector<std::string> AudioManager::get_per_process_scream_receiver_seen_tags
     return m_receiver_manager ? m_receiver_manager->get_per_process_scream_receiver_seen_tags(listen_port) : std::vector<std::string>();
 }
 
+#if !defined(_WIN32)
+std::vector<std::string> AudioManager::get_pulse_receiver_seen_tags() {
+    return m_receiver_manager ? m_receiver_manager->get_pulse_receiver_seen_tags() : std::vector<std::string>();
+}
+#endif
+
 bool AudioManager::add_system_capture_reference(const std::string& device_tag, CaptureParams params) {
     std::scoped_lock lock(m_manager_mutex);
     if (!m_receiver_manager) {

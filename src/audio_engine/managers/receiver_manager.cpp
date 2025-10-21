@@ -32,6 +32,14 @@ bool ReceiverManager::initialize_receivers(int rtp_listen_port, std::shared_ptr<
         per_process_config.listen_port = 16402;
         m_per_process_scream_receivers[16402] = std::make_unique<PerProcessScreamReceiver>(per_process_config, notification_queue, m_timeshift_manager, "PerProcessScreamReceiver-16402");
 
+#if !defined(_WIN32)
+        pulse::PulseReceiverConfig pulse_config;
+        pulse_config.tcp_listen_port = 4713;
+        pulse_config.unix_socket_path = "/tmp/screamrouter-pulse.sock";
+        pulse_config.require_auth_cookie = false;
+        m_pulse_receiver = std::make_unique<pulse::PulseAudioReceiver>(pulse_config, notification_queue, m_timeshift_manager, "PulseAudioReceiver");
+#endif
+
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("Failed during receiver creation in initialize: %s", e.what());
         return false;
@@ -51,6 +59,12 @@ void ReceiverManager::start_receivers() {
         receiver->start();
         LOG_CPP_INFO("PerProcessScreamReceiver started on port %d.", port);
     }
+#if !defined(_WIN32)
+    if (m_pulse_receiver) {
+        m_pulse_receiver->start();
+        LOG_CPP_INFO("PulseAudioReceiver started.");
+    }
+#endif
 }
 
 void ReceiverManager::stop_receivers() {
@@ -63,6 +77,11 @@ void ReceiverManager::stop_receivers() {
     for (auto const& [port, receiver] : m_per_process_scream_receivers) {
         receiver->stop();
     }
+#if !defined(_WIN32)
+    if (m_pulse_receiver) {
+        m_pulse_receiver->stop();
+    }
+#endif
     for (auto& [tag, receiver] : capture_receivers_) {
         if (receiver) {
             receiver->stop();
@@ -74,6 +93,9 @@ void ReceiverManager::cleanup_receivers() {
     m_rtp_receiver.reset();
     m_raw_scream_receivers.clear();
     m_per_process_scream_receivers.clear();
+#if !defined(_WIN32)
+    m_pulse_receiver.reset();
+#endif
     capture_receivers_.clear();
     capture_receiver_usage_.clear();
 }
@@ -109,6 +131,15 @@ std::vector<std::string> ReceiverManager::get_per_process_scream_receiver_seen_t
     LOG_CPP_WARNING("PerProcessScreamReceiver not found for port: %d when calling get_per_process_scream_receiver_seen_tags.", listen_port);
     return {};
 }
+
+#if !defined(_WIN32)
+std::vector<std::string> ReceiverManager::get_pulse_receiver_seen_tags() {
+    if (m_pulse_receiver) {
+        return m_pulse_receiver->get_seen_tags();
+    }
+    return {};
+}
+#endif
 
 bool ReceiverManager::ensure_capture_receiver(const std::string& tag, const CaptureParams& params) {
     std::scoped_lock lock(m_manager_mutex);

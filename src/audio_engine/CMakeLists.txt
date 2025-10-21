@@ -50,6 +50,7 @@ target_compile_definitions(screamrouter_audio_engine
         $<$<PLATFORM_ID:Windows>:_CRT_SECURE_NO_WARNINGS>
 )
 
+
 if(MSVC)
     target_compile_options(screamrouter_audio_engine PRIVATE /O2 /W3 /EHsc /MP)
 else()
