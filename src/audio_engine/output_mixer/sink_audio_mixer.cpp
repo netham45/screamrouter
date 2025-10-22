@@ -201,7 +201,6 @@ void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared
         source_buffers_[instance_id].audio_data.assign(SINK_MIXING_BUFFER_SAMPLES, 0);
         LOG_CPP_INFO("[SinkMixer:%s] Added input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
-    input_cv_.notify_one();
 }
 
 /**
@@ -424,7 +423,10 @@ void SinkAudioMixer::stop() {
     LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_write_pos_, clock_manager_enabled_.load() ? 1 : 0);
     stop_flag_ = true;
 
-    input_cv_.notify_all();
+    if (clock_condition_handle_.condition) {
+        clock_condition_handle_.condition->cv.notify_all();
+    }
+
     unregister_mix_timer();
     LOG_CPP_INFO("[SinkMixer:%s] Mix timer unregistered", config_.sink_id.c_str());
 
@@ -1193,11 +1195,9 @@ std::chrono::microseconds SinkAudioMixer::calculate_mix_period() const {
 }
 
 void SinkAudioMixer::register_mix_timer() {
-    {
-        std::lock_guard<std::mutex> lock(input_cv_mutex_);
-        pending_mix_ticks_ = 0;
-    }
-    clock_callback_id_ = 0;
+    clock_condition_handle_ = {};
+    clock_last_sequence_ = 0;
+    clock_pending_ticks_ = 0;
     clock_manager_enabled_.store(false, std::memory_order_release);
 
     timer_sample_rate_ = config_.output_samplerate > 0 ? config_.output_samplerate : 48000;
@@ -1217,48 +1217,46 @@ void SinkAudioMixer::register_mix_timer() {
         }
     }
 
-    auto callback = [this]() { this->handle_mix_tick(); };
     try {
-        clock_callback_id_ = clock_manager_->register_clock(
-            timer_sample_rate_, timer_channels_, timer_bit_depth_, std::move(callback));
+        clock_condition_handle_ = clock_manager_->register_clock_condition(
+            timer_sample_rate_, timer_channels_, timer_bit_depth_);
+        if (!clock_condition_handle_.valid()) {
+            throw std::runtime_error("ClockManager returned invalid condition handle");
+        }
+        if (auto condition = clock_condition_handle_.condition) {
+            std::lock_guard<std::mutex> condition_lock(condition->mutex);
+            condition->sequence = 0;
+        }
+        clock_last_sequence_ = 0;
+        clock_pending_ticks_ = 0;
         clock_manager_enabled_.store(true, std::memory_order_release);
-        LOG_CPP_DEBUG("[SinkMixer:%s] Registered clock-managed mix timer (sr=%d ch=%d bit=%d)",
+        LOG_CPP_DEBUG("[SinkMixer:%s] Registered clock-managed mix timer (sr=%d ch=%d bit=%d) using conditions",
                       config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_);
     } catch (const std::exception& ex) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Failed to register mix timer with ClockManager: %s. Falling back to internal pacing.",
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to register mix timer condition with ClockManager: %s. Falling back to internal pacing.",
                       config_.sink_id.c_str(), ex.what());
-        clock_callback_id_ = 0;
+        clock_condition_handle_ = {};
         clock_manager_enabled_.store(false, std::memory_order_release);
     }
 }
 
 void SinkAudioMixer::unregister_mix_timer() {
-    if (clock_manager_enabled_.load(std::memory_order_acquire) && clock_manager_ && clock_callback_id_ != 0) {
+    if (clock_manager_ && clock_condition_handle_.valid()) {
         try {
-            clock_manager_->unregister_clock(timer_sample_rate_, timer_channels_, timer_bit_depth_, clock_callback_id_);
+            clock_manager_->unregister_clock_condition(clock_condition_handle_);
         } catch (const std::exception& ex) {
             LOG_CPP_WARNING("[SinkMixer:%s] Failed to unregister mix timer: %s",
                             config_.sink_id.c_str(), ex.what());
         }
     }
 
-    clock_callback_id_ = 0;
     clock_manager_enabled_.store(false, std::memory_order_release);
-    {
-        std::lock_guard<std::mutex> lock(input_cv_mutex_);
-        pending_mix_ticks_ = 0;
-    }
+    clock_condition_handle_ = {};
+    clock_last_sequence_ = 0;
+    clock_pending_ticks_ = 0;
     timer_sample_rate_ = 0;
     timer_channels_ = 0;
     timer_bit_depth_ = 0;
-}
-
-void SinkAudioMixer::handle_mix_tick() {
-    {
-        std::lock_guard<std::mutex> lock(input_cv_mutex_);
-        pending_mix_ticks_++;
-    }
-    input_cv_.notify_one();
 }
 
 bool SinkAudioMixer::wait_for_mix_tick() {
@@ -1273,15 +1271,32 @@ bool SinkAudioMixer::wait_for_mix_tick() {
         return !stop_flag_;
     }
 
-    std::unique_lock<std::mutex> lock(input_cv_mutex_);
-    input_cv_.wait(lock, [this]() { return stop_flag_ || pending_mix_ticks_ > 0; });
+    if (!clock_condition_handle_.valid() || !clock_condition_handle_.condition) {
+        std::this_thread::sleep_for(mix_period_);
+        return !stop_flag_;
+    }
+
+    auto condition = clock_condition_handle_.condition;
+    if (clock_pending_ticks_ == 0) {
+        std::unique_lock<std::mutex> condition_lock(condition->mutex);
+        condition->cv.wait(condition_lock, [this, &condition]() {
+            return stop_flag_ || condition->sequence > clock_last_sequence_;
+        });
+        if (stop_flag_) {
+            return false;
+        }
+        clock_pending_ticks_ = condition->sequence - clock_last_sequence_;
+        clock_last_sequence_ = condition->sequence;
+    }
+
+    if (clock_pending_ticks_ == 0) {
+        return false;
+    }
+
+    clock_pending_ticks_--;
     if (stop_flag_) {
         return false;
     }
-    if (pending_mix_ticks_ == 0) {
-        return false;
-    }
-    pending_mix_ticks_--;
     return true;
 }
 

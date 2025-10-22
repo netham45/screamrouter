@@ -177,13 +177,11 @@ private:
     std::map<std::string, bool> input_active_state_;
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
 
-    std::condition_variable input_cv_;
-    std::mutex input_cv_mutex_;
-
     std::unique_ptr<ClockManager> clock_manager_;
-    ClockManager::CallbackId clock_callback_id_{0};
     std::atomic<bool> clock_manager_enabled_{false};
-    size_t pending_mix_ticks_{0};
+    ClockManager::ConditionHandle clock_condition_handle_{};
+    uint64_t clock_last_sequence_{0};
+    uint64_t clock_pending_ticks_{0};
     int timer_sample_rate_{0};
     int timer_channels_{0};
     int timer_bit_depth_{0};
@@ -296,7 +294,6 @@ private:
     std::chrono::microseconds calculate_mix_period() const;
     void register_mix_timer();
     void unregister_mix_timer();
-    void handle_mix_tick();
     bool wait_for_mix_tick();
 };
 

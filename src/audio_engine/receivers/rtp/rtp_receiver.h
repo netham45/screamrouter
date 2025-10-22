@@ -108,7 +108,8 @@ private:
         uint8_t chlayout2 = 0;
         uint32_t samples_per_chunk = 0;
         uint32_t next_rtp_timestamp = 0;
-        ClockManager::CallbackId callback_id = 0;
+        ClockManager::ConditionHandle clock_handle;
+        uint64_t clock_last_sequence = 0;
         std::deque<TaggedAudioPacket> pending_chunks;
         std::vector<uint32_t> last_ssrcs;
     };
@@ -142,6 +143,8 @@ private:
     void process_ready_packets(uint32_t ssrc, const struct sockaddr_in& client_addr);
     /** @brief Internal version of process_ready_packets that can optionally skip locking. */
     void process_ready_packets_internal(uint32_t ssrc, const struct sockaddr_in& client_addr, bool take_lock);
+    /** @brief Checks clock conditions and dispatches pending scheduled chunks. */
+    void dispatch_clock_ticks();
     
     /**
      * @brief Generates a unique key for identifying a source.

@@ -419,7 +419,8 @@ struct PulseAudioReceiver::Impl::Connection {
         uint64_t underrun_usec = 0;
         ProfilingData profile;
         std::deque<PendingChunk> pending_chunks;
-        ClockManager::CallbackId callback_id = 0;
+        ClockManager::ConditionHandle clock_handle;
+        uint64_t clock_last_sequence = 0;
         uint32_t samples_per_chunk = 0;
         // Extended RTP timeline state (audio clock units)
         // rtp_base is a randomized 32-bit offset to align with RTP best practices.
@@ -478,6 +479,7 @@ struct PulseAudioReceiver::Impl::Connection {
     void handle_clock_tick(uint32_t stream_index);
     void unregister_stream_clock(StreamState& stream);
     void register_stream_clock(StreamState& stream);
+    void dispatch_clock_ticks();
     uint32_t calculate_samples_per_chunk(const StreamState& stream) const;
     bool handle_command(Command command, uint32_t tag, const uint8_t* payload, size_t length, std::vector<int>& fds);
     bool handle_auth(uint32_t tag, TagReader& reader);
@@ -1007,7 +1009,7 @@ uint32_t PulseAudioReceiver::Impl::Connection::calculate_samples_per_chunk(const
 }
 
 void PulseAudioReceiver::Impl::Connection::register_stream_clock(StreamState& stream) {
-    if (!owner->clock_manager || stream.callback_id != 0) {
+    if (!owner->clock_manager || stream.clock_handle.valid()) {
         return;
     }
     const uint32_t bit_depth = sample_format_bit_depth(stream.sample_spec.format);
@@ -1015,30 +1017,78 @@ void PulseAudioReceiver::Impl::Connection::register_stream_clock(StreamState& st
         return;
     }
     try {
-        stream.callback_id = owner->clock_manager->register_clock(
+        stream.clock_handle = owner->clock_manager->register_clock_condition(
             static_cast<int>(stream.sample_spec.rate),
             static_cast<int>(stream.sample_spec.channels),
-            static_cast<int>(bit_depth),
-            [this, index = stream.local_index]() { this->handle_clock_tick(index); });
+            static_cast<int>(bit_depth));
+        if (!stream.clock_handle.valid()) {
+            throw std::runtime_error("ClockManager returned invalid condition handle");
+        }
+        if (auto condition = stream.clock_handle.condition) {
+            std::lock_guard<std::mutex> condition_lock(condition->mutex);
+            stream.clock_last_sequence = condition->sequence;
+        } else {
+            stream.clock_last_sequence = 0;
+        }
     } catch (const std::exception& ex) {
         owner->log_error("Failed to register PulseAudio stream clock for " + stream.composite_tag + ": " + ex.what());
     }
 }
 
 void PulseAudioReceiver::Impl::Connection::unregister_stream_clock(StreamState& stream) {
-    if (!owner->clock_manager || stream.callback_id == 0) {
+    if (!owner->clock_manager || !stream.clock_handle.valid()) {
         return;
     }
     try {
-        owner->clock_manager->unregister_clock(
-            static_cast<int>(stream.sample_spec.rate),
-            static_cast<int>(stream.sample_spec.channels),
-            static_cast<int>(sample_format_bit_depth(stream.sample_spec.format)),
-            stream.callback_id);
+        owner->clock_manager->unregister_clock_condition(stream.clock_handle);
     } catch (const std::exception& ex) {
         owner->log_error("Failed to unregister PulseAudio stream clock for " + stream.composite_tag + ": " + ex.what());
     }
-    stream.callback_id = 0;
+    stream.clock_handle = {};
+    stream.clock_last_sequence = 0;
+}
+
+void PulseAudioReceiver::Impl::Connection::dispatch_clock_ticks() {
+    if (!owner->clock_manager) {
+        return;
+    }
+
+    std::vector<std::pair<uint32_t, uint64_t>> pending_ticks;
+
+    {
+        std::lock_guard<std::mutex> lock(stream_mutex);
+        for (auto& [stream_index, stream] : streams) {
+            if (!stream.clock_handle.valid()) {
+                continue;
+            }
+
+            auto condition = stream.clock_handle.condition;
+            if (!condition) {
+                continue;
+            }
+
+            uint64_t sequence_snapshot = 0;
+            {
+                std::unique_lock<std::mutex> condition_lock(condition->mutex);
+                sequence_snapshot = condition->sequence;
+            }
+
+            if (sequence_snapshot > stream.clock_last_sequence) {
+                uint64_t tick_count = sequence_snapshot - stream.clock_last_sequence;
+                stream.clock_last_sequence = sequence_snapshot;
+                pending_ticks.emplace_back(stream_index, tick_count);
+            }
+        }
+    }
+
+    for (const auto& [stream_index, tick_count] : pending_ticks) {
+        for (uint64_t i = 0; i < tick_count; ++i) {
+            if (owner->clock_manager == nullptr) {
+                return;
+            }
+            handle_clock_tick(stream_index);
+        }
+    }
 }
 
 void PulseAudioReceiver::Impl::Connection::handle_clock_tick(uint32_t stream_index) {
@@ -2457,6 +2507,12 @@ PulseAudioReceiver::Impl::Connection::next_due_request() const {
 
 void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
     while (!stop_flag.load()) {
+        for (auto& connection : connections) {
+            if (connection) {
+                connection->dispatch_clock_ticks();
+            }
+        }
+
         std::vector<pollfd> pollfds;
         if (tcp_listen_fd >= 0) {
             pollfds.push_back(pollfd{tcp_listen_fd, POLLIN, 0});
@@ -2472,7 +2528,7 @@ void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
         }
 
         auto now = std::chrono::steady_clock::now();
-        int timeout_ms = 100;
+        int timeout_ms = 5;
         for (const auto& connection : connections) {
             if (auto due = connection->next_due_request()) {
                 if (*due <= now) {
@@ -2520,6 +2576,7 @@ void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
                 }
             }
             conn->process_due_requests();
+            conn->dispatch_clock_ticks();
             ++i;
         }
     }

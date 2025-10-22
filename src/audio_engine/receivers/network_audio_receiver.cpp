@@ -217,13 +217,19 @@ void NetworkAudioReceiver::run() {
         fds[0].events = POLLIN;
         fds[0].revents = 0;
 
+        on_before_poll_wait();
+
         int poll_ret = NAR_POLL(fds, 1, poll_timeout);
 
-        if (stop_flag_) break; // Check immediately after poll returns
+        if (stop_flag_) {
+            on_after_poll_iteration();
+            break; // Check immediately after poll returns
+        }
 
         if (poll_ret < 0) {
 #ifndef _WIN32 // EINTR is POSIX specific
             if (NAR_GET_LAST_SOCK_ERROR == EINTR) {
+                on_after_poll_iteration();
                 continue; // Interrupted by signal, just retry
             }
 #endif
@@ -236,11 +242,13 @@ void NetworkAudioReceiver::run() {
             if (!stop_flag_) {
                  std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
+            on_after_poll_iteration();
             continue;
         }
 
         if (poll_ret == 0) {
             // Timeout - no data received, loop again to check stop_flag_
+            on_after_poll_iteration();
             continue;
         }
 
@@ -248,6 +256,7 @@ void NetworkAudioReceiver::run() {
             // Check socket validity again before recvfrom, as stop() might have closed it
             if (socket_fd_ == NAR_INVALID_SOCKET_VALUE) {
                 log_warning("Socket became invalid before recvfrom, exiting run loop.");
+                on_after_poll_iteration();
                 break;
             }
 #ifdef _WIN32
@@ -262,6 +271,7 @@ void NetworkAudioReceiver::run() {
                 if (!stop_flag_ && socket_fd_ != NAR_INVALID_SOCKET_VALUE) {
                     log_error("recvfrom() failed");
                 }
+                on_after_poll_iteration();
                 continue;
             }
 
@@ -305,12 +315,16 @@ void NetworkAudioReceiver::run() {
                 // is_valid_packet_structure might log, or we can log generically here
                 // log_warning("Received invalid packet structure from " + std::string(inet_ntoa(client_addr.sin_addr)));
             }
+            on_after_poll_iteration();
         } else if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
              // Socket error occurred
              if (!stop_flag_ && socket_fd_ != NAR_INVALID_SOCKET_VALUE) {
                 log_error("Socket error detected by poll()");
              }
+             on_after_poll_iteration();
              break; // Exit loop on socket error
+        } else {
+            on_after_poll_iteration();
         }
     } // End while loop
 
@@ -324,6 +338,10 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
         log_error("TimeshiftManager is null. Cannot add packet for source: " + packet.source_tag);
     }
 }
+
+void NetworkAudioReceiver::on_before_poll_wait() {}
+
+void NetworkAudioReceiver::on_after_poll_iteration() {}
 
 std::vector<std::string> NetworkAudioReceiver::get_seen_tags() {
     std::lock_guard<std::mutex> lock(seen_tags_mutex_);

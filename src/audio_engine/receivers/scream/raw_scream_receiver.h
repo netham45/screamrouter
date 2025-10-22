@@ -81,7 +81,8 @@ private:
         uint8_t chlayout2 = 0;
         uint32_t samples_per_chunk = 0;
         uint32_t next_rtp_timestamp = 0;
-        ClockManager::CallbackId callback_id = 0;
+        ClockManager::ConditionHandle clock_handle;
+        uint64_t clock_last_sequence = 0;
         std::deque<TaggedAudioPacket> pending_packets;
     };
 
@@ -89,6 +90,10 @@ private:
     void handle_clock_tick(const std::string& source_tag);
     std::shared_ptr<StreamState> get_or_create_stream_state(const TaggedAudioPacket& packet);
     void clear_all_streams();
+    void dispatch_clock_ticks();
+
+    void on_before_poll_wait() override;
+    void on_after_poll_iteration() override;
 
     RawScreamReceiverConfig config_;
     ClockManager* clock_manager_;

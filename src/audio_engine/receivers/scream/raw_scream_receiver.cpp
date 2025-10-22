@@ -17,7 +17,7 @@ const size_t RAW_SCREAM_HEADER_SIZE = 5;
 const size_t RAW_CHUNK_SIZE = 1152;
 const size_t EXPECTED_RAW_PACKET_SIZE = RAW_SCREAM_HEADER_SIZE + RAW_CHUNK_SIZE; // 5 + 1152 = 1157
 const size_t RAW_RECEIVE_BUFFER_SIZE_CONFIG = 2048; // Should be larger than EXPECTED_RAW_PACKET_SIZE
-const int RAW_POLL_TIMEOUT_MS_CONFIG = 100;   // Check for stop flag every 100ms
+const int RAW_POLL_TIMEOUT_MS_CONFIG = 5;   // Check for stop flag every 5ms to service clock ticks promptly
 
 RawScreamReceiver::RawScreamReceiver(
     RawScreamReceiverConfig config,
@@ -162,10 +162,18 @@ std::shared_ptr<RawScreamReceiver::StreamState> RawScreamReceiver::get_or_create
         it = inserted.first;
 
         if (clock_manager_) {
-            auto callback = [this, tag = state->source_tag]() { this->handle_clock_tick(tag); };
             try {
-                state->callback_id = clock_manager_->register_clock(
-                    state->sample_rate, state->channels, state->bit_depth, std::move(callback));
+                state->clock_handle = clock_manager_->register_clock_condition(
+                    state->sample_rate, state->channels, state->bit_depth);
+                if (!state->clock_handle.valid()) {
+                    throw std::runtime_error("ClockManager returned invalid condition handle");
+                }
+                if (auto condition = state->clock_handle.condition) {
+                    std::lock_guard<std::mutex> condition_lock(condition->mutex);
+                    state->clock_last_sequence = condition->sequence;
+                } else {
+                    state->clock_last_sequence = 0;
+                }
             } catch (const std::exception& ex) {
                 log_error("Failed to register clock for " + state->source_tag + ": " + ex.what());
                 stream_states_.erase(it);
@@ -188,13 +196,14 @@ std::shared_ptr<RawScreamReceiver::StreamState> RawScreamReceiver::get_or_create
                           (state->bit_depth != packet.bit_depth);
 
     if (format_changed) {
-        if (clock_manager_ && state->callback_id != 0) {
+        if (clock_manager_ && state->clock_handle.valid()) {
             try {
-                clock_manager_->unregister_clock(state->sample_rate, state->channels, state->bit_depth, state->callback_id);
+                clock_manager_->unregister_clock_condition(state->clock_handle);
             } catch (const std::exception& ex) {
                 log_error("Failed to unregister clock for " + state->source_tag + ": " + ex.what());
             }
-            state->callback_id = 0;
+            state->clock_handle = {};
+            state->clock_last_sequence = 0;
         }
 
         state->sample_rate = packet.sample_rate;
@@ -211,10 +220,18 @@ std::shared_ptr<RawScreamReceiver::StreamState> RawScreamReceiver::get_or_create
         }
 
         if (clock_manager_) {
-            auto callback = [this, tag = state->source_tag]() { this->handle_clock_tick(tag); };
             try {
-                state->callback_id = clock_manager_->register_clock(
-                    state->sample_rate, state->channels, state->bit_depth, std::move(callback));
+                state->clock_handle = clock_manager_->register_clock_condition(
+                    state->sample_rate, state->channels, state->bit_depth);
+                if (!state->clock_handle.valid()) {
+                    throw std::runtime_error("ClockManager returned invalid condition handle");
+                }
+                if (auto condition = state->clock_handle.condition) {
+                    std::lock_guard<std::mutex> condition_lock(condition->mutex);
+                    state->clock_last_sequence = condition->sequence;
+                } else {
+                    state->clock_last_sequence = 0;
+                }
             } catch (const std::exception& ex) {
                 log_error("Failed to register clock for " + state->source_tag + ": " + ex.what());
                 stream_states_.erase(it);
@@ -248,6 +265,54 @@ void RawScreamReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
 
     if (fallback) {
         NetworkAudioReceiver::dispatch_ready_packet(std::move(packet));
+    }
+}
+
+void RawScreamReceiver::dispatch_clock_ticks() {
+    if (stop_flag_) {
+        return;
+    }
+
+    std::vector<std::pair<std::string, uint64_t>> pending_ticks;
+
+    {
+        std::lock_guard<std::mutex> lock(stream_state_mutex_);
+        for (auto& [tag, state_ptr] : stream_states_) {
+            if (!state_ptr) {
+                continue;
+            }
+
+            auto& state = *state_ptr;
+            if (!state.clock_handle.valid()) {
+                continue;
+            }
+
+            auto condition = state.clock_handle.condition;
+            if (!condition) {
+                continue;
+            }
+
+            uint64_t sequence_snapshot = 0;
+            {
+                std::unique_lock<std::mutex> condition_lock(condition->mutex);
+                sequence_snapshot = condition->sequence;
+            }
+
+            if (sequence_snapshot > state.clock_last_sequence) {
+                uint64_t tick_count = sequence_snapshot - state.clock_last_sequence;
+                state.clock_last_sequence = sequence_snapshot;
+                pending_ticks.emplace_back(tag, tick_count);
+            }
+        }
+    }
+
+    for (const auto& [tag, tick_count] : pending_ticks) {
+        for (uint64_t i = 0; i < tick_count; ++i) {
+            if (stop_flag_) {
+                return;
+            }
+            handle_clock_tick(tag);
+        }
     }
 }
 
@@ -294,13 +359,14 @@ void RawScreamReceiver::clear_all_streams() {
     std::lock_guard<std::mutex> lock(stream_state_mutex_);
     if (clock_manager_) {
         for (auto& [tag, state] : stream_states_) {
-            if (state && state->callback_id != 0) {
+            if (state && state->clock_handle.valid()) {
                 try {
-                    clock_manager_->unregister_clock(state->sample_rate, state->channels, state->bit_depth, state->callback_id);
+                    clock_manager_->unregister_clock_condition(state->clock_handle);
                 } catch (const std::exception& ex) {
                     log_error("Failed to unregister clock for " + tag + ": " + ex.what());
                 }
-                state->callback_id = 0;
+                state->clock_handle = {};
+                state->clock_last_sequence = 0;
             }
         }
     }
@@ -313,6 +379,14 @@ size_t RawScreamReceiver::get_receive_buffer_size() const {
 
 int RawScreamReceiver::get_poll_timeout_ms() const {
     return RAW_POLL_TIMEOUT_MS_CONFIG;
+}
+
+void RawScreamReceiver::on_before_poll_wait() {
+    dispatch_clock_ticks();
+}
+
+void RawScreamReceiver::on_after_poll_iteration() {
+    dispatch_clock_ticks();
 }
 
 } // namespace audio

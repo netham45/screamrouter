@@ -95,6 +95,12 @@ protected:
     /** @brief The main processing loop for the receiver thread. */
     void run() override;
 
+    /** @brief Hook invoked immediately before the thread blocks in poll/select. */
+    virtual void on_before_poll_wait();
+
+    /** @brief Hook invoked once at the end of each poll iteration (including timeouts or errors). */
+    virtual void on_after_poll_iteration();
+
     // --- Pure Virtual Methods for Derived Classes ---
     /**
      * @brief Performs basic structural validation of a received packet.

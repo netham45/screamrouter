@@ -6,7 +6,6 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -20,8 +19,22 @@ namespace audio {
 class ClockManager {
 public:
     using ClockKey = std::tuple<int, int, int>; // sample_rate, channels, bit_depth
-    using CallbackId = std::uint64_t;
-    using Callback = std::function<void()>;
+
+    struct ClockCondition {
+        std::mutex mutex;
+        std::condition_variable cv;
+        uint64_t sequence = 0;
+    };
+
+    struct ConditionHandle {
+        ClockKey key{};
+        std::uint64_t id = 0;
+        std::shared_ptr<ClockCondition> condition;
+
+        bool valid() const {
+            return condition != nullptr && id != 0;
+        }
+    };
 
     ClockManager();
     ~ClockManager();
@@ -29,27 +42,27 @@ public:
     ClockManager(const ClockManager&) = delete;
     ClockManager& operator=(const ClockManager&) = delete;
 
-    CallbackId register_clock(int sample_rate, int channels, int bit_depth, Callback callback);
-    void unregister_clock(int sample_rate, int channels, int bit_depth, CallbackId callback_id);
+    ConditionHandle register_clock_condition(int sample_rate, int channels, int bit_depth);
+    void unregister_clock_condition(const ConditionHandle& handle);
 
 private:
-    struct CallbackEntry {
-        CallbackId id = 0;
-        Callback callback;
+    struct ConditionEntry {
+        std::uint64_t id = 0;
+        std::weak_ptr<ClockCondition> condition;
         std::atomic<bool> active{false};
     };
 
     struct ClockEntry {
         std::chrono::nanoseconds period{0};
         std::chrono::steady_clock::time_point next_fire{};
-        std::vector<std::shared_ptr<CallbackEntry>> callbacks;
+        std::vector<std::shared_ptr<ConditionEntry>> conditions;
     };
 
     static constexpr std::size_t kChunkSizeBytes = 1152;
 
     static std::chrono::nanoseconds calculate_period(int sample_rate, int channels, int bit_depth);
-    bool has_active_callbacks(const ClockEntry& entry) const;
-    void cleanup_inactive_callbacks(ClockEntry& entry);
+    bool has_active_conditions(const ClockEntry& entry) const;
+    void cleanup_inactive_conditions(ClockEntry& entry);
     void run();
 
     std::map<ClockKey, ClockEntry> clock_entries_;
@@ -57,7 +70,7 @@ private:
     std::condition_variable cv_;
     std::thread worker_thread_;
     std::atomic<bool> stop_requested_{false};
-    std::atomic<CallbackId> next_callback_id_{1};
+    std::atomic<std::uint64_t> next_condition_id_{1};
 };
 
 } // namespace audio
