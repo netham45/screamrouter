@@ -1,5 +1,48 @@
 #include "pulse_receiver.h"
 
+#ifdef _WIN32
+
+#include <stdexcept>
+#include <utility>
+
+namespace screamrouter {
+namespace audio {
+namespace pulse {
+
+struct PulseAudioReceiver::Impl {};
+
+PulseAudioReceiver::PulseAudioReceiver(PulseReceiverConfig config,
+                                       std::shared_ptr<NotificationQueue> notification_queue,
+                                       TimeshiftManager* timeshift_manager,
+                                       ClockManager* clock_manager,
+                                       std::string logger_prefix)
+    : config_(std::move(config)) {
+    (void)notification_queue;
+    (void)timeshift_manager;
+    (void)clock_manager;
+    (void)logger_prefix;
+}
+
+PulseAudioReceiver::~PulseAudioReceiver() = default;
+
+void PulseAudioReceiver::start() {
+    throw std::runtime_error("PulseAudio receiver is not available on Windows");
+}
+
+void PulseAudioReceiver::stop() {}
+
+std::vector<std::string> PulseAudioReceiver::get_seen_tags() {
+    return {};
+}
+
+void PulseAudioReceiver::run() {}
+
+} // namespace pulse
+} // namespace audio
+} // namespace screamrouter
+
+#else // !_WIN32
+
 #include "pulse_message.h"
 #include "pulse_tagstruct.h"
 
@@ -33,10 +76,6 @@
 #include <cerrno>
 #include <csignal>
 #include <cstring>
-
-#ifdef _WIN32
-#error "PulseAudio receiver currently supports only POSIX platforms"
-#endif
 
 #include <fcntl.h>
 #include <poll.h>
@@ -623,7 +662,15 @@ bool PulseAudioReceiver::Impl::initialize() {
     }
 
     if (!config.unix_socket_path.empty()) {
-        unix_socket_path = config.unix_socket_path;
+        unix_socket_path = config.unix_socket_path + "/native";
+        std::string unix_pid_path = config.unix_socket_path + "/pid";
+        FILE* pidf = fopen(unix_pid_path.c_str(), "w");
+        if (pidf) {
+            fprintf(pidf, "%d\n", getpid());
+            fclose(pidf);
+        } else {
+            log_warning("Failed to write PID file: " + errno_string(errno));
+        }
         ::unlink(unix_socket_path.c_str());
 
         unix_listen_fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -731,7 +778,7 @@ void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix) {
             ucred cred{};
             socklen_t cl = sizeof(cred);
             if (::getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &cred, &cl) == 0) {
-                conn->peer_identity = "pid:" + std::to_string(cred.pid);
+                conn->peer_identity = "127.0.0.1      " + std::to_string(cred.pid);
             }
 #endif
             if (conn->peer_identity.empty()) {
@@ -1243,8 +1290,8 @@ bool PulseAudioReceiver::Impl::Connection::process_message(Message& message) {
         return handle_command(command, tag, payload_ptr, payload_length, message.fds);
     }
     if (owner->debug_packets) {
-        owner->log_debug("RECV audio chunk stream=" + std::to_string(message.descriptor.channel) +
-                         " length=" + std::to_string(message.payload.size()));
+        owner->log_debug("RECV playback frame stream=" + std::to_string(message.descriptor.channel) +
+                         " payload=" + std::to_string(message.payload.size()));
     }
     return handle_playback_data(message);
 }
@@ -2332,6 +2379,14 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
             return false;
         }
 
+        if (owner->debug_packets) {
+            owner->log_debug("RECV memfd block stream=" + std::to_string(stream_index) +
+                             " shm=" + std::to_string(shm_id) +
+                             " block=" + std::to_string(block_id) +
+                             " len=" + std::to_string(length) +
+                             " off=" + std::to_string(offset));
+        }
+
         auto pool_it = memfd_pools.find(shm_id);
         if (pool_it == memfd_pools.end()) {
             if (!non_registered_memfd_error_logged) {
@@ -2659,3 +2714,5 @@ void PulseAudioReceiver::run() {
 } // namespace pulse
 } // namespace audio
 } // namespace screamrouter
+
+#endif // !_WIN32

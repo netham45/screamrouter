@@ -279,6 +279,31 @@ class BuildExtCommand(build_ext):
         self.cross_target = detect_cross_compile_platform()
         self.is_cross_compiling = bool(self.cross_target)
 
+        # Prepare base environment for CMake invocations (ensure MSVC vars on Windows)
+        self._env_base = os.environ.copy()
+        if sys.platform == "win32":
+            from build_system.platform import MSVCEnvironment
+
+            detected_arch = getattr(self.build_system, "arch", "x64")
+            normalized_arch = str(detected_arch).lower()
+            msvc_arch = "x86" if normalized_arch in {"x86", "win32", "i386", "i686"} else "x64"
+
+            msvc_env = MSVCEnvironment(arch=msvc_arch)
+            if not msvc_env.vcvarsall_path:
+                raise RuntimeError(
+                    "Unable to locate vcvarsall.bat. Install the MSVC Build Tools "
+                    "or run the build from a Visual Studio Developer Command Prompt."
+                )
+
+            activated_env = msvc_env.setup_environment()
+            # Preserve any custom environment variables that vcvarsall doesn't set
+            for key, value in os.environ.items():
+                if key not in activated_env:
+                    activated_env[key] = value
+
+            print(f"Using MSVC environment from {msvc_env.vcvarsall_path}")
+            self._env_base = activated_env
+
         self.cmake_executable = shutil.which("cmake")
         if not self.cmake_executable:
             raise RuntimeError("cmake not found in PATH. Please install CMake >= 3.14")
@@ -334,17 +359,11 @@ class BuildExtCommand(build_ext):
             if arch_part:
                 cmake_args.append(f"-DCMAKE_SYSTEM_PROCESSOR={arch_part}")
 
-        env = os.environ.copy()
+        env = self._create_cmake_env()
         # Ensure function tracing can be toggled via env during pip builds
         if env.get("SCREAMROUTER_FNTRACE"):
             cmake_args.append("-DSR_ENABLE_FNTRACE=ON")
         # Help CMake locate dependencies and pybind11
-        prefix_paths = [str(self.install_dir), str(self.pybind11_cmake_dir)]
-        existing_prefix = env.get("CMAKE_PREFIX_PATH")
-        if existing_prefix:
-            prefix_paths.append(existing_prefix)
-        env["CMAKE_PREFIX_PATH"] = os.pathsep.join(prefix_paths)
-        env.setdefault("CMAKE_BUILD_PARALLEL_LEVEL", str(self.parallel))
 
         print("Configuring CMake project...")
         subprocess.run(cmake_args, cwd=str(project_root), check=True, env=env)
@@ -394,6 +413,38 @@ class BuildExtCommand(build_ext):
             print("Successfully generated stubs for screamrouter_audio_engine.")
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             print(f"WARNING: Failed to generate pybind11 stubs: {e}", file=sys.stderr)
+
+    def _create_cmake_env(self):
+        """Create an environment dict for running CMake builds."""
+        base_env = getattr(self, "_env_base", None)
+        if base_env is None:
+            base_env = os.environ.copy()
+        else:
+            base_env = base_env.copy()
+
+        prefix_components = [str(self.install_dir), str(self.pybind11_cmake_dir)]
+        existing_prefix = base_env.get("CMAKE_PREFIX_PATH")
+        if existing_prefix:
+            prefix_components.append(existing_prefix)
+        # Preserve order while removing duplicates / empty entries
+        seen = set()
+        merged_prefix = []
+        for entry in prefix_components:
+            if not entry:
+                continue
+            # Split existing prefix entries on os.pathsep to deduplicate accurately
+            parts = entry.split(os.pathsep)
+            for part in parts:
+                normalized = part.strip()
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                merged_prefix.append(normalized)
+        if merged_prefix:
+            base_env["CMAKE_PREFIX_PATH"] = os.pathsep.join(merged_prefix)
+
+        base_env.setdefault("CMAKE_BUILD_PARALLEL_LEVEL", str(self.parallel))
+        return base_env
 
 
 # Create extension metadata (actual build handled by CMake)

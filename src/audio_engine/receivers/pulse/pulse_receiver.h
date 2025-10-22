@@ -20,12 +20,14 @@ namespace pulse {
 
 struct PulseReceiverConfig {
     uint16_t tcp_listen_port = 0;            ///< 0 disables TCP listener
-    std::string unix_socket_path;           ///< Absolute path for native protocol UNIX socket
     bool require_auth_cookie = false;       ///< If true, clients must authenticate using cookie
+#if !defined(_WIN32)
+    std::string unix_socket_path;           ///< Absolute path for native protocol UNIX socket
     std::string auth_cookie_path;           ///< Optional cookie file path
     std::string socket_owner_user;          ///< Optional owner username for the UNIX socket
     std::string socket_owner_group;         ///< Optional group name for the UNIX socket
     int socket_permissions = 0660;          ///< File mode for the UNIX socket
+#endif
 };
 
 /**

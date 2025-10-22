@@ -8,6 +8,7 @@
  */
 #ifndef SINK_AUDIO_MIXER_H
 #define SINK_AUDIO_MIXER_H
+#define NOMINMAX
 
 #include "../utils/audio_component.h"
 #include "../utils/thread_safe_queue.h"

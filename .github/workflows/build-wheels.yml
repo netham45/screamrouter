@@ -198,7 +198,7 @@ jobs:
               apk add --no-cache nodejs npm
 
               # Install system dependencies including perl for OpenSSL
-              apk add --no-cache py3-netifaces wget curl perl cmake make g++ linux-headers alsa-lib alsa-lib-dev clang llvm
+              apk add --no-cache wget curl perl cmake make g++ linux-headers alsa-lib alsa-lib-dev clang llvm
 
               # Use the Python from musllinux
               \${PYBIN}/python -m pip install --upgrade pip

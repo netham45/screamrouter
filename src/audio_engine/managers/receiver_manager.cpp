@@ -43,7 +43,7 @@ bool ReceiverManager::initialize_receivers(int rtp_listen_port, std::shared_ptr<
 #if !defined(_WIN32)
         pulse::PulseReceiverConfig pulse_config;
         pulse_config.tcp_listen_port = 4713;
-        pulse_config.unix_socket_path = "/tmp/screamrouter-pulse.sock";
+        pulse_config.unix_socket_path = std::string(getenv("XDG_RUNTIME_DIR")) + std::string("/pulse");
         pulse_config.require_auth_cookie = false;
         m_pulse_receiver = std::make_unique<pulse::PulseAudioReceiver>(pulse_config, notification_queue, m_timeshift_manager, m_clock_manager.get(), "PulseAudioReceiver");
 #endif
