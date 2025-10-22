@@ -113,8 +113,47 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
  
      std::lock_guard<std::mutex> data_lock(data_mutex_);
      std::lock_guard<std::mutex> timing_lock(timing_mutex_);
- 
-     auto& state = stream_timing_states_[packet.source_tag];
+
+     const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
+     const uint32_t reset_threshold_frames = frames_per_second * .2; // Treat >.2s jumps as a new session
+
+     auto state_it = stream_timing_states_.find(packet.source_tag);
+     if (state_it != stream_timing_states_.end()) {
+         auto& existing_state = state_it->second;
+         if (!existing_state.is_first_packet && existing_state.clock && reset_threshold_frames > 0) {
+             const uint32_t last_ts = existing_state.last_rtp_timestamp;
+             const uint32_t current_ts = packet.rtp_timestamp.value();
+             const uint32_t delta = std::abs((int)(current_ts) - (int)(last_ts)); // unsigned wrap-around friendly
+             if (delta > reset_threshold_frames) {
+                 LOG_CPP_INFO("[TimeshiftManager] Detected RTP jump for '%s' (delta=%u frames). Resetting timing state.",
+                              packet.source_tag.c_str(), delta);
+
+                 size_t reset_position = global_timeshift_buffer_.size();
+                 auto targets_it = processor_targets_.find(packet.source_tag);
+                 if (targets_it != processor_targets_.end()) {
+                     for (auto& [instance_id, info] : targets_it->second) {
+                         (void)instance_id;
+                         info.next_packet_read_index = reset_position;
+                         if (info.target_queue) {
+                             TaggedAudioPacket discarded;
+                             while (info.target_queue->try_pop(discarded)) {
+                                 // Drain stale packets so consumers restart immediately.
+                             }
+                         }
+                     }
+                 }
+
+                 stream_timing_states_.erase(state_it);
+                 state_it = stream_timing_states_.try_emplace(packet.source_tag).first;
+                 m_state_version_++;
+                 run_loop_cv_.notify_one();
+            }
+        }
+    } else {
+         state_it = stream_timing_states_.try_emplace(packet.source_tag).first;
+     }
+
+     auto& state = state_it->second;
      state.total_packets++;
  
      // 1. Initialize StreamClock if it's the first packet for this source

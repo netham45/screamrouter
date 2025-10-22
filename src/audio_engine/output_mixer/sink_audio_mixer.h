@@ -186,6 +186,10 @@ private:
     int timer_channels_{0};
     int timer_bit_depth_{0};
 
+    int playback_sample_rate_{0};
+    int playback_channels_{0};
+    int playback_bit_depth_{0};
+
     std::chrono::microseconds mix_period_{std::chrono::microseconds(12000)};
     std::chrono::steady_clock::time_point next_mix_time_{};
 
@@ -291,7 +295,9 @@ private:
     // Per-source underrun counters
     std::map<std::string, uint64_t> profiling_source_underruns_;
 
-    std::chrono::microseconds calculate_mix_period() const;
+    void set_playback_format(int sample_rate, int channels, int bit_depth);
+    void update_playback_format_from_sender();
+    std::chrono::microseconds calculate_mix_period(int sample_rate, int channels, int bit_depth) const;
     void register_mix_timer();
     void unregister_mix_timer();
     bool wait_for_mix_tick();

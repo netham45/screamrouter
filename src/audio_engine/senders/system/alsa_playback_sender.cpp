@@ -278,6 +278,21 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
     return true;
 }
 
+unsigned int AlsaPlaybackSender::get_effective_sample_rate() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return sample_rate_;
+}
+
+unsigned int AlsaPlaybackSender::get_effective_channels() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return channels_;
+}
+
+unsigned int AlsaPlaybackSender::get_effective_bit_depth() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return static_cast<unsigned int>(bit_depth_);
+}
+
 #endif // __linux__
 
 } // namespace audio

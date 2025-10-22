@@ -76,6 +76,8 @@ SinkAudioMixer::SinkAudioMixer(
          config_.output_channels = 2;
     }
 
+    set_playback_format(config_.output_samplerate, config_.output_channels, config_.output_bitdepth);
+
     if (config_.protocol == "rtp") {
         if (config_.multi_device_mode && !config_.rtp_receivers.empty()) {
             LOG_CPP_INFO("[SinkMixer:%s] Creating MultiDeviceRtpSender with %zu receivers.",
@@ -492,8 +494,7 @@ bool SinkAudioMixer::start_internal() {
     stop_flag_ = false;
     payload_buffer_write_pos_ = 0;
     reset_profiler_counters();
-    mix_period_ = calculate_mix_period();
-    next_mix_time_ = std::chrono::steady_clock::now();
+    set_playback_format(config_.output_samplerate, config_.output_channels, config_.output_bitdepth);
 
     clear_pending_audio();
 
@@ -515,6 +516,8 @@ bool SinkAudioMixer::start_internal() {
         LOG_CPP_INFO("[SinkMixer:%s] Network sender setup in %lld ms", config_.sink_id.c_str(),
                      (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_setup1 - t_setup0).count());
     }
+
+    update_playback_format_from_sender();
 
     register_mix_timer();
 
@@ -768,12 +771,21 @@ void SinkAudioMixer::mix_buffers() {
  */
 void SinkAudioMixer::downscale_buffer() {
     auto t0 = std::chrono::steady_clock::now();
-    size_t output_byte_depth = config_.output_bitdepth / 8;
+    int target_bit_depth = playback_bit_depth_ > 0 ? playback_bit_depth_ : config_.output_bitdepth;
+    if (target_bit_depth <= 0) {
+        target_bit_depth = 16;
+    }
+    size_t output_byte_depth = static_cast<size_t>(target_bit_depth) / 8;
+    if (output_byte_depth == 0) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Invalid target bit depth %d during downscale.",
+                      config_.sink_id.c_str(), target_bit_depth);
+        return;
+    }
     size_t samples_to_convert = mixing_buffer_.size();
 
     size_t expected_bytes_to_write = samples_to_convert * output_byte_depth;
     LOG_CPP_DEBUG("[SinkMixer:%s] Downscale: Converting %zu samples (int32) to %d-bit. Expected output bytes=%zu.",
-                  config_.sink_id.c_str(), samples_to_convert, config_.output_bitdepth, expected_bytes_to_write);
+                  config_.sink_id.c_str(), samples_to_convert, target_bit_depth, expected_bytes_to_write);
 
     size_t available_space = payload_buffer_.size() - payload_buffer_write_pos_;
 
@@ -798,7 +810,7 @@ void SinkAudioMixer::downscale_buffer() {
 
     for (size_t i = 0; i < samples_to_convert; ++i) {
         int32_t sample = read_ptr[i];
-        switch (config_.output_bitdepth) {
+        switch (target_bit_depth) {
             case 16:
                 *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
                 *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
@@ -814,6 +826,10 @@ void SinkAudioMixer::downscale_buffer() {
                 *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
                 *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
                 break;
+            default:
+                LOG_CPP_ERROR("[SinkMixer:%s] Unsupported target bit depth %d during downscale.",
+                              config_.sink_id.c_str(), target_bit_depth);
+                return;
         }
     }
     size_t bytes_written = write_ptr - write_ptr_start;
@@ -1165,17 +1181,57 @@ void SinkAudioMixer::maybe_log_profiler() {
     }
 }
 
-std::chrono::microseconds SinkAudioMixer::calculate_mix_period() const {
-    int samplerate = config_.output_samplerate > 0 ? config_.output_samplerate : 48000;
-    samplerate = std::max(1, samplerate);
-    int channels = std::max(1, config_.output_channels);
-    int bit_depth = config_.output_bitdepth > 0 ? config_.output_bitdepth : 16;
-    if ((bit_depth % 8) != 0) {
-        bit_depth = 16;
+void SinkAudioMixer::set_playback_format(int sample_rate, int channels, int bit_depth) {
+    int sanitized_rate = sample_rate > 0 ? sample_rate : 48000;
+    int sanitized_channels = std::clamp(channels, 1, 8);
+    int sanitized_bit_depth = bit_depth > 0 ? bit_depth : 16;
+    if ((sanitized_bit_depth % 8) != 0) {
+        sanitized_bit_depth = 16;
     }
 
-    const std::size_t bytes_per_sample = static_cast<std::size_t>(bit_depth) / 8;
-    const std::size_t frame_bytes = bytes_per_sample * static_cast<std::size_t>(channels);
+    playback_sample_rate_ = sanitized_rate;
+    playback_channels_ = sanitized_channels;
+    playback_bit_depth_ = sanitized_bit_depth;
+
+    mix_period_ = calculate_mix_period(playback_sample_rate_, playback_channels_, playback_bit_depth_);
+    next_mix_time_ = std::chrono::steady_clock::now();
+}
+
+void SinkAudioMixer::update_playback_format_from_sender() {
+#if defined(__linux__)
+    if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+        unsigned int device_rate = alsa_sender->get_effective_sample_rate();
+        unsigned int device_channels = alsa_sender->get_effective_channels();
+        unsigned int device_bit_depth = alsa_sender->get_effective_bit_depth();
+
+        int new_sample_rate = device_rate > 0 ? static_cast<int>(device_rate) : playback_sample_rate_;
+        int new_channels = device_channels > 0 ? static_cast<int>(device_channels) : playback_channels_;
+        int new_bit_depth = device_bit_depth > 0 ? static_cast<int>(device_bit_depth) : playback_bit_depth_;
+
+        bool format_changed = (new_sample_rate != playback_sample_rate_) ||
+                              (new_channels != playback_channels_) ||
+                              (new_bit_depth != playback_bit_depth_);
+
+        if (format_changed) {
+            set_playback_format(new_sample_rate, new_channels, new_bit_depth);
+            LOG_CPP_INFO("[SinkMixer:%s] Updated playback pacing to match ALSA device (rate=%d Hz, channels=%d, bit_depth=%d).",
+                         config_.sink_id.c_str(), playback_sample_rate_, playback_channels_, playback_bit_depth_);
+        }
+        return;
+    }
+#endif
+}
+
+std::chrono::microseconds SinkAudioMixer::calculate_mix_period(int samplerate, int channels, int bit_depth) const {
+    int sanitized_rate = std::max(1, samplerate);
+    int sanitized_channels = std::max(1, channels);
+    int sanitized_bit_depth = bit_depth;
+    if (sanitized_bit_depth <= 0 || (sanitized_bit_depth % 8) != 0) {
+        sanitized_bit_depth = 16;
+    }
+
+    const std::size_t bytes_per_sample = static_cast<std::size_t>(sanitized_bit_depth) / 8;
+    const std::size_t frame_bytes = bytes_per_sample * static_cast<std::size_t>(sanitized_channels);
     if (frame_bytes == 0) {
         return std::chrono::microseconds(6000);
     }
@@ -1186,7 +1242,7 @@ std::chrono::microseconds SinkAudioMixer::calculate_mix_period() const {
     }
 
     const long long numerator = static_cast<long long>(frames_per_chunk) * 1000000LL;
-    long long period_us = numerator / static_cast<long long>(samplerate);
+    long long period_us = numerator / static_cast<long long>(sanitized_rate);
     if (period_us <= 0) {
         period_us = 6000;
     }
@@ -1200,9 +1256,9 @@ void SinkAudioMixer::register_mix_timer() {
     clock_pending_ticks_ = 0;
     clock_manager_enabled_.store(false, std::memory_order_release);
 
-    timer_sample_rate_ = config_.output_samplerate > 0 ? config_.output_samplerate : 48000;
-    timer_channels_ = std::clamp(config_.output_channels, 1, 8);
-    timer_bit_depth_ = config_.output_bitdepth > 0 ? config_.output_bitdepth : 16;
+    timer_sample_rate_ = playback_sample_rate_ > 0 ? playback_sample_rate_ : 48000;
+    timer_channels_ = std::clamp(playback_channels_, 1, 8);
+    timer_bit_depth_ = playback_bit_depth_ > 0 ? playback_bit_depth_ : 16;
     if ((timer_bit_depth_ % 8) != 0) {
         timer_bit_depth_ = 16;
     }

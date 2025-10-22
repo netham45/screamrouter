@@ -23,6 +23,12 @@ public:
     void close() override;
     void send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) override;
 
+#if defined(__linux__)
+    unsigned int get_effective_sample_rate() const;
+    unsigned int get_effective_channels() const;
+    unsigned int get_effective_bit_depth() const;
+#endif
+
 private:
 #if defined(__linux__)
     bool parse_legacy_card_device(const std::string& value, int& card, int& device) const;
@@ -46,7 +52,7 @@ private:
     snd_pcm_uframes_t buffer_frames_ = 0;
     size_t bytes_per_frame_ = 0;
 
-    std::mutex state_mutex_;
+    mutable std::mutex state_mutex_;
 #else
     SinkMixerConfig config_;
 #endif
