@@ -140,8 +140,13 @@ std::optional<timeval> TagReader::read_timeval() {
         return std::nullopt;
     }
     timeval tv{};
+#if defined(_WIN32)
+    tv.tv_sec = static_cast<long>(sec);
+    tv.tv_usec = static_cast<long>(usec);
+#else
     tv.tv_sec = static_cast<time_t>(sec);
     tv.tv_usec = static_cast<suseconds_t>(usec);
+#endif
     return tv;
 }
 

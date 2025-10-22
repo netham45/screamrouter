@@ -1,6 +1,6 @@
 #include "pulse_receiver.h"
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(_WIN64) || defined(WIN32)
 
 #include <stdexcept>
 #include <utility>
@@ -41,7 +41,7 @@ void PulseAudioReceiver::run() {}
 } // namespace audio
 } // namespace screamrouter
 
-#else // !_WIN32
+#else // POSIX build
 
 #include "pulse_message.h"
 #include "pulse_tagstruct.h"
@@ -2715,4 +2715,4 @@ void PulseAudioReceiver::run() {
 } // namespace audio
 } // namespace screamrouter
 
-#endif // !_WIN32
+#endif // POSIX build

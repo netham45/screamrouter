@@ -106,13 +106,15 @@ bool NetworkAudioReceiver::setup_socket() {
 
 #ifdef _WIN32
     char reuse = 1;
-    if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+    if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR,
+                   reinterpret_cast<const char*>(&reuse), static_cast<int>(sizeof(reuse))) < 0) {
         log_error("Failed to set SO_REUSEADDR");
         close_socket();
         return false;
     }
     int buffer_size = 1152 * 10;
-    setsockopt(socket_fd_, SOL_SOCKET, SO_RCVBUF, &buffer_size, sizeof(buffer_size));
+    setsockopt(socket_fd_, SOL_SOCKET, SO_RCVBUF,
+               reinterpret_cast<const char*>(&buffer_size), static_cast<int>(sizeof(buffer_size)));
 #else // POSIX
     int reuse = 1;
     if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
