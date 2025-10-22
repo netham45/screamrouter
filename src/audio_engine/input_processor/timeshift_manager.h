@@ -205,6 +205,12 @@ public:
      */
     TimeshiftManagerStats get_stats();
 
+    /**
+     * @brief Resets timing state and pending buffer indices for a specific source tag.
+     * @param source_tag The composite source tag whose timing state should be cleared.
+     */
+    void reset_stream_state(const std::string& source_tag);
+
 protected:
     /** @brief The main loop for the manager's thread. */
     void run() override;

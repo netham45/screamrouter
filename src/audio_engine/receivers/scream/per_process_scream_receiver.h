@@ -12,10 +12,6 @@
 #include "../clock_manager.h"
 #include "../../audio_types.h"
 
-#include <map>
-#include <deque>
-#include <memory>
-#include <mutex>
 #include <cstdint>
 #include <string>
 
@@ -69,41 +65,14 @@ protected:
         TaggedAudioPacket& out_packet,
         std::string& out_source_tag
     ) override;
-    void dispatch_ready_packet(TaggedAudioPacket&& packet) override;
 
     size_t get_receive_buffer_size() const override;
     int get_poll_timeout_ms() const override;
 
 private:
-    struct StreamState {
-        std::string source_tag;
-        int sample_rate = 0;
-        int channels = 0;
-        int bit_depth = 0;
-        uint8_t chlayout1 = 0;
-        uint8_t chlayout2 = 0;
-        uint32_t samples_per_chunk = 0;
-        uint32_t next_rtp_timestamp = 0;
-        ClockManager::ConditionHandle clock_handle;
-        uint64_t clock_last_sequence = 0;
-        std::deque<TaggedAudioPacket> pending_packets;
-    };
-
-    static uint32_t calculate_samples_per_chunk(int channels, int bit_depth);
-    void handle_clock_tick(const std::string& source_tag);
-    std::shared_ptr<StreamState> get_or_create_stream_state(const TaggedAudioPacket& packet);
-    void clear_all_streams();
-    void dispatch_clock_ticks();
-
     PerProcessScreamReceiverConfig config_;
-    ClockManager* clock_manager_;
-    std::mutex stream_state_mutex_;
-    std::map<std::string, std::shared_ptr<StreamState>> stream_states_;
 
     bool validate_per_process_scream_content(const uint8_t* buffer, int size, const std::string& sender_ip, TaggedAudioPacket& out_packet, std::string& out_composite_source_tag);
-
-    void on_before_poll_wait() override;
-    void on_after_poll_iteration() override;
 };
 
 } // namespace audio

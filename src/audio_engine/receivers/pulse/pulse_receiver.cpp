@@ -452,10 +452,24 @@ struct PulseAudioReceiver::Impl::Connection {
     }
 
     ~Connection() {
+        std::unordered_set<std::string> tags_to_reset;
+        if (owner && owner->timeshift_manager) {
+            for (const auto& [_, stream] : streams) {
+                tags_to_reset.insert(stream.composite_tag);
+            }
+        }
+
         for (auto& [_, stream] : streams) {
             unregister_stream_clock(stream);
         }
         streams.clear();
+
+        if (owner && owner->timeshift_manager) {
+            for (const auto& tag : tags_to_reset) {
+                owner->timeshift_manager->reset_stream_state(tag);
+            }
+        }
+
         for (auto& entry : memfd_pools) {
             if (entry.second.fd >= 0) {
                 ::close(entry.second.fd);
@@ -585,6 +599,9 @@ bool PulseAudioReceiver::Impl::initialize() {
         int opt = 1;
         ::setsockopt(tcp_listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
+        opt = 1152 * 10;
+        ::setsockopt(tcp_listen_fd, SOL_SOCKET, SO_RCVBUF, &opt, sizeof(opt));
+
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = INADDR_ANY;
@@ -624,6 +641,8 @@ bool PulseAudioReceiver::Impl::initialize() {
             unix_listen_fd = -1;
             return false;
         }
+        int opt = 1152 * 10;
+        ::setsockopt(unix_listen_fd, SOL_SOCKET, SO_RCVBUF, &opt, sizeof(opt));
         if (::listen(unix_listen_fd, static_cast<int>(kMaxConnections)) < 0) {
             log_error("Failed to listen on UNIX socket: " + errno_string(errno));
             ::close(unix_listen_fd);
@@ -1856,8 +1875,12 @@ bool PulseAudioReceiver::Impl::Connection::handle_delete_stream(uint32_t tag, Ta
     }
     auto it = streams.find(*channel);
     if (it != streams.end()) {
+        const std::string stream_tag = it->second.composite_tag;
         unregister_stream_clock(it->second);
         streams.erase(it);
+        if (owner->timeshift_manager) {
+            owner->timeshift_manager->reset_stream_state(stream_tag);
+        }
     }
     enqueue_simple_reply(tag);
     return true;

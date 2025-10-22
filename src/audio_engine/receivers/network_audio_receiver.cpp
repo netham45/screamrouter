@@ -8,6 +8,7 @@
 #include <stdexcept>     // For runtime_error
 #include <system_error>  // For socket error checking
 #include <algorithm>     // For std::find
+#include <cstddef>
 
 namespace screamrouter {
 namespace audio {
@@ -20,11 +21,15 @@ NetworkAudioReceiver::NetworkAudioReceiver(
     uint16_t listen_port,
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager,
-    std::string logger_prefix)
+    std::string logger_prefix,
+    ClockManager* clock_manager,
+    std::size_t chunk_size_bytes)
     : listen_port_(listen_port),
       socket_fd_(NAR_INVALID_SOCKET_VALUE),
       notification_queue_(notification_queue),
       timeshift_manager_(timeshift_manager),
+      clock_manager_(clock_manager),
+      chunk_size_bytes_(chunk_size_bytes),
       logger_prefix_(std::move(logger_prefix)) {
 
 #ifdef _WIN32
@@ -38,6 +43,10 @@ NetworkAudioReceiver::NetworkAudioReceiver(
         log_error("TimeshiftManager pointer is null. Receiver will not function correctly.");
         // throw std::runtime_error(logger_prefix_ + " requires a valid TimeshiftManager.");
     }
+    if (clock_manager_ && chunk_size_bytes_ == 0) {
+        log_warning("ClockManager provided but chunk size is zero; clock scheduling will be disabled.");
+        clock_manager_ = nullptr;
+    }
     log_message("Initialized with port " + std::to_string(listen_port_));
 }
 
@@ -49,6 +58,8 @@ NetworkAudioReceiver::~NetworkAudioReceiver() noexcept {
 #ifdef _WIN32
     decrement_winsock_users();
 #endif
+    clear_clock_managed_streams();
+    reset_all_pcm_accumulators();
     log_message("Destroyed.");
 }
 
@@ -190,6 +201,9 @@ void NetworkAudioReceiver::stop() {
     } else {
         log_warning("Thread was not joinable (might not have started or already stopped).");
     }
+
+    clear_clock_managed_streams();
+    reset_all_pcm_accumulators();
 }
 
 void NetworkAudioReceiver::run() {
@@ -332,6 +346,12 @@ void NetworkAudioReceiver::run() {
 }
 
 void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
+    if (clock_manager_ && chunk_size_bytes_ > 0) {
+        if (enqueue_clock_managed_packet(std::move(packet))) {
+            return;
+        }
+    }
+
     if (timeshift_manager_) {
         timeshift_manager_->add_packet(std::move(packet));
     } else {
@@ -339,15 +359,368 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
     }
 }
 
-void NetworkAudioReceiver::on_before_poll_wait() {}
+void NetworkAudioReceiver::on_before_poll_wait() {
+    service_clock_manager();
+}
 
-void NetworkAudioReceiver::on_after_poll_iteration() {}
+void NetworkAudioReceiver::on_after_poll_iteration() {
+    service_clock_manager();
+}
 
 std::vector<std::string> NetworkAudioReceiver::get_seen_tags() {
     std::lock_guard<std::mutex> lock(seen_tags_mutex_);
     std::vector<std::string> tags;
     tags.swap(seen_tags_); // Return collected tags and clear for next poll
     return tags;
+}
+
+bool NetworkAudioReceiver::enqueue_clock_managed_packet(TaggedAudioPacket&& packet) {
+    if (!clock_manager_ || chunk_size_bytes_ == 0) {
+        return false;
+    }
+
+    std::shared_ptr<ClockStreamState> state;
+    {
+        std::lock_guard<std::mutex> lock(stream_state_mutex_);
+        state = get_or_create_stream_state_locked(packet);
+        if (!state) {
+            return false;
+        }
+
+        state->pending_packets.push_back(std::move(packet));
+        if (!state->pending_packets.back().ssrcs.empty()) {
+            state->last_ssrcs = state->pending_packets.back().ssrcs;
+        }
+    }
+
+    return true;
+}
+
+void NetworkAudioReceiver::service_clock_manager() {
+    if (!clock_manager_ || chunk_size_bytes_ == 0) {
+        return;
+    }
+
+    std::vector<std::pair<std::string, uint64_t>> pending_ticks;
+
+    {
+        std::lock_guard<std::mutex> lock(stream_state_mutex_);
+        for (auto& [tag, state_ptr] : stream_states_) {
+            if (!state_ptr) {
+                continue;
+            }
+
+            auto& state = *state_ptr;
+            if (!state.clock_handle.valid()) {
+                continue;
+            }
+
+            auto condition = state.clock_handle.condition;
+            if (!condition) {
+                continue;
+            }
+
+            uint64_t sequence_snapshot = 0;
+            {
+                std::unique_lock<std::mutex> condition_lock(condition->mutex);
+                sequence_snapshot = condition->sequence;
+            }
+
+            if (sequence_snapshot > state.clock_last_sequence) {
+                uint64_t tick_count = sequence_snapshot - state.clock_last_sequence;
+                state.clock_last_sequence = sequence_snapshot;
+                pending_ticks.emplace_back(tag, tick_count);
+            }
+        }
+    }
+
+    for (const auto& [tag, tick_count] : pending_ticks) {
+        for (uint64_t i = 0; i < tick_count; ++i) {
+            if (stop_flag_) {
+                return;
+            }
+            handle_clock_tick(tag);
+        }
+    }
+}
+
+std::vector<TaggedAudioPacket> NetworkAudioReceiver::append_pcm_payload(PcmAppendContext&& context) {
+    std::vector<TaggedAudioPacket> completed_chunks;
+
+    if (chunk_size_bytes_ == 0 || context.payload.empty()) {
+        return completed_chunks;
+    }
+
+    auto samples_per_chunk = calculate_samples_per_chunk(context.channels, context.bit_depth);
+    if (samples_per_chunk == 0) {
+        log_warning("Unable to determine samples per chunk for accumulator key " + context.accumulator_key);
+        return completed_chunks;
+    }
+
+    std::lock_guard<std::mutex> lock(pcm_accumulator_mutex_);
+    auto& accumulator = pcm_accumulators_[context.accumulator_key];
+
+    const bool format_initialized = accumulator.last_sample_rate != 0;
+    const bool format_changed = format_initialized &&
+        (accumulator.last_sample_rate != context.sample_rate ||
+         accumulator.last_channels != context.channels ||
+         accumulator.last_bit_depth != context.bit_depth ||
+         accumulator.last_chlayout1 != context.chlayout1 ||
+         accumulator.last_chlayout2 != context.chlayout2);
+
+    if (format_changed) {
+        accumulator.buffer.clear();
+        accumulator.chunk_active = false;
+        accumulator.first_packet_rtp_timestamp.reset();
+    }
+
+    accumulator.last_sample_rate = context.sample_rate;
+    accumulator.last_channels = context.channels;
+    accumulator.last_bit_depth = context.bit_depth;
+    accumulator.last_chlayout1 = context.chlayout1;
+    accumulator.last_chlayout2 = context.chlayout2;
+
+    if (!accumulator.chunk_active) {
+        accumulator.chunk_active = true;
+        accumulator.first_packet_time = context.received_time;
+        accumulator.first_packet_rtp_timestamp = context.rtp_timestamp;
+    }
+
+    accumulator.buffer.insert(accumulator.buffer.end(), context.payload.begin(), context.payload.end());
+
+    while (accumulator.buffer.size() >= chunk_size_bytes_) {
+        if (!accumulator.chunk_active) {
+            accumulator.chunk_active = true;
+            accumulator.first_packet_time = context.received_time;
+            accumulator.first_packet_rtp_timestamp = context.rtp_timestamp;
+        }
+
+        TaggedAudioPacket packet;
+        packet.source_tag = context.source_tag;
+        packet.received_time = accumulator.first_packet_time;
+        if (accumulator.first_packet_rtp_timestamp.has_value()) {
+            packet.rtp_timestamp = accumulator.first_packet_rtp_timestamp;
+            accumulator.first_packet_rtp_timestamp = accumulator.first_packet_rtp_timestamp.value() + samples_per_chunk;
+        }
+
+        packet.sample_rate = context.sample_rate;
+        packet.channels = context.channels;
+        packet.bit_depth = context.bit_depth;
+        packet.chlayout1 = context.chlayout1;
+        packet.chlayout2 = context.chlayout2;
+        packet.ssrcs = context.ssrcs;
+
+        packet.audio_data.assign(accumulator.buffer.begin(),
+                                 accumulator.buffer.begin() + static_cast<std::ptrdiff_t>(chunk_size_bytes_));
+        accumulator.buffer.erase(accumulator.buffer.begin(),
+                                 accumulator.buffer.begin() + static_cast<std::ptrdiff_t>(chunk_size_bytes_));
+
+        completed_chunks.push_back(std::move(packet));
+
+        accumulator.chunk_active = false;
+        accumulator.first_packet_rtp_timestamp.reset();
+        accumulator.first_packet_time = {};
+    }
+
+    if (accumulator.buffer.empty()) {
+        accumulator.chunk_active = false;
+        accumulator.first_packet_rtp_timestamp.reset();
+        accumulator.first_packet_time = {};
+    }
+
+    return completed_chunks;
+}
+
+void NetworkAudioReceiver::reset_pcm_accumulator(const std::string& accumulator_key) {
+    std::lock_guard<std::mutex> lock(pcm_accumulator_mutex_);
+    pcm_accumulators_.erase(accumulator_key);
+}
+
+void NetworkAudioReceiver::reset_all_pcm_accumulators() {
+    std::lock_guard<std::mutex> lock(pcm_accumulator_mutex_);
+    pcm_accumulators_.clear();
+}
+
+std::shared_ptr<NetworkAudioReceiver::ClockStreamState> NetworkAudioReceiver::get_or_create_stream_state_locked(const TaggedAudioPacket& packet) {
+    if (!clock_manager_) {
+        return nullptr;
+    }
+
+    auto it = stream_states_.find(packet.source_tag);
+    bool created = false;
+
+    if (it == stream_states_.end()) {
+        auto state = std::make_shared<ClockStreamState>();
+        state->source_tag = packet.source_tag;
+        it = stream_states_.emplace(packet.source_tag, std::move(state)).first;
+        created = true;
+    }
+
+    auto state = it->second;
+    if (!state) {
+        state = std::make_shared<ClockStreamState>();
+        state->source_tag = packet.source_tag;
+        it->second = state;
+        created = true;
+    }
+
+    const bool format_changed = created ||
+        state->sample_rate != packet.sample_rate ||
+        state->channels != packet.channels ||
+        state->bit_depth != packet.bit_depth ||
+        state->chlayout1 != packet.chlayout1 ||
+        state->chlayout2 != packet.chlayout2;
+
+    if (format_changed) {
+        if (state->clock_handle.valid()) {
+            try {
+                clock_manager_->unregister_clock_condition(state->clock_handle);
+            } catch (const std::exception& ex) {
+                log_error("Failed to unregister clock for " + state->source_tag + ": " + ex.what());
+            }
+            state->clock_handle = {};
+            state->clock_last_sequence = 0;
+        }
+
+        state->sample_rate = packet.sample_rate;
+        state->channels = packet.channels;
+        state->bit_depth = packet.bit_depth;
+        state->chlayout1 = packet.chlayout1;
+        state->chlayout2 = packet.chlayout2;
+        state->samples_per_chunk = calculate_samples_per_chunk(packet.channels, packet.bit_depth);
+        state->next_rtp_timestamp = 0;
+        state->pending_packets.clear();
+
+        if (state->samples_per_chunk == 0) {
+            log_error("Unsupported audio format for clock scheduling from " + packet.source_tag);
+            stream_states_.erase(it);
+            return nullptr;
+        }
+
+        try {
+            state->clock_handle = clock_manager_->register_clock_condition(
+                state->sample_rate, state->channels, state->bit_depth);
+            if (!state->clock_handle.valid()) {
+                throw std::runtime_error("ClockManager returned invalid condition handle");
+            }
+            if (auto condition = state->clock_handle.condition) {
+                std::lock_guard<std::mutex> condition_lock(condition->mutex);
+                state->clock_last_sequence = condition->sequence;
+            } else {
+                state->clock_last_sequence = 0;
+            }
+        } catch (const std::exception& ex) {
+            log_error("Failed to register clock for " + state->source_tag + ": " + ex.what());
+            stream_states_.erase(it);
+            return nullptr;
+        }
+    }
+
+    return state;
+}
+
+void NetworkAudioReceiver::clear_clock_managed_streams() {
+    std::lock_guard<std::mutex> lock(stream_state_mutex_);
+
+    if (clock_manager_) {
+        for (auto& [tag, state] : stream_states_) {
+            if (state && state->clock_handle.valid()) {
+                try {
+                    clock_manager_->unregister_clock_condition(state->clock_handle);
+                } catch (const std::exception& ex) {
+                    log_error("Failed to unregister clock for " + tag + ": " + ex.what());
+                }
+                state->clock_handle = {};
+                state->clock_last_sequence = 0;
+            }
+        }
+    }
+
+    stream_states_.clear();
+}
+
+void NetworkAudioReceiver::handle_clock_tick(const std::string& source_tag) {
+    TaggedAudioPacket packet;
+    bool have_packet = false;
+
+    {
+        std::lock_guard<std::mutex> lock(stream_state_mutex_);
+        auto it = stream_states_.find(source_tag);
+        if (it == stream_states_.end() || !it->second) {
+            return;
+        }
+
+        auto& state = *it->second;
+        const auto now = std::chrono::steady_clock::now();
+
+        if (!state.pending_packets.empty()) {
+            packet = std::move(state.pending_packets.front());
+            state.pending_packets.pop_front();
+            packet.received_time = now;
+            if (!packet.ssrcs.empty()) {
+                state.last_ssrcs = packet.ssrcs;
+            }
+
+            if (state.samples_per_chunk > 0) {
+                if (packet.rtp_timestamp.has_value()) {
+                    state.next_rtp_timestamp = packet.rtp_timestamp.value();
+                } else {
+                    state.next_rtp_timestamp += state.samples_per_chunk;
+                    packet.rtp_timestamp = state.next_rtp_timestamp;
+                }
+            } else {
+                packet.rtp_timestamp.reset();
+            }
+
+            have_packet = true;
+        } else {
+            if (chunk_size_bytes_ == 0 || state.sample_rate == 0 || state.channels == 0) {
+                return;
+            }
+
+            packet.source_tag = state.source_tag;
+            packet.audio_data.assign(chunk_size_bytes_, 0);
+            packet.received_time = now;
+            packet.sample_rate = state.sample_rate;
+            packet.channels = state.channels;
+            packet.bit_depth = state.bit_depth;
+            packet.chlayout1 = state.chlayout1;
+            packet.chlayout2 = state.chlayout2;
+            packet.ssrcs = state.last_ssrcs;
+
+            if (state.samples_per_chunk > 0) {
+                state.next_rtp_timestamp += state.samples_per_chunk;
+                packet.rtp_timestamp = state.next_rtp_timestamp;
+            } else {
+                packet.rtp_timestamp.reset();
+            }
+
+            have_packet = true;
+        }
+    }
+
+    if (!have_packet) {
+        return;
+    }
+
+    if (timeshift_manager_) {
+        timeshift_manager_->add_packet(std::move(packet));
+    } else {
+        log_error("TimeshiftManager is null. Cannot add packet for source: " + packet.source_tag);
+    }
+}
+
+uint32_t NetworkAudioReceiver::calculate_samples_per_chunk(int channels, int bit_depth) const {
+    if (chunk_size_bytes_ == 0 || channels <= 0 || bit_depth <= 0 || (bit_depth % 8) != 0) {
+        return 0;
+    }
+
+    const std::size_t bytes_per_frame = static_cast<std::size_t>(channels) * static_cast<std::size_t>(bit_depth / 8);
+    if (bytes_per_frame == 0 || (chunk_size_bytes_ % bytes_per_frame) != 0) {
+        return 0;
+    }
+
+    return static_cast<uint32_t>(chunk_size_bytes_ / bytes_per_frame);
 }
 } // namespace audio
 } // namespace screamrouter

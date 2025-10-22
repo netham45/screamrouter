@@ -386,6 +386,38 @@ void TimeshiftManager::update_processor_timeshift(const std::string& instance_id
     run_loop_cv_.notify_one();
 }
 
+void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
+    LOG_CPP_INFO("[TimeshiftManager] Resetting stream state for tag %s", source_tag.c_str());
+
+    size_t reset_position = 0;
+    {
+        std::lock_guard<std::mutex> data_lock(data_mutex_);
+        reset_position = global_timeshift_buffer_.size();
+
+        auto targets_it = processor_targets_.find(source_tag);
+        if (targets_it != processor_targets_.end()) {
+            for (auto& [instance_id, info] : targets_it->second) {
+                (void)instance_id;
+                info.next_packet_read_index = reset_position;
+                if (info.target_queue) {
+                    TaggedAudioPacket discarded;
+                    while (info.target_queue->try_pop(discarded)) {
+                        // Drain stale packets so consumers don't process the old stream.
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> timing_lock(timing_mutex_);
+        stream_timing_states_.erase(source_tag);
+    }
+
+    m_state_version_++;
+    run_loop_cv_.notify_one();
+}
+
 /**
  * @brief The main processing loop for the manager's thread.
  */

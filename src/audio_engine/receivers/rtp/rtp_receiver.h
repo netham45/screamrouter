@@ -17,7 +17,6 @@
 #include "rtp_reordering_buffer.h" // Added for jitter buffer
 #include <mutex>
 #include <memory>
-#include <deque>
 #include <vector>
 #include <map> // Added for SSRC -> buffer mapping
 #include <cstdint>
@@ -99,23 +98,7 @@ protected:
     int get_poll_timeout_ms() const override;
 
 private:
-    struct StreamState {
-        std::string source_tag;
-        int sample_rate = 0;
-        int channels = 0;
-        int bit_depth = 0;
-        uint8_t chlayout1 = 0;
-        uint8_t chlayout2 = 0;
-        uint32_t samples_per_chunk = 0;
-        uint32_t next_rtp_timestamp = 0;
-        ClockManager::ConditionHandle clock_handle;
-        uint64_t clock_last_sequence = 0;
-        std::deque<TaggedAudioPacket> pending_chunks;
-        std::vector<uint32_t> last_ssrcs;
-    };
-
     RtpReceiverConfig config_;
-    ClockManager* clock_manager_;
     #ifdef _WIN32
         fd_set master_read_fds_;  // Master set for select()
         socket_t max_fd_;          // Highest socket fd for select()
@@ -143,8 +126,6 @@ private:
     void process_ready_packets(uint32_t ssrc, const struct sockaddr_in& client_addr);
     /** @brief Internal version of process_ready_packets that can optionally skip locking. */
     void process_ready_packets_internal(uint32_t ssrc, const struct sockaddr_in& client_addr, bool take_lock);
-    /** @brief Checks clock conditions and dispatches pending scheduled chunks. */
-    void dispatch_clock_ticks();
     
     /**
      * @brief Generates a unique key for identifying a source.
@@ -152,11 +133,7 @@ private:
      * @return A string in the format "IP:port".
      */
     std::string get_source_key(const struct sockaddr_in& addr) const;
-    void enqueue_chunk(TaggedAudioPacket&& packet);
-    std::shared_ptr<StreamState> get_or_create_stream_state(const TaggedAudioPacket& packet);
-    void handle_clock_tick(const std::string& source_tag);
-    void clear_all_streams();
-    static uint32_t calculate_samples_per_chunk(int channels, int bit_depth);
+    std::string make_pcm_accumulator_key(uint32_t ssrc) const;
 
     // Per-source SSRC tracking to handle multiple independent RTP streams
     std::map<std::string, uint32_t> source_to_last_ssrc_;  // Map: "IP:port" -> last known SSRC
@@ -165,15 +142,6 @@ private:
     // Jitter and reordering handling
     std::map<uint32_t, RtpReorderingBuffer> reordering_buffers_;
     std::mutex reordering_buffer_mutex_;
-
-    // PCM accumulation, now per-SSRC
-    std::map<uint32_t, std::vector<uint8_t>> pcm_accumulators_;
-    std::map<uint32_t, bool> is_accumulating_chunk_;
-    std::map<uint32_t, std::chrono::steady_clock::time_point> chunk_first_packet_received_time_;
-    std::map<uint32_t, uint32_t> chunk_first_packet_rtp_timestamp_;
-    
-    uint32_t last_rtp_timestamp_ = 0;
-    uint32_t last_chunk_remainder_samples_ = 0;
 
     std::unique_ptr<SapListener> sap_listener_;
 
@@ -186,8 +154,6 @@ private:
     };
     std::map<socket_t, SessionInfo> socket_sessions_; // Maps socket FD to session info
     std::map<std::string, socket_t> unicast_source_to_socket_; // Maps "source_ip:dest_ip:port" to socket FD
-    std::mutex stream_state_mutex_;
-    std::map<std::string, std::shared_ptr<StreamState>> stream_states_;
 };
 
 } // namespace audio

@@ -800,6 +800,7 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
     // 2. Get current and desired connection sets for easy comparison.
     const std::vector<std::string>& current_path_ids_vec = current_sink_state.params.connected_source_path_ids;
     std::set<std::string> current_path_ids_set(current_path_ids_vec.begin(), current_path_ids_vec.end());
+    std::set<std::string> updated_path_ids_set = current_path_ids_set; // Track the connections that are actually established.
 
     const std::vector<std::string>& desired_path_ids_vec = desired_sink_params.connected_source_path_ids;
     std::set<std::string> desired_path_ids_set(desired_path_ids_vec.begin(), desired_path_ids_vec.end());
@@ -843,10 +844,14 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
                  const auto t_c1 = std::chrono::steady_clock::now();
                  LOG_CPP_ERROR("[ConfigApplier]         -> connect_source_sink FAILED (%lld ms)",
                                (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_c1 - t_c0).count());
+                 LOG_CPP_WARNING("[ConfigApplier]         -> Connection attempt for path %s will be retried on the next apply_state cycle.",
+                                  desired_path_id.c_str());
+                 updated_path_ids_set.erase(desired_path_id); // Ensure the shadow state reflects the failure.
             } else {
                  const auto t_c1 = std::chrono::steady_clock::now();
                  LOG_CPP_INFO("[ConfigApplier]         -> Connection successful in %lld ms",
                               (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_c1 - t_c0).count());
+                 updated_path_ids_set.insert(desired_path_id);
             }
         }
     }
@@ -886,11 +891,20 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
                  LOG_CPP_INFO("[ConfigApplier]         -> Disconnected in %lld ms",
                               (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_d1 - t_d0).count());
             }
+            updated_path_ids_set.erase(current_path_id);
         }
     }
 
     // 5. Update the internal state to match the desired state.
-    current_sink_state.params.connected_source_path_ids = desired_sink_params.connected_source_path_ids;
+    std::vector<std::string> resulting_connections;
+    resulting_connections.reserve(updated_path_ids_set.size());
+    for (const auto& desired_path_id : desired_path_ids_vec) {
+        if (updated_path_ids_set.find(desired_path_id) != updated_path_ids_set.end()) {
+            resulting_connections.push_back(desired_path_id);
+        }
+    }
+
+    current_sink_state.params.connected_source_path_ids = std::move(resulting_connections);
     LOG_CPP_DEBUG("[ConfigApplier]     Internal connection state updated for sink %s", sink_id.c_str());
 }
 

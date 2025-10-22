@@ -61,15 +61,14 @@ RtpReceiver::RtpReceiver(
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager,
     ClockManager* clock_manager)
-    : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, "[RtpReceiver]"),
-      config_(config),
-      clock_manager_(clock_manager),
+    : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, "[RtpReceiver]", clock_manager, TARGET_PCM_CHUNK_SIZE),
+      config_(config)
       #ifdef _WIN32
-          max_fd_(NAR_INVALID_SOCKET_VALUE),
+          , max_fd_(NAR_INVALID_SOCKET_VALUE)
       #else
-          epoll_fd_(NAR_INVALID_SOCKET_VALUE),
+          , epoll_fd_(NAR_INVALID_SOCKET_VALUE)
       #endif
-      last_rtp_timestamp_(0), last_chunk_remainder_samples_(0) {
+{
     if (!clock_manager_) {
         throw std::runtime_error("RtpReceiver requires a valid ClockManager instance");
     }
@@ -86,7 +85,6 @@ RtpReceiver::RtpReceiver(
 }
 
 RtpReceiver::~RtpReceiver() noexcept {
-    clear_all_streams();
 }
 
 std::vector<SapAnnouncement> RtpReceiver::get_sap_announcements() {
@@ -104,6 +102,12 @@ std::string RtpReceiver::get_source_key(const struct sockaddr_in& addr) const {
     return std::string(ip_str) + ":" + std::to_string(ntohs(addr.sin_port));
 }
 
+std::string RtpReceiver::make_pcm_accumulator_key(uint32_t ssrc) const {
+    char buffer[32];
+    snprintf(buffer, sizeof(buffer), "ssrc:%u", ssrc);
+    return std::string(buffer);
+}
+
 void RtpReceiver::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, const std::string& source_key) {
     char old_ssrc_hex[12];
     char new_ssrc_hex[12];
@@ -118,10 +122,7 @@ void RtpReceiver::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, cons
    if (reordering_buffers_.count(old_ssrc)) {
        reordering_buffers_.at(old_ssrc).reset();
    }
-   pcm_accumulators_.erase(old_ssrc);
-   is_accumulating_chunk_.erase(old_ssrc);
-   chunk_first_packet_received_time_.erase(old_ssrc);
-   chunk_first_packet_rtp_timestamp_.erase(old_ssrc);
+   reset_pcm_accumulator(make_pcm_accumulator_key(old_ssrc));
 
    log_message("State for SSRC " + std::string(old_ssrc_hex) + " cleared due to SSRC change.");
 }
@@ -178,19 +179,15 @@ void RtpReceiver::close_socket() {
    {
        std::lock_guard<std::mutex> lock(reordering_buffer_mutex_);
        reordering_buffers_.clear();
-       pcm_accumulators_.clear();
-       is_accumulating_chunk_.clear();
-       chunk_first_packet_received_time_.clear();
-       chunk_first_packet_rtp_timestamp_.clear();
    }
    {
        std::lock_guard<std::mutex> lock(source_ssrc_mutex_);
        source_to_last_ssrc_.clear();
    }
 
-    std::lock_guard<std::mutex> lock(socket_fds_mutex_);
-    clear_all_streams();
+    reset_all_pcm_accumulators();
 
+    std::lock_guard<std::mutex> lock(socket_fds_mutex_);
     #ifdef _WIN32
         FD_ZERO(&master_read_fds_);
         max_fd_ = NAR_INVALID_SOCKET_VALUE;
@@ -242,7 +239,7 @@ void RtpReceiver::run() {
     #endif
  
     while (is_running()) {
-        dispatch_clock_ticks();
+        service_clock_manager();
 
         #ifdef _WIN32
             // Windows: Use select()
@@ -283,7 +280,7 @@ void RtpReceiver::run() {
                 // Call internal version with take_lock=false since we already hold the lock
                 process_ready_packets_internal(ssrc, cliaddr, false);
             }
-            dispatch_clock_ticks();
+            service_clock_manager();
             continue;
         }
 
@@ -412,7 +409,7 @@ void RtpReceiver::run() {
                 } // End if EPOLLIN
             } // End for n_events
         #endif
-        dispatch_clock_ticks();
+        service_clock_manager();
     } // End while is_running
     log_message("RTP receiver thread finished.");
 }
@@ -555,329 +552,51 @@ void RtpReceiver::process_ready_packets_internal(uint32_t ssrc, const struct soc
         return;
     }
 
-    // Get or create the accumulator for this SSRC
-    auto& pcm_accumulator = pcm_accumulators_[ssrc];
-    if (pcm_accumulator.capacity() < TARGET_PCM_CHUNK_SIZE * 2) {
-        pcm_accumulator.reserve(TARGET_PCM_CHUNK_SIZE * 2);
-    }
+    char client_ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
+    std::string source_tag = client_ip_str;
+
+    const bool system_is_le = is_system_little_endian();
+    const std::string accumulator_key = make_pcm_accumulator_key(ssrc);
 
     for (auto& packet_data : ready_packets) {
-        if (!is_accumulating_chunk_[ssrc]) {
-            chunk_first_packet_received_time_[ssrc] = packet_data.received_time;
-            chunk_first_packet_rtp_timestamp_[ssrc] = packet_data.rtp_timestamp;
-            is_accumulating_chunk_[ssrc] = true;
-        }
-
         std::vector<uint8_t> processed_payload = std::move(packet_data.payload);
-        bool system_is_le = is_system_little_endian();
         if ((props.endianness == Endianness::BIG && system_is_le) ||
             (props.endianness == Endianness::LITTLE && !system_is_le)) {
             swap_endianness(processed_payload.data(), processed_payload.size(), props.bit_depth);
         }
+        NetworkAudioReceiver::PcmAppendContext pcm_context;
+        pcm_context.accumulator_key = accumulator_key;
+        pcm_context.source_tag = source_tag;
+        pcm_context.payload = std::move(processed_payload);
+        pcm_context.sample_rate = props.sample_rate;
+        pcm_context.channels = props.channels;
+        pcm_context.bit_depth = props.bit_depth;
+        pcm_context.chlayout1 = 0x03; // Stereo L/R
+        pcm_context.chlayout2 = 0x00;
+        pcm_context.received_time = packet_data.received_time;
+        pcm_context.rtp_timestamp = packet_data.rtp_timestamp;
+        pcm_context.ssrcs.reserve(1 + packet_data.csrcs.size());
+        pcm_context.ssrcs.push_back(packet_data.ssrc);
+        pcm_context.ssrcs.insert(pcm_context.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
 
-        pcm_accumulator.insert(pcm_accumulator.end(), processed_payload.begin(), processed_payload.end());
-
-        while (pcm_accumulator.size() >= TARGET_PCM_CHUNK_SIZE) {
-            TaggedAudioPacket packet;
-            packet.received_time = chunk_first_packet_received_time_[ssrc];
-            packet.rtp_timestamp = chunk_first_packet_rtp_timestamp_[ssrc];
-
-            size_t bytes_per_sample = props.bit_depth / 8;
-            if (bytes_per_sample > 0 && props.channels > 0) {
-                size_t samples_in_chunk = (TARGET_PCM_CHUNK_SIZE / bytes_per_sample) / props.channels;
-                chunk_first_packet_rtp_timestamp_[ssrc] += samples_in_chunk;
-            }
-
-            packet.ssrcs.push_back(packet_data.ssrc);
-            packet.ssrcs.insert(packet.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
-
-            char client_ip_str[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
-            std::string source_tag = client_ip_str;
-            packet.source_tag = source_tag;
-
-            packet.channels = props.channels;
-            packet.sample_rate = props.sample_rate;
-            packet.bit_depth = props.bit_depth;
-            packet.chlayout1 = 0x03; // Stereo L/R
-            packet.chlayout2 = 0x00;
-
-            packet.audio_data.assign(pcm_accumulator.begin(), pcm_accumulator.begin() + TARGET_PCM_CHUNK_SIZE);
-            pcm_accumulator.erase(pcm_accumulator.begin(), pcm_accumulator.begin() + TARGET_PCM_CHUNK_SIZE);
-
-            is_accumulating_chunk_[ssrc] = false;
-
-            enqueue_chunk(std::move(packet));
-
+        auto completed_chunks = append_pcm_payload(std::move(pcm_context));
+        for (auto& chunk : completed_chunks) {
             bool new_tag = false;
             {
                 std::lock_guard<std::mutex> lock(seen_tags_mutex_);
-                if (std::find(seen_tags_.begin(), seen_tags_.end(), source_tag) == seen_tags_.end()) {
-                    seen_tags_.push_back(source_tag);
+                if (std::find(seen_tags_.begin(), seen_tags_.end(), chunk.source_tag) == seen_tags_.end()) {
+                    seen_tags_.push_back(chunk.source_tag);
                     new_tag = true;
                 }
             }
             if (new_tag && notification_queue_) {
-                notification_queue_->push({source_tag});
+                notification_queue_->push({chunk.source_tag});
             }
+
+            dispatch_ready_packet(std::move(chunk));
         }
     }
-}
-
-void RtpReceiver::dispatch_clock_ticks() {
-    std::vector<std::pair<std::string, uint64_t>> pending_ticks;
-
-    {
-        std::lock_guard<std::mutex> lock(stream_state_mutex_);
-        for (auto& [tag, state_ptr] : stream_states_) {
-            if (!state_ptr) {
-                continue;
-            }
-
-            auto& state = *state_ptr;
-            if (!state.clock_handle.valid()) {
-                continue;
-            }
-
-            auto condition = state.clock_handle.condition;
-            if (!condition) {
-                continue;
-            }
-
-            uint64_t sequence_snapshot = 0;
-            {
-                std::unique_lock<std::mutex> condition_lock(condition->mutex);
-                sequence_snapshot = condition->sequence;
-            }
-
-            if (sequence_snapshot > state.clock_last_sequence) {
-                uint64_t tick_count = sequence_snapshot - state.clock_last_sequence;
-                state.clock_last_sequence = sequence_snapshot;
-                pending_ticks.emplace_back(tag, tick_count);
-            }
-        }
-    }
-
-    for (const auto& [tag, tick_count] : pending_ticks) {
-        for (uint64_t i = 0; i < tick_count; ++i) {
-            if (!is_running()) {
-                return;
-            }
-            handle_clock_tick(tag);
-        }
-    }
-}
-
-
-uint32_t RtpReceiver::calculate_samples_per_chunk(int channels, int bit_depth) {
-    if (channels <= 0 || bit_depth <= 0 || (bit_depth % 8) != 0) {
-        return 0;
-    }
-
-    const std::size_t bytes_per_frame = static_cast<std::size_t>(channels) * static_cast<std::size_t>(bit_depth / 8);
-    if (bytes_per_frame == 0 || (TARGET_PCM_CHUNK_SIZE % bytes_per_frame) != 0) {
-        return 0;
-    }
-
-    return static_cast<uint32_t>(TARGET_PCM_CHUNK_SIZE / bytes_per_frame);
-}
-
-std::shared_ptr<RtpReceiver::StreamState> RtpReceiver::get_or_create_stream_state(const TaggedAudioPacket& packet) {
-    auto it = stream_states_.find(packet.source_tag);
-
-    if (it == stream_states_.end()) {
-        auto state = std::make_shared<StreamState>();
-        state->source_tag = packet.source_tag;
-        state->sample_rate = packet.sample_rate;
-        state->channels = packet.channels;
-        state->bit_depth = packet.bit_depth;
-        state->chlayout1 = packet.chlayout1;
-        state->chlayout2 = packet.chlayout2;
-        state->samples_per_chunk = calculate_samples_per_chunk(packet.channels, packet.bit_depth);
-        state->next_rtp_timestamp = 0;
-
-        if (state->samples_per_chunk == 0) {
-            log_error("Unsupported RTP format for scheduled delivery from " + packet.source_tag);
-            return nullptr;
-        }
-
-        auto inserted = stream_states_.emplace(packet.source_tag, state);
-        it = inserted.first;
-
-        if (clock_manager_) {
-            try {
-                state->clock_handle = clock_manager_->register_clock_condition(
-                    state->sample_rate, state->channels, state->bit_depth);
-                if (!state->clock_handle.valid()) {
-                    throw std::runtime_error("ClockManager returned invalid condition handle");
-                }
-                if (auto condition = state->clock_handle.condition) {
-                    std::lock_guard<std::mutex> condition_lock(condition->mutex);
-                    state->clock_last_sequence = condition->sequence;
-                } else {
-                    state->clock_last_sequence = 0;
-                }
-            } catch (const std::exception& ex) {
-                log_error("Failed to register clock for " + state->source_tag + ": " + ex.what());
-                stream_states_.erase(it);
-                return nullptr;
-            }
-        }
-
-        return state;
-    }
-
-    auto state = it->second;
-    if (!state) {
-        state = std::make_shared<StreamState>();
-        state->source_tag = packet.source_tag;
-        it->second = state;
-    }
-
-    bool format_changed = (state->sample_rate != packet.sample_rate) ||
-                          (state->channels != packet.channels) ||
-                          (state->bit_depth != packet.bit_depth);
-
-    if (format_changed) {
-        if (clock_manager_ && state->clock_handle.valid()) {
-            try {
-                clock_manager_->unregister_clock_condition(state->clock_handle);
-            } catch (const std::exception& ex) {
-                log_error("Failed to unregister clock for " + state->source_tag + ": " + ex.what());
-            }
-            state->clock_handle = {};
-            state->clock_last_sequence = 0;
-        }
-
-        state->sample_rate = packet.sample_rate;
-        state->channels = packet.channels;
-        state->bit_depth = packet.bit_depth;
-        state->chlayout1 = packet.chlayout1;
-        state->chlayout2 = packet.chlayout2;
-        state->samples_per_chunk = calculate_samples_per_chunk(packet.channels, packet.bit_depth);
-        state->next_rtp_timestamp = 0;
-        state->pending_chunks.clear();
-
-        if (state->samples_per_chunk == 0) {
-            log_error("Unsupported RTP format for scheduled delivery from " + packet.source_tag);
-            stream_states_.erase(it);
-            return nullptr;
-        }
-
-        if (clock_manager_) {
-            try {
-                state->clock_handle = clock_manager_->register_clock_condition(
-                    state->sample_rate, state->channels, state->bit_depth);
-                if (!state->clock_handle.valid()) {
-                    throw std::runtime_error("ClockManager returned invalid condition handle");
-                }
-                if (auto condition = state->clock_handle.condition) {
-                    std::lock_guard<std::mutex> condition_lock(condition->mutex);
-                    state->clock_last_sequence = condition->sequence;
-                } else {
-                    state->clock_last_sequence = 0;
-                }
-            } catch (const std::exception& ex) {
-                log_error("Failed to register clock for " + state->source_tag + ": " + ex.what());
-                stream_states_.erase(it);
-                return nullptr;
-            }
-        }
-    }
-
-    state->last_ssrcs = packet.ssrcs;
-    return state;
-}
-
-void RtpReceiver::enqueue_chunk(TaggedAudioPacket&& packet) {
-    if (!clock_manager_) {
-        NetworkAudioReceiver::dispatch_ready_packet(std::move(packet));
-        return;
-    }
-
-    bool fallback = false;
-    {
-        std::lock_guard<std::mutex> lock(stream_state_mutex_);
-        auto state = get_or_create_stream_state(packet);
-        if (!state) {
-            fallback = true;
-        } else {
-            state->pending_chunks.push_back(std::move(packet));
-            state->last_ssrcs = state->pending_chunks.back().ssrcs;
-        }
-    }
-
-    if (fallback) {
-        NetworkAudioReceiver::dispatch_ready_packet(std::move(packet));
-    }
-}
-
-void RtpReceiver::handle_clock_tick(const std::string& source_tag) {
-    TaggedAudioPacket packet;
-
-    {
-        std::lock_guard<std::mutex> lock(stream_state_mutex_);
-        auto it = stream_states_.find(source_tag);
-        if (it == stream_states_.end() || !it->second) {
-            return;
-        }
-
-        auto& state = *it->second;
-        const auto now = std::chrono::steady_clock::now();
-
-        if (!state.pending_chunks.empty()) {
-            packet = std::move(state.pending_chunks.front());
-            state.pending_chunks.pop_front();
-            packet.received_time = now;
-            state.last_ssrcs = packet.ssrcs;
-
-            if (state.samples_per_chunk > 0) {
-                if (packet.rtp_timestamp.has_value()) {
-                    state.next_rtp_timestamp = packet.rtp_timestamp.value();
-                } else {
-                    state.next_rtp_timestamp += state.samples_per_chunk;
-                    packet.rtp_timestamp = state.next_rtp_timestamp;
-                }
-            }
-        } else {
-            packet.source_tag = state.source_tag;
-            packet.audio_data.assign(TARGET_PCM_CHUNK_SIZE, 0);
-            packet.received_time = now;
-            packet.sample_rate = state.sample_rate;
-            packet.channels = state.channels;
-            packet.bit_depth = state.bit_depth;
-            packet.chlayout1 = state.chlayout1;
-            packet.chlayout2 = state.chlayout2;
-            packet.ssrcs = state.last_ssrcs;
-
-            if (state.samples_per_chunk > 0) {
-                state.next_rtp_timestamp += state.samples_per_chunk;
-                packet.rtp_timestamp = state.next_rtp_timestamp;
-            } else {
-                packet.rtp_timestamp.reset();
-            }
-        }
-    }
-
-    NetworkAudioReceiver::dispatch_ready_packet(std::move(packet));
-}
-
-void RtpReceiver::clear_all_streams() {
-    std::lock_guard<std::mutex> lock(stream_state_mutex_);
-    if (clock_manager_) {
-        for (auto& [tag, state] : stream_states_) {
-            if (state && state->clock_handle.valid()) {
-                try {
-                    clock_manager_->unregister_clock_condition(state->clock_handle);
-                } catch (const std::exception& ex) {
-                    log_error("Failed to unregister clock for " + tag + ": " + ex.what());
-                }
-                state->clock_handle = {};
-                state->clock_last_sequence = 0;
-            }
-        }
-    }
-    stream_states_.clear();
 }
 
 // --- Dummied/Simplified NetworkAudioReceiver Pure Virtual Method Implementations ---
