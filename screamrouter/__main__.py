@@ -308,7 +308,7 @@ def main():
                 logger.error(f"Error during signal handler cleanup: {e}")
             server.should_exit = True
             server.force_exit = True
-            os.kill(os.getpid(), signal.SIGTERM)
+            #os.kill(os.getpid(), signal.SIGTERM)
             sys.exit(0)
 
 

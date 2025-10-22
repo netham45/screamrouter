@@ -75,7 +75,16 @@ void TimeshiftManager::stop() {
         LOG_CPP_WARNING("[TimeshiftManager] Already stopped or stopping.");
         return;
     }
-    LOG_CPP_INFO("[TimeshiftManager] Stopping...");
+    size_t buf_size = 0;
+    size_t processor_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        buf_size = global_timeshift_buffer_.size();
+        for (auto const& kv : processor_targets_) {
+            processor_count += kv.second.size();
+        }
+    }
+    LOG_CPP_INFO("[TimeshiftManager] Stopping... buffer=%zu processors=%zu", buf_size, processor_count);
     stop_flag_ = true;
     m_state_version_++;
     run_loop_cv_.notify_all();

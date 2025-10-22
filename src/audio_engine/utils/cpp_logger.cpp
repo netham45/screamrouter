@@ -24,6 +24,7 @@ namespace { // Anonymous namespace for internal linkage
     const size_t MAX_LOG_QUEUE_SIZE = 2048; // Max number of log entries in queue
     bool shutdown_requested = false;
     bool overflow_message_logged_since_clear = false; // To prevent spamming overflow messages
+    std::atomic<bool> stderr_mirror{false};
 }
 
 // Definition of the global log level variable
@@ -77,6 +78,18 @@ void log_message(LogLevel level, const char* file, int line, const char* format,
         va_start(args, format);
         vsnprintf(buffer.data(), buffer.size(), format, args);
         va_end(args);
+    }
+
+    // Mirror to stderr if enabled (best-effort, non-blocking)
+    if (stderr_mirror.load(std::memory_order_relaxed)) {
+        const char* lvl = "INFO";
+        switch (level) {
+            case LogLevel::DEBUG: lvl = "DEBUG"; break;
+            case LogLevel::INFO: lvl = "INFO"; break;
+            case LogLevel::WARNING: lvl = "WARN"; break;
+            case LogLevel::ERR: lvl = "ERROR"; break;
+        }
+        std::cerr << "[CPP][" << lvl << "][" << (file ? file : "?") << ":" << line << "] " << buffer.data() << std::endl;
     }
 
     LogEntry new_entry;
@@ -157,6 +170,10 @@ void shutdown_cpp_logger() {
 
 void set_cpp_log_level(LogLevel level) {
     current_log_level.store(level, std::memory_order_relaxed);
+}
+
+void set_cpp_log_stderr_mirror(bool enable) {
+    stderr_mirror.store(enable, std::memory_order_relaxed);
 }
 
 } // namespace logging

@@ -16,6 +16,7 @@ SinkManager::~SinkManager() {
 
 bool SinkManager::add_sink(const SinkConfig& config, bool running) {
     LOG_CPP_INFO("Adding sink: %s", config.id.c_str());
+    const auto t0 = std::chrono::steady_clock::now();
 
     if (!running) {
         LOG_CPP_ERROR("Cannot add sink, manager is not running.");
@@ -58,8 +59,14 @@ bool SinkManager::add_sink(const SinkConfig& config, bool running) {
         m_sink_configs[config.id] = config;
     }
 
+    const auto t_make1 = std::chrono::steady_clock::now();
     m_sinks.at(config.id)->start();
-    LOG_CPP_INFO("Sink %s added and started successfully.", config.id.c_str());
+    const auto t_start1 = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("Sink %s added and started successfully. (construct=%lld ms start=%lld ms total=%lld ms)",
+                 config.id.c_str(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_make1 - t0).count(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_start1 - t_make1).count(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_start1 - t0).count());
     return true;
 }
 
@@ -81,6 +88,7 @@ bool SinkManager::remove_sink(const std::string& sink_id) {
     }
 
     if (sink_to_remove) {
+        LOG_CPP_INFO("[SinkManager] Stopping mixer for sink: %s", sink_id.c_str());
         sink_to_remove->stop();
     }
 
@@ -160,6 +168,26 @@ std::vector<SinkAudioMixer*> SinkManager::get_all_mixers() {
         mixers.push_back(mixer.get());
     }
     return mixers;
+}
+
+void SinkManager::stop_all() {
+    std::vector<std::unique_ptr<SinkAudioMixer>> to_stop;
+    {
+        std::scoped_lock lock(m_manager_mutex);
+        LOG_CPP_INFO("[SinkManager] stop_all(): stopping %zu sinks", m_sinks.size());
+        for (auto &pair : m_sinks) {
+            to_stop.push_back(std::move(pair.second));
+        }
+        m_sinks.clear();
+        m_sink_configs.clear();
+        m_mp3_output_queues.clear();
+    }
+    for (auto &mixer : to_stop) {
+        if (mixer) {
+            LOG_CPP_INFO("[SinkManager] stop_all(): stopping mixer id=%s", mixer->get_config().sink_id.c_str());
+            mixer->stop();
+        }
+    }
 }
 
 } // namespace audio

@@ -356,6 +356,9 @@ private:
      * @return Pointer to the GlobalSynchronizationClock for this rate.
      */
     GlobalSynchronizationClock* get_or_create_sync_clock(int sample_rate);
+
+    // Debug helper to dump state during shutdown hangs
+    void debug_dump_state(const char* label);
 };
     
 /**

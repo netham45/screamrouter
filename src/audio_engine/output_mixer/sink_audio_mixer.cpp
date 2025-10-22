@@ -150,6 +150,7 @@ SinkAudioMixer::~SinkAudioMixer() {
     if (!stop_flag_) {
         stop();
     }
+    join_startup_thread();
     if (component_thread_.joinable()) {
         LOG_CPP_WARNING("[SinkMixer:%s] Warning: Joining thread in destructor, stop() might not have been called properly.", config_.sink_id.c_str());
         component_thread_.join();
@@ -375,36 +376,25 @@ void SinkAudioMixer::start() {
         LOG_CPP_INFO("[SinkMixer:%s] Already running.", config_.sink_id.c_str());
         return;
     }
-    LOG_CPP_INFO("[SinkMixer:%s] Starting...", config_.sink_id.c_str());
-    stop_flag_ = false;
-    payload_buffer_write_pos_ = 0;
-    reset_profiler_counters();
-    mix_period_ = calculate_mix_period();
-    next_mix_time_ = std::chrono::steady_clock::now();
+    if (startup_in_progress_.load(std::memory_order_acquire)) {
+        LOG_CPP_INFO("[SinkMixer:%s] Startup already in progress.", config_.sink_id.c_str());
+        return;
+    }
 
-    clear_pending_audio();
-
-    if (network_sender_ && !network_sender_->setup()) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Network sender setup failed. Cannot start mixer thread.", config_.sink_id.c_str());
-        if (config_.protocol == "system_audio") {
-            LOG_CPP_WARNING("[SinkMixer:%s] System audio playback sender setup failed; continuing anyway.",
-                            config_.sink_id.c_str());
-        } else {
-            return;
+    if (startup_thread_.joinable()) {
+        try {
+            startup_thread_.join();
+        } catch (const std::system_error& e) {
+            LOG_CPP_ERROR("[SinkMixer:%s] Error joining previous startup thread: %s", config_.sink_id.c_str(), e.what());
         }
     }
 
-    register_mix_timer();
-
+    startup_in_progress_.store(true, std::memory_order_release);
     try {
-        component_thread_ = std::thread(&SinkAudioMixer::run, this);
-        LOG_CPP_INFO("[SinkMixer:%s] Thread started.", config_.sink_id.c_str());
+        startup_thread_ = std::thread(&SinkAudioMixer::start_async, this);
     } catch (const std::system_error& e) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Failed to start thread: %s", config_.sink_id.c_str(), e.what());
-        unregister_mix_timer();
-        if (network_sender_) {
-            network_sender_->close();
-        }
+        startup_in_progress_.store(false, std::memory_order_release);
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to launch startup thread: %s", config_.sink_id.c_str(), e.what());
         throw;
     }
 }
@@ -413,15 +403,30 @@ void SinkAudioMixer::start() {
  * @brief Stops the mixer's processing thread and cleans up resources.
  */
 void SinkAudioMixer::stop() {
-     if (stop_flag_) {
+    LOG_CPP_INFO("[SinkMixer:%s] stop(): enter", config_.sink_id.c_str());
+    join_startup_thread();
+
+    if (stop_flag_) {
         LOG_CPP_INFO("[SinkMixer:%s] Already stopped or stopping.", config_.sink_id.c_str());
         return;
     }
-    LOG_CPP_INFO("[SinkMixer:%s] Stopping...", config_.sink_id.c_str());
+
+    size_t inputs = 0;
+    size_t listeners = 0;
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        inputs = input_queues_.size();
+    }
+    {
+        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
+        listeners = listener_senders_.size();
+    }
+    LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_write_pos_, clock_manager_enabled_.load() ? 1 : 0);
     stop_flag_ = true;
 
     input_cv_.notify_all();
     unregister_mix_timer();
+    LOG_CPP_INFO("[SinkMixer:%s] Mix timer unregistered", config_.sink_id.c_str());
 
     if (mp3_output_queue_ && lame_global_flags_) {
         LOG_CPP_INFO("[SinkMixer:%s] Flushing LAME buffer...", config_.sink_id.c_str());
@@ -434,7 +439,7 @@ void SinkAudioMixer::stop() {
     }
 
     if (component_thread_.joinable()) {
-         try {
+        try {
             component_thread_.join();
             LOG_CPP_INFO("[SinkMixer:%s] Thread joined.", config_.sink_id.c_str());
         } catch (const std::system_error& e) {
@@ -443,6 +448,7 @@ void SinkAudioMixer::stop() {
     }
 
     if (network_sender_) {
+        LOG_CPP_INFO("[SinkMixer:%s] Closing primary network sender...", config_.sink_id.c_str());
         network_sender_->close();
     }
 
@@ -450,12 +456,98 @@ void SinkAudioMixer::stop() {
         std::lock_guard<std::mutex> lock(listener_senders_mutex_);
         for (auto& pair : listener_senders_) {
             if (pair.second) {
+                LOG_CPP_INFO("[SinkMixer:%s] Closing listener sender id=%s", config_.sink_id.c_str(), pair.first.c_str());
                 pair.second->close();
             }
         }
         listener_senders_.clear();
         LOG_CPP_INFO("[SinkMixer:%s] All listener senders closed and cleared.", config_.sink_id.c_str());
     }
+    LOG_CPP_INFO("[SinkMixer:%s] stop(): exit", config_.sink_id.c_str());
+}
+
+void SinkAudioMixer::start_async() {
+    bool started = false;
+    try {
+        started = start_internal();
+    } catch (const std::exception& ex) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Exception during startup: %s", config_.sink_id.c_str(), ex.what());
+    } catch (...) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Unknown exception during startup.", config_.sink_id.c_str());
+    }
+
+    if (!started) {
+        stop_flag_ = true;
+    }
+
+    startup_in_progress_.store(false, std::memory_order_release);
+}
+
+bool SinkAudioMixer::start_internal() {
+    LOG_CPP_INFO("[SinkMixer:%s] Starting...", config_.sink_id.c_str());
+    const auto t0 = std::chrono::steady_clock::now();
+
+    stop_flag_ = false;
+    payload_buffer_write_pos_ = 0;
+    reset_profiler_counters();
+    mix_period_ = calculate_mix_period();
+    next_mix_time_ = std::chrono::steady_clock::now();
+
+    clear_pending_audio();
+
+    const auto t_setup0 = std::chrono::steady_clock::now();
+    if (network_sender_ && !network_sender_->setup()) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Network sender setup failed.", config_.sink_id.c_str());
+        if (config_.protocol == "system_audio") {
+            LOG_CPP_WARNING("[SinkMixer:%s] System audio playback sender setup failed; continuing anyway.",
+                            config_.sink_id.c_str());
+        } else {
+            if (network_sender_) {
+                network_sender_->close();
+            }
+            return false;
+        }
+    }
+    const auto t_setup1 = std::chrono::steady_clock::now();
+    if (network_sender_) {
+        LOG_CPP_INFO("[SinkMixer:%s] Network sender setup in %lld ms", config_.sink_id.c_str(),
+                     (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_setup1 - t_setup0).count());
+    }
+
+    register_mix_timer();
+
+    try {
+        const auto t_thr0 = std::chrono::steady_clock::now();
+        component_thread_ = std::thread(&SinkAudioMixer::run, this);
+        const auto t_thr1 = std::chrono::steady_clock::now();
+        LOG_CPP_INFO("[SinkMixer:%s] Thread started in %lld ms (total so far %lld ms).",
+                     config_.sink_id.c_str(),
+                     (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_thr1 - t_thr0).count(),
+                     (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_thr1 - t0).count());
+    } catch (const std::system_error& e) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to start thread: %s", config_.sink_id.c_str(), e.what());
+        unregister_mix_timer();
+        if (network_sender_) {
+            network_sender_->close();
+        }
+        return false;
+    }
+
+    return true;
+}
+
+void SinkAudioMixer::join_startup_thread() {
+    if (!startup_thread_.joinable()) {
+        return;
+    }
+
+    try {
+        startup_thread_.join();
+    } catch (const std::system_error& e) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Error joining startup thread: %s", config_.sink_id.c_str(), e.what());
+    }
+
+    startup_in_progress_.store(false, std::memory_order_release);
 }
 
 /**
@@ -525,6 +617,8 @@ bool SinkAudioMixer::wait_for_source_data() {
                 input_active_state_[instance_id] = false;
                 m_buffer_underruns++;
                 lagging_sources++;
+                // Per-source underrun profiling
+                profiling_source_underruns_[instance_id]++;
             }
         }
     }
@@ -606,6 +700,7 @@ bool SinkAudioMixer::wait_for_source_data() {
  * @brief Mixes audio from all active source buffers into the main mixing buffer.
  */
 void SinkAudioMixer::mix_buffers() {
+    auto t0 = std::chrono::steady_clock::now();
     std::fill(mixing_buffer_.begin(), mixing_buffer_.end(), 0);
     
     std::vector<uint32_t> collected_csrcs;
@@ -658,12 +753,19 @@ void SinkAudioMixer::mix_buffers() {
     }
 
     LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Mix complete. Mixed %zu active sources into mixing_buffer_ (%zu samples).", config_.sink_id.c_str(), active_source_count, total_samples_to_mix);
+    auto t1 = std::chrono::steady_clock::now();
+    uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    profiling_mix_calls_++;
+    profiling_mix_ns_sum_ += static_cast<long double>(dt);
+    if (dt > profiling_mix_ns_max_) profiling_mix_ns_max_ = dt;
+    if (dt < profiling_mix_ns_min_) profiling_mix_ns_min_ = dt;
 }
 
 /**
  * @brief Downscales the 32-bit mixed audio to the target bit depth for network output.
  */
 void SinkAudioMixer::downscale_buffer() {
+    auto t0 = std::chrono::steady_clock::now();
     size_t output_byte_depth = config_.output_bitdepth / 8;
     size_t samples_to_convert = mixing_buffer_.size();
 
@@ -723,6 +825,12 @@ void SinkAudioMixer::downscale_buffer() {
     payload_buffer_write_pos_ += bytes_written;
     profiling_max_payload_buffer_bytes_ = std::max(profiling_max_payload_buffer_bytes_, payload_buffer_write_pos_);
     LOG_CPP_DEBUG("[SinkMixer:%s] Downscale complete. payload_buffer_write_pos_=%zu", config_.sink_id.c_str(), payload_buffer_write_pos_);
+    auto t1 = std::chrono::steady_clock::now();
+    uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    profiling_downscale_calls_++;
+    profiling_downscale_ns_sum_ += static_cast<long double>(dt);
+    if (dt > profiling_downscale_ns_max_) profiling_downscale_ns_max_ = dt;
+    if (dt < profiling_downscale_ns_min_) profiling_downscale_ns_min_ = dt;
 }
 
 /**
@@ -730,6 +838,7 @@ void SinkAudioMixer::downscale_buffer() {
  * @return The number of stereo samples processed.
  */
 size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
+    auto t0 = std::chrono::steady_clock::now();
     if (!stereo_preprocessor_) {
         return 0;
     }
@@ -755,6 +864,12 @@ size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
             break;
         }
     }
+    auto t1 = std::chrono::steady_clock::now();
+    uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    profiling_preprocess_calls_++;
+    profiling_preprocess_ns_sum_ += static_cast<long double>(dt);
+    if (dt > profiling_preprocess_ns_max_) profiling_preprocess_ns_max_ = dt;
+    if (dt < profiling_preprocess_ns_min_) profiling_preprocess_ns_min_ = dt;
     return processed_samples_count;
 }
 
@@ -763,6 +878,7 @@ size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
  * @param samples_to_dispatch The number of stereo samples to send.
  */
 void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
+    auto t0 = std::chrono::steady_clock::now();
     std::vector<std::string> closed_listeners_to_remove;
 
     {
@@ -801,6 +917,12 @@ void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
         remove_listener(listener_id);  // This will close() the sender without holding the lock
         LOG_CPP_INFO("[SinkMixer:%s] Immediately removed closed listener: %s", config_.sink_id.c_str(), listener_id.c_str());
     }
+    auto t1 = std::chrono::steady_clock::now();
+    uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    profiling_dispatch_calls_++;
+    profiling_dispatch_ns_sum_ += static_cast<long double>(dt);
+    if (dt > profiling_dispatch_ns_max_) profiling_dispatch_ns_max_ = dt;
+    if (dt < profiling_dispatch_ns_min_) profiling_dispatch_ns_min_ = dt;
 }
 
 /**
@@ -808,6 +930,7 @@ void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
  * @param samples_to_encode The number of stereo samples to encode.
  */
 void SinkAudioMixer::encode_and_push_mp3(size_t samples_to_encode) {
+    auto t0 = std::chrono::steady_clock::now();
     if (!mp3_output_queue_ || !lame_global_flags_ || samples_to_encode == 0) {
         return;
     }
@@ -838,6 +961,12 @@ void SinkAudioMixer::encode_and_push_mp3(size_t samples_to_encode) {
         mp3_data.mp3_data.assign(mp3_encode_buffer_.begin(), mp3_encode_buffer_.begin() + mp3_bytes_encoded);
         mp3_output_queue_->push(std::move(mp3_data));
     }
+    auto t1 = std::chrono::steady_clock::now();
+    uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    profiling_mp3_calls_++;
+    profiling_mp3_ns_sum_ += static_cast<long double>(dt);
+    if (dt > profiling_mp3_ns_max_) profiling_mp3_ns_max_ = dt;
+    if (dt < profiling_mp3_ns_min_) profiling_mp3_ns_min_ = dt;
 }
 
 /**
@@ -872,6 +1001,27 @@ void SinkAudioMixer::reset_profiler_counters() {
     profiling_last_send_gap_ms_ = 0.0;
     profiling_send_gap_samples_ = 0;
     profiling_last_chunk_send_time_ = std::chrono::steady_clock::now();
+    profiling_mix_ns_sum_ = 0.0L;
+    profiling_mix_calls_ = 0;
+    profiling_mix_ns_max_ = 0;
+    profiling_mix_ns_min_ = std::numeric_limits<uint64_t>::max();
+    profiling_downscale_ns_sum_ = 0.0L;
+    profiling_downscale_calls_ = 0;
+    profiling_downscale_ns_max_ = 0;
+    profiling_downscale_ns_min_ = std::numeric_limits<uint64_t>::max();
+    profiling_preprocess_ns_sum_ = 0.0L;
+    profiling_preprocess_calls_ = 0;
+    profiling_preprocess_ns_max_ = 0;
+    profiling_preprocess_ns_min_ = std::numeric_limits<uint64_t>::max();
+    profiling_dispatch_ns_sum_ = 0.0L;
+    profiling_dispatch_calls_ = 0;
+    profiling_dispatch_ns_max_ = 0;
+    profiling_dispatch_ns_min_ = std::numeric_limits<uint64_t>::max();
+    profiling_mp3_ns_sum_ = 0.0L;
+    profiling_mp3_calls_ = 0;
+    profiling_mp3_ns_max_ = 0;
+    profiling_mp3_ns_min_ = std::numeric_limits<uint64_t>::max();
+    profiling_source_underruns_.clear();
 }
 
 void SinkAudioMixer::maybe_log_profiler() {
@@ -941,8 +1091,15 @@ void SinkAudioMixer::maybe_log_profiler() {
     }
     double total_hold_ms = profiling_underrun_hold_time_ms_ + active_hold_ms;
 
+    // Operation timing averages in ms
+    auto avg_mix_ms = (profiling_mix_calls_ > 0 && profiling_mix_ns_sum_ > 0.0L) ? static_cast<double>(profiling_mix_ns_sum_ / 1'000'000.0L) / static_cast<double>(profiling_mix_calls_) : 0.0;
+    auto avg_downscale_ms = (profiling_downscale_calls_ > 0 && profiling_downscale_ns_sum_ > 0.0L) ? static_cast<double>(profiling_downscale_ns_sum_ / 1'000'000.0L) / static_cast<double>(profiling_downscale_calls_) : 0.0;
+    auto avg_preprocess_ms = (profiling_preprocess_calls_ > 0 && profiling_preprocess_ns_sum_ > 0.0L) ? static_cast<double>(profiling_preprocess_ns_sum_ / 1'000'000.0L) / static_cast<double>(profiling_preprocess_calls_) : 0.0;
+    auto avg_dispatch_ms = (profiling_dispatch_calls_ > 0 && profiling_dispatch_ns_sum_ > 0.0L) ? static_cast<double>(profiling_dispatch_ns_sum_ / 1'000'000.0L) / static_cast<double>(profiling_dispatch_calls_) : 0.0;
+    auto avg_mp3_ms = (profiling_mp3_calls_ > 0 && profiling_mp3_ns_sum_ > 0.0L) ? static_cast<double>(profiling_mp3_ns_sum_ / 1'000'000.0L) / static_cast<double>(profiling_mp3_calls_) : 0.0;
+
     LOG_CPP_INFO(
-        "[Profiler][SinkMixer:%s] cycles=%llu data_cycles=%llu chunks_sent=%llu payload_kib=%.2f active_inputs=%zu/%zu avg_ready=%.2f avg_lagging=%.2f avg_queue=%.2f max_queue=%zu buffer_bytes(current/peak)=(%zu/%zu) underruns=%llu overflows=%llu mp3_overflows=%llu dwell_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu send_gap_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu underrun_hold_ms(total=%.2f active=%.2f last=%.2f events=%llu active=%s)",
+        "[Profiler][SinkMixer:%s] cycles=%llu data_cycles=%llu chunks_sent=%llu payload_kib=%.2f active_inputs=%zu/%zu avg_ready=%.2f avg_lagging=%.2f avg_queue=%.2f max_queue=%zu buffer_bytes(current/peak)=(%zu/%zu) underruns=%llu overflows=%llu mp3_overflows=%llu dwell_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu send_gap_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu underrun_hold_ms(total=%.2f active=%.2f last=%.2f events=%llu active=%s) timings_ms[mix(avg/max/min)=%.3f/%.3f/%.3f downscale(avg/max/min)=%.3f/%.3f/%.3f preprocess(avg/max/min)=%.3f/%.3f/%.3f dispatch(avg/max/min)=%.3f/%.3f/%.3f mp3(avg/max/min)=%.3f/%.3f/%.3f]",
         config_.sink_id.c_str(),
         static_cast<unsigned long long>(profiling_cycles_),
         static_cast<unsigned long long>(profiling_data_ready_cycles_),
@@ -973,13 +1130,36 @@ void SinkAudioMixer::maybe_log_profiler() {
         active_hold_ms,
         profiling_last_underrun_hold_ms_,
         static_cast<unsigned long long>(profiling_underrun_events_),
-        underrun_silence_active_ ? "true" : "false");
+        underrun_silence_active_ ? "true" : "false",
+        avg_mix_ms,
+        static_cast<double>(profiling_mix_ns_max_) / 1'000'000.0,
+        profiling_mix_ns_min_ == std::numeric_limits<uint64_t>::max() ? 0.0 : static_cast<double>(profiling_mix_ns_min_) / 1'000'000.0,
+        avg_downscale_ms,
+        static_cast<double>(profiling_downscale_ns_max_) / 1'000'000.0,
+        profiling_downscale_ns_min_ == std::numeric_limits<uint64_t>::max() ? 0.0 : static_cast<double>(profiling_downscale_ns_min_) / 1'000'000.0,
+        avg_preprocess_ms,
+        static_cast<double>(profiling_preprocess_ns_max_) / 1'000'000.0,
+        profiling_preprocess_ns_min_ == std::numeric_limits<uint64_t>::max() ? 0.0 : static_cast<double>(profiling_preprocess_ns_min_) / 1'000'000.0,
+        avg_dispatch_ms,
+        static_cast<double>(profiling_dispatch_ns_max_) / 1'000'000.0,
+        profiling_dispatch_ns_min_ == std::numeric_limits<uint64_t>::max() ? 0.0 : static_cast<double>(profiling_dispatch_ns_min_) / 1'000'000.0,
+        avg_mp3_ms,
+        static_cast<double>(profiling_mp3_ns_max_) / 1'000'000.0,
+        profiling_mp3_ns_min_ == std::numeric_limits<uint64_t>::max() ? 0.0 : static_cast<double>(profiling_mp3_ns_min_) / 1'000'000.0);
 
     reset_profiler_counters();
     profiling_last_log_time_ = now;
     profiling_last_chunk_send_time_ = now;
     if (underrun_silence_active_) {
         profiling_underrun_active_since_ = now;
+    }
+
+    // Emit per-source underrun summary once per interval
+    if (!profiling_source_underruns_.empty()) {
+        for (const auto& kv : profiling_source_underruns_) {
+            LOG_CPP_INFO("[Profiler][SinkMixer:%s] source=%s underruns=%llu",
+                         config_.sink_id.c_str(), kv.first.c_str(), static_cast<unsigned long long>(kv.second));
+        }
     }
 }
 

@@ -26,6 +26,7 @@
 #include <iomanip>
 #include <cctype>
 #include <utility>
+#include <random>
 
 #include "../../audio_processor/audio_processor.h"
 
@@ -420,6 +421,11 @@ struct PulseAudioReceiver::Impl::Connection {
         std::deque<PendingChunk> pending_chunks;
         ClockManager::CallbackId callback_id = 0;
         uint32_t samples_per_chunk = 0;
+        // Extended RTP timeline state (audio clock units)
+        // rtp_base is a randomized 32-bit offset to align with RTP best practices.
+        // next_rtp_frame holds the next absolute 64-bit timestamp in RTP units
+        // to ensure wrap-safe progression.
+        uint64_t rtp_base = 0;
         uint64_t next_rtp_frame = 0;
         bool has_rtp_frame = false;
     };
@@ -1072,13 +1078,15 @@ void PulseAudioReceiver::Impl::Connection::handle_clock_tick(uint32_t stream_ind
 
             packet.audio_data = std::move(pending.audio_data);
             auto now_stamped = std::chrono::steady_clock::now();
-            if (pending.play_time.time_since_epoch().count() == 0 || pending.play_time > now_stamped) {
+            if (pending.play_time.time_since_epoch().count() == 0) {
                 packet.received_time = now_stamped;
             } else {
                 packet.received_time = pending.play_time;
             }
-            packet.rtp_timestamp = static_cast<uint32_t>(pending.start_frame & 0xFFFFFFFFu);
-            stream.next_rtp_frame = pending.start_frame + pending.chunk_frames;
+            // Map chunk start frame to RTP timeline using randomized base
+            uint64_t start_abs = stream.rtp_base + pending.start_frame;
+            packet.rtp_timestamp = static_cast<uint32_t>(start_abs & 0xFFFFFFFFu);
+            stream.next_rtp_frame = start_abs + pending.chunk_frames;
             stream.has_rtp_frame = true;
         } else {
             record_chunk_metrics(stream,
@@ -1742,7 +1750,18 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     stream_it->second.next_request_time = std::chrono::steady_clock::now();
     stream_it->second.samples_per_chunk = calculate_samples_per_chunk(stream_it->second);
     stream_it->second.has_rtp_frame = false;
-    stream_it->second.next_rtp_frame = 0;
+    // Initialize RTP base to a randomized 32-bit value and set the extended
+    // timeline start. Using a random offset avoids timestamp collisions and
+    // better matches RTP expectations while remaining purely local here.
+    {
+        std::random_device rd;
+        std::mt19937_64 gen(static_cast<uint64_t>(rd()) ^
+                            (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this)) << 1));
+        std::uniform_int_distribution<uint32_t> dist(0, 0xFFFFFFFFu);
+        uint32_t base = dist(gen);
+        stream_it->second.rtp_base = static_cast<uint64_t>(base);
+        stream_it->second.next_rtp_frame = stream_it->second.rtp_base;
+    }
     if (owner->clock_manager && stream_it->second.samples_per_chunk > 0) {
         register_stream_clock(stream_it->second);
     } else if (stream_it->second.samples_per_chunk == 0) {

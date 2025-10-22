@@ -71,6 +71,8 @@ private:
     std::optional<SystemDeviceInfo> parse_screamrouter_fifo_entry(const std::string& filename) const;
     int inotify_fd_ = -1;
     int inotify_watch_fd_ = -1;
+    // Self-pipe to wake poll() on shutdown
+    int wake_pipe_[2] = {-1, -1};
 #endif
 
     std::shared_ptr<NotificationQueue> notification_queue_;

@@ -20,6 +20,7 @@
 #include <cmath> // For std::abs
 #include <limits> // For std::numeric_limits
 #include <pybind11/pybind11.h>
+#include <chrono>
 
 using namespace screamrouter::audio;
 
@@ -76,7 +77,11 @@ AudioEngineConfigApplier::~AudioEngineConfigApplier() {
  * @note Success/failure tracking is not yet fully implemented.
  */
 bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
-    LOG_CPP_DEBUG("Applying new engine state...");
+    using clock = std::chrono::steady_clock;
+    const auto t_start = clock::now();
+
+    LOG_CPP_INFO("[ConfigApplier] Applying desired state: sinks=%zu, paths=%zu",
+                 desired_state.sinks.size(), desired_state.source_paths.size());
 
     std::vector<std::string> sink_ids_to_remove;
     std::vector<AppliedSinkParams> sinks_to_add;
@@ -86,51 +91,60 @@ bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
     std::vector<AppliedSourcePathParams> paths_to_add;
     std::vector<AppliedSourcePathParams> paths_to_update;
 
-    // 1. Reconcile to find differences between the desired state and the current active state.
-    LOG_CPP_DEBUG("Reconciling sinks...");
+    // 1) Reconcile current vs desired
+    const auto t_rec_start = clock::now();
     reconcile_sinks(desired_state.sinks, sink_ids_to_remove, sinks_to_add, sinks_to_update);
-    LOG_CPP_DEBUG("Reconciling source paths...");
     reconcile_source_paths(desired_state.source_paths, path_ids_to_remove, paths_to_add, paths_to_update);
+    const auto t_rec_end = clock::now();
+    LOG_CPP_INFO("[ConfigApplier] Reconcile: %lld ms | sinks(-%zu +%zu ~%zu) paths(-%zu +%zu ~%zu)",
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_rec_end - t_rec_start).count(),
+                 sink_ids_to_remove.size(), sinks_to_add.size(), sinks_to_update.size(),
+                 path_ids_to_remove.size(), paths_to_add.size(), paths_to_update.size());
 
-    // 2. Process removals first to free up resources and avoid dependency issues.
-    // Source paths are removed before sinks as a general practice.
-    LOG_CPP_DEBUG("Processing source path removals (%zu)...", path_ids_to_remove.size());
+    // 2) Removals first (paths then sinks)
+    const auto t_rem_start = clock::now();
+    LOG_CPP_INFO("[ConfigApplier] Removing: paths=%zu, sinks=%zu",
+                 path_ids_to_remove.size(), sink_ids_to_remove.size());
     process_source_path_removals(path_ids_to_remove);
-
-    LOG_CPP_DEBUG("Processing sink removals (%zu)...", sink_ids_to_remove.size());
     process_sink_removals(sink_ids_to_remove);
+    const auto t_rem_end = clock::now();
+    LOG_CPP_INFO("[ConfigApplier] Removals: %lld ms", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_rem_end - t_rem_start).count());
 
-    // 3. Process additions.
-    LOG_CPP_DEBUG("Processing source path additions (%zu)...", paths_to_add.size());
-    // A temporary map is not strictly needed here as connections are handled during sink processing.
+    // 3) Additions (paths then sinks)
+    const auto t_add_start = clock::now();
+    LOG_CPP_INFO("[ConfigApplier] Adding: paths=%zu, sinks=%zu", paths_to_add.size(), sinks_to_add.size());
     std::map<std::string, std::string> added_path_id_to_instance_id;
-    for (auto& path_param : paths_to_add) { // Pass by reference to update generated_instance_id.
+    for (auto& path_param : paths_to_add) {
+        const auto t_one_start = clock::now();
         if (process_source_path_addition(path_param)) {
-            // Successfully added, update our active state map immediately.
             active_source_paths_[path_param.path_id] = {path_param};
-            // Store the generated ID for the connection phase.
             added_path_id_to_instance_id[path_param.path_id] = path_param.generated_instance_id;
+            const auto t_one_end = clock::now();
+            LOG_CPP_INFO("[ConfigApplier] +Path id='%s' -> instance='%s' in %lld ms",
+                         path_param.path_id.c_str(), path_param.generated_instance_id.c_str(),
+                         (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_one_end - t_one_start).count());
         } else {
-            LOG_CPP_ERROR("Failed to add source path: %s. Skipping associated connections.", path_param.path_id.c_str());
-            // Error is logged; processing continues with the next item.
+            const auto t_one_end = clock::now();
+            LOG_CPP_ERROR("[ConfigApplier] +Path FAILED id='%s' after %lld ms",
+                          path_param.path_id.c_str(),
+                          (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_one_end - t_one_start).count());
         }
     }
-
-    LOG_CPP_DEBUG("Processing sink additions (%zu)...", sinks_to_add.size());
-    // Sink additions will also handle initial connections via reconcile_connections_for_sink.
     process_sink_additions(sinks_to_add);
+    const auto t_add_end = clock::now();
+    LOG_CPP_INFO("[ConfigApplier] Additions: %lld ms", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_add_end - t_add_start).count());
 
-    // 4. Process updates for existing items (parameter changes, connection changes).
-    LOG_CPP_DEBUG("Processing source path updates (%zu)...", paths_to_update.size());
+    // 4) Updates
+    const auto t_upd_start = clock::now();
     process_source_path_updates(paths_to_update);
-    
-    LOG_CPP_DEBUG("Processing sink updates (connections) (%zu)...", sinks_to_update.size());
-    // Sink updates will primarily handle connection changes via reconcile_connections_for_sink.
     process_sink_updates(sinks_to_update);
+    const auto t_upd_end = clock::now();
+    LOG_CPP_INFO("[ConfigApplier] Updates: %lld ms", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_upd_end - t_upd_start).count());
 
-    LOG_CPP_DEBUG("Engine state application finished.");
-    // Future work: Implement proper success/failure tracking based on helper method results.
-    return true; // Placeholder, assumes success.
+    const auto t_end = clock::now();
+    LOG_CPP_INFO("[ConfigApplier] Finished apply_state in %lld ms",
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count());
+    return true;
 }
 
 // --- Comparison Helper Functions ---
@@ -245,14 +259,20 @@ void AudioEngineConfigApplier::reconcile_sinks(
  * @param sink_ids_to_remove A vector of sink IDs to be removed.
  */
 void AudioEngineConfigApplier::process_sink_removals(const std::vector<std::string>& sink_ids_to_remove) {
-    LOG_CPP_DEBUG("Processing %zu sink removals...", sink_ids_to_remove.size());
+    LOG_CPP_INFO("[ConfigApplier] Removing %zu sinks...", sink_ids_to_remove.size());
     for (const auto& sink_id : sink_ids_to_remove) {
-        LOG_CPP_DEBUG("  - Removing sink: %s", sink_id.c_str());
+        const auto t0 = std::chrono::steady_clock::now();
+        LOG_CPP_DEBUG("[ConfigApplier]   - Removing sink: %s", sink_id.c_str());
         if (audio_manager_.remove_sink(sink_id)) {
             active_sinks_.erase(sink_id);
-            LOG_CPP_DEBUG("    Sink %s removed successfully from AudioManager and internal state.", sink_id.c_str());
+            const auto t1 = std::chrono::steady_clock::now();
+            LOG_CPP_INFO("[ConfigApplier]     Sink %s removed (in %lld ms)", sink_id.c_str(),
+                         (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
         } else {
-            LOG_CPP_ERROR("    AudioManager failed to remove sink: %s. Internal state may be inconsistent.", sink_id.c_str());
+            const auto t1 = std::chrono::steady_clock::now();
+            LOG_CPP_ERROR("[ConfigApplier]     FAILED to remove sink: %s (after %lld ms). Internal state may be inconsistent.",
+                          sink_id.c_str(),
+                          (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
             // Attempt to remove from internal state anyway to avoid repeated failed attempts.
             active_sinks_.erase(sink_id);
         }
@@ -266,9 +286,17 @@ void AudioEngineConfigApplier::process_sink_removals(const std::vector<std::stri
  * @param sinks_to_add A vector of parameters for the new sinks to be added.
  */
 void AudioEngineConfigApplier::process_sink_additions(const std::vector<AppliedSinkParams>& sinks_to_add) {
-    LOG_CPP_DEBUG("Processing %zu sink additions...", sinks_to_add.size());
+    LOG_CPP_INFO("[ConfigApplier] Adding %zu sinks...", sinks_to_add.size());
     for (const auto& sink_param : sinks_to_add) {
-        LOG_CPP_DEBUG("  - Adding sink: %s", sink_param.sink_id.c_str());
+        const auto t0 = std::chrono::steady_clock::now();
+        LOG_CPP_INFO("[ConfigApplier]   - Adding sink: id='%s' proto='%s' ip='%s' port=%d ch=%d rate=%d bit=%d",
+                     sink_param.sink_id.c_str(),
+                     sink_param.sink_engine_config.protocol.c_str(),
+                     sink_param.sink_engine_config.output_ip.c_str(),
+                     sink_param.sink_engine_config.output_port,
+                     sink_param.sink_engine_config.channels,
+                     sink_param.sink_engine_config.samplerate,
+                     sink_param.sink_engine_config.bitdepth);
         if (audio_manager_.add_sink(sink_param.sink_engine_config)) {
             // Add to internal state.
             InternalSinkState new_internal_state;
@@ -276,13 +304,18 @@ void AudioEngineConfigApplier::process_sink_additions(const std::vector<AppliedS
             // Crucially, clear connections initially; reconcile_connections will set them.
             new_internal_state.params.connected_source_path_ids.clear();
             active_sinks_[sink_param.sink_id] = new_internal_state;
-            LOG_CPP_DEBUG("    Sink %s added to AudioManager and internal state.", sink_param.sink_id.c_str());
+            const auto t1 = std::chrono::steady_clock::now();
+            LOG_CPP_INFO("[ConfigApplier]     Sink %s added in %lld ms", sink_param.sink_id.c_str(),
+                         (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
 
             // Now reconcile connections for the newly added sink.
-            LOG_CPP_DEBUG("    -> Calling reconcile_connections_for_sink for ADDED sink: %s", sink_param.sink_id.c_str());
+            LOG_CPP_DEBUG("[ConfigApplier]     -> reconcile_connections_for_sink(added %s)", sink_param.sink_id.c_str());
             reconcile_connections_for_sink(sink_param); // Pass desired state.
         } else {
-            LOG_CPP_ERROR("    AudioManager failed to add sink: %s", sink_param.sink_id.c_str());
+            const auto t1 = std::chrono::steady_clock::now();
+            LOG_CPP_ERROR("[ConfigApplier]     FAILED to add sink: %s (attempt took %lld ms)",
+                          sink_param.sink_id.c_str(),
+                          (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
             // Don't add to internal state or reconcile connections if add failed.
         }
     }
@@ -296,14 +329,14 @@ void AudioEngineConfigApplier::process_sink_additions(const std::vector<AppliedS
  * @param sinks_to_update A vector of parameters for the sinks to be updated.
  */
 void AudioEngineConfigApplier::process_sink_updates(const std::vector<AppliedSinkParams>& sinks_to_update) {
-    LOG_CPP_DEBUG("Processing %zu sink updates...", sinks_to_update.size());
+    LOG_CPP_INFO("[ConfigApplier] Updating %zu sinks...", sinks_to_update.size());
     for (const auto& desired_sink_param : sinks_to_update) {
         const std::string& sink_id = desired_sink_param.sink_id;
-        LOG_CPP_DEBUG("  - Updating sink: %s", sink_id.c_str());
+        LOG_CPP_DEBUG("[ConfigApplier]   - Updating sink: %s", sink_id.c_str());
 
         auto active_it = active_sinks_.find(sink_id);
         if (active_it == active_sinks_.end()) {
-            LOG_CPP_ERROR("    Cannot update sink %s: Not found in active state (should not happen).", sink_id.c_str());
+            LOG_CPP_ERROR("[ConfigApplier]     Cannot update sink %s: Not found in active state (should not happen).", sink_id.c_str());
             continue;
         }
         InternalSinkState& current_internal_state = active_it->second;
@@ -312,19 +345,26 @@ void AudioEngineConfigApplier::process_sink_updates(const std::vector<AppliedSin
         bool config_changed = !compare_sink_configs(current_internal_state.params.sink_engine_config, desired_sink_param.sink_engine_config);
 
         if (config_changed) {
-            LOG_CPP_DEBUG("    Core sink parameters changed for %s. Re-adding sink.", sink_id.c_str());
+            LOG_CPP_DEBUG("[ConfigApplier]     Core sink parameters changed for %s. Re-adding sink.", sink_id.c_str());
             // Remove the old sink from AudioManager.
+            const auto t_rm0 = std::chrono::steady_clock::now();
             if (!audio_manager_.remove_sink(sink_id)) {
-                 LOG_CPP_ERROR("    Failed to remove sink %s during update. Aborting update for this sink.", sink_id.c_str());
+                 LOG_CPP_ERROR("[ConfigApplier]     Failed to remove sink %s during update. Aborting update for this sink.", sink_id.c_str());
                  continue; // Skip to next sink if removal failed.
             }
+            const auto t_rm1 = std::chrono::steady_clock::now();
+            LOG_CPP_INFO("[ConfigApplier]     Removed old sink %s in %lld ms", sink_id.c_str(),
+                         (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_rm1 - t_rm0).count());
             // Add the sink back with the new config.
+            const auto t_add0 = std::chrono::steady_clock::now();
             if (!audio_manager_.add_sink(desired_sink_param.sink_engine_config)) {
-                 LOG_CPP_ERROR("    Failed to re-add sink %s with new config during update. Sink is now removed.", sink_id.c_str());
+                 LOG_CPP_ERROR("[ConfigApplier]     Failed to re-add sink %s with new config during update. Sink is now removed.", sink_id.c_str());
                  active_sinks_.erase(active_it); // Remove from internal state as it couldn't be re-added.
                  continue; // Skip to next sink.
             }
-            LOG_CPP_DEBUG("    Sink %s re-added successfully with new config.", sink_id.c_str());
+            const auto t_add1 = std::chrono::steady_clock::now();
+            LOG_CPP_INFO("[ConfigApplier]     Sink %s re-added with new config in %lld ms", sink_id.c_str(),
+                         (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_add1 - t_add0).count());
             // Update internal config state.
             current_internal_state.params.sink_engine_config = desired_sink_param.sink_engine_config;
             // Clear internal connection state as they will be re-established.
@@ -332,7 +372,7 @@ void AudioEngineConfigApplier::process_sink_updates(const std::vector<AppliedSin
         }
 
         // Always reconcile connections for updated sinks (whether config changed or only connections changed).
-        LOG_CPP_DEBUG("    -> Calling reconcile_connections_for_sink for UPDATED sink: %s", sink_id.c_str());
+        LOG_CPP_DEBUG("[ConfigApplier]     -> reconcile_connections_for_sink(updated %s)", sink_id.c_str());
         reconcile_connections_for_sink(desired_sink_param); // Pass desired state.
         
         // The internal state's connections are updated inside reconcile_connections_for_sink.
@@ -492,7 +532,17 @@ void AudioEngineConfigApplier::process_source_path_removals(const std::vector<st
  * @return True if the source was added successfully, false otherwise.
  */
 bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathParams& path_param_to_add) {
-    LOG_CPP_DEBUG("Processing source path addition for path_id: %s", path_param_to_add.path_id.c_str());
+    using clock = std::chrono::steady_clock;
+    const auto t0 = clock::now();
+    LOG_CPP_INFO("[ConfigApplier] +Path begin id='%s' src='%s' -> sink='%s' out=%dch@%dHz in=%dch@%dHz/%dbit",
+                 path_param_to_add.path_id.c_str(),
+                 path_param_to_add.source_tag.c_str(),
+                 path_param_to_add.target_sink_id.c_str(),
+                 path_param_to_add.target_output_channels,
+                 path_param_to_add.target_output_samplerate,
+                 path_param_to_add.source_input_channels,
+                 path_param_to_add.source_input_samplerate,
+                 path_param_to_add.source_input_bitdepth);
     
     // 1. Create C++ SourceConfig from the provided parameters.
     audio::SourceConfig cpp_source_config;
@@ -566,39 +616,58 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
             }
         }
 
+        const auto t_cap0 = clock::now();
         if (audio_manager_.add_system_capture_reference(path_param_to_add.source_tag, capture_params)) {
             added_capture_reference = true;
-            LOG_CPP_DEBUG("    Registered system capture reference for %s", path_param_to_add.source_tag.c_str());
+            const auto t_cap1 = clock::now();
+            LOG_CPP_INFO("[ConfigApplier]     Capture ready for %s in %lld ms",
+                         path_param_to_add.source_tag.c_str(),
+                         (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_cap1 - t_cap0).count());
         } else {
-            LOG_CPP_WARNING("    Failed to register system capture reference for %s", path_param_to_add.source_tag.c_str());
+            const auto t_cap1 = clock::now();
+            LOG_CPP_WARNING("[ConfigApplier]     Failed to init capture for %s (attempt %lld ms)",
+                            path_param_to_add.source_tag.c_str(),
+                            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_cap1 - t_cap0).count());
         }
     }
 
     // 2. Call AudioManager to configure the source and get an instance ID.
+    const auto t_cfg0 = clock::now();
     std::string instance_id = audio_manager_.configure_source(cpp_source_config);
+    const auto t_cfg1 = clock::now();
 
     // 3. Handle the result and update the parameter struct.
     if (instance_id.empty()) {
-        LOG_CPP_ERROR("    AudioManager failed to configure source for path_id: %s with source_tag: %s",
-                      path_param_to_add.path_id.c_str(), path_param_to_add.source_tag.c_str());
+        LOG_CPP_ERROR("[ConfigApplier]     FAILED to configure source for path_id: %s source_tag: %s (took %lld ms)",
+                      path_param_to_add.path_id.c_str(), path_param_to_add.source_tag.c_str(),
+                      (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_cfg1 - t_cfg0).count());
         path_param_to_add.generated_instance_id.clear(); // Ensure ID is empty on failure.
         if (added_capture_reference) {
             audio_manager_.remove_system_capture_reference(path_param_to_add.source_tag);
         }
         return false;
     } else {
-        LOG_CPP_DEBUG("    Successfully configured source for path_id: %s, got instance_id: %s",
-                     path_param_to_add.path_id.c_str(), instance_id.c_str());
+        LOG_CPP_INFO("[ConfigApplier]     Configured source for path_id: %s, instance_id: %s (in %lld ms)",
+                     path_param_to_add.path_id.c_str(), instance_id.c_str(),
+                     (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_cfg1 - t_cfg0).count());
         path_param_to_add.generated_instance_id = instance_id; // Store the generated ID.
         
         // Apply the initial speaker layouts map for the newly added source.
-        LOG_CPP_DEBUG("    Applying initial speaker_layouts_map for new source instance %s", instance_id.c_str());
+        const auto t_up0 = clock::now();
+        LOG_CPP_DEBUG("[ConfigApplier]     Applying initial speaker_layouts_map for new source instance %s", instance_id.c_str());
         
         audio::SourceParameterUpdates updates;
         updates.speaker_layouts_map = path_param_to_add.speaker_layouts_map;
         audio_manager_.update_source_parameters(instance_id, updates);
+        const auto t_up1 = clock::now();
+        LOG_CPP_DEBUG("[ConfigApplier]     Initial speaker_layouts_map applied for %s in %lld ms",
+                      instance_id.c_str(),
+                      (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_up1 - t_up0).count());
 
-        LOG_CPP_DEBUG("    Initial speaker_layouts_map applied for instance %s", instance_id.c_str());
+        const auto t1 = clock::now();
+        LOG_CPP_INFO("[ConfigApplier] +Path complete id='%s' total %lld ms",
+                     path_param_to_add.path_id.c_str(),
+                     (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
 
         // The caller (apply_state) is responsible for adding this to the active_source_paths_ map.
         return true;
@@ -614,10 +683,10 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
  * @param paths_to_update A vector of parameters for the source paths to be updated.
  */
 void AudioEngineConfigApplier::process_source_path_updates(const std::vector<AppliedSourcePathParams>& paths_to_update) {
-    LOG_CPP_DEBUG("Processing %zu source path updates...", paths_to_update.size());
+    LOG_CPP_INFO("[ConfigApplier] Updating %zu source path(s)...", paths_to_update.size());
     for (const auto& desired_path_param : paths_to_update) {
         const std::string& path_id = desired_path_param.path_id;
-        LOG_CPP_DEBUG("  - Updating path: %s", path_id.c_str());
+        LOG_CPP_DEBUG("[ConfigApplier]   - Updating path: %s", path_id.c_str());
 
         auto active_it = active_source_paths_.find(path_id);
         if (active_it == active_source_paths_.end()) {
@@ -642,10 +711,11 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
             current_path_state.params.source_input_bitdepth != desired_path_param.source_input_bitdepth;
 
         if (fundamental_change) {
-            LOG_CPP_DEBUG("    Fundamental change detected for path %s. Re-creating SourceInputProcessor.", path_id.c_str());
+            const auto t_recreate0 = std::chrono::steady_clock::now();
+            LOG_CPP_DEBUG("[ConfigApplier]     Fundamental change detected for %s. Re-creating instance.", path_id.c_str());
             // Remove the old instance.
             if (!audio_manager_.remove_source(instance_id)) {
-                 LOG_CPP_ERROR("    Failed to remove old source instance %s during update. Aborting update for this path.", instance_id.c_str());
+                 LOG_CPP_ERROR("[ConfigApplier]     Failed to remove old instance %s. Aborting this path.", instance_id.c_str());
                  continue; // Skip to the next path.
             }
             // Remove from internal state immediately.
@@ -656,19 +726,24 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
             if (process_source_path_addition(temp_param_for_add)) {
                 // Add the new state back to the internal map.
                 active_source_paths_[temp_param_for_add.path_id] = {temp_param_for_add};
-                LOG_CPP_DEBUG("    Path %s re-created with new instance_id: %s",
+                LOG_CPP_DEBUG("[ConfigApplier]     Re-created %s with new instance_id: %s",
                              path_id.c_str(), temp_param_for_add.generated_instance_id.c_str());
                 // Connections for this new instance_id will be re-established by the sink update logic.
             } else {
-                LOG_CPP_ERROR("    Failed to re-create source path %s after fundamental change. Path is now removed.", path_id.c_str());
+                LOG_CPP_ERROR("[ConfigApplier]     Failed to re-create %s after fundamental change. Path is removed.", path_id.c_str());
                 // Path remains removed from active_source_paths_.
             }
+            const auto t_recreate1 = std::chrono::steady_clock::now();
+            LOG_CPP_INFO("[ConfigApplier]     Re-create cycle for %s took %lld ms",
+                         path_id.c_str(),
+                         (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_recreate1 - t_recreate0).count());
             // Whether re-add succeeded or failed, we are done with this path for this update cycle.
             continue;
         }
 
         // Process non-fundamental parameter updates.
-        LOG_CPP_DEBUG("    Applying parameter updates for path %s (Instance: %s)", path_id.c_str(), instance_id.c_str());
+        const auto t_up0 = std::chrono::steady_clock::now();
+        LOG_CPP_DEBUG("[ConfigApplier]     Applying parameter updates for %s (Instance: %s)", path_id.c_str(), instance_id.c_str());
 
         audio::SourceParameterUpdates updates;
         updates.volume = desired_path_param.volume;
@@ -685,13 +760,17 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
         updates.speaker_layouts_map = desired_path_param.speaker_layouts_map;
 
         audio_manager_.update_source_parameters(instance_id, updates);
+        const auto t_up1 = std::chrono::steady_clock::now();
+        LOG_CPP_INFO("[ConfigApplier]     Param update for %s took %lld ms",
+                     path_id.c_str(),
+                     (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_up1 - t_up0).count());
 
         // Update the internal state to reflect the desired parameters.
         // The generated instance ID must be preserved.
         std::string preserved_instance_id = current_path_state.params.generated_instance_id;
         current_path_state.params = desired_path_param;
         current_path_state.params.generated_instance_id = preserved_instance_id;
-        LOG_CPP_DEBUG("    Internal state updated for path %s", path_id.c_str());
+        LOG_CPP_DEBUG("[ConfigApplier]     Internal state updated for path %s", path_id.c_str());
     }
 }
 
@@ -708,7 +787,7 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
  */
 void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkParams& desired_sink_params) {
     const std::string& sink_id = desired_sink_params.sink_id;
-    LOG_CPP_DEBUG("Reconciling connections for sink: %s", sink_id.c_str());
+    LOG_CPP_DEBUG("[ConfigApplier] Reconciling connections for sink: %s", sink_id.c_str());
 
     // 1. Find the current internal state for this sink.
     auto current_sink_state_it = active_sinks_.find(sink_id);
@@ -726,15 +805,15 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
     std::set<std::string> desired_path_ids_set(desired_path_ids_vec.begin(), desired_path_ids_vec.end());
 
     // Log current vs. desired connections for debugging.
-    LOG_CPP_DEBUG("    Current connection path IDs (%zu):", current_path_ids_set.size());
+    LOG_CPP_DEBUG("[ConfigApplier]     Current connection path IDs (%zu):", current_path_ids_set.size());
     if (current_path_ids_set.empty()) { LOG_CPP_DEBUG("      (None)"); }
     for(const auto& id : current_path_ids_set) { LOG_CPP_DEBUG("      - %s", id.c_str()); }
-    LOG_CPP_DEBUG("    Desired connection path IDs (%zu):", desired_path_ids_set.size());
+    LOG_CPP_DEBUG("[ConfigApplier]     Desired connection path IDs (%zu):", desired_path_ids_set.size());
     if (desired_path_ids_set.empty()) { LOG_CPP_DEBUG("      (None)"); }
     for(const auto& id : desired_path_ids_set) { LOG_CPP_DEBUG("      - %s", id.c_str()); }
 
     // 3. Identify and process connections to add.
-    LOG_CPP_DEBUG("    Checking connections to add...");
+    LOG_CPP_DEBUG("[ConfigApplier]     Checking connections to add...");
     for (const auto& desired_path_id : desired_path_ids_set) {
         if (current_path_ids_set.find(desired_path_id) == current_path_ids_set.end()) {
             // This connection is in the desired state but not the current state.
@@ -749,7 +828,7 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
             const std::string& source_instance_id = source_params.generated_instance_id;
             const audio::SinkConfig& sink_config = desired_sink_params.sink_engine_config;
 
-            LOG_CPP_DEBUG("      + Connecting Source:");
+            LOG_CPP_DEBUG("[ConfigApplier]       + Connecting Source:");
             LOG_CPP_DEBUG("          Path ID: %s", desired_path_id.c_str());
             LOG_CPP_DEBUG("          Instance ID: %s", source_instance_id.c_str());
             LOG_CPP_DEBUG("          Source Tag: %s", source_params.source_tag.c_str());
@@ -759,16 +838,21 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
             LOG_CPP_DEBUG("          Format: %dch@%dHz, %dbit", sink_config.channels, sink_config.samplerate, sink_config.bitdepth);
 
             // Call AudioManager to establish the connection.
+            const auto t_c0 = std::chrono::steady_clock::now();
             if (!audio_manager_.connect_source_sink(source_instance_id, sink_id)) {
-                 LOG_CPP_ERROR("        -> AudioManager connect_source_sink FAILED.");
+                 const auto t_c1 = std::chrono::steady_clock::now();
+                 LOG_CPP_ERROR("[ConfigApplier]         -> connect_source_sink FAILED (%lld ms)",
+                               (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_c1 - t_c0).count());
             } else {
-                 LOG_CPP_DEBUG("        -> Connection successful.");
+                 const auto t_c1 = std::chrono::steady_clock::now();
+                 LOG_CPP_INFO("[ConfigApplier]         -> Connection successful in %lld ms",
+                              (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_c1 - t_c0).count());
             }
         }
     }
 
     // 4. Identify and process connections to remove.
-    LOG_CPP_DEBUG("    Checking connections to remove...");
+    LOG_CPP_DEBUG("[ConfigApplier]     Checking connections to remove...");
     for (const auto& current_path_id : current_path_ids_set) {
         if (desired_path_ids_set.find(current_path_id) == desired_path_ids_set.end()) {
             // This connection is in the current state but not the desired state.
@@ -792,18 +876,22 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
             LOG_CPP_DEBUG("          Sink ID: %s", sink_id.c_str());
 
             // Call AudioManager to break the connection.
+            const auto t_d0 = std::chrono::steady_clock::now();
             if (!audio_manager_.disconnect_source_sink(source_instance_id, sink_id)) {
-                 // Log an error, but failure might be expected if the source was already removed by the AudioManager.
-                 LOG_CPP_ERROR("        -> AudioManager disconnect_source_sink FAILED (might be expected if source was already removed).");
+                 const auto t_d1 = std::chrono::steady_clock::now();
+                 LOG_CPP_ERROR("[ConfigApplier]         -> disconnect_source_sink FAILED (%lld ms) (might be expected)",
+                               (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_d1 - t_d0).count());
             } else {
-                 LOG_CPP_DEBUG("        -> Disconnection successful.");
+                 const auto t_d1 = std::chrono::steady_clock::now();
+                 LOG_CPP_INFO("[ConfigApplier]         -> Disconnected in %lld ms",
+                              (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_d1 - t_d0).count());
             }
         }
     }
 
     // 5. Update the internal state to match the desired state.
     current_sink_state.params.connected_source_path_ids = desired_sink_params.connected_source_path_ids;
-    LOG_CPP_DEBUG("    Internal connection state updated for sink %s", sink_id.c_str());
+    LOG_CPP_DEBUG("[ConfigApplier]     Internal connection state updated for sink %s", sink_id.c_str());
 }
 
 

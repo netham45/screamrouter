@@ -46,9 +46,6 @@ NetworkAudioReceiver::~NetworkAudioReceiver() noexcept {
         log_warning("Destructor called while still running. Forcing stop.");
         stop(); // Ensure stop is called
     }
-    // Thread joining should be handled by stop()
-    // close_socket() should be handled by stop()
-
 #ifdef _WIN32
     decrement_winsock_users();
 #endif
@@ -90,6 +87,7 @@ void NetworkAudioReceiver::log_warning(const std::string& msg) {
 
 bool NetworkAudioReceiver::setup_socket() {
     socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
+
     if (socket_fd_ == NAR_INVALID_SOCKET_VALUE) {
         log_error("Failed to create socket");
         return false;
@@ -102,6 +100,8 @@ bool NetworkAudioReceiver::setup_socket() {
         close_socket();
         return false;
     }
+    int buffer_size = 1152 * 10;
+    setsockopt(socket_fd_, SOL_SOCKET, SO_RCVBUF, &buffer_size, sizeof(buffer_size));
 #else // POSIX
     int reuse = 1;
     if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
@@ -109,6 +109,8 @@ bool NetworkAudioReceiver::setup_socket() {
         close_socket();
         return false;
     }
+    int buffer_size = 1152 * 10;
+    setsockopt(socket_fd_, SOL_SOCKET, SO_RCVBUF, &buffer_size, sizeof(buffer_size));
 #endif
 
     struct sockaddr_in server_addr;
@@ -169,13 +171,14 @@ void NetworkAudioReceiver::stop() {
         log_warning("Already stopped or stopping.");
         return;
     }
-    log_message("Stopping...");
+    log_message("Stopping... (socket_fd=" + std::to_string(socket_fd_) + ", thread_joinable=" + (component_thread_.joinable() ? std::string("1") : std::string("0")) + ")");
     stop_flag_ = true;
 
     // Closing the socket can help interrupt blocking recvfrom/poll calls
     // This needs to be done carefully if the socket is used by another thread (run loop)
     // It's generally safe if poll/recvfrom handle errors like EBADF or specific shutdown signals.
     close_socket(); // Close socket to unblock poll/recvfrom
+    log_message("Socket closed (fd now=" + std::to_string(socket_fd_) + ")");
 
     if (component_thread_.joinable()) {
         try {
@@ -330,4 +333,3 @@ std::vector<std::string> NetworkAudioReceiver::get_seen_tags() {
 }
 } // namespace audio
 } // namespace screamrouter
-

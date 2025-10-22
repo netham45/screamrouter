@@ -335,6 +335,9 @@ class BuildExtCommand(build_ext):
                 cmake_args.append(f"-DCMAKE_SYSTEM_PROCESSOR={arch_part}")
 
         env = os.environ.copy()
+        # Ensure function tracing can be toggled via env during pip builds
+        if env.get("SCREAMROUTER_FNTRACE"):
+            cmake_args.append("-DSR_ENABLE_FNTRACE=ON")
         # Help CMake locate dependencies and pybind11
         prefix_paths = [str(self.install_dir), str(self.pybind11_cmake_dir)]
         existing_prefix = env.get("CMAKE_PREFIX_PATH")

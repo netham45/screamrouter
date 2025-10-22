@@ -55,16 +55,54 @@ void AlsaDeviceEnumerator::start() {
 
 void AlsaDeviceEnumerator::stop() {
 #if defined(__linux__)
+    LOG_CPP_INFO("[ALSA-Enumerator] stop() requested (running=%d)", running_.load() ? 1 : 0);
     if (running_.exchange(false)) {
-        if (monitor_thread_.joinable()) {
-            monitor_thread_.join();
+        // Proactively tear down inotify to break out of poll() promptly
+        teardown_fifo_watch();
+        // Signal wake pipe to break out of poll immediately
+        if (wake_pipe_[1] >= 0) {
+            const char b = 'x';
+            (void)write(wake_pipe_[1], &b, 1);
         }
+        if (monitor_thread_.joinable()) {
+            LOG_CPP_INFO("[ALSA-Enumerator] Joining monitor thread (with timeout)...");
+#if defined(__linux__)
+            // Try a timed join using pthread_timedjoin_np to avoid indefinite hangs
+            pthread_t th = monitor_thread_.native_handle();
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_sec += 2; // 2s timeout
+            int rc = pthread_timedjoin_np(th, nullptr, &ts);
+            if (rc == 0) {
+                LOG_CPP_INFO("[ALSA-Enumerator] Monitor thread joined.");
+                // std::thread is now joined by pthread; invalidate it safely
+                // Workaround: create a dummy thread and swap to reset joinable state
+                std::thread().swap(monitor_thread_);
+            } else if (rc == ETIMEDOUT) {
+                LOG_CPP_WARNING("[ALSA-Enumerator] Monitor thread join timed out; detaching to avoid hang.");
+                monitor_thread_.detach();
+            } else {
+                LOG_CPP_WARNING("[ALSA-Enumerator] pthread_timedjoin_np returned rc=%d (%s); detaching thread.", rc, std::strerror(rc));
+                monitor_thread_.detach();
+            }
+#else
+            monitor_thread_.join();
+            LOG_CPP_INFO("[ALSA-Enumerator] Monitor thread joined.");
+#endif
+        } else {
+            LOG_CPP_INFO("[ALSA-Enumerator] Monitor thread not joinable.");
+        }
+    } else {
+        LOG_CPP_INFO("[ALSA-Enumerator] Already stopped.");
     }
 #else
     running_ = false;
 #endif
-    std::lock_guard<std::mutex> lock(registry_mutex_);
-    registry_.clear();
+    {
+        std::lock_guard<std::mutex> lock(registry_mutex_);
+        registry_.clear();
+    }
+    LOG_CPP_INFO("[ALSA-Enumerator] Registry cleared.");
 }
 
 AlsaDeviceEnumerator::Registry AlsaDeviceEnumerator::get_registry_snapshot() const {
@@ -304,8 +342,22 @@ void AlsaDeviceEnumerator::monitor_loop() {
     enumerate_devices();
     setup_fifo_watch();
 
+    // Setup wake pipe for prompt shutdown
+    if (wake_pipe_[0] < 0 || wake_pipe_[1] < 0) {
+        int fds[2];
+        if (pipe(fds) == 0) {
+            wake_pipe_[0] = fds[0];
+            wake_pipe_[1] = fds[1];
+            LOG_CPP_DEBUG("[ALSA-Enumerator] Wake pipe created rd=%d wr=%d", wake_pipe_[0], wake_pipe_[1]);
+        } else {
+            LOG_CPP_WARNING("[ALSA-Enumerator] Failed to create wake pipe: %s", std::strerror(errno));
+        }
+    }
+
     while (running_) {
+        LOG_CPP_DEBUG("[ALSA-Enumerator] Loop begin (running=%d)", running_.load() ? 1 : 0);
         auto handles = open_control_handles();
+        LOG_CPP_DEBUG("[ALSA-Enumerator] Opened %zu control handles", handles.size());
 
         std::vector<pollfd> poll_fds;
         poll_fds.reserve(handles.size() + 1);
@@ -332,6 +384,13 @@ void AlsaDeviceEnumerator::monitor_loop() {
             fifo_fd.revents = 0;
             poll_fds.push_back(fifo_fd);
         }
+        if (wake_pipe_[0] >= 0) {
+            pollfd wake_fd{};
+            wake_fd.fd = wake_pipe_[0];
+            wake_fd.events = POLLIN | POLLERR | POLLHUP;
+            wake_fd.revents = 0;
+            poll_fds.push_back(wake_fd);
+        }
 
         // Attempt to re-establish the directory watch if it previously failed.
         if (running_) {
@@ -341,6 +400,7 @@ void AlsaDeviceEnumerator::monitor_loop() {
         bool should_rescan = poll_fds.empty();
         if (!poll_fds.empty()) {
             int poll_result = poll(poll_fds.data(), static_cast<nfds_t>(poll_fds.size()), kPollTimeoutMs);
+            LOG_CPP_DEBUG("[ALSA-Enumerator] poll() returned %d", poll_result);
             if (poll_result > 0) {
                 bool control_event_seen = false;
                 bool fifo_event_seen = false;
@@ -379,6 +439,15 @@ void AlsaDeviceEnumerator::monitor_loop() {
                         }
                     }
                 }
+                if (wake_pipe_[0] >= 0) {
+                    for (const auto& pfd : poll_fds) {
+                        if (pfd.fd == wake_pipe_[0] && (pfd.revents & (POLLIN | POLLERR | POLLHUP))) {
+                            char buf[64];
+                            (void)read(wake_pipe_[0], buf, sizeof(buf));
+                            LOG_CPP_INFO("[ALSA-Enumerator] Wake pipe signaled");
+                        }
+                    }
+                }
 
                 should_rescan = control_event_seen || fifo_event_seen;
             } else if (poll_result == 0) {
@@ -393,8 +462,10 @@ void AlsaDeviceEnumerator::monitor_loop() {
         }
 
         close_control_handles(handles);
+        LOG_CPP_DEBUG("[ALSA-Enumerator] Closed control handles");
 
         if (!running_) {
+            LOG_CPP_INFO("[ALSA-Enumerator] Stop flag detected; breaking loop");
             break;
         }
 
@@ -406,11 +477,17 @@ void AlsaDeviceEnumerator::monitor_loop() {
     }
 
     teardown_fifo_watch();
+    if (wake_pipe_[0] >= 0) { close(wake_pipe_[0]); wake_pipe_[0] = -1; }
+    if (wake_pipe_[1] >= 0) { close(wake_pipe_[1]); wake_pipe_[1] = -1; }
     LOG_CPP_INFO("[ALSA-Enumerator] Monitoring thread exiting.");
 }
 
 void AlsaDeviceEnumerator::enumerate_devices() {
     LOG_CPP_INFO("[ALSA-Enumerator] Starting full ALSA device enumeration pass.");
+    if (!running_) {
+        LOG_CPP_INFO("[ALSA-Enumerator] Stop requested before enumeration; skipping.");
+        return;
+    }
     Registry scanned_registry;
 
     Registry previous_registry;
@@ -428,6 +505,10 @@ void AlsaDeviceEnumerator::enumerate_devices() {
         LOG_CPP_DEBUG("[ALSA-Enumerator] No ALSA device hints returned.");
     } else {
         for (void** hint = hints; *hint != nullptr; ++hint) {
+            if (!running_) {
+                LOG_CPP_INFO("[ALSA-Enumerator] Stop requested during hint scan; breaking.");
+                break;
+            }
             char* name_raw = snd_device_name_get_hint(*hint, "NAME");
             if (!name_raw) {
                 continue;
@@ -489,6 +570,10 @@ void AlsaDeviceEnumerator::enumerate_devices() {
             auto device_index = resolve_device_index(device_token);
 
             for (DeviceDirection direction : directions) {
+                if (!running_) {
+                    LOG_CPP_INFO("[ALSA-Enumerator] Stop requested mid-enumeration; breaking device loop");
+                    break;
+                }
                 const char* prefix = (direction == DeviceDirection::CAPTURE) ? kAlsaCapturePrefix : kAlsaPlaybackPrefix;
                 std::string tag = std::string(prefix) + device_name;
                 const SystemDeviceInfo* previous_info = nullptr;
@@ -587,6 +672,10 @@ std::vector<AlsaDeviceEnumerator::ControlHandle> AlsaDeviceEnumerator::open_cont
         return handles;
     }
     while (card >= 0) {
+        if (!running_) {
+            LOG_CPP_INFO("[ALSA-Enumerator] Stop requested while opening control handles; aborting.");
+            break;
+        }
         char hw_name[32];
         std::snprintf(hw_name, sizeof(hw_name), "hw:%d", card);
         snd_ctl_t* ctl = nullptr;

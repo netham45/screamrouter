@@ -943,6 +943,10 @@ class ConfigurationManager(threading.Thread):
         _logger.debug("[Configuration Manager] Stopping webstream")
         self.__api_webstream.stop()
         _logger.debug("[Configuration Manager] Webstream stopped")
+        # Stop plugins first to prevent further writes into the engine during shutdown
+        _logger.debug("[Configuration Manager] Stopping Plugin Manager")
+        self.plugin_manager.stop_registered_plugins()
+        _logger.debug("[Configuration Manager] Plugin Manager Stopped")
 
         # --- C++ Engine Shutdown ---
         if self.cpp_audio_manager:
@@ -956,9 +960,6 @@ class ConfigurationManager(threading.Thread):
 
         _logger.debug("[Configuration Manager] Stopping Python receivers")
         _logger.debug("[Configuration Manager] Receiver stopped")
-        _logger.debug("[Configuration Manager] Stopping Plugin Manager")
-        self.plugin_manager.stop_registered_plugins()
-        _logger.debug("[Configuration Manager] Plugin Manager Stopped")
         _logger.debug("[Configuration Manager] Stopping mDNS")
         self.mdns_responder.stop()
         self.mdns_pinger.stop()

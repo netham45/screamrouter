@@ -74,6 +74,46 @@ target_link_libraries(screamrouter_audio_engine
         srtp2
 )
 
+# Always compile function-level instrumentation for this target (non-MSVC).
+# Runtime is still gated by SCREAMROUTER_TRACE, so default behavior remains off.
+if(NOT MSVC)
+    # Optional: enable function-level instrumentation only when requested.
+    # Toggle via CMake option SR_ENABLE_FNTRACE or env var SCREAMROUTER_FNTRACE.
+    option(SR_ENABLE_FNTRACE "Enable -finstrument-functions for audio_engine" OFF)
+    if(DEFINED ENV{SCREAMROUTER_FNTRACE})
+        set(SR_ENABLE_FNTRACE ON)
+    endif()
+
+    if(SR_ENABLE_FNTRACE)
+        message(STATUS "screamrouter_audio_engine: function tracing ENABLED (SR_ENABLE_FNTRACE=ON)")
+        # Instrument only this target's object files
+        target_compile_options(screamrouter_audio_engine PRIVATE -finstrument-functions)
+        # Keep trace implementation itself from being instrumented to avoid recursion
+        set_source_files_properties(
+            "${CMAKE_CURRENT_SOURCE_DIR}/utils/fntrace.cpp"
+            PROPERTIES COMPILE_OPTIONS "-fno-instrument-functions"
+        )
+        # Ensure the probe function is not inlined so it reliably emits events
+        set_source_files_properties(
+            "${CMAKE_CURRENT_SOURCE_DIR}/utils/fntrace_probe.cpp"
+            PROPERTIES COMPILE_OPTIONS "-fno-inline"
+        )
+        # Bind instrumentation hook calls locally to this module to avoid
+        # runtime interposition by other shared objects in the Python process.
+        target_link_options(screamrouter_audio_engine PRIVATE -Wl,-Bsymbolic -Wl,-Bsymbolic-functions)
+        target_compile_definitions(screamrouter_audio_engine PRIVATE SR_FNTRACE_BUILD=1)
+
+        # Optional stricter mode to maximize event coverage by reducing inlining/opts.
+        # Enable with env var SCREAMROUTER_FNTRACE_STRICT=1
+        if(DEFINED ENV{SCREAMROUTER_FNTRACE_STRICT})
+            message(STATUS "screamrouter_audio_engine: STRICT tracing (O0, -fno-inline, -fno-optimize-sibling-calls)")
+            target_compile_options(screamrouter_audio_engine PRIVATE -O0 -fno-inline -fno-optimize-sibling-calls)
+        endif()
+    else()
+        message(STATUS "screamrouter_audio_engine: function tracing DISABLED (SR_ENABLE_FNTRACE=OFF)")
+    endif()
+endif()
+
 if(WIN32)
     target_link_libraries(screamrouter_audio_engine
         PRIVATE

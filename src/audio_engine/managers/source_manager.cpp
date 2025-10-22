@@ -42,6 +42,7 @@ std::string SourceManager::generate_unique_instance_id(const std::string& base_t
 }
 
 std::string SourceManager::configure_source(const SourceConfig& config, bool running) {
+    const auto t0 = std::chrono::steady_clock::now();
     if (!running) {
         LOG_CPP_ERROR("Cannot configure source, manager is not running.");
         return "";
@@ -55,6 +56,7 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
     std::shared_ptr<ChunkQueue> sink_queue;
     std::shared_ptr<CommandQueue> cmd_queue;
 
+    const auto t_construct0 = std::chrono::steady_clock::now();
     try {
         SourceConfig validated_config = config;
         if (validated_config.initial_eq.empty() || validated_config.initial_eq.size() != EQ_BANDS) {
@@ -81,6 +83,7 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
         LOG_CPP_ERROR("Failed to create SourceInputProcessor for instance %s (tag: %s): %s", instance_id.c_str(), config.tag.c_str(), e.what());
         return "";
     }
+    const auto t_construct1 = std::chrono::steady_clock::now();
 
     {
         std::scoped_lock lock(m_manager_mutex);
@@ -91,8 +94,11 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
     }
 
     if (m_timeshift_manager) {
+        const auto t_ts0 = std::chrono::steady_clock::now();
         m_timeshift_manager->register_processor(instance_id, config.tag, rtp_queue, config.initial_delay_ms, config.initial_timeshift_sec);
-        LOG_CPP_INFO("Registered instance %s with TimeshiftManager.", instance_id.c_str());
+        const auto t_ts1 = std::chrono::steady_clock::now();
+        LOG_CPP_INFO("Registered instance %s with TimeshiftManager in %lld ms.", instance_id.c_str(),
+                     (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_ts1 - t_ts0).count());
     } else {
         LOG_CPP_ERROR("TimeshiftManager is null. Cannot register source instance %s", instance_id.c_str());
         std::scoped_lock lock(m_manager_mutex);
@@ -116,27 +122,36 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
 #endif
 
         if (is_system_tag) {
+            const auto t_cap0 = std::chrono::steady_clock::now();
             LOG_CPP_INFO("Source instance %s uses %s capture device: %s",
                          instance_id.c_str(), backend_label, config.tag.c_str());
 
             if (m_ensure_capture_callback(config.tag)) {
+                const auto t_cap1 = std::chrono::steady_clock::now();
                 std::scoped_lock lock(m_manager_mutex);
                 m_instance_to_capture_tag[instance_id] = config.tag;
-                LOG_CPP_INFO("%s capture device %s activated for instance %s",
+                LOG_CPP_INFO("%s capture device %s activated for instance %s (in %lld ms)",
                              backend_label,
                              config.tag.c_str(),
-                             instance_id.c_str());
+                             instance_id.c_str(),
+                             (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_cap1 - t_cap0).count());
             } else {
-                LOG_CPP_ERROR("Failed to activate %s capture device %s for instance %s",
+                const auto t_cap1 = std::chrono::steady_clock::now();
+                LOG_CPP_ERROR("Failed to activate %s capture device %s for instance %s (attempt %lld ms)",
                               backend_label,
                               config.tag.c_str(),
-                              instance_id.c_str());
+                              instance_id.c_str(),
+                              (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_cap1 - t_cap0).count());
             }
         }
     }
 
     m_sources.at(instance_id)->start();
-    LOG_CPP_INFO("Source instance %s (tag: %s) configured and started successfully.", instance_id.c_str(), config.tag.c_str());
+    const auto t1 = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("Source instance %s (tag: %s) configured and started successfully. (construct=%lld ms, total=%lld ms)",
+                 instance_id.c_str(), config.tag.c_str(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_construct1 - t_construct0).count(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
     return instance_id;
 }
 
@@ -219,6 +234,63 @@ std::vector<SourceInputProcessor*> SourceManager::get_all_processors() {
         processors.push_back(proc.get());
     }
     return processors;
+}
+
+void SourceManager::stop_all() {
+    std::vector<std::pair<std::string, std::string>> to_unregister; // (instance_id, source_tag)
+    std::vector<std::unique_ptr<SourceInputProcessor>> to_stop;
+    std::vector<std::string> capture_tags;
+
+    {
+        std::scoped_lock lock(m_manager_mutex);
+        for (auto &entry : m_sources) {
+            const std::string &instance_id = entry.first;
+            if (entry.second) {
+                to_unregister.emplace_back(instance_id, entry.second->get_source_tag());
+            }
+            to_stop.push_back(std::move(entry.second));
+        }
+        m_sources.clear();
+
+        // Clear queues for each source
+        m_rtp_to_source_queues.clear();
+        m_source_to_sink_queues.clear();
+        m_command_queues.clear();
+
+        // Gather capture tags to release
+        for (auto const &kv : m_instance_to_capture_tag) {
+            capture_tags.push_back(kv.second);
+        }
+        m_instance_to_capture_tag.clear();
+    }
+
+    // Unregister processors from TimeshiftManager outside the lock
+    for (auto const &p : to_unregister) {
+        if (m_timeshift_manager && !p.second.empty()) {
+            m_timeshift_manager->unregister_processor(p.first, p.second);
+            LOG_CPP_INFO("Unregistered instance %s (tag: %s) from TimeshiftManager (shutdown).",
+                         p.first.c_str(), p.second.c_str());
+        }
+    }
+
+    // Stop each processor thread cleanly
+    for (auto &proc : to_stop) {
+        if (proc) {
+            proc->stop();
+        }
+    }
+
+    // Release system capture device references
+    if (m_release_capture_callback) {
+        for (const auto &tag : capture_tags) {
+            m_release_capture_callback(tag);
+            const char* backend_label = "ALSA";
+#if defined(_WIN32)
+            backend_label = "WASAPI";
+#endif
+            LOG_CPP_INFO("Released %s capture device %s during shutdown", backend_label, tag.c_str());
+        }
+    }
 }
 
 } // namespace audio

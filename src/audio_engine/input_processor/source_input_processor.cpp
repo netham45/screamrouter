@@ -163,7 +163,13 @@ void SourceInputProcessor::stop() {
         LOG_CPP_INFO("[SourceProc:%s] Already stopped or stopping.", config_.instance_id.c_str());
         return;
     }
-    LOG_CPP_INFO("[SourceProc:%s] Stopping...", config_.instance_id.c_str());
+    bool comp_joinable = component_thread_.joinable();
+    bool input_joinable = input_thread_.joinable();
+    size_t in_q = input_queue_ ? input_queue_->size() : 0;
+    size_t cmd_q = command_queue_ ? command_queue_->size() : 0;
+    bool in_stopped = input_queue_ ? input_queue_->is_stopped() : true;
+    bool cmd_stopped = command_queue_ ? command_queue_->is_stopped() : true;
+    LOG_CPP_INFO("[SourceProc:%s] Stopping... comp_joinable=%d input_joinable=%d in_q=%zu cmd_q=%zu in_stopped=%d cmd_stopped=%d", config_.instance_id.c_str(), comp_joinable ? 1 : 0, input_joinable ? 1 : 0, in_q, cmd_q, in_stopped ? 1 : 0, cmd_stopped ? 1 : 0);
 
     // Set the stop flag FIRST (used by loops)
     stop_flag_ = true; // Set the atomic flag

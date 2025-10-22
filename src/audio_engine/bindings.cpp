@@ -19,6 +19,11 @@
 #include "audio_types.h"
 #include "synchronization/global_synchronization_clock.h"
 #include "synchronization/sink_synchronization_coordinator.h"
+// Initialize tracing early so the JSON file is created as soon as the module
+// is imported when SCREAMROUTER_TRACE is set.
+#include "utils/fntrace.h"
+#include "utils/fntrace_probe.h"
+#include <cstdlib>
 
 // Note: audio_types.h and audio_engine_config_types.h are included by the headers above.
 
@@ -35,6 +40,21 @@ using namespace screamrouter;
  * basic data types are bound before the classes that use them.
  */
 PYBIND11_MODULE(screamrouter_audio_engine, m) {
+    // Initialize tracing only when instrumentation is compiled-in.
+#ifdef SR_FNTRACE_BUILD
+    srtrace::init_if_needed();
+    if (std::getenv("SCREAMROUTER_TRACE")) {
+        std::fprintf(stderr, "[fntrace] compiled-in, runtime enabled\n");
+        std::fflush(stderr);
+    }
+    // Force at least one instrumented function call so traces appear immediately
+    sr_fntrace_probe();
+#else
+    if (std::getenv("SCREAMROUTER_TRACE")) {
+        std::fprintf(stderr, "[fntrace] requested, but NOT compiled-in. Rebuild with SCREAMROUTER_FNTRACE=1.\n");
+        std::fflush(stderr);
+    }
+#endif
     m.doc() = "ScreamRouter C++ Audio Engine Extension"; // Optional module docstring
 
     // --- Call Binding Functions in Dependency Order ---

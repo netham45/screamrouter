@@ -16,6 +16,23 @@ struct TimeshiftTuning {
     double max_playback_rate = 1.02;
     long loop_max_sleep_ms = 10;
     double max_catchup_lag_ms = 20.0;
+    double max_jitter_ms = 150.0;
+    double jitter_decay_factor = 0.05;
+    double jitter_decay_stable_threshold_ms = 2.0;
+    int jitter_decay_stable_packet_window = 50;
+    long jitter_idle_decay_interval_ms = 500;
+    double jitter_idle_decay_factor = 0.1;
+    double max_adaptive_delay_ms = 200.0;
+
+    // --- Temporal Store / DVR defaults ---
+    // Target playout delay (D) relative to now_ref; mixer follows head at D behind.
+    long target_playout_delay_ms = 200;  // auto-tune in future
+    // Commit guard: distance behind (now + D) before we consider items immutable/committed.
+    long commit_guard_ms = 24;           // ~2 × 12ms chunk by default
+    // DVR retention window in seconds (ring buffer duration).
+    long dvr_retention_sec = 300;        // 5 minutes
+    // Segment duration for durable window (ms); used if/when segmenting to disk.
+    long dvr_segment_ms = 250;           // audio-only default
 };
 
 struct ProfilerSettings {

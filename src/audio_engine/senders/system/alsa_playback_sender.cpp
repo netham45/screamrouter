@@ -236,7 +236,7 @@ bool AlsaPlaybackSender::configure_device() {
 
 void AlsaPlaybackSender::close_locked() {
     if (pcm_handle_) {
-        snd_pcm_drain(pcm_handle_);
+        snd_pcm_drop(pcm_handle_);
         snd_pcm_close(pcm_handle_);
         pcm_handle_ = nullptr;
     }

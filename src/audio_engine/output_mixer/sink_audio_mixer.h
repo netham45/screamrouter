@@ -26,6 +26,7 @@
 #include <atomic>
 #include <chrono>
 #include <limits>
+#include <thread>
 
 class AudioProcessor;
 
@@ -217,6 +218,9 @@ private:
     /** @brief Pointer to the synchronization coordinator (not owned). */
     SinkSynchronizationCoordinator* coordinator_ = nullptr;
 
+    std::thread startup_thread_;
+    std::atomic<bool> startup_in_progress_{false};
+
     void initialize_lame();
     void close_lame();
 
@@ -228,6 +232,9 @@ private:
     void encode_and_push_mp3(size_t samples_to_encode);
     void cleanup_closed_listeners();
     void clear_pending_audio();
+    void start_async();
+    bool start_internal();
+    void join_startup_thread();
 
     // --- Profiling ---
     void reset_profiler_counters();
@@ -256,6 +263,35 @@ private:
     double profiling_send_gap_min_ms_{std::numeric_limits<double>::infinity()};
     double profiling_last_send_gap_ms_{0.0};
     uint64_t profiling_send_gap_samples_{0};
+
+    // Detailed operation timings
+    long double profiling_mix_ns_sum_{0.0L};
+    uint64_t profiling_mix_calls_{0};
+    uint64_t profiling_mix_ns_max_{0};
+    uint64_t profiling_mix_ns_min_{std::numeric_limits<uint64_t>::max()};
+
+    long double profiling_downscale_ns_sum_{0.0L};
+    uint64_t profiling_downscale_calls_{0};
+    uint64_t profiling_downscale_ns_max_{0};
+    uint64_t profiling_downscale_ns_min_{std::numeric_limits<uint64_t>::max()};
+
+    long double profiling_preprocess_ns_sum_{0.0L};
+    uint64_t profiling_preprocess_calls_{0};
+    uint64_t profiling_preprocess_ns_max_{0};
+    uint64_t profiling_preprocess_ns_min_{std::numeric_limits<uint64_t>::max()};
+
+    long double profiling_dispatch_ns_sum_{0.0L};
+    uint64_t profiling_dispatch_calls_{0};
+    uint64_t profiling_dispatch_ns_max_{0};
+    uint64_t profiling_dispatch_ns_min_{std::numeric_limits<uint64_t>::max()};
+
+    long double profiling_mp3_ns_sum_{0.0L};
+    uint64_t profiling_mp3_calls_{0};
+    uint64_t profiling_mp3_ns_max_{0};
+    uint64_t profiling_mp3_ns_min_{std::numeric_limits<uint64_t>::max()};
+
+    // Per-source underrun counters
+    std::map<std::string, uint64_t> profiling_source_underruns_;
 
     std::chrono::microseconds calculate_mix_period() const;
     void register_mix_timer();

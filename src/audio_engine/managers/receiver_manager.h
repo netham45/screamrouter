@@ -112,6 +112,11 @@ public:
      */
     void release_capture_receiver(const std::string& tag);
 
+    /**
+     * @brief Logs the current status of receivers for debugging.
+     */
+    void log_status();
+
 private:
     std::recursive_mutex& m_manager_mutex;
     TimeshiftManager* m_timeshift_manager;

@@ -1,6 +1,7 @@
 #include "receiver_manager.h"
 #include "../utils/cpp_logger.h"
 #include <exception>
+#include <chrono>
 
 namespace screamrouter {
 namespace audio {
@@ -149,6 +150,7 @@ std::vector<std::string> ReceiverManager::get_pulse_receiver_seen_tags() {
 #endif
 
 bool ReceiverManager::ensure_capture_receiver(const std::string& tag, const CaptureParams& params) {
+    const auto t0 = std::chrono::steady_clock::now();
     std::scoped_lock lock(m_manager_mutex);
 
     auto usage_it = capture_receiver_usage_.find(tag);
@@ -164,6 +166,10 @@ bool ReceiverManager::ensure_capture_receiver(const std::string& tag, const Capt
         }
         LOG_CPP_INFO("ReceiverManager ensured existing capture receiver %s (ref_count=%zu).",
                      tag.c_str(), usage_it->second);
+        const auto t1 = std::chrono::steady_clock::now();
+        LOG_CPP_INFO("[ReceiverManager] ensure_capture(existing) %s (ref=%zu) in %lld ms",
+                     tag.c_str(), usage_it->second,
+                     (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
         return true;
     }
 
@@ -198,7 +204,9 @@ bool ReceiverManager::ensure_capture_receiver(const std::string& tag, const Capt
         return false;
     }
 
+    const auto t_s0 = std::chrono::steady_clock::now();
     receiver->start();
+    const auto t_s1 = std::chrono::steady_clock::now();
     if (!receiver->is_running()) {
         LOG_CPP_ERROR("ReceiverManager created capture receiver %s but it failed to start.", tag.c_str());
         return false;
@@ -206,7 +214,10 @@ bool ReceiverManager::ensure_capture_receiver(const std::string& tag, const Capt
 
     capture_receiver_usage_[tag] = 1;
     capture_receivers_[tag] = std::move(receiver);
-    LOG_CPP_INFO("ReceiverManager started capture receiver %s.", tag.c_str());
+    LOG_CPP_INFO("ReceiverManager started capture receiver %s (start=%lld ms total=%lld ms).",
+                 tag.c_str(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_s1 - t_s0).count(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_s1 - t0).count());
     return true;
 }
 
@@ -234,6 +245,41 @@ void ReceiverManager::release_capture_receiver(const std::string& tag) {
     } else {
         LOG_CPP_INFO("ReceiverManager decremented capture receiver %s (ref_count=%zu).",
                      tag.c_str(), usage_it->second);
+    }
+}
+
+void ReceiverManager::log_status() {
+    // RTP
+    if (m_rtp_receiver) {
+        LOG_CPP_INFO("[ReceiverManager] RTP receiver running=%d", m_rtp_receiver->is_running() ? 1 : 0);
+    } else {
+        LOG_CPP_INFO("[ReceiverManager] RTP receiver: none");
+    }
+
+    // Raw scream receivers
+    LOG_CPP_INFO("[ReceiverManager] Raw scream receivers: %zu", m_raw_scream_receivers.size());
+    for (auto const& [port, recv] : m_raw_scream_receivers) {
+        LOG_CPP_INFO("  - RawScream port %d running=%d", port, recv && recv->is_running() ? 1 : 0);
+    }
+
+    // Per-process scream receivers
+    LOG_CPP_INFO("[ReceiverManager] Per-process scream receivers: %zu", m_per_process_scream_receivers.size());
+    for (auto const& [port, recv] : m_per_process_scream_receivers) {
+        LOG_CPP_INFO("  - PerProcessScream port %d running=%d", port, recv && recv->is_running() ? 1 : 0);
+    }
+
+#if !defined(_WIN32)
+    // Pulse receiver
+    if (m_pulse_receiver) {
+        LOG_CPP_INFO("[ReceiverManager] PulseAudio receiver running=%d", m_pulse_receiver->is_running() ? 1 : 0);
+    } else {
+        LOG_CPP_INFO("[ReceiverManager] PulseAudio receiver: none");
+    }
+#endif
+    // Capture receivers
+    LOG_CPP_INFO("[ReceiverManager] Capture receivers: %zu", capture_receivers_.size());
+    for (auto const& [tag, recv] : capture_receivers_) {
+        LOG_CPP_INFO("  - Capture %s running=%d", tag.c_str(), recv && recv->is_running() ? 1 : 0);
     }
 }
 
