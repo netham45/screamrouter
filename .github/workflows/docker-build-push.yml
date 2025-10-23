@@ -49,7 +49,7 @@ jobs:
             type=sha,format=short
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
           flavor: |
-            suffix=-amd64,onlatest=true
+            suffix=,onlatest=true
       
       - name: Build and push AMD64 Docker image
         uses: docker/build-push-action@v5
