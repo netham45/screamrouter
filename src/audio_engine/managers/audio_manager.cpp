@@ -46,17 +46,37 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
 
         std::unique_ptr<system_audio::SystemDeviceEnumerator> enumerator;
 #if defined(__linux__)
-        enumerator.reset(new system_audio::AlsaDeviceEnumerator(m_notification_queue));
+        try {
+            enumerator.reset(new system_audio::AlsaDeviceEnumerator(m_notification_queue));
+        } catch (const std::exception& e) {
+            LOG_CPP_WARNING("[AudioManager] Failed to construct ALSA device enumerator: %s. Continuing without system device enumeration.", e.what());
+        }
 #elif defined(_WIN32)
-        enumerator.reset(new system_audio::WasapiDeviceEnumerator(m_notification_queue));
+        try {
+            enumerator.reset(new system_audio::WasapiDeviceEnumerator(m_notification_queue));
+        } catch (const std::exception& e) {
+            LOG_CPP_WARNING("[AudioManager] Failed to construct WASAPI device enumerator: %s. Continuing without system device enumeration.", e.what());
+        }
 #else
         enumerator.reset(nullptr);
 #endif
         m_system_device_enumerator = std::move(enumerator);
         if (m_system_device_enumerator) {
-            m_system_device_enumerator->start();
-            std::lock_guard<std::mutex> device_lock(device_registry_mutex_);
-            system_device_registry_ = m_system_device_enumerator->get_registry_snapshot();
+            try {
+                m_system_device_enumerator->start();
+                std::lock_guard<std::mutex> device_lock(device_registry_mutex_);
+                system_device_registry_ = m_system_device_enumerator->get_registry_snapshot();
+            } catch (const std::exception& e) {
+                LOG_CPP_WARNING("[AudioManager] System audio enumerator failed to start: %s. Disabling system device monitoring.", e.what());
+                try {
+                    m_system_device_enumerator->stop();
+                } catch (const std::exception& stop_err) {
+                    LOG_CPP_DEBUG("[AudioManager] Ignoring enumerator stop exception after start failure: %s", stop_err.what());
+                }
+                m_system_device_enumerator.reset();
+                std::lock_guard<std::mutex> device_lock(device_registry_mutex_);
+                system_device_registry_.clear();
+            }
         }
 
         m_source_manager = std::make_unique<SourceManager>(m_manager_mutex, m_timeshift_manager.get(), m_settings);
