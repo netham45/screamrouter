@@ -265,6 +265,12 @@ bool WasapiCaptureReceiver::initialize_capture_format(WAVEFORMATEX* mix_format) 
     active_channels_ = format_ptr_->nChannels;
     active_sample_rate_ = format_ptr_->nSamplesPerSec;
 
+    if (active_sample_rate_ > 0) {
+        seconds_per_frame_ = 1.0 / static_cast<double>(active_sample_rate_);
+    } else {
+        seconds_per_frame_ = 0.0;
+    }
+
     target_bit_depth_ = capture_params_.bit_depth == 32 ? 32 : 16;
     target_bytes_per_frame_ = (target_bit_depth_ / 8) * active_channels_;
     source_bytes_per_frame_ = format_ptr_->nBlockAlign;
@@ -332,13 +338,15 @@ void WasapiCaptureReceiver::capture_loop() {
             BYTE* data = nullptr;
             UINT32 frames = 0;
             DWORD flags = 0;
-            hr = capture_client_->GetBuffer(&data, &frames, &flags, nullptr, nullptr);
+            UINT64 device_position = 0;
+            UINT64 qpc_position = 0;
+            hr = capture_client_->GetBuffer(&data, &frames, &flags, &device_position, &qpc_position);
             if (FAILED(hr)) {
                 LOG_CPP_ERROR("[WasapiCapture:%s] GetBuffer failed: 0x%lx", device_tag_.c_str(), hr);
                 return;
             }
 
-            process_packet(data, frames, flags);
+            process_packet(data, frames, flags, device_position, qpc_position);
 
             hr = capture_client_->ReleaseBuffer(frames);
             if (FAILED(hr)) {
@@ -349,9 +357,20 @@ void WasapiCaptureReceiver::capture_loop() {
     }
 }
 
-void WasapiCaptureReceiver::process_packet(BYTE* data, UINT32 frames, DWORD flags) {
+void WasapiCaptureReceiver::process_packet(BYTE* data, UINT32 frames, DWORD flags, UINT64 device_position, UINT64 /*qpc_position*/) {
     if (frames == 0) {
         return;
+    }
+
+    if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) {
+        LOG_CPP_WARNING("[WasapiCapture:%s] Data discontinuity signaled by WASAPI. Resetting capture state.", device_tag_.c_str());
+        reset_chunk_state();
+    }
+
+    if (!stream_time_initialized_) {
+        stream_start_time_ = std::chrono::steady_clock::now();
+        stream_start_frame_position_ = static_cast<uint64_t>(device_position);
+        stream_time_initialized_ = true;
     }
 
     const size_t total_target_bytes = static_cast<size_t>(frames) * target_bytes_per_frame_;
@@ -425,17 +444,36 @@ void WasapiCaptureReceiver::process_packet(BYTE* data, UINT32 frames, DWORD flag
         ? static_cast<size_t>(frames) * target_bytes_per_frame_
         : conversion_buffer_.size();
 
+    const uint64_t device_frame_position = static_cast<uint64_t>(device_position);
+
+    if (!accumulator_position_initialized_) {
+        accumulator_frame_position_ = device_frame_position;
+        accumulator_position_initialized_ = true;
+    } else {
+        size_t frames_in_accumulator = chunk_accumulator_.size() / target_bytes_per_frame_;
+        uint64_t expected_position = accumulator_frame_position_ + frames_in_accumulator;
+        if (device_frame_position != expected_position) {
+            LOG_CPP_WARNING("[WasapiCapture:%s] Device position jump detected. expected=%llu actual=%llu. Resetting accumulator.",
+                            device_tag_.c_str(),
+                            static_cast<unsigned long long>(expected_position),
+                            static_cast<unsigned long long>(device_frame_position));
+            chunk_accumulator_.clear();
+            accumulator_frame_position_ = device_frame_position;
+        }
+    }
+
     chunk_accumulator_.insert(chunk_accumulator_.end(), src_ptr, src_ptr + bytes_from_packet);
 
     while (chunk_accumulator_.size() >= chunk_bytes_) {
         std::vector<uint8_t> chunk(chunk_bytes_);
         std::copy_n(chunk_accumulator_.begin(), chunk_bytes_, chunk.begin());
         chunk_accumulator_.erase(chunk_accumulator_.begin(), chunk_accumulator_.begin() + chunk_bytes_);
-        dispatch_chunk(std::move(chunk));
+        dispatch_chunk(std::move(chunk), accumulator_frame_position_);
+        accumulator_frame_position_ += chunk_bytes_ / target_bytes_per_frame_;
     }
 }
 
-void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data) {
+void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data, uint64_t frame_position) {
     if (chunk_data.empty()) {
         return;
     }
@@ -452,8 +490,17 @@ void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data) {
     packet.chlayout2 = 0x00;
 
     const uint32_t frames = FramesFromBytes(packet.audio_data.size(), target_bytes_per_frame_);
-    packet.rtp_timestamp = running_timestamp_;
-    running_timestamp_ += frames;
+    if (stream_time_initialized_ && seconds_per_frame_ > 0.0) {
+        const double frames_since_start = static_cast<double>(frame_position - stream_start_frame_position_);
+        const double seconds_since_start = frames_since_start * seconds_per_frame_;
+        auto offset_duration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds_since_start));
+        packet.received_time = stream_start_time_ + offset_duration;
+    } else {
+        packet.received_time = std::chrono::steady_clock::now();
+    }
+
+    packet.rtp_timestamp = static_cast<uint32_t>(frame_position & 0xFFFFFFFFu);
+    running_timestamp_ = static_cast<uint32_t>((frame_position + frames) & 0xFFFFFFFFu);
 
     bool is_new_source = false;
     {
@@ -481,6 +528,10 @@ void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data) {
 void WasapiCaptureReceiver::reset_chunk_state() {
     chunk_accumulator_.clear();
     running_timestamp_ = 0;
+    accumulator_position_initialized_ = false;
+    accumulator_frame_position_ = 0;
+    stream_time_initialized_ = false;
+    stream_start_frame_position_ = 0;
 }
 
 bool WasapiCaptureReceiver::resolve_endpoint_id(std::wstring& endpoint_id_w) {
