@@ -119,6 +119,8 @@ struct ProcessedAudioChunk {
     std::vector<int32_t> audio_data;
     /** @brief SSRC and CSRCs, forwarded from the original packet. */
     std::vector<uint32_t> ssrcs;
+    /** @brief Timestamp recorded when the chunk was produced by the source processor. */
+    std::chrono::steady_clock::time_point produced_time{};
 };
 
 /**
@@ -248,6 +250,25 @@ struct StreamStats {
     uint64_t total_packets_in_stream = 0;
     double target_buffer_level_ms = 0.0;
     double buffer_target_fill_percentage = 0.0;
+    double avg_arrival_error_ms = 0.0;
+    double avg_abs_arrival_error_ms = 0.0;
+    double max_arrival_error_ms = 0.0;
+    double min_arrival_error_ms = 0.0;
+    uint64_t arrival_error_sample_count = 0;
+    double avg_playout_deviation_ms = 0.0;
+    double avg_abs_playout_deviation_ms = 0.0;
+    double max_playout_deviation_ms = 0.0;
+    double min_playout_deviation_ms = 0.0;
+    uint64_t playout_deviation_sample_count = 0;
+    double avg_head_playout_lag_ms = 0.0;
+    double max_head_playout_lag_ms = 0.0;
+    uint64_t head_playout_lag_sample_count = 0;
+    double last_head_playout_lag_ms = 0.0;
+    double clock_offset_ms = 0.0;
+    double clock_drift_ppm = 0.0;
+    double clock_last_innovation_ms = 0.0;
+    double clock_avg_abs_innovation_ms = 0.0;
+    double clock_last_measured_offset_ms = 0.0;
 };
 
 struct SourceStats {
@@ -667,7 +688,26 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("total_anchor_adjustment_ms", &StreamStats::total_anchor_adjustment_ms)
             .def_readwrite("total_packets_in_stream", &StreamStats::total_packets_in_stream)
             .def_readwrite("target_buffer_level_ms", &StreamStats::target_buffer_level_ms)
-            .def_readwrite("buffer_target_fill_percentage", &StreamStats::buffer_target_fill_percentage);
+            .def_readwrite("buffer_target_fill_percentage", &StreamStats::buffer_target_fill_percentage)
+            .def_readwrite("avg_arrival_error_ms", &StreamStats::avg_arrival_error_ms)
+            .def_readwrite("avg_abs_arrival_error_ms", &StreamStats::avg_abs_arrival_error_ms)
+            .def_readwrite("max_arrival_error_ms", &StreamStats::max_arrival_error_ms)
+            .def_readwrite("min_arrival_error_ms", &StreamStats::min_arrival_error_ms)
+            .def_readwrite("arrival_error_sample_count", &StreamStats::arrival_error_sample_count)
+            .def_readwrite("avg_playout_deviation_ms", &StreamStats::avg_playout_deviation_ms)
+            .def_readwrite("avg_abs_playout_deviation_ms", &StreamStats::avg_abs_playout_deviation_ms)
+            .def_readwrite("max_playout_deviation_ms", &StreamStats::max_playout_deviation_ms)
+            .def_readwrite("min_playout_deviation_ms", &StreamStats::min_playout_deviation_ms)
+            .def_readwrite("playout_deviation_sample_count", &StreamStats::playout_deviation_sample_count)
+            .def_readwrite("avg_head_playout_lag_ms", &StreamStats::avg_head_playout_lag_ms)
+            .def_readwrite("max_head_playout_lag_ms", &StreamStats::max_head_playout_lag_ms)
+            .def_readwrite("head_playout_lag_sample_count", &StreamStats::head_playout_lag_sample_count)
+            .def_readwrite("last_head_playout_lag_ms", &StreamStats::last_head_playout_lag_ms)
+            .def_readwrite("clock_offset_ms", &StreamStats::clock_offset_ms)
+            .def_readwrite("clock_drift_ppm", &StreamStats::clock_drift_ppm)
+            .def_readwrite("clock_last_innovation_ms", &StreamStats::clock_last_innovation_ms)
+            .def_readwrite("clock_avg_abs_innovation_ms", &StreamStats::clock_avg_abs_innovation_ms)
+            .def_readwrite("clock_last_measured_offset_ms", &StreamStats::clock_last_measured_offset_ms);
 
         py::class_<SourceStats>(m, "SourceStats", "Statistics for a single source processor")
             .def(py::init<>())

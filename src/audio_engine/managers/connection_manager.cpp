@@ -24,6 +24,7 @@ ConnectionManager::~ConnectionManager() {
 }
 
 bool ConnectionManager::connect_source_sink(const std::string& source_instance_id, const std::string& sink_id, bool running) {
+    const auto t0 = std::chrono::steady_clock::now();
     std::scoped_lock lock(m_manager_mutex);
 
     if (!running) {
@@ -42,12 +43,18 @@ bool ConnectionManager::connect_source_sink(const std::string& source_instance_i
         return false;
     }
 
+    const auto t_add0 = std::chrono::steady_clock::now();
     m_sink_manager->add_input_queue_to_sink(sink_id, source_instance_id, queue_it->second);
-    LOG_CPP_INFO("Connection successful: Source instance %s -> Sink %s", source_instance_id.c_str(), sink_id.c_str());
+    const auto t_add1 = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("Connection successful: Source instance %s -> Sink %s (enqueue=%lld ms total=%lld ms)",
+                 source_instance_id.c_str(), sink_id.c_str(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_add1 - t_add0).count(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_add1 - t0).count());
     return true;
 }
 
 bool ConnectionManager::disconnect_source_sink(const std::string& source_instance_id, const std::string& sink_id, bool running) {
+    const auto t0 = std::chrono::steady_clock::now();
     std::scoped_lock lock(m_manager_mutex);
 
     if (!running) {
@@ -60,8 +67,13 @@ bool ConnectionManager::disconnect_source_sink(const std::string& source_instanc
         return true;
     }
 
+    const auto t_rm0 = std::chrono::steady_clock::now();
     m_sink_manager->remove_input_queue_from_sink(sink_id, source_instance_id);
-    LOG_CPP_INFO("Disconnection successful: Source instance %s -x Sink %s", source_instance_id.c_str(), sink_id.c_str());
+    const auto t_rm1 = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("Disconnection successful: Source instance %s -x Sink %s (remove=%lld ms total=%lld ms)",
+                 source_instance_id.c_str(), sink_id.c_str(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_rm1 - t_rm0).count(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_rm1 - t0).count());
     return true;
 }
 

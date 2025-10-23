@@ -12,6 +12,19 @@ WebRtcManager::WebRtcManager(std::recursive_mutex& manager_mutex, SinkManager* s
 }
 
 WebRtcManager::~WebRtcManager() {
+    // Signal any deferred setup threads to exit early and join them.
+    shutting_down_.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(setup_threads_mutex_);
+        for (auto &t : setup_threads_) {
+            if (t.joinable()) {
+                try { t.join(); } catch (const std::system_error& e) {
+                    LOG_CPP_ERROR("[WebRtcManager] Error joining setup thread: %s", e.what());
+                }
+            }
+        }
+        setup_threads_.clear();
+    }
     LOG_CPP_INFO("WebRtcManager destroyed.");
 }
 
@@ -108,22 +121,28 @@ bool WebRtcManager::add_webrtc_listener(
     // Since Python is still in the middle of calling add_webrtc_listener (holding the GIL),
     // calling setup() here would deadlock. Instead, we defer it to a separate thread.
     
-    // Launch setup in a detached thread to avoid GIL deadlock
-    std::thread([this, sink_id, listener_id]() {
-        // Small delay to ensure Python has released the GIL
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        
-        INetworkSender* sender = m_sink_manager->get_listener_from_sink(sink_id, listener_id);
-        if (sender) {
-            if (!sender->setup()) {
-                LOG_CPP_ERROR("[WebRtcManager] Failed to setup WebRTC connection for listener %s", listener_id.c_str());
-                // Clean up on failure
-                remove_webrtc_listener(sink_id, listener_id, true);
+    // Launch setup in a managed thread to avoid GIL deadlock and allow clean shutdown
+    {
+        std::lock_guard<std::mutex> lock(setup_threads_mutex_);
+        setup_threads_.emplace_back([this, sink_id, listener_id]() {
+            // Small delay to ensure Python has released the GIL
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (shutting_down_.load(std::memory_order_acquire)) {
+                return;
             }
-        } else {
-            LOG_CPP_ERROR("[WebRtcManager] Could not find sender for listener %s after adding", listener_id.c_str());
-        }
-    }).detach();
+
+            INetworkSender* sender = m_sink_manager->get_listener_from_sink(sink_id, listener_id);
+            if (sender) {
+                if (!sender->setup()) {
+                    LOG_CPP_ERROR("[WebRtcManager] Failed to setup WebRTC connection for listener %s", listener_id.c_str());
+                    // Clean up on failure
+                    remove_webrtc_listener(sink_id, listener_id, true);
+                }
+            } else {
+                LOG_CPP_ERROR("[WebRtcManager] Could not find sender for listener %s after adding", listener_id.c_str());
+            }
+        });
+    }
     
     return true;
 }

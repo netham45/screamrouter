@@ -194,6 +194,20 @@ private:
         const uint8_t** out_audio_payload_ptr,
         size_t* out_audio_payload_size
     );
+
+    // --- Profiling ---
+    void reset_profiler_counters();
+    void maybe_log_profiler();
+    std::chrono::steady_clock::time_point profiling_last_log_time_;
+    uint64_t profiling_packets_received_{0};
+    uint64_t profiling_chunks_pushed_{0};
+    uint64_t profiling_discarded_packets_{0};
+    uint64_t profiling_processing_ns_{0};
+    uint64_t profiling_processing_samples_{0};
+    size_t profiling_peak_process_buffer_samples_{0};
+    uint64_t profiling_input_queue_sum_{0};
+    uint64_t profiling_output_queue_sum_{0};
+    uint64_t profiling_queue_samples_{0};
 };
 
 } // namespace audio

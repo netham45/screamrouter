@@ -101,56 +101,110 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
 }
 
 void AudioManager::shutdown() {
-    std::scoped_lock lock(m_manager_mutex);
+    std::unique_lock<std::recursive_mutex> lock(m_manager_mutex);
     if (!m_running) {
         LOG_CPP_INFO("AudioManager already shut down.");
         return;
     }
     m_running = false;
 
+    // Ensure C++ logs go to stderr during shutdown for visibility
+    screamrouter::audio::logging::set_cpp_log_level(screamrouter::audio::logging::LogLevel::DEBUG);
+    screamrouter::audio::logging::set_cpp_log_stderr_mirror(true);
+
     LOG_CPP_INFO("Shutting down AudioManager...");
 
-    if (m_system_device_enumerator) {
-        m_system_device_enumerator->stop();
-    }
-
+    // Stop notification processing early to avoid new events
     if (m_notification_queue) {
         m_notification_queue->stop();
     }
-
     if (m_notification_thread.joinable()) {
         m_notification_thread.join();
     }
 
-    if (m_receiver_manager) {
-        m_receiver_manager->stop_receivers();
+    // Release the manager mutex to avoid deadlocks when joining threads
+    // (e.g., WebRTC setup threads that may need this mutex via SinkManager)
+    lock.unlock();
+
+    // Emit initial state snapshot
+    debug_dump_state("BEGIN_SHUTDOWN");
+
+    // Disable and remove sink coordinators via per-sink removal
+    if (m_sink_manager) {
+        auto sink_ids = m_sink_manager->get_sink_ids();
+        LOG_CPP_INFO("[Shutdown] Removing %zu sinks...", sink_ids.size());
+        for (const auto &sid : sink_ids) {
+            LOG_CPP_INFO("[Shutdown] Removing sink '%s'", sid.c_str());
+            // remove_sink disables coordinator and stops mixer
+            remove_sink(sid);
+        }
     }
 
+    // Stop all remaining sinks defensively (in case any were added but not in configs)
+    if (m_sink_manager) {
+        LOG_CPP_INFO("[Shutdown] Calling SinkManager::stop_all()...");
+        m_sink_manager->stop_all();
+    }
+
+    // Disconnect and stop all sources; unregister from timeshift and release capture devices
+    if (m_source_manager) {
+        LOG_CPP_INFO("[Shutdown] Calling SourceManager::stop_all()...");
+        m_source_manager->stop_all();
+    }
+
+    // Stop network receivers and clean them up
+    if (m_receiver_manager) {
+        LOG_CPP_INFO("[Shutdown] Stopping receivers...");
+        m_receiver_manager->log_status();
+        m_receiver_manager->stop_receivers();
+        LOG_CPP_INFO("[Shutdown] Receivers stopped. Cleaning up...");
+        m_receiver_manager->cleanup_receivers();
+    }
+
+    // Stop stats and timeshift after producers/consumers are quiet
+    if (m_stats_manager) {
+        LOG_CPP_INFO("[Shutdown] Stopping StatsManager...");
+        m_stats_manager->stop();
+    }
     if (m_timeshift_manager) {
+        LOG_CPP_INFO("[Shutdown] Stopping TimeshiftManager...");
         m_timeshift_manager->stop();
     }
 
-    if (m_stats_manager) {
-        m_stats_manager->stop();
+    // Stop system device enumerator last
+    if (m_system_device_enumerator) {
+        LOG_CPP_INFO("[Shutdown] Stopping SystemDeviceEnumerator...");
+        m_system_device_enumerator->stop();
     }
 
-    // The managers will be destroyed automatically via unique_ptr,
-    // which will stop any components they own.
+    // The managers will be destroyed automatically via unique_ptr
+    LOG_CPP_INFO("[Shutdown] Stopping Receiver Manager...");
     m_receiver_manager.reset();
+    LOG_CPP_INFO("[Shutdown] Stopping WebRTC Manager...");
     m_webrtc_manager.reset();
+    LOG_CPP_INFO("[Shutdown] Stopping MP3 Data API...");
     m_mp3_data_api_manager.reset();
+    LOG_CPP_INFO("[Shutdown] Stopping Control API ...");
     m_control_api_manager.reset();
+    LOG_CPP_INFO("[Shutdown] Stopping Connection Manager...");
     m_connection_manager.reset();
+    LOG_CPP_INFO("[Shutdown] Stopping Sink Manager...");
     m_sink_manager.reset();
+    LOG_CPP_INFO("[Shutdown] Stopping Source Manager...");
     m_source_manager.reset();
+    LOG_CPP_INFO("[Shutdown] Stopping Timeshift Manager...");
     m_timeshift_manager.reset();
+    LOG_CPP_INFO("[Shutdown] Stopping Stats Manager...");
     m_stats_manager.reset();
+    LOG_CPP_INFO("[Shutdown] Stopping System Device Enumerator...");
     m_system_device_enumerator.reset();
 
     // Clean up synchronization coordinators
+    LOG_CPP_INFO("[Shutdown] Clearing Sink Coordinators...");
     sink_coordinators_.clear();
 
     // Clean up sync clocks
+    LOG_CPP_INFO("[Shutdown] Clearing Clocks...");
     sync_clocks_.clear();
 
     {
@@ -163,6 +217,62 @@ void AudioManager::shutdown() {
     }
 
     LOG_CPP_INFO("AudioManager shutdown complete.");
+}
+
+void AudioManager::debug_dump_state(const char* label) {
+    LOG_CPP_INFO("[DebugDump] Label=%s running=%d", label ? label : "", m_running ? 1 : 0);
+    // Sinks
+    if (m_sink_manager) {
+        auto ids = m_sink_manager->get_sink_ids();
+        LOG_CPP_INFO("[DebugDump] Sinks: %zu", ids.size());
+        for (auto const& id : ids) {
+            LOG_CPP_INFO("  - sink id='%s'", id.c_str());
+        }
+        auto mixers = m_sink_manager->get_all_mixers();
+        for (auto* m : mixers) {
+            auto cfg = m->get_config();
+            auto stats = m->get_stats();
+            LOG_CPP_INFO("  mixer '%s' running=%d inputs=%zu active_inputs=%zu listeners=%zu chunks_mixed=%llu", cfg.sink_id.c_str(), m->is_running() ? 1 : 0, stats.total_input_streams, stats.active_input_streams, stats.listener_ids.size(), (unsigned long long)stats.total_chunks_mixed);
+        }
+    } else {
+        LOG_CPP_INFO("[DebugDump] Sinks: manager=null");
+    }
+
+    // Sources
+    if (m_source_manager) {
+        auto procs = m_source_manager->get_all_processors();
+        LOG_CPP_INFO("[DebugDump] Sources: %zu", procs.size());
+        for (auto* p : procs) {
+            auto st = p->get_stats();
+            auto q = p->get_input_queue();
+            size_t qsize = q ? q->size() : 0;
+            LOG_CPP_INFO("  source id='%s' tag='%s' input_q=%zu total_packets=%llu reconfigs=%llu", p->get_instance_id().c_str(), p->get_source_tag().c_str(), qsize, (unsigned long long)st.total_packets_processed, (unsigned long long)st.reconfigurations);
+        }
+    } else {
+        LOG_CPP_INFO("[DebugDump] Sources: manager=null");
+    }
+
+    // Timeshift
+    if (m_timeshift_manager) {
+        auto ts = m_timeshift_manager->get_stats();
+        LOG_CPP_INFO("[DebugDump] Timeshift: running=%d buffer_size=%zu packets_added=%llu", m_timeshift_manager->is_running() ? 1 : 0, ts.global_buffer_size, (unsigned long long)ts.total_packets_added);
+    } else {
+        LOG_CPP_INFO("[DebugDump] Timeshift: none");
+    }
+
+    // Receivers
+    if (m_receiver_manager) {
+        m_receiver_manager->log_status();
+    } else {
+        LOG_CPP_INFO("[DebugDump] Receivers: none");
+    }
+
+    // Stats manager
+    if (m_stats_manager) {
+        LOG_CPP_INFO("[DebugDump] StatsManager running=%d", m_stats_manager->is_running() ? 1 : 0);
+    } else {
+        LOG_CPP_INFO("[DebugDump] StatsManager: none");
+    }
 }
 
 GlobalSynchronizationClock* AudioManager::get_or_create_sync_clock(int sample_rate) {
@@ -181,6 +291,7 @@ GlobalSynchronizationClock* AudioManager::get_or_create_sync_clock(int sample_ra
 }
 
 bool AudioManager::add_sink(SinkConfig config) {
+    const auto t0 = std::chrono::steady_clock::now();
     if (!m_sink_manager) {
         return false;
     }
@@ -189,6 +300,10 @@ bool AudioManager::add_sink(SinkConfig config) {
     if (!m_sink_manager->add_sink(config, m_running)) {
         return false;
     }
+    const auto t_after_add = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("[AudioManager] add_sink id='%s' proto='%s' created in %lld ms",
+                 config.id.c_str(), config.protocol.c_str(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_after_add - t0).count());
     
     // Now add synchronization if enabled
     if (m_settings && m_settings->synchronization.enable_multi_sink_sync) {
@@ -239,10 +354,15 @@ bool AudioManager::add_sink(SinkConfig config) {
         }
     }
     
+    const auto t1 = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("[AudioManager] add_sink id='%s' total %lld ms",
+                 config.id.c_str(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
     return true;
 }
 
 bool AudioManager::remove_sink(const std::string& sink_id) {
+    const auto t0 = std::chrono::steady_clock::now();
     if (!m_sink_manager) {
         return false;
     }
@@ -261,11 +381,25 @@ bool AudioManager::remove_sink(const std::string& sink_id) {
     }
     
     // Now remove the sink through SinkManager
-    return m_sink_manager->remove_sink(sink_id);
+    const bool ok = m_sink_manager->remove_sink(sink_id);
+    const auto t1 = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("[AudioManager] remove_sink id='%s' -> %s (%lld ms)",
+                 sink_id.c_str(), ok ? "OK" : "FAIL",
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+    return ok;
 }
 
 std::string AudioManager::configure_source(SourceConfig config) {
-    return m_source_manager ? m_source_manager->configure_source(config, m_running) : "";
+    const auto t0 = std::chrono::steady_clock::now();
+    if (!m_source_manager) {
+        return "";
+    }
+    const std::string id = m_source_manager->configure_source(config, m_running);
+    const auto t1 = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("[AudioManager] configure_source tag='%s' -> instance='%s' (%lld ms)",
+                 config.tag.c_str(), id.c_str(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+    return id;
 }
 
 bool AudioManager::remove_source(const std::string& instance_id) {
@@ -283,11 +417,23 @@ bool AudioManager::remove_source(const std::string& instance_id) {
 }
 
 bool AudioManager::connect_source_sink(const std::string& source_instance_id, const std::string& sink_id) {
-    return m_connection_manager ? m_connection_manager->connect_source_sink(source_instance_id, sink_id, m_running) : false;
+    const auto t0 = std::chrono::steady_clock::now();
+    bool ok = m_connection_manager ? m_connection_manager->connect_source_sink(source_instance_id, sink_id, m_running) : false;
+    const auto t1 = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("[AudioManager] connect %s -> %s : %s (%lld ms)",
+                 source_instance_id.c_str(), sink_id.c_str(), ok ? "OK" : "FAIL",
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+    return ok;
 }
 
 bool AudioManager::disconnect_source_sink(const std::string& source_instance_id, const std::string& sink_id) {
-    return m_connection_manager ? m_connection_manager->disconnect_source_sink(source_instance_id, sink_id, m_running) : false;
+    const auto t0 = std::chrono::steady_clock::now();
+    bool ok = m_connection_manager ? m_connection_manager->disconnect_source_sink(source_instance_id, sink_id, m_running) : false;
+    const auto t1 = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("[AudioManager] disconnect %s -/-> %s : %s (%lld ms)",
+                 source_instance_id.c_str(), sink_id.c_str(), ok ? "OK" : "FAIL",
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
+    return ok;
 }
 
 void AudioManager::update_source_parameters(const std::string& instance_id, SourceParameterUpdates params) {
@@ -338,7 +484,14 @@ std::vector<std::string> AudioManager::get_per_process_scream_receiver_seen_tags
     return m_receiver_manager ? m_receiver_manager->get_per_process_scream_receiver_seen_tags(listen_port) : std::vector<std::string>();
 }
 
+#if !defined(_WIN32)
+std::vector<std::string> AudioManager::get_pulse_receiver_seen_tags() {
+    return m_receiver_manager ? m_receiver_manager->get_pulse_receiver_seen_tags() : std::vector<std::string>();
+}
+#endif
+
 bool AudioManager::add_system_capture_reference(const std::string& device_tag, CaptureParams params) {
+    const auto t0 = std::chrono::steady_clock::now();
     std::scoped_lock lock(m_manager_mutex);
     if (!m_receiver_manager) {
         LOG_CPP_ERROR("AudioManager add_system_capture_reference called before receiver manager initialization.");
@@ -374,8 +527,10 @@ bool AudioManager::add_system_capture_reference(const std::string& device_tag, C
                     int device = std::stoi(body.substr(dot_pos + 1));
                     params.hw_id = "hw:" + std::to_string(card) + "," + std::to_string(device);
                 } catch (const std::exception&) {
-                    LOG_CPP_WARNING("AudioManager failed to derive hw_id from capture tag %s.", device_tag.c_str());
+                    params.hw_id = body;
                 }
+            } else {
+                params.hw_id = body;
             }
         }
     }
@@ -484,7 +639,14 @@ bool AudioManager::add_system_capture_reference(const std::string& device_tag, C
     }
 #endif
 
-    return m_receiver_manager->ensure_capture_receiver(device_tag, params);
+    const auto t_ensure0 = std::chrono::steady_clock::now();
+    const bool ok = m_receiver_manager->ensure_capture_receiver(device_tag, params);
+    const auto t1 = std::chrono::steady_clock::now();
+    LOG_CPP_INFO("[AudioManager] ensure_capture tag='%s' -> %s (%lld ms total, %lld ms ensure)",
+                 device_tag.c_str(), ok ? "OK" : "FAIL",
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count(),
+                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t_ensure0).count());
+    return ok;
 }
 
 void AudioManager::remove_system_capture_reference(const std::string& device_tag) {

@@ -8,12 +8,16 @@
  */
 #ifndef SINK_AUDIO_MIXER_H
 #define SINK_AUDIO_MIXER_H
+#if defined(_WIN32) && !defined(NOMINMAX)
+#define NOMINMAX
+#endif
 
 #include "../utils/audio_component.h"
 #include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
 #include "../senders/i_network_sender.h"
 #include "../configuration/audio_engine_settings.h"
+#include "../receivers/clock_manager.h"
 
 #include <string>
 #include <vector>
@@ -23,6 +27,14 @@
 #include <condition_variable>
 #include <lame/lame.h>
 #include <atomic>
+#include <chrono>
+#include <limits>
+#include <thread>
+
+#if defined(_WIN32)
+#undef max
+#undef min
+#endif
 
 class AudioProcessor;
 
@@ -173,11 +185,21 @@ private:
     std::map<std::string, bool> input_active_state_;
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
 
-    std::condition_variable input_cv_;
-    std::mutex input_cv_mutex_;
+    std::unique_ptr<ClockManager> clock_manager_;
+    std::atomic<bool> clock_manager_enabled_{false};
+    ClockManager::ConditionHandle clock_condition_handle_{};
+    uint64_t clock_last_sequence_{0};
+    uint64_t clock_pending_ticks_{0};
+    int timer_sample_rate_{0};
+    int timer_channels_{0};
+    int timer_bit_depth_{0};
 
-    const std::chrono::milliseconds GRACE_PERIOD_TIMEOUT{12};
-    const std::chrono::milliseconds GRACE_PERIOD_POLL_INTERVAL{1};
+    int playback_sample_rate_{0};
+    int playback_channels_{0};
+    int playback_bit_depth_{0};
+
+    std::chrono::microseconds mix_period_{std::chrono::microseconds(12000)};
+    std::chrono::steady_clock::time_point next_mix_time_{};
 
     std::vector<int32_t> mixing_buffer_;
     std::vector<int32_t> stereo_buffer_;
@@ -196,12 +218,18 @@ private:
     std::atomic<uint64_t> m_buffer_overflows{0};
     std::atomic<uint64_t> m_mp3_buffer_overflows{0};
 
+    bool underrun_silence_active_ = false;
+    std::chrono::steady_clock::time_point underrun_silence_deadline_{};
+
     // --- Synchronization Coordination ---
     /** @brief Whether coordination mode is enabled for synchronized dispatch. */
     bool coordination_mode_ = false;
     
     /** @brief Pointer to the synchronization coordinator (not owned). */
     SinkSynchronizationCoordinator* coordinator_ = nullptr;
+
+    std::thread startup_thread_;
+    std::atomic<bool> startup_in_progress_{false};
 
     void initialize_lame();
     void close_lame();
@@ -213,6 +241,74 @@ private:
     void dispatch_to_listeners(size_t samples_to_dispatch);
     void encode_and_push_mp3(size_t samples_to_encode);
     void cleanup_closed_listeners();
+    void clear_pending_audio();
+    void start_async();
+    bool start_internal();
+    void join_startup_thread();
+
+    // --- Profiling ---
+    void reset_profiler_counters();
+    void maybe_log_profiler();
+    std::chrono::steady_clock::time_point profiling_last_log_time_;
+    uint64_t profiling_cycles_{0};
+    uint64_t profiling_data_ready_cycles_{0};
+    uint64_t profiling_chunks_sent_{0};
+    uint64_t profiling_payload_bytes_sent_{0};
+    size_t profiling_ready_sources_sum_{0};
+    size_t profiling_lagging_sources_sum_{0};
+    size_t profiling_samples_count_{0};
+    size_t profiling_max_payload_buffer_bytes_{0};
+    double profiling_chunk_dwell_sum_ms_{0.0};
+    double profiling_chunk_dwell_max_ms_{0.0};
+    double profiling_chunk_dwell_min_ms_{std::numeric_limits<double>::infinity()};
+    double profiling_last_chunk_dwell_ms_{0.0};
+    uint64_t profiling_chunk_dwell_samples_{0};
+    std::chrono::steady_clock::time_point profiling_underrun_active_since_{};
+    double profiling_underrun_hold_time_ms_{0.0};
+    double profiling_last_underrun_hold_ms_{0.0};
+    uint64_t profiling_underrun_events_{0};
+    std::chrono::steady_clock::time_point profiling_last_chunk_send_time_{};
+    double profiling_send_gap_sum_ms_{0.0};
+    double profiling_send_gap_max_ms_{0.0};
+    double profiling_send_gap_min_ms_{std::numeric_limits<double>::infinity()};
+    double profiling_last_send_gap_ms_{0.0};
+    uint64_t profiling_send_gap_samples_{0};
+
+    // Detailed operation timings
+    long double profiling_mix_ns_sum_{0.0L};
+    uint64_t profiling_mix_calls_{0};
+    uint64_t profiling_mix_ns_max_{0};
+    uint64_t profiling_mix_ns_min_{std::numeric_limits<uint64_t>::max()};
+
+    long double profiling_downscale_ns_sum_{0.0L};
+    uint64_t profiling_downscale_calls_{0};
+    uint64_t profiling_downscale_ns_max_{0};
+    uint64_t profiling_downscale_ns_min_{std::numeric_limits<uint64_t>::max()};
+
+    long double profiling_preprocess_ns_sum_{0.0L};
+    uint64_t profiling_preprocess_calls_{0};
+    uint64_t profiling_preprocess_ns_max_{0};
+    uint64_t profiling_preprocess_ns_min_{std::numeric_limits<uint64_t>::max()};
+
+    long double profiling_dispatch_ns_sum_{0.0L};
+    uint64_t profiling_dispatch_calls_{0};
+    uint64_t profiling_dispatch_ns_max_{0};
+    uint64_t profiling_dispatch_ns_min_{std::numeric_limits<uint64_t>::max()};
+
+    long double profiling_mp3_ns_sum_{0.0L};
+    uint64_t profiling_mp3_calls_{0};
+    uint64_t profiling_mp3_ns_max_{0};
+    uint64_t profiling_mp3_ns_min_{std::numeric_limits<uint64_t>::max()};
+
+    // Per-source underrun counters
+    std::map<std::string, uint64_t> profiling_source_underruns_;
+
+    void set_playback_format(int sample_rate, int channels, int bit_depth);
+    void update_playback_format_from_sender();
+    std::chrono::microseconds calculate_mix_period(int sample_rate, int channels, int bit_depth) const;
+    void register_mix_timer();
+    void unregister_mix_timer();
+    bool wait_for_mix_tick();
 };
 
 } // namespace audio

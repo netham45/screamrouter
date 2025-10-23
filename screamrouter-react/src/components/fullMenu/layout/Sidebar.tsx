@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Box,
   Flex,
@@ -7,9 +7,11 @@ import {
   Divider,
   useColorModeValue,
   CloseButton,
+  Text,
 } from '@chakra-ui/react';
 import NavItem from '../navigation/NavItem';
 import { SidebarProps } from '../types';
+import ApiService, { type SystemInfo } from '../../../api/api';
 
 /**
  * Sidebar component for the FullMenu.
@@ -35,7 +37,73 @@ const Sidebar: React.FC<SidebarProps> = ({
   const borderColor = useColorModeValue('gray.200', 'gray.700');
   const headingColor = useColorModeValue('gray.700', 'gray.100');
   const sectionHeadingColor = useColorModeValue('gray.500', 'gray.400');
+  const cardBg = useColorModeValue('blue.50', 'whiteAlpha.100');
+  const cardBorder = useColorModeValue('blue.100', 'whiteAlpha.300');
+  const cardText = useColorModeValue('gray.700', 'whiteAlpha.900');
+  const cardMutedText = useColorModeValue('gray.500', 'whiteAlpha.700');
   const totalSystemDevices = systemCaptureDevices.length + systemPlaybackDevices.length;
+
+  const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  const [systemInfoError, setSystemInfoError] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchSystemInfo = async () => {
+      try {
+        const response = await ApiService.getSystemInfo();
+        if (isMounted) {
+          setSystemInfo(response.data);
+          setSystemInfoError(false);
+        }
+      } catch (error) {
+        console.error('Failed to fetch system info:', error);
+        if (isMounted) {
+          setSystemInfoError(true);
+        }
+      }
+    };
+
+    fetchSystemInfo();
+    const intervalId = window.setInterval(fetchSystemInfo, 10000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  const formatPercent = (value: number | null | undefined, digits = 0) => {
+    if (value === null || value === undefined || Number.isNaN(value)) {
+      return 'n/a';
+    }
+    return `${value.toFixed(digits)}%`;
+  };
+
+  const formatMemoryValue = (value: number | null | undefined) => {
+    if (value === null || value === undefined || Number.isNaN(value)) {
+      return 'n/a';
+    }
+    if (value >= 1024) {
+      return `${(value / 1024).toFixed(1)} GB`;
+    }
+    return `${Math.round(value)} MB`;
+  };
+
+  const formatLoadAverage = (load: SystemInfo['load_average']) => {
+    if (!load) {
+      return 'n/a';
+    }
+    return `${load.one.toFixed(2)} / ${load.five.toFixed(2)} / ${load.fifteen.toFixed(2)}`;
+  };
+
+  const formattedLocalTime = systemInfo
+    ? new Date(systemInfo.server_time.local_iso).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    : 'n/a';
 
   return (
     <>
@@ -60,21 +128,55 @@ const Sidebar: React.FC<SidebarProps> = ({
         overflowY="auto"
         height={{ md: '100%' }}
       >
-        <Flex
+        <Box
           p={4}
-          justify="space-between"
-          align="center"
           borderBottomWidth="1px"
           borderColor={borderColor}
         >
-          <Heading as="h2" size="md" color={headingColor}>
-            Navigation
-          </Heading>
-          <CloseButton
-            display={{ base: 'block', md: 'none' }}
-            onClick={toggleSidebar}
-          />
-        </Flex>
+          <Flex justify="space-between" align="center" mb={3}>
+            <CloseButton
+              display={{ base: 'block', md: 'none' }}
+              onClick={toggleSidebar}
+            />
+          </Flex>
+          <Box
+            borderRadius="lg"
+            borderWidth="1px"
+            borderColor={cardBorder}
+            bg={cardBg}
+            p={3}
+          >
+            {systemInfo ? (
+              <>
+                <Text fontSize="sm" fontWeight="semibold" color={cardText} noOfLines={1}>
+                  {systemInfo.hostname}
+                </Text>
+                <Text fontSize="xs" color={cardMutedText} mt={1}>
+                  {formattedLocalTime} <br />
+                  Uptime {systemInfo.uptime_human ?? 'n/a'}
+                </Text>
+                <Text fontSize="xs" color={cardText} mt={2}>
+                  Load {formatLoadAverage(systemInfo.load_average)}
+                </Text>
+                <Text fontSize="xs" color={cardText}>
+                  Mem {formatPercent(systemInfo.memory.used_percent, 0)} • {formatMemoryValue(systemInfo.memory.used_mb)} / {formatMemoryValue(systemInfo.memory.total_mb)}
+                </Text>
+                <Text fontSize="xs" color={cardText}>
+                  PID {systemInfo.process.pid} • CPU {formatPercent(systemInfo.process.cpu_percent, 1)} • RSS {formatMemoryValue(systemInfo.process.memory_rss_mb)}
+                </Text>
+              </>
+            ) : (
+              <Text fontSize="xs" color={cardMutedText}>
+                {systemInfoError ? 'Unable to load system stats.' : 'Loading system stats...'}
+              </Text>
+            )}
+            {systemInfoError && systemInfo && (
+              <Text fontSize="xs" color="red.300" mt={2}>
+                Refresh failed
+              </Text>
+            )}
+          </Box>
+        </Box>
         
         <VStack
           as="nav"

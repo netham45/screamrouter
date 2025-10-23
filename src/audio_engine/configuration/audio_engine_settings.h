@@ -15,6 +15,29 @@ struct TimeshiftTuning {
     double min_playback_rate = 0.98;
     double max_playback_rate = 1.02;
     long loop_max_sleep_ms = 10;
+    double max_catchup_lag_ms = 20.0;
+    double max_jitter_ms = 150.0;
+    double jitter_decay_factor = 0.05;
+    double jitter_decay_stable_threshold_ms = 2.0;
+    int jitter_decay_stable_packet_window = 50;
+    long jitter_idle_decay_interval_ms = 500;
+    double jitter_idle_decay_factor = 0.1;
+    double max_adaptive_delay_ms = 200.0;
+
+    // --- Temporal Store / DVR defaults ---
+    // Target playout delay (D) relative to now_ref; mixer follows head at D behind.
+    long target_playout_delay_ms = 200;  // auto-tune in future
+    // Commit guard: distance behind (now + D) before we consider items immutable/committed.
+    long commit_guard_ms = 24;           // ~2 × 12ms chunk by default
+    // DVR retention window in seconds (ring buffer duration).
+    long dvr_retention_sec = 300;        // 5 minutes
+    // Segment duration for durable window (ms); used if/when segmenting to disk.
+    long dvr_segment_ms = 250;           // audio-only default
+};
+
+struct ProfilerSettings {
+    bool enabled = true;
+    long log_interval_ms = 1000;
 };
 
 struct MixerTuning {
@@ -23,6 +46,7 @@ struct MixerTuning {
     int mp3_bitrate_kbps = 192;
     bool mp3_vbr_enabled = false;
     int mp3_output_queue_max_size = 10;
+    long underrun_hold_timeout_ms = 250;
 };
 
 struct SourceProcessorTuning {
@@ -58,6 +82,7 @@ struct SynchronizationTuning {
 class AudioEngineSettings {
 public:
     TimeshiftTuning timeshift_tuning;
+    ProfilerSettings profiler;
     MixerTuning mixer_tuning;
     SourceProcessorTuning source_processor_tuning;
     ProcessorTuning processor_tuning;

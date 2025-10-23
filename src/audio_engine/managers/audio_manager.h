@@ -169,6 +169,11 @@ public:
      * @return A vector of composite source tags, or an empty vector if the receiver is not found.
      */
     std::vector<std::string> get_per_process_scream_receiver_seen_tags(int listen_port);
+#if !defined(_WIN32)
+#if !defined(_WIN32)
+    std::vector<std::string> get_pulse_receiver_seen_tags();
+#endif
+#endif
 
     /**
      * @brief Adds a reference to a system capture device, creating the receiver if needed.
@@ -351,6 +356,9 @@ private:
      * @return Pointer to the GlobalSynchronizationClock for this rate.
      */
     GlobalSynchronizationClock* get_or_create_sync_clock(int sample_rate);
+
+    // Debug helper to dump state during shutdown hangs
+    void debug_dump_state(const char* label);
 };
     
 /**
@@ -371,7 +379,13 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("proportional_gain_kp", &TimeshiftTuning::proportional_gain_kp)
         .def_readwrite("min_playback_rate", &TimeshiftTuning::min_playback_rate)
         .def_readwrite("max_playback_rate", &TimeshiftTuning::max_playback_rate)
-        .def_readwrite("loop_max_sleep_ms", &TimeshiftTuning::loop_max_sleep_ms);
+        .def_readwrite("loop_max_sleep_ms", &TimeshiftTuning::loop_max_sleep_ms)
+        .def_readwrite("max_catchup_lag_ms", &TimeshiftTuning::max_catchup_lag_ms);
+
+    py::class_<ProfilerSettings>(m, "ProfilerSettings")
+        .def(py::init<>())
+        .def_readwrite("enabled", &ProfilerSettings::enabled)
+        .def_readwrite("log_interval_ms", &ProfilerSettings::log_interval_ms);
 
     py::class_<MixerTuning>(m, "MixerTuning")
         .def(py::init<>())
@@ -379,7 +393,8 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("grace_period_poll_interval_ms", &MixerTuning::grace_period_poll_interval_ms)
         .def_readwrite("mp3_bitrate_kbps", &MixerTuning::mp3_bitrate_kbps)
         .def_readwrite("mp3_vbr_enabled", &MixerTuning::mp3_vbr_enabled)
-        .def_readwrite("mp3_output_queue_max_size", &MixerTuning::mp3_output_queue_max_size);
+        .def_readwrite("mp3_output_queue_max_size", &MixerTuning::mp3_output_queue_max_size)
+        .def_readwrite("underrun_hold_timeout_ms", &MixerTuning::underrun_hold_timeout_ms);
 
     py::class_<SourceProcessorTuning>(m, "SourceProcessorTuning")
         .def(py::init<>())
@@ -411,6 +426,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
     py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
         .def(py::init<>())
         .def_readwrite("timeshift_tuning", &AudioEngineSettings::timeshift_tuning)
+        .def_readwrite("profiler", &AudioEngineSettings::profiler)
         .def_readwrite("mixer_tuning", &AudioEngineSettings::mixer_tuning)
         .def_readwrite("source_processor_tuning", &AudioEngineSettings::source_processor_tuning)
         .def_readwrite("processor_tuning", &AudioEngineSettings::processor_tuning)
@@ -462,6 +478,10 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def("get_per_process_scream_receiver_seen_tags", &AudioManager::get_per_process_scream_receiver_seen_tags,
              py::arg("listen_port"),
              "Retrieves the list of seen source tags from a specific Per-Process Scream receiver.")
+#if !defined(_WIN32)
+        .def("get_pulse_receiver_seen_tags", &AudioManager::get_pulse_receiver_seen_tags,
+             "Retrieves the list of seen source tags from the PulseAudio receiver.")
+#endif
         .def("write_plugin_packet",
              [](AudioManager &self,
                 const std::string& source_instance_id,

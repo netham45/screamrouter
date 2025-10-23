@@ -59,15 +59,19 @@ const int RTP_BITS_PER_SAMPLE_L16_48K_STEREO = 16;
 RtpReceiver::RtpReceiver(
     RtpReceiverConfig config,
     std::shared_ptr<NotificationQueue> notification_queue,
-    TimeshiftManager* timeshift_manager)
-    : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, "[RtpReceiver]"),
-      config_(config),
+    TimeshiftManager* timeshift_manager,
+    ClockManager* clock_manager)
+    : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, "[RtpReceiver]", clock_manager, TARGET_PCM_CHUNK_SIZE),
+      config_(config)
       #ifdef _WIN32
-          max_fd_(NAR_INVALID_SOCKET_VALUE),
+          , max_fd_(NAR_INVALID_SOCKET_VALUE)
       #else
-          epoll_fd_(NAR_INVALID_SOCKET_VALUE),
+          , epoll_fd_(NAR_INVALID_SOCKET_VALUE)
       #endif
-      last_rtp_timestamp_(0), last_chunk_remainder_samples_(0) {
+{
+    if (!clock_manager_) {
+        throw std::runtime_error("RtpReceiver requires a valid ClockManager instance");
+    }
     #ifdef _WIN32
         FD_ZERO(&master_read_fds_);
     #endif
@@ -81,7 +85,6 @@ RtpReceiver::RtpReceiver(
 }
 
 RtpReceiver::~RtpReceiver() noexcept {
-    
 }
 
 std::vector<SapAnnouncement> RtpReceiver::get_sap_announcements() {
@@ -99,6 +102,12 @@ std::string RtpReceiver::get_source_key(const struct sockaddr_in& addr) const {
     return std::string(ip_str) + ":" + std::to_string(ntohs(addr.sin_port));
 }
 
+std::string RtpReceiver::make_pcm_accumulator_key(uint32_t ssrc) const {
+    char buffer[32];
+    snprintf(buffer, sizeof(buffer), "ssrc:%u", ssrc);
+    return std::string(buffer);
+}
+
 void RtpReceiver::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, const std::string& source_key) {
     char old_ssrc_hex[12];
     char new_ssrc_hex[12];
@@ -113,10 +122,7 @@ void RtpReceiver::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, cons
    if (reordering_buffers_.count(old_ssrc)) {
        reordering_buffers_.at(old_ssrc).reset();
    }
-   pcm_accumulators_.erase(old_ssrc);
-   is_accumulating_chunk_.erase(old_ssrc);
-   chunk_first_packet_received_time_.erase(old_ssrc);
-   chunk_first_packet_rtp_timestamp_.erase(old_ssrc);
+   reset_pcm_accumulator(make_pcm_accumulator_key(old_ssrc));
 
    log_message("State for SSRC " + std::string(old_ssrc_hex) + " cleared due to SSRC change.");
 }
@@ -173,18 +179,15 @@ void RtpReceiver::close_socket() {
    {
        std::lock_guard<std::mutex> lock(reordering_buffer_mutex_);
        reordering_buffers_.clear();
-       pcm_accumulators_.clear();
-       is_accumulating_chunk_.clear();
-       chunk_first_packet_received_time_.clear();
-       chunk_first_packet_rtp_timestamp_.clear();
    }
    {
        std::lock_guard<std::mutex> lock(source_ssrc_mutex_);
        source_to_last_ssrc_.clear();
    }
 
-    std::lock_guard<std::mutex> lock(socket_fds_mutex_);
+    reset_all_pcm_accumulators();
 
+    std::lock_guard<std::mutex> lock(socket_fds_mutex_);
     #ifdef _WIN32
         FD_ZERO(&master_read_fds_);
         max_fd_ = NAR_INVALID_SOCKET_VALUE;
@@ -236,6 +239,8 @@ void RtpReceiver::run() {
     #endif
  
     while (is_running()) {
+        service_clock_manager();
+
         #ifdef _WIN32
             // Windows: Use select()
             fd_set read_fds = master_read_fds_;
@@ -275,6 +280,7 @@ void RtpReceiver::run() {
                 // Call internal version with take_lock=false since we already hold the lock
                 process_ready_packets_internal(ssrc, cliaddr, false);
             }
+            service_clock_manager();
             continue;
         }
 
@@ -403,6 +409,7 @@ void RtpReceiver::run() {
                 } // End if EPOLLIN
             } // End for n_events
         #endif
+        service_clock_manager();
     } // End while is_running
     log_message("RTP receiver thread finished.");
 }
@@ -545,76 +552,52 @@ void RtpReceiver::process_ready_packets_internal(uint32_t ssrc, const struct soc
         return;
     }
 
-    // Get or create the accumulator for this SSRC
-    auto& pcm_accumulator = pcm_accumulators_[ssrc];
-    if (pcm_accumulator.capacity() < TARGET_PCM_CHUNK_SIZE * 2) {
-        pcm_accumulator.reserve(TARGET_PCM_CHUNK_SIZE * 2);
-    }
+    char client_ip_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
+    std::string source_tag = client_ip_str;
+
+    const bool system_is_le = is_system_little_endian();
+    const std::string accumulator_key = make_pcm_accumulator_key(ssrc);
 
     for (auto& packet_data : ready_packets) {
-        if (!is_accumulating_chunk_[ssrc]) {
-            chunk_first_packet_received_time_[ssrc] = packet_data.received_time;
-            chunk_first_packet_rtp_timestamp_[ssrc] = packet_data.rtp_timestamp;
-            is_accumulating_chunk_[ssrc] = true;
-        }
-
         std::vector<uint8_t> processed_payload = std::move(packet_data.payload);
-        bool system_is_le = is_system_little_endian();
         if ((props.endianness == Endianness::BIG && system_is_le) ||
             (props.endianness == Endianness::LITTLE && !system_is_le)) {
             swap_endianness(processed_payload.data(), processed_payload.size(), props.bit_depth);
         }
+        NetworkAudioReceiver::PcmAppendContext pcm_context;
+        pcm_context.accumulator_key = accumulator_key;
+        pcm_context.source_tag = source_tag;
+        pcm_context.payload = std::move(processed_payload);
+        pcm_context.sample_rate = props.sample_rate;
+        pcm_context.channels = props.channels;
+        pcm_context.bit_depth = props.bit_depth;
+        pcm_context.chlayout1 = 0x03; // Stereo L/R
+        pcm_context.chlayout2 = 0x00;
+        pcm_context.received_time = packet_data.received_time;
+        pcm_context.rtp_timestamp = packet_data.rtp_timestamp;
+        pcm_context.ssrcs.reserve(1 + packet_data.csrcs.size());
+        pcm_context.ssrcs.push_back(packet_data.ssrc);
+        pcm_context.ssrcs.insert(pcm_context.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
 
-        pcm_accumulator.insert(pcm_accumulator.end(), processed_payload.begin(), processed_payload.end());
-
-        while (pcm_accumulator.size() >= TARGET_PCM_CHUNK_SIZE) {
-            TaggedAudioPacket packet;
-            packet.received_time = chunk_first_packet_received_time_[ssrc];
-            packet.rtp_timestamp = chunk_first_packet_rtp_timestamp_[ssrc];
-            
-            size_t bytes_per_sample = props.bit_depth / 8;
-            if (bytes_per_sample > 0 && props.channels > 0) {
-                size_t samples_in_chunk = (TARGET_PCM_CHUNK_SIZE / bytes_per_sample) / props.channels;
-                chunk_first_packet_rtp_timestamp_[ssrc] += samples_in_chunk;
-            }
-
-            packet.ssrcs.push_back(packet_data.ssrc);
-            packet.ssrcs.insert(packet.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
-
-            char client_ip_str[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
-            packet.source_tag = client_ip_str;
-            
-            packet.channels = props.channels;
-            packet.sample_rate = props.sample_rate;
-            packet.bit_depth = props.bit_depth;
-            packet.chlayout1 = 0x03; // Stereo L/R
-            packet.chlayout2 = 0x00;
-
-            packet.audio_data.assign(pcm_accumulator.begin(), pcm_accumulator.begin() + TARGET_PCM_CHUNK_SIZE);
-            pcm_accumulator.erase(pcm_accumulator.begin(), pcm_accumulator.begin() + TARGET_PCM_CHUNK_SIZE);
-            
-            is_accumulating_chunk_[ssrc] = false;
-
-            if (timeshift_manager_) {
-                timeshift_manager_->add_packet(std::move(packet));
-            }
-
+        auto completed_chunks = append_pcm_payload(std::move(pcm_context));
+        for (auto& chunk : completed_chunks) {
             bool new_tag = false;
             {
                 std::lock_guard<std::mutex> lock(seen_tags_mutex_);
-                if (std::find(seen_tags_.begin(), seen_tags_.end(), packet.source_tag) == seen_tags_.end()) {
-                    seen_tags_.push_back(packet.source_tag);
+                if (std::find(seen_tags_.begin(), seen_tags_.end(), chunk.source_tag) == seen_tags_.end()) {
+                    seen_tags_.push_back(chunk.source_tag);
                     new_tag = true;
                 }
             }
             if (new_tag && notification_queue_) {
-                notification_queue_->push({packet.source_tag});
+                notification_queue_->push({chunk.source_tag});
             }
+
+            dispatch_ready_packet(std::move(chunk));
         }
     }
 }
-
 
 // --- Dummied/Simplified NetworkAudioReceiver Pure Virtual Method Implementations ---
  
@@ -646,7 +629,7 @@ size_t RtpReceiver::get_receive_buffer_size() const {
 }
 
 int RtpReceiver::get_poll_timeout_ms() const {
-    return 100; // ms
+    return 5; // Reduced timeout to service clock-driven playout promptly
 }
 
 } // namespace audio

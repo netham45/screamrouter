@@ -175,6 +175,54 @@ export interface AudioEngineStats {
   sink_stats: SinkStats[];
 }
 
+export interface SystemLoadAverage {
+  one: number;
+  five: number;
+  fifteen: number;
+}
+
+export interface SystemMemoryStats {
+  total_mb: number | null;
+  available_mb: number | null;
+  used_mb: number | null;
+  used_percent: number | null;
+}
+
+export interface ProcessRuntimeStats {
+  pid: number;
+  name: string;
+  status: string;
+  cpu_percent: number | null;
+  memory_percent: number | null;
+  memory_rss_mb: number | null;
+  num_threads: number | null;
+  uptime_seconds: number | null;
+  uptime_human: string | null;
+  started_at: string | null;
+}
+
+export interface SystemInfo {
+  hostname: string;
+  fqdn: string;
+  platform: {
+    system: string;
+    release: string;
+    version: string;
+    machine: string;
+    python: string;
+  };
+  server_time: {
+    local_iso: string;
+    utc_iso: string;
+  };
+  uptime_seconds: number | null;
+  uptime_human: string | null;
+  cpu_count: number | null;
+  load_average: SystemLoadAverage | null;
+  memory: SystemMemoryStats;
+  process: ProcessRuntimeStats;
+}
+
 // --- Audio Engine Settings Interfaces ---
 export interface TimeshiftTuning {
   cleanup_interval_ms: number;
@@ -474,6 +522,9 @@ const ApiService = {
       return axios.post(`/api/routes/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout);
   },
   // --- End Speaker Layout Update Methods ---
+
+  // --- System ---
+  getSystemInfo: () => axios.get<SystemInfo>('/api/system/info'),
 
   // --- Stats ---
   getStats: () => axios.get<AudioEngineStats>('/api/stats'),

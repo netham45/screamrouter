@@ -58,6 +58,7 @@ from screamrouter.api.api_mdns import APIMdns
 from screamrouter.api.api_log_viewer import APILogViewer
 from screamrouter.api.api_preferences import APIPreferences
 from screamrouter.api.api_stats import APIStats
+from screamrouter.api.api_system import APISystemInfo
 from screamrouter.api.api_webrtc import APIWebRTC
 from screamrouter.api.api_website import APIWebsite
 from screamrouter.api.api_websocket_config import APIWebsocketConfig
@@ -307,7 +308,7 @@ def main():
                 logger.error(f"Error during signal handler cleanup: {e}")
             server.should_exit = True
             server.force_exit = True
-            os.kill(os.getpid(), signal.SIGTERM)
+            #os.kill(os.getpid(), signal.SIGTERM)
             sys.exit(0)
 
 
@@ -500,6 +501,7 @@ def main():
     equalizer: APIEqualizer = APIEqualizer(app)
     mdns_api: APIMdns = APIMdns(app, screamrouter_configuration)
     stats_api: APIStats = APIStats(app, screamrouter_configuration)
+    system_info_api: APISystemInfo = APISystemInfo(app)
     log_viewer: APILogViewer = APILogViewer(app)
     preferences_manager = PreferencesManager()
     preferences_api: APIPreferences = APIPreferences(app, preferences_manager)

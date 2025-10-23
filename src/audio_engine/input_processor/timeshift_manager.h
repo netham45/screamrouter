@@ -24,6 +24,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <limits>
 
 namespace screamrouter {
 namespace audio {
@@ -74,6 +75,31 @@ struct StreamTimingState {
     std::atomic<uint64_t> tm_buffer_underruns{0};
     std::atomic<uint64_t> tm_packets_discarded{0};
     std::atomic<uint64_t> lagging_events_count{0};
+
+    // Detailed profiling accumulators
+    double arrival_error_ms_sum = 0.0;
+    double arrival_error_ms_abs_sum = 0.0;
+    double arrival_error_ms_max = -std::numeric_limits<double>::infinity();
+    double arrival_error_ms_min = std::numeric_limits<double>::infinity();
+    uint64_t arrival_error_samples = 0;
+
+    double playout_deviation_ms_sum = 0.0;
+    double playout_deviation_ms_abs_sum = 0.0;
+    double playout_deviation_ms_max = -std::numeric_limits<double>::infinity();
+    double playout_deviation_ms_min = std::numeric_limits<double>::infinity();
+    uint64_t playout_deviation_samples = 0;
+
+    double head_playout_lag_ms_sum = 0.0;
+    double head_playout_lag_ms_max = -std::numeric_limits<double>::infinity();
+    uint64_t head_playout_lag_samples = 0;
+    double last_head_playout_lag_ms = 0.0;
+
+    double last_clock_offset_ms = 0.0;
+    double last_clock_drift_ppm = 0.0;
+    double last_clock_innovation_ms = 0.0;
+    double last_clock_measured_offset_ms = 0.0;
+    double clock_innovation_abs_sum_ms = 0.0;
+    uint64_t clock_innovation_samples = 0;
 };
 
 /**
@@ -93,6 +119,25 @@ struct TimeshiftManagerStats {
     std::map<std::string, double> stream_last_arrival_time_error_ms;
     std::map<std::string, double> stream_target_buffer_level_ms;
     std::map<std::string, double> stream_buffer_target_fill_percentage;
+    std::map<std::string, double> stream_avg_arrival_error_ms;
+    std::map<std::string, double> stream_avg_abs_arrival_error_ms;
+    std::map<std::string, double> stream_max_arrival_error_ms;
+    std::map<std::string, double> stream_min_arrival_error_ms;
+    std::map<std::string, uint64_t> stream_arrival_error_sample_count;
+    std::map<std::string, double> stream_avg_playout_deviation_ms;
+    std::map<std::string, double> stream_avg_abs_playout_deviation_ms;
+    std::map<std::string, double> stream_max_playout_deviation_ms;
+    std::map<std::string, double> stream_min_playout_deviation_ms;
+    std::map<std::string, uint64_t> stream_playout_deviation_sample_count;
+    std::map<std::string, double> stream_avg_head_playout_lag_ms;
+    std::map<std::string, double> stream_max_head_playout_lag_ms;
+    std::map<std::string, uint64_t> stream_head_playout_lag_sample_count;
+    std::map<std::string, double> stream_last_head_playout_lag_ms;
+    std::map<std::string, double> stream_clock_offset_ms;
+    std::map<std::string, double> stream_clock_drift_ppm;
+    std::map<std::string, double> stream_clock_last_innovation_ms;
+    std::map<std::string, double> stream_clock_avg_abs_innovation_ms;
+    std::map<std::string, double> stream_clock_last_measured_offset_ms;
 };
 
 /**
@@ -160,6 +205,12 @@ public:
      */
     TimeshiftManagerStats get_stats();
 
+    /**
+     * @brief Resets timing state and pending buffer indices for a specific source tag.
+     * @param source_tag The composite source tag whose timing state should be cleared.
+     */
+    void reset_stream_state(const std::string& source_tag);
+
 protected:
     /** @brief The main loop for the manager's thread. */
     void run() override;
@@ -190,6 +241,15 @@ private:
 
     std::atomic<uint64_t> m_state_version_{0};
     std::atomic<uint64_t> m_total_packets_added{0};
+
+    // --- Profiling ---
+    void reset_profiler_counters_unlocked(std::chrono::steady_clock::time_point now);
+    void maybe_log_profiler_unlocked(std::chrono::steady_clock::time_point now);
+    std::chrono::steady_clock::time_point profiling_last_log_time_;
+    uint64_t profiling_packets_dispatched_{0};
+    uint64_t profiling_packets_dropped_{0};
+    uint64_t profiling_packets_late_count_{0};
+    double profiling_total_lateness_ms_{0.0};
 };
 
 } // namespace audio

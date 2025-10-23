@@ -16,6 +16,7 @@ extern "C" {
 #include <dirent.h>
 #include <poll.h>
 #include <string_view>
+#include <cstdlib>
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -54,16 +55,54 @@ void AlsaDeviceEnumerator::start() {
 
 void AlsaDeviceEnumerator::stop() {
 #if defined(__linux__)
+    LOG_CPP_INFO("[ALSA-Enumerator] stop() requested (running=%d)", running_.load() ? 1 : 0);
     if (running_.exchange(false)) {
-        if (monitor_thread_.joinable()) {
-            monitor_thread_.join();
+        // Proactively tear down inotify to break out of poll() promptly
+        teardown_fifo_watch();
+        // Signal wake pipe to break out of poll immediately
+        if (wake_pipe_[1] >= 0) {
+            const char b = 'x';
+            (void)write(wake_pipe_[1], &b, 1);
         }
+        if (monitor_thread_.joinable()) {
+            LOG_CPP_INFO("[ALSA-Enumerator] Joining monitor thread (with timeout)...");
+#if defined(__linux__)
+            // Try a timed join using pthread_timedjoin_np to avoid indefinite hangs
+            pthread_t th = monitor_thread_.native_handle();
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_sec += 2; // 2s timeout
+            int rc = pthread_timedjoin_np(th, nullptr, &ts);
+            if (rc == 0) {
+                LOG_CPP_INFO("[ALSA-Enumerator] Monitor thread joined.");
+                // std::thread is now joined by pthread; invalidate it safely
+                // Workaround: create a dummy thread and swap to reset joinable state
+                std::thread().swap(monitor_thread_);
+            } else if (rc == ETIMEDOUT) {
+                LOG_CPP_WARNING("[ALSA-Enumerator] Monitor thread join timed out; detaching to avoid hang.");
+                monitor_thread_.detach();
+            } else {
+                LOG_CPP_WARNING("[ALSA-Enumerator] pthread_timedjoin_np returned rc=%d (%s); detaching thread.", rc, std::strerror(rc));
+                monitor_thread_.detach();
+            }
+#else
+            monitor_thread_.join();
+            LOG_CPP_INFO("[ALSA-Enumerator] Monitor thread joined.");
+#endif
+        } else {
+            LOG_CPP_INFO("[ALSA-Enumerator] Monitor thread not joinable.");
+        }
+    } else {
+        LOG_CPP_INFO("[ALSA-Enumerator] Already stopped.");
     }
 #else
     running_ = false;
 #endif
-    std::lock_guard<std::mutex> lock(registry_mutex_);
-    registry_.clear();
+    {
+        std::lock_guard<std::mutex> lock(registry_mutex_);
+        registry_.clear();
+    }
+    LOG_CPP_INFO("[ALSA-Enumerator] Registry cleared.");
 }
 
 AlsaDeviceEnumerator::Registry AlsaDeviceEnumerator::get_registry_snapshot() const {
@@ -136,76 +175,94 @@ std::string friendly_from_label(const std::string& label) {
     return result;
 }
 
-std::string build_device_tag(const std::string& prefix, int card, int device) {
-    return prefix + std::to_string(card) + "." + std::to_string(device);
+std::string trim_whitespace(const std::string& value) {
+    size_t start = 0;
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
+        ++start;
+    }
+    size_t end = value.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+        --end;
+    }
+    return value.substr(start, end - start);
 }
 
-std::string build_hw_id(int card, int device) {
-    return "hw:" + std::to_string(card) + "," + std::to_string(device);
+std::optional<int> parse_numeric_token(const std::string& token) {
+    if (token.empty()) {
+        return std::nullopt;
+    }
+    try {
+        return static_cast<int>(std::stol(token));
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
 }
 
-SystemDeviceInfo create_device_info(
-    snd_ctl_card_info_t* card_info,
-    snd_pcm_info_t* pcm_info,
-    int card,
-    int device,
-    snd_pcm_stream_t stream)
-{
-    SystemDeviceInfo info;
-    info.direction = (stream == SND_PCM_STREAM_CAPTURE) ? DeviceDirection::CAPTURE : DeviceDirection::PLAYBACK;
-    const std::string tag_prefix = (info.direction == DeviceDirection::CAPTURE) ? "ac:" : "ap:";
-    info.tag = build_device_tag(tag_prefix, card, device);
-    info.hw_id = build_hw_id(card, device);
-    info.present = true;
-    info.card_index = card;
-    info.device_index = device;
-
-    const char* card_name = snd_ctl_card_info_get_name(card_info);
-    const char* device_name = snd_pcm_info_get_name(pcm_info);
-    const char* device_id = snd_pcm_info_get_id(pcm_info);
-
-    std::string friendly_name;
-    if (card_name) {
-        friendly_name = card_name;
+std::optional<int> resolve_card_index(const std::string& card_token) {
+    if (card_token.empty()) {
+        return std::nullopt;
     }
-    if (device_name && std::strlen(device_name) > 0) {
-        if (!friendly_name.empty()) {
-            friendly_name += " - ";
+    if (auto numeric = parse_numeric_token(card_token)) {
+        return numeric;
+    }
+    int resolved = snd_card_get_index(card_token.c_str());
+    if (resolved >= 0) {
+        return resolved;
+    }
+    return std::nullopt;
+}
+
+std::optional<int> resolve_device_index(const std::string& device_token) {
+    return parse_numeric_token(device_token);
+}
+
+std::string clean_description(const std::string& description) {
+    if (description.empty()) {
+        return {};
+    }
+    std::string cleaned = description;
+    std::replace(cleaned.begin(), cleaned.end(), '\n', ' ');
+    std::replace(cleaned.begin(), cleaned.end(), '\r', ' ');
+    while (true) {
+        const auto double_space = cleaned.find("  ");
+        if (double_space == std::string::npos) {
+            break;
         }
-        friendly_name += device_name;
-    } else if (device_id && std::strlen(device_id) > 0) {
-        if (!friendly_name.empty()) {
-            friendly_name += " - ";
-        }
-        friendly_name += device_id;
+        cleaned.erase(double_space, 1);
     }
+    return trim_whitespace(cleaned);
+}
 
-    if (!friendly_name.empty()) {
-        friendly_name += (info.direction == DeviceDirection::CAPTURE) ? " (Capture)" : " (Playback)";
-    } else {
-        friendly_name = info.hw_id + ((info.direction == DeviceDirection::CAPTURE) ? " (Capture)" : " (Playback)");
+bool is_probe_safe(const std::string& device_name) {
+    if (device_name.rfind("hw:", 0) == 0) {
+        return true;
     }
-    info.friendly_name = friendly_name;
+    if (device_name.rfind("plughw:", 0) == 0) {
+        return true;
+    }
+    return false;
+}
 
+void populate_pcm_capabilities(SystemDeviceInfo& info, snd_pcm_stream_t stream) {
     snd_pcm_t* pcm_handle = nullptr;
     int open_err = snd_pcm_open(&pcm_handle, info.hw_id.c_str(), stream, SND_PCM_NONBLOCK);
     if (open_err < 0) {
-        LOG_CPP_WARNING("[ALSA-Enumerator] Failed to open %s for capability query: %s", info.hw_id.c_str(), snd_strerror(open_err));
-        return info;
+        LOG_CPP_DEBUG("[ALSA-Enumerator] Unable to open %s for capability query: %s", info.hw_id.c_str(), snd_strerror(open_err));
+        return;
     }
 
     snd_pcm_hw_params_t* params = nullptr;
     if (snd_pcm_hw_params_malloc(&params) < 0) {
-        LOG_CPP_WARNING("[ALSA-Enumerator] Failed to allocate hw params for %s", info.hw_id.c_str());
+        LOG_CPP_DEBUG("[ALSA-Enumerator] Failed to allocate hw params for %s", info.hw_id.c_str());
         snd_pcm_close(pcm_handle);
-        return info;
+        return;
     }
 
     if (snd_pcm_hw_params_any(pcm_handle, params) < 0) {
-        LOG_CPP_WARNING("[ALSA-Enumerator] Failed to query hw params for %s", info.hw_id.c_str());
+        LOG_CPP_DEBUG("[ALSA-Enumerator] Failed to query hw params for %s", info.hw_id.c_str());
         snd_pcm_hw_params_free(params);
         snd_pcm_close(pcm_handle);
-        return info;
+        return;
     }
 
     unsigned int min_channels = 0;
@@ -230,6 +287,49 @@ SystemDeviceInfo create_device_info(
 
     snd_pcm_hw_params_free(params);
     snd_pcm_close(pcm_handle);
+}
+
+SystemDeviceInfo create_hint_device_info(
+    const std::string& tag,
+    const std::string& device_name,
+    DeviceDirection direction,
+    const std::string& description,
+    const std::optional<int>& card_index,
+    const std::optional<int>& device_index,
+    const SystemDeviceInfo* previous_info)
+{
+    SystemDeviceInfo info;
+    info.direction = direction;
+    info.tag = tag;
+    info.hw_id = device_name;
+    info.endpoint_id = device_name;
+    info.present = true;
+    info.card_index = card_index.value_or(-1);
+    info.device_index = device_index.value_or(-1);
+
+    if (previous_info && previous_info->hw_id == info.hw_id) {
+        info.channels = previous_info->channels;
+        info.sample_rates = previous_info->sample_rates;
+        info.bit_depth = previous_info->bit_depth;
+    }
+
+    std::string friendly = clean_description(description);
+    if (friendly.empty()) {
+        friendly = device_name;
+    }
+    if (!friendly.empty()) {
+        friendly += (direction == DeviceDirection::CAPTURE) ? " (Capture)" : " (Playback)";
+    }
+    info.friendly_name = friendly;
+
+    const snd_pcm_stream_t stream = (direction == DeviceDirection::CAPTURE) ? SND_PCM_STREAM_CAPTURE : SND_PCM_STREAM_PLAYBACK;
+
+    bool need_probe = !previous_info || previous_info->hw_id != info.hw_id ||
+                      previous_info->channels.min == 0 || previous_info->sample_rates.min == 0;
+
+    if (need_probe && is_probe_safe(device_name)) {
+        populate_pcm_capabilities(info, stream);
+    }
 
     return info;
 }
@@ -242,8 +342,22 @@ void AlsaDeviceEnumerator::monitor_loop() {
     enumerate_devices();
     setup_fifo_watch();
 
+    // Setup wake pipe for prompt shutdown
+    if (wake_pipe_[0] < 0 || wake_pipe_[1] < 0) {
+        int fds[2];
+        if (pipe(fds) == 0) {
+            wake_pipe_[0] = fds[0];
+            wake_pipe_[1] = fds[1];
+            LOG_CPP_DEBUG("[ALSA-Enumerator] Wake pipe created rd=%d wr=%d", wake_pipe_[0], wake_pipe_[1]);
+        } else {
+            LOG_CPP_WARNING("[ALSA-Enumerator] Failed to create wake pipe: %s", std::strerror(errno));
+        }
+    }
+
     while (running_) {
+        LOG_CPP_DEBUG("[ALSA-Enumerator] Loop begin (running=%d)", running_.load() ? 1 : 0);
         auto handles = open_control_handles();
+        LOG_CPP_DEBUG("[ALSA-Enumerator] Opened %zu control handles", handles.size());
 
         std::vector<pollfd> poll_fds;
         poll_fds.reserve(handles.size() + 1);
@@ -270,6 +384,13 @@ void AlsaDeviceEnumerator::monitor_loop() {
             fifo_fd.revents = 0;
             poll_fds.push_back(fifo_fd);
         }
+        if (wake_pipe_[0] >= 0) {
+            pollfd wake_fd{};
+            wake_fd.fd = wake_pipe_[0];
+            wake_fd.events = POLLIN | POLLERR | POLLHUP;
+            wake_fd.revents = 0;
+            poll_fds.push_back(wake_fd);
+        }
 
         // Attempt to re-establish the directory watch if it previously failed.
         if (running_) {
@@ -279,6 +400,7 @@ void AlsaDeviceEnumerator::monitor_loop() {
         bool should_rescan = poll_fds.empty();
         if (!poll_fds.empty()) {
             int poll_result = poll(poll_fds.data(), static_cast<nfds_t>(poll_fds.size()), kPollTimeoutMs);
+            LOG_CPP_DEBUG("[ALSA-Enumerator] poll() returned %d", poll_result);
             if (poll_result > 0) {
                 bool control_event_seen = false;
                 bool fifo_event_seen = false;
@@ -317,6 +439,15 @@ void AlsaDeviceEnumerator::monitor_loop() {
                         }
                     }
                 }
+                if (wake_pipe_[0] >= 0) {
+                    for (const auto& pfd : poll_fds) {
+                        if (pfd.fd == wake_pipe_[0] && (pfd.revents & (POLLIN | POLLERR | POLLHUP))) {
+                            char buf[64];
+                            (void)read(wake_pipe_[0], buf, sizeof(buf));
+                            LOG_CPP_INFO("[ALSA-Enumerator] Wake pipe signaled");
+                        }
+                    }
+                }
 
                 should_rescan = control_event_seen || fifo_event_seen;
             } else if (poll_result == 0) {
@@ -331,8 +462,10 @@ void AlsaDeviceEnumerator::monitor_loop() {
         }
 
         close_control_handles(handles);
+        LOG_CPP_DEBUG("[ALSA-Enumerator] Closed control handles");
 
         if (!running_) {
+            LOG_CPP_INFO("[ALSA-Enumerator] Stop flag detected; breaking loop");
             break;
         }
 
@@ -344,122 +477,150 @@ void AlsaDeviceEnumerator::monitor_loop() {
     }
 
     teardown_fifo_watch();
+    if (wake_pipe_[0] >= 0) { close(wake_pipe_[0]); wake_pipe_[0] = -1; }
+    if (wake_pipe_[1] >= 0) { close(wake_pipe_[1]); wake_pipe_[1] = -1; }
     LOG_CPP_INFO("[ALSA-Enumerator] Monitoring thread exiting.");
 }
 
 void AlsaDeviceEnumerator::enumerate_devices() {
     LOG_CPP_INFO("[ALSA-Enumerator] Starting full ALSA device enumeration pass.");
-    Registry scanned_registry;
-
-    int card = -1;
-    int err = snd_card_next(&card);
-    if (err < 0) {
-        LOG_CPP_ERROR("[ALSA-Enumerator] snd_card_next failed: %s", snd_strerror(err));
+    if (!running_) {
+        LOG_CPP_INFO("[ALSA-Enumerator] Stop requested before enumeration; skipping.");
         return;
     }
+    Registry scanned_registry;
 
-    int total_cards = 0;
-    int total_devices = 0;
-    while (card >= 0) {
-        ++total_cards;
-        char hw_name[32];
-        std::snprintf(hw_name, sizeof(hw_name), "hw:%d", card);
+    Registry previous_registry;
+    {
+        std::lock_guard<std::mutex> lock(registry_mutex_);
+        previous_registry = registry_;
+    }
 
-        snd_ctl_t* ctl = nullptr;
-        snd_ctl_card_info_t* card_info = nullptr;
-        snd_pcm_info_t* pcm_info = nullptr;
-        int device = -1;
-
-        do {
-            if ((err = snd_ctl_open(&ctl, hw_name, 0)) < 0) {
-                LOG_CPP_WARNING("[ALSA-Enumerator] Failed to open control for %s: %s", hw_name, snd_strerror(err));
+    size_t processed_hints = 0;
+    void** hints = nullptr;
+    int err = snd_device_name_hint(-1, "pcm", &hints);
+    if (err < 0) {
+        LOG_CPP_WARNING("[ALSA-Enumerator] snd_device_name_hint failed: %s", snd_strerror(err));
+    } else if (!hints) {
+        LOG_CPP_DEBUG("[ALSA-Enumerator] No ALSA device hints returned.");
+    } else {
+        for (void** hint = hints; *hint != nullptr; ++hint) {
+            if (!running_) {
+                LOG_CPP_INFO("[ALSA-Enumerator] Stop requested during hint scan; breaking.");
                 break;
             }
-
-            LOG_CPP_INFO("[ALSA-Enumerator] Inspecting ALSA card %s", hw_name);
-
-            if (snd_ctl_card_info_malloc(&card_info) < 0) {
-                LOG_CPP_WARNING("[ALSA-Enumerator] Failed to allocate card info for %s", hw_name);
-                break;
+            char* name_raw = snd_device_name_get_hint(*hint, "NAME");
+            if (!name_raw) {
+                continue;
+            }
+            std::string device_name = trim_whitespace(name_raw);
+            std::free(name_raw);
+            if (device_name.empty()) {
+                continue;
             }
 
-            if ((err = snd_ctl_card_info(ctl, card_info)) < 0) {
-                LOG_CPP_WARNING("[ALSA-Enumerator] Failed to get card info for %s: %s", hw_name, snd_strerror(err));
-                break;
+            ++processed_hints;
+
+            char* ioid_raw = snd_device_name_get_hint(*hint, "IOID");
+            std::string ioid_value;
+            if (ioid_raw) {
+                ioid_value = trim_whitespace(ioid_raw);
+                std::free(ioid_raw);
             }
 
-            if (snd_pcm_info_malloc(&pcm_info) < 0) {
-                LOG_CPP_WARNING("[ALSA-Enumerator] Failed to allocate pcm info for %s", hw_name);
-                break;
+            std::vector<DeviceDirection> directions;
+            if (ioid_value.empty()) {
+                directions = {DeviceDirection::CAPTURE, DeviceDirection::PLAYBACK};
+            } else {
+                std::string ioid_lower = ioid_value;
+                std::transform(ioid_lower.begin(), ioid_lower.end(), ioid_lower.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                if (ioid_lower == "input" || ioid_lower == "capture") {
+                    directions = {DeviceDirection::CAPTURE};
+                } else if (ioid_lower == "output" || ioid_lower == "playback") {
+                    directions = {DeviceDirection::PLAYBACK};
+                } else {
+                    directions = {DeviceDirection::CAPTURE, DeviceDirection::PLAYBACK};
+                }
             }
 
-            device = -1;
-            while (true) {
-                if ((err = snd_ctl_pcm_next_device(ctl, &device)) < 0) {
-                    LOG_CPP_WARNING("[ALSA-Enumerator] snd_ctl_pcm_next_device failed on %s: %s", hw_name, snd_strerror(err));
+            char* desc_raw = snd_device_name_get_hint(*hint, "DESC");
+            std::string description;
+            if (desc_raw) {
+                description = desc_raw;
+                std::free(desc_raw);
+            }
+
+            char* card_raw = snd_device_name_get_hint(*hint, "CARD");
+            std::string card_token;
+            if (card_raw) {
+                card_token = trim_whitespace(card_raw);
+                std::free(card_raw);
+            }
+
+            char* dev_raw = snd_device_name_get_hint(*hint, "DEV");
+            std::string device_token;
+            if (dev_raw) {
+                device_token = trim_whitespace(dev_raw);
+                std::free(dev_raw);
+            }
+
+            auto card_index = resolve_card_index(card_token);
+            auto device_index = resolve_device_index(device_token);
+
+            for (DeviceDirection direction : directions) {
+                if (!running_) {
+                    LOG_CPP_INFO("[ALSA-Enumerator] Stop requested mid-enumeration; breaking device loop");
                     break;
                 }
-                if (device < 0) {
-                    break;
+                const char* prefix = (direction == DeviceDirection::CAPTURE) ? kAlsaCapturePrefix : kAlsaPlaybackPrefix;
+                std::string tag = std::string(prefix) + device_name;
+                const SystemDeviceInfo* previous_info = nullptr;
+                auto prev_it = previous_registry.find(tag);
+                if (prev_it != previous_registry.end()) {
+                    previous_info = &prev_it->second;
                 }
 
-                ++total_devices;
-                LOG_CPP_INFO("[ALSA-Enumerator]  Card %d -> PCM device %d", card, device);
-
-                for (auto stream : {SND_PCM_STREAM_CAPTURE, SND_PCM_STREAM_PLAYBACK}) {
-                    snd_pcm_info_set_device(pcm_info, device);
-                    snd_pcm_info_set_subdevice(pcm_info, 0);
-                    snd_pcm_info_set_stream(pcm_info, stream);
-
-                    if ((err = snd_ctl_pcm_info(ctl, pcm_info)) < 0) {
-                        LOG_CPP_DEBUG("[ALSA-Enumerator]   Stream %s unsupported for card %d device %d (%s)",
-                                      (stream == SND_PCM_STREAM_CAPTURE ? "CAPTURE" : "PLAYBACK"),
-                                      card,
-                                      device,
-                                      snd_strerror(err));
-                        continue; // direction unsupported for this device
-                    }
-
-                    SystemDeviceInfo info = create_device_info(card_info, pcm_info, card, device, stream);
-                    LOG_CPP_INFO("[ALSA-Enumerator]   Discovered %s -> %s", info.tag.c_str(), info.friendly_name.c_str());
-                    LOG_CPP_DEBUG("[ALSA-Enumerator]    hw_id=%s channels=%u-%u rates=%u-%u",
-                                   info.hw_id.c_str(),
-                                   info.channels.min,
-                                   info.channels.max,
-                                   info.sample_rates.min,
-                                   info.sample_rates.max);
-                    scanned_registry[info.tag] = info;
-                }
+                SystemDeviceInfo info = create_hint_device_info(tag, device_name, direction, description, card_index, device_index, previous_info);
+                LOG_CPP_INFO("[ALSA-Enumerator]   Discovered %s -> %s", info.tag.c_str(), info.friendly_name.c_str());
+                LOG_CPP_DEBUG("[ALSA-Enumerator]    alsa_id=%s channels=%u-%u rates=%u-%u",
+                               info.hw_id.c_str(),
+                               info.channels.min,
+                               info.channels.max,
+                               info.sample_rates.min,
+                               info.sample_rates.max);
+                scanned_registry[info.tag] = info;
             }
-
-        } while (false);
-
-        if (pcm_info) {
-            snd_pcm_info_free(pcm_info);
         }
-        if (card_info) {
-            snd_ctl_card_info_free(card_info);
-        }
-        if (ctl) {
-            snd_ctl_close(ctl);
-        }
-
-        if ((err = snd_card_next(&card)) < 0) {
-            LOG_CPP_WARNING("[ALSA-Enumerator] snd_card_next iteration failed: %s", snd_strerror(err));
-            break;
-        }
+        snd_device_name_free_hint(hints);
     }
 
     append_screamrouter_runtime_devices(scanned_registry);
 
-    LOG_CPP_INFO("[ALSA-Enumerator] Enumeration pass complete: cards=%d pcm_devices=%d discovered=%zu", total_cards, total_devices, scanned_registry.size());
+    size_t capture_devices = 0;
+    size_t playback_devices = 0;
+    for (const auto& [tag, info] : scanned_registry) {
+        (void)tag;
+        if (info.direction == DeviceDirection::CAPTURE) {
+            ++capture_devices;
+        } else if (info.direction == DeviceDirection::PLAYBACK) {
+            ++playback_devices;
+        }
+    }
+
+    LOG_CPP_INFO("[ALSA-Enumerator] Enumeration pass complete: hints=%zu capture=%zu playback=%zu total=%zu",
+                 processed_hints,
+                 capture_devices,
+                 playback_devices,
+                 scanned_registry.size());
 
     std::vector<DeviceDiscoveryNotification> notifications;
 
     {
         std::lock_guard<std::mutex> lock(registry_mutex_);
-        Registry previous = registry_;
-        Registry updated = previous;
+        Registry previous = std::move(previous_registry);
+        Registry updated = registry_;
 
         for (const auto& [tag, info] : scanned_registry) {
             auto prev_it = previous.find(tag);
@@ -511,6 +672,10 @@ std::vector<AlsaDeviceEnumerator::ControlHandle> AlsaDeviceEnumerator::open_cont
         return handles;
     }
     while (card >= 0) {
+        if (!running_) {
+            LOG_CPP_INFO("[ALSA-Enumerator] Stop requested while opening control handles; aborting.");
+            break;
+        }
         char hw_name[32];
         std::snprintf(hw_name, sizeof(hw_name), "hw:%d", card);
         snd_ctl_t* ctl = nullptr;

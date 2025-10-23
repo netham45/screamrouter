@@ -1,0 +1,69 @@
+[fntrace] requested, but NOT compiled-in. Rebuild with SCREAMROUTER_FNTRACE=1.
+================================================================================
+ScreamRouter Configuration:
+================================================================================
+Config Directory:     /etc/screamrouter
+Logs Directory:       /var/log/screamrouter/logs
+Certificate Dir:      /etc/screamrouter/cert
+API Port:             443
+API Host:             0.0.0.0
+Config Path:          /etc/screamrouter/config.yaml
+Equalizer Config:     /etc/screamrouter/equalizers.yaml
+Certificate:          /etc/screamrouter/cert/cert.pem
+Certificate Key:      /etc/screamrouter/cert/privkey.pem
+Site Directory:       /usr/local/lib/python3.11/dist-packages/screamrouter/site
+================================================================================
+[INFO:2025-10-22 10:33:23,445][screamrouter_logger.py:110:143221]C++ Log Retrieval Worker started.
+[INFO:2025-10-22 10:33:23,445][screamrouter_logger.py:200:143221]C++ log forwarding initialized and retrieval thread started.
+[INFO:2025-10-22 10:33:23,652][__main__.py:274:143221]SSL certificate found: /etc/screamrouter/cert/cert.pem
+[INFO:2025-10-22 10:33:23,652][__main__.py:275:143221]SSL certificate key found: /etc/screamrouter/cert/privkey.pem
+[INFO:2025-10-22 10:33:23,653][__main__.py:375:143221]AudioManager initialized successfully with rtp_listen_port=40000 and global_timeshift_buffer_duration_sec=300 seconds.
+[INFO:2025-10-22 10:33:23,655][api_webstream.py:86:143221][WebStream] MP3 Web Stream Available
+[INFO:2025-10-22 10:33:23,657][api_websocket_config.py:38:143221][WebSocket Config] Configuration WebSocket endpoint registered
+[INFO:2025-10-22 10:33:23,657][api_websocket_debug.py:24:143221][WebSocket Debug] Debug WebSocket proxy endpoint registered
+[INFO:2025-10-22 10:33:23,657][audio_manager.cpp:22:143221]AudioManager created.
+[INFO:2025-10-22 10:33:23,659][play_url.py:87:143221]Starting thread for plugin Play URL
+[INFO:2025-10-22 10:33:23,659][audio_manager.cpp:40:143221]Initializing AudioManager with rtp_listen_port: 40000, timeshift_buffer_duration: 300s
+[INFO:2025-10-22 10:33:23,659][screamrouter_plugin.py:277:143221][Plugin Play URL] Thread started (PID: 143221).
+[INFO:2025-10-22 10:33:23,660][timeshift_manager.cpp:32:143221][TimeshiftManager] Initializing with max buffer duration: 300s
+[INFO:2025-10-22 10:33:23,661][source_manager.cpp:19:143221]SourceManager created.
+[INFO:2025-10-22 10:33:23,661][source_manager.cpp:27:143221]SourceManager capture device callbacks set.
+/root/screamrouter/screamrouter/__main__.py:402: DeprecationWarning: This API is deprecated and will be removed in a future version of pyOpenSSL. You should use pyca/cryptography's X.509 APIs instead.
+  ext = cert.get_extension(i)
+[INFO:2025-10-22 10:33:23,661][__main__.py:421:143221]Using hostname from SSL certificate: screamrouter.netham45.org.local.
+[INFO:2025-10-22 10:33:23,661][sink_manager.cpp:10:143221]SinkManager created.
+[INFO:2025-10-22 10:33:23,661][__main__.py:453:143221]Detected local IP address: 192.168.3.114
+[INFO:2025-10-22 10:33:23,662][mdns_ptr_responder.py:54:143221]ManualPTRResponder initializing for IP 192.168.3.114 -> screamrouter.netham45.org.local.
+[INFO:2025-10-22 10:33:23,662][mdns_ptr_responder.py:67:143221]ManualPTRResponder initialized. Will respond to PTR queries for 114.3.168.192.in-addr.arpa. with screamrouter.netham45.org.local.
+[INFO:2025-10-22 10:33:23,662][mdns_ptr_responder.py:71:143221]Entering ManualPTRResponder run() method.
+[INFO:2025-10-22 10:33:23,662][__main__.py:483:143221]Started ManualPTRResponder for IP 192.168.3.114 -> screamrouter.netham45.org.local.
+[INFO:2025-10-22 10:33:23,662][ntp_server.py:22:143221]Init NTP server process (PID: 143221) on port 123
+[INFO:2025-10-22 10:33:23,662][mdns_ptr_responder.py:89:143221]ManualPTRResponder socket bound and listening on port 5353
+[INFO:2025-10-22 10:33:23,662][alsa_device_enumerator.cpp:340:143221][ALSA-Enumerator] Monitoring thread started.
+[INFO:2025-10-22 10:33:23,662][ntp_server.py:27:143221]Starting NTP server process (PID: 143221) on port 123
+[INFO:2025-10-22 10:33:23,662][alsa_device_enumerator.cpp:486:143221][ALSA-Enumerator] Starting full ALSA device enumeration pass.
+[INFO:2025-10-22 10:33:23,663][mdns_responder.py:42:143221]MDNSResponder initializing.
+[INFO:2025-10-22 10:33:23,663][ntp_server.py:33:143221]NTP server listening on 0.0.0.0:123
+[INFO:2025-10-22 10:33:23,663][mdns_responder.py:55:143221]MDNSResponder initializing. Listen interfaces: None, Explicit IPs: None
+[INFO:2025-10-22 10:33:23,663][mdns_responder.py:87:143221]Entering MDNSResponder run() method.
+[INFO:2025-10-22 10:33:23,663][mdns_responder.py:91:143221]Attempting to initialize Zeroconf for listening. Interfaces choice: InterfaceChoice.All
+[INFO:2025-10-22 10:33:23,665][receiver_manager.cpp:17:143221]ReceiverManager created.
+[INFO:2025-10-22 10:33:23,667][mdns_pinger.py:208:143221]mDNS discovery started for _scream._udp services
+[INFO:2025-10-22 10:33:23,667][mdns_responder.py:94:143221]Zeroconf initialized successfully.
+[INFO:2025-10-22 10:33:23,668][mdns_responder.py:109:143221]No explicit IPs provided, attempting automatic detection...
+[INFO:2025-10-22 10:33:23,668][mdns_responder.py:68:143221]Detected non-loopback/link-local IPv4 addresses via getaddrinfo: ['192.168.3.114', '192.168.3.114', '192.168.3.114']
+[INFO:2025-10-22 10:33:23,671][mdns_responder.py:116:143221]Fallback hostname resolution: Screamrouter -> 192.168.3.114
+[INFO:2025-10-22 10:33:23,671][mdns_settings_pinger.py:169:143221]mDNS settings discovery started
+[INFO:2025-10-22 10:33:23,671][mdns_responder.py:151:143221]ServiceInfo created for registration: ServiceInfo(type='_screamrouter._tcp.local.', name='screamrouter._screamrouter._tcp.local.', addresses=[b'\xc0\xa8\x03r'], port=0, weight=0, priority=0, server='screamrouter.local.', properties={}, interface_index=None)
+[INFO:2025-10-22 10:33:23,672][mdns_responder.py:159:143221]Attempting to register mDNS service: Name='screamrouter._screamrouter._tcp.local.', Addr='['192.168.3.114']'
+[INFO:2025-10-22 10:33:23,672][webrtc_manager.cpp:11:143221]WebRtcManager created.
+[INFO:2025-10-22 10:33:23,672][mdns_scream_advertiser.py:83:143221]ScreamAdvertiser initialized. Port: 40000, MAC: BC:24:11:54:9B:FD, Hostname: Screamrouter-549BFD, Channels: 8, SampleRates: (44100, 48000), BitDepths: (16, 24, 32), Protocol: scream
+[INFO:2025-10-22 10:33:23,673][mdns_scream_advertiser.py:258:143221]ScreamAdvertiser thread starting...
+[INFO:2025-10-22 10:33:23,673][temporary_entity_manager.py:52:143221][TemporaryEntityManager] Initialized
+[INFO:2025-10-22 10:33:23,673][configuration_manager.py:191:143221][Configuration Manager] Using provided C++ AudioManager instance.
+[INFO:2025-10-22 10:33:23,674][configuration_manager.py:197:143221][Configuration Manager] C++ AudioEngineConfigApplier created using provided AudioManager.
+[INFO:2025-10-22 10:33:23,685][connection_manager.cpp:19:143221]ConnectionManager created.
+[INFO:2025-10-22 10:33:23,685][mdns_scream_advertiser.py:263:143221]Zeroconf initialized for ScreamAdvertiser
+[INFO:2025-10-22 10:33:23,714][mdns_scream_advertiser.py:253:143221]Created ServiceInfo: name=Screamrouter-549BFD._scream._udp.local., port=40000, properties={'mode': 'receiver', 'type': 'receiver', 'mac': 'BC:24:11:54:9B:FD', 'protocol': 'scream', 'protocols': 'scream', 'transport': 'scream', 'format': 'scream', 'codecs': 'lpcm', 'channels': '8', 'channel_count': '8', 'channelCount': '8', 'channel_layout': '7.1', 'channelLayout': '7.1', 'sample_rate': '48000', 'sample_rates': '44100,48000', 'samplerates': '44100,48000', 'supported_sample_rates': '44100,48000', 'supportedSampleRates': '44100,48000', 'sampleRate': '48000', 'sample_rate_hz': '48000', 'bit_depth': '32', 'bit_depths': '16,24,32', 'supported_bit_depths': '16,24,32', 'supportedBitDepths': '16,24,32', 'bitdepth': '32', 'bitDepth': '32', 'identifier': 'Screamrouter-549BFD'}
+[INFO:2025-10-22 10:33:23,725][mdns_scream_advertiser.py:268:143221]Registering _scream._udp service: Screamrouter-549BFD._scream._udp.local. on port 40000
+[INFO:2025-10-22 10:33:23,761][control_api_manager.cpp:18:143221]Cont

@@ -14,6 +14,9 @@
 #include <memory>
 #include <mutex>
 #include <map>
+#include <vector>
+#include <thread>
+#include <atomic>
 
 namespace screamrouter {
 namespace audio {
@@ -103,6 +106,11 @@ private:
     SinkManager* m_sink_manager;
     std::map<std::string, SinkConfig>& m_sink_configs;
     std::map<std::string, WebRtcListenerInfo> m_webrtc_listeners;
+
+    // Track deferred setup tasks so they can be joined safely on shutdown.
+    std::mutex setup_threads_mutex_;
+    std::vector<std::thread> setup_threads_;
+    std::atomic<bool> shutting_down_{false};
 };
 
 } // namespace audio

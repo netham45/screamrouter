@@ -102,6 +102,13 @@ public:
      */
     std::vector<SinkAudioMixer*> get_all_mixers();
 
+    /**
+     * @brief Stops all active sinks and clears internal state.
+     * @details Iterates all mixers, calls stop() on each, and clears
+     *          sink configs and MP3 queues. Safe to call during shutdown.
+     */
+    void stop_all();
+
 private:
     std::recursive_mutex& m_manager_mutex;
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;

@@ -214,3 +214,39 @@ export const sortRoutes = (routes: Route[], sortConfig: SortConfig, starredRoute
     return 0;
   });
 };
+
+/**
+ * Extract the first IPv4 address found in a string.
+ */
+const extractIpFromValue = (value?: string | null): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/(\d{1,3}(?:\.\d{1,3}){3})/);
+  return match ? match[1] : null;
+};
+
+/**
+ * Determine the process listing IP for a process-backed source group.
+ */
+export const getProcessGroupIp = (group: Source, allSources: Source[]): string | null => {
+  if (!group.is_group || !group.group_members || group.group_members.length === 0) {
+    return null;
+  }
+
+  const processMember = group.group_members
+    .map(memberName => allSources.find(source => source.name === memberName))
+    .find((member): member is Source => Boolean(member && member.is_process));
+
+  if (!processMember) {
+    return null;
+  }
+
+  const ipFromTag = extractIpFromValue(processMember.tag ?? undefined);
+  if (ipFromTag) {
+    return ipFromTag;
+  }
+
+  return extractIpFromValue(processMember.ip ?? undefined);
+};

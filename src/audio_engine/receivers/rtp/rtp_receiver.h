@@ -10,12 +10,14 @@
 #define RTP_RECEIVER_H
 
 #include "../network_audio_receiver.h"
+#include "../clock_manager.h"
 #include "../../audio_types.h"
 #include <rtc/rtp.hpp>
 #include "sap_listener.h"
 #include "rtp_reordering_buffer.h" // Added for jitter buffer
 #include <mutex>
 #include <memory>
+#include <vector>
 #include <map> // Added for SSRC -> buffer mapping
 #include <cstdint>
 #ifndef _WIN32
@@ -48,7 +50,8 @@ public:
     RtpReceiver(
         RtpReceiverConfig config,
         std::shared_ptr<NotificationQueue> notification_queue,
-        TimeshiftManager* timeshift_manager
+        TimeshiftManager* timeshift_manager,
+        ClockManager* clock_manager
     );
 
     /**
@@ -130,6 +133,7 @@ private:
      * @return A string in the format "IP:port".
      */
     std::string get_source_key(const struct sockaddr_in& addr) const;
+    std::string make_pcm_accumulator_key(uint32_t ssrc) const;
 
     // Per-source SSRC tracking to handle multiple independent RTP streams
     std::map<std::string, uint32_t> source_to_last_ssrc_;  // Map: "IP:port" -> last known SSRC
@@ -138,15 +142,6 @@ private:
     // Jitter and reordering handling
     std::map<uint32_t, RtpReorderingBuffer> reordering_buffers_;
     std::mutex reordering_buffer_mutex_;
-
-    // PCM accumulation, now per-SSRC
-    std::map<uint32_t, std::vector<uint8_t>> pcm_accumulators_;
-    std::map<uint32_t, bool> is_accumulating_chunk_;
-    std::map<uint32_t, std::chrono::steady_clock::time_point> chunk_first_packet_received_time_;
-    std::map<uint32_t, uint32_t> chunk_first_packet_rtp_timestamp_;
-    
-    uint32_t last_rtp_timestamp_ = 0;
-    uint32_t last_chunk_remainder_samples_ = 0;
 
     std::unique_ptr<SapListener> sap_listener_;
 

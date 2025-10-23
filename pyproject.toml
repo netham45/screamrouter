@@ -9,10 +9,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "screamrouter"
-version = "0.3.28"
+version = "0.3.39"
 description = "ScreamRouter audio routing system with web interface and C++ audio engine"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 license = {text = "AGPL-3.0"}
 authors = [
     {name = "Netham45"}

@@ -70,6 +70,14 @@ void shutdown_cpp_logger();
 void set_cpp_log_level(LogLevel level);
 
 /**
+ * @brief Enables or disables mirroring C++ logs to stderr immediately.
+ * @details When enabled, every log_message will also be written to stderr in addition to
+ *          being queued. Useful during early initialization or shutdown when the Python
+ *          side may not be draining the queue.
+ */
+void set_cpp_log_stderr_mirror(bool enable);
+
+/**
  * @brief Dispatches a log message to the internal C++ queue.
  * @details This function handles printf-style formatting and captures file/line info.
  * @param level The log level.

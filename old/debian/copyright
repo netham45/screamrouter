@@ -1,7 +1,0 @@
-Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: screamrouter
-Source: https://github.com/netham45/screamrouter
-
-Files: *
-Copyright: 2023-2025 ScreamRouter Contributors
-License: Not yet decided

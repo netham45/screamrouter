@@ -14,6 +14,20 @@ namespace audio {
 namespace {
 constexpr uint8_t kStereoLayout = 0x03;
 constexpr uint8_t kMonoLayout = 0x01;
+
+bool parse_legacy_card_device(const std::string& value, int& card, int& device) {
+    const auto dot_pos = value.find('.');
+    if (dot_pos == std::string::npos) {
+        return false;
+    }
+    try {
+        card = std::stoi(value.substr(0, dot_pos));
+        device = std::stoi(value.substr(dot_pos + 1));
+    } catch (const std::exception&) {
+        return false;
+    }
+    return true;
+}
 }
 
 AlsaCaptureReceiver::AlsaCaptureReceiver(
@@ -122,25 +136,23 @@ std::string AlsaCaptureReceiver::resolve_hw_id() const {
     if (!capture_params_.hw_id.empty()) {
         return capture_params_.hw_id;
     }
-    if (device_tag_.rfind("hw:", 0) == 0) {
-        return device_tag_;
+    if (device_tag_.empty()) {
+        return {};
     }
+
     if (device_tag_.rfind("ac:", 0) == 0) {
         const std::string body = device_tag_.substr(3);
-        const auto dot_pos = body.find('.');
-        if (dot_pos != std::string::npos) {
-            try {
-                int card = std::stoi(body.substr(0, dot_pos));
-                int device = std::stoi(body.substr(dot_pos + 1));
-                std::ostringstream oss;
-                oss << "hw:" << card << "," << device;
-                return oss.str();
-            } catch (const std::exception&) {
-                return {};
-            }
+        int card = 0;
+        int device = 0;
+        if (parse_legacy_card_device(body, card, device)) {
+            std::ostringstream oss;
+            oss << "hw:" << card << "," << device;
+            return oss.str();
         }
+        return body;
     }
-    return {};
+
+    return device_tag_;
 }
 
 bool AlsaCaptureReceiver::open_device_locked() {

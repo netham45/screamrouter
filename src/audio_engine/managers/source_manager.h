@@ -80,6 +80,12 @@ public:
      */
     std::vector<SourceInputProcessor*> get_all_processors();
 
+    /**
+     * @brief Stops all source processors, unregisters them from TimeshiftManager,
+     *        and releases any system capture device references.
+     */
+    void stop_all();
+
 private:
     /**
      * @brief Generates a unique identifier for a new source processor instance.

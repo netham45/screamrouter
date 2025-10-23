@@ -23,11 +23,11 @@
    AccordionIcon
  } from '@chakra-ui/react';
  import { ChevronDownIcon, ChevronUpIcon, StarIcon, SettingsIcon } from '@chakra-ui/icons';
- import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower, FaHeadphones } from 'react-icons/fa';
- import { Source, Sink, Route } from '../../../api/api';
- import VolumeSlider from '../controls/VolumeSlider';
- import TimeshiftSlider from '../controls/TimeshiftSlider';
- import { openEditPage } from '../utils';
+import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower, FaHeadphones, FaListUl } from 'react-icons/fa';
+import { Source, Sink, Route } from '../../../api/api';
+import VolumeSlider from '../controls/VolumeSlider';
+import TimeshiftSlider from '../controls/TimeshiftSlider';
+import { openEditPage, getProcessGroupIp } from '../utils';
  
  /**
   * Type for the different resource types.
@@ -203,6 +203,9 @@ const ResourceListItem: React.FC<ResourceListItemProps> = ({
   const isSource = (item: ResourceItem): item is Source => type === 'sources';
   const isSink = (item: ResourceItem): item is Sink => type === 'sinks';
   const isRoute = (item: ResourceItem): item is Route => type === 'routes';
+
+  // Determine whether this source represents a process group
+  const processGroupIp = isSource(item) ? getProcessGroupIp(item, allSources) : null;
 
   // Function to get active routes for a source or sink
   const getActiveRoutes = (): string[] => {
@@ -512,6 +515,32 @@ const ResourceListItem: React.FC<ResourceListItemProps> = ({
                 title="Open VNC"
               >
                 VNC
+              </Badge>
+            )}
+            {isSource(item) && processGroupIp && (
+              <Badge
+                colorScheme="gray"
+                borderRadius="full"
+                px={2}
+                py={1}
+                userSelect="none"
+                cursor="pointer"
+                _hover={{ opacity: 0.8 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.open(
+  `/site/processes/${processGroupIp}`,
+  'process-window',
+  'popup=yes,noopener,noreferrer,toolbar=no,location=no,menubar=no,status=no,scrollbars=yes,resizable=yes,width=900,height=700'
+);
+                }}
+                title="View Processes"
+                display="inline-flex"
+                alignItems="center"
+                gap={1}
+              >
+                <Box as={FaListUl} fontSize="xs" />
+                Processes
               </Badge>
             )}
           </HStack>

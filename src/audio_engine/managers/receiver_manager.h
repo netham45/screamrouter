@@ -9,8 +9,12 @@
 #define RECEIVER_MANAGER_H
 
 #include "../receivers/rtp/rtp_receiver.h"
+#include "../receivers/clock_manager.h"
 #include "../receivers/scream/raw_scream_receiver.h"
 #include "../receivers/scream/per_process_scream_receiver.h"
+#if !defined(_WIN32)
+#include "../receivers/pulse/pulse_receiver.h"
+#endif
 #include "../receivers/system/alsa_capture_receiver.h"
 #include "../receivers/system/screamrouter_fifo_receiver.h"
 #include "../receivers/system/wasapi_capture_receiver.h"
@@ -90,6 +94,9 @@ public:
      * @return A vector of source tag strings.
      */
     std::vector<std::string> get_per_process_scream_receiver_seen_tags(int listen_port);
+#if !defined(_WIN32)
+    std::vector<std::string> get_pulse_receiver_seen_tags();
+#endif
 
     /**
      * @brief Ensures an ALSA capture receiver is active for the requested device tag.
@@ -105,13 +112,22 @@ public:
      */
     void release_capture_receiver(const std::string& tag);
 
+    /**
+     * @brief Logs the current status of receivers for debugging.
+     */
+    void log_status();
+
 private:
     std::recursive_mutex& m_manager_mutex;
     TimeshiftManager* m_timeshift_manager;
+    std::unique_ptr<ClockManager> m_clock_manager;
 
     std::unique_ptr<RtpReceiver> m_rtp_receiver;
     std::map<int, std::unique_ptr<RawScreamReceiver>> m_raw_scream_receivers;
     std::map<int, std::unique_ptr<PerProcessScreamReceiver>> m_per_process_scream_receivers;
+#if !defined(_WIN32)
+    std::unique_ptr<pulse::PulseAudioReceiver> m_pulse_receiver;
+#endif
     std::unordered_map<std::string, std::unique_ptr<NetworkAudioReceiver>> capture_receivers_;
     std::unordered_map<std::string, size_t> capture_receiver_usage_;
     std::shared_ptr<NotificationQueue> m_notification_queue;

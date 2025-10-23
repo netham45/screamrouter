@@ -17,15 +17,19 @@ const size_t RAW_SCREAM_HEADER_SIZE = 5;
 const size_t RAW_CHUNK_SIZE = 1152;
 const size_t EXPECTED_RAW_PACKET_SIZE = RAW_SCREAM_HEADER_SIZE + RAW_CHUNK_SIZE; // 5 + 1152 = 1157
 const size_t RAW_RECEIVE_BUFFER_SIZE_CONFIG = 2048; // Should be larger than EXPECTED_RAW_PACKET_SIZE
-const int RAW_POLL_TIMEOUT_MS_CONFIG = 100;   // Check for stop flag every 100ms
+const int RAW_POLL_TIMEOUT_MS_CONFIG = 5;   // Check for stop flag every 5ms to service clock ticks promptly
 
 RawScreamReceiver::RawScreamReceiver(
     RawScreamReceiverConfig config,
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager,
+    ClockManager* clock_manager,
     std::string logger_prefix)
-    : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, logger_prefix),
+    : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, logger_prefix, clock_manager, RAW_CHUNK_SIZE),
       config_(config) {
+    if (!clock_manager_) {
+        throw std::runtime_error("RawScreamReceiver requires a valid ClockManager instance");
+    }
     // Base class constructor handles WSAStartup, null checks for queue/manager, and initial logging.
 }
 
@@ -117,22 +121,6 @@ bool RawScreamReceiver::process_and_validate_payload(
         return false;
     }
     
-    // Calculate samples in this chunk
-    int bytes_per_sample = out_packet.channels * (out_packet.bit_depth / 8);
-    if (bytes_per_sample == 0) {
-        log_warning("Calculated zero bytes per sample for " + out_source_tag);
-        return false; // Avoid division by zero
-    }
-    uint32_t samples_in_chunk = RAW_CHUNK_SIZE / bytes_per_sample;
-
-    // Update and assign timestamp
-    {
-        std::lock_guard<std::mutex> lock(timestamps_mutex_);
-        // Increment the timestamp for the stream, initializing if it's the first packet
-        stream_timestamps_[out_source_tag] += samples_in_chunk;
-        out_packet.rtp_timestamp = stream_timestamps_[out_source_tag];
-    }
-
     return true;
 }
 

@@ -1,6 +1,0 @@
-screamrouter.py usr/share/screamrouter/
-requirements.txt usr/share/screamrouter/
-uvicorn_log_config.yaml usr/share/screamrouter/
-site/ usr/share/screamrouter/site/
-src/ usr/share/screamrouter/src/
-images/ usr/share/screamrouter/images/
