@@ -440,10 +440,11 @@ void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data) {
         return;
     }
 
+    const uint32_t frames = FramesFromBytes(chunk_data.size(), target_bytes_per_frame_);
+
     TaggedAudioPacket packet;
     packet.source_tag = device_tag_;
     packet.audio_data = std::move(chunk_data);
-    packet.received_time = std::chrono::steady_clock::now();
     packet.channels = static_cast<int>(active_channels_);
     packet.sample_rate = static_cast<int>(active_sample_rate_);
     packet.bit_depth = static_cast<int>(target_bit_depth_);
@@ -451,7 +452,28 @@ void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data) {
     packet.chlayout1 = (active_channels_ == 1) ? kMonoLayout : kStereoLayout;
     packet.chlayout2 = 0x00;
 
-    const uint32_t frames = FramesFromBytes(packet.audio_data.size(), target_bytes_per_frame_);
+    auto now = std::chrono::steady_clock::now();
+    if (!next_chunk_time_initialized_) {
+        next_chunk_time_ = now;
+        next_chunk_time_initialized_ = true;
+    } else if (now > next_chunk_time_ + std::chrono::milliseconds(250)) {
+        // Large gap detected; realign timing cursor to avoid backwards timestamps.
+        next_chunk_time_ = now;
+    }
+
+    packet.received_time = next_chunk_time_;
+
+    if (active_sample_rate_ > 0 && frames > 0) {
+        const double seconds = static_cast<double>(frames) / static_cast<double>(active_sample_rate_);
+        auto increment = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds));
+        if (increment.count() <= 0) {
+            increment = std::chrono::steady_clock::duration{1};
+        }
+        next_chunk_time_ += increment;
+    } else {
+        next_chunk_time_ = now;
+    }
+
     packet.rtp_timestamp = running_timestamp_;
     running_timestamp_ += frames;
 
@@ -481,6 +503,7 @@ void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data) {
 void WasapiCaptureReceiver::reset_chunk_state() {
     chunk_accumulator_.clear();
     running_timestamp_ = 0;
+    next_chunk_time_initialized_ = false;
 }
 
 bool WasapiCaptureReceiver::resolve_endpoint_id(std::wstring& endpoint_id_w) {
