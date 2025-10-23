@@ -571,6 +571,7 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
         cpp_source_config.initial_eq = path_param_to_add.eq_values;
     }
     cpp_source_config.initial_delay_ms = path_param_to_add.delay_ms;
+    cpp_source_config.initial_timeshift_sec = path_param_to_add.timeshift_sec;
     cpp_source_config.target_output_channels = path_param_to_add.target_output_channels;
     cpp_source_config.target_output_samplerate = path_param_to_add.target_output_samplerate;
 

@@ -535,7 +535,8 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
 
                 // 2. Add the adaptive playout delay
-                double adaptive_delay_ms = target_info.current_delay_ms +
+                const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
+                double adaptive_delay_ms = target_info.current_delay_ms + timeshift_backshift_ms +
                                            (m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate);
                 
                 auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(adaptive_delay_ms);
@@ -872,7 +873,8 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
             }
 
             auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(next_packet.rtp_timestamp.value());
-            double adaptive_delay_ms = target_info.current_delay_ms + (m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate);
+            const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
+            double adaptive_delay_ms = target_info.current_delay_ms + timeshift_backshift_ms + (m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate);
             auto ideal_playout_time = expected_arrival_time + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double, std::milli>(adaptive_delay_ms));
 
             if (ideal_playout_time < earliest_time) {
