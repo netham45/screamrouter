@@ -14,7 +14,6 @@
 #include <string>
 #include <vector>
 #include <mutex>
-#include <chrono>
 
 namespace screamrouter {
 namespace audio {
@@ -96,8 +95,6 @@ private:
     std::vector<uint8_t> conversion_buffer_;
 
     uint32_t running_timestamp_ = 0;
-    bool next_chunk_time_initialized_ = false;
-    std::chrono::steady_clock::time_point next_chunk_time_{};
 
     std::mutex device_mutex_;
 };
