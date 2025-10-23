@@ -376,6 +376,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("jitter_safety_margin_multiplier", &TimeshiftTuning::jitter_safety_margin_multiplier)
         .def_readwrite("late_packet_threshold_ms", &TimeshiftTuning::late_packet_threshold_ms)
         .def_readwrite("target_buffer_level_ms", &TimeshiftTuning::target_buffer_level_ms)
+        .def_readwrite("target_recovery_rate_ms_per_sec", &TimeshiftTuning::target_recovery_rate_ms_per_sec)
         .def_readwrite("proportional_gain_kp", &TimeshiftTuning::proportional_gain_kp)
         .def_readwrite("min_playback_rate", &TimeshiftTuning::min_playback_rate)
         .def_readwrite("max_playback_rate", &TimeshiftTuning::max_playback_rate)

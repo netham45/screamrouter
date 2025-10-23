@@ -81,6 +81,7 @@ def settings_to_dict(settings: AudioEngineSettings):
             "jitter_safety_margin_multiplier": settings.timeshift_tuning.jitter_safety_margin_multiplier,
             "late_packet_threshold_ms": settings.timeshift_tuning.late_packet_threshold_ms,
             "target_buffer_level_ms": settings.timeshift_tuning.target_buffer_level_ms,
+            "target_recovery_rate_ms_per_sec": settings.timeshift_tuning.target_recovery_rate_ms_per_sec,
             "proportional_gain_kp": settings.timeshift_tuning.proportional_gain_kp,
             "min_playback_rate": settings.timeshift_tuning.min_playback_rate,
             "max_playback_rate": settings.timeshift_tuning.max_playback_rate,

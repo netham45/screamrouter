@@ -10,7 +10,8 @@ struct TimeshiftTuning {
     double jitter_smoothing_factor = 16.0;
     double jitter_safety_margin_multiplier = 2.0;
     double late_packet_threshold_ms = 10.0;
-    double target_buffer_level_ms = 15.0;
+    double target_buffer_level_ms = 20.0;
+    double target_recovery_rate_ms_per_sec = 15.0;
     double proportional_gain_kp = 0.0005;
     double min_playback_rate = 0.98;
     double max_playback_rate = 1.02;

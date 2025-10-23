@@ -68,6 +68,7 @@ struct StreamTimingState {
     double last_arrival_time_error_ms = 0.0; // For stats
     double target_buffer_level_ms = 0.0;
     double buffer_target_fill_percentage = 0.0;
+    std::chrono::steady_clock::time_point last_target_update_time{};
 
     // Stats
     std::atomic<uint64_t> total_packets{0};

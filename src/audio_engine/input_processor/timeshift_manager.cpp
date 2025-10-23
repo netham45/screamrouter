@@ -153,8 +153,12 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
          state_it = stream_timing_states_.try_emplace(packet.source_tag).first;
      }
 
-     auto& state = state_it->second;
-     state.total_packets++;
+    auto& state = state_it->second;
+    if (state.is_first_packet) {
+        state.target_buffer_level_ms = m_settings->timeshift_tuning.target_buffer_level_ms;
+        state.last_target_update_time = packet.received_time;
+    }
+    state.total_packets++;
  
      // 1. Initialize StreamClock if it's the first packet for this source
      if (!state.clock) {
@@ -536,10 +540,34 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                 // 2. Add the adaptive playout delay
                 const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
-                double adaptive_delay_ms = target_info.current_delay_ms + timeshift_backshift_ms +
-                                           (m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate);
-                
-                auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(adaptive_delay_ms);
+                const double base_latency_target_ms = std::max<double>(
+                    target_info.current_delay_ms,
+                    m_settings->timeshift_tuning.target_buffer_level_ms);
+                const double jitter_padding_ms = m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate;
+                double desired_latency_ms = base_latency_target_ms + timeshift_backshift_ms + jitter_padding_ms;
+
+                double effective_latency_ms = timing_state->target_buffer_level_ms;
+                if (effective_latency_ms <= 0.0) {
+                    effective_latency_ms = desired_latency_ms;
+                }
+
+                if (desired_latency_ms > effective_latency_ms) {
+                    effective_latency_ms = desired_latency_ms;
+                } else {
+                    double delta_seconds = 0.0;
+                    if (timing_state->last_target_update_time.time_since_epoch().count() != 0) {
+                        delta_seconds = std::chrono::duration<double>(current_steady_time - timing_state->last_target_update_time).count();
+                        delta_seconds = std::max(0.0, delta_seconds);
+                    }
+                    effective_latency_ms = std::max(
+                        desired_latency_ms,
+                        effective_latency_ms - (m_settings->timeshift_tuning.target_recovery_rate_ms_per_sec * delta_seconds));
+                }
+
+                timing_state->target_buffer_level_ms = effective_latency_ms;
+                timing_state->last_target_update_time = current_steady_time;
+
+                auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(effective_latency_ms);
                 
                 auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - current_steady_time).count();
 
@@ -607,13 +635,13 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         timing_state->current_buffer_level_ms = 0;
                     }
 
-                    // 2. Implement P-controller to adjust playback rate.
-                    // The target buffer level should be the same as our adaptive playout delay.
-                    timing_state->target_buffer_level_ms = adaptive_delay_ms;
-                    double error_ms = timing_state->target_buffer_level_ms - timing_state->current_buffer_level_ms;
+                    // 2. Implement P-controller to adjust playback rate based on the effective latency target.
+                    const double controller_target_ms = effective_latency_ms;
+                    timing_state->target_buffer_level_ms = controller_target_ms;
+                    double error_ms = controller_target_ms - timing_state->current_buffer_level_ms;
 
-                    if (timing_state->target_buffer_level_ms > 0) {
-                        timing_state->buffer_target_fill_percentage = (timing_state->current_buffer_level_ms / timing_state->target_buffer_level_ms) * 100.0;
+                    if (controller_target_ms > 0) {
+                        timing_state->buffer_target_fill_percentage = (timing_state->current_buffer_level_ms / controller_target_ms) * 100.0;
                     } else {
                         timing_state->buffer_target_fill_percentage = 0.0;
                     }
@@ -874,8 +902,17 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
 
             auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(next_packet.rtp_timestamp.value());
             const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
-            double adaptive_delay_ms = target_info.current_delay_ms + timeshift_backshift_ms + (m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate);
-            auto ideal_playout_time = expected_arrival_time + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double, std::milli>(adaptive_delay_ms));
+            const double base_latency_target_ms = std::max<double>(
+                target_info.current_delay_ms,
+                m_settings->timeshift_tuning.target_buffer_level_ms);
+            const double jitter_padding_ms = m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate;
+            double desired_latency_ms = base_latency_target_ms + timeshift_backshift_ms + jitter_padding_ms;
+            const double state_target_ms = (timing_state->target_buffer_level_ms > 0.0)
+                                               ? timing_state->target_buffer_level_ms
+                                               : desired_latency_ms;
+            double effective_latency_ms = std::max(desired_latency_ms, state_target_ms);
+            auto ideal_playout_time = expected_arrival_time + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                                            std::chrono::duration<double, std::milli>(effective_latency_ms));
 
             if (ideal_playout_time < earliest_time) {
                 earliest_time = ideal_playout_time;

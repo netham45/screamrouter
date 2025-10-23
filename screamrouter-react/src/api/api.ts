@@ -231,6 +231,7 @@ export interface TimeshiftTuning {
   jitter_safety_margin_multiplier: number;
   late_packet_threshold_ms: number;
   target_buffer_level_ms: number;
+  target_recovery_rate_ms_per_sec: number;
   proportional_gain_kp: number;
   min_playback_rate: number;
   max_playback_rate: number;
