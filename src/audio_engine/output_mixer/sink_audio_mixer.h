@@ -42,6 +42,7 @@ namespace screamrouter {
 namespace audio {
 
 class SinkSynchronizationCoordinator;
+class MixScheduler;
 
 /**
  * @struct SinkAudioMixerStats
@@ -175,6 +176,7 @@ private:
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
     std::unique_ptr<INetworkSender> network_sender_;
+    std::unique_ptr<MixScheduler> mix_scheduler_;
     
     std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
     std::mutex listener_senders_mutex_;

@@ -6,6 +6,7 @@
  *          mixing it, and dispatching it to various network senders.
  */
 #include "sink_audio_mixer.h"
+#include "mix_scheduler.h"
 #include "../utils/cpp_logger.h"
 #include <iostream>
 #include <stdexcept>
@@ -17,6 +18,7 @@
 #include <cmath>
 #include <thread>
 #include <limits>
+#include <unordered_set>
 #include "../audio_processor/audio_processor.h"
 #include "../senders/scream/scream_sender.h"
 #include "../senders/rtp/rtp_sender.h"
@@ -57,6 +59,7 @@ SinkAudioMixer::SinkAudioMixer(
       m_settings(settings),
       mp3_output_queue_(mp3_output_queue),
       network_sender_(nullptr),
+      mix_scheduler_(std::make_unique<MixScheduler>(config_.sink_id, m_settings)),
       mixing_buffer_(SINK_MIXING_BUFFER_SAMPLES, 0),
       stereo_buffer_(SINK_MIXING_BUFFER_SAMPLES * 2, 0),
       payload_buffer_(SINK_CHUNK_SIZE_BYTES * 8, 0),
@@ -152,6 +155,9 @@ SinkAudioMixer::~SinkAudioMixer() {
     if (!stop_flag_) {
         stop();
     }
+    if (mix_scheduler_) {
+        mix_scheduler_->shutdown();
+    }
     join_startup_thread();
     if (component_thread_.joinable()) {
         LOG_CPP_WARNING("[SinkMixer:%s] Warning: Joining thread in destructor, stop() might not have been called properly.", config_.sink_id.c_str());
@@ -203,6 +209,10 @@ void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared
         source_buffers_[instance_id].audio_data.assign(SINK_MIXING_BUFFER_SAMPLES, 0);
         LOG_CPP_INFO("[SinkMixer:%s] Added input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
+
+    if (mix_scheduler_) {
+        mix_scheduler_->attach_source(instance_id, std::move(queue));
+    }
 }
 
 /**
@@ -216,6 +226,10 @@ void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
         input_active_state_.erase(instance_id);
         source_buffers_.erase(instance_id);
         LOG_CPP_INFO("[SinkMixer:%s] Removed input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
+    }
+
+    if (mix_scheduler_) {
+        mix_scheduler_->detach_source(instance_id);
     }
 }
 
@@ -425,6 +439,10 @@ void SinkAudioMixer::stop() {
     LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_write_pos_, clock_manager_enabled_.load() ? 1 : 0);
     stop_flag_ = true;
 
+    if (mix_scheduler_) {
+        mix_scheduler_->shutdown();
+    }
+
     if (clock_condition_handle_.condition) {
         clock_condition_handle_.condition->cv.notify_all();
     }
@@ -561,6 +579,11 @@ void SinkAudioMixer::join_startup_thread() {
  * @return `true` if any data was popped from any queue, `false` otherwise.
  */
 bool SinkAudioMixer::wait_for_source_data() {
+    MixScheduler::HarvestResult harvest;
+    if (mix_scheduler_) {
+        harvest = mix_scheduler_->collect_ready_chunks();
+    }
+
     std::lock_guard<std::mutex> lock(queues_mutex_);
 
     bool data_actually_popped_this_cycle = false;
@@ -577,54 +600,77 @@ bool SinkAudioMixer::wait_for_source_data() {
     }
 
     bool was_holding_silence = underrun_silence_active_;
+    std::unordered_set<std::string> drained_ids(harvest.drained_sources.begin(), harvest.drained_sources.end());
 
-    LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Polling input queues.", config_.sink_id.c_str());
-    for (auto const& [instance_id, queue_ptr] : input_queues_) {
-        ProcessedAudioChunk chunk;
+    for (const auto& drained_id : drained_ids) {
+        auto active_it = input_active_state_.find(drained_id);
+        if (active_it != input_active_state_.end()) {
+            active_it->second = false;
+        }
+        auto buffer_it = source_buffers_.find(drained_id);
+        if (buffer_it != source_buffers_.end()) {
+            buffer_it->second = ProcessedAudioChunk{};
+        }
+    }
+
+    for (auto& pair : harvest.ready_chunks) {
+        const std::string& instance_id = pair.first;
+        auto& ready_entry = pair.second;
+
+        bool previously_active = input_active_state_.count(instance_id) ? input_active_state_[instance_id] : false;
+        ProcessedAudioChunk chunk = std::move(ready_entry.chunk);
+        const size_t sample_count = chunk.audio_data.size();
+
+        if (sample_count != SINK_MIXING_BUFFER_SAMPLES) {
+            LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
+                          config_.sink_id.c_str(), instance_id.c_str(), sample_count);
+            ready_this_cycle[instance_id] = false;
+            input_active_state_[instance_id] = false;
+            continue;
+        }
+
+        if (chunk.produced_time.time_since_epoch().count() != 0) {
+            double dwell_ms = std::chrono::duration<double, std::milli>(ready_entry.arrival_time - chunk.produced_time).count();
+            profiling_last_chunk_dwell_ms_ = dwell_ms;
+            profiling_chunk_dwell_sum_ms_ += dwell_ms;
+            profiling_chunk_dwell_samples_++;
+            if (profiling_chunk_dwell_samples_ == 1) {
+                profiling_chunk_dwell_min_ms_ = dwell_ms;
+                profiling_chunk_dwell_max_ms_ = dwell_ms;
+            } else {
+                profiling_chunk_dwell_min_ms_ = std::min(profiling_chunk_dwell_min_ms_, dwell_ms);
+                profiling_chunk_dwell_max_ms_ = std::max(profiling_chunk_dwell_max_ms_, dwell_ms);
+            }
+        }
+
+        m_total_chunks_mixed++;
+        source_buffers_[instance_id] = std::move(chunk);
+        ready_this_cycle[instance_id] = true;
+        data_actually_popped_this_cycle = true;
+        if (!previously_active) {
+            LOG_CPP_DEBUG("[SinkMixer:%s] Input instance %s became active", config_.sink_id.c_str(), instance_id.c_str());
+        }
+        input_active_state_[instance_id] = true;
+        drained_ids.erase(instance_id);
+    }
+
+    for (const auto& [instance_id, queue_ptr] : input_queues_) {
+        (void)queue_ptr;
+        if (!ready_this_cycle.count(instance_id)) {
+            ready_this_cycle[instance_id] = false;
+        }
+
+        bool drained = drained_ids.count(instance_id) > 0;
+        bool currently_ready = ready_this_cycle[instance_id];
         bool previously_active = input_active_state_.count(instance_id) ? input_active_state_[instance_id] : false;
 
-        if (queue_ptr->try_pop(chunk)) {
-            if (chunk.audio_data.size() != SINK_MIXING_BUFFER_SAMPLES) {
-                LOG_CPP_ERROR(
-                    "[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
-                    config_.sink_id.c_str(), instance_id.c_str(), chunk.audio_data.size());
-                ready_this_cycle[instance_id] = false;
-                input_active_state_[instance_id] = false;
-            } else {
-                auto pop_time = std::chrono::steady_clock::now();
-                if (chunk.produced_time.time_since_epoch().count() != 0) {
-                    double dwell_ms = std::chrono::duration<double, std::milli>(pop_time - chunk.produced_time).count();
-                    profiling_last_chunk_dwell_ms_ = dwell_ms;
-                    profiling_chunk_dwell_sum_ms_ += dwell_ms;
-                    profiling_chunk_dwell_samples_++;
-                    if (profiling_chunk_dwell_samples_ == 1) {
-                        profiling_chunk_dwell_min_ms_ = dwell_ms;
-                        profiling_chunk_dwell_max_ms_ = dwell_ms;
-                    } else {
-                        profiling_chunk_dwell_min_ms_ = std::min(profiling_chunk_dwell_min_ms_, dwell_ms);
-                        profiling_chunk_dwell_max_ms_ = std::max(profiling_chunk_dwell_max_ms_, dwell_ms);
-                    }
-                }
-                m_total_chunks_mixed++;
-                source_buffers_[instance_id] = std::move(chunk);
-                ready_this_cycle[instance_id] = true;
-                data_actually_popped_this_cycle = true;
-                if (!previously_active) {
-                    LOG_CPP_DEBUG("[SinkMixer:%s] Input instance %s became active", config_.sink_id.c_str(), instance_id.c_str());
-                }
-                input_active_state_[instance_id] = true;
-            }
-        } else {
-            ready_this_cycle[instance_id] = false;
-            if (previously_active) {
-                LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Instance %s did not provide a chunk this cycle, marking inactive.",
-                              config_.sink_id.c_str(), instance_id.c_str());
-                input_active_state_[instance_id] = false;
-                m_buffer_underruns++;
-                lagging_sources++;
-                // Per-source underrun profiling
-                profiling_source_underruns_[instance_id]++;
-            }
+        if (!currently_ready && previously_active && !drained) {
+            LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Instance %s did not provide a chunk this cycle, marking inactive.",
+                          config_.sink_id.c_str(), instance_id.c_str());
+            input_active_state_[instance_id] = false;
+            m_buffer_underruns++;
+            lagging_sources++;
+            profiling_source_underruns_[instance_id]++;
         }
     }
 
@@ -1384,18 +1430,17 @@ void SinkAudioMixer::cleanup_closed_listeners() {
 }
 
 void SinkAudioMixer::clear_pending_audio() {
+    if (mix_scheduler_) {
+        MixScheduler::HarvestResult discard;
+        do {
+            discard = mix_scheduler_->collect_ready_chunks();
+        } while (!discard.ready_chunks.empty());
+    }
+
     std::lock_guard<std::mutex> lock(queues_mutex_);
 
     for (auto& [instance_id, queue_ptr] : input_queues_) {
-        if (!queue_ptr) {
-            continue;
-        }
-
-        ProcessedAudioChunk discarded;
-        while (queue_ptr->try_pop(discarded)) {
-            // Discard buffered audio accumulated while the mixer was stopped.
-        }
-
+        (void)queue_ptr;
         input_active_state_[instance_id] = false;
         source_buffers_[instance_id] = ProcessedAudioChunk{};
     }
