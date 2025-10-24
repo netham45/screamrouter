@@ -26,7 +26,7 @@ GlobalSynchronizationClock::GlobalSynchronizationClock(int master_sample_rate)
       barrier_generation_(0),
       enabled_(false),
       sync_proportional_gain_(0.01),
-      max_rate_adjustment_(0.02),
+      max_rate_adjustment_(0.05),
       sync_smoothing_factor_(0.9),
       sinks_ready_count_(0),
       total_barrier_timeouts_(0)
@@ -215,7 +215,7 @@ double GlobalSynchronizationClock::calculate_rate_adjustment(const std::string& 
     // Log significant rate adjustments
     if (std::abs(adjustment - 1.0) > 0.001) {
         double drift_ppm = (adjustment - 1.0) * 1000000.0;
-        LOG_CPP_DEBUG("Sink '%s' rate adjustment: %.6f (%+.1f ppm), error: %.1f samples",
+        LOG_CPP_INFO("Sink '%s' rate adjustment: %.6f (%+.1f ppm), error: %.1f samples",
                       sink_id.c_str(), adjustment, drift_ppm, info.accumulated_error_samples);
     }
     

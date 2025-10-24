@@ -359,8 +359,8 @@ private:
     /** @brief Proportional gain for drift compensation (default: 0.01). */
     double sync_proportional_gain_ = 0.01;
     
-    /** @brief Maximum allowed rate adjustment (default: ±2% = 0.02). */
-    double max_rate_adjustment_ = 0.02;
+    /** @brief Maximum allowed rate adjustment (default: ±5% = 0.05). */
+    double max_rate_adjustment_ = 0.5;
     
     /** @brief Smoothing factor for error accumulation (default: 0.9 for EMA). */
     double sync_smoothing_factor_ = 0.9;

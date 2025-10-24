@@ -117,7 +117,7 @@ bool SinkSynchronizationCoordinator::coordinate_dispatch() {
     
     // Phase 4: Post-Dispatch Report
     // Typical chunk size is 1152 samples (24ms at 48kHz)
-    const uint64_t chunk_samples = 1152;
+    const uint64_t chunk_samples = CHUNK_SIZE ;
     total_samples_output_ += chunk_samples;
     
     // Get current buffer level from mixer stats
