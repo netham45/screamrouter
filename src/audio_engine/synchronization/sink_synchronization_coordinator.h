@@ -91,9 +91,11 @@ struct CoordinatorStats {
  * 
  * // In mixer's run loop:
  * if (should_coordinate()) {
- *     coordinator->coordinate_dispatch();
- * } else {
- *     // Legacy immediate dispatch
+ *     if (coordinator->begin_dispatch()) {
+ *         // ... perform mix & send, capture timing ...
+ *         SinkSynchronizationCoordinator::DispatchTimingInfo timing{start_time, end_time};
+ *         coordinator->complete_dispatch(frames_output, timing);
+ *     }
  * }
  * ```
  * 
@@ -101,6 +103,21 @@ struct CoordinatorStats {
  */
 class SinkSynchronizationCoordinator {
 public:
+    /**
+     * @brief Timing metrics captured by the mixer for a single dispatch cycle.
+     */
+    struct DispatchTimingInfo {
+        std::chrono::steady_clock::time_point dispatch_start{}; ///< Timestamp taken immediately after the barrier is released.
+        std::chrono::steady_clock::time_point dispatch_end{};   ///< Timestamp captured right after payload emission completes.
+
+        /**
+         * @brief Calculates the duration spent performing local work for the dispatch.
+         */
+        std::chrono::steady_clock::duration processing_duration() const {
+            return dispatch_end - dispatch_start;
+        }
+    };
+
     /**
      * @brief Constructs a coordinator for a specific sink.
      * @param sink_id Unique identifier for this sink (e.g., "living_room_left").
@@ -158,13 +175,24 @@ public:
      * 
      * Architecture Reference: MULTI_SPEAKER_SYNC_ARCHITECTURE.md lines 569-603
      */
-    bool coordinate_dispatch();
+    /**
+     * @brief Waits on the shared barrier and prepares for the next dispatch cycle.
+     * @return True if the mixer should proceed with mixing/output, false otherwise.
+     */
+    bool begin_dispatch();
+
+    /**
+     * @brief Finalizes a dispatch using measured execution timings from the mixer.
+     * @param samples_output Number of PCM frames emitted during the dispatch.
+     * @param timing Detailed timing information captured by the mixer.
+     */
+    void complete_dispatch(uint64_t samples_output, const DispatchTimingInfo& timing);
     
     /**
      * @brief Checks if coordination is currently enabled.
      * @return True if coordination is active, false if in legacy mode.
      * 
-     * @details The mixer should check this before calling coordinate_dispatch().
+     * @details The mixer should check this before calling begin_dispatch().
      *          If false, mixer should use legacy immediate dispatch mode.
      * 
      * Thread Safety: Safe to call from any thread (atomic read).
@@ -278,6 +306,9 @@ private:
     
     /** @brief Number of buffer underrun events. */
     std::atomic<uint64_t> underruns_{0};
+
+    /** @brief Last rate adjustment communicated by the global clock. */
+    std::atomic<double> last_rate_adjustment_{1.0};
     
     // --- Helper Methods ---
     
@@ -291,7 +322,11 @@ private:
      * 
      * @note Must be called after each dispatch operation (success or underrun).
      */
-    void report_timing_to_global_clock(uint64_t samples_sent, bool had_underrun);
+    void report_timing_to_global_clock(uint64_t samples_sent,
+                                      bool had_underrun,
+                                      double buffer_fill,
+                                      const DispatchTimingInfo& timing,
+                                      uint64_t rtp_start_timestamp);
 };
 
 } // namespace audio

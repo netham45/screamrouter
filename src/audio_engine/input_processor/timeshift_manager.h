@@ -251,6 +251,11 @@ private:
     uint64_t profiling_packets_dropped_{0};
     uint64_t profiling_packets_late_count_{0};
     double profiling_total_lateness_ms_{0.0};
+
+    // --- Scheduling Budget Estimation ---
+    double smoothed_processing_per_packet_us_{0.0};
+    bool processing_budget_initialized_{false};
+    std::chrono::steady_clock::time_point last_iteration_finish_time_{};
 };
 
 } // namespace audio

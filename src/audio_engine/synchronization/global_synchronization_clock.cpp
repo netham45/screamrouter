@@ -14,6 +14,9 @@
 
 namespace screamrouter {
 namespace audio {
+namespace {
+constexpr double kProcessingLatencyEmaAlpha = 0.2;
+}
 
 // ============================================================================
 // Constructor / Destructor
@@ -150,6 +153,18 @@ void GlobalSynchronizationClock::report_sink_timing(
     info.total_samples_output += report.samples_output;
     info.last_reported_rtp_timestamp = report.rtp_timestamp_output;
     info.last_report_time = report.dispatch_time;
+    info.last_dispatch_start_time = report.dispatch_start_time;
+    info.last_processing_duration = report.processing_duration;
+
+    const double processing_us = std::max(0.0, std::chrono::duration<double, std::micro>(report.processing_duration).count());
+    if (info.processing_latency_initialized) {
+        info.smoothed_processing_latency_us =
+            info.smoothed_processing_latency_us * (1.0 - kProcessingLatencyEmaAlpha) +
+            processing_us * kProcessingLatencyEmaAlpha;
+    } else {
+        info.smoothed_processing_latency_us = processing_us;
+        info.processing_latency_initialized = true;
+    }
     
     if (report.had_underrun) {
         info.underrun_count++;
@@ -183,6 +198,17 @@ double GlobalSynchronizationClock::calculate_rate_adjustment(const std::string& 
     
     // Calculate expected samples based on elapsed time
     auto now = std::chrono::steady_clock::now();
+
+    if (info.processing_latency_initialized) {
+        const auto latency_offset = std::chrono::microseconds(
+            static_cast<int64_t>(info.smoothed_processing_latency_us));
+        if (latency_offset < (now - reference_time_)) {
+            now -= latency_offset;
+        } else {
+            now = reference_time_;
+        }
+    }
+
     auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - reference_time_);
     double elapsed_seconds = elapsed.count() / 1000000.0;
     

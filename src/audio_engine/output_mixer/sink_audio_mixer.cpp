@@ -1497,20 +1497,22 @@ void SinkAudioMixer::run() {
             continue;
         }
 
-        // --- SYNCHRONIZATION COORDINATION POINT ---
-        if (coordination_mode_ && coordinator_) {
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination enabled, calling coordinator...", config_.sink_id.c_str());
-            bool coord_success = coordinator_->coordinate_dispatch();
+        const bool coordination_active = coordination_mode_ && coordinator_;
+        SinkSynchronizationCoordinator::DispatchTimingInfo dispatch_timing{};
 
-            if (!coord_success) {
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordinator reported failure, skipping this cycle.",
+        if (coordination_active) {
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination enabled, waiting on barrier...", config_.sink_id.c_str());
+            if (!coordinator_->begin_dispatch()) {
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordinator requested skip, yielding cycle.",
                               config_.sink_id.c_str());
                 lock.unlock();
                 maybe_log_profiler();
                 continue;
             }
 
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination complete.", config_.sink_id.c_str());
+            dispatch_timing.dispatch_start = std::chrono::steady_clock::now();
+            dispatch_timing.dispatch_end = dispatch_timing.dispatch_start;
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Barrier cleared, proceeding with mix.", config_.sink_id.c_str());
         }
 
         LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing buffers...", config_.sink_id.c_str());
@@ -1521,6 +1523,22 @@ void SinkAudioMixer::run() {
 
         downscale_buffer();
 
+        const int effective_bit_depth = (playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0)
+                                            ? playback_bit_depth_
+                                            : 16;
+        const std::size_t bytes_per_sample = static_cast<std::size_t>(effective_bit_depth) / 8;
+        const int effective_channels = std::max(playback_channels_, 1);
+        const std::size_t frame_bytes = bytes_per_sample * static_cast<std::size_t>(effective_channels);
+        const bool frame_metrics_valid = frame_bytes > 0 && (SINK_CHUNK_SIZE_BYTES % frame_bytes) == 0;
+        const std::size_t frames_per_chunk = frame_metrics_valid ? (SINK_CHUNK_SIZE_BYTES / frame_bytes) : 0;
+        uint64_t frames_dispatched = 0;
+
+        if (!frame_metrics_valid && coordination_active) {
+            LOG_CPP_WARNING("[SinkMixer:%s] RunLoop: Unable to derive frames_per_chunk (bit_depth=%d, channels=%d).",
+                            config_.sink_id.c_str(), playback_bit_depth_, playback_channels_);
+        }
+
+        size_t chunks_dispatched = 0;
         while (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
             auto send_time = std::chrono::steady_clock::now();
             if (profiling_last_chunk_send_time_.time_since_epoch().count() != 0) {
@@ -1544,6 +1562,11 @@ void SinkAudioMixer::run() {
             profiling_chunks_sent_++;
             profiling_payload_bytes_sent_ += SINK_CHUNK_SIZE_BYTES;
 
+            if (frame_metrics_valid) {
+                frames_dispatched += frames_per_chunk;
+            }
+            chunks_dispatched++;
+
             size_t bytes_remaining = payload_buffer_write_pos_ - SINK_CHUNK_SIZE_BYTES;
             if (bytes_remaining > 0) {
                 memmove(payload_buffer_.data(), payload_buffer_.data() + SINK_CHUNK_SIZE_BYTES, bytes_remaining);
@@ -1552,6 +1575,23 @@ void SinkAudioMixer::run() {
 
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Sent chunk, remaining bytes in buffer: %zu",
                           config_.sink_id.c_str(), payload_buffer_write_pos_);
+        }
+
+        if (coordination_active) {
+            dispatch_timing.dispatch_end = std::chrono::steady_clock::now();
+            if (!frame_metrics_valid) {
+                if (chunks_dispatched > 0 && playback_sample_rate_ > 0) {
+                    const double period_seconds = std::chrono::duration<double>(mix_period_).count();
+                    const double frames_per_chunk_estimate = period_seconds > 0.0
+                                                                 ? static_cast<double>(playback_sample_rate_) * period_seconds
+                                                                 : 0.0;
+                    frames_dispatched = static_cast<uint64_t>(
+                        std::llround(frames_per_chunk_estimate * static_cast<double>(chunks_dispatched)));
+                } else {
+                    frames_dispatched = 0;
+                }
+            }
+            coordinator_->complete_dispatch(frames_dispatched, dispatch_timing);
         }
 
         bool has_listeners;

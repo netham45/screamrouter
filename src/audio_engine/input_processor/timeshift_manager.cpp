@@ -20,6 +20,10 @@
 namespace screamrouter {
 namespace audio {
 
+namespace {
+constexpr double kProcessingBudgetAlpha = 0.2;
+}
+
 /**
  * @brief Constructs a TimeshiftManager.
  * @param max_buffer_duration The maximum duration of audio to hold in the global buffer.
@@ -503,8 +507,10 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
         return;
     }
 
-    auto current_steady_time = std::chrono::steady_clock::now();
+    const auto iteration_start = std::chrono::steady_clock::now();
+    auto now = iteration_start;
     const double max_catchup_lag_ms = m_settings->timeshift_tuning.max_catchup_lag_ms;
+    size_t packets_processed = 0;
 
     for (auto& [source_tag, source_map] : processor_targets_) {
         for (auto& [instance_id, target_info] : source_map) {
@@ -534,6 +540,8 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     continue;
                 }
 
+                now = std::chrono::steady_clock::now();
+
                 // --- Playout Time Calculation ---
                 // 1. Get expected arrival time from the stable clock
                 auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
@@ -556,7 +564,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 } else {
                     double delta_seconds = 0.0;
                     if (timing_state->last_target_update_time.time_since_epoch().count() != 0) {
-                        delta_seconds = std::chrono::duration<double>(current_steady_time - timing_state->last_target_update_time).count();
+                        delta_seconds = std::chrono::duration<double>(now - timing_state->last_target_update_time).count();
                         delta_seconds = std::max(0.0, delta_seconds);
                     }
                     effective_latency_ms = std::max(
@@ -565,11 +573,11 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 }
 
                 timing_state->target_buffer_level_ms = effective_latency_ms;
-                timing_state->last_target_update_time = current_steady_time;
+                timing_state->last_target_update_time = now;
 
                 auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(effective_latency_ms);
-                
-                auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - current_steady_time).count();
+
+                auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
 
                 if (timing_state) {
                     double head_lag_ms = std::max(-time_until_playout_ms, 0.0);
@@ -580,7 +588,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 }
 
                 // Check if the packet is ready to be played
-                if (ideal_playout_time <= current_steady_time) {
+                if (ideal_playout_time <= now) {
                     const double lateness_ms = -time_until_playout_ms;
                     if (lateness_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
                         timing_state->late_packets_count++;
@@ -655,12 +663,19 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                     target_info.target_queue->push(std::move(packet_to_send));
                     profiling_packets_dispatched_++;
-                    
+                    packets_processed++;
+
                     timing_state->last_played_rtp_timestamp = candidate_packet.rtp_timestamp.value();
-                    
+
                     target_info.next_packet_read_index++;
 
-                    continue;
+                    now = std::chrono::steady_clock::now();
+                    if (ideal_playout_time > now) {
+                        continue;
+                    }
+
+                    // If we consumed the available slack, let the outer loop reschedule.
+                    break;
                 } else {
                     // The loop is breaking because the next packet's playout time is in the future.
                     break;
@@ -669,8 +684,25 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
         }
     }
 
+    const auto iteration_end = std::chrono::steady_clock::now();
+    last_iteration_finish_time_ = iteration_end;
+
+    if (packets_processed > 0) {
+        const double iteration_us = std::chrono::duration<double, std::micro>(iteration_end - iteration_start).count();
+        const double per_packet_us = iteration_us / static_cast<double>(packets_processed);
+
+        if (processing_budget_initialized_) {
+            smoothed_processing_per_packet_us_ =
+                smoothed_processing_per_packet_us_ * (1.0 - kProcessingBudgetAlpha) +
+                per_packet_us * kProcessingBudgetAlpha;
+        } else {
+            smoothed_processing_per_packet_us_ = per_packet_us;
+            processing_budget_initialized_ = true;
+        }
+    }
+
     if (m_settings->profiler.enabled) {
-        maybe_log_profiler_unlocked(std::chrono::steady_clock::now());
+        maybe_log_profiler_unlocked(iteration_end);
     }
 }
 
@@ -723,7 +755,7 @@ void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::ti
                                     : 0.0;
 
     LOG_CPP_INFO(
-        "[Profiler][Timeshift][Global] buffer=%zu targets=%zu avg_backlog=%.2f max_backlog=%zu dispatched=%llu dropped=%llu late_count=%llu avg_late_ms=%.2f late_ms_sum=%.2f",
+        "[Profiler][Timeshift][Global] buffer=%zu targets=%zu avg_backlog=%.2f max_backlog=%zu dispatched=%llu dropped=%llu late_count=%llu avg_late_ms=%.2f late_ms_sum=%.2f proc_budget_us=%.2f",
         buffer_size,
         total_targets,
         avg_backlog,
@@ -732,7 +764,8 @@ void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::ti
         static_cast<unsigned long long>(profiling_packets_dropped_),
         static_cast<unsigned long long>(profiling_packets_late_count_),
         avg_late_ms,
-        profiling_total_lateness_ms_);
+        profiling_total_lateness_ms_,
+        processing_budget_initialized_ ? smoothed_processing_per_packet_us_ : 0.0);
 
     {
         std::lock_guard<std::mutex> timing_lock(timing_mutex_);
@@ -871,10 +904,15 @@ void TimeshiftManager::cleanup_global_buffer_unlocked() {
  * @note This function assumes the caller holds the data_mutex.
  */
 std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_time() {
+    const auto now = std::chrono::steady_clock::now();
+    const auto reference_now = (last_iteration_finish_time_.time_since_epoch().count() != 0)
+                                   ? std::max(now, last_iteration_finish_time_)
+                                   : now;
+
     auto next_cleanup_time = last_cleanup_time_ + std::chrono::milliseconds(m_settings->timeshift_tuning.cleanup_interval_ms);
     auto earliest_time = std::chrono::steady_clock::time_point::max();
 
-    const auto max_sleep_time = std::chrono::steady_clock::now() + std::chrono::milliseconds(m_settings->timeshift_tuning.loop_max_sleep_ms);
+    const auto max_sleep_time = reference_now + std::chrono::milliseconds(m_settings->timeshift_tuning.loop_max_sleep_ms);
 
     for (const auto& [source_tag, source_map] : processor_targets_) {
         for (const auto& [instance_id, target_info] : source_map) {
@@ -914,10 +952,29 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
             auto ideal_playout_time = expected_arrival_time + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                                                             std::chrono::duration<double, std::milli>(effective_latency_ms));
 
-            if (ideal_playout_time < earliest_time) {
-                earliest_time = ideal_playout_time;
+            auto candidate_time = ideal_playout_time;
+            if (processing_budget_initialized_ && smoothed_processing_per_packet_us_ > 0.0) {
+                const auto budget = std::chrono::microseconds(
+                    static_cast<int64_t>(smoothed_processing_per_packet_us_));
+                if (ideal_playout_time > reference_now) {
+                    if (budget < (ideal_playout_time - reference_now)) {
+                        candidate_time = ideal_playout_time - budget;
+                    } else {
+                        candidate_time = reference_now;
+                    }
+                }
+            }
+
+            if (candidate_time < earliest_time) {
+                earliest_time = candidate_time;
             }
         }
+    }
+
+    if (earliest_time == std::chrono::steady_clock::time_point::max()) {
+        earliest_time = reference_now;
+    } else if (earliest_time < reference_now) {
+        earliest_time = reference_now;
     }
 
     return std::min({earliest_time, next_cleanup_time, max_sleep_time});
