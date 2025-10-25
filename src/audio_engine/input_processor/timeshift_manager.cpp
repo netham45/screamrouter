@@ -22,6 +22,11 @@ namespace audio {
 
 namespace {
 constexpr double kProcessingBudgetAlpha = 0.2;
+constexpr double kRtpContinuitySlackSeconds = 0.25; // allow ~250ms drift before declaring discontinuity
+constexpr double kMaxRateStepPerChunkUp = 0.05;
+constexpr double kMaxRateStepPerChunkDown = 0.05;
+constexpr double kControllerDeadbandMs = 1.0;
+constexpr double kControllerDeadbandRatio = 0.02; // 2% of target latency
 }
 
 /**
@@ -119,21 +124,49 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
      std::lock_guard<std::mutex> timing_lock(timing_mutex_);
 
      const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
-     const uint32_t reset_threshold_frames = frames_per_second * .2; // Treat >.2s jumps as a new session
+     const uint32_t reset_threshold_frames = static_cast<uint32_t>(frames_per_second * 0.2f); // Treat >0.2s jumps as a new session by default
 
      auto state_it = stream_timing_states_.find(packet.source_tag);
      if (state_it != stream_timing_states_.end()) {
          auto& existing_state = state_it->second;
-         if (!existing_state.is_first_packet && existing_state.clock && reset_threshold_frames > 0) {
-             const uint32_t last_ts = existing_state.last_rtp_timestamp;
-             const uint32_t current_ts = packet.rtp_timestamp.value();
-             const uint32_t delta = std::abs((int)(current_ts) - (int)(last_ts)); // unsigned wrap-around friendly
-             if (delta > reset_threshold_frames) {
-                 LOG_CPP_INFO("[TimeshiftManager] Detected RTP jump for '%s' (delta=%u frames). Resetting timing state.",
-                              packet.source_tag.c_str(), delta);
+        if (!existing_state.is_first_packet && existing_state.clock && reset_threshold_frames > 0) {
+            const uint32_t last_ts = existing_state.last_rtp_timestamp;
+            const uint32_t current_ts = packet.rtp_timestamp.value();
+            const uint32_t delta = std::abs((int)(current_ts) - (int)(last_ts)); // unsigned wrap-around friendly
+            bool should_reset = delta > reset_threshold_frames;
 
-                 size_t reset_position = global_timeshift_buffer_.size();
-                 auto targets_it = processor_targets_.find(packet.source_tag);
+            if (should_reset) {
+                const auto last_wallclock = existing_state.last_wallclock;
+                if (last_wallclock.time_since_epoch().count() != 0) {
+                    const auto wallclock_gap = packet.received_time - last_wallclock;
+                    const double wallclock_gap_sec = std::chrono::duration<double>(wallclock_gap).count();
+                    if (wallclock_gap_sec > 0.0) {
+                        const auto delta_frames = static_cast<uint64_t>(delta);
+                        const auto expected_frames = static_cast<uint64_t>(std::llround(wallclock_gap_sec * static_cast<double>(frames_per_second)));
+                        const auto continuity_slack_frames = static_cast<uint64_t>(std::llround(static_cast<double>(frames_per_second) * kRtpContinuitySlackSeconds));
+
+                        const auto lower_bound = (expected_frames > continuity_slack_frames)
+                                                     ? (expected_frames - continuity_slack_frames)
+                                                     : 0ULL;
+                        const auto upper_bound = expected_frames + continuity_slack_frames;
+
+                        if (delta_frames >= lower_bound && delta_frames <= upper_bound) {
+                            should_reset = false;
+                            LOG_CPP_DEBUG("[TimeshiftManager] RTP jump matches wall-clock advance for '%s' (delta=%u frames, expected=%llu, slack=%llu). Keeping timing state.",
+                                          packet.source_tag.c_str(), delta,
+                                          static_cast<unsigned long long>(expected_frames),
+                                          static_cast<unsigned long long>(continuity_slack_frames));
+                        }
+                    }
+                }
+            }
+
+            if (should_reset) {
+                LOG_CPP_INFO("[TimeshiftManager] Detected RTP jump for '%s' (delta=%u frames). Resetting timing state.",
+                             packet.source_tag.c_str(), delta);
+
+                size_t reset_position = global_timeshift_buffer_.size();
+                auto targets_it = processor_targets_.find(packet.source_tag);
                  if (targets_it != processor_targets_.end()) {
                      for (auto& [instance_id, info] : targets_it->second) {
                          (void)instance_id;
@@ -189,9 +222,19 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
          // D is the difference in transit time for two packets.
          // Our arrival_error_ms is the transit time relative to the stable clock.
          double transit_time_variation = std::abs(arrival_error_ms - state.last_arrival_time_error_ms);
+         const double jitter_cap = (m_settings && m_settings->timeshift_tuning.max_jitter_ms > 0.0)
+                                       ? std::max(1.0, m_settings->timeshift_tuning.max_jitter_ms)
+                                       : 50.0;
+         if (transit_time_variation > jitter_cap) {
+             transit_time_variation = jitter_cap;
+         }
+         if (transit_time_variation < 0.05) {
+             transit_time_variation = 0.0;
+         }
+
          double jitter_diff = transit_time_variation - state.jitter_estimate;
          state.jitter_estimate += jitter_diff / m_settings->timeshift_tuning.jitter_smoothing_factor;
-         state.jitter_estimate = std::max(1.0, state.jitter_estimate); // Enforce a minimum jitter of 1.0ms
+         state.jitter_estimate = std::clamp(state.jitter_estimate, 0.5, jitter_cap);
          state.last_arrival_time_error_ms = arrival_error_ms;
 
          state.arrival_error_ms_sum += arrival_error_ms;
@@ -236,6 +279,7 @@ TimeshiftManagerStats TimeshiftManager::get_stats() {
         std::lock_guard<std::mutex> lock(timing_mutex_);
         for (const auto& [source_tag, timing_state] : stream_timing_states_) {
             stats.jitter_estimates[source_tag] = timing_state.jitter_estimate;
+            stats.stream_system_jitter_ms[source_tag] = timing_state.system_jitter_estimate_ms;
             stats.stream_total_packets[source_tag] = timing_state.total_packets.load();
             stats.stream_late_packets[source_tag] = timing_state.late_packets_count.load();
             stats.stream_lagging_events[source_tag] = timing_state.lagging_events_count.load();
@@ -318,6 +362,10 @@ void TimeshiftManager::register_processor(
     info.current_delay_ms = initial_delay_ms;
     info.current_timeshift_backshift_sec = initial_timeshift_sec;
     info.source_tag_filter = source_tag;
+    info.sink_playback_rate = 1.0;
+    info.sink_system_delay_ms = 0.0;
+    info.smoothed_sink_playback_rate = 1.0;
+    info.smoothed_sink_system_delay_ms = 0.0;
 
     {
         std::lock_guard<std::mutex> lock(data_mutex_);
@@ -429,6 +477,45 @@ void TimeshiftManager::update_processor_timeshift(const std::string& instance_id
     if (!found_processor) {
         LOG_CPP_WARNING("[TimeshiftManager] Attempted to update timeshift for unknown processor instance_id: %s", instance_id.c_str());
     }
+    m_state_version_++;
+    run_loop_cv_.notify_one();
+}
+
+void TimeshiftManager::update_processor_sink_rate(const std::string& instance_id, double playback_rate, double system_delay_ms) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    bool found_processor = false;
+    constexpr double kRateSmoothing = 0.3;
+    constexpr double kDelaySmoothing = 0.25;
+    for (auto& [tag, source_map] : processor_targets_) {
+        auto proc_it = source_map.find(instance_id);
+        if (proc_it != source_map.end()) {
+            if (m_settings) {
+                const double min_rate = m_settings->timeshift_tuning.min_playback_rate;
+                const double comfort_max = m_settings->timeshift_tuning.max_playback_rate;
+                const double absolute_max = std::max(comfort_max, m_settings->timeshift_tuning.absolute_max_playback_rate);
+                playback_rate = std::clamp(playback_rate, min_rate, absolute_max);
+            } else {
+                playback_rate = std::clamp(playback_rate, 0.01, 4.0);
+            }
+            auto& info = proc_it->second;
+            info.sink_playback_rate = playback_rate;
+            info.sink_system_delay_ms = system_delay_ms;
+
+            info.smoothed_sink_playback_rate += kRateSmoothing * (playback_rate - info.smoothed_sink_playback_rate);
+            info.smoothed_sink_system_delay_ms += kDelaySmoothing * (system_delay_ms - info.smoothed_sink_system_delay_ms);
+            found_processor = true;
+            break;
+        }
+    }
+
+    if (!found_processor) {
+        LOG_CPP_DEBUG("[TimeshiftManager] Ignored sink rate update for unknown processor instance_id=%s", instance_id.c_str());
+        return;
+    }
+
+    LOG_CPP_DEBUG("[TimeshiftManager] sink feedback: instance_id=%s rate=%.6f system_delay_ms=%.2f",
+                  instance_id.c_str(), playback_rate, system_delay_ms);
+
     m_state_version_++;
     run_loop_cv_.notify_one();
 }
@@ -551,7 +638,9 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 const double base_latency_target_ms = std::max<double>(
                     target_info.current_delay_ms,
                     m_settings->timeshift_tuning.target_buffer_level_ms);
-                const double jitter_padding_ms = m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate;
+                const double network_padding_ms = m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate;
+                const double system_padding_ms = m_settings->timeshift_tuning.system_jitter_safety_multiplier * timing_state->system_jitter_estimate_ms;
+                const double jitter_padding_ms = network_padding_ms + system_padding_ms;
                 double desired_latency_ms = base_latency_target_ms + timeshift_backshift_ms + jitter_padding_ms;
 
                 double effective_latency_ms = timing_state->target_buffer_level_ms;
@@ -559,17 +648,16 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     effective_latency_ms = desired_latency_ms;
                 }
 
-                if (desired_latency_ms > effective_latency_ms) {
+                const double max_adaptive_delay_ms = m_settings->timeshift_tuning.max_adaptive_delay_ms;
+                if (max_adaptive_delay_ms > 0.0) {
+                    desired_latency_ms = std::min(desired_latency_ms, max_adaptive_delay_ms);
+                }
+
+                if (effective_latency_ms <= 0.0) {
                     effective_latency_ms = desired_latency_ms;
                 } else {
-                    double delta_seconds = 0.0;
-                    if (timing_state->last_target_update_time.time_since_epoch().count() != 0) {
-                        delta_seconds = std::chrono::duration<double>(now - timing_state->last_target_update_time).count();
-                        delta_seconds = std::max(0.0, delta_seconds);
-                    }
-                    effective_latency_ms = std::max(
-                        desired_latency_ms,
-                        effective_latency_ms - (m_settings->timeshift_tuning.target_recovery_rate_ms_per_sec * delta_seconds));
+                    const double smoothing = std::max(1.0, m_settings->timeshift_tuning.jitter_smoothing_factor);
+                    effective_latency_ms += (desired_latency_ms - effective_latency_ms) / smoothing;
                 }
 
                 timing_state->target_buffer_level_ms = effective_latency_ms;
@@ -579,12 +667,36 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                 auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
 
-                if (timing_state) {
-                    double head_lag_ms = std::max(-time_until_playout_ms, 0.0);
-                    timing_state->last_head_playout_lag_ms = head_lag_ms;
+                double combined_delay_ms_for_rate = 0.0;
+                    if (timing_state) {
+                        double head_lag_ms = std::max(-time_until_playout_ms, 0.0);
+                        timing_state->last_head_playout_lag_ms = head_lag_ms;
                     timing_state->head_playout_lag_ms_sum += head_lag_ms;
                     timing_state->head_playout_lag_ms_max = std::max(timing_state->head_playout_lag_ms_max, head_lag_ms);
                     timing_state->head_playout_lag_samples++;
+
+                    const double sink_delay_ms = target_info.sink_system_delay_ms;
+                    if (sink_delay_ms >= 0.0) {
+                        combined_delay_ms_for_rate = std::max(sink_delay_ms, head_lag_ms);
+                    } else {
+                        combined_delay_ms_for_rate = sink_delay_ms;
+                    }
+                    const double smoothing = std::max(1.0, m_settings->timeshift_tuning.jitter_smoothing_factor);
+                    const double decay = std::clamp(m_settings->timeshift_tuning.jitter_decay_factor, 0.0, 1.0);
+                    if (timing_state->system_jitter_estimate_ms <= 0.0) {
+                        timing_state->system_jitter_estimate_ms = combined_delay_ms_for_rate;
+                    } else if (combined_delay_ms_for_rate >= timing_state->system_jitter_estimate_ms) {
+                        const double diff_up = combined_delay_ms_for_rate - timing_state->system_jitter_estimate_ms;
+                        timing_state->system_jitter_estimate_ms += diff_up / smoothing;
+                    } else {
+                        const double diff_down = timing_state->system_jitter_estimate_ms - combined_delay_ms_for_rate;
+                        timing_state->system_jitter_estimate_ms -= diff_down * decay;
+                    }
+                    const double system_cap = (m_settings && m_settings->timeshift_tuning.max_jitter_ms > 0.0)
+                                                  ? std::max(1.0, m_settings->timeshift_tuning.max_jitter_ms)
+                                                  : 50.0;
+                    timing_state->system_jitter_estimate_ms = std::clamp(timing_state->system_jitter_estimate_ms, 0.0, system_cap);
+                    timing_state->last_system_delay_ms = combined_delay_ms_for_rate;
                 }
 
                 // Check if the packet is ready to be played
@@ -632,13 +744,16 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                             }
                         }
 
-                        // Estimate packet duration from the candidate packet's format.
-                        // This assumes all packets in the stream have a similar duration.
                         int bytes_per_sample = candidate_packet.bit_depth / 8;
                         size_t num_samples_per_channel = candidate_packet.audio_data.size() / (candidate_packet.channels * bytes_per_sample);
                         double packet_duration_ms = (static_cast<double>(num_samples_per_channel) * 1000.0) / static_cast<double>(candidate_packet.sample_rate);
-                        
-                        timing_state->current_buffer_level_ms = available_packets * packet_duration_ms;
+
+                        const double packets_after_current = (available_packets > 0)
+                                                                ? static_cast<double>(available_packets - 1) * packet_duration_ms
+                                                                : 0.0;
+                        const double fractional_head_ms = std::max(time_until_playout_ms, 0.0);
+
+                        timing_state->current_buffer_level_ms = std::max(0.0, packets_after_current + fractional_head_ms);
                     } else {
                         timing_state->current_buffer_level_ms = 0;
                     }
@@ -646,20 +761,78 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     // 2. Implement P-controller to adjust playback rate based on the effective latency target.
                     const double controller_target_ms = effective_latency_ms;
                     timing_state->target_buffer_level_ms = controller_target_ms;
-                    double error_ms = controller_target_ms - timing_state->current_buffer_level_ms;
+                    double adjusted_buffer_level_ms = timing_state->current_buffer_level_ms;
+
+                    double sink_rate_hint = target_info.smoothed_sink_playback_rate > 0.0 ? target_info.smoothed_sink_playback_rate : 1.0;
+                    double expected_rate = std::max(timing_state->current_playback_rate, 1e-6);
+                    adjusted_buffer_level_ms /= expected_rate;
+
+                    double error_ms = controller_target_ms - adjusted_buffer_level_ms;
+                    double normalized_error = 0.0;
+                    if (controller_target_ms > 0.0) {
+                        normalized_error = error_ms / controller_target_ms;
+                    }
+                    if (std::abs(error_ms) < kControllerDeadbandMs || std::abs(normalized_error) < kControllerDeadbandRatio) {
+                        normalized_error = 0.0;
+                    }
+                    normalized_error = std::clamp(normalized_error, -1.0, 1.0);
 
                     if (controller_target_ms > 0) {
-                        timing_state->buffer_target_fill_percentage = (timing_state->current_buffer_level_ms / controller_target_ms) * 100.0;
+                        timing_state->buffer_target_fill_percentage = (adjusted_buffer_level_ms / controller_target_ms) * 100.0;
                     } else {
                         timing_state->buffer_target_fill_percentage = 0.0;
                     }
 
-                    double rate_adjustment = error_ms * m_settings->timeshift_tuning.proportional_gain_kp;
+                    double rate_adjustment = normalized_error * m_settings->timeshift_tuning.proportional_gain_kp;
 
-                    // Adjust rate and clamp to a safe range (e.g., +/- 2%) to prevent audible artifacts.
-                    double new_rate = 1.0 - rate_adjustment;
-                    timing_state->current_playback_rate = std::max(m_settings->timeshift_tuning.min_playback_rate, std::min(m_settings->timeshift_tuning.max_playback_rate, new_rate));
-                    packet_to_send.playback_rate = timing_state->current_playback_rate;
+                    // Base jitter controller rate and sink hint combination.
+                    double local_rate = 1.0 - rate_adjustment;
+                    const double min_rate = m_settings->timeshift_tuning.min_playback_rate;
+                    const double comfort_max_rate = m_settings->timeshift_tuning.max_playback_rate;
+                    const double absolute_max_rate = std::max(m_settings->timeshift_tuning.absolute_max_playback_rate, comfort_max_rate);
+
+                    double combined_rate = std::clamp(local_rate, min_rate, absolute_max_rate);
+
+                    if (std::isfinite(sink_rate_hint) && sink_rate_hint > 0.0) {
+                        const double sink_mix = 0.15;
+                        combined_rate = (1.0 - sink_mix) * combined_rate + sink_mix * std::clamp(sink_rate_hint, min_rate, absolute_max_rate);
+                    }
+
+                    const double measured_system_delay_ms = target_info.smoothed_sink_system_delay_ms;
+                    const double system_delay_for_rate = std::max(0.0, measured_system_delay_ms);
+                    if (system_delay_for_rate > 0.0) {
+                        const double target_ms = std::max(1.0, effective_latency_ms);
+                        const double system_gain = std::clamp(m_settings->timeshift_tuning.system_jitter_gain, 0.0, 0.5);
+                        const double system_pull = 1.0 + system_gain * std::clamp(system_delay_for_rate / target_ms, 0.0, 1.0);
+                        combined_rate *= system_pull;
+                    }
+
+                    combined_rate = std::clamp(combined_rate, min_rate, absolute_max_rate);
+
+                    const double previous_rate = timing_state->current_playback_rate;
+                    const double max_step_up = kMaxRateStepPerChunkUp;
+                    const double max_step_down = kMaxRateStepPerChunkDown;
+                    if (combined_rate > previous_rate + max_step_up) {
+                        combined_rate = previous_rate + max_step_up;
+                    } else if (combined_rate < previous_rate - max_step_down) {
+                        combined_rate = previous_rate - max_step_down;
+                    }
+
+                    combined_rate = std::clamp(combined_rate, min_rate, absolute_max_rate);
+
+                    timing_state->current_playback_rate = combined_rate;
+                    packet_to_send.playback_rate = combined_rate;
+                    if (profiling_packets_dispatched_ % 64 == 0) {
+                        LOG_CPP_DEBUG("[TimeshiftManager] rate=%.6f local=%.6f sink=%.6f sys_delay=%.3f jitter=%.3f buffer=%.3f adj_buffer=%.3f target=%.3f",
+                                      combined_rate,
+                                      local_rate,
+                                      sink_rate_hint,
+                                      measured_system_delay_ms,
+                                      timing_state->jitter_estimate,
+                                      timing_state->current_buffer_level_ms,
+                                      adjusted_buffer_level_ms,
+                                      effective_latency_ms);
+                    }
 
                     target_info.target_queue->push(std::move(packet_to_send));
                     profiling_packets_dispatched_++;
@@ -794,9 +967,11 @@ void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::ti
             }
 
             LOG_CPP_INFO(
-                "[Profiler][Timeshift][Stream %s] jitter=%.2fms clk_offset=%.3fms drift=%.3fppm clk_innov_last=%.3fms clk_innov_avg_abs=%.3fms clk_update_age=%.2fms clk_meas_offset=%.3fms arrival(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) playout_dev(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) head_lag(last=%.3fms avg=%.3fms max=%.3fms samples=%llu) buffer(cur=%.3fms target=%.3fms fill=%.1f%% playback_rate=%.6f)",
+                "[Profiler][Timeshift][Stream %s] jitter=%.2fms sys_jitter=%.2fms sys_delay=%.2fms clk_offset=%.3fms drift=%.3fppm clk_innov_last=%.3fms clk_innov_avg_abs=%.3fms clk_update_age=%.2fms clk_meas_offset=%.3fms arrival(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) playout_dev(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) head_lag(last=%.3fms avg=%.3fms max=%.3fms samples=%llu) buffer(cur=%.3fms target=%.3fms fill=%.1f%% playback_rate=%.6f)",
                 source_tag.c_str(),
                 timing_state.jitter_estimate,
+                timing_state.system_jitter_estimate_ms,
+                timing_state.last_system_delay_ms,
                 timing_state.last_clock_offset_ms,
                 timing_state.last_clock_drift_ppm,
                 timing_state.last_clock_innovation_ms,
@@ -943,7 +1118,9 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
             const double base_latency_target_ms = std::max<double>(
                 target_info.current_delay_ms,
                 m_settings->timeshift_tuning.target_buffer_level_ms);
-            const double jitter_padding_ms = m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate;
+            const double network_padding_ms = m_settings->timeshift_tuning.jitter_safety_margin_multiplier * timing_state->jitter_estimate;
+            const double system_padding_ms = m_settings->timeshift_tuning.system_jitter_safety_multiplier * timing_state->system_jitter_estimate_ms;
+            const double jitter_padding_ms = network_padding_ms + system_padding_ms;
             double desired_latency_ms = base_latency_target_ms + timeshift_backshift_ms + jitter_padding_ms;
             const double state_target_ms = (timing_state->target_buffer_level_ms > 0.0)
                                                ? timing_state->target_buffer_level_ms

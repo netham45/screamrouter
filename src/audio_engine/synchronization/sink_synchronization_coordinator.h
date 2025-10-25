@@ -186,7 +186,7 @@ public:
      * @param samples_output Number of PCM frames emitted during the dispatch.
      * @param timing Detailed timing information captured by the mixer.
      */
-    void complete_dispatch(uint64_t samples_output, const DispatchTimingInfo& timing);
+    double complete_dispatch(uint64_t samples_output, const DispatchTimingInfo& timing);
     
     /**
      * @brief Checks if coordination is currently enabled.

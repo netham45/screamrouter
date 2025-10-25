@@ -28,7 +28,7 @@ namespace { // Anonymous namespace for internal linkage
 }
 
 // Definition of the global log level variable
-std::atomic<LogLevel> current_log_level(LogLevel::INFO);
+std::atomic<LogLevel> current_log_level(LogLevel::DEBUG);
 
 // void set_log_callback(LogCallback callback) { // Removed
 //     std::lock_guard<std::mutex> lock(callback_mutex);

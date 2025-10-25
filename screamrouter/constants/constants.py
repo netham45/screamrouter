@@ -60,7 +60,7 @@ API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
 """This is the host FastAPI binds to"""
 LOGS_DIR: str = os.getenv("LOGS_DIR", _LOGS_DIR)
 """This is the directory logs are stored in"""
-CONSOLE_LOG_LEVEL: str = os.getenv("CONSOLE_LOG_LEVEL", "INFO")
+CONSOLE_LOG_LEVEL: str = os.getenv("CONSOLE_LOG_LEVEL", "DEBUG")
 """Log level for stdout
    Valid values are "DEBUG", "INFO", "WARNING", "ERROR"."""
 LOG_TO_FILE: bool = os.getenv("LOG_TO_FILE", "True").lower() == "true"

@@ -46,7 +46,15 @@ struct ProcessorTargetInfo {
     size_t next_packet_read_index;
     /** @brief The source tag this processor is interested in. */
     std::string source_tag_filter;
-};
+    /** @brief Latest sink-provided playback rate hint (post-global clock). */
+    double sink_playback_rate = 1.0;
+    /** @brief Latest sink-reported system delay in milliseconds. */
+    double sink_system_delay_ms = 0.0;
+    /** @brief Smoothed sink playback rate for controller consumption. */
+    double smoothed_sink_playback_rate = 1.0;
+    /** @brief Smoothed sink system delay in milliseconds. */
+    double smoothed_sink_system_delay_ms = 0.0;
+}; 
 
 /**
  * @struct StreamTimingState
@@ -60,6 +68,8 @@ struct StreamTimingState {
 
     // Jitter estimation (RFC 3550)
     double jitter_estimate = 1.0; // Start with 1ms default jitter
+    double system_jitter_estimate_ms = 1.0;
+    double last_system_delay_ms = 0.0;
 
     // Playout buffer state
     double current_buffer_level_ms = 0.0;
@@ -138,6 +148,7 @@ struct TimeshiftManagerStats {
     std::map<std::string, double> stream_clock_drift_ppm;
     std::map<std::string, double> stream_clock_last_innovation_ms;
     std::map<std::string, double> stream_clock_avg_abs_innovation_ms;
+    std::map<std::string, double> stream_system_jitter_ms;
     std::map<std::string, double> stream_clock_last_measured_offset_ms;
 };
 
@@ -199,6 +210,12 @@ public:
      * @param timeshift_sec The new timeshift in seconds.
      */
     void update_processor_timeshift(const std::string& instance_id, float timeshift_sec);
+    /**
+     * @brief Updates the sink-provided playback rate hint for a processor.
+     * @param instance_id The ID of the processor.
+     * @param playback_rate The playback rate requested by the downstream sink.
+     */
+    void update_processor_sink_rate(const std::string& instance_id, double playback_rate, double system_delay_ms);
 
     /**
      * @brief Retrieves the current statistics from the manager.

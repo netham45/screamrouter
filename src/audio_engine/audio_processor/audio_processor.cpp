@@ -218,14 +218,9 @@ void AudioProcessor::setVolumeNormalization(bool enabled) {
 }
 
 void AudioProcessor::set_playback_rate(double rate) {
-    // Clamp the rate to a reasonable range to avoid extreme changes that cause artifacts.
-    // We use a small range (+/- 2%) for imperceptible adjustments.
-    double clamped_rate = std::max(0.98, std::min(1.02, rate));
-    if (std::abs(clamped_rate - playback_rate_.load()) > 0.0001) {
-        playback_rate_.store(clamped_rate);
-        // The new rate will be used dynamically by src_process in the next audio processing call.
-        LOG_CPP_DEBUG("[AudioProc] Playback rate set to %.4f.", clamped_rate);
-    }
+    const double clamped = std::clamp(rate, 1e-6, 8.0);
+    playback_rate_.store(clamped);
+    setRatio = 1.0 / clamped;
 }
 
 void AudioProcessor::setEqNormalization(bool enabled) {
@@ -471,7 +466,7 @@ void AudioProcessor::volumeAdjust() {
 
 void AudioProcessor::resample() {
     PROFILE_FUNCTION();
-    if (!isProcessingRequired() || m_upsampler == nullptr) {
+    /*if (!isProcessingRequired() || m_upsampler == nullptr) {
         size_t samples_to_copy = scale_buffer_pos;
         if (samples_to_copy > scaled_float_buffer_.size()) {
             LOG_CPP_ERROR("[AudioProc] Error: scale_buffer_pos (%zu) exceeds scaled_float_buffer_ size (%zu) in resample bypass.", samples_to_copy, scaled_float_buffer_.size());
@@ -485,17 +480,25 @@ void AudioProcessor::resample() {
         resample_float_out_buffer_.resize(samples_to_copy);
         resample_buffer_pos = samples_to_copy;
         return;
-    }
+    }*/
 
     if (scale_buffer_pos == 0) {
         resample_buffer_pos = 0;
         return;
     }
 
-    double current_playback_rate = playback_rate_.load();
-    double effective_oversampled_rate = static_cast<double>(outputSampleRate * m_settings->processor_tuning.oversampling_factor) * current_playback_rate;
-    double ratio = effective_oversampled_rate / inputSampleRate;
+    const double current_playback_rate = std::max(1e-6, playback_rate_.load());
+    const int oversample_factor = std::max(1, m_settings ? m_settings->processor_tuning.oversampling_factor : 1);
+    const double effective_output_rate = static_cast<double>(outputSampleRate) / (setRatio) * static_cast<double>(oversample_factor);
+    const double ratio = ((effective_output_rate) / static_cast<double>(inputSampleRate));
 
+    LOG_CPP_DEBUG("[AudioProc] resample begin rate=%.6f ratio=%.6f over=%d in_sr=%d out_sr=%d scale_pos=%zu",
+                  current_playback_rate,
+                  ratio,
+                  oversample_factor,
+                  inputSampleRate,
+                  outputSampleRate,
+                  scale_buffer_pos);
     if (std::abs(ratio - 1.0) <= std::numeric_limits<double>::epsilon()) {
         size_t samples_to_copy = scale_buffer_pos;
         if (samples_to_copy > scaled_float_buffer_.size()) {
@@ -527,7 +530,7 @@ void AudioProcessor::resample() {
     size_t estimated_output_frames = static_cast<size_t>(std::ceil(static_cast<double>(total_input_frames) * ratio)) + 16;
     size_t estimated_output_samples = estimated_output_frames * static_cast<size_t>(inputChannels);
     if (resample_float_out_buffer_.size() < estimated_output_samples) {
-        try { resample_float_out_buffer_.resize(estimated_output_samples); }
+        try { resample_float_out_buffer_.resize(estimated_output_samples * 1.5); }
         catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resample_float_out_buffer_: %s", e.what()); resample_buffer_pos = 0; return; }
     }
 
@@ -551,6 +554,10 @@ void AudioProcessor::resample() {
         src_data.src_ratio = ratio;
 
         int error = src_process(m_upsampler, &src_data);
+        LOG_CPP_DEBUG("[AudioProc] resample loop input_used=%ld output_gen=%ld src_ratio=%.6f",
+                      src_data.input_frames_used,
+                      src_data.output_frames_gen,
+                      src_data.src_ratio);
         if (error) {
             LOG_CPP_ERROR("[AudioProc] libsamplerate upsampling error: %s", src_strerror(error));
             resample_buffer_pos = 0;
@@ -611,9 +618,15 @@ void AudioProcessor::downsample() {
         return;
     }
 
-    double current_playback_rate = playback_rate_.load();
-    double effective_oversampled_rate = static_cast<double>(outputSampleRate * m_settings->processor_tuning.oversampling_factor) * current_playback_rate;
-    double ratio = static_cast<double>(outputSampleRate) / effective_oversampled_rate;
+    const double current_playback_rate = std::max(1e-6, playback_rate_.load());
+    const int oversample_factor = std::max(1, m_settings ? m_settings->processor_tuning.oversampling_factor : 1);
+    const double effective_output_rate = static_cast<double>(outputSampleRate) * static_cast<double>(oversample_factor);
+    const double ratio = static_cast<double>(outputSampleRate) / effective_output_rate;
+    LOG_CPP_DEBUG("[AudioProc] downsample begin rate=%.6f ratio=%.6f over=%d merged_pos=%zu",
+                  current_playback_rate,
+                  ratio,
+                  oversample_factor,
+                  merged_buffer_pos);
 
     if (std::abs(ratio - 1.0) <= std::numeric_limits<double>::epsilon()) {
         size_t samples_to_copy = merged_buffer_pos;
@@ -1419,6 +1432,8 @@ bool AudioProcessor::isProcessingRequiredCheck() {
     for (int i = 0; i < EQ_BANDS; ++i) {
         if (eq[i] != 1.0f) return true;
     }
+
+    if (std::abs(playback_rate_.load() - 1.0) > 1e-6) return true;
     
     return false;
 }

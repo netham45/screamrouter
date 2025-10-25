@@ -90,7 +90,7 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
                 this->release_system_capture_device(tag);
             }
         );
-        m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex, m_settings);
+        m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex, m_settings, m_timeshift_manager.get());
         m_receiver_manager = std::make_unique<ReceiverManager>(m_manager_mutex, m_timeshift_manager.get());
         m_webrtc_manager = std::make_unique<WebRtcManager>(m_manager_mutex, m_sink_manager.get(), m_sink_manager->get_sink_configs());
         m_connection_manager = std::make_unique<ConnectionManager>(m_manager_mutex, m_source_manager.get(), m_sink_manager.get(), m_source_manager->get_source_to_sink_queues(), m_source_manager->get_sources());

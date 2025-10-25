@@ -35,7 +35,7 @@ MAIN_LOGGER.addHandler(root_console)
 if constants.LOG_TO_FILE:
     all_rotating_handler = logging.handlers.RotatingFileHandler(os.path.join(constants.LOGS_DIR, "all.log"),
                                     maxBytes=10000000, backupCount=constants.LOG_ENTRIES_TO_RETAIN)
-    all_rotating_handler.setLevel(logging.INFO)
+    all_rotating_handler.setLevel(logging.DEBUG)
     all_rotating_handler.setFormatter(FORMATTER)
     MAIN_LOGGER.addHandler(all_rotating_handler)
     try:

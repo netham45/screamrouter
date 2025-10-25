@@ -162,6 +162,8 @@ private:
     std::vector<float> eq_processed_buffer_;
     std::vector<float> dc_temp_buffer_;
 
+    double setRatio = 1;
+
     // --- Buffer Position Trackers ---
     size_t scale_buffer_pos = 0;
     size_t process_buffer_pos = 0;

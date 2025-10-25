@@ -32,9 +32,14 @@
 #include "../senders/system/wasapi_playback_sender.h"
 #endif
 #include "../synchronization/sink_synchronization_coordinator.h"
+#include "../input_processor/timeshift_manager.h"
 
 using namespace screamrouter::audio;
 using namespace screamrouter::audio::utils;
+
+namespace {
+constexpr double kCatchupAggressionMs = 250.0;
+}
 
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
     #ifdef __SSE2__
@@ -54,7 +59,8 @@ using namespace screamrouter::audio::utils;
 SinkAudioMixer::SinkAudioMixer(
     SinkMixerConfig config,
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue,
-    std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
+    std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings,
+    TimeshiftManager* timeshift_manager)
     : config_(config),
       m_settings(settings),
       mp3_output_queue_(mp3_output_queue),
@@ -66,6 +72,8 @@ SinkAudioMixer::SinkAudioMixer(
       lame_global_flags_(nullptr),
       stereo_preprocessor_(nullptr),
       mp3_encode_buffer_(SINK_MP3_BUFFER_SIZE),
+      timeshift_manager_(timeshift_manager),
+      system_delay_filtered_ms_(0.0),
       profiling_last_log_time_(std::chrono::steady_clock::now())
 {
     LOG_CPP_INFO("[SinkMixer:%s] Initializing...", config_.sink_id.c_str());
@@ -207,6 +215,7 @@ void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared
         input_queues_[instance_id] = queue;
         input_active_state_[instance_id] = false;
         source_buffers_[instance_id].audio_data.assign(SINK_MIXING_BUFFER_SAMPLES, 0);
+        source_feedback_[instance_id] = SourceFeedbackState{};
         LOG_CPP_INFO("[SinkMixer:%s] Added input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
 
@@ -220,11 +229,12 @@ void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared
  * @param instance_id The unique ID of the source processor instance.
  */
 void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
-     {
+    {
         std::lock_guard<std::mutex> lock(queues_mutex_);
         input_queues_.erase(instance_id);
         input_active_state_.erase(instance_id);
         source_buffers_.erase(instance_id);
+        source_feedback_.erase(instance_id);
         LOG_CPP_INFO("[SinkMixer:%s] Removed input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
 
@@ -611,6 +621,7 @@ bool SinkAudioMixer::wait_for_source_data() {
         if (buffer_it != source_buffers_.end()) {
             buffer_it->second = ProcessedAudioChunk{};
         }
+        mark_source_feedback_inactive(drained_id);
     }
 
     for (auto& pair : harvest.ready_chunks) {
@@ -626,6 +637,7 @@ bool SinkAudioMixer::wait_for_source_data() {
                           config_.sink_id.c_str(), instance_id.c_str(), sample_count);
             ready_this_cycle[instance_id] = false;
             input_active_state_[instance_id] = false;
+            mark_source_feedback_inactive(instance_id);
             continue;
         }
 
@@ -641,6 +653,9 @@ bool SinkAudioMixer::wait_for_source_data() {
                 profiling_chunk_dwell_min_ms_ = std::min(profiling_chunk_dwell_min_ms_, dwell_ms);
                 profiling_chunk_dwell_max_ms_ = std::max(profiling_chunk_dwell_max_ms_, dwell_ms);
             }
+            update_source_feedback_state(instance_id, chunk, dwell_ms);
+        } else {
+            update_source_feedback_state(instance_id, chunk, 0.0);
         }
 
         m_total_chunks_mixed++;
@@ -671,6 +686,7 @@ bool SinkAudioMixer::wait_for_source_data() {
             m_buffer_underruns++;
             lagging_sources++;
             profiling_source_underruns_[instance_id]++;
+            mark_source_feedback_inactive(instance_id);
         }
     }
 
@@ -728,6 +744,24 @@ bool SinkAudioMixer::wait_for_source_data() {
             LOG_CPP_INFO("[SinkMixer:%s] Underrun silence cleared.", config_.sink_id.c_str());
         }
     }
+
+    double active_sum = 0.0;
+    size_t active_count = 0;
+    for (const auto& [instance_id, state] : source_feedback_) {
+        if (state.active) {
+            active_sum += state.smoothed_rate;
+            active_count++;
+        }
+    }
+
+    double aggregated_rate = 1.0;
+    if (active_count > 0 && std::isfinite(active_sum)) {
+        aggregated_rate = std::clamp(active_sum / static_cast<double>(active_count), 0.5, 1.5);
+    }
+    const double blend = 0.2;
+    current_rate_request_ += blend * (aggregated_rate - current_rate_request_);
+    LOG_CPP_DEBUG("[SinkMixer:%s] Aggregated playback rate request=%.6f (active=%zu)",
+                  config_.sink_id.c_str(), current_rate_request_, active_count);
 
     size_t ready_count = 0;
     for (const auto& [instance_id, is_ready] : ready_this_cycle) {
@@ -1240,6 +1274,7 @@ void SinkAudioMixer::set_playback_format(int sample_rate, int channels, int bit_
     playback_bit_depth_ = sanitized_bit_depth;
 
     mix_period_ = calculate_mix_period(playback_sample_rate_, playback_channels_, playback_bit_depth_);
+    dynamic_mix_interval_ = mix_period_;
     next_mix_time_ = std::chrono::steady_clock::now();
 }
 
@@ -1362,44 +1397,34 @@ void SinkAudioMixer::unregister_mix_timer() {
 }
 
 bool SinkAudioMixer::wait_for_mix_tick() {
+    const auto target_time = next_mix_time_ + dynamic_mix_interval_;
+    const double mix_period_ms = std::chrono::duration<double, std::milli>(dynamic_mix_interval_).count();
+
+    const auto finalize_tick = [this, &target_time, mix_period_ms](std::chrono::steady_clock::time_point actual_time,
+                                                                  uint64_t remaining_ticks) {
+        const double overrun_ms = std::chrono::duration<double, std::milli>(actual_time - target_time).count();
+        const double backlog_ms = mix_period_ms * static_cast<double>(remaining_ticks);
+        const double total_delay_ms = overrun_ms + backlog_ms;
+        last_mix_sleep_overrun_ms_ = total_delay_ms;
+        latest_system_delay_ms_ = total_delay_ms;
+        next_mix_time_ = target_time;
+    };
+
     if (!clock_manager_enabled_.load(std::memory_order_acquire)) {
-        next_mix_time_ += mix_period_;
         auto now = std::chrono::steady_clock::now();
-        if (next_mix_time_ > now) {
-            std::this_thread::sleep_until(next_mix_time_);
+        if (target_time > now) {
+            std::this_thread::sleep_until(target_time);
+            now = std::chrono::steady_clock::now();
         } else {
-            next_mix_time_ = now;
+            now = std::chrono::steady_clock::now();
         }
+        finalize_tick(now, 0);
         return !stop_flag_;
     }
 
-    if (!clock_condition_handle_.valid() || !clock_condition_handle_.condition) {
-        std::this_thread::sleep_for(mix_period_);
-        return !stop_flag_;
-    }
-
-    auto condition = clock_condition_handle_.condition;
-    if (clock_pending_ticks_ == 0) {
-        std::unique_lock<std::mutex> condition_lock(condition->mutex);
-        condition->cv.wait(condition_lock, [this, &condition]() {
-            return stop_flag_ || condition->sequence > clock_last_sequence_;
-        });
-        if (stop_flag_) {
-            return false;
-        }
-        clock_pending_ticks_ = condition->sequence - clock_last_sequence_;
-        clock_last_sequence_ = condition->sequence;
-    }
-
-    if (clock_pending_ticks_ == 0) {
-        return false;
-    }
-
-    clock_pending_ticks_--;
-    if (stop_flag_) {
-        return false;
-    }
-    return true;
+    std::this_thread::sleep_until(target_time);
+    finalize_tick(std::chrono::steady_clock::now(), 0);
+    return !stop_flag_;
 }
 
 void SinkAudioMixer::cleanup_closed_listeners() {
@@ -1443,11 +1468,142 @@ void SinkAudioMixer::clear_pending_audio() {
         (void)queue_ptr;
         input_active_state_[instance_id] = false;
         source_buffers_[instance_id] = ProcessedAudioChunk{};
+        auto feedback_it = source_feedback_.find(instance_id);
+        if (feedback_it != source_feedback_.end()) {
+            feedback_it->second.active = false;
+            feedback_it->second.smoothed_rate = 1.0;
+            feedback_it->second.last_chunk_rate = 1.0;
+            feedback_it->second.smoothed_delay_ms = 0.0;
+        }
     }
 
     underrun_silence_active_ = false;
     payload_buffer_write_pos_ = 0;
     profiling_max_payload_buffer_bytes_ = 0;
+}
+
+void SinkAudioMixer::update_source_feedback_state(const std::string& instance_id, const ProcessedAudioChunk& chunk, double dwell_ms) {
+    auto it = source_feedback_.find(instance_id);
+    if (it == source_feedback_.end()) {
+        return;
+    }
+
+    auto& state = it->second;
+    const double rate = (std::isfinite(chunk.playback_rate) && chunk.playback_rate > 0.0)
+                            ? chunk.playback_rate
+                            : 1.0;
+    constexpr double kRateAlpha = 0.3;
+    constexpr double kDelayAlpha = 0.2;
+
+    state.last_chunk_rate = rate;
+    state.smoothed_rate += kRateAlpha * (rate - state.smoothed_rate);
+    state.smoothed_delay_ms += kDelayAlpha * (dwell_ms - state.smoothed_delay_ms);
+    state.last_update = std::chrono::steady_clock::now();
+    state.active = true;
+}
+
+void SinkAudioMixer::mark_source_feedback_inactive(const std::string& instance_id) {
+    auto it = source_feedback_.find(instance_id);
+    if (it == source_feedback_.end()) {
+        return;
+    }
+
+    auto& state = it->second;
+    state.active = false;
+    state.smoothed_rate += 0.35 * (1.0 - state.smoothed_rate);
+    state.smoothed_delay_ms *= 0.5;
+}
+
+void SinkAudioMixer::log_feedback_snapshot(const char* reason, double applied_rate, double scheduler_rate) {
+    if (!reason) {
+        reason = "update";
+    }
+
+    if (!m_settings || !m_settings->profiler.enabled) {
+        return;
+    }
+
+    size_t active_sources = 0;
+    double avg_rate = 0.0;
+    for (const auto& [id, state] : source_feedback_) {
+        if (!state.active) {
+            continue;
+        }
+        active_sources++;
+        avg_rate += state.smoothed_rate;
+    }
+    if (active_sources > 0) {
+        avg_rate /= static_cast<double>(active_sources);
+    } else {
+        avg_rate = 1.0;
+    }
+
+    LOG_CPP_DEBUG("[SinkMixer:%s] feedback[%s] applied=%.6f scheduler=%.6f avg_source=%.6f active=%zu delay_filt=%.3f",
+                  config_.sink_id.c_str(), reason, applied_rate, scheduler_rate, avg_rate,
+                  active_sources, system_delay_filtered_ms_);
+}
+
+void SinkAudioMixer::propagate_playback_feedback_to_sources(double playback_rate_hint, double system_delay_ms) {
+    if (!timeshift_manager_) {
+        return;
+    }
+
+    system_delay_filtered_ms_ += 0.2 * (system_delay_ms - system_delay_filtered_ms_);
+
+    double clamped_hint = playback_rate_hint;
+    if (m_settings) {
+        const auto min_rate = m_settings->timeshift_tuning.min_playback_rate;
+        const auto max_rate = m_settings->timeshift_tuning.absolute_max_playback_rate;
+        clamped_hint = std::clamp(clamped_hint, min_rate, max_rate);
+    } else {
+        clamped_hint = std::clamp(clamped_hint, 0.5, 1.5);
+    }
+
+    struct SinkUpdate {
+        std::string instance_id;
+        double rate;
+    };
+
+    std::vector<SinkUpdate> updates;
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        updates.reserve(input_queues_.size());
+        for (const auto& [instance_id, _] : input_queues_) {
+            double per_source_rate = clamped_hint;
+            auto feedback_it = source_feedback_.find(instance_id);
+            if (feedback_it != source_feedback_.end() && std::isfinite(feedback_it->second.smoothed_rate) && feedback_it->second.smoothed_rate > 0.0) {
+                auto& state = feedback_it->second;
+                state.smoothed_delay_ms += 0.25 * (system_delay_filtered_ms_ - state.smoothed_delay_ms);
+
+                double delay_ms = std::max(0.0, state.smoothed_delay_ms);
+                double delay_norm = std::clamp(delay_ms / (0.5 * kCatchupAggressionMs), 0.0, 1.0);
+                double mix = state.active ? (0.15 + 0.20 * delay_norm) : 0.08;
+                mix = std::clamp(mix, 0.0, 0.35);
+
+                per_source_rate = (1.0 - mix) * clamped_hint + mix * state.smoothed_rate;
+            }
+            if (m_settings) {
+                const auto min_rate = m_settings->timeshift_tuning.min_playback_rate;
+                const auto max_rate = m_settings->timeshift_tuning.absolute_max_playback_rate;
+                per_source_rate = std::clamp(per_source_rate, min_rate, max_rate);
+            } else {
+                per_source_rate = std::clamp(per_source_rate, 0.5, 1.5);
+            }
+
+            updates.push_back({instance_id, per_source_rate});
+        }
+    }
+
+    if (updates.empty()) {
+        return;
+    }
+
+    for (const auto& entry : updates) {
+        timeshift_manager_->update_processor_sink_rate(entry.instance_id, entry.rate, system_delay_filtered_ms_);
+    }
+
+    LOG_CPP_DEBUG("[SinkMixer:%s] Propagated playback feedback (global=%.6f filtered_delay=%.3f) to %zu sources.",
+                  config_.sink_id.c_str(), clamped_hint, system_delay_filtered_ms_, updates.size());
 }
 
 /**
@@ -1499,6 +1655,7 @@ void SinkAudioMixer::run() {
 
         const bool coordination_active = coordination_mode_ && coordinator_;
         SinkSynchronizationCoordinator::DispatchTimingInfo dispatch_timing{};
+        double system_delay_ms_for_feedback = latest_system_delay_ms_;
 
         if (coordination_active) {
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination enabled, waiting on barrier...", config_.sink_id.c_str());
@@ -1512,6 +1669,7 @@ void SinkAudioMixer::run() {
 
             dispatch_timing.dispatch_start = std::chrono::steady_clock::now();
             dispatch_timing.dispatch_end = dispatch_timing.dispatch_start;
+
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Barrier cleared, proceeding with mix.", config_.sink_id.c_str());
         }
 
@@ -1577,6 +1735,7 @@ void SinkAudioMixer::run() {
                           config_.sink_id.c_str(), payload_buffer_write_pos_);
         }
 
+        double latest_rate_adjustment = 1.0;
         if (coordination_active) {
             dispatch_timing.dispatch_end = std::chrono::steady_clock::now();
             if (!frame_metrics_valid) {
@@ -1591,8 +1750,54 @@ void SinkAudioMixer::run() {
                     frames_dispatched = 0;
                 }
             }
-            coordinator_->complete_dispatch(frames_dispatched, dispatch_timing);
+            latest_rate_adjustment = coordinator_->complete_dispatch(frames_dispatched, dispatch_timing);
         }
+
+        double requested_rate = current_rate_request_;
+        if (!std::isfinite(requested_rate) || requested_rate <= 0.0) {
+            requested_rate = 1.0;
+        }
+
+        double coordinator_rate = latest_rate_adjustment;
+        if (!std::isfinite(coordinator_rate) || coordinator_rate <= 0.0) {
+            coordinator_rate = 1.0;
+        }
+
+        const double aggression = kCatchupAggressionMs;
+        double scheduler_rate = 1.0;
+        if (std::isfinite(system_delay_ms_for_feedback)) {
+            double ratio = system_delay_ms_for_feedback / aggression;
+            ratio = std::clamp(ratio, -0.05, 0.05);
+            scheduler_rate = std::clamp(1.0 + ratio, 0.8, 1.2);
+        }
+
+        double applied_rate = requested_rate;
+        applied_rate *= scheduler_rate;
+        applied_rate *= coordinator_rate;
+
+        double feedback_rate = scheduler_rate * coordinator_rate;
+
+        const double min_rate = m_settings ? m_settings->timeshift_tuning.min_playback_rate : 0.5;
+        const double comfort_max = m_settings ? m_settings->timeshift_tuning.max_playback_rate : 1.2;
+        const double absolute_max = m_settings ? std::max(comfort_max, m_settings->timeshift_tuning.absolute_max_playback_rate) : 1.5;
+
+        applied_rate = std::clamp(applied_rate, min_rate, absolute_max);
+        feedback_rate = std::clamp(feedback_rate, min_rate, absolute_max);
+        requested_rate = std::clamp(requested_rate, min_rate, absolute_max);
+
+        last_sink_rate_hint_ = applied_rate;
+
+        const double base_interval_us = std::chrono::duration<double, std::micro>(mix_period_).count();
+        const double desired_interval_us = base_interval_us / std::max(0.01, applied_rate);
+        double current_interval_us = std::chrono::duration<double, std::micro>(dynamic_mix_interval_).count();
+        const double interval_alpha = 0.25;
+        current_interval_us += interval_alpha * (desired_interval_us - current_interval_us);
+        current_interval_us = std::clamp(current_interval_us, base_interval_us * 0.5, base_interval_us * 2.0);
+        dynamic_mix_interval_ = std::chrono::microseconds(static_cast<int64_t>(std::max(1000.0, current_interval_us)));
+
+        log_feedback_snapshot("cycle", applied_rate, scheduler_rate);
+
+        propagate_playback_feedback_to_sources(feedback_rate, system_delay_ms_for_feedback);
 
         bool has_listeners;
         {

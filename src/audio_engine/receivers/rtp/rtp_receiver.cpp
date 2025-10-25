@@ -450,7 +450,7 @@ void RtpReceiver::open_dynamic_session(const std::string& ip, int port, const st
         log_warning("Failed to set SO_REUSEADDR for " + ip + ":" + std::to_string(port) + ": " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
     }
 
-    int recv_buf_size = 256 * 1024;
+    int recv_buf_size = 4000 * 1152; // TODO: Change to 4*1152 when done testing jitter
     if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&recv_buf_size), sizeof(recv_buf_size)) < 0) {
         log_warning("Failed to set SO_RCVBUF for " + ip + ":" + std::to_string(port) + ": " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
     }

@@ -105,12 +105,12 @@ bool SinkSynchronizationCoordinator::begin_dispatch() {
     return true;
 }
 
-void SinkSynchronizationCoordinator::complete_dispatch(uint64_t samples_output,
-                                                       const DispatchTimingInfo& timing) {
+double SinkSynchronizationCoordinator::complete_dispatch(uint64_t samples_output,
+                                                         const DispatchTimingInfo& timing) {
     if (!coordination_enabled_ || !global_clock_ || !global_clock_->is_enabled()) {
         last_output_rtp_timestamp_ += samples_output;
         total_samples_output_ += samples_output;
-        return;
+        return 1.0;
     }
 
     // Gather mixer statistics to determine underrun state and nominal buffer fill.
@@ -150,19 +150,22 @@ void SinkSynchronizationCoordinator::complete_dispatch(uint64_t samples_output,
                                   timing,
                                   rtp_start_timestamp);
 
+    double last_rate = last_rate_adjustment_.load(std::memory_order_acquire);
+
     if (had_underrun) {
         LOG_CPP_DEBUG("SinkSynchronizationCoordinator[%s]: Dispatch completed with underrun (samples=%lu)",
                       sink_id_.c_str(), static_cast<unsigned long>(samples_output));
     } else {
-        const double rate_adjustment = last_rate_adjustment_.load(std::memory_order_acquire);
         LOG_CPP_DEBUG(
             "SinkSynchronizationCoordinator[%s]: Dispatch complete - rate=%.4f, samples=%lu, total_samples=%lu, buffer_fill=%.1f%%",
             sink_id_.c_str(),
-            rate_adjustment,
+            last_rate,
             static_cast<unsigned long>(samples_output),
             static_cast<unsigned long>(total_samples_output_),
             buffer_fill * 100.0);
     }
+
+    return last_rate;
 }
 
 // ============================================================================
