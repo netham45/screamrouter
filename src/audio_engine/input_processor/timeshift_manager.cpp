@@ -767,7 +767,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     double expected_rate = std::max(timing_state->current_playback_rate, 1e-6);
                     adjusted_buffer_level_ms /= expected_rate;
 
-                    double error_ms = controller_target_ms - adjusted_buffer_level_ms;
+                    double error_ms = adjusted_buffer_level_ms - controller_target_ms;
                     double normalized_error = 0.0;
                     if (controller_target_ms > 0.0) {
                         normalized_error = error_ms / controller_target_ms;
