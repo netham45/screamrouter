@@ -30,7 +30,6 @@
 #include <chrono>
 #include <limits>
 #include <thread>
-#include <unordered_map>
 
 #if defined(_WIN32)
 #undef max
@@ -44,7 +43,6 @@ namespace audio {
 
 class SinkSynchronizationCoordinator;
 class MixScheduler;
-class TimeshiftManager;
 
 /**
  * @struct SinkAudioMixerStats
@@ -92,8 +90,7 @@ public:
     SinkAudioMixer(
         SinkMixerConfig config,
         std::shared_ptr<Mp3OutputQueue> mp3_output_queue,
-        std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings,
-        TimeshiftManager* timeshift_manager
+        std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings
     );
 
     /**
@@ -190,19 +187,6 @@ private:
     std::map<std::string, bool> input_active_state_;
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
 
-    struct SourceFeedbackState {
-        double last_chunk_rate = 1.0;
-        double smoothed_rate = 1.0;
-        double smoothed_delay_ms = 0.0;
-        std::chrono::steady_clock::time_point last_update{};
-        bool active = false;
-    };
-
-    std::unordered_map<std::string, SourceFeedbackState> source_feedback_;
-    double current_rate_request_ = 1.0;
-    double last_sink_rate_hint_ = 1.0;
-    double system_delay_filtered_ms_ = 0.0;
-
     std::unique_ptr<ClockManager> clock_manager_;
     std::atomic<bool> clock_manager_enabled_{false};
     ClockManager::ConditionHandle clock_condition_handle_{};
@@ -231,10 +215,6 @@ private:
     lame_t lame_global_flags_ = nullptr;
     std::unique_ptr<AudioProcessor> stereo_preprocessor_;
     std::vector<uint8_t> mp3_encode_buffer_;
-
-    TimeshiftManager* timeshift_manager_{nullptr};
-    double last_mix_sleep_overrun_ms_{0.0};
-    double latest_system_delay_ms_{0.0};
 
     std::atomic<uint64_t> m_total_chunks_mixed{0};
     std::atomic<uint64_t> m_buffer_underruns{0};
@@ -268,11 +248,6 @@ private:
     void start_async();
     bool start_internal();
     void join_startup_thread();
-    void propagate_playback_feedback_to_sources(double playback_rate_hint, double system_delay_ms);
-    void update_source_feedback_state(const std::string& instance_id, const ProcessedAudioChunk& chunk, double dwell_ms);
-    void mark_source_feedback_inactive(const std::string& instance_id);
-    void log_feedback_snapshot(const char* reason, double applied_rate, double scheduler_rate);
-
     // --- Profiling ---
     void reset_profiler_counters();
     void maybe_log_profiler();

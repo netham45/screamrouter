@@ -46,15 +46,7 @@ struct ProcessorTargetInfo {
     size_t next_packet_read_index;
     /** @brief The source tag this processor is interested in. */
     std::string source_tag_filter;
-    /** @brief Latest sink-provided playback rate hint (post-global clock). */
-    double sink_playback_rate = 1.0;
-    /** @brief Latest sink-reported system delay in milliseconds. */
-    double sink_system_delay_ms = 0.0;
-    /** @brief Smoothed sink playback rate for controller consumption. */
-    double smoothed_sink_playback_rate = 1.0;
-    /** @brief Smoothed sink system delay in milliseconds. */
-    double smoothed_sink_system_delay_ms = 0.0;
-}; 
+};
 
 /**
  * @struct StreamTimingState
@@ -210,13 +202,6 @@ public:
      * @param timeshift_sec The new timeshift in seconds.
      */
     void update_processor_timeshift(const std::string& instance_id, float timeshift_sec);
-    /**
-     * @brief Updates the sink-provided playback rate hint for a processor.
-     * @param instance_id The ID of the processor.
-     * @param playback_rate The playback rate requested by the downstream sink.
-     */
-    void update_processor_sink_rate(const std::string& instance_id, double playback_rate, double system_delay_ms);
-
     /**
      * @brief Retrieves the current statistics from the manager.
      * @return A struct containing the current stats.
