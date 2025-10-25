@@ -144,6 +144,8 @@ constexpr uint32_t PA_ERR_INVALID = 3;
 constexpr uint32_t PA_ERR_NOENTITY = 5;
 constexpr uint32_t PA_ERR_NOTSUPPORTED = 19;
 
+std::atomic<uint64_t> g_pulse_stream_counter{0};
+
 const char* command_name(Command c) {
     switch (c) {
         case Command::Auth: return "Auth";
@@ -214,6 +216,17 @@ void apply_proplist_update(std::unordered_map<std::string, std::string>& target,
             }
             break;
     }
+}
+
+std::string make_unique_stream_tag(const std::string& base) {
+    const uint64_t counter = g_pulse_stream_counter.fetch_add(1, std::memory_order_relaxed);
+    std::ostringstream oss;
+    oss << base << "#" << std::hex << std::setw(6) << std::setfill('0') << counter;
+    return oss.str();
+}
+
+std::string make_wildcard_tag(const std::string& base) {
+    return base + "*";
 }
 
 inline uint32_t min_version(uint32_t client_version) {
@@ -439,6 +452,8 @@ struct PulseAudioReceiver::Impl::Connection {
         ChannelMap channel_map;
         CVolume volume;
         std::string composite_tag;
+        std::string base_tag;
+        std::string wildcard_tag;
         std::unordered_map<std::string, std::string> proplist;
         bool corked = false;
         uint32_t pending_request_bytes = 0;
@@ -1834,7 +1849,10 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     stream.channel_map = config.channel_map;
     stream.volume = config.volume;
     stream.corked = muted;
-    stream.composite_tag = composite_tag_for_stream(config.proplist);
+    stream.base_tag = composite_tag_for_stream(config.proplist);
+    strip_nuls(stream.base_tag);
+    stream.wildcard_tag = make_wildcard_tag(stream.base_tag);
+    stream.composite_tag = make_unique_stream_tag(stream.base_tag);
     strip_nuls(stream.composite_tag);
     stream.proplist = config.proplist;
     stream.adjust_latency = adjust_latency_flag;
@@ -1853,7 +1871,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     stream.chlayout1 = layout.first;
     stream.chlayout2 = layout.second;
 
-    owner->note_tag_seen(stream.composite_tag);
+    owner->note_tag_seen(stream.wildcard_tag);
 
     LOG_CPP_INFO("Accepted PulseAudio client tag %s", stream.composite_tag.c_str());
 

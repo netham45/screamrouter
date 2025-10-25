@@ -45,7 +45,9 @@ class MDNSResponder(threading.Thread):
 
         # MDNSResponder specific attributes
         self.hostname = "screamrouter" # Zeroconf adds .local automatically
-        self.service_type = "_screamrouter._tcp.local." # Define a custom service type
+        # Use a dedicated service type so the control-plane advertiser can own
+        # `_screamrouter._tcp` without duplicate entries.
+        self.service_type = "_screamrouter-host._tcp.local."
         self.service_name = f"{self.hostname}.{self.service_type}"
         self.zeroconf: Optional[Zeroconf] = None
         self.service_info: Optional[ServiceInfo] = None

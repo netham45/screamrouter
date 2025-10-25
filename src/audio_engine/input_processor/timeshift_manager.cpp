@@ -23,7 +23,36 @@ namespace audio {
 namespace {
 constexpr double kProcessingBudgetAlpha = 0.2;
 constexpr double kRtpContinuitySlackSeconds = 0.25; // allow ~250ms drift before declaring discontinuity
+
+bool has_prefix(const std::string& value, const std::string& prefix) {
+    if (prefix.empty()) {
+        return true;
+    }
+    if (value.size() < prefix.size()) {
+        return false;
+    }
+    return value.compare(0, prefix.size(), prefix) == 0;
 }
+
+bool match_and_bind_source(ProcessorTargetInfo& info, const std::string& actual_tag) {
+    if (!info.is_wildcard) {
+        return actual_tag == info.source_tag_filter;
+    }
+    if (!info.bound_source_tag.empty()) {
+        return info.bound_source_tag == actual_tag;
+    }
+    if (has_prefix(actual_tag, info.wildcard_prefix)) {
+        info.bound_source_tag = actual_tag;
+        return true;
+    }
+    return false;
+}
+
+const std::string& active_tag(const ProcessorTargetInfo& info) {
+    return info.is_wildcard ? info.bound_source_tag : info.source_tag_filter;
+}
+
+} // namespace
 
 /**
  * @brief Constructs a TimeshiftManager.
@@ -310,6 +339,12 @@ void TimeshiftManager::register_processor(
     info.current_delay_ms = initial_delay_ms;
     info.current_timeshift_backshift_sec = initial_timeshift_sec;
     info.source_tag_filter = source_tag;
+    info.is_wildcard = !source_tag.empty() && source_tag.back() == '*';
+    if (info.is_wildcard) {
+        info.wildcard_prefix = source_tag.substr(0, source_tag.size() - 1);
+    } else {
+        info.bound_source_tag = source_tag;
+    }
 
     {
         std::lock_guard<std::mutex> lock(data_mutex_);
@@ -433,11 +468,21 @@ void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
         std::lock_guard<std::mutex> data_lock(data_mutex_);
         reset_position = global_timeshift_buffer_.size();
 
-        auto targets_it = processor_targets_.find(source_tag);
-        if (targets_it != processor_targets_.end()) {
-            for (auto& [instance_id, info] : targets_it->second) {
+        for (auto& [filter_tag, source_map] : processor_targets_) {
+            for (auto& [instance_id, info] : source_map) {
                 (void)instance_id;
+                const std::string& bound_tag = active_tag(info);
+                const bool direct_match = (!info.is_wildcard && filter_tag == source_tag);
+                const bool bound_match = info.is_wildcard && !bound_tag.empty() && bound_tag == source_tag;
+                if (!direct_match && !bound_match) {
+                    continue;
+                }
+
                 info.next_packet_read_index = reset_position;
+                if (info.is_wildcard) {
+                    info.bound_source_tag.clear();
+                }
+
                 if (info.target_queue) {
                     TaggedAudioPacket discarded;
                     while (info.target_queue->try_pop(discarded)) {
@@ -505,26 +550,28 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
     size_t packets_processed = 0;
 
     for (auto& [source_tag, source_map] : processor_targets_) {
+        (void)source_tag;
         for (auto& [instance_id, target_info] : source_map) {
-            
-            StreamTimingState* timing_state = nullptr;
-            {
-                std::lock_guard<std::mutex> lock(timing_mutex_);
-                if (stream_timing_states_.count(source_tag) && stream_timing_states_.at(source_tag).clock) {
-                    timing_state = &stream_timing_states_.at(source_tag);
-                }
-            }
-
             while (target_info.next_packet_read_index < global_timeshift_buffer_.size()) {
                 const auto& candidate_packet = global_timeshift_buffer_[target_info.next_packet_read_index];
 
-                if (candidate_packet.source_tag != target_info.source_tag_filter) {
+                if (!match_and_bind_source(target_info, candidate_packet.source_tag)) {
                     target_info.next_packet_read_index++;
                     continue;
                 }
 
+                StreamTimingState* timing_state = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(timing_mutex_);
+                    auto timing_it = stream_timing_states_.find(candidate_packet.source_tag);
+                    if (timing_it != stream_timing_states_.end() && timing_it->second.clock) {
+                        timing_state = &timing_it->second;
+                    }
+                }
+
                 if (!timing_state) {
-                    break;
+                    target_info.next_packet_read_index++;
+                    continue;
                 }
 
                 if (!candidate_packet.rtp_timestamp.has_value() || candidate_packet.sample_rate == 0) {
@@ -583,9 +630,10 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     if (max_catchup_lag_ms > 0.0 && lateness_ms > max_catchup_lag_ms) {
                         timing_state->tm_packets_discarded++;
                         profiling_packets_dropped_++;
+                        const std::string& log_tag = active_tag(target_info).empty() ? candidate_packet.source_tag : active_tag(target_info);
                         LOG_CPP_DEBUG(
                             "[TimeshiftManager] Dropping late packet for source '%s'. Lateness=%.2f ms exceeds catchup limit=%.2f ms.",
-                            target_info.source_tag_filter.c_str(),
+                            log_tag.c_str(),
                             lateness_ms,
                             max_catchup_lag_ms);
 
@@ -797,8 +845,9 @@ void TimeshiftManager::cleanup_global_buffer_unlocked() {
                     // The processor's read index is within the block to be removed.
                     // We must determine if it's truly lagging or just idle.
                     bool is_truly_lagging = false;
+                    const std::string& bound_tag = active_tag(proc_info);
                     for (size_t i = proc_info.next_packet_read_index; i < remove_count; ++i) {
-                        if (global_timeshift_buffer_[i].source_tag == proc_info.source_tag_filter) {
+                        if (!bound_tag.empty() && global_timeshift_buffer_[i].source_tag == bound_tag) {
                             // It missed a packet it was supposed to play. It's lagging.
                             is_truly_lagging = true;
                             break;
@@ -810,10 +859,10 @@ void TimeshiftManager::cleanup_global_buffer_unlocked() {
                                         id.c_str(), proc_info.next_packet_read_index, remove_count);
                         
                         // Safely increment the lagging event counter for this stream
-                        {
+                        if (!bound_tag.empty()) {
                             std::lock_guard<std::mutex> lock(timing_mutex_);
-                            if (stream_timing_states_.count(proc_info.source_tag_filter)) {
-                                stream_timing_states_.at(proc_info.source_tag_filter).lagging_events_count++;
+                            if (stream_timing_states_.count(bound_tag)) {
+                                stream_timing_states_.at(bound_tag).lagging_events_count++;
                             }
                         }
 

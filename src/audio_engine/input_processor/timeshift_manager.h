@@ -46,6 +46,12 @@ struct ProcessorTargetInfo {
     size_t next_packet_read_index;
     /** @brief The source tag this processor is interested in. */
     std::string source_tag_filter;
+    /** @brief Indicates that source_tag_filter uses a wildcard suffix. */
+    bool is_wildcard = false;
+    /** @brief Prefix used for wildcard matching. */
+    std::string wildcard_prefix;
+    /** @brief Concrete tag currently bound when wildcard matching is used. */
+    std::string bound_source_tag;
 };
 
 /**

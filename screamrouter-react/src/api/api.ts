@@ -110,6 +110,21 @@ export interface SystemAudioDeviceInfo {
   present: boolean;
 }
 
+export interface RouterMdnsService {
+  name: string;
+  host: string;
+  port: number;
+  addresses: string[];
+  properties: Record<string, string>;
+  priority?: number;
+  weight?: number;
+}
+
+export interface RouterServiceResponse {
+  timeout: number;
+  services: RouterMdnsService[];
+}
+
 /**
  * Interface for Equalizer object
  */
@@ -509,6 +524,9 @@ const ApiService = {
   getDiscoverySnapshot: () => axios.get<UnifiedDiscoverySnapshot>('/discovery/snapshot'),
   addDiscoveredSource: (deviceKey: string) => axios.post('/sources/add-discovered', { device_key: deviceKey }),
   addDiscoveredSink: (deviceKey: string) => axios.post('/sinks/add-discovered', { device_key: deviceKey }),
+  getRouterServices: (timeout = 1.5) => axios.get<RouterServiceResponse>('/mdns/router-services', {
+    params: { timeout },
+  }),
 
   // --- Speaker Layout Update Methods ---
   updateSourceSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {

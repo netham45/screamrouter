@@ -14,6 +14,7 @@ import { FaPlay, FaStepBackward, FaStepForward } from 'react-icons/fa';
 import { HeaderBarProps } from '../types';
 import SearchBox from '../search/SearchBox';
 import VolumeSlider from '../controls/VolumeSlider';
+import InstanceSwitcher from '../../common/InstanceSwitcher';
 
 /**
  * HeaderBar component for the FullMenu.
@@ -51,8 +52,10 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
       bg={bgColor}
       color={textColor}
       boxShadow="md"
+      flexWrap={{ base: 'wrap', xl: 'nowrap' }}
+      rowGap={3}
     >
-      <Flex align="center">
+      <Flex align="center" flex={{ base: '1 0 100%', xl: '0 0 auto' }}>
         <IconButton
           aria-label="Open menu"
           icon={<HamburgerIcon />}
@@ -72,7 +75,14 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         </Text>
       </Flex>
       
-      <Box flex="1" mx={6} display="flex" alignItems="center">
+      <Box
+        flex={{ base: '1 0 100%', xl: '1' }}
+        mx={{ base: 0, xl: 6 }}
+        display="flex"
+        alignItems={{ base: 'flex-start', xl: 'center' }}
+        flexDirection={{ base: 'column', xl: 'row' }}
+        gap={{ base: 3, xl: 0 }}
+      >
       <SearchBox
           sources={sources}
           sinks={sinks}
@@ -82,7 +92,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         {activeSource && (
           <>
             {controlSource && (
-              <HStack spacing={1} mr={4}>
+              <HStack spacing={1} mr={{ base: 0, xl: 4 }}>
                 <Tooltip label="Previous Track">
                   <IconButton
                     aria-label="Previous Track"
@@ -125,7 +135,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
               </HStack>
             )}
             {updateVolume && activeSourceObj && (
-              <Box mr={4} width="150px">
+              <Box mr={{ base: 0, xl: 4 }} width="150px">
                 <VolumeSlider
                   showLabel={false}
                   value={activeSourceObj.volume || 0}
@@ -142,6 +152,16 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
       </Box>
       
       <HStack spacing={2}>
+        <InstanceSwitcher
+          buttonProps={{
+            variant: 'outline',
+            colorScheme: 'whiteAlpha',
+            size: 'sm',
+            borderColor: 'whiteAlpha.700',
+            _hover: { bg: 'whiteAlpha.200' },
+          }}
+          menuListProps={{ minW: '280px' }}
+        />
         <Tooltip label="Start guided tutorial">
           <IconButton
             aria-label="Start tutorial"
