@@ -751,9 +751,9 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         const double packets_after_current = (available_packets > 0)
                                                                 ? static_cast<double>(available_packets - 1) * packet_duration_ms
                                                                 : 0.0;
-                        const double fractional_head_ms = std::max(time_until_playout_ms, 0.0);
+                        const double fractional_head_ms = time_until_playout_ms;
 
-                        timing_state->current_buffer_level_ms = std::max(0.0, packets_after_current + fractional_head_ms);
+                        timing_state->current_buffer_level_ms = packets_after_current + fractional_head_ms;
                     } else {
                         timing_state->current_buffer_level_ms = 0;
                     }

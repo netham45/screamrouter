@@ -14,10 +14,12 @@ struct TimeshiftTuning {
     double target_buffer_level_ms = 20.0;
     double target_recovery_rate_ms_per_sec = 15.0;
     double proportional_gain_kp = 0.05;
+    double catchup_boost_gain = 2.0;
     double min_playback_rate = 0.90;
     double max_playback_rate = 1.10;
     double absolute_max_playback_rate = 1.25;
     double system_jitter_gain = 0.05;
+    double system_delay_ratio_cap = 3.0;
     long loop_max_sleep_ms = 10;
     double max_catchup_lag_ms = 20.0;
     double max_jitter_ms = 150.0;
