@@ -90,7 +90,7 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
                 this->release_system_capture_device(tag);
             }
         );
-        m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex, m_settings);
+        m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex, m_settings, m_timeshift_manager.get());
         m_receiver_manager = std::make_unique<ReceiverManager>(m_manager_mutex, m_timeshift_manager.get());
         m_webrtc_manager = std::make_unique<WebRtcManager>(m_manager_mutex, m_sink_manager.get(), m_sink_manager->get_sink_configs());
         m_connection_manager = std::make_unique<ConnectionManager>(m_manager_mutex, m_source_manager.get(), m_sink_manager.get(), m_source_manager->get_source_to_sink_queues(), m_source_manager->get_sources());
@@ -129,21 +129,7 @@ void AudioManager::shutdown() {
     m_running = false;
 
     // Ensure C++ logs go to stderr during shutdown for visibility
-    screamrouter::audio::logging::set_cpp_log_leveTraceback (most recent call last):
-  File "/home/nathan/.pyenv/versions/3.10.18/lib/python3.10/runpy.py", line 196, in _run_module_as_main
-    return _run_code(code, main_globals, None,
-  File "/home/nathan/.pyenv/versions/3.10.18/lib/python3.10/runpy.py", line 86, in _run_code
-    exec(code, run_globals)
-  File "/home/nathan/screamrouter_git/screamrouter/screamrouter/__main__.py", line 532, in <module>
-    main()
-  File "/home/nathan/screamrouter_git/screamrouter/screamrouter/__main__.py", line 491, in main
-    screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream,
-  File "/home/nathan/.pyenv/versions/3.10.18/lib/python3.10/site-packages/screamrouter/configuration/configuration_manager.py", line 117, in __init__
-    screamrouter_audio_engine.set_cpp_log_level("DEBUG")
-TypeError: set_cpp_log_level(): incompatible function arguments. The following argument types are supported:
-    1. (level: screamrouter_audio_engine.LogLevel_CPP) -> None
-
-Invoked with: 'DEBUG'l(screamrouter::audio::logging::LogLevel::DEBUG);
+    screamrouter::audio::logging::set_cpp_log_level(screamrouter::audio::logging::LogLevel::DEBUG);
     screamrouter::audio::logging::set_cpp_log_stderr_mirror(true);
 
     LOG_CPP_INFO("Shutting down AudioManager...");
