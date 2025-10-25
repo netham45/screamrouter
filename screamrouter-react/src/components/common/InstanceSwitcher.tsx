@@ -17,7 +17,7 @@ import {
 } from '@chakra-ui/react';
 import { ChevronDownIcon, RepeatIcon } from '@chakra-ui/icons';
 import { FiServer } from 'react-icons/fi';
-import { useRouterInstances } from '../../hooks/useRouterInstances';
+import { useRouterInstances, RouterInstance } from '../../hooks/useRouterInstances';
 
 export interface InstanceSwitcherProps {
   buttonProps?: ButtonProps;
@@ -25,6 +25,7 @@ export interface InstanceSwitcherProps {
   size?: ButtonProps['size'];
   hideLabel?: boolean;
   showIcon?: boolean;
+  resolveHref?: (instance: RouterInstance) => string;
 }
 
 const InstanceSwitcher: React.FC<InstanceSwitcherProps> = ({
@@ -33,6 +34,7 @@ const InstanceSwitcher: React.FC<InstanceSwitcherProps> = ({
   size = 'sm',
   hideLabel = false,
   showIcon = true,
+  resolveHref,
 }) => {
   const { instances, loading, error, refresh } = useRouterInstances();
   const currentInstance = instances.find(instance => instance.isCurrent) || null;
@@ -49,11 +51,15 @@ const InstanceSwitcher: React.FC<InstanceSwitcherProps> = ({
     px: 3,
   };
 
-  const handleSelect = (url: string, isCurrent: boolean) => {
-    if (!url || isCurrent) {
+  const handleSelect = (instance: RouterInstance) => {
+    if (instance.isCurrent) {
       return;
     }
-    window.location.href = url;
+    const targetUrl = resolveHref ? resolveHref(instance) : instance.url;
+    if (!targetUrl) {
+      return;
+    }
+    window.location.href = targetUrl;
   };
 
   const handleRefresh = (event: React.MouseEvent) => {
@@ -103,7 +109,7 @@ const InstanceSwitcher: React.FC<InstanceSwitcherProps> = ({
             <MenuItem
               key={instance.id}
               icon={<Icon as={FiServer} />}
-              onClick={() => handleSelect(instance.url, instance.isCurrent)}
+              onClick={() => handleSelect(instance)}
             >
               <Box>
                 <Text fontWeight="semibold">{instance.label}</Text>

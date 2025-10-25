@@ -80,6 +80,20 @@ class RouterServiceAdvertiser(threading.Thread):
             return "00:00:00:00:00:00"
 
     def _format_hostname(self) -> str:
+        """Prefer the system hostname; fall back to the MAC-derived name."""
+        try:
+            system_hostname = socket.gethostname().strip()
+        except Exception:  # pragma: no cover - platform specific
+            system_hostname = ""
+
+        def _sanitize(name: str) -> str:
+            cleaned = ''.join(c if c.isalnum() or c in ('-', '_') else '-' for c in name)
+            return cleaned.strip('-_')
+
+        candidate = _sanitize(system_hostname)
+        if candidate:
+            return candidate
+
         suffix = self.mac_address.replace(":", "")[-6:] if self.mac_address else "000000"
         return f"Screamrouter-{suffix}"
 

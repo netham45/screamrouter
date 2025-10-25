@@ -88,6 +88,7 @@ void PulseAudioReceiver::run() {}
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <unistd.h>
 #include <pwd.h>
 #include <grp.h>
@@ -110,7 +111,7 @@ constexpr uint32_t kDefaultMaxLength = kDefaultBufferLength * 2;
 constexpr int64_t kMaxCatchupUsecPerChunk = 50000; // limit to 20ms of catch-up per chunk to avoid pops
 constexpr int64_t kMaxUnderrunResetUsec = 500000;  // jump directly to realtime if we fall >500ms behind
 constexpr uint32_t kProgramTagLength = 30;
-constexpr uint32_t kPaddedIpLength = 15;
+constexpr uint32_t kPaddedIpLength = 32;
 constexpr uint32_t kVolumeNorm = 0x10000u;
 constexpr uint8_t kSampleFormatS32LE = 7; // matches PulseAudio's PA_SAMPLE_S32LE
 constexpr uint8_t kSampleFormatS16LE = 3;
@@ -779,15 +780,24 @@ void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix) {
         auto conn = std::make_unique<Connection>(this, client_fd, is_unix);
 
         if (!is_unix) {
-            char host[INET6_ADDRSTRLEN] = {0};
-            if (ss.ss_family == AF_INET) {
-                auto* sin = reinterpret_cast<sockaddr_in*>(&ss);
-                inet_ntop(AF_INET, &sin->sin_addr, host, sizeof(host));
-            } else if (ss.ss_family == AF_INET6) {
-                auto* sin6 = reinterpret_cast<sockaddr_in6*>(&ss);
-                inet_ntop(AF_INET6, &sin6->sin6_addr, host, sizeof(host));
+            char host[NI_MAXHOST] = {0};
+            char serv[NI_MAXSERV] = {0};
+            const int gi = getnameinfo(reinterpret_cast<const sockaddr*>(&ss), len,
+                                       host, sizeof(host),
+                                       serv, sizeof(serv),
+                                       NI_NUMERICHOST | NI_NUMERICSERV);
+            if (gi == 0 && host[0] != '\0') {
+                conn->peer_identity = std::string(host) + ":" + serv;
+            } else {
+                if (ss.ss_family == AF_INET) {
+                    auto* sin = reinterpret_cast<sockaddr_in*>(&ss);
+                    inet_ntop(AF_INET, &sin->sin_addr, host, sizeof(host));
+                } else if (ss.ss_family == AF_INET6) {
+                    auto* sin6 = reinterpret_cast<sockaddr_in6*>(&ss);
+                    inet_ntop(AF_INET6, &sin6->sin6_addr, host, sizeof(host));
+                }
+                conn->peer_identity = host[0] ? std::string(host) : "unknown";
             }
-            conn->peer_identity = host;
         } else {
 #ifdef SO_PEERCRED
             ucred cred{};
@@ -797,8 +807,15 @@ void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix) {
             }
 #endif
             if (conn->peer_identity.empty()) {
-                conn->peer_identity = "local";
+                conn->peer_identity = "local:" + std::to_string(client_fd);
             }
+        }
+
+        {
+            const uint64_t conn_id = g_pulse_stream_counter.fetch_add(1, std::memory_order_relaxed);
+            std::ostringstream oss;
+            oss << conn->peer_identity << "#" << std::hex << std::setw(6) << std::setfill('0') << conn_id;
+            conn->peer_identity = oss.str();
         }
 
         log("Accepted PulseAudio client from " + conn->peer_identity);

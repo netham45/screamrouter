@@ -674,6 +674,10 @@ const DesktopMenu: React.FC = () => {
                 borderRadius: 'md',
               }}
               menuListProps={{ minW: '260px' }}
+              resolveHref={(instance) => {
+                const base = instance.url.replace(/\/$/, '');
+                return `${base}/desktopMenu`;
+              }}
             />
           </Box>
         </Flex>

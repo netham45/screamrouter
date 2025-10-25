@@ -1818,6 +1818,7 @@ class ConfigurationManager(threading.Thread):
              return None
 
         _logger.info("[Config Translator] Starting translation to C++ DesiredEngineState...")
+
         cpp_desired_state = screamrouter_audio_engine.DesiredEngineState()
         processed_source_paths: dict[str, screamrouter_audio_engine.AppliedSourcePathParams] = {}
         processed_sinks_list: list[screamrouter_audio_engine.AppliedSinkParams] = [] # Temporary list for sinks
@@ -2052,10 +2053,10 @@ class ConfigurationManager(threading.Thread):
                     
                     # Prioritize IP for source_tag, fallback to tag, then empty string.
                     # This tag is crucial for RtpReceiver packet routing.
-                    if py_source_desc.ip:
+                    if py_source_desc.is_process and py_source_desc.tag:
+                        source_tag_for_cpp = py_source_desc.tag
+                    elif py_source_desc.ip:
                         source_tag_for_cpp = str(py_source_desc.ip)
-                    elif py_source_desc.is_process and py_source_desc.tag:
-                        source_tag_for_cpp = self._canonical_process_tag(py_source_desc.tag) or py_source_desc.tag
                     else:
                         source_tag_for_cpp = py_source_desc.tag if py_source_desc.tag is not None else ""
                     cpp_source_path.source_tag = source_tag_for_cpp
