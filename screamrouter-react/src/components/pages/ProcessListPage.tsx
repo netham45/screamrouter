@@ -22,6 +22,7 @@ import ConfirmationDialog from '../dialogs/ConfirmationDialog';
 import { ColorProvider } from '../desktopMenu/context/ColorContext';
 import { useAppContext } from '../../context/AppContext';
 import { createDesktopMenuActions } from '../desktopMenu/utils';
+import { canonicalizeProcessTag } from '../../utils/processTags';
 
 // Define the type for route parameters
 type ProcessListParams = {
@@ -68,8 +69,17 @@ const ProcessListPage: React.FC = () => {
     const processesForIp = sources.filter(source => 
       source.is_process && source.tag && source.tag.startsWith(ip)
     );
-    
-    setProcessSources(processesForIp);
+
+    const deduped = new Map<string, Source>();
+    processesForIp.forEach(source => {
+      const canonicalTag = canonicalizeProcessTag(source.tag);
+      const key = canonicalTag ?? source.tag ?? source.name;
+      if (!deduped.has(key)) {
+        deduped.set(key, canonicalTag ? { ...source, tag: canonicalTag } : source);
+      }
+    });
+
+    setProcessSources(Array.from(deduped.values()));
     console.log(`Found ${processesForIp.length} processes for IP ${ip}`);
     setLoading(false);
   }, [ip, sources]); // Re-run when sources or IP changes

@@ -42,6 +42,7 @@ namespace screamrouter {
 namespace audio {
 
 class SinkSynchronizationCoordinator;
+class MixScheduler;
 
 /**
  * @struct SinkAudioMixerStats
@@ -175,6 +176,7 @@ private:
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
     std::unique_ptr<INetworkSender> network_sender_;
+    std::unique_ptr<MixScheduler> mix_scheduler_;
     
     std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
     std::mutex listener_senders_mutex_;
@@ -200,6 +202,7 @@ private:
 
     std::chrono::microseconds mix_period_{std::chrono::microseconds(12000)};
     std::chrono::steady_clock::time_point next_mix_time_{};
+    std::chrono::microseconds dynamic_mix_interval_{std::chrono::microseconds(12000)};
 
     std::vector<int32_t> mixing_buffer_;
     std::vector<int32_t> stereo_buffer_;
@@ -245,7 +248,6 @@ private:
     void start_async();
     bool start_internal();
     void join_startup_thread();
-
     // --- Profiling ---
     void reset_profiler_counters();
     void maybe_log_profiler();

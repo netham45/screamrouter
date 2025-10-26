@@ -354,6 +354,7 @@ const StatsPage: React.FC = () => {
                     {renderTuningControl('timeshift_tuning', 'jitter_safety_margin_multiplier', 'Jitter Safety Margin', 0.1)}
                     {renderTuningControl('timeshift_tuning', 'late_packet_threshold_ms', 'Late Packet Threshold (ms)', 1)}
                     {renderTuningControl('timeshift_tuning', 'target_buffer_level_ms', 'Target Buffer Level (ms)')}
+                    {renderTuningControl('timeshift_tuning', 'target_recovery_rate_ms_per_sec', 'Target Recovery Rate (ms/s)', 0.1)}
                     {renderTuningControl('timeshift_tuning', 'proportional_gain_kp', 'Proportional Gain (Kp)', 0.0001)}
                     {renderTuningControl('timeshift_tuning', 'min_playback_rate', 'Min Playback Rate', 0.01)}
                     {renderTuningControl('timeshift_tuning', 'max_playback_rate', 'Max Playback Rate', 0.01)}

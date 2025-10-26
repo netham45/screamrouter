@@ -47,16 +47,28 @@ struct SinkTimingInfo {
     
     /** @brief Wall clock time of the last timing report. */
     std::chrono::steady_clock::time_point last_report_time;
-    
+
+    /** @brief Wall clock time when local processing for the last dispatch started. */
+    std::chrono::steady_clock::time_point last_dispatch_start_time;
+
+    /** @brief Duration of local processing for the last dispatch. */
+    std::chrono::steady_clock::duration last_processing_duration{};
+
     /** @brief Smoothed error in samples (exponential moving average). */
     double accumulated_error_samples = 0.0;
-    
+
     /** @brief Current playback rate adjustment factor (e.g., 1.001 = 0.1% faster). */
     double current_rate_adjustment = 1.0;
-    
+
+    /** @brief Smoothed estimate of local processing latency in microseconds. */
+    double smoothed_processing_latency_us = 0.0;
+
+    /** @brief Whether the processing latency estimator has been primed. */
+    bool processing_latency_initialized = false;
+
     /** @brief Whether this sink is currently active and participating in synchronization. */
     bool is_active = true;
-    
+
     /** @brief Count of buffer underruns reported by this sink. */
     uint64_t underrun_count = 0;
 };
@@ -68,19 +80,28 @@ struct SinkTimingInfo {
  */
 struct SinkTimingReport {
     /** @brief Number of samples output in this dispatch. */
-    uint64_t samples_output;
-    
+    uint64_t samples_output = 0;
+
+    /** @brief RTP timestamp corresponding to the first sample in this dispatch. */
+    uint64_t rtp_timestamp_start = 0;
+
     /** @brief RTP timestamp of the audio that was output. */
-    uint64_t rtp_timestamp_output;
-    
-    /** @brief Wall clock time when the dispatch occurred. */
+    uint64_t rtp_timestamp_output = 0;
+
+    /** @brief Wall clock time when the mixer began processing this dispatch. */
+    std::chrono::steady_clock::time_point dispatch_start_time;
+
+    /** @brief Wall clock time when the dispatch completed (payload emitted). */
     std::chrono::steady_clock::time_point dispatch_time;
-    
+
+    /** @brief Measured duration of local processing between start and completion. */
+    std::chrono::steady_clock::duration processing_duration{};
+
     /** @brief True if this dispatch experienced a buffer underrun. */
-    bool had_underrun;
-    
+    bool had_underrun = false;
+
     /** @brief Current buffer fill level as a percentage (0.0 to 1.0). */
-    double buffer_fill_percentage;
+    double buffer_fill_percentage = 0.0;
 };
 
 /**
@@ -359,8 +380,8 @@ private:
     /** @brief Proportional gain for drift compensation (default: 0.01). */
     double sync_proportional_gain_ = 0.01;
     
-    /** @brief Maximum allowed rate adjustment (default: ±2% = 0.02). */
-    double max_rate_adjustment_ = 0.02;
+    /** @brief Maximum allowed rate adjustment (default: ±5% = 0.05). */
+    double max_rate_adjustment_ = 0.5;
     
     /** @brief Smoothing factor for error accumulation (default: 0.9 for EMA). */
     double sync_smoothing_factor_ = 0.9;

@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <cstdint>
+#include <chrono>
 
 namespace screamrouter {
 namespace audio {
@@ -62,8 +64,8 @@ private:
     void stop_stream();
     void capture_loop();
     bool resolve_endpoint_id(std::wstring& endpoint_id_w);
-    void process_packet(BYTE* data, UINT32 frames, DWORD flags);
-    void dispatch_chunk(std::vector<uint8_t>&& chunk_data);
+    void process_packet(BYTE* data, UINT32 frames, DWORD flags, UINT64 device_position, UINT64 qpc_position);
+    void dispatch_chunk(std::vector<uint8_t>&& chunk_data, uint64_t frame_position);
     void reset_chunk_state();
 
     std::string device_tag_;
@@ -95,6 +97,12 @@ private:
     std::vector<uint8_t> conversion_buffer_;
 
     uint32_t running_timestamp_ = 0;
+    bool accumulator_position_initialized_ = false;
+    uint64_t accumulator_frame_position_ = 0;
+    bool stream_time_initialized_ = false;
+    std::chrono::steady_clock::time_point stream_start_time_{};
+    uint64_t stream_start_frame_position_ = 0;
+    double seconds_per_frame_ = 0.0;
 
     std::mutex device_mutex_;
 };

@@ -17,6 +17,7 @@ import { MenuLevel, DesktopMenuActions } from './types';
 import { Heading } from '@chakra-ui/react'; // Removed Text
 import { createDesktopMenuActions } from './utils';
 import AddMenuDropdown from './controls/AddMenuDropdown';
+import InstanceSwitcher from '../common/InstanceSwitcher';
 
 /**
  * The main DesktopMenu component optimized for the slide-out panel interface.
@@ -661,6 +662,24 @@ const DesktopMenu: React.FC = () => {
               />
             </ButtonGroup>
           </HStack>
+          <Box width="100%" mt={2} textAlign="center">
+            <InstanceSwitcher
+              size="xs"
+              buttonProps={{
+                width: '100%',
+                variant: 'solid',
+                bg: buttonBgInactive,
+                color: buttonTextInactive,
+                _hover: { bg: buttonBgActive },
+                borderRadius: 'md',
+              }}
+              menuListProps={{ minW: '260px' }}
+              resolveHref={(instance) => {
+                const base = instance.url.replace(/\/$/, '');
+                return `${base}/desktopMenu`;
+              }}
+            />
+          </Box>
         </Flex>
       </Box>
     </Flex>

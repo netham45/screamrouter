@@ -44,8 +44,14 @@ struct ProcessorTargetInfo {
     float current_timeshift_backshift_sec;
     /** @brief The index into the global buffer where this processor should read its next packet. */
     size_t next_packet_read_index;
-    /** @brief The source tag this processor is interested in. */
+    /** @brief The configured source tag filter (may include wildcard suffix). */
     std::string source_tag_filter;
+    /** @brief Indicates this filter uses a trailing '*' wildcard. */
+    bool is_wildcard = false;
+    /** @brief Prefix to match when wildcarding. */
+    std::string wildcard_prefix;
+    /** @brief Bound concrete tag once a wildcard matches a stream. */
+    std::string bound_source_tag;
 };
 
 /**
@@ -60,6 +66,8 @@ struct StreamTimingState {
 
     // Jitter estimation (RFC 3550)
     double jitter_estimate = 1.0; // Start with 1ms default jitter
+    double system_jitter_estimate_ms = 1.0;
+    double last_system_delay_ms = 0.0;
 
     // Playout buffer state
     double current_buffer_level_ms = 0.0;
@@ -68,6 +76,7 @@ struct StreamTimingState {
     double last_arrival_time_error_ms = 0.0; // For stats
     double target_buffer_level_ms = 0.0;
     double buffer_target_fill_percentage = 0.0;
+    std::chrono::steady_clock::time_point last_target_update_time{};
 
     // Stats
     std::atomic<uint64_t> total_packets{0};
@@ -137,6 +146,7 @@ struct TimeshiftManagerStats {
     std::map<std::string, double> stream_clock_drift_ppm;
     std::map<std::string, double> stream_clock_last_innovation_ms;
     std::map<std::string, double> stream_clock_avg_abs_innovation_ms;
+    std::map<std::string, double> stream_system_jitter_ms;
     std::map<std::string, double> stream_clock_last_measured_offset_ms;
 };
 
@@ -198,12 +208,12 @@ public:
      * @param timeshift_sec The new timeshift in seconds.
      */
     void update_processor_timeshift(const std::string& instance_id, float timeshift_sec);
-
     /**
      * @brief Retrieves the current statistics from the manager.
      * @return A struct containing the current stats.
      */
     TimeshiftManagerStats get_stats();
+
 
     /**
      * @brief Resets timing state and pending buffer indices for a specific source tag.
@@ -250,6 +260,11 @@ private:
     uint64_t profiling_packets_dropped_{0};
     uint64_t profiling_packets_late_count_{0};
     double profiling_total_lateness_ms_{0.0};
+
+    // --- Scheduling Budget Estimation ---
+    double smoothed_processing_per_packet_us_{0.0};
+    bool processing_budget_initialized_{false};
+    std::chrono::steady_clock::time_point last_iteration_finish_time_{};
 };
 
 } // namespace audio

@@ -19,6 +19,7 @@
 
 namespace screamrouter {
 namespace audio {
+class TimeshiftManager;
 using ChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using Mp3Queue = utils::ThreadSafeQueue<EncodedMP3Data>;
 
@@ -35,7 +36,9 @@ public:
      * @brief Constructs a SinkManager.
      * @param manager_mutex A reference to the main AudioManager mutex for thread safety.
      */
-    SinkManager(std::recursive_mutex& manager_mutex, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
+    SinkManager(std::recursive_mutex& manager_mutex,
+                std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings,
+                TimeshiftManager* timeshift_manager);
     /**
      * @brief Destructor.
      */
@@ -112,6 +115,7 @@ public:
 private:
     std::recursive_mutex& m_manager_mutex;
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
+    TimeshiftManager* m_timeshift_manager;
 
     std::map<std::string, std::unique_ptr<SinkAudioMixer>> m_sinks;
     std::map<std::string, SinkConfig> m_sink_configs;

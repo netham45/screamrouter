@@ -21,10 +21,12 @@
 #include "stats_manager.h"
 #include "../configuration/audio_engine_settings.h"
 #include "../system_audio/system_device_enumerator.h"
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <optional>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
@@ -220,6 +222,9 @@ public:
         uint8_t chlayout2
     );
 
+    std::optional<std::string> resolve_stream_tag(const std::string& tag);
+    std::vector<std::string> list_stream_tags_for_wildcard(const std::string& wildcard_tag);
+
     /**
      * @brief Injects a plugin-generated audio packet into the global timeshift buffer.
      * @param source_tag The source tag to associate with the packet.
@@ -316,6 +321,14 @@ public:
      */
     std::vector<DeviceDiscoveryNotification> drain_device_notifications();
 
+    void handle_stream_tag_resolved(const std::string& wildcard_tag,
+                                    const std::string& concrete_tag);
+    void handle_stream_tag_removed(const std::string& wildcard_tag);
+
+    void set_stream_tag_listener(std::function<void(const std::string&, const std::string&)> on_resolved,
+                                 std::function<void(const std::string&)> on_removed);
+    void clear_stream_tag_listener();
+
 private:
     std::atomic<bool> m_running{false};
     std::recursive_mutex m_manager_mutex;
@@ -340,6 +353,11 @@ private:
     SystemDeviceRegistry system_device_registry_;
     std::mutex pending_device_events_mutex_;
     std::vector<DeviceDiscoveryNotification> pending_device_events_;
+
+    std::mutex stream_tag_listener_mutex_;
+    std::function<void(const std::string&, const std::string&)> stream_tag_listener_on_resolved_;
+    std::function<void(const std::string&)> stream_tag_listener_on_removed_;
+
 
     // --- Multi-Rate Synchronization ---
     std::map<int, std::unique_ptr<GlobalSynchronizationClock>> sync_clocks_;
@@ -376,6 +394,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("jitter_safety_margin_multiplier", &TimeshiftTuning::jitter_safety_margin_multiplier)
         .def_readwrite("late_packet_threshold_ms", &TimeshiftTuning::late_packet_threshold_ms)
         .def_readwrite("target_buffer_level_ms", &TimeshiftTuning::target_buffer_level_ms)
+        .def_readwrite("target_recovery_rate_ms_per_sec", &TimeshiftTuning::target_recovery_rate_ms_per_sec)
         .def_readwrite("proportional_gain_kp", &TimeshiftTuning::proportional_gain_kp)
         .def_readwrite("min_playback_rate", &TimeshiftTuning::min_playback_rate)
         .def_readwrite("max_playback_rate", &TimeshiftTuning::max_playback_rate)

@@ -70,6 +70,7 @@ from screamrouter.utils.mdns_pinger import MDNSPinger
 from screamrouter.utils.mdns_responder import MDNSResponder
 from screamrouter.utils.mdns_settings_pinger import MDNSSettingsPinger
 from screamrouter.utils.mdns_scream_advertiser import ScreamAdvertiser
+from screamrouter.utils.mdns_router_service_advertiser import RouterServiceAdvertiser
 
 # Import and initialize logger *before* the try block that might use it
 _logger = screamrouter_logger.get_logger(__name__)
@@ -103,6 +104,17 @@ class ConfigurationManager(threading.Thread):
             return ""
         return value.replace("\x00", "")
 
+    @staticmethod
+    def _canonical_process_tag(tag: Any) -> str:
+        """Normalize process tags and ensure they carry a trailing wildcard."""
+        normalized = ConfigurationManager._normalize_process_tag(tag)
+        if not normalized:
+            return ""
+        stripped = normalized.rstrip('*').strip()
+        if not stripped:
+            return ""
+        return f"{stripped}*"
+
     def __init__(self, websocket: APIWebStream,
                  plugin_manager: PluginManager,
                  websocket_config: APIWebsocketConfig,
@@ -128,6 +140,13 @@ class ConfigurationManager(threading.Thread):
         self.mdns_scream_advertiser: ScreamAdvertiser = ScreamAdvertiser(port=constants.RTP_RECEIVER_PORT)
         """MDNS Scream Advertiser, advertises the RTP listener as a _scream._udp service"""
         self.mdns_scream_advertiser.start()
+        self.mdns_router_service_advertiser: RouterServiceAdvertiser = RouterServiceAdvertiser(
+            port=constants.API_PORT,
+            site_path="/site",
+            api_prefix="/api",
+        )
+        """MDNS Router Advertiser, exposes the main FastAPI/React UI via _screamrouter._tcp"""
+        self.mdns_router_service_advertiser.start()
         self.sink_descriptions: List[SinkDescription] = []
         """List of Sinks the controller knows of"""
         self.source_descriptions:  List[SourceDescription] = []
@@ -965,6 +984,7 @@ class ConfigurationManager(threading.Thread):
         self.mdns_pinger.stop()
         self.mdns_settings_pinger.stop()
         self.mdns_scream_advertiser.stop()
+        self.mdns_router_service_advertiser.stop()
         _logger.debug("[Configuration Manager] mDNS stopped")
         
         # Clean up temporary entities
@@ -1798,6 +1818,7 @@ class ConfigurationManager(threading.Thread):
              return None
 
         _logger.info("[Config Translator] Starting translation to C++ DesiredEngineState...")
+
         cpp_desired_state = screamrouter_audio_engine.DesiredEngineState()
         processed_source_paths: dict[str, screamrouter_audio_engine.AppliedSourcePathParams] = {}
         processed_sinks_list: list[screamrouter_audio_engine.AppliedSinkParams] = [] # Temporary list for sinks
@@ -2032,8 +2053,12 @@ class ConfigurationManager(threading.Thread):
                     
                     # Prioritize IP for source_tag, fallback to tag, then empty string.
                     # This tag is crucial for RtpReceiver packet routing.
-                    source_tag_for_cpp = str(py_source_desc.ip) if py_source_desc.ip else \
-                                         (py_source_desc.tag if py_source_desc.tag is not None else "")
+                    if py_source_desc.is_process and py_source_desc.tag:
+                        source_tag_for_cpp = py_source_desc.tag
+                    elif py_source_desc.ip:
+                        source_tag_for_cpp = str(py_source_desc.ip)
+                    else:
+                        source_tag_for_cpp = py_source_desc.tag if py_source_desc.tag is not None else ""
                     cpp_source_path.source_tag = source_tag_for_cpp
                     
                     cpp_source_path.target_sink_id = cpp_applied_sink.sink_id # Link to the sink
@@ -2692,14 +2717,19 @@ class ConfigurationManager(threading.Thread):
             return
 
         raw_tag = self._normalize_process_tag(tag)
-        normalized_tag = raw_tag.strip()
-        if not normalized_tag:
+        canonical_tag = self._canonical_process_tag(raw_tag)
+        if not canonical_tag:
             _logger.debug("[Configuration Manager] Skipping auto add for whitespace-only process tag")
             return
+
+        normalized_tag = canonical_tag[:-1] if canonical_tag.endswith('*') else canonical_tag
+        normalized_tag = normalized_tag.strip()
 
         device_lookup_keys = [f"per_process:{raw_tag}"]
         if raw_tag != normalized_tag:
             device_lookup_keys.append(f"per_process:{normalized_tag}")
+        if canonical_tag not in (raw_tag, normalized_tag):
+            device_lookup_keys.append(f"per_process:{canonical_tag}")
 
         discovered_device = None
         for key in device_lookup_keys:
@@ -2735,7 +2765,7 @@ class ConfigurationManager(threading.Thread):
                 return "", parts[0].strip()
             return "", ""
 
-        ip_candidate: Optional[str] = _valid_ip(raw_tag[:15].strip())
+        ip_candidate: Optional[str] = _valid_ip(normalized_tag[:15].strip())
         if not ip_candidate and discovered_device and discovered_device.ip:
             ip_candidate = _valid_ip(discovered_device.ip)
         if not ip_candidate:
@@ -2792,7 +2822,7 @@ class ConfigurationManager(threading.Thread):
 
         source = SourceDescription(
             name=sourcename,
-            tag=raw_tag,
+            tag=canonical_tag,
             is_process=True,
         )
 
@@ -2987,10 +3017,24 @@ class ConfigurationManager(threading.Thread):
         #self.scream_per_process_recevier.check_known_sources()
         #self.multicast_scream_recevier.check_known_ips()
         #self.rtp_receiver.check_known_ips()
-        known_source_tags: List[str] = [str(desc.tag) for desc in self.source_descriptions if desc.tag is not None]
+        known_source_tags: List[str] = []
+        for desc in self.source_descriptions:
+            if desc.tag is None:
+                continue
+            if desc.is_process:
+                canonical = self._canonical_process_tag(desc.tag)
+                known_source_tags.append(canonical or str(desc.tag))
+            else:
+                known_source_tags.append(str(desc.tag))
         known_source_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions if desc.ip is not None]
         known_sink_ips: List[str] = [str(desc.ip) for desc in self.sink_descriptions if desc.ip is not None]
         known_sink_config_ids: List[str] = [str(desc.config_id) for desc in self.sink_descriptions if desc.config_id is not None]
+        known_process_tags: Set[str] = {
+            self._canonical_process_tag(desc.tag)
+            for desc in self.source_descriptions
+            if desc.is_process and desc.tag
+        }
+        known_process_tags.discard("")
         
         # --- C++ Engine Based Auto Source Detection ---
         if self.cpp_audio_manager and screamrouter_audio_engine:
@@ -3079,11 +3123,12 @@ class ConfigurationManager(threading.Thread):
             try:
                 per_process_seen_tags = self.cpp_audio_manager.get_per_process_scream_receiver_seen_tags(per_process_receiver_port)
                 for tag_str in per_process_seen_tags:
-                    identifier = self._normalize_process_tag(tag_str)
+                    identifier = self._canonical_process_tag(tag_str)
                     if not identifier:
                         continue
 
-                    ip_segment = identifier[:15].strip()
+                    tag_body = identifier[:-1] if identifier.endswith('*') else identifier
+                    ip_segment = tag_body[:15].strip()
                     try:
                         parsed_ip = str(IPAddressType(ip_segment))
                     except Exception:  # pylint: disable=broad-except
@@ -3103,13 +3148,14 @@ class ConfigurationManager(threading.Thread):
                     ):
                         continue
 
-                    is_new_source = identifier not in known_source_tags
+                    is_new_source = identifier not in known_process_tags
                     if is_new_source:
                         _logger.info(
                             "[Configuration Manager] Discovered new per-process source from C++ Receiver (port %d): %s",
                             per_process_receiver_port,
                             identifier,
                         )
+                        known_process_tags.add(identifier)
                         known_source_tags.append(identifier)
 
                         self._store_discovered_device(
@@ -3138,12 +3184,14 @@ class ConfigurationManager(threading.Thread):
                 try:
                     pulse_seen_tags = self.cpp_audio_manager.get_pulse_receiver_seen_tags()
                     for tag_str in pulse_seen_tags:
-                        identifier = self._normalize_process_tag(tag_str)
+                        identifier = self._canonical_process_tag(tag_str)
                         if not identifier:
                             continue
 
+                        tag_body = identifier[:-1] if identifier.endswith('*') else identifier
+
                         ip_candidate: Optional[str] = None
-                        ip_segment = identifier[:15].strip()
+                        ip_segment = tag_body[:15].strip()
                         try:
                             ip_candidate = str(IPAddressType(ip_segment))
                         except Exception:  # pylint: disable=broad-except
@@ -3152,11 +3200,11 @@ class ConfigurationManager(threading.Thread):
                         pulse_properties = {"source": "pulse"}
                         store_ip = ip_candidate
                         if not store_ip:
-                            parts = identifier.strip().split(None, 1)
+                            parts = tag_body.strip().split(None, 1)
                             if parts:
                                 store_ip = parts[0]
                         if not store_ip:
-                            store_ip = identifier
+                            store_ip = tag_body
 
                         if self._update_discovered_device_last_seen(
                             method="pulse",
@@ -3168,12 +3216,13 @@ class ConfigurationManager(threading.Thread):
                         ):
                             continue
 
-                        is_new_pulse_source = identifier not in known_source_tags
+                        is_new_pulse_source = identifier not in known_process_tags
                         if is_new_pulse_source:
                             _logger.info(
                                 "[Configuration Manager] Discovered new PulseAudio source: %s",
                                 identifier,
                             )
+                            known_process_tags.add(identifier)
                             known_source_tags.append(identifier)
 
                             self._store_discovered_device(
@@ -3344,9 +3393,11 @@ class ConfigurationManager(threading.Thread):
                            source.tag[:15].strip() == str(entry.ip)]:
                 if source.config_id == entry.source_id or not source.config_id:
                     source.config_id = entry.source_id
-                    if entry.tag and entry.tag != source.tag:
-                        source_changed = True
-                        source.tag = entry.tag
+                    if entry.tag:
+                        updated_tag = self._canonical_process_tag(entry.tag)
+                        if updated_tag and updated_tag != source.tag:
+                            source_changed = True
+                            source.tag = updated_tag
                     if entry.vnc_ip and entry.vnc_ip != source.vnc_ip:
                         source_changed = True
                         source.vnc_ip = entry.vnc_ip
@@ -3361,9 +3412,11 @@ class ConfigurationManager(threading.Thread):
                         if entry.ip and entry.ip != source.ip:
                             source_changed = True
                             source.ip = entry.ip
-                        if entry.tag and entry.tag != source.tag:
-                            source_changed = True
-                            source.tag = entry.tag
+                        if entry.tag:
+                            updated_tag = self._canonical_process_tag(entry.tag) if source.is_process else entry.tag
+                            if updated_tag and updated_tag != source.tag:
+                                source_changed = True
+                                source.tag = updated_tag
                         if entry.vnc_ip and entry.vnc_ip != source.vnc_ip:
                             source_changed = True
                             source.vnc_ip = entry.vnc_ip

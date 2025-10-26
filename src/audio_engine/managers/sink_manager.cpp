@@ -5,8 +5,12 @@
 namespace screamrouter {
 namespace audio {
 
-SinkManager::SinkManager(std::recursive_mutex& manager_mutex, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
-    : m_manager_mutex(manager_mutex), m_settings(settings) {
+SinkManager::SinkManager(std::recursive_mutex& manager_mutex,
+                         std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings,
+                         TimeshiftManager* timeshift_manager)
+    : m_manager_mutex(manager_mutex),
+      m_settings(std::move(settings)),
+      m_timeshift_manager(timeshift_manager) {
     LOG_CPP_INFO("SinkManager created.");
 }
 

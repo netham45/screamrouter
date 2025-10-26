@@ -121,6 +121,8 @@ struct ProcessedAudioChunk {
     std::vector<uint32_t> ssrcs;
     /** @brief Timestamp recorded when the chunk was produced by the source processor. */
     std::chrono::steady_clock::time_point produced_time{};
+    /** @brief Playback rate applied by the source processor for this chunk. */
+    double playback_rate = 1.0;
 };
 
 /**

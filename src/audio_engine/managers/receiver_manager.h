@@ -22,8 +22,10 @@
 #include "../utils/thread_safe_queue.h"
 #include "../input_processor/timeshift_manager.h"
 #include "../audio_types.h"
+#include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -98,6 +100,14 @@ public:
     std::vector<std::string> get_pulse_receiver_seen_tags();
 #endif
 
+    std::optional<std::string> resolve_stream_tag(const std::string& tag);
+
+    std::vector<std::string> list_stream_tags_for_wildcard(const std::string& wildcard_tag);
+
+    void set_stream_tag_callbacks(
+        std::function<void(const std::string&, const std::string&)> on_resolved,
+        std::function<void(const std::string&)> on_removed);
+
     /**
      * @brief Ensures an ALSA capture receiver is active for the requested device tag.
      * @param tag ALSA capture tag (ac:<card>.<device>).
@@ -131,6 +141,9 @@ private:
     std::unordered_map<std::string, std::unique_ptr<NetworkAudioReceiver>> capture_receivers_;
     std::unordered_map<std::string, size_t> capture_receiver_usage_;
     std::shared_ptr<NotificationQueue> m_notification_queue;
+
+    std::function<void(const std::string&, const std::string&)> stream_tag_resolved_cb_;
+    std::function<void(const std::string&)> stream_tag_removed_cb_;
 };
 
 } // namespace audio

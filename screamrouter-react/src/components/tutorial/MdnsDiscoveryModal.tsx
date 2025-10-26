@@ -23,6 +23,7 @@ import {
 } from '@chakra-ui/react';
 import ApiService from '../../api/api';
 import { DiscoveredDevice } from '../../types/preferences';
+import { formatProcessTag } from '../../utils/processTags';
 
 interface MdnsDiscoveryModalProps {
   isOpen: boolean;
@@ -322,7 +323,9 @@ const MdnsDiscoveryModal: React.FC<MdnsDiscoveryModalProps> = ({
                         {device.tag && (
                           <>
                             <Text aria-hidden="true">•</Text>
-                            <Text>Tag {device.tag}</Text>
+                            <Text>
+                              Tag {device.role === 'process' ? formatProcessTag(device.tag) : device.tag}
+                            </Text>
                           </>
                         )}
                       </Flex>

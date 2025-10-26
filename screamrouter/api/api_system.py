@@ -163,7 +163,7 @@ class APISystemInfo:
 
         return {
             "hostname": socket.gethostname(),
-            "fqdn": socket.getfqdn(),
+            "fqdn": "",
             "platform": {
                 "system": platform.system(),
                 "release": platform.release(),

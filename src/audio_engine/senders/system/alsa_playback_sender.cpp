@@ -195,9 +195,11 @@ bool AlsaPlaybackSender::configure_device() {
     snd_pcm_hw_params_set_rate_near(pcm_handle_, hw_params, &rate, nullptr);
     sample_rate_ = rate;
 
-    unsigned int period_time = 64000;
+    constexpr unsigned int kTargetLatencyUs = 20000;      // 20 ms overall buffer target
+    constexpr unsigned int kPeriodsPerBuffer = 4;          // keep a few smaller periods for smoothness
+    unsigned int buffer_time = kTargetLatencyUs;
+    unsigned int period_time = std::max(1000u, buffer_time / kPeriodsPerBuffer);
     snd_pcm_hw_params_set_period_time_near(pcm_handle_, hw_params, &period_time, nullptr);
-    unsigned int buffer_time = period_time * 4;
     snd_pcm_hw_params_set_buffer_time_near(pcm_handle_, hw_params, &buffer_time, nullptr);
 
     err = snd_pcm_hw_params(pcm_handle_, hw_params);

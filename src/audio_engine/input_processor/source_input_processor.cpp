@@ -321,6 +321,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          output_chunk.audio_data.assign(process_buffer_.begin(), process_buffer_.begin() + required_samples);
          output_chunk.ssrcs = current_packet_ssrcs_;
          output_chunk.produced_time = std::chrono::steady_clock::now();
+         output_chunk.playback_rate = m_current_playback_rate;
          size_t pushed_samples = output_chunk.audio_data.size();
 
          // Push to the output queue
@@ -432,12 +433,17 @@ void SourceInputProcessor::input_loop() {
         m_last_packet_time = now;
         m_is_first_packet_after_discontinuity = false;
 
+        LOG_CPP_DEBUG("[SourceProc:%s] Packet playback_rate=%.6f (current=%.6f)",
+                      config_.instance_id.c_str(), timed_packet.playback_rate, m_current_playback_rate);
+
         // Check if the playback rate has changed and command the AudioProcessor.
         if (audio_processor_ && std::abs(timed_packet.playback_rate - m_current_playback_rate) > 0.0001) {
             std::lock_guard<std::mutex> lock(processor_config_mutex_);
             if (audio_processor_) { // Double-check after lock
                 audio_processor_->set_playback_rate(timed_packet.playback_rate);
                 m_current_playback_rate = timed_packet.playback_rate;
+                LOG_CPP_DEBUG("[SourceProc:%s] Applied playback rate %.6f from timeshift packet.",
+                              config_.instance_id.c_str(), m_current_playback_rate);
             }
         }
 

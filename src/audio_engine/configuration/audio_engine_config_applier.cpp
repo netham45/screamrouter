@@ -17,10 +17,12 @@
 
 #include <map>
 #include <set>
+#include <unordered_map>
 #include <cmath> // For std::abs
 #include <limits> // For std::numeric_limits
 #include <pybind11/pybind11.h>
 #include <chrono>
+#include <functional>
 
 using namespace screamrouter::audio;
 
@@ -32,6 +34,19 @@ std::string sanitize_screamrouter_label(const std::string& label) {
     std::string out;
     out.reserve(label.size());
     for (char c : label) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') {
+            out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        } else {
+            out.push_back('_');
+        }
+    }
+    return out;
+}
+
+std::string sanitize_clone_suffix(const std::string& tag) {
+    std::string out;
+    out.reserve(tag.size());
+    for (char c : tag) {
         if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') {
             out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
         } else {
@@ -52,6 +67,13 @@ std::string sanitize_screamrouter_label(const std::string& label) {
 AudioEngineConfigApplier::AudioEngineConfigApplier(audio::AudioManager& audio_manager)
     : audio_manager_(audio_manager) {
     LOG_CPP_DEBUG("AudioEngineConfigApplier created.");
+    audio_manager_.set_stream_tag_listener(
+        [this](const std::string& wildcard, const std::string& concrete) {
+            this->handle_stream_tag_resolved(wildcard, concrete);
+        },
+        [this](const std::string& wildcard) {
+            this->handle_stream_tag_removed(wildcard);
+        });
     // The active_source_paths_ and active_sinks_ maps are default-initialized to be empty.
 }
 
@@ -59,6 +81,7 @@ AudioEngineConfigApplier::AudioEngineConfigApplier(audio::AudioManager& audio_ma
  * @brief Destroys the AudioEngineConfigApplier.
  */
 AudioEngineConfigApplier::~AudioEngineConfigApplier() {
+    audio_manager_.clear_stream_tag_listener();
     LOG_CPP_DEBUG("AudioEngineConfigApplier destroyed.");
     // This class does not own the audio_manager_, so no deletion is necessary.
 }
@@ -77,11 +100,15 @@ AudioEngineConfigApplier::~AudioEngineConfigApplier() {
  * @note Success/failure tracking is not yet fully implemented.
  */
 bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
+    std::lock_guard<std::recursive_mutex> lock(apply_mutex_);
+    cached_desired_state_ = desired_state;
+    DesiredEngineState effective_state = build_effective_state(desired_state);
+    cached_desired_state_valid_ = true;
     using clock = std::chrono::steady_clock;
     const auto t_start = clock::now();
 
-    LOG_CPP_INFO("[ConfigApplier] Applying desired state: sinks=%zu, paths=%zu",
-                 desired_state.sinks.size(), desired_state.source_paths.size());
+    LOG_CPP_INFO("[ConfigApplier] Applying desired state: sinks=%zu, paths=%zu (expanded paths=%zu)",
+                 desired_state.sinks.size(), desired_state.source_paths.size(), effective_state.source_paths.size());
 
     std::vector<std::string> sink_ids_to_remove;
     std::vector<AppliedSinkParams> sinks_to_add;
@@ -93,8 +120,8 @@ bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
 
     // 1) Reconcile current vs desired
     const auto t_rec_start = clock::now();
-    reconcile_sinks(desired_state.sinks, sink_ids_to_remove, sinks_to_add, sinks_to_update);
-    reconcile_source_paths(desired_state.source_paths, path_ids_to_remove, paths_to_add, paths_to_update);
+    reconcile_sinks(effective_state.sinks, sink_ids_to_remove, sinks_to_add, sinks_to_update);
+    reconcile_source_paths(effective_state.source_paths, path_ids_to_remove, paths_to_add, paths_to_update);
     const auto t_rec_end = clock::now();
     LOG_CPP_INFO("[ConfigApplier] Reconcile: %lld ms | sinks(-%zu +%zu ~%zu) paths(-%zu +%zu ~%zu)",
                  (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_rec_end - t_rec_start).count(),
@@ -116,12 +143,22 @@ bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
     std::map<std::string, std::string> added_path_id_to_instance_id;
     for (auto& path_param : paths_to_add) {
         const auto t_one_start = clock::now();
-        if (process_source_path_addition(path_param)) {
-            active_source_paths_[path_param.path_id] = {path_param};
+        const std::string filter_tag = get_filter_for_path_id(path_param.path_id, path_param.source_tag);
+        const auto add_result = process_source_path_addition(path_param, filter_tag);
+        if (add_result == SourcePathAddResult::Added) {
+            InternalSourcePathState state;
+            state.params = path_param;
+            state.filter_tag = filter_tag;
+            active_source_paths_[path_param.path_id] = std::move(state);
             added_path_id_to_instance_id[path_param.path_id] = path_param.generated_instance_id;
             const auto t_one_end = clock::now();
             LOG_CPP_INFO("[ConfigApplier] +Path id='%s' -> instance='%s' in %lld ms",
                          path_param.path_id.c_str(), path_param.generated_instance_id.c_str(),
+                         (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_one_end - t_one_start).count());
+        } else if (add_result == SourcePathAddResult::PendingStream) {
+            const auto t_one_end = clock::now();
+            LOG_CPP_INFO("[ConfigApplier] +Path id='%s' waiting for concrete stream '%s' (%lld ms)",
+                         path_param.path_id.c_str(), filter_tag.c_str(),
                          (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_one_end - t_one_start).count());
         } else {
             const auto t_one_end = clock::now();
@@ -417,8 +454,7 @@ bool compare_applied_source_path_params(const AppliedSourcePathParams& a, const 
         }
     }
 
-    return a.source_tag == b.source_tag &&
-           a.target_sink_id == b.target_sink_id &&
+    return a.target_sink_id == b.target_sink_id &&
            volume_equal &&
            a.eq_values == b.eq_values &&
            a.delay_ms == b.delay_ms &&
@@ -477,7 +513,17 @@ void AudioEngineConfigApplier::reconcile_source_paths(
         } else {
             // Path exists, check if its parameters have changed.
             const InternalSourcePathState& current_state = active_it->second;
-            if (!compare_applied_source_path_params(current_state.params, desired_path)) {
+            const std::string desired_filter = get_filter_for_path_id(desired_path.path_id, desired_path.source_tag);
+            const bool filter_changed = current_state.filter_tag != desired_filter;
+            AppliedSourcePathParams effective_desired = desired_path;
+            const bool desired_is_wildcard = !effective_desired.source_tag.empty() && effective_desired.source_tag.back() == '*';
+            if (desired_is_wildcard) {
+                if (auto resolved = resolve_source_tag(desired_filter)) {
+                    effective_desired.source_tag = *resolved;
+                }
+            }
+            const bool params_changed = !compare_applied_source_path_params(current_state.params, effective_desired);
+            if (filter_changed || params_changed) {
                 // Parameters differ, so mark for update.
                 paths_to_update.push_back(desired_path);
             }
@@ -531,11 +577,33 @@ void AudioEngineConfigApplier::process_source_path_removals(const std::vector<st
  *                                  field will be populated on success.
  * @return True if the source was added successfully, false otherwise.
  */
-bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathParams& path_param_to_add) {
+AudioEngineConfigApplier::SourcePathAddResult AudioEngineConfigApplier::process_source_path_addition(
+    AppliedSourcePathParams& path_param_to_add,
+    const std::string& filter_tag) {
     using clock = std::chrono::steady_clock;
     const auto t0 = clock::now();
-    LOG_CPP_INFO("[ConfigApplier] +Path begin id='%s' src='%s' -> sink='%s' out=%dch@%dHz in=%dch@%dHz/%dbit",
+    LOG_CPP_INFO("[ConfigApplier] +Path resolving filter='%s' path_id='%s'",
+                 filter_tag.c_str(), path_param_to_add.path_id.c_str());
+    bool has_concrete_tag = !path_param_to_add.source_tag.empty() && path_param_to_add.source_tag.back() != '*';
+    if (!has_concrete_tag) {
+        auto resolved_tag = resolve_source_tag(filter_tag);
+        if (!resolved_tag) {
+            LOG_CPP_INFO("[ConfigApplier] +Path id='%s': no concrete stream for filter '%s'; deferring",
+                         path_param_to_add.path_id.c_str(), filter_tag.c_str());
+            return SourcePathAddResult::PendingStream;
+        }
+
+        LOG_CPP_INFO("[ConfigApplier] +Path id='%s': filter '%s' resolved to '%s'",
+                     path_param_to_add.path_id.c_str(), filter_tag.c_str(), resolved_tag->c_str());
+        path_param_to_add.source_tag = *resolved_tag;
+    } else {
+        LOG_CPP_INFO("[ConfigApplier] +Path id='%s': using concrete stream '%s' from filter '%s'",
+                     path_param_to_add.path_id.c_str(), path_param_to_add.source_tag.c_str(), filter_tag.c_str());
+    }
+
+    LOG_CPP_INFO("[ConfigApplier] +Path begin id='%s' filter='%s' resolved='%s' -> sink='%s' out=%dch@%dHz in=%dch@%dHz/%dbit",
                  path_param_to_add.path_id.c_str(),
+                 filter_tag.c_str(),
                  path_param_to_add.source_tag.c_str(),
                  path_param_to_add.target_sink_id.c_str(),
                  path_param_to_add.target_output_channels,
@@ -646,7 +714,7 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
         if (added_capture_reference) {
             audio_manager_.remove_system_capture_reference(path_param_to_add.source_tag);
         }
-        return false;
+        return SourcePathAddResult::Failed;
     } else {
         LOG_CPP_INFO("[ConfigApplier]     Configured source for path_id: %s, instance_id: %s (in %lld ms)",
                      path_param_to_add.path_id.c_str(), instance_id.c_str(),
@@ -671,7 +739,7 @@ bool AudioEngineConfigApplier::process_source_path_addition(AppliedSourcePathPar
                      (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count());
 
         // The caller (apply_state) is responsible for adding this to the active_source_paths_ map.
-        return true;
+        return SourcePathAddResult::Added;
     }
 }
 
@@ -702,14 +770,33 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
             continue;
         }
 
+        const std::string filter_tag = get_filter_for_path_id(path_id, desired_path_param.source_tag);
+        LOG_CPP_INFO("[ConfigApplier]   -> Updating path %s using filter '%s'",
+                     path_id.c_str(), filter_tag.c_str());
+
+        AppliedSourcePathParams desired_params = desired_path_param;
+        const bool desired_is_wildcard = !desired_params.source_tag.empty() && desired_params.source_tag.back() == '*';
+        if (desired_is_wildcard) {
+            auto resolved_tag = resolve_source_tag(filter_tag);
+            if (!resolved_tag) {
+                LOG_CPP_WARNING("    Path %s: filter '%s' unresolved; remaining wildcard-bound.",
+                                path_id.c_str(), filter_tag.c_str());
+                desired_params.source_tag = filter_tag;
+            } else {
+                LOG_CPP_INFO("    Path %s: filter '%s' resolved to '%s'",
+                             path_id.c_str(), filter_tag.c_str(), resolved_tag->c_str());
+                desired_params.source_tag = *resolved_tag;
+            }
+        }
+
         // Check for fundamental changes requiring re-creation of the source processor.
         bool fundamental_change =
-            current_path_state.params.source_tag != desired_path_param.source_tag ||
-            current_path_state.params.target_output_channels != desired_path_param.target_output_channels ||
-            current_path_state.params.target_output_samplerate != desired_path_param.target_output_samplerate ||
-            current_path_state.params.source_input_channels != desired_path_param.source_input_channels ||
-            current_path_state.params.source_input_samplerate != desired_path_param.source_input_samplerate ||
-            current_path_state.params.source_input_bitdepth != desired_path_param.source_input_bitdepth;
+            current_path_state.params.source_tag != desired_params.source_tag ||
+            current_path_state.params.target_output_channels != desired_params.target_output_channels ||
+            current_path_state.params.target_output_samplerate != desired_params.target_output_samplerate ||
+            current_path_state.params.source_input_channels != desired_params.source_input_channels ||
+            current_path_state.params.source_input_samplerate != desired_params.source_input_samplerate ||
+            current_path_state.params.source_input_bitdepth != desired_params.source_input_bitdepth;
 
         if (fundamental_change) {
             const auto t_recreate0 = std::chrono::steady_clock::now();
@@ -724,12 +811,19 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
 
             // Add a new instance.
             AppliedSourcePathParams temp_param_for_add = desired_path_param;
-            if (process_source_path_addition(temp_param_for_add)) {
+            auto recreate_result = process_source_path_addition(temp_param_for_add, filter_tag);
+            if (recreate_result == SourcePathAddResult::Added) {
                 // Add the new state back to the internal map.
-                active_source_paths_[temp_param_for_add.path_id] = {temp_param_for_add};
+                InternalSourcePathState state;
+                state.params = temp_param_for_add;
+                state.filter_tag = filter_tag;
+                active_source_paths_[temp_param_for_add.path_id] = std::move(state);
                 LOG_CPP_DEBUG("[ConfigApplier]     Re-created %s with new instance_id: %s",
                              path_id.c_str(), temp_param_for_add.generated_instance_id.c_str());
                 // Connections for this new instance_id will be re-established by the sink update logic.
+            } else if (recreate_result == SourcePathAddResult::PendingStream) {
+                LOG_CPP_INFO("[ConfigApplier]     Re-create of %s pending stream match for filter '%s'",
+                             path_id.c_str(), filter_tag.c_str());
             } else {
                 LOG_CPP_ERROR("[ConfigApplier]     Failed to re-create %s after fundamental change. Path is removed.", path_id.c_str());
                 // Path remains removed from active_source_paths_.
@@ -747,18 +841,18 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
         LOG_CPP_DEBUG("[ConfigApplier]     Applying parameter updates for %s (Instance: %s)", path_id.c_str(), instance_id.c_str());
 
         audio::SourceParameterUpdates updates;
-        updates.volume = desired_path_param.volume;
-        if (desired_path_param.eq_values.size() == EQ_BANDS) {
-            updates.eq_values = desired_path_param.eq_values;
-            updates.eq_normalization = desired_path_param.eq_normalization;
+        updates.volume = desired_params.volume;
+        if (desired_params.eq_values.size() == EQ_BANDS) {
+            updates.eq_values = desired_params.eq_values;
+            updates.eq_normalization = desired_params.eq_normalization;
         } else {
             LOG_CPP_ERROR("    Invalid EQ size (%zu) for path update %s. Skipping EQ update.",
-                          desired_path_param.eq_values.size(), path_id.c_str());
+                          desired_params.eq_values.size(), path_id.c_str());
         }
-        updates.volume_normalization = desired_path_param.volume_normalization;
-        updates.delay_ms = desired_path_param.delay_ms;
-        updates.timeshift_sec = desired_path_param.timeshift_sec;
-        updates.speaker_layouts_map = desired_path_param.speaker_layouts_map;
+        updates.volume_normalization = desired_params.volume_normalization;
+        updates.delay_ms = desired_params.delay_ms;
+        updates.timeshift_sec = desired_params.timeshift_sec;
+        updates.speaker_layouts_map = desired_params.speaker_layouts_map;
 
         audio_manager_.update_source_parameters(instance_id, updates);
         const auto t_up1 = std::chrono::steady_clock::now();
@@ -769,8 +863,9 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
         // Update the internal state to reflect the desired parameters.
         // The generated instance ID must be preserved.
         std::string preserved_instance_id = current_path_state.params.generated_instance_id;
-        current_path_state.params = desired_path_param;
+        current_path_state.params = desired_params;
         current_path_state.params.generated_instance_id = preserved_instance_id;
+        current_path_state.filter_tag = filter_tag;
         LOG_CPP_DEBUG("[ConfigApplier]     Internal state updated for path %s", path_id.c_str());
     }
 }
@@ -907,6 +1002,135 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
 
     current_sink_state.params.connected_source_path_ids = std::move(resulting_connections);
     LOG_CPP_DEBUG("[ConfigApplier]     Internal connection state updated for sink %s", sink_id.c_str());
+}
+
+
+std::optional<std::string> AudioEngineConfigApplier::resolve_source_tag(const std::string& requested_tag) {
+    LOG_CPP_DEBUG("[ConfigApplier] resolve_source_tag('%s')", requested_tag.c_str());
+    if (requested_tag.empty()) {
+        LOG_CPP_DEBUG("[ConfigApplier] resolve_source_tag('%s') => <empty>", requested_tag.c_str());
+        return std::nullopt;
+    }
+    if (requested_tag.back() != '*') {
+        LOG_CPP_DEBUG("[ConfigApplier] resolve_source_tag('%s') -> concrete (no wildcard)", requested_tag.c_str());
+        return requested_tag;
+    }
+
+    const std::string prefix = requested_tag.substr(0, requested_tag.size() - 1);
+    auto resolved = audio_manager_.resolve_stream_tag(requested_tag);
+    if (resolved && resolved->rfind(prefix, 0) == 0) {
+        LOG_CPP_INFO("[ConfigApplier] resolve_source_tag('%s') => '%s'", requested_tag.c_str(), resolved->c_str());
+        return resolved;
+    }
+    LOG_CPP_DEBUG("[ConfigApplier] resolve_source_tag('%s') => <none>", requested_tag.c_str());
+    return std::nullopt;
+}
+
+DesiredEngineState AudioEngineConfigApplier::build_effective_state(const DesiredEngineState& base_state) {
+    DesiredEngineState effective_state;
+    effective_state.sinks = base_state.sinks;
+    effective_state.source_paths.reserve(base_state.source_paths.size());
+
+    std::unordered_map<std::string, std::vector<std::string>> clone_ids_by_template;
+    clone_filter_lookup_.clear();
+
+    for (const auto& path : base_state.source_paths) {
+        effective_state.source_paths.push_back(path);
+        clone_filter_lookup_[path.path_id] = path.source_tag;
+        if (path.source_tag.empty() || path.source_tag.back() != '*') {
+            continue;
+        }
+
+        auto active_streams = audio_manager_.list_stream_tags_for_wildcard(path.source_tag);
+        if (active_streams.empty()) {
+            continue;
+        }
+        auto& clone_ids = clone_ids_by_template[path.path_id];
+        clone_ids.reserve(active_streams.size());
+        for (const auto& concrete_tag : active_streams) {
+            AppliedSourcePathParams clone = path;
+            clone.path_id = path.path_id + "::" + sanitize_clone_suffix(concrete_tag);
+            clone.source_tag = concrete_tag;
+            effective_state.source_paths.push_back(clone);
+            clone_ids.push_back(clone.path_id);
+            clone_filter_lookup_[clone.path_id] = path.source_tag;
+        }
+    }
+
+    if (!clone_ids_by_template.empty()) {
+        for (auto& sink : effective_state.sinks) {
+            std::vector<std::string> updated_connections;
+            for (const auto& connection_id : sink.connected_source_path_ids) {
+                auto clone_it = clone_ids_by_template.find(connection_id);
+                if (clone_it != clone_ids_by_template.end() && !clone_it->second.empty()) {
+                    updated_connections.insert(updated_connections.end(),
+                                               clone_it->second.begin(),
+                                               clone_it->second.end());
+                } else {
+                    updated_connections.push_back(connection_id);
+                }
+            }
+            sink.connected_source_path_ids = std::move(updated_connections);
+        }
+    }
+
+    return effective_state;
+}
+
+std::string AudioEngineConfigApplier::get_filter_for_path_id(const std::string& path_id, const std::string& fallback) const {
+    auto it = clone_filter_lookup_.find(path_id);
+    if (it != clone_filter_lookup_.end()) {
+        return it->second;
+    }
+    return fallback;
+}
+
+void AudioEngineConfigApplier::handle_stream_tag_resolved(const std::string& wildcard_tag,
+                                                          const std::string& concrete_tag) {
+    {
+        std::lock_guard<std::recursive_mutex> lock(apply_mutex_);
+        if (!cached_desired_state_valid_) {
+            LOG_CPP_DEBUG("[ConfigApplier] Ignoring stream resolution '%s' -> '%s' (no cached state)",
+                          wildcard_tag.c_str(), concrete_tag.c_str());
+            return;
+        }
+    }
+
+    LOG_CPP_INFO("[ConfigApplier] Pulse wildcard '%s' resolved to '%s'; reapplying desired state",
+                 wildcard_tag.c_str(), concrete_tag.c_str());
+    reapply_cached_state("pulse_stream_resolved");
+}
+
+void AudioEngineConfigApplier::handle_stream_tag_removed(const std::string& wildcard_tag) {
+    {
+        std::lock_guard<std::recursive_mutex> lock(apply_mutex_);
+        if (!cached_desired_state_valid_) {
+            LOG_CPP_DEBUG("[ConfigApplier] Ignoring stream removal '%s' (no cached state)",
+                          wildcard_tag.c_str());
+            return;
+        }
+    }
+
+    LOG_CPP_INFO("[ConfigApplier] Pulse wildcard '%s' removed; reapplying desired state",
+                 wildcard_tag.c_str());
+    reapply_cached_state("pulse_stream_removed");
+}
+
+void AudioEngineConfigApplier::reapply_cached_state(const char* reason) {
+    DesiredEngineState snapshot;
+    {
+        std::lock_guard<std::recursive_mutex> lock(apply_mutex_);
+        if (!cached_desired_state_valid_) {
+            LOG_CPP_WARNING("[ConfigApplier] Cannot reapply (%s): no cached desired state",
+                            reason ? reason : "unspecified");
+            return;
+        }
+        snapshot = cached_desired_state_;
+    }
+
+    LOG_CPP_INFO("[ConfigApplier] Reapplying cached desired state (reason=%s)",
+                 reason ? reason : "unspecified");
+    apply_state(std::move(snapshot));
 }
 
 
