@@ -3,8 +3,6 @@
 #include "../../utils/cpp_logger.h"
 
 #include <algorithm>
-#include <chrono>
-#include <cmath>
 #include <cstring>
 #include <sstream>
 
@@ -23,7 +21,6 @@ AlsaPlaybackSender::AlsaPlaybackSender(const SinkMixerConfig& config)
     sample_rate_ = static_cast<unsigned int>(config.output_samplerate);
     channels_ = static_cast<unsigned int>(config.output_channels);
     bit_depth_ = config.output_bitdepth;
-    adaptive_settings_ = config.adaptive_playback;
 #endif
 }
 
@@ -90,30 +87,8 @@ void AlsaPlaybackSender::send_payload(const uint8_t* payload_data, size_t payloa
         return;
     }
 
-    const uint8_t* write_ptr = payload_data;
-    size_t frames_to_write = frames_in_payload;
-    size_t pad_frames = 0;
-
-    if (adaptive_control_enabled()) {
-        AdaptiveFrameAction action = evaluate_adaptive_action_locked(frames_to_write);
-        if (action.type == AdaptiveActionType::Drop && action.frames > 0) {
-            const size_t frames_to_drop = std::min(frames_to_write, action.frames);
-            write_ptr += frames_to_drop * source_frame_bytes;
-            frames_to_write -= frames_to_drop;
-        } else if (action.type == AdaptiveActionType::Pad && action.frames > 0) {
-            pad_frames = action.frames;
-        }
-    }
-
-    bool write_result = true;
-    if (frames_to_write > 0) {
-        write_result = write_frames(write_ptr, frames_to_write, source_frame_bytes);
-    }
-
-    if (write_result && pad_frames > 0) {
-        ensure_padding_capacity(pad_frames * source_frame_bytes);
-        write_result = write_frames(padding_buffer_.data(), pad_frames, source_frame_bytes);
-    }
+    // Write directly to ALSA - no conversion needed
+    bool write_result = write_frames(payload_data, frames_in_payload, source_frame_bytes);
 
     if (!write_result) {
         LOG_CPP_WARNING("[AlsaPlayback:%s] Dropped audio chunk due to write failure.", device_tag_.c_str());
@@ -303,132 +278,6 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
     }
 
     return true;
-}
-
-double AlsaPlaybackSender::query_playback_delay_locked() {
-    if (!pcm_handle_) {
-        return -1.0;
-    }
-
-    snd_pcm_status_t* status = nullptr;
-    if (snd_pcm_status_malloc(&status) < 0 || !status) {
-        return -1.0;
-    }
-
-    double delay_ms = -1.0;
-    if (snd_pcm_status(pcm_handle_, status) == 0) {
-        const snd_pcm_sframes_t delay_frames = snd_pcm_status_get_delay(status);
-        if (delay_frames >= 0 && sample_rate_ > 0) {
-            delay_ms = (static_cast<double>(delay_frames) / static_cast<double>(sample_rate_)) * 1000.0;
-        }
-    }
-
-    snd_pcm_status_free(status);
-    return delay_ms;
-}
-
-bool AlsaPlaybackSender::adaptive_control_enabled() const {
-    return pcm_handle_ && bytes_per_frame_ > 0 && sample_rate_ > 0;
-}
-
-void AlsaPlaybackSender::ensure_padding_capacity(size_t bytes_needed) {
-    if (bytes_needed == 0) {
-        return;
-    }
-
-    if (padding_buffer_.size() < bytes_needed) {
-        padding_buffer_.assign(bytes_needed, 0);
-    } else {
-        std::fill_n(padding_buffer_.begin(), bytes_needed, 0);
-    }
-}
-
-size_t AlsaPlaybackSender::delay_ms_to_frames(double delay_ms) const {
-    if (delay_ms <= 0.0 || sample_rate_ == 0) {
-        return 0;
-    }
-
-    const double frames = (delay_ms * static_cast<double>(sample_rate_)) / 1000.0;
-    if (frames <= 0.0) {
-        return 0;
-    }
-
-    const auto rounded = static_cast<long long>(std::llround(frames));
-    return rounded > 0 ? static_cast<size_t>(rounded) : 0;
-}
-
-AlsaPlaybackSender::AdaptiveFrameAction AlsaPlaybackSender::evaluate_adaptive_action_locked(size_t frames_available) {
-    AdaptiveFrameAction action;
-    if (!adaptive_control_enabled()) {
-        return action;
-    }
-
-    const double measured_delay = query_playback_delay_locked();
-    if (measured_delay >= 0.0) {
-        const double alpha = std::clamp(adaptive_settings_.smoothing_alpha, 0.0, 1.0);
-        if (!adaptive_delay_initialized_) {
-            smoothed_delay_ms_ = measured_delay;
-            adaptive_delay_initialized_ = true;
-        } else {
-            smoothed_delay_ms_ = (alpha * measured_delay) + ((1.0 - alpha) * smoothed_delay_ms_);
-        }
-        last_delay_ms_ = measured_delay;
-    } else if (!adaptive_delay_initialized_) {
-        return action;
-    }
-
-    action.measured_delay_ms = last_delay_ms_;
-    action.smoothed_delay_ms = smoothed_delay_ms_;
-
-    if (adaptive_settings_.max_compensation_frames == 0) {
-        return action;
-    }
-
-    const double target = std::max(0.0, adaptive_settings_.target_delay_ms);
-    const double tolerance = std::max(0.0, adaptive_settings_.tolerance_ms);
-
-    if (smoothed_delay_ms_ > target + tolerance && frames_available > 0) {
-        size_t frames_to_drop = delay_ms_to_frames(smoothed_delay_ms_ - target);
-        frames_to_drop = std::min(frames_to_drop, adaptive_settings_.max_compensation_frames);
-        frames_to_drop = std::min(frames_to_drop, frames_available);
-        if (frames_to_drop > 0) {
-            action.type = AdaptiveActionType::Drop;
-            action.frames = frames_to_drop;
-            maybe_log_adaptive_event(action);
-        }
-    } else if (smoothed_delay_ms_ + tolerance < target) {
-        size_t frames_to_add = delay_ms_to_frames(target - smoothed_delay_ms_);
-        frames_to_add = std::min(frames_to_add, adaptive_settings_.max_compensation_frames);
-        if (frames_to_add > 0) {
-            action.type = AdaptiveActionType::Pad;
-            action.frames = frames_to_add;
-            maybe_log_adaptive_event(action);
-        }
-    }
-
-    return action;
-}
-
-void AlsaPlaybackSender::maybe_log_adaptive_event(const AdaptiveFrameAction& action) {
-    if (action.type == AdaptiveActionType::None) {
-        return;
-    }
-
-    const int interval_ms = adaptive_settings_.log_interval_ms;
-    const auto now = std::chrono::steady_clock::now();
-    if (interval_ms > 0 && last_adaptive_log_ts_ != std::chrono::steady_clock::time_point{}) {
-        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_adaptive_log_ts_);
-        if (elapsed.count() < interval_ms) {
-            return;
-        }
-    }
-
-    last_adaptive_log_ts_ = now;
-    const char* label = action.type == AdaptiveActionType::Drop ? "drop" : "pad";
-
-    LOG_CPP_INFO("[AlsaPlayback:%s] Adaptive playback action=%s frames=%zu measured=%.2fms smoothed=%.2fms target=%.2f±%.2fms",
-                 device_tag_.c_str(), label, action.frames, action.measured_delay_ms,
-                 action.smoothed_delay_ms, adaptive_settings_.target_delay_ms, adaptive_settings_.tolerance_ms);
 }
 
 unsigned int AlsaPlaybackSender::get_effective_sample_rate() const {
