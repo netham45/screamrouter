@@ -43,6 +43,8 @@ bool match_and_bind_source(ProcessorTargetInfo& info, const std::string& actual_
     }
     if (has_prefix(actual_tag, info.wildcard_prefix)) {
         info.bound_source_tag = actual_tag;
+        LOG_CPP_INFO("[TimeshiftManager] Bound wildcard '%s*' -> '%s'",
+                     info.wildcard_prefix.c_str(), actual_tag.c_str());
         return true;
     }
     return false;
@@ -51,7 +53,6 @@ bool match_and_bind_source(ProcessorTargetInfo& info, const std::string& actual_
 const std::string& active_tag(const ProcessorTargetInfo& info) {
     return info.is_wildcard ? info.bound_source_tag : info.source_tag_filter;
 }
-
 } // namespace
 
 /**
@@ -342,6 +343,8 @@ void TimeshiftManager::register_processor(
     info.is_wildcard = !source_tag.empty() && source_tag.back() == '*';
     if (info.is_wildcard) {
         info.wildcard_prefix = source_tag.substr(0, source_tag.size() - 1);
+        LOG_CPP_INFO("[TimeshiftManager] Processor %s registered with wildcard prefix '%s'",
+                     instance_id.c_str(), info.wildcard_prefix.c_str());
     } else {
         info.bound_source_tag = source_tag;
     }
@@ -367,6 +370,8 @@ void TimeshiftManager::register_processor(
             LOG_CPP_INFO("[TimeshiftManager] Initial timeshift is 0 or buffer empty. Set next_packet_read_index to end of buffer: %zu", info.next_packet_read_index);
         }
         processor_targets_[source_tag][instance_id] = info;
+        LOG_CPP_DEBUG("[TimeshiftManager] Processor %s stored under filter '%s' (wildcard=%d)",
+                      instance_id.c_str(), source_tag.c_str(), info.is_wildcard ? 1 : 0);
     }
     LOG_CPP_INFO("[TimeshiftManager] Processor %s registered for source_tag %s with read_idx %zu",
                  instance_id.c_str(), source_tag.c_str(), info.next_packet_read_index);
@@ -471,9 +476,8 @@ void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
         for (auto& [filter_tag, source_map] : processor_targets_) {
             for (auto& [instance_id, info] : source_map) {
                 (void)instance_id;
-                const std::string& bound_tag = active_tag(info);
                 const bool direct_match = (!info.is_wildcard && filter_tag == source_tag);
-                const bool bound_match = info.is_wildcard && !bound_tag.empty() && bound_tag == source_tag;
+                const bool bound_match = info.is_wildcard && !info.bound_source_tag.empty() && info.bound_source_tag == source_tag;
                 if (!direct_match && !bound_match) {
                     continue;
                 }
@@ -556,6 +560,10 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 const auto& candidate_packet = global_timeshift_buffer_[target_info.next_packet_read_index];
 
                 if (!match_and_bind_source(target_info, candidate_packet.source_tag)) {
+                    if (target_info.is_wildcard && (target_info.next_packet_read_index % 256 == 0)) {
+                        LOG_CPP_DEBUG("[TimeshiftManager] Instance %s skipping packet tag '%s' (filter '%s')",
+                                      instance_id.c_str(), candidate_packet.source_tag.c_str(), target_info.source_tag_filter.c_str());
+                    }
                     target_info.next_packet_read_index++;
                     continue;
                 }
@@ -630,7 +638,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     if (max_catchup_lag_ms > 0.0 && lateness_ms > max_catchup_lag_ms) {
                         timing_state->tm_packets_discarded++;
                         profiling_packets_dropped_++;
-                        const std::string& log_tag = active_tag(target_info).empty() ? candidate_packet.source_tag : active_tag(target_info);
+                        const std::string& log_tag = target_info.source_tag_filter.empty() ? candidate_packet.source_tag : target_info.source_tag_filter;
                         LOG_CPP_DEBUG(
                             "[TimeshiftManager] Dropping late packet for source '%s'. Lateness=%.2f ms exceeds catchup limit=%.2f ms.",
                             log_tag.c_str(),

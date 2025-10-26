@@ -92,6 +92,13 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
         );
         m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex, m_settings, m_timeshift_manager.get());
         m_receiver_manager = std::make_unique<ReceiverManager>(m_manager_mutex, m_timeshift_manager.get());
+        m_receiver_manager->set_stream_tag_callbacks(
+            [this](const std::string& wildcard, const std::string& concrete) {
+                this->handle_stream_tag_resolved(wildcard, concrete);
+            },
+            [this](const std::string& wildcard) {
+                this->handle_stream_tag_removed(wildcard);
+            });
         m_webrtc_manager = std::make_unique<WebRtcManager>(m_manager_mutex, m_sink_manager.get(), m_sink_manager->get_sink_configs());
         m_connection_manager = std::make_unique<ConnectionManager>(m_manager_mutex, m_source_manager.get(), m_sink_manager.get(), m_source_manager->get_source_to_sink_queues(), m_source_manager->get_sources());
         m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_source_manager->get_command_queues(), m_timeshift_manager.get(), m_source_manager->get_sources());
@@ -509,6 +516,72 @@ std::vector<std::string> AudioManager::get_pulse_receiver_seen_tags() {
     return m_receiver_manager ? m_receiver_manager->get_pulse_receiver_seen_tags() : std::vector<std::string>();
 }
 #endif
+
+std::optional<std::string> AudioManager::resolve_stream_tag(const std::string& tag) {
+    LOG_CPP_DEBUG("[AudioManager] resolve_stream_tag('%s')", tag.c_str());
+    if (!m_receiver_manager) {
+        LOG_CPP_DEBUG("[AudioManager] resolve_stream_tag('%s') => <no receiver manager>", tag.c_str());
+        return std::nullopt;
+    }
+    auto resolved = m_receiver_manager->resolve_stream_tag(tag);
+    if (resolved) {
+        LOG_CPP_INFO("[AudioManager] resolve_stream_tag('%s') => '%s'", tag.c_str(), resolved->c_str());
+    } else {
+        LOG_CPP_DEBUG("[AudioManager] resolve_stream_tag('%s') => <none>", tag.c_str());
+    }
+    return resolved;
+}
+
+std::vector<std::string> AudioManager::list_stream_tags_for_wildcard(const std::string& wildcard_tag) {
+    if (!m_receiver_manager) {
+        return {};
+    }
+    return m_receiver_manager->list_stream_tags_for_wildcard(wildcard_tag);
+}
+
+void AudioManager::handle_stream_tag_resolved(const std::string& wildcard_tag,
+                                              const std::string& concrete_tag) {
+    LOG_CPP_INFO("[AudioManager] Stream tag resolved: '%s' -> '%s'",
+                 wildcard_tag.c_str(), concrete_tag.c_str());
+    std::function<void(const std::string&, const std::string&)> listener;
+    {
+        std::lock_guard<std::mutex> lock(stream_tag_listener_mutex_);
+        listener = stream_tag_listener_on_resolved_;
+    }
+    if (listener) {
+        listener(wildcard_tag, concrete_tag);
+    } else {
+        LOG_CPP_DEBUG("[AudioManager] No stream tag listener registered for resolution events.");
+    }
+}
+
+void AudioManager::handle_stream_tag_removed(const std::string& wildcard_tag) {
+    LOG_CPP_INFO("[AudioManager] Stream tag removed: '%s'", wildcard_tag.c_str());
+    std::function<void(const std::string&)> listener;
+    {
+        std::lock_guard<std::mutex> lock(stream_tag_listener_mutex_);
+        listener = stream_tag_listener_on_removed_;
+    }
+    if (listener) {
+        listener(wildcard_tag);
+    } else {
+        LOG_CPP_DEBUG("[AudioManager] No stream tag listener registered for removal events.");
+    }
+}
+
+void AudioManager::set_stream_tag_listener(
+    std::function<void(const std::string&, const std::string&)> on_resolved,
+    std::function<void(const std::string&)> on_removed) {
+    std::lock_guard<std::mutex> lock(stream_tag_listener_mutex_);
+    stream_tag_listener_on_resolved_ = std::move(on_resolved);
+    stream_tag_listener_on_removed_ = std::move(on_removed);
+}
+
+void AudioManager::clear_stream_tag_listener() {
+    std::lock_guard<std::mutex> lock(stream_tag_listener_mutex_);
+    stream_tag_listener_on_resolved_ = nullptr;
+    stream_tag_listener_on_removed_ = nullptr;
+}
 
 bool AudioManager::add_system_capture_reference(const std::string& device_tag, CaptureParams params) {
     const auto t0 = std::chrono::steady_clock::now();

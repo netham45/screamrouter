@@ -46,6 +46,9 @@ bool ReceiverManager::initialize_receivers(int rtp_listen_port, std::shared_ptr<
         pulse_config.unix_socket_path = std::string(getenv("XDG_RUNTIME_DIR")) + std::string("/pulse");
         pulse_config.require_auth_cookie = false;
         m_pulse_receiver = std::make_unique<pulse::PulseAudioReceiver>(pulse_config, notification_queue, m_timeshift_manager, m_clock_manager.get(), "PulseAudioReceiver");
+        if (stream_tag_resolved_cb_ || stream_tag_removed_cb_) {
+            m_pulse_receiver->set_stream_tag_callbacks(stream_tag_resolved_cb_, stream_tag_removed_cb_);
+        }
 #endif
 
     } catch (const std::exception& e) {
@@ -148,6 +151,48 @@ std::vector<std::string> ReceiverManager::get_pulse_receiver_seen_tags() {
     return {};
 }
 #endif
+
+std::optional<std::string> ReceiverManager::resolve_stream_tag(const std::string& tag) {
+#if !defined(_WIN32)
+    if (m_pulse_receiver) {
+        LOG_CPP_DEBUG("[ReceiverManager] resolve_stream_tag('%s') -> querying Pulse", tag.c_str());
+        auto resolved = m_pulse_receiver->resolve_stream_tag(tag);
+        if (resolved) {
+            LOG_CPP_INFO("[ReceiverManager] resolve_stream_tag('%s') => '%s'", tag.c_str(), resolved->c_str());
+            return resolved;
+        }
+    }
+#endif
+    LOG_CPP_DEBUG("[ReceiverManager] resolve_stream_tag('%s') => <none>", tag.c_str());
+    (void)tag;
+    return std::nullopt;
+}
+
+std::vector<std::string> ReceiverManager::list_stream_tags_for_wildcard(const std::string& wildcard_tag) {
+#if !defined(_WIN32)
+    if (m_pulse_receiver) {
+        return m_pulse_receiver->list_stream_tags_for_wildcard(wildcard_tag);
+    }
+#else
+    (void)wildcard_tag;
+#endif
+    return {};
+}
+
+void ReceiverManager::set_stream_tag_callbacks(
+    std::function<void(const std::string&, const std::string&)> on_resolved,
+    std::function<void(const std::string&)> on_removed) {
+    stream_tag_resolved_cb_ = std::move(on_resolved);
+    stream_tag_removed_cb_ = std::move(on_removed);
+#if !defined(_WIN32)
+    if (m_pulse_receiver) {
+        m_pulse_receiver->set_stream_tag_callbacks(stream_tag_resolved_cb_, stream_tag_removed_cb_);
+    }
+#else
+    (void)stream_tag_resolved_cb_;
+    (void)stream_tag_removed_cb_;
+#endif
+}
 
 bool ReceiverManager::ensure_capture_receiver(const std::string& tag, const CaptureParams& params) {
     const auto t0 = std::chrono::steady_clock::now();

@@ -3017,13 +3017,15 @@ class ConfigurationManager(threading.Thread):
         #self.scream_per_process_recevier.check_known_sources()
         #self.multicast_scream_recevier.check_known_ips()
         #self.rtp_receiver.check_known_ips()
-        for source in self.source_descriptions:
-            if source.is_process and source.tag:
-                canonical_tag = self._canonical_process_tag(source.tag)
-                if canonical_tag and canonical_tag != source.tag:
-                    source.tag = canonical_tag
-
-        known_source_tags: List[str] = [str(desc.tag) for desc in self.source_descriptions if desc.tag is not None]
+        known_source_tags: List[str] = []
+        for desc in self.source_descriptions:
+            if desc.tag is None:
+                continue
+            if desc.is_process:
+                canonical = self._canonical_process_tag(desc.tag)
+                known_source_tags.append(canonical or str(desc.tag))
+            else:
+                known_source_tags.append(str(desc.tag))
         known_source_ips: List[str] = [str(desc.ip) for desc in self.source_descriptions if desc.ip is not None]
         known_sink_ips: List[str] = [str(desc.ip) for desc in self.sink_descriptions if desc.ip is not None]
         known_sink_config_ids: List[str] = [str(desc.config_id) for desc in self.sink_descriptions if desc.config_id is not None]

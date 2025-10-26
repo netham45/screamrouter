@@ -1,10 +1,12 @@
 #ifndef SCREAMROUTER_AUDIO_PULSE_PULSE_RECEIVER_H
 #define SCREAMROUTER_AUDIO_PULSE_PULSE_RECEIVER_H
 
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
 #include "../../utils/audio_component.h"
 #include "../../utils/thread_safe_queue.h"
@@ -35,6 +37,9 @@ struct PulseReceiverConfig {
  */
 class PulseAudioReceiver : public AudioComponent {
 public:
+    using StreamTagResolvedCallback = std::function<void(const std::string&, const std::string&)>;
+    using StreamTagRemovedCallback = std::function<void(const std::string&)>;
+
     PulseAudioReceiver(PulseReceiverConfig config,
                        std::shared_ptr<NotificationQueue> notification_queue,
                        TimeshiftManager* timeshift_manager,
@@ -47,6 +52,11 @@ public:
     void stop() override;
 
     std::vector<std::string> get_seen_tags();
+    std::optional<std::string> resolve_stream_tag(const std::string& tag) const;
+    std::vector<std::string> list_stream_tags_for_wildcard(const std::string& wildcard) const;
+
+    void set_stream_tag_callbacks(StreamTagResolvedCallback on_resolved,
+                                  StreamTagRemovedCallback on_removed);
 
     const PulseReceiverConfig& config() const { return config_; }
 

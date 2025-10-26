@@ -44,13 +44,13 @@ struct ProcessorTargetInfo {
     float current_timeshift_backshift_sec;
     /** @brief The index into the global buffer where this processor should read its next packet. */
     size_t next_packet_read_index;
-    /** @brief The source tag this processor is interested in. */
+    /** @brief The configured source tag filter (may include wildcard suffix). */
     std::string source_tag_filter;
-    /** @brief Indicates that source_tag_filter uses a wildcard suffix. */
+    /** @brief Indicates this filter uses a trailing '*' wildcard. */
     bool is_wildcard = false;
-    /** @brief Prefix used for wildcard matching. */
+    /** @brief Prefix to match when wildcarding. */
     std::string wildcard_prefix;
-    /** @brief Concrete tag currently bound when wildcard matching is used. */
+    /** @brief Bound concrete tag once a wildcard matches a stream. */
     std::string bound_source_tag;
 };
 
@@ -213,6 +213,7 @@ public:
      * @return A struct containing the current stats.
      */
     TimeshiftManagerStats get_stats();
+
 
     /**
      * @brief Resets timing state and pending buffer indices for a specific source tag.

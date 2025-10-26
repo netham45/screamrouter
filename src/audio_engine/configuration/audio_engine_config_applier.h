@@ -13,6 +13,8 @@
 #include <vector>
 #include <map>
 #include <set>
+#include <unordered_map>
+#include <optional>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
@@ -59,6 +61,12 @@ public:
     bool apply_state(DesiredEngineState desired_state);
 
 private:
+    enum class SourcePathAddResult {
+        Added,
+        PendingStream,
+        Failed
+    };
+
     /** @brief Reference to the AudioManager instance being controlled. */
     audio::AudioManager& audio_manager_;
 
@@ -70,6 +78,7 @@ private:
      */
     struct InternalSourcePathState {
         AppliedSourcePathParams params;
+        std::string filter_tag;
     };
     /** @brief Map storing active source paths, keyed by path_id. */
     std::map<std::string, InternalSourcePathState> active_source_paths_;
@@ -117,7 +126,7 @@ private:
     void process_sink_updates(const std::vector<AppliedSinkParams>& sinks_to_update);
     
     void process_source_path_removals(const std::vector<std::string>& path_ids_to_remove);
-    bool process_source_path_addition(AppliedSourcePathParams& path_to_add);
+    SourcePathAddResult process_source_path_addition(AppliedSourcePathParams& path_to_add, const std::string& filter_tag);
     void process_source_path_updates(const std::vector<AppliedSourcePathParams>& paths_to_update);
 
     /**
@@ -125,6 +134,20 @@ private:
      * @param desired_sink_params The desired parameters for the sink, including its connections.
      */
     void reconcile_connections_for_sink(const AppliedSinkParams& desired_sink_params);
+
+    std::optional<std::string> resolve_source_tag(const std::string& requested_tag);
+    DesiredEngineState build_effective_state(const DesiredEngineState& base_state);
+    std::string get_filter_for_path_id(const std::string& path_id, const std::string& fallback) const;
+
+    void handle_stream_tag_resolved(const std::string& wildcard_tag,
+                                    const std::string& concrete_tag);
+    void handle_stream_tag_removed(const std::string& wildcard_tag);
+    void reapply_cached_state(const char* reason);
+
+    mutable std::recursive_mutex apply_mutex_;
+    DesiredEngineState cached_desired_state_;
+    bool cached_desired_state_valid_ = false;
+    std::unordered_map<std::string, std::string> clone_filter_lookup_;
 };
     
 /**
@@ -145,3 +168,8 @@ inline void bind_config_applier(pybind11::module_ &m) {
 } // namespace screamrouter
 
 #endif // AUDIO_ENGINE_CONFIG_APPLIER_H
+    enum class SourcePathAddResult {
+        Added,
+        PendingStream,
+        Failed
+    };

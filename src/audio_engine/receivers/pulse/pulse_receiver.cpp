@@ -187,7 +187,7 @@ inline std::string trim_string(const std::string& value) {
 
 inline std::string pad_or_truncate(const std::string& value, std::size_t width) {
     if (value.size() >= width) {
-        return value.substr(0, width);
+        return value;
     }
     std::string result(width, ' ');
     std::copy(value.begin(), value.end(), result.begin());
@@ -356,6 +356,11 @@ struct PulseAudioReceiver::Impl {
     std::vector<std::unique_ptr<Connection>> connections;
     std::vector<std::string> seen_tags;
     std::unordered_set<std::string> known_tags;
+    std::unordered_map<std::string, std::unordered_set<std::string>> wildcard_to_composites;
+    mutable std::mutex tag_map_mutex;
+
+    PulseAudioReceiver::StreamTagResolvedCallback stream_tag_resolved_cb;
+    PulseAudioReceiver::StreamTagRemovedCallback stream_tag_removed_cb;
 
     std::vector<uint8_t> auth_cookie;
     bool debug_packets = false;
@@ -393,11 +398,85 @@ struct PulseAudioReceiver::Impl {
         std::string clean_tag = tag;
         strip_nuls(clean_tag);
         if (known_tags.insert(clean_tag).second) {
+            log_debug("Discovered Pulse wildcard '" + clean_tag + "'");
             seen_tags.push_back(clean_tag);
             if (notification_queue) {
                 notification_queue->push(DeviceDiscoveryNotification{clean_tag, DeviceDirection::CAPTURE, true});
             }
         }
+    }
+
+    void note_tag_removed(const std::string& tag) {
+        std::string clean_tag = tag;
+        strip_nuls(clean_tag);
+        if (known_tags.erase(clean_tag) > 0) {
+            log_debug("Pulse wildcard removed '" + clean_tag + "'");
+            if (notification_queue) {
+                notification_queue->push(DeviceDiscoveryNotification{clean_tag, DeviceDirection::CAPTURE, false});
+            }
+        }
+    }
+
+    void register_tag_mapping(const std::string& wildcard, const std::string& composite) {
+        {
+            std::lock_guard<std::mutex> lock(tag_map_mutex);
+            wildcard_to_composites[wildcard].insert(composite);
+        }
+        log_debug("Registered Pulse wildcard '" + wildcard + "' -> '" + composite + "'");
+        auto cb = stream_tag_resolved_cb;
+        if (cb) {
+            cb(wildcard, composite);
+        }
+    }
+
+    void unregister_tag_mapping(const std::string& wildcard, const std::string& composite) {
+        bool removed = false;
+        {
+            std::lock_guard<std::mutex> lock(tag_map_mutex);
+            auto it = wildcard_to_composites.find(wildcard);
+            if (it != wildcard_to_composites.end()) {
+                it->second.erase(composite);
+                if (it->second.empty()) {
+                    wildcard_to_composites.erase(it);
+                }
+                removed = true;
+            }
+        }
+        if (removed) {
+            log_debug("Removed Pulse wildcard mapping for '" + wildcard + "' -> '" + composite + "'");
+            auto cb = stream_tag_removed_cb;
+            if (cb) {
+                cb(wildcard);
+            }
+        }
+    }
+
+    std::vector<std::string> list_streams_for_wildcard(const std::string& wildcard) const {
+        std::lock_guard<std::mutex> lock(tag_map_mutex);
+        std::vector<std::string> streams;
+        auto it = wildcard_to_composites.find(wildcard);
+        if (it == wildcard_to_composites.end()) {
+            return streams;
+        }
+        streams.insert(streams.end(), it->second.begin(), it->second.end());
+        return streams;
+    }
+
+    std::optional<std::string> resolve_stream_tag_internal(const std::string& tag) const {
+        if (tag.empty()) {
+            return std::nullopt;
+        }
+        if (tag.back() != '*') {
+            return tag;
+        }
+        std::lock_guard<std::mutex> lock(tag_map_mutex);
+        auto it = wildcard_to_composites.find(tag);
+        if (it == wildcard_to_composites.end() || it->second.empty()) {
+            log_debug("No mapping for wildcard '" + tag + "'");
+            return std::nullopt;
+        }
+        log_debug("Resolved wildcard '" + tag + "' -> '" + *it->second.begin() + "'");
+        return *it->second.begin();
     }
 };
 
@@ -406,6 +485,7 @@ struct PulseAudioReceiver::Impl::Connection {
     int fd = -1;
     bool is_unix = false;
     std::string peer_identity;
+    std::string base_identity;
     std::string client_app_name;
     std::string client_process_binary;
     std::unordered_map<std::string, std::string> client_props;
@@ -508,8 +588,10 @@ struct PulseAudioReceiver::Impl::Connection {
 
     ~Connection() {
         std::unordered_set<std::string> tags_to_reset;
-        if (owner && owner->timeshift_manager) {
-            for (const auto& [_, stream] : streams) {
+        std::vector<std::pair<std::string, std::string>> wildcard_pairs;
+        for (const auto& [_, stream] : streams) {
+            wildcard_pairs.emplace_back(stream.wildcard_tag, stream.composite_tag);
+            if (owner && owner->timeshift_manager) {
                 tags_to_reset.insert(stream.composite_tag);
             }
         }
@@ -522,6 +604,12 @@ struct PulseAudioReceiver::Impl::Connection {
         if (owner && owner->timeshift_manager) {
             for (const auto& tag : tags_to_reset) {
                 owner->timeshift_manager->reset_stream_state(tag);
+            }
+        }
+        if (owner) {
+            for (const auto& [wildcard, concrete] : wildcard_pairs) {
+                owner->unregister_tag_mapping(wildcard, concrete);
+                owner->note_tag_removed(wildcard);
             }
         }
 
@@ -803,20 +891,16 @@ void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix) {
             ucred cred{};
             socklen_t cl = sizeof(cred);
             if (::getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &cred, &cl) == 0) {
-                conn->peer_identity = "127.0.0.1      " + std::to_string(cred.pid);
+                (void)cred;
+                conn->peer_identity = "127.0.0.1";
             }
 #endif
             if (conn->peer_identity.empty()) {
-                conn->peer_identity = "local:" + std::to_string(client_fd);
+                conn->peer_identity = "local";
             }
         }
 
-        {
-            const uint64_t conn_id = g_pulse_stream_counter.fetch_add(1, std::memory_order_relaxed);
-            std::ostringstream oss;
-            oss << conn->peer_identity << "#" << std::hex << std::setw(6) << std::setfill('0') << conn_id;
-            conn->peer_identity = oss.str();
-        }
+        conn->base_identity = conn->peer_identity;
 
         log("Accepted PulseAudio client from " + conn->peer_identity);
         connections.push_back(std::move(conn));
@@ -1889,6 +1973,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     stream.chlayout2 = layout.second;
 
     owner->note_tag_seen(stream.wildcard_tag);
+    owner->register_tag_mapping(stream.wildcard_tag, stream.composite_tag);
 
     LOG_CPP_INFO("Accepted PulseAudio client tag %s", stream.composite_tag.c_str());
 
@@ -1959,10 +2044,14 @@ bool PulseAudioReceiver::Impl::Connection::handle_delete_stream(uint32_t tag, Ta
     if (it != streams.end()) {
         const std::string stream_tag = it->second.composite_tag;
         unregister_stream_clock(it->second);
+        auto removed_stream = std::move(it->second);
+        std::string wildcard_tag = removed_stream.wildcard_tag;
         streams.erase(it);
         if (owner->timeshift_manager) {
             owner->timeshift_manager->reset_stream_state(stream_tag);
         }
+        owner->unregister_tag_mapping(wildcard_tag, stream_tag);
+        owner->note_tag_removed(wildcard_tag);
     }
     enqueue_simple_reply(tag);
     return true;
@@ -2574,15 +2663,18 @@ std::string PulseAudioReceiver::Impl::Connection::composite_tag_for_stream(const
     }
     strip_nuls(program);
     program = trim_string(program);
-    program = pad_or_truncate(program, kProgramTagLength);
-
-    std::string base = peer_identity;
+    
+    std::string base = base_identity.empty() ? peer_identity : base_identity;
     strip_nuls(base);
     base = trim_string(base);
-    base = pad_or_truncate(base, kPaddedIpLength);
 
-    std::string composite = base + program;
-    strip_nuls(composite);
+    std::string composite = base;
+    if (!program.empty()) {
+        if (!composite.empty()) {
+            composite += ' ';
+        }
+        composite += program;
+    }
     return composite;
 }
 
@@ -2740,6 +2832,21 @@ std::vector<std::string> PulseAudioReceiver::get_seen_tags() {
     std::vector<std::string> tags;
     tags.swap(impl_->seen_tags);
     return tags;
+}
+
+std::optional<std::string> PulseAudioReceiver::resolve_stream_tag(const std::string& tag) const {
+    impl_->log_debug("resolve_stream_tag called for '" + tag + "'");
+    return impl_->resolve_stream_tag_internal(tag);
+}
+
+std::vector<std::string> PulseAudioReceiver::list_stream_tags_for_wildcard(const std::string& wildcard) const {
+    return impl_->list_streams_for_wildcard(wildcard);
+}
+
+void PulseAudioReceiver::set_stream_tag_callbacks(StreamTagResolvedCallback on_resolved,
+                                                  StreamTagRemovedCallback on_removed) {
+    impl_->stream_tag_resolved_cb = std::move(on_resolved);
+    impl_->stream_tag_removed_cb = std::move(on_removed);
 }
 
 void PulseAudioReceiver::run() {
