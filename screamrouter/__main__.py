@@ -367,10 +367,9 @@ def main():
     # py::arg("rtp_listen_port"), py::arg("global_timeshift_buffer_duration_sec")
     if not audio_manager.initialize(rtp_listen_port=default_rtp_port, global_timeshift_buffer_duration_sec=global_buffer_duration):
         logger.error(
-            "Failed to initialize AudioManager with rtp_listen_port=%s and global_timeshift_buffer_duration_sec=%s. Exiting.",
+            "Failed to initialize AudioManager with rtp_listen_port=%s and global_timeshift_buffer_duration_sec=%s.",
             default_rtp_port, global_buffer_duration
         )
-        sys.exit(1)
     else:
         logger.info(
             "AudioManager initialized successfully with rtp_listen_port=%s and global_timeshift_buffer_duration_sec=%s seconds.",

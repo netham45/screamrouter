@@ -12,7 +12,10 @@
 #include "../system_audio/wasapi_device_enumerator.h"
 #endif
 #include <algorithm>
+#include <cstdlib>
+#include <fstream>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -39,33 +42,63 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
 
     LOG_CPP_INFO("Initializing AudioManager with rtp_listen_port: %d, timeshift_buffer_duration: %ds", rtp_listen_port, global_timeshift_buffer_duration_sec);
 
+    std::string current_stage = "pre-init";
+
     try {
+        current_stage = "creating AudioEngineSettings";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_settings = std::make_shared<AudioEngineSettings>();
+
+        current_stage = "constructing TimeshiftManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s (buffer=%ds)", current_stage.c_str(), global_timeshift_buffer_duration_sec);
         m_timeshift_manager = std::make_unique<TimeshiftManager>(std::chrono::seconds(global_timeshift_buffer_duration_sec), m_settings);
+
+        current_stage = "creating NotificationQueue";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_notification_queue = std::make_shared<NotificationQueue>();
+
+        current_stage = "probing system device enumerator";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
 
         std::unique_ptr<system_audio::SystemDeviceEnumerator> enumerator;
 #if defined(__linux__)
+        const char* env_alsa_conf = std::getenv("ALSA_CONFIG_PATH");
+        const char* resolved_alsa_conf = (env_alsa_conf && env_alsa_conf[0]) ? env_alsa_conf : "/usr/share/alsa/alsa.conf";
+        bool alsa_conf_exists = false;
+        {
+            std::ifstream alsa_file(resolved_alsa_conf);
+            alsa_conf_exists = alsa_file.good();
+        }
+        LOG_CPP_INFO("[AudioManager::initialize] ALSA config path='%s' (env='%s', exists=%d)",
+                     resolved_alsa_conf,
+                     env_alsa_conf ? env_alsa_conf : "<unset>",
+                     alsa_conf_exists ? 1 : 0);
         try {
             enumerator.reset(new system_audio::AlsaDeviceEnumerator(m_notification_queue));
+            LOG_CPP_INFO("[AudioManager::initialize] ALSA device enumerator constructed successfully.");
         } catch (const std::exception& e) {
             LOG_CPP_WARNING("[AudioManager] Failed to construct ALSA device enumerator: %s. Continuing without system device enumeration.", e.what());
         }
 #elif defined(_WIN32)
         try {
             enumerator.reset(new system_audio::WasapiDeviceEnumerator(m_notification_queue));
+            LOG_CPP_INFO("[AudioManager::initialize] WASAPI device enumerator constructed successfully.");
         } catch (const std::exception& e) {
             LOG_CPP_WARNING("[AudioManager] Failed to construct WASAPI device enumerator: %s. Continuing without system device enumeration.", e.what());
         }
 #else
+        LOG_CPP_INFO("[AudioManager::initialize] No system audio enumerator available on this platform.");
         enumerator.reset(nullptr);
 #endif
         m_system_device_enumerator = std::move(enumerator);
         if (m_system_device_enumerator) {
+            current_stage = "starting system device enumerator";
+            LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
             try {
                 m_system_device_enumerator->start();
                 std::lock_guard<std::mutex> device_lock(device_registry_mutex_);
                 system_device_registry_ = m_system_device_enumerator->get_registry_snapshot();
+                LOG_CPP_INFO("[AudioManager::initialize] System device enumerator started; %zu devices cached.", system_device_registry_.size());
             } catch (const std::exception& e) {
                 LOG_CPP_WARNING("[AudioManager] System audio enumerator failed to start: %s. Disabling system device monitoring.", e.what());
                 try {
@@ -79,6 +112,8 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
             }
         }
 
+        current_stage = "creating SourceManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_source_manager = std::make_unique<SourceManager>(m_manager_mutex, m_timeshift_manager.get(), m_settings);
         
         // Set up callbacks for system capture device management
@@ -90,7 +125,12 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
                 this->release_system_capture_device(tag);
             }
         );
+        current_stage = "creating SinkManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_sink_manager = std::make_unique<SinkManager>(m_manager_mutex, m_settings, m_timeshift_manager.get());
+
+        current_stage = "creating ReceiverManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_receiver_manager = std::make_unique<ReceiverManager>(m_manager_mutex, m_timeshift_manager.get());
         m_receiver_manager->set_stream_tag_callbacks(
             [this](const std::string& wildcard, const std::string& concrete) {
@@ -99,24 +139,53 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
             [this](const std::string& wildcard) {
                 this->handle_stream_tag_removed(wildcard);
             });
+
+        current_stage = "creating WebRtcManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_webrtc_manager = std::make_unique<WebRtcManager>(m_manager_mutex, m_sink_manager.get(), m_sink_manager->get_sink_configs());
+
+        current_stage = "creating ConnectionManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_connection_manager = std::make_unique<ConnectionManager>(m_manager_mutex, m_source_manager.get(), m_sink_manager.get(), m_source_manager->get_source_to_sink_queues(), m_source_manager->get_sources());
+
+        current_stage = "creating ControlApiManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_source_manager->get_command_queues(), m_timeshift_manager.get(), m_source_manager->get_sources());
+
+        current_stage = "creating MP3DataApiManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_mp3_data_api_manager = std::make_unique<MP3DataApiManager>(m_manager_mutex, m_sink_manager->get_mp3_output_queues(), m_sink_manager->get_sink_configs());
+
+        current_stage = "creating StatsManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_stats_manager = std::make_unique<StatsManager>(m_timeshift_manager.get(), m_source_manager.get(), m_sink_manager.get());
 
+        current_stage = "initializing network receivers";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s (port=%d)", current_stage.c_str(), rtp_listen_port);
         if (!m_receiver_manager->initialize_receivers(rtp_listen_port, m_notification_queue)) {
             throw std::runtime_error("Failed to initialize receivers");
         }
 
+        current_stage = "starting TimeshiftManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_timeshift_manager->start();
+
+        current_stage = "starting ReceiverManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_receiver_manager->start_receivers();
+
+        current_stage = "starting StatsManager";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_stats_manager->start();
         
+        current_stage = "launching notification thread";
+        LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
         m_notification_thread = std::thread(&AudioManager::process_notifications, this);
 
     } catch (const std::exception& e) {
-        LOG_CPP_ERROR("Failed to initialize AudioManager: %s", e.what());
+        LOG_CPP_ERROR("Failed to initialize AudioManager during stage '%s': %s",
+                      current_stage.c_str(),
+                      e.what());
         // Clean up partially initialized components
         shutdown();
         return false;

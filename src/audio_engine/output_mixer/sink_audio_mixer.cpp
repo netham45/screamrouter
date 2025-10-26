@@ -1467,11 +1467,8 @@ void SinkAudioMixer::run() {
         bool should_mix = has_active_sources || underrun_silence_active_;
 
         if (!should_mix) {
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No active sources and no underrun hold. Skipping mix.",
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No active sources and no underrun hold. Emitting silence.",
                           config_.sink_id.c_str());
-            lock.unlock();
-            maybe_log_profiler();
-            continue;
         }
 
         const bool coordination_active = coordination_mode_ && coordinator_;

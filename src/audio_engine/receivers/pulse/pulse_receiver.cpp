@@ -742,7 +742,7 @@ bool PulseAudioReceiver::Impl::initialize() {
         int opt = 1;
         ::setsockopt(tcp_listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-        opt = 1152 * 10;
+        opt = 1152 * 25;
         ::setsockopt(tcp_listen_fd, SOL_SOCKET, SO_RCVBUF, &opt, sizeof(opt));
 
         sockaddr_in addr{};

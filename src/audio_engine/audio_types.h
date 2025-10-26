@@ -494,6 +494,23 @@ struct AudioManagerConfigCpp {
 };
 
 /**
+ * @struct AdaptivePlaybackSettings
+ * @brief Parameters for adaptive playback control when targeting a local system device.
+ */
+struct AdaptivePlaybackSettings {
+    /** @brief Desired buffered audio in milliseconds. */
+    double target_delay_ms = 80.0;
+    /** @brief Acceptable variation from the target in milliseconds. */
+    double tolerance_ms = 10.0;
+    /** @brief Maximum frames to drop or inject during a single adjustment. */
+    size_t max_compensation_frames = 256;
+    /** @brief Smoothing factor (0..1) for measured delay samples. */
+    double smoothing_alpha = 0.2;
+    /** @brief Minimum interval between adaptive log statements, in milliseconds (0 disables throttling). */
+    int log_interval_ms = 1000;
+};
+
+/**
  * @struct SinkMixerConfig
  * @brief Configuration for a SinkAudioMixer component.
  */
@@ -526,6 +543,8 @@ struct SinkMixerConfig {
     std::vector<config::RtpReceiverConfig> rtp_receivers;
     /** @brief Enable multi-device RTP mode. */
     bool multi_device_mode = false;
+    /** @brief Adaptive playback parameters for local system sinks. */
+    AdaptivePlaybackSettings adaptive_playback;
 };
 
 

@@ -3,6 +3,7 @@
 #include "../i_network_sender.h"
 #include "../../audio_types.h"
 
+#include <chrono>
 #include <string>
 #include <vector>
 #include <mutex>
@@ -37,6 +38,28 @@ private:
     bool handle_write_error(int err);
     bool write_frames(const void* data, size_t frame_count, size_t bytes_per_frame);
     void close_locked();
+    double query_playback_delay_locked();
+    bool adaptive_control_enabled() const;
+    void ensure_padding_capacity(size_t bytes_needed);
+
+    enum class AdaptiveActionType {
+        None,
+        Drop,
+        Pad
+    };
+
+    struct AdaptiveFrameAction {
+        AdaptiveActionType type = AdaptiveActionType::None;
+        size_t frames = 0;
+        double measured_delay_ms = 0.0;
+        double smoothed_delay_ms = 0.0;
+    };
+
+    AdaptiveFrameAction evaluate_adaptive_action_locked(size_t frames_available);
+    void maybe_log_adaptive_event(const AdaptiveFrameAction& action);
+    size_t delay_ms_to_frames(double delay_ms) const;
+
+    AdaptivePlaybackSettings adaptive_settings_;
 
     SinkMixerConfig config_;
     std::string device_tag_;
@@ -51,6 +74,11 @@ private:
     snd_pcm_uframes_t period_frames_ = 0;
     snd_pcm_uframes_t buffer_frames_ = 0;
     size_t bytes_per_frame_ = 0;
+    double smoothed_delay_ms_ = 0.0;
+    double last_delay_ms_ = 0.0;
+    bool adaptive_delay_initialized_ = false;
+    std::chrono::steady_clock::time_point last_adaptive_log_ts_{};
+    std::vector<uint8_t> padding_buffer_;
 
     mutable std::mutex state_mutex_;
 #else
