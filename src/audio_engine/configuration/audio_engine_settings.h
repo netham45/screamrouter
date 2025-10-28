@@ -13,7 +13,7 @@ struct TimeshiftTuning {
     double jitter_safety_margin_multiplier = 2.0;
     double system_jitter_safety_multiplier = 1.0;
     double late_packet_threshold_ms = 10.0;
-    double target_buffer_level_ms = 20.0;
+    double target_buffer_level_ms = 8.0;
     double target_recovery_rate_ms_per_sec = 15.0;
     double proportional_gain_kp = 0.05;
     double catchup_boost_gain = 2.0;

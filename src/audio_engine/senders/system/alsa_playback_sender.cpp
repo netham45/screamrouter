@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <limits>
 #include <sstream>
 
 namespace screamrouter {
@@ -277,9 +278,20 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
 
     const uint8_t* byte_ptr = static_cast<const uint8_t*>(data);
     size_t frames_remaining = frame_count;
-    const snd_pcm_sframes_t period_target = period_frames_ > 0
-                                                ? static_cast<snd_pcm_sframes_t>(period_frames_)
-                                                : static_cast<snd_pcm_sframes_t>(1);
+    // Treat a "chunk" as the ALSA period we negotiated; fall back to the buffer geometry if needed.
+    constexpr snd_pcm_sframes_t kMaxBufferedPeriods = 3;
+    snd_pcm_sframes_t period_frames = 0;
+    if (period_frames_ > 0) {
+        period_frames = static_cast<snd_pcm_sframes_t>(period_frames_);
+    } else if (buffer_frames_ >= static_cast<snd_pcm_uframes_t>(kMaxBufferedPeriods)) {
+        period_frames = static_cast<snd_pcm_sframes_t>(buffer_frames_ / kMaxBufferedPeriods);
+    }
+    const snd_pcm_sframes_t period_target = period_frames > 0 ? period_frames : static_cast<snd_pcm_sframes_t>(1);
+    // Bound the ALSA hardware queue to a few periods so resumes don't replay large backlogs.
+    const snd_pcm_sframes_t max_buffered_frames = period_frames > 0
+                                                      ? std::min(period_frames * kMaxBufferedPeriods,
+                                                                 std::numeric_limits<snd_pcm_sframes_t>::max())
+                                                      : static_cast<snd_pcm_sframes_t>(0);
 
     while (frames_remaining > 0) {
         int wait_rc = snd_pcm_wait(pcm_handle_, 50);
@@ -299,7 +311,33 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
             continue;
         }
 
+        snd_pcm_sframes_t delay_frames = 0;
+        snd_pcm_sframes_t allowed_extra = std::numeric_limits<snd_pcm_sframes_t>::max();
+        if (max_buffered_frames > 0) {
+            int delay_rc = snd_pcm_delay(pcm_handle_, &delay_frames);
+            if (delay_rc < 0) {
+                if (!handle_write_error(delay_rc)) {
+                    return false;
+                }
+                continue;
+            }
+            if (delay_frames < 0) {
+                delay_frames = 0;
+            }
+
+            allowed_extra = max_buffered_frames - delay_frames;
+            if (allowed_extra <= 0) {
+                LOG_CPP_WARNING("[AlsaPlayback:%s] Dropping %zu frames to cap ALSA queue (queued=%ld frames, limit=%ld frames).",
+                                device_tag_.c_str(), frames_remaining, static_cast<long>(delay_frames),
+                                static_cast<long>(max_buffered_frames));
+                return true;
+            }
+        }
+
         snd_pcm_sframes_t frames_desired = static_cast<snd_pcm_sframes_t>(std::min(frames_remaining, static_cast<size_t>(period_target)));
+        if (max_buffered_frames > 0) {
+            frames_desired = std::min(frames_desired, allowed_extra);
+        }
         if (frames_desired <= 0) {
             break;
         }
@@ -322,7 +360,6 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
         byte_ptr += static_cast<size_t>(written) * bytes_per_frame;
         frames_remaining -= static_cast<size_t>(written);
 
-        snd_pcm_sframes_t delay_frames = 0;
         if (snd_pcm_delay(pcm_handle_, &delay_frames) == 0) {
             double delay_ms = 1000.0 * static_cast<double>(delay_frames) / static_cast<double>(sample_rate_);
             LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA reported delay: %.2f ms (%ld frames).",

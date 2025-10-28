@@ -302,9 +302,8 @@ class ConfigurationManager(threading.Thread):
         """Updates fields on the sink indicated by old_sink_name to what is specified in new_sink
            Undefined fields are ignored"""
         print(f"Updating {old_sink_name}")
-        is_eq_only: bool = True
-        is_eq_found: bool = False
         changed_sink: SinkDescription = self.get_sink_by_name(old_sink_name)
+        notify_volume_eq: bool = False
         if new_sink.name != old_sink_name:
             for sink in self.sink_descriptions:
                 if sink.name == new_sink.name:
@@ -314,11 +313,11 @@ class ConfigurationManager(threading.Thread):
                 # config_id should never be modified after creation
                 _logger.warning(f"Attempt to modify config_id for sink {old_sink_name} - ignoring this change")
                 continue
-            if field == "equalizer":
-                is_eq_found = True
-            elif field != "name":
-                is_eq_only = False
-            setattr(changed_sink, field, getattr(new_sink, field))
+            old_value = getattr(changed_sink, field, None)
+            new_value = getattr(new_sink, field)
+            setattr(changed_sink, field, new_value)
+            if field in {"volume", "delay", "timeshift"} and new_value != old_value:
+                notify_volume_eq = True
 
         for sink in self.sink_descriptions:
             for index, group_member in enumerate(sink.group_members):
@@ -330,6 +329,8 @@ class ConfigurationManager(threading.Thread):
 
         # Always trigger a full reload for simplicity and robustness with C++ engine
         self.__reload_configuration()
+        if notify_volume_eq:
+            self.__notify_volume_eq_condition()
         return True
 
     def delete_sink(self, sink_name: SinkNameType) -> bool:
@@ -506,9 +507,8 @@ class ConfigurationManager(threading.Thread):
     def update_source(self, new_source: SourceDescription, old_source_name: SourceNameType) -> bool:
         """Updates fields on source 'old_source_name' to what's specified in new_source
            Undefined fields are not changed"""
-        is_eq_only: bool = True
-        is_eq_found: bool = False
         changed_source: SourceDescription = self.get_source_by_name(old_source_name)
+        notify_volume_eq: bool = False
         if new_source.name != old_source_name:
             for source in self.source_descriptions:
                 if source.name == new_source.name:
@@ -518,12 +518,11 @@ class ConfigurationManager(threading.Thread):
                 # config_id should never be modified after creation
                 _logger.warning(f"Attempt to modify config_id for source {old_source_name} - ignoring this change")
                 continue
-            if field == "equalizer":
-                is_eq_found = True
-            elif field != "name":
-                is_eq_only = False
-        
-            setattr(changed_source, field, getattr(new_source, field))
+            old_value = getattr(changed_source, field, None)
+            new_value = getattr(new_source, field)
+            setattr(changed_source, field, new_value)
+            if field in {"volume", "delay", "timeshift"} and new_value != old_value:
+                notify_volume_eq = True
         for source in self.source_descriptions:
             for index, group_member in enumerate(source.group_members):
                 if group_member == old_source_name:
@@ -534,6 +533,8 @@ class ConfigurationManager(threading.Thread):
 
         # Always trigger a full reload
         self.__reload_configuration()
+        if notify_volume_eq:
+            self.__notify_volume_eq_condition()
         return True
 
     def delete_source(self, source_name: SourceNameType) -> bool:
@@ -597,9 +598,8 @@ class ConfigurationManager(threading.Thread):
     def update_route(self, new_route: RouteDescription, old_route_name: RouteNameType) -> bool:
         """Updates fields on the route indicated by old_route_name to what is specified in new_route
            Undefined fields are ignored"""
-        is_eq_only: bool = True
-        is_eq_found: bool = False
         changed_route: RouteDescription = self.get_route_by_name(old_route_name)
+        notify_volume_eq: bool = False
         if new_route.name != old_route_name:
             for route in self.route_descriptions:
                 if route.name == new_route.name:
@@ -609,14 +609,28 @@ class ConfigurationManager(threading.Thread):
                 # config_id should never be modified after creation
                 _logger.warning(f"Attempt to modify config_id for route {old_route_name} - ignoring this change")
                 continue
-            if field == "equalizer":
-                is_eq_found = True
-            elif field != "name":
-                is_eq_only = False
-            setattr(changed_route, field, getattr(new_route, field))
+            old_value = getattr(changed_route, field, None)
+            new_value = getattr(new_route, field)
+            setattr(changed_route, field, new_value)
+            if field in {"volume", "delay", "timeshift"} and new_value != old_value:
+                notify_volume_eq = True
         # Always trigger a full reload
         self.__reload_configuration()
+        if notify_volume_eq:
+            self.__notify_volume_eq_condition()
         return True
+
+    def __notify_volume_eq_condition(self) -> None:
+        """Signal listeners that volume/delay/timeshift have changed."""
+        if not self.reload_condition.acquire(timeout=10):
+            _logger.warning("[Configuration Manager] Failed to acquire volume/eq condition semaphore")
+            return
+        try:
+            self.reload_condition.notify()
+        except RuntimeError:
+            pass
+        finally:
+            self.reload_condition.release()
 
     def delete_route(self, route_name: RouteNameType) -> bool:
         """Deletes a route by name"""

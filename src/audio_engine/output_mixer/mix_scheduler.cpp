@@ -6,6 +6,10 @@
 namespace screamrouter {
 namespace audio {
 
+namespace {
+constexpr std::size_t kMaxReadyChunksPerSource = 2; // cap to ~12ms of backlog at 48kHz
+}
+
 MixScheduler::MixScheduler(std::string mixer_id,
                            std::shared_ptr<AudioEngineSettings> settings)
     : mixer_id_(std::move(mixer_id)),
@@ -242,7 +246,13 @@ void MixScheduler::append_ready_chunk(const std::string& instance_id,
 
     {
         std::lock_guard<std::mutex> lock(ready_mutex_);
-        ready_chunks_[instance_id].push_back(std::move(ready));
+        auto& queue = ready_chunks_[instance_id];
+        if (queue.size() >= kMaxReadyChunksPerSource) {
+            queue.pop_front();
+            LOG_CPP_DEBUG("[MixScheduler:%s] Dropping oldest ready chunk for %s to enforce cap=%zu.",
+                          mixer_id_.c_str(), instance_id.c_str(), kMaxReadyChunksPerSource);
+        }
+        queue.push_back(std::move(ready));
     }
 }
 
