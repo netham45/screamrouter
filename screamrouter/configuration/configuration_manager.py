@@ -3048,7 +3048,7 @@ class ConfigurationManager(threading.Thread):
 
                     rtp_properties = {"source": "cpp_engine"}
                     if self._update_discovered_device_last_seen(
-                        method="rtp",
+                        method="cpp_rtp",
                         identifier=ip_value,
                         ip=ip_value,
                         device_type="rtp_stream",
@@ -3065,7 +3065,7 @@ class ConfigurationManager(threading.Thread):
                         known_source_ips.append(ip_value)
 
                     self._store_discovered_device(
-                        method="rtp",
+                        method="cpp_rtp",
                         role="source",
                         identifier=ip_value,
                         ip=ip_value,
@@ -3088,7 +3088,7 @@ class ConfigurationManager(threading.Thread):
 
                         raw_properties = {"receiver_port": port, "source": "cpp_engine"}
                         if self._update_discovered_device_last_seen(
-                            method="raw_scream",
+                            method="cpp_raw",
                             identifier=ip_value,
                             ip=ip_value,
                             port=port,
@@ -3107,7 +3107,7 @@ class ConfigurationManager(threading.Thread):
                             known_source_ips.append(ip_value)
 
                         self._store_discovered_device(
-                            method="raw_scream",
+                            method="cpp_raw",
                             role="source",
                             identifier=ip_value,
                             ip=ip_value,
@@ -3138,15 +3138,13 @@ class ConfigurationManager(threading.Thread):
                         "receiver_port": per_process_receiver_port,
                         "source": "cpp_engine",
                     }
-                    if self._update_discovered_device_last_seen(
-                        method="per_process",
-                        identifier=identifier,
-                        ip=parsed_ip,
-                        tag=identifier,
-                        device_type="per_process",
-                        properties=per_process_properties,
-                    ):
-                        continue
+                    # Per-process entries are auto-managed; exclude them from discovered list.
+                    for lookup_key in {
+                        f"per_process:{identifier}",
+                        f"per_process:{tag_str}",
+                        f"per_process:{raw_tag}",  # best-effort cleanup for historic keys
+                    }:
+                        self.discovered_devices.pop(lookup_key, None)
 
                     is_new_source = identifier not in known_process_tags
                     if is_new_source:
@@ -3157,16 +3155,6 @@ class ConfigurationManager(threading.Thread):
                         )
                         known_process_tags.add(identifier)
                         known_source_tags.append(identifier)
-
-                        self._store_discovered_device(
-                            method="per_process",
-                            role="process",
-                            identifier=identifier,
-                            ip=parsed_ip,
-                            tag=identifier,
-                            device_type="per_process",
-                            properties=per_process_properties,
-                        )
 
                         try:
                             self.auto_add_process_source(identifier)
@@ -3206,15 +3194,12 @@ class ConfigurationManager(threading.Thread):
                         if not store_ip:
                             store_ip = tag_body
 
-                        if self._update_discovered_device_last_seen(
-                            method="pulse",
-                            identifier=identifier,
-                            ip=store_ip,
-                            tag=identifier,
-                            device_type="pulse_process",
-                            properties=pulse_properties,
-                        ):
-                            continue
+                        # Pulse process entries are also auto-managed, keep them out of discovery list.
+                        for lookup_key in {
+                            f"pulse:{identifier}",
+                            f"pulse:{tag_str}",
+                        }:
+                            self.discovered_devices.pop(lookup_key, None)
 
                         is_new_pulse_source = identifier not in known_process_tags
                         if is_new_pulse_source:
@@ -3225,16 +3210,6 @@ class ConfigurationManager(threading.Thread):
                             known_process_tags.add(identifier)
                             known_source_tags.append(identifier)
 
-                            self._store_discovered_device(
-                                method="pulse",
-                                role="process",
-                                identifier=identifier,
-                                ip=store_ip,
-                                tag=identifier,
-                                device_type="pulse_process",
-                                properties=pulse_properties,
-                            )
-
                             try:
                                 self.auto_add_process_source(identifier)
                             except Exception as auto_exc:  # pylint: disable=broad-except
@@ -3243,16 +3218,6 @@ class ConfigurationManager(threading.Thread):
                                     identifier,
                                     auto_exc,
                                 )
-                        else:
-                            self._store_discovered_device(
-                                method="pulse",
-                                role="process",
-                                identifier=identifier,
-                                ip=store_ip,
-                                tag=identifier,
-                                device_type="pulse_process",
-                                properties=pulse_properties,
-                            )
                 except Exception as e:  # pylint: disable=broad-except
                     _logger.error("[Configuration Manager] Error getting seen tags from PulseAudio Receiver: %s", e)
 
@@ -3289,7 +3254,7 @@ class ConfigurationManager(threading.Thread):
                             known_source_ips.append(ip_value)
 
                         self._store_discovered_device(
-                            method="sap",
+                            method="cpp_sap",
                             role="source",
                             identifier=identifier,
                             ip=ip_value,

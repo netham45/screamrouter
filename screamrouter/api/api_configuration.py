@@ -140,7 +140,7 @@ class APIConfiguration():
             raise HTTPException(status_code=400, detail="Discovered device is not a source")
 
         try:
-            if device.device_type == "per_process" or device.discovery_method == "cpp_per_process":
+            if device.device_type == "per_process" or device.discovery_method == "per_process":
                 if not device.tag:
                     raise HTTPException(status_code=400, detail="Per-process source missing tag")
                 self._configuration_controller.auto_add_process_source(device.tag)

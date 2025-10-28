@@ -48,7 +48,8 @@ const TranscribePage: React.FC<TranscribePageProps> = ({ ip: propIp }) => {
     }
 
     // Create WebSocket connection
-    const wsUrl = `ws://127.0.0.1:8085/transcribe/${ip}/`;
+    const streamURL = encodeURIComponent(window.location.origin + `/${ip}`);
+    const wsUrl = `ws://127.0.0.1:8085/transcribe/${streamURL}/`;
     const ws = new WebSocket(wsUrl);
 
     // WebSocket event handlers

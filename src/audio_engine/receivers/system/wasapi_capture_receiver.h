@@ -17,6 +17,8 @@
 #include <cstdint>
 #include <chrono>
 
+#include "../../utils/byte_ring_buffer.h"
+
 namespace screamrouter {
 namespace audio {
 namespace system_audio {
@@ -55,7 +57,6 @@ protected:
     int get_poll_timeout_ms() const override;
 
 private:
-
     bool open_device();
     void close_device();
     bool configure_audio_client();
@@ -93,7 +94,7 @@ private:
     size_t target_bytes_per_frame_ = 0;
     size_t chunk_bytes_ = kChunkSize;
 
-    std::vector<uint8_t> chunk_accumulator_;
+    ::screamrouter::audio::utils::ByteRingBuffer chunk_buffer_;
     std::vector<uint8_t> conversion_buffer_;
 
     uint32_t running_timestamp_ = 0;

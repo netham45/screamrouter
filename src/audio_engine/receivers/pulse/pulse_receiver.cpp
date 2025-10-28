@@ -47,6 +47,7 @@ void PulseAudioReceiver::run() {}
 #include "pulse_tagstruct.h"
 
 #include "../../input_processor/timeshift_manager.h"
+#include "../../utils/byte_ring_buffer.h"
 #include "../../utils/cpp_logger.h"
 
 #include <algorithm>
@@ -540,7 +541,7 @@ struct PulseAudioReceiver::Impl::Connection {
         uint32_t pending_request_bytes = 0;
         std::chrono::steady_clock::time_point next_request_time{};
         uint64_t frame_cursor = 0;
-        std::vector<uint8_t> pending_payload;
+        ::screamrouter::audio::utils::ByteRingBuffer pending_payload;
         std::chrono::steady_clock::time_point last_delivery_time{};
         bool has_last_delivery = false;
         uint8_t chlayout1 = 0;
@@ -742,7 +743,7 @@ bool PulseAudioReceiver::Impl::initialize() {
         int opt = 1;
         ::setsockopt(tcp_listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-        opt = 1152 * 25;
+        opt = 10000 * 15;
         ::setsockopt(tcp_listen_fd, SOL_SOCKET, SO_RCVBUF, &opt, sizeof(opt));
 
         sockaddr_in addr{};
@@ -1980,6 +1981,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     auto [stream_it, inserted] = streams.emplace(stream.local_index, stream);
     stream_it->second.frame_cursor = 0;
     stream_it->second.pending_payload.clear();
+    stream_it->second.pending_payload.reserve(CHUNK_SIZE * 2);
     stream_it->second.has_last_delivery = false;
     uint32_t initial_request = effective_request_bytes(stream_it->second);
     stream_it->second.pending_request_bytes = initial_request;
@@ -2554,8 +2556,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
     const bool converted_format = (stream.sample_spec.format == kSampleFormatFloat32LE);
 
     if (!active_payload->empty()) {
-        stream.pending_payload.insert(stream.pending_payload.end(),
-                                      active_payload->begin(), active_payload->end());
+        stream.pending_payload.write(active_payload->data(), active_payload->size());
     }
 
     if (should_release_block) {
@@ -2563,10 +2564,12 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
     }
 
     while (stream.pending_payload.size() >= CHUNK_SIZE) {
-        std::vector<uint8_t> chunk(stream.pending_payload.begin(),
-                                   stream.pending_payload.begin() + CHUNK_SIZE);
-        stream.pending_payload.erase(stream.pending_payload.begin(),
-                                     stream.pending_payload.begin() + CHUNK_SIZE);
+        std::vector<uint8_t> chunk(CHUNK_SIZE);
+        const std::size_t popped = stream.pending_payload.pop(chunk.data(), CHUNK_SIZE);
+        if (popped == 0) {
+            break;
+        }
+        chunk.resize(popped);
 
         if (stream.sample_spec.format == kSampleFormatFloat32LE) {
             chunk = convert_float_chunk_to_s32(chunk);

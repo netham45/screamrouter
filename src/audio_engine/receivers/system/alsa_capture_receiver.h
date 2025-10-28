@@ -8,6 +8,8 @@
 #include <atomic>
 #include <chrono>
 
+#include "../../utils/byte_ring_buffer.h"
+
 #define CHUNK_SIZE 1152
 
 #if defined(__linux__) && defined(__has_include)
@@ -81,8 +83,7 @@ private:
     uint32_t running_timestamp_ = 0;
 
     std::vector<uint8_t> period_buffer_;
-    std::vector<uint8_t> chunk_accumulator_;
-    std::vector<uint8_t> chunk_conversion_buffer_;
+    ::screamrouter::audio::utils::ByteRingBuffer chunk_buffer_;
 
     std::mutex device_mutex_;
 #else
