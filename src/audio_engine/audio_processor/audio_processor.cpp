@@ -1302,6 +1302,7 @@ void AudioProcessor::removeDCOffset() {
 
 
 bool AudioProcessor::isProcessingRequired() {
+    return true;
     if (!isProcessingRequiredCacheSet) {
         isProcessingRequiredCache = isProcessingRequiredCheck();
         isProcessingRequiredCacheSet = true;

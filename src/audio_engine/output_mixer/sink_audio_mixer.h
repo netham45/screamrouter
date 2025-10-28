@@ -79,14 +79,6 @@ const size_t SINK_MP3_BUFFER_SIZE = SINK_CHUNK_SIZE_BYTES * 8;
  */
 class SinkAudioMixer : public AudioComponent {
 public:
-    struct TickTiming {
-        std::chrono::steady_clock::time_point scheduled_time{};
-        std::chrono::steady_clock::time_point wake_time{};
-        uint64_t sequence = 0;
-        uint64_t missed_ticks = 0;
-        std::chrono::nanoseconds lateness{0};
-    };
-
     /** @brief A map of input queues, keyed by the unique source instance ID. */
     using InputQueueMap = std::map<std::string, std::shared_ptr<InputChunkQueue>>;
 
@@ -196,8 +188,10 @@ private:
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
 
     std::unique_ptr<ClockManager> clock_manager_;
+    std::atomic<bool> clock_manager_enabled_{false};
     ClockManager::ConditionHandle clock_condition_handle_{};
     uint64_t clock_last_sequence_{0};
+    uint64_t clock_pending_ticks_{0};
     int timer_sample_rate_{0};
     int timer_channels_{0};
     int timer_bit_depth_{0};
@@ -214,8 +208,7 @@ private:
     std::vector<int32_t> stereo_buffer_;
     std::vector<uint8_t> payload_buffer_;
     size_t payload_buffer_write_pos_ = 0;
-    uint64_t pending_skip_chunks_{0};
-
+    
     std::vector<uint32_t> current_csrcs_;
     std::mutex csrc_mutex_;
 
@@ -245,12 +238,6 @@ private:
     void close_lame();
 
     bool wait_for_source_data();
-    TickTiming await_mix_tick();
-    void ensure_clock_condition_registered();
-    void drop_pending_payload_chunks();
-    void emit_telemetry_if_due(std::chrono::steady_clock::time_point now);
-    void reset_telemetry_counters(std::chrono::steady_clock::time_point now);
-    void reset_slip_tracking(std::chrono::steady_clock::time_point reference_time);
     void mix_buffers();
     void downscale_buffer();
     size_t preprocess_for_listeners_and_mp3();
@@ -288,34 +275,6 @@ private:
     double profiling_send_gap_min_ms_{std::numeric_limits<double>::infinity()};
     double profiling_last_send_gap_ms_{0.0};
     uint64_t profiling_send_gap_samples_{0};
-    double profiling_last_slip_ms_{0.0};
-    long double profiling_slip_sum_ms_{0.0L};
-    double profiling_slip_max_ms_{0.0};
-    double profiling_slip_min_ms_{std::numeric_limits<double>::infinity()};
-    uint64_t profiling_slip_events_{0};
-    uint64_t profiling_payload_chunks_skipped_{0};
-    uint64_t profiling_payload_bytes_skipped_{0};
-    double profiling_last_skip_ms_{0.0};
-
-    std::chrono::steady_clock::time_point telemetry_last_emit_{};
-    std::chrono::milliseconds telemetry_emit_interval_{std::chrono::milliseconds(3000)};
-    double telemetry_last_slip_ms_{0.0};
-    long double telemetry_slip_sum_ms_{0.0L};
-    double telemetry_slip_max_ms_{0.0};
-    double telemetry_slip_min_ms_{std::numeric_limits<double>::infinity()};
-    uint64_t telemetry_pending_skip_chunks_total_{0};
-    uint64_t telemetry_pending_skip_chunks_peak_{0};
-    uint64_t telemetry_payload_chunks_skipped_total_{0};
-    uint64_t telemetry_samples_{0};
-    double telemetry_last_dwell_ms_{0.0};
-    long double telemetry_dwell_sum_ms_{0.0L};
-    double telemetry_dwell_max_ms_{0.0};
-    double telemetry_dwell_min_ms_{std::numeric_limits<double>::infinity()};
-    uint64_t telemetry_dwell_samples_{0};
-
-    std::chrono::steady_clock::time_point slip_reference_time_{};
-    uint64_t slip_chunks_sent_{0};
-    uint64_t slip_chunks_dropped_{0};
 
     // Detailed operation timings
     long double profiling_mix_ns_sum_{0.0L};
@@ -351,6 +310,7 @@ private:
     std::chrono::microseconds calculate_mix_period(int sample_rate, int channels, int bit_depth) const;
     void register_mix_timer();
     void unregister_mix_timer();
+    bool wait_for_mix_tick();
 };
 
 } // namespace audio

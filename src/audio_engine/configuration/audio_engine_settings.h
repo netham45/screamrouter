@@ -1,6 +1,8 @@
 #ifndef AUDIO_ENGINE_SETTINGS_H
 #define AUDIO_ENGINE_SETTINGS_H
 
+#include <cstddef>
+
 namespace screamrouter {
 namespace audio {
 
@@ -55,6 +57,7 @@ struct MixerTuning {
     long underrun_hold_timeout_ms = 250;
     double host_jitter_skip_threshold_ms = 1.5;
     double host_jitter_skip_grace_ms = 24.0;
+    std::size_t max_input_queue_chunks = 8;
 };
 
 struct SourceProcessorTuning {

@@ -595,14 +595,14 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                 // 2. Add the adaptive playout delay
                 const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
-                const double base_latency_target_ms = std::max<double>(
+                double base_latency_ms = std::max<double>(
                     target_info.current_delay_ms,
                     m_settings->timeshift_tuning.target_buffer_level_ms);
-                double desired_latency_ms = base_latency_target_ms + timeshift_backshift_ms;
                 const double max_adaptive_delay_ms = m_settings->timeshift_tuning.max_adaptive_delay_ms;
                 if (max_adaptive_delay_ms > 0.0) {
-                    desired_latency_ms = std::min(desired_latency_ms, max_adaptive_delay_ms);
+                    base_latency_ms = std::min(base_latency_ms, max_adaptive_delay_ms);
                 }
+                const double desired_latency_ms = base_latency_ms + timeshift_backshift_ms;
 
                 timing_state->target_buffer_level_ms = desired_latency_ms;
                 timing_state->last_target_update_time = now;
@@ -939,14 +939,14 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
 
             auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(next_packet.rtp_timestamp.value());
             const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
-            const double base_latency_target_ms = std::max<double>(
+            double base_latency_ms = std::max<double>(
                 target_info.current_delay_ms,
                 m_settings->timeshift_tuning.target_buffer_level_ms);
-            double desired_latency_ms = base_latency_target_ms + timeshift_backshift_ms;
             const double max_adaptive_delay_ms = m_settings->timeshift_tuning.max_adaptive_delay_ms;
             if (max_adaptive_delay_ms > 0.0) {
-                desired_latency_ms = std::min(desired_latency_ms, max_adaptive_delay_ms);
+                base_latency_ms = std::min(base_latency_ms, max_adaptive_delay_ms);
             }
+            const double desired_latency_ms = base_latency_ms + timeshift_backshift_ms;
 
             const double state_target_ms = (timing_state->target_buffer_level_ms > 0.0)
                                                ? timing_state->target_buffer_level_ms
