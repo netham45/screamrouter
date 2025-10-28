@@ -3142,7 +3142,6 @@ class ConfigurationManager(threading.Thread):
                     for lookup_key in {
                         f"per_process:{identifier}",
                         f"per_process:{tag_str}",
-                        f"per_process:{raw_tag}",  # best-effort cleanup for historic keys
                     }:
                         self.discovered_devices.pop(lookup_key, None)
 
@@ -3229,12 +3228,30 @@ class ConfigurationManager(threading.Thread):
                         if not isinstance(announcement, dict):
                             continue
 
-                        ip_value = str(announcement.get("ip") or announcement.get("stream_ip") or "").strip()
+                        stream_ip = str(announcement.get("ip") or announcement.get("stream_ip") or "").strip()
+                        announcer_ip = str(announcement.get("announcer_ip") or "").strip()
+                        ip_value = announcer_ip or stream_ip
                         if not ip_value:
                             continue
 
                         port_value = announcement.get("port")
-                        identifier = f"{ip_value}:{port_value}" if port_value else ip_value
+
+                        legacy_device = None
+                        if stream_ip and stream_ip != ip_value:
+                            legacy_keys = {f"cpp_sap:{stream_ip}"}
+                            if port_value:
+                                legacy_keys.add(f"cpp_sap:{stream_ip}:{port_value}")
+                            for legacy_key in legacy_keys:
+                                popped = self.discovered_devices.pop(legacy_key, None)
+                                if popped and not legacy_device:
+                                    legacy_device = popped
+
+                        identifier_parts = [ip_value]
+                        if port_value:
+                            identifier_parts.append(str(port_value))
+                        if stream_ip and stream_ip != ip_value:
+                            identifier_parts.append(stream_ip)
+                        identifier = ":".join(identifier_parts)
 
                         properties = {
                             "source": "cpp_engine",
@@ -3244,13 +3261,39 @@ class ConfigurationManager(threading.Thread):
                             value = announcement.get(key)
                             if value is not None:
                                 properties[key] = value
+                        if stream_ip:
+                            properties.setdefault("stream_ip", stream_ip)
 
+                        if legacy_device:
+                            legacy_props = dict(legacy_device.properties or {})
+                            legacy_props.update(properties)
+                            properties = legacy_props
+
+                        if self._update_discovered_device_last_seen(
+                            method="cpp_sap",
+                            identifier=identifier,
+                            ip=ip_value,
+                            port=port_value,
+                            device_type="rtp_stream",
+                            properties=properties,
+                        ):
+                            continue
+
+                        display_port = port_value if port_value else "unknown"
                         if ip_value not in known_source_ips:
-                            _logger.info(
-                                "[Configuration Manager] Discovered SAP-announced source from C++ RTP Receiver: %s:%s",
-                                ip_value,
-                                port_value if port_value else "unknown",
-                            )
+                            if stream_ip and stream_ip != ip_value:
+                                _logger.info(
+                                    "[Configuration Manager] Discovered SAP-announced source from C++ RTP Receiver: announcer %s, stream %s:%s",
+                                    ip_value,
+                                    stream_ip,
+                                    display_port,
+                                )
+                            else:
+                                _logger.info(
+                                    "[Configuration Manager] Discovered SAP-announced source from C++ RTP Receiver: %s:%s",
+                                    ip_value,
+                                    display_port,
+                                )
                             known_source_ips.append(ip_value)
 
                         self._store_discovered_device(
@@ -3261,6 +3304,8 @@ class ConfigurationManager(threading.Thread):
                             port=port_value,
                             device_type="rtp_stream",
                             properties=properties,
+                            name=legacy_device.name if legacy_device and legacy_device.name else None,
+                            tag=legacy_device.tag if legacy_device and legacy_device.tag else None,
                         )
             except Exception as e:
                 _logger.error("[Configuration Manager] Error processing SAP announcements from C++ RTP Receiver: %s", e)

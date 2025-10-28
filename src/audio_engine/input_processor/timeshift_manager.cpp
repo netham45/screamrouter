@@ -834,7 +834,8 @@ void TimeshiftManager::cleanup_global_buffer_unlocked() {
     auto oldest_allowed_time_by_duration = std::chrono::steady_clock::now() - max_buffer_duration_sec_;
     
     size_t remove_count = 0;
-    for (const auto& packet : global_timeshift_buffer_) {
+    for (size_t i = 0; i < global_timeshift_buffer_.size(); ++i) {
+        const auto& packet = global_timeshift_buffer_[i];
         if (packet.received_time < oldest_allowed_time_by_duration) {
             remove_count++;
         } else {
@@ -888,7 +889,7 @@ void TimeshiftManager::cleanup_global_buffer_unlocked() {
                 }
             }
         }
-        global_timeshift_buffer_.erase(global_timeshift_buffer_.begin(), global_timeshift_buffer_.begin() + remove_count);
+        global_timeshift_buffer_.pop_front(remove_count);
     } else {
         LOG_CPP_DEBUG("[TimeshiftManager] Cleanup: No packets older than max duration to remove.");
     }

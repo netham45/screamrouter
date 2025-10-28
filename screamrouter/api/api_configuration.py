@@ -145,14 +145,20 @@ class APIConfiguration():
                     raise HTTPException(status_code=400, detail="Per-process source missing tag")
                 self._configuration_controller.auto_add_process_source(device.tag)
             else:
-                if not device.ip:
+                target_ip = device.ip
+                if device.discovery_method == "cpp_sap" and device.properties:
+                    stream_ip = device.properties.get("stream_ip")
+                    if isinstance(stream_ip, str) and stream_ip.strip():
+                        target_ip = stream_ip.strip()
+
+                if not target_ip:
                     raise HTTPException(status_code=400, detail="Discovered source missing IP")
                 service_info = {
                     "name": device.name,
                     "port": device.port,
                     "properties": device.properties or {},
                 }
-                self._configuration_controller.auto_add_source(IPAddressType(device.ip), service_info)
+                self._configuration_controller.auto_add_source(IPAddressType(target_ip), service_info)
 
             self._configuration_controller.discovered_devices.pop(device_key, None)
             return {"status": "ok"}

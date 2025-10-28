@@ -435,7 +435,7 @@ void AudioProcessor::volumeAdjust() {
 
 void AudioProcessor::resample() {
     PROFILE_FUNCTION();
-    /*if (!isProcessingRequired() || m_upsampler == nullptr) {
+    if (!isProcessingRequired() || m_upsampler == nullptr) {
         size_t samples_to_copy = scale_buffer_pos;
         if (samples_to_copy > scaled_float_buffer_.size()) {
             LOG_CPP_ERROR("[AudioProc] Error: scale_buffer_pos (%zu) exceeds scaled_float_buffer_ size (%zu) in resample bypass.", samples_to_copy, scaled_float_buffer_.size());
@@ -449,7 +449,7 @@ void AudioProcessor::resample() {
         resample_float_out_buffer_.resize(samples_to_copy);
         resample_buffer_pos = samples_to_copy;
         return;
-    }*/
+    }
 
     if (scale_buffer_pos == 0) {
         resample_buffer_pos = 0;
