@@ -93,6 +93,9 @@ def settings_to_dict(settings: AudioEngineSettings):
             "mp3_bitrate_kbps": settings.mixer_tuning.mp3_bitrate_kbps,
             "mp3_vbr_enabled": settings.mixer_tuning.mp3_vbr_enabled,
             "mp3_output_queue_max_size": settings.mixer_tuning.mp3_output_queue_max_size,
+            "underrun_hold_timeout_ms": settings.mixer_tuning.underrun_hold_timeout_ms,
+            "host_jitter_skip_threshold_ms": settings.mixer_tuning.host_jitter_skip_threshold_ms,
+            "host_jitter_skip_grace_ms": settings.mixer_tuning.host_jitter_skip_grace_ms,
         },
         "source_processor_tuning": {
             "command_loop_sleep_ms": settings.source_processor_tuning.command_loop_sleep_ms,

@@ -259,6 +259,9 @@ export interface MixerTuning {
   mp3_bitrate_kbps: number;
   mp3_vbr_enabled: boolean;
   mp3_output_queue_max_size: number;
+  underrun_hold_timeout_ms: number;
+  host_jitter_skip_threshold_ms: number;
+  host_jitter_skip_grace_ms: number;
 }
 
 export interface SourceProcessorTuning {

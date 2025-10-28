@@ -16,7 +16,7 @@
 
 #include <string>
 #include <vector>
-#include "../utils/object_ring_buffer.h"
+#include <deque>
 #include "stream_clock.h"
 #include <map>
 #include <chrono>
@@ -226,7 +226,7 @@ protected:
     void run() override;
 
 private:
-    ::screamrouter::audio::utils::ObjectRingBuffer<TaggedAudioPacket> global_timeshift_buffer_;
+    std::deque<TaggedAudioPacket> global_timeshift_buffer_;
     // Map: source_tag -> instance_id -> ProcessorTargetInfo
     std::map<std::string, std::map<std::string, ProcessorTargetInfo>> processor_targets_;
     std::mutex data_mutex_;

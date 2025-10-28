@@ -413,7 +413,9 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("mp3_bitrate_kbps", &MixerTuning::mp3_bitrate_kbps)
         .def_readwrite("mp3_vbr_enabled", &MixerTuning::mp3_vbr_enabled)
         .def_readwrite("mp3_output_queue_max_size", &MixerTuning::mp3_output_queue_max_size)
-        .def_readwrite("underrun_hold_timeout_ms", &MixerTuning::underrun_hold_timeout_ms);
+        .def_readwrite("underrun_hold_timeout_ms", &MixerTuning::underrun_hold_timeout_ms)
+        .def_readwrite("host_jitter_skip_threshold_ms", &MixerTuning::host_jitter_skip_threshold_ms)
+        .def_readwrite("host_jitter_skip_grace_ms", &MixerTuning::host_jitter_skip_grace_ms);
 
     py::class_<SourceProcessorTuning>(m, "SourceProcessorTuning")
         .def(py::init<>())

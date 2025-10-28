@@ -53,6 +53,8 @@ struct MixerTuning {
     bool mp3_vbr_enabled = false;
     int mp3_output_queue_max_size = 10;
     long underrun_hold_timeout_ms = 250;
+    double host_jitter_skip_threshold_ms = 1.5;
+    double host_jitter_skip_grace_ms = 24.0;
 };
 
 struct SourceProcessorTuning {
