@@ -214,7 +214,8 @@ private:
     std::vector<int32_t> stereo_buffer_;
     std::vector<uint8_t> payload_buffer_;
     size_t payload_buffer_write_pos_ = 0;
-    
+    uint64_t pending_skip_chunks_{0};
+
     std::vector<uint32_t> current_csrcs_;
     std::mutex csrc_mutex_;
 
@@ -246,6 +247,7 @@ private:
     bool wait_for_source_data();
     TickTiming await_mix_tick();
     void ensure_clock_condition_registered();
+    void drop_pending_payload_chunks();
     void mix_buffers();
     void downscale_buffer();
     size_t preprocess_for_listeners_and_mp3();
@@ -283,6 +285,14 @@ private:
     double profiling_send_gap_min_ms_{std::numeric_limits<double>::infinity()};
     double profiling_last_send_gap_ms_{0.0};
     uint64_t profiling_send_gap_samples_{0};
+    uint64_t profiling_host_late_events_{0};
+    long double profiling_host_late_ns_sum_{0.0L};
+    uint64_t profiling_host_late_ns_max_{0};
+    uint64_t profiling_host_late_ns_min_{std::numeric_limits<uint64_t>::max()};
+    uint64_t profiling_last_host_late_ns_{0};
+    uint64_t profiling_payload_chunks_skipped_{0};
+    uint64_t profiling_payload_bytes_skipped_{0};
+    double profiling_last_skip_ms_{0.0};
 
     // Detailed operation timings
     long double profiling_mix_ns_sum_{0.0L};
@@ -318,7 +328,6 @@ private:
     std::chrono::microseconds calculate_mix_period(int sample_rate, int channels, int bit_depth) const;
     void register_mix_timer();
     void unregister_mix_timer();
-    bool wait_for_mix_tick();
 };
 
 } // namespace audio

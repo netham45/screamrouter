@@ -436,7 +436,7 @@ void SinkAudioMixer::stop() {
         std::lock_guard<std::mutex> lock(listener_senders_mutex_);
         listeners = listener_senders_.size();
     }
-    LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_write_pos_, clock_manager_enabled_.load() ? 1 : 0);
+    LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_handle_valid=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_write_pos_, clock_condition_handle_.valid() ? 1 : 0);
     stop_flag_ = true;
 
     if (mix_scheduler_) {
@@ -1086,6 +1086,14 @@ void SinkAudioMixer::reset_profiler_counters() {
     profiling_mp3_ns_max_ = 0;
     profiling_mp3_ns_min_ = std::numeric_limits<uint64_t>::max();
     profiling_source_underruns_.clear();
+    profiling_host_late_events_ = 0;
+    profiling_host_late_ns_sum_ = 0.0L;
+    profiling_host_late_ns_max_ = 0;
+    profiling_host_late_ns_min_ = std::numeric_limits<uint64_t>::max();
+    profiling_last_host_late_ns_ = 0;
+    profiling_payload_chunks_skipped_ = 0;
+    profiling_payload_bytes_skipped_ = 0;
+    profiling_last_skip_ms_ = 0.0;
 }
 
 void SinkAudioMixer::maybe_log_profiler() {
@@ -1155,6 +1163,23 @@ void SinkAudioMixer::maybe_log_profiler() {
     }
     double total_hold_ms = profiling_underrun_hold_time_ms_ + active_hold_ms;
 
+    double last_host_late_ms = static_cast<double>(profiling_last_host_late_ns_) / 1'000'000.0;
+    double avg_host_late_ms = 0.0;
+    double max_host_late_ms = 0.0;
+    double min_host_late_ms = 0.0;
+    if (profiling_host_late_events_ > 0) {
+        auto avg_ns = profiling_host_late_ns_sum_ / static_cast<long double>(profiling_host_late_events_);
+        avg_host_late_ms = static_cast<double>(avg_ns / 1'000'000.0L);
+        max_host_late_ms = static_cast<double>(profiling_host_late_ns_max_) / 1'000'000.0;
+        if (profiling_host_late_ns_min_ != std::numeric_limits<uint64_t>::max()) {
+            min_host_late_ms = static_cast<double>(profiling_host_late_ns_min_) / 1'000'000.0;
+        }
+    }
+
+    uint64_t total_skipped_chunks = profiling_payload_chunks_skipped_;
+    uint64_t total_skipped_bytes = profiling_payload_bytes_skipped_;
+    double last_skip_ms = profiling_last_skip_ms_;
+
     // Operation timing averages in ms
     auto avg_mix_ms = (profiling_mix_calls_ > 0 && profiling_mix_ns_sum_ > 0.0L) ? static_cast<double>(profiling_mix_ns_sum_ / 1'000'000.0L) / static_cast<double>(profiling_mix_calls_) : 0.0;
     auto avg_downscale_ms = (profiling_downscale_calls_ > 0 && profiling_downscale_ns_sum_ > 0.0L) ? static_cast<double>(profiling_downscale_ns_sum_ / 1'000'000.0L) / static_cast<double>(profiling_downscale_calls_) : 0.0;
@@ -1163,7 +1188,7 @@ void SinkAudioMixer::maybe_log_profiler() {
     auto avg_mp3_ms = (profiling_mp3_calls_ > 0 && profiling_mp3_ns_sum_ > 0.0L) ? static_cast<double>(profiling_mp3_ns_sum_ / 1'000'000.0L) / static_cast<double>(profiling_mp3_calls_) : 0.0;
 
     LOG_CPP_INFO(
-        "[Profiler][SinkMixer:%s] cycles=%llu data_cycles=%llu chunks_sent=%llu payload_kib=%.2f active_inputs=%zu/%zu avg_ready=%.2f avg_lagging=%.2f avg_queue=%.2f max_queue=%zu buffer_bytes(current/peak)=(%zu/%zu) underruns=%llu overflows=%llu mp3_overflows=%llu dwell_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu send_gap_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu underrun_hold_ms(total=%.2f active=%.2f last=%.2f events=%llu active=%s) timings_ms[mix(avg/max/min)=%.3f/%.3f/%.3f downscale(avg/max/min)=%.3f/%.3f/%.3f preprocess(avg/max/min)=%.3f/%.3f/%.3f dispatch(avg/max/min)=%.3f/%.3f/%.3f mp3(avg/max/min)=%.3f/%.3f/%.3f]",
+        "[Profiler][SinkMixer:%s] cycles=%llu data_cycles=%llu chunks_sent=%llu payload_kib=%.2f active_inputs=%zu/%zu avg_ready=%.2f avg_lagging=%.2f avg_queue=%.2f max_queue=%zu buffer_bytes(current/peak)=(%zu/%zu) underruns=%llu overflows=%llu mp3_overflows=%llu dwell_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu send_gap_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu underrun_hold_ms(total=%.2f active=%.2f last=%.2f events=%llu active=%s) timings_ms[mix(avg/max/min)=%.3f/%.3f/%.3f downscale(avg/max/min)=%.3f/%.3f/%.3f preprocess(avg/max/min)=%.3f/%.3f/%.3f dispatch(avg/max/min)=%.3f/%.3f/%.3f mp3(avg/max/min)=%.3f/%.3f/%.3f] host_late_ms(last/avg/max/min/events)=%.3f/%.3f/%.3f/%.3f/%llu payload_skip(chunks_total=%llu bytes_total=%llu last_ms=%.3f)",
         config_.sink_id.c_str(),
         static_cast<unsigned long long>(profiling_cycles_),
         static_cast<unsigned long long>(profiling_data_ready_cycles_),
@@ -1209,7 +1234,15 @@ void SinkAudioMixer::maybe_log_profiler() {
         profiling_dispatch_ns_min_ == std::numeric_limits<uint64_t>::max() ? 0.0 : static_cast<double>(profiling_dispatch_ns_min_) / 1'000'000.0,
         avg_mp3_ms,
         static_cast<double>(profiling_mp3_ns_max_) / 1'000'000.0,
-        profiling_mp3_ns_min_ == std::numeric_limits<uint64_t>::max() ? 0.0 : static_cast<double>(profiling_mp3_ns_min_) / 1'000'000.0);
+        profiling_mp3_ns_min_ == std::numeric_limits<uint64_t>::max() ? 0.0 : static_cast<double>(profiling_mp3_ns_min_) / 1'000'000.0,
+        last_host_late_ms,
+        avg_host_late_ms,
+        max_host_late_ms,
+        min_host_late_ms,
+        static_cast<unsigned long long>(profiling_host_late_events_),
+        static_cast<unsigned long long>(total_skipped_chunks),
+        static_cast<unsigned long long>(total_skipped_bytes),
+        last_skip_ms);
 
     reset_profiler_counters();
     profiling_last_log_time_ = now;
@@ -1300,8 +1333,6 @@ std::chrono::microseconds SinkAudioMixer::calculate_mix_period(int samplerate, i
 void SinkAudioMixer::register_mix_timer() {
     clock_condition_handle_ = {};
     clock_last_sequence_ = 0;
-    clock_pending_ticks_ = 0;
-    clock_manager_enabled_.store(false, std::memory_order_release);
 
     timer_sample_rate_ = playback_sample_rate_ > 0 ? playback_sample_rate_ : 48000;
     timer_channels_ = std::clamp(playback_channels_, 1, 8);
@@ -1310,37 +1341,41 @@ void SinkAudioMixer::register_mix_timer() {
         timer_bit_depth_ = 16;
     }
 
-    if (!clock_manager_) {
-        try {
-            clock_manager_ = std::make_unique<ClockManager>();
-        } catch (const std::exception& ex) {
-            LOG_CPP_ERROR("[SinkMixer:%s] Failed to create ClockManager: %s",
-                          config_.sink_id.c_str(), ex.what());
+    try {
+        ensure_clock_condition_registered();
+    } catch (const std::exception& ex) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to register mix timer with ClockManager: %s",
+                      config_.sink_id.c_str(), ex.what());
+        throw;
+    }
+}
+
+void SinkAudioMixer::ensure_clock_condition_registered() {
+    if (clock_condition_handle_.valid()) {
+        if (clock_condition_handle_.condition) {
             return;
         }
+        clock_condition_handle_ = {};
     }
 
-    try {
-        clock_condition_handle_ = clock_manager_->register_clock_condition(
-            timer_sample_rate_, timer_channels_, timer_bit_depth_);
-        if (!clock_condition_handle_.valid()) {
-            throw std::runtime_error("ClockManager returned invalid condition handle");
-        }
-        if (auto condition = clock_condition_handle_.condition) {
-            std::lock_guard<std::mutex> condition_lock(condition->mutex);
-            condition->sequence = 0;
-        }
-        clock_last_sequence_ = 0;
-        clock_pending_ticks_ = 0;
-        clock_manager_enabled_.store(true, std::memory_order_release);
-        LOG_CPP_DEBUG("[SinkMixer:%s] Registered clock-managed mix timer (sr=%d ch=%d bit=%d) using conditions",
-                      config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_);
-    } catch (const std::exception& ex) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Failed to register mix timer condition with ClockManager: %s. Falling back to internal pacing.",
-                      config_.sink_id.c_str(), ex.what());
-        clock_condition_handle_ = {};
-        clock_manager_enabled_.store(false, std::memory_order_release);
+    if (!clock_manager_) {
+        clock_manager_ = std::make_unique<ClockManager>();
     }
+
+    ClockManager::ConditionHandle handle = clock_manager_->register_clock_condition(
+        timer_sample_rate_, timer_channels_, timer_bit_depth_);
+    if (!handle.valid() || !handle.condition) {
+        throw std::runtime_error("ClockManager returned invalid condition handle");
+    }
+
+    {
+        std::lock_guard<std::mutex> condition_lock(handle.condition->mutex);
+        clock_last_sequence_ = handle.condition->sequence;
+    }
+
+    clock_condition_handle_ = std::move(handle);
+    LOG_CPP_DEBUG("[SinkMixer:%s] Clock condition registered (sr=%d ch=%d bit=%d)",
+                  config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_);
 }
 
 void SinkAudioMixer::unregister_mix_timer() {
@@ -1353,30 +1388,98 @@ void SinkAudioMixer::unregister_mix_timer() {
         }
     }
 
-    clock_manager_enabled_.store(false, std::memory_order_release);
     clock_condition_handle_ = {};
     clock_last_sequence_ = 0;
-    clock_pending_ticks_ = 0;
     timer_sample_rate_ = 0;
     timer_channels_ = 0;
     timer_bit_depth_ = 0;
 }
 
-bool SinkAudioMixer::wait_for_mix_tick() {
-    const auto target_time = next_mix_time_ + dynamic_mix_interval_;
+SinkAudioMixer::TickTiming SinkAudioMixer::await_mix_tick() {
+    TickTiming timing;
 
-    if (!clock_manager_enabled_.load(std::memory_order_acquire)) {
-        auto now = std::chrono::steady_clock::now();
-        if (target_time > now) {
-            std::this_thread::sleep_until(target_time);
-        }
-        next_mix_time_ = target_time;
-        return !stop_flag_;
+    ensure_clock_condition_registered();
+
+    timing.scheduled_time = next_mix_time_ + dynamic_mix_interval_;
+    next_mix_time_ = timing.scheduled_time;
+
+    auto condition = clock_condition_handle_.condition;
+    if (!condition) {
+        clock_condition_handle_ = {};
+        throw std::runtime_error("ClockManager condition expired");
     }
 
-    std::this_thread::sleep_until(target_time);
-    next_mix_time_ = target_time;
-    return !stop_flag_;
+    uint64_t expected_sequence = clock_last_sequence_ + 1;
+
+    {
+        std::unique_lock<std::mutex> lock(condition->mutex);
+        condition->cv.wait(lock, [this, &condition, expected_sequence]() {
+            return stop_flag_ || condition->sequence >= expected_sequence;
+        });
+        timing.sequence = condition->sequence;
+    }
+
+    timing.wake_time = std::chrono::steady_clock::now();
+
+    if (timing.sequence < expected_sequence) {
+        timing.sequence = expected_sequence;
+    }
+    if (timing.sequence > expected_sequence) {
+        timing.missed_ticks = timing.sequence - expected_sequence;
+    }
+
+    clock_last_sequence_ = timing.sequence;
+
+    if (timing.wake_time > timing.scheduled_time) {
+        timing.lateness = timing.wake_time - timing.scheduled_time;
+    } else {
+        timing.lateness = std::chrono::nanoseconds::zero();
+    }
+
+    return timing;
+}
+
+void SinkAudioMixer::drop_pending_payload_chunks() {
+    if (pending_skip_chunks_ == 0) {
+        return;
+    }
+
+    constexpr size_t chunk_bytes = SINK_CHUNK_SIZE_BYTES;
+    if (chunk_bytes == 0 || payload_buffer_write_pos_ < chunk_bytes) {
+        return;
+    }
+
+    const size_t available_chunks = payload_buffer_write_pos_ / chunk_bytes;
+    if (available_chunks == 0) {
+        return;
+    }
+
+    const uint64_t chunks_to_drop = std::min<uint64_t>(pending_skip_chunks_, available_chunks);
+    const size_t bytes_to_drop = static_cast<size_t>(chunks_to_drop) * chunk_bytes;
+
+    if (bytes_to_drop == 0) {
+        return;
+    }
+
+    size_t bytes_remaining = payload_buffer_write_pos_ - bytes_to_drop;
+    if (bytes_remaining > 0) {
+        std::memmove(payload_buffer_.data(), payload_buffer_.data() + bytes_to_drop, bytes_remaining);
+    }
+    payload_buffer_write_pos_ = bytes_remaining;
+    pending_skip_chunks_ -= chunks_to_drop;
+
+    profiling_payload_chunks_skipped_ += chunks_to_drop;
+    profiling_payload_bytes_skipped_ += bytes_to_drop;
+
+    auto skipped_duration = dynamic_mix_interval_ * static_cast<int64_t>(chunks_to_drop);
+    profiling_last_skip_ms_ = static_cast<double>(skipped_duration.count()) / 1000.0;
+
+    LOG_CPP_DEBUG("[SinkMixer:%s] Dropped %llu chunk(s) (%zu bytes) from payload buffer due to host jitter. Remaining pending skips=%llu, buffer_bytes=%zu",
+                    config_.sink_id.c_str(),
+                    static_cast<unsigned long long>(chunks_to_drop),
+                    bytes_to_drop,
+                    static_cast<unsigned long long>(pending_skip_chunks_),
+                    payload_buffer_write_pos_);
 }
 
 void SinkAudioMixer::cleanup_closed_listeners() {
@@ -1424,6 +1527,7 @@ void SinkAudioMixer::clear_pending_audio() {
 
     underrun_silence_active_ = false;
     payload_buffer_write_pos_ = 0;
+    pending_skip_chunks_ = 0;
     profiling_max_payload_buffer_bytes_ = 0;
 }
 
@@ -1435,12 +1539,83 @@ void SinkAudioMixer::run() {
     next_mix_time_ = std::chrono::steady_clock::now();
 
     while (!stop_flag_) {
-        if (!wait_for_mix_tick()) {
+        TickTiming tick_timing;
+        try {
+            tick_timing = await_mix_tick();
+        } catch (const std::exception& ex) {
+            LOG_CPP_ERROR("[SinkMixer:%s] Mix tick wait failed: %s", config_.sink_id.c_str(), ex.what());
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
 
         if (stop_flag_) {
             break;
+        }
+
+        uint64_t schedule_corrections = 0;
+        if (dynamic_mix_interval_.count() > 0) {
+            while (next_mix_time_ < tick_timing.wake_time) {
+                next_mix_time_ += dynamic_mix_interval_;
+                schedule_corrections++;
+            }
+        }
+
+        const auto lateness_ns = tick_timing.lateness;
+        if (lateness_ns.count() > 0) {
+            profiling_last_host_late_ns_ = static_cast<uint64_t>(lateness_ns.count());
+            profiling_host_late_events_++;
+            profiling_host_late_ns_sum_ += static_cast<long double>(lateness_ns.count());
+            profiling_host_late_ns_max_ = std::max(profiling_host_late_ns_max_, static_cast<uint64_t>(lateness_ns.count()));
+            profiling_host_late_ns_min_ = std::min(profiling_host_late_ns_min_, static_cast<uint64_t>(lateness_ns.count()));
+        }
+
+        uint64_t skip_intervals = 0;
+        double threshold_ms = m_settings ? m_settings->mixer_tuning.host_jitter_skip_threshold_ms : 0.0;
+        if (threshold_ms < 0.0) {
+            threshold_ms = 0.0;
+        }
+        auto threshold_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::duration<double, std::milli>(threshold_ms));
+
+        if (lateness_ns > threshold_ns && lateness_ns.count() > 0) {
+            skip_intervals = schedule_corrections;
+            if (skip_intervals == 0 && dynamic_mix_interval_.count() > 0) {
+                auto chunk_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(dynamic_mix_interval_);
+                if (chunk_ns.count() > 0) {
+                    long double ratio = static_cast<long double>(lateness_ns.count()) /
+                                         static_cast<long double>(chunk_ns.count());
+                    skip_intervals = std::max<uint64_t>(1, static_cast<uint64_t>(std::ceil(ratio)));
+                }
+            }
+        }
+
+        if (skip_intervals > 0) {
+            skip_intervals = std::max(skip_intervals, tick_timing.missed_ticks);
+            pending_skip_chunks_ += skip_intervals;
+
+            auto skipped_duration = dynamic_mix_interval_ * static_cast<int64_t>(skip_intervals);
+            profiling_last_skip_ms_ = static_cast<double>(skipped_duration.count()) / 1000.0;
+
+            double grace_ms = m_settings ? m_settings->mixer_tuning.host_jitter_skip_grace_ms : 0.0;
+            if (grace_ms < 0.0) {
+                grace_ms = 0.0;
+            }
+            auto grace_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::duration<double, std::milli>(grace_ms));
+
+            if (lateness_ns > grace_ns && grace_ns.count() > 0) {
+                LOG_CPP_WARNING("[SinkMixer:%s] Host lateness %.3f ms exceeded grace window %.3f ms; pending skips now=%llu",
+                                config_.sink_id.c_str(),
+                                static_cast<double>(lateness_ns.count()) / 1'000'000.0,
+                                grace_ms,
+                                static_cast<unsigned long long>(pending_skip_chunks_));
+            } else {
+                LOG_CPP_DEBUG("[SinkMixer:%s] Host lateness %.3f ms triggered skip of %llu chunk(s); pending skips now=%llu",
+                              config_.sink_id.c_str(),
+                              static_cast<double>(lateness_ns.count()) / 1'000'000.0,
+                              static_cast<unsigned long long>(skip_intervals),
+                              static_cast<unsigned long long>(pending_skip_chunks_));
+            }
         }
 
         profiling_cycles_++;
@@ -1497,6 +1672,7 @@ void SinkAudioMixer::run() {
         lock.unlock();
 
         downscale_buffer();
+        drop_pending_payload_chunks();
 
         const int effective_bit_depth = (playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0)
                                             ? playback_bit_depth_
