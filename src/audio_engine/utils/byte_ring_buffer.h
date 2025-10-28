@@ -14,6 +14,10 @@ class ByteRingBuffer {
 public:
     ByteRingBuffer() = default;
 
+    bool empty() const { return size_ == 0; }
+    std::size_t size() const { return size_; }
+    std::size_t capacity() const { return buffer_.size(); }
+
     void reserve(std::size_t capacity) {
         ensure_capacity(capacity);
     }
@@ -22,9 +26,6 @@ public:
         head_ = 0;
         size_ = 0;
     }
-
-    std::size_t size() const { return size_; }
-    bool empty() const { return size_ == 0; }
 
     void write(const uint8_t* data, std::size_t bytes) {
         if (!data || bytes == 0) {
@@ -55,6 +56,10 @@ public:
         head_ = (head_ + to_read) % buffer_.size();
         size_ -= to_read;
         return to_read;
+    }
+
+    const uint8_t* data_at(std::size_t offset) const {
+        return buffer_.data() + ((head_ + offset) % buffer_.size());
     }
 
 private:
@@ -89,4 +94,3 @@ private:
 } // namespace utils
 } // namespace audio
 } // namespace screamrouter
-

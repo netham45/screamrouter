@@ -248,6 +248,9 @@ private:
     TickTiming await_mix_tick();
     void ensure_clock_condition_registered();
     void drop_pending_payload_chunks();
+    void emit_telemetry_if_due(std::chrono::steady_clock::time_point now);
+    void reset_telemetry_counters(std::chrono::steady_clock::time_point now);
+    void reset_slip_tracking(std::chrono::steady_clock::time_point reference_time);
     void mix_buffers();
     void downscale_buffer();
     size_t preprocess_for_listeners_and_mp3();
@@ -285,14 +288,34 @@ private:
     double profiling_send_gap_min_ms_{std::numeric_limits<double>::infinity()};
     double profiling_last_send_gap_ms_{0.0};
     uint64_t profiling_send_gap_samples_{0};
-    uint64_t profiling_host_late_events_{0};
-    long double profiling_host_late_ns_sum_{0.0L};
-    uint64_t profiling_host_late_ns_max_{0};
-    uint64_t profiling_host_late_ns_min_{std::numeric_limits<uint64_t>::max()};
-    uint64_t profiling_last_host_late_ns_{0};
+    double profiling_last_slip_ms_{0.0};
+    long double profiling_slip_sum_ms_{0.0L};
+    double profiling_slip_max_ms_{0.0};
+    double profiling_slip_min_ms_{std::numeric_limits<double>::infinity()};
+    uint64_t profiling_slip_events_{0};
     uint64_t profiling_payload_chunks_skipped_{0};
     uint64_t profiling_payload_bytes_skipped_{0};
     double profiling_last_skip_ms_{0.0};
+
+    std::chrono::steady_clock::time_point telemetry_last_emit_{};
+    std::chrono::milliseconds telemetry_emit_interval_{std::chrono::milliseconds(3000)};
+    double telemetry_last_slip_ms_{0.0};
+    long double telemetry_slip_sum_ms_{0.0L};
+    double telemetry_slip_max_ms_{0.0};
+    double telemetry_slip_min_ms_{std::numeric_limits<double>::infinity()};
+    uint64_t telemetry_pending_skip_chunks_total_{0};
+    uint64_t telemetry_pending_skip_chunks_peak_{0};
+    uint64_t telemetry_payload_chunks_skipped_total_{0};
+    uint64_t telemetry_samples_{0};
+    double telemetry_last_dwell_ms_{0.0};
+    long double telemetry_dwell_sum_ms_{0.0L};
+    double telemetry_dwell_max_ms_{0.0};
+    double telemetry_dwell_min_ms_{std::numeric_limits<double>::infinity()};
+    uint64_t telemetry_dwell_samples_{0};
+
+    std::chrono::steady_clock::time_point slip_reference_time_{};
+    uint64_t slip_chunks_sent_{0};
+    uint64_t slip_chunks_dropped_{0};
 
     // Detailed operation timings
     long double profiling_mix_ns_sum_{0.0L};

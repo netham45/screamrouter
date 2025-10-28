@@ -72,8 +72,6 @@ SourceInputProcessor::SourceInputProcessor(
 
     // initialize_audio_processor(); // Removed
     audio_processor_ = nullptr; // Set audio_processor_ to nullptr initially
-    process_buffer_.reserve(OUTPUT_CHUNK_SAMPLES * sizeof(int32_t) * 4);
-
     LOG_CPP_INFO("[SourceProc:%s] Initialization complete.", config_.instance_id.c_str());
 }
 
@@ -287,12 +285,20 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
     if (actual_samples_processed > 0) {
         // Ensure we don't read past the actual size of the temporary buffer, although actual_samples_processed should be <= its size.
         size_t samples_to_insert = std::min(static_cast<size_t>(actual_samples_processed), processor_output_buffer.size());
-        const size_t bytes_to_insert = samples_to_insert * sizeof(int32_t);
-        process_buffer_.write(reinterpret_cast<const uint8_t*>(processor_output_buffer.data()), bytes_to_insert);
-        const size_t buffered_samples = process_buffer_.size() / sizeof(int32_t);
-        profiling_peak_process_buffer_samples_ = std::max(profiling_peak_process_buffer_samples_, buffered_samples);
-        LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Appended %zu samples. process_buffer_ size=%zu samples.",
-                      config_.instance_id.c_str(), samples_to_insert, buffered_samples);
+        
+        // Append the correctly processed samples to the internal process_buffer_
+        try {
+            process_buffer_.insert(process_buffer_.end(),
+                                   processor_output_buffer.begin(),
+                                   processor_output_buffer.begin() + samples_to_insert);
+            profiling_peak_process_buffer_samples_ = std::max(profiling_peak_process_buffer_samples_, process_buffer_.size());
+        } catch (const std::bad_alloc& e) {
+             LOG_CPP_ERROR("[SourceProc:%s] Failed to insert into process_buffer_: %s", config_.instance_id.c_str(), e.what());
+             // Handle allocation failure, maybe clear buffer or stop processing?
+             process_buffer_.clear(); // Example: clear buffer to prevent further issues
+             return;
+        }
+        LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Appended %zu samples. process_buffer_ size=%zu samples.", config_.instance_id.c_str(), samples_to_insert, process_buffer_.size());
     } else if (actual_samples_processed < 0) {
          // processAudio returned an error code (e.g., -1)
          LOG_CPP_ERROR("[SourceProc:%s] AudioProcessor::processAudio returned an error code: %d", config_.instance_id.c_str(), actual_samples_processed);
@@ -305,38 +311,32 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
 void SourceInputProcessor::push_output_chunk_if_ready() {
     // Check if we have enough samples for a full output chunk
     size_t required_samples = OUTPUT_CHUNK_SAMPLES; // Should be 576 for 16-bit stereo sink target
-    size_t current_buffer_samples = process_buffer_.size() / sizeof(int32_t);
+    size_t current_buffer_size = process_buffer_.size();
 
-    LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Checking buffer. Current=%zu samples. Required=%zu samples.",
-                  config_.instance_id.c_str(), current_buffer_samples, required_samples);
+    LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Checking buffer. Current=%zu samples. Required=%zu samples.", config_.instance_id.c_str(), current_buffer_size, required_samples);
 
-    while (output_queue_ && current_buffer_samples >= required_samples) { // Check queue pointer
+    while (output_queue_ && current_buffer_size >= required_samples) { // Check queue pointer
         ProcessedAudioChunk output_chunk;
-        output_chunk.audio_data.resize(required_samples);
-        const size_t bytes_to_pop = required_samples * sizeof(int32_t);
-        const size_t popped = process_buffer_.pop(reinterpret_cast<uint8_t*>(output_chunk.audio_data.data()), bytes_to_pop);
-        if (popped != bytes_to_pop) {
-            LOG_CPP_ERROR("[SourceProc:%s] PushOutput: Expected %zu bytes but popped %zu. Restoring and aborting push.",
-                          config_.instance_id.c_str(), bytes_to_pop, popped);
-            if (popped > 0) {
-                process_buffer_.write(reinterpret_cast<const uint8_t*>(output_chunk.audio_data.data()), popped);
-            }
-            break;
-        }
+        // Copy the required number of samples
+         output_chunk.audio_data.assign(process_buffer_.begin(), process_buffer_.begin() + required_samples);
+         output_chunk.ssrcs = current_packet_ssrcs_;
+         output_chunk.produced_time = std::chrono::steady_clock::now();
+         output_chunk.playback_rate = m_current_playback_rate;
+         size_t pushed_samples = output_chunk.audio_data.size();
 
-        output_chunk.ssrcs = current_packet_ssrcs_;
-        output_chunk.produced_time = std::chrono::steady_clock::now();
-        output_chunk.playback_rate = m_current_playback_rate;
+         // Push to the output queue
+         LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Pushing chunk with %zu samples (Expected=%zu) to Sink queue.", config_.instance_id.c_str(), pushed_samples, required_samples);
+         if (pushed_samples != required_samples) {
+             LOG_CPP_ERROR("[SourceProc:%s] PushOutput: Mismatch between pushed samples (%zu) and required samples (%zu).", config_.instance_id.c_str(), pushed_samples, required_samples);
+         }
+         output_queue_->push(std::move(output_chunk));
+         profiling_chunks_pushed_++;
 
-        LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Pushing chunk with %zu samples (Expected=%zu) to Sink queue.",
-                      config_.instance_id.c_str(), output_chunk.audio_data.size(), required_samples);
-        output_queue_->push(std::move(output_chunk));
-        profiling_chunks_pushed_++;
+         // Remove the copied samples from the process buffer
+        process_buffer_.erase(process_buffer_.begin(), process_buffer_.begin() + required_samples);
+        current_buffer_size = process_buffer_.size(); // Update size after erasing
 
-        current_buffer_samples = process_buffer_.size() / sizeof(int32_t); // Update size after popping
-
-        LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Pushed chunk. Remaining process_buffer_ size=%zu samples.",
-                      config_.instance_id.c_str(), current_buffer_samples);
+        LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Pushed chunk. Remaining process_buffer_ size=%zu samples.", config_.instance_id.c_str(), current_buffer_size);
     }
 }
 
@@ -347,7 +347,7 @@ void SourceInputProcessor::reset_profiler_counters() {
     profiling_discarded_packets_ = 0;
     profiling_processing_ns_ = 0;
     profiling_processing_samples_ = 0;
-    profiling_peak_process_buffer_samples_ = process_buffer_.size() / sizeof(int32_t);
+    profiling_peak_process_buffer_samples_ = process_buffer_.size();
     profiling_input_queue_sum_ = 0;
     profiling_output_queue_sum_ = 0;
     profiling_queue_samples_ = 0;
@@ -369,7 +369,7 @@ void SourceInputProcessor::maybe_log_profiler() {
         return;
     }
 
-    size_t current_process_buffer = process_buffer_.size() / sizeof(int32_t);
+    size_t current_process_buffer = process_buffer_.size();
     size_t input_queue_size = input_queue_ ? input_queue_->size() : 0;
     size_t output_queue_size = output_queue_ ? output_queue_->size() : 0;
 

@@ -13,7 +13,6 @@
 #include "../utils/audio_component.h"
 #include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
-#include "../utils/byte_ring_buffer.h"
 #include "../audio_processor/audio_processor.h"
 #include "../configuration/audio_engine_settings.h"
 
@@ -149,7 +148,7 @@ private:
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::mutex processor_config_mutex_;
 
-    ::screamrouter::audio::utils::ByteRingBuffer process_buffer_;
+    std::vector<int32_t> process_buffer_; // This will be repurposed as the resampler output buffer
     std::vector<uint32_t> current_packet_ssrcs_;
     double m_current_playback_rate = 1.0;
 

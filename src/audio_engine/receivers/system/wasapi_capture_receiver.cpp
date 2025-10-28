@@ -12,7 +12,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <vector>
 
 namespace screamrouter {
 namespace audio {
@@ -84,7 +83,7 @@ WasapiCaptureReceiver::WasapiCaptureReceiver(std::string device_tag,
 {
     loopback_mode_ = system_audio::tag_has_prefix(device_tag_, system_audio::kWasapiLoopbackPrefix) || capture_params_.loopback;
     exclusive_mode_ = capture_params_.exclusive_mode;
-    chunk_buffer_.reserve(kChunkSize * 2);
+    chunk_accumulator_.reserve(kChunkSize * 2);
 }
 
 WasapiCaptureReceiver::~WasapiCaptureReceiver() noexcept {
@@ -211,69 +210,20 @@ bool WasapiCaptureReceiver::configure_audio_client() {
         stream_flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
     }
 
-    REFERENCE_TIME default_period = 0;
-    REFERENCE_TIME minimum_period = 0;
-    hr = audio_client_->GetDevicePeriod(&default_period, &minimum_period);
-    if (FAILED(hr)) {
-        LOG_CPP_WARNING("[WasapiCapture:%s] GetDevicePeriod failed: 0x%lx", device_tag_.c_str(), hr);
-        default_period = 0;
-        minimum_period = 0;
-    }
-
-    const auto ms_to_reference = [](uint32_t ms) -> REFERENCE_TIME {
-        return static_cast<REFERENCE_TIME>(ms) * 10000;
-    };
-
-    std::vector<REFERENCE_TIME> candidate_durations;
+    REFERENCE_TIME buffer_duration = 0;
     if (capture_params_.buffer_duration_ms > 0) {
-        candidate_durations.push_back(ms_to_reference(capture_params_.buffer_duration_ms));
-    }
-    if (minimum_period > 0) {
-        candidate_durations.push_back(minimum_period);
-    }
-    if (default_period > 0) {
-        candidate_durations.push_back(default_period);
-    }
-    candidate_durations.push_back(0);
-
-    auto remove_duplicates = [](std::vector<REFERENCE_TIME>& values) {
-        std::vector<REFERENCE_TIME> unique;
-        unique.reserve(values.size());
-        for (REFERENCE_TIME value : values) {
-            if (std::find(unique.begin(), unique.end(), value) == unique.end()) {
-                unique.push_back(value);
-            }
-        }
-        values.swap(unique);
-    };
-    remove_duplicates(candidate_durations);
-
-    HRESULT init_hr = E_FAIL;
-    REFERENCE_TIME chosen_duration = 0;
-    for (REFERENCE_TIME duration : candidate_durations) {
-        init_hr = audio_client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                                            stream_flags,
-                                            duration,
-                                            0,
-                                            format_ptr_,
-                                            nullptr);
-        if (SUCCEEDED(init_hr)) {
-            chosen_duration = duration;
-            break;
-        }
-        LOG_CPP_WARNING("[WasapiCapture:%s] Initialize failed for duration %lld (0x%lx).", device_tag_.c_str(), static_cast<long long>(duration), init_hr);
-        if (duration == 0) {
-            break;
-        }
+        buffer_duration = static_cast<REFERENCE_TIME>(capture_params_.buffer_duration_ms) * 10000;
     }
 
-    if (FAILED(init_hr)) {
-        LOG_CPP_ERROR("[WasapiCapture:%s] IAudioClient::Initialize failed after trying candidates.", device_tag_.c_str());
+    hr = audio_client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                   stream_flags,
+                                   buffer_duration,
+                                   0,
+                                   format_ptr_,
+                                   nullptr);
+    if (FAILED(hr)) {
+        LOG_CPP_ERROR("[WasapiCapture:%s] IAudioClient::Initialize failed: 0x%lx", device_tag_.c_str(), hr);
         return false;
-    }
-
-    if (chosen_duration != 0) {
-        LOG_CPP_INFO("[WasapiCapture:%s] Using buffer duration %lld (100ns units).", device_tag_.c_str(), static_cast<long long>(chosen_duration));
     }
 
     hr = audio_client_->GetService(IID_PPV_ARGS(&capture_client_));
@@ -294,33 +244,6 @@ bool WasapiCaptureReceiver::configure_audio_client() {
     if (FAILED(hr)) {
         LOG_CPP_ERROR("[WasapiCapture:%s] SetEventHandle failed: 0x%lx", device_tag_.c_str(), hr);
         return false;
-    }
-
-    UINT32 buffer_frames = 0;
-    hr = audio_client_->GetBufferSize(&buffer_frames);
-    if (FAILED(hr)) {
-        LOG_CPP_WARNING("[WasapiCapture:%s] GetBufferSize failed: 0x%lx", device_tag_.c_str(), hr);
-        buffer_frames = 0;
-    }
-
-    const REFERENCE_TIME basis_period = (chosen_duration != 0) ? chosen_duration : (minimum_period != 0 ? minimum_period : default_period);
-    size_t period_frames = 0;
-    if (basis_period > 0 && active_sample_rate_ > 0) {
-        period_frames = static_cast<size_t>((static_cast<uint64_t>(basis_period) * active_sample_rate_ + 9'999'999) / 10'000'000);
-    }
-    if (period_frames == 0 && buffer_frames > 0) {
-        period_frames = buffer_frames;
-    }
-    if (period_frames == 0) {
-        period_frames = std::max<size_t>(1, kChunkSize / std::max<size_t>(1, target_bytes_per_frame_));
-    }
-
-    const size_t new_chunk_bytes = std::max<size_t>(target_bytes_per_frame_, period_frames * target_bytes_per_frame_);
-    if (new_chunk_bytes != chunk_bytes_) {
-        LOG_CPP_INFO("[WasapiCapture:%s] Adjusting chunk size from %zu to %zu bytes (frames=%zu).",
-                     device_tag_.c_str(), chunk_bytes_, new_chunk_bytes, period_frames);
-        chunk_bytes_ = new_chunk_bytes;
-        chunk_buffer_.reserve(chunk_bytes_ * 2);
     }
 
     return true;
@@ -527,34 +450,26 @@ void WasapiCaptureReceiver::process_packet(BYTE* data, UINT32 frames, DWORD flag
         accumulator_frame_position_ = device_frame_position;
         accumulator_position_initialized_ = true;
     } else {
-        size_t frames_in_accumulator = chunk_buffer_.size() / target_bytes_per_frame_;
+        size_t frames_in_accumulator = chunk_accumulator_.size() / target_bytes_per_frame_;
         uint64_t expected_position = accumulator_frame_position_ + frames_in_accumulator;
         if (device_frame_position != expected_position) {
             LOG_CPP_WARNING("[WasapiCapture:%s] Device position jump detected. expected=%llu actual=%llu. Resetting accumulator.",
                             device_tag_.c_str(),
                             static_cast<unsigned long long>(expected_position),
                             static_cast<unsigned long long>(device_frame_position));
-            chunk_buffer_.clear();
+            chunk_accumulator_.clear();
             accumulator_frame_position_ = device_frame_position;
         }
     }
 
-    chunk_buffer_.write(src_ptr, bytes_from_packet);
+    chunk_accumulator_.insert(chunk_accumulator_.end(), src_ptr, src_ptr + bytes_from_packet);
 
-    while (chunk_buffer_.size() >= chunk_bytes_) {
+    while (chunk_accumulator_.size() >= chunk_bytes_) {
         std::vector<uint8_t> chunk(chunk_bytes_);
-        const std::size_t popped = chunk_buffer_.pop(chunk.data(), chunk_bytes_);
-        if (popped == 0) {
-            break;
-        }
-        chunk.resize(popped);
+        std::copy_n(chunk_accumulator_.begin(), chunk_bytes_, chunk.begin());
+        chunk_accumulator_.erase(chunk_accumulator_.begin(), chunk_accumulator_.begin() + chunk_bytes_);
         dispatch_chunk(std::move(chunk), accumulator_frame_position_);
-        if (target_bytes_per_frame_ > 0) {
-            if (popped % target_bytes_per_frame_ != 0) {
-                LOG_CPP_WARNING("[WasapiCapture:%s] Chunk size misalignment detected (%zu bytes).", device_tag_.c_str(), popped);
-            }
-            accumulator_frame_position_ += popped / target_bytes_per_frame_;
-        }
+        accumulator_frame_position_ += chunk_bytes_ / target_bytes_per_frame_;
     }
 }
 
@@ -611,7 +526,7 @@ void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data, ui
 }
 
 void WasapiCaptureReceiver::reset_chunk_state() {
-    chunk_buffer_.clear();
+    chunk_accumulator_.clear();
     running_timestamp_ = 0;
     accumulator_position_initialized_ = false;
     accumulator_frame_position_ = 0;

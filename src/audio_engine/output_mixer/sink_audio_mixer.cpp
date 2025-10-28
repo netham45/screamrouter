@@ -512,6 +512,8 @@ bool SinkAudioMixer::start_internal() {
     stop_flag_ = false;
     payload_buffer_write_pos_ = 0;
     reset_profiler_counters();
+    reset_telemetry_counters(std::chrono::steady_clock::now());
+    reset_slip_tracking(std::chrono::steady_clock::now());
     set_playback_format(config_.output_samplerate, config_.output_channels, config_.output_bitdepth);
 
     clear_pending_audio();
@@ -640,6 +642,14 @@ bool SinkAudioMixer::wait_for_source_data() {
             } else {
                 profiling_chunk_dwell_min_ms_ = std::min(profiling_chunk_dwell_min_ms_, dwell_ms);
                 profiling_chunk_dwell_max_ms_ = std::max(profiling_chunk_dwell_max_ms_, dwell_ms);
+            }
+
+            telemetry_last_dwell_ms_ = dwell_ms;
+            telemetry_dwell_sum_ms_ += static_cast<long double>(dwell_ms);
+            telemetry_dwell_samples_++;
+            telemetry_dwell_max_ms_ = std::max(telemetry_dwell_max_ms_, dwell_ms);
+            if (dwell_ms < telemetry_dwell_min_ms_) {
+                telemetry_dwell_min_ms_ = dwell_ms;
             }
         }
 
@@ -1086,14 +1096,37 @@ void SinkAudioMixer::reset_profiler_counters() {
     profiling_mp3_ns_max_ = 0;
     profiling_mp3_ns_min_ = std::numeric_limits<uint64_t>::max();
     profiling_source_underruns_.clear();
-    profiling_host_late_events_ = 0;
-    profiling_host_late_ns_sum_ = 0.0L;
-    profiling_host_late_ns_max_ = 0;
-    profiling_host_late_ns_min_ = std::numeric_limits<uint64_t>::max();
-    profiling_last_host_late_ns_ = 0;
+    profiling_last_slip_ms_ = 0.0;
+    profiling_slip_sum_ms_ = 0.0L;
+    profiling_slip_max_ms_ = 0.0;
+    profiling_slip_min_ms_ = std::numeric_limits<double>::infinity();
+    profiling_slip_events_ = 0;
     profiling_payload_chunks_skipped_ = 0;
     profiling_payload_bytes_skipped_ = 0;
     profiling_last_skip_ms_ = 0.0;
+}
+
+void SinkAudioMixer::reset_telemetry_counters(std::chrono::steady_clock::time_point now) {
+    telemetry_last_emit_ = now;
+    telemetry_last_slip_ms_ = 0.0;
+    telemetry_slip_sum_ms_ = 0.0L;
+    telemetry_slip_max_ms_ = 0.0;
+    telemetry_slip_min_ms_ = std::numeric_limits<double>::infinity();
+    telemetry_pending_skip_chunks_total_ = 0;
+    telemetry_pending_skip_chunks_peak_ = pending_skip_chunks_;
+    telemetry_payload_chunks_skipped_total_ = 0;
+    telemetry_samples_ = 0;
+    telemetry_last_dwell_ms_ = 0.0;
+    telemetry_dwell_sum_ms_ = 0.0L;
+    telemetry_dwell_max_ms_ = 0.0;
+    telemetry_dwell_min_ms_ = std::numeric_limits<double>::infinity();
+    telemetry_dwell_samples_ = 0;
+}
+
+void SinkAudioMixer::reset_slip_tracking(std::chrono::steady_clock::time_point reference_time) {
+    slip_reference_time_ = reference_time;
+    slip_chunks_sent_ = 0;
+    slip_chunks_dropped_ = 0;
 }
 
 void SinkAudioMixer::maybe_log_profiler() {
@@ -1163,16 +1196,15 @@ void SinkAudioMixer::maybe_log_profiler() {
     }
     double total_hold_ms = profiling_underrun_hold_time_ms_ + active_hold_ms;
 
-    double last_host_late_ms = static_cast<double>(profiling_last_host_late_ns_) / 1'000'000.0;
-    double avg_host_late_ms = 0.0;
-    double max_host_late_ms = 0.0;
-    double min_host_late_ms = 0.0;
-    if (profiling_host_late_events_ > 0) {
-        auto avg_ns = profiling_host_late_ns_sum_ / static_cast<long double>(profiling_host_late_events_);
-        avg_host_late_ms = static_cast<double>(avg_ns / 1'000'000.0L);
-        max_host_late_ms = static_cast<double>(profiling_host_late_ns_max_) / 1'000'000.0;
-        if (profiling_host_late_ns_min_ != std::numeric_limits<uint64_t>::max()) {
-            min_host_late_ms = static_cast<double>(profiling_host_late_ns_min_) / 1'000'000.0;
+    double last_slip_ms = profiling_last_slip_ms_;
+    double avg_slip_ms = 0.0;
+    double max_slip_ms = 0.0;
+    double min_slip_ms = 0.0;
+    if (profiling_slip_events_ > 0) {
+        avg_slip_ms = static_cast<double>(profiling_slip_sum_ms_ / static_cast<long double>(profiling_slip_events_));
+        max_slip_ms = profiling_slip_max_ms_;
+        if (profiling_slip_min_ms_ != std::numeric_limits<double>::infinity()) {
+            min_slip_ms = profiling_slip_min_ms_;
         }
     }
 
@@ -1188,7 +1220,7 @@ void SinkAudioMixer::maybe_log_profiler() {
     auto avg_mp3_ms = (profiling_mp3_calls_ > 0 && profiling_mp3_ns_sum_ > 0.0L) ? static_cast<double>(profiling_mp3_ns_sum_ / 1'000'000.0L) / static_cast<double>(profiling_mp3_calls_) : 0.0;
 
     LOG_CPP_INFO(
-        "[Profiler][SinkMixer:%s] cycles=%llu data_cycles=%llu chunks_sent=%llu payload_kib=%.2f active_inputs=%zu/%zu avg_ready=%.2f avg_lagging=%.2f avg_queue=%.2f max_queue=%zu buffer_bytes(current/peak)=(%zu/%zu) underruns=%llu overflows=%llu mp3_overflows=%llu dwell_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu send_gap_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu underrun_hold_ms(total=%.2f active=%.2f last=%.2f events=%llu active=%s) timings_ms[mix(avg/max/min)=%.3f/%.3f/%.3f downscale(avg/max/min)=%.3f/%.3f/%.3f preprocess(avg/max/min)=%.3f/%.3f/%.3f dispatch(avg/max/min)=%.3f/%.3f/%.3f mp3(avg/max/min)=%.3f/%.3f/%.3f] host_late_ms(last/avg/max/min/events)=%.3f/%.3f/%.3f/%.3f/%llu payload_skip(chunks_total=%llu bytes_total=%llu last_ms=%.3f)",
+        "[Profiler][SinkMixer:%s] cycles=%llu data_cycles=%llu chunks_sent=%llu payload_kib=%.2f active_inputs=%zu/%zu avg_ready=%.2f avg_lagging=%.2f avg_queue=%.2f max_queue=%zu buffer_bytes(current/peak)=(%zu/%zu) underruns=%llu overflows=%llu mp3_overflows=%llu dwell_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu send_gap_ms(last/avg/max/min/samples)=%.2f/%.2f/%.2f/%.2f/%llu underrun_hold_ms(total=%.2f active=%.2f last=%.2f events=%llu active=%s) timings_ms[mix(avg/max/min)=%.3f/%.3f/%.3f downscale(avg/max/min)=%.3f/%.3f/%.3f preprocess(avg/max/min)=%.3f/%.3f/%.3f dispatch(avg/max/min)=%.3f/%.3f/%.3f mp3(avg/max/min)=%.3f/%.3f/%.3f] slip_ms(last/avg/max/min/events)=%.3f/%.3f/%.3f/%.3f/%llu payload_skip(chunks_total=%llu bytes_total=%llu last_ms=%.3f)",
         config_.sink_id.c_str(),
         static_cast<unsigned long long>(profiling_cycles_),
         static_cast<unsigned long long>(profiling_data_ready_cycles_),
@@ -1235,11 +1267,11 @@ void SinkAudioMixer::maybe_log_profiler() {
         avg_mp3_ms,
         static_cast<double>(profiling_mp3_ns_max_) / 1'000'000.0,
         profiling_mp3_ns_min_ == std::numeric_limits<uint64_t>::max() ? 0.0 : static_cast<double>(profiling_mp3_ns_min_) / 1'000'000.0,
-        last_host_late_ms,
-        avg_host_late_ms,
-        max_host_late_ms,
-        min_host_late_ms,
-        static_cast<unsigned long long>(profiling_host_late_events_),
+        last_slip_ms,
+        avg_slip_ms,
+        max_slip_ms,
+        min_slip_ms,
+        static_cast<unsigned long long>(profiling_slip_events_),
         static_cast<unsigned long long>(total_skipped_chunks),
         static_cast<unsigned long long>(total_skipped_bytes),
         last_skip_ms);
@@ -1470,6 +1502,8 @@ void SinkAudioMixer::drop_pending_payload_chunks() {
 
     profiling_payload_chunks_skipped_ += chunks_to_drop;
     profiling_payload_bytes_skipped_ += bytes_to_drop;
+    telemetry_payload_chunks_skipped_total_ += chunks_to_drop;
+    slip_chunks_dropped_ += chunks_to_drop;
 
     auto skipped_duration = dynamic_mix_interval_ * static_cast<int64_t>(chunks_to_drop);
     profiling_last_skip_ms_ = static_cast<double>(skipped_duration.count()) / 1000.0;
@@ -1480,6 +1514,98 @@ void SinkAudioMixer::drop_pending_payload_chunks() {
                     bytes_to_drop,
                     static_cast<unsigned long long>(pending_skip_chunks_),
                     payload_buffer_write_pos_);
+}
+
+void SinkAudioMixer::emit_telemetry_if_due(std::chrono::steady_clock::time_point now) {
+    if (telemetry_emit_interval_.count() <= 0) {
+        return;
+    }
+
+    if (telemetry_last_emit_.time_since_epoch().count() == 0) {
+        telemetry_last_emit_ = now;
+        return;
+    }
+
+    if (now < telemetry_last_emit_) {
+        telemetry_last_emit_ = now;
+        return;
+    }
+
+    if (now - telemetry_last_emit_ < telemetry_emit_interval_) {
+        return;
+    }
+
+    double avg_slip_ms = 0.0;
+    double max_slip_ms = 0.0;
+    double min_slip_ms = 0.0;
+    if (telemetry_samples_ > 0) {
+        avg_slip_ms = static_cast<double>(telemetry_slip_sum_ms_ / static_cast<long double>(telemetry_samples_));
+        max_slip_ms = telemetry_slip_max_ms_;
+        if (telemetry_slip_min_ms_ != std::numeric_limits<double>::infinity()) {
+            min_slip_ms = telemetry_slip_min_ms_;
+        }
+    } else {
+        avg_slip_ms = telemetry_last_slip_ms_;
+        max_slip_ms = telemetry_last_slip_ms_;
+        min_slip_ms = telemetry_last_slip_ms_;
+    }
+
+    double avg_pending = 0.0;
+    if (telemetry_samples_ > 0) {
+        avg_pending = static_cast<double>(telemetry_pending_skip_chunks_total_) /
+                      static_cast<double>(telemetry_samples_);
+    } else {
+        avg_pending = static_cast<double>(pending_skip_chunks_);
+    }
+
+    double pending_ms_current = 0.0;
+    double pending_ms_peak = 0.0;
+    double pending_ms_avg = 0.0;
+    if (dynamic_mix_interval_.count() > 0) {
+        auto chunk_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(dynamic_mix_interval_).count();
+        double chunk_ms = static_cast<double>(chunk_ns) / 1'000'000.0;
+        pending_ms_current = chunk_ms * static_cast<double>(pending_skip_chunks_);
+        pending_ms_peak = chunk_ms * static_cast<double>(telemetry_pending_skip_chunks_peak_);
+        pending_ms_avg = chunk_ms * avg_pending;
+    }
+
+    double avg_dwell_ms = 0.0;
+    double max_dwell_ms = 0.0;
+    double min_dwell_ms = 0.0;
+    if (telemetry_dwell_samples_ > 0) {
+        avg_dwell_ms = static_cast<double>(telemetry_dwell_sum_ms_ / static_cast<long double>(telemetry_dwell_samples_));
+        max_dwell_ms = telemetry_dwell_max_ms_;
+        if (telemetry_dwell_min_ms_ != std::numeric_limits<double>::infinity()) {
+            min_dwell_ms = telemetry_dwell_min_ms_;
+        }
+    } else {
+        avg_dwell_ms = telemetry_last_dwell_ms_;
+        max_dwell_ms = telemetry_last_dwell_ms_;
+        min_dwell_ms = telemetry_last_dwell_ms_;
+    }
+
+    LOG_CPP_INFO(
+        "[Telemetry][SinkMixer:%s] slip_ms(last=%.3f avg=%.3f max=%.3f min=%.3f samples=%llu) pending_chunks(avg=%.3f peak=%llu current=%llu -> ms avg=%.3f peak=%.3f current=%.3f) dwell_ms(last=%.3f avg=%.3f max=%.3f min=%.3f samples=%llu) chunks_dropped_total=%llu",
+        config_.sink_id.c_str(),
+        telemetry_last_slip_ms_,
+        avg_slip_ms,
+        max_slip_ms,
+        min_slip_ms,
+        static_cast<unsigned long long>(telemetry_samples_),
+        avg_pending,
+        static_cast<unsigned long long>(telemetry_pending_skip_chunks_peak_),
+        static_cast<unsigned long long>(pending_skip_chunks_),
+        pending_ms_avg,
+        pending_ms_peak,
+        pending_ms_current,
+        telemetry_last_dwell_ms_,
+        avg_dwell_ms,
+        max_dwell_ms,
+        min_dwell_ms,
+        static_cast<unsigned long long>(telemetry_dwell_samples_),
+        static_cast<unsigned long long>(telemetry_payload_chunks_skipped_total_));
+
+    reset_telemetry_counters(now);
 }
 
 void SinkAudioMixer::cleanup_closed_listeners() {
@@ -1560,63 +1686,107 @@ void SinkAudioMixer::run() {
             }
         }
 
+        if (slip_reference_time_.time_since_epoch().count() == 0) {
+            reset_slip_tracking(tick_timing.wake_time);
+        }
+
         const auto lateness_ns = tick_timing.lateness;
-        if (lateness_ns.count() > 0) {
-            profiling_last_host_late_ns_ = static_cast<uint64_t>(lateness_ns.count());
-            profiling_host_late_events_++;
-            profiling_host_late_ns_sum_ += static_cast<long double>(lateness_ns.count());
-            profiling_host_late_ns_max_ = std::max(profiling_host_late_ns_max_, static_cast<uint64_t>(lateness_ns.count()));
-            profiling_host_late_ns_min_ = std::min(profiling_host_late_ns_min_, static_cast<uint64_t>(lateness_ns.count()));
-        }
+        double chunk_ms = dynamic_mix_interval_.count() > 0
+                               ? static_cast<double>(dynamic_mix_interval_.count()) / 1000.0
+                               : 0.0;
 
-        uint64_t skip_intervals = 0;
-        double threshold_ms = m_settings ? m_settings->mixer_tuning.host_jitter_skip_threshold_ms : 0.0;
-        if (threshold_ms < 0.0) {
-            threshold_ms = 0.0;
-        }
-        auto threshold_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::duration<double, std::milli>(threshold_ms));
-
-        if (lateness_ns > threshold_ns && lateness_ns.count() > 0) {
-            skip_intervals = schedule_corrections;
-            if (skip_intervals == 0 && dynamic_mix_interval_.count() > 0) {
-                auto chunk_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(dynamic_mix_interval_);
-                if (chunk_ns.count() > 0) {
-                    long double ratio = static_cast<long double>(lateness_ns.count()) /
-                                         static_cast<long double>(chunk_ns.count());
-                    skip_intervals = std::max<uint64_t>(1, static_cast<uint64_t>(std::ceil(ratio)));
+        uint64_t slip_chunks = 0;
+        if (chunk_ms > 0.0) {
+            auto interval_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(dynamic_mix_interval_);
+            if (interval_ns.count() > 0) {
+                auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(tick_timing.wake_time - slip_reference_time_);
+                uint64_t expected_chunks = static_cast<uint64_t>(elapsed_ns.count() / static_cast<long double>(interval_ns.count()));
+                uint64_t accounted_chunks = slip_chunks_sent_ + slip_chunks_dropped_;
+                if (expected_chunks > accounted_chunks) {
+                    slip_chunks = expected_chunks - accounted_chunks;
                 }
             }
         }
 
-        if (skip_intervals > 0) {
-            skip_intervals = std::max(skip_intervals, tick_timing.missed_ticks);
-            pending_skip_chunks_ += skip_intervals;
+        double slip_ms = chunk_ms * static_cast<double>(slip_chunks);
 
-            auto skipped_duration = dynamic_mix_interval_ * static_cast<int64_t>(skip_intervals);
-            profiling_last_skip_ms_ = static_cast<double>(skipped_duration.count()) / 1000.0;
-
-            double grace_ms = m_settings ? m_settings->mixer_tuning.host_jitter_skip_grace_ms : 0.0;
-            if (grace_ms < 0.0) {
-                grace_ms = 0.0;
-            }
-            auto grace_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::duration<double, std::milli>(grace_ms));
-
-            if (lateness_ns > grace_ns && grace_ns.count() > 0) {
-                LOG_CPP_WARNING("[SinkMixer:%s] Host lateness %.3f ms exceeded grace window %.3f ms; pending skips now=%llu",
-                                config_.sink_id.c_str(),
-                                static_cast<double>(lateness_ns.count()) / 1'000'000.0,
-                                grace_ms,
-                                static_cast<unsigned long long>(pending_skip_chunks_));
-            } else {
-                LOG_CPP_DEBUG("[SinkMixer:%s] Host lateness %.3f ms triggered skip of %llu chunk(s); pending skips now=%llu",
-                              config_.sink_id.c_str(),
-                              static_cast<double>(lateness_ns.count()) / 1'000'000.0,
-                              static_cast<unsigned long long>(skip_intervals),
-                              static_cast<unsigned long long>(pending_skip_chunks_));
-            }
+        profiling_last_slip_ms_ = slip_ms;
+        profiling_slip_events_++;
+        profiling_slip_sum_ms_ += static_cast<long double>(slip_ms);
+        profiling_slip_max_ms_ = std::max(profiling_slip_max_ms_, slip_ms);
+        if (slip_ms < profiling_slip_min_ms_) {
+            profiling_slip_min_ms_ = slip_ms;
         }
+
+        telemetry_last_slip_ms_ = slip_ms;
+        telemetry_slip_sum_ms_ += static_cast<long double>(slip_ms);
+        telemetry_slip_max_ms_ = std::max(telemetry_slip_max_ms_, slip_ms);
+        if (slip_ms < telemetry_slip_min_ms_) {
+            telemetry_slip_min_ms_ = slip_ms;
+        }
+
+        double threshold_ms = m_settings ? m_settings->mixer_tuning.host_jitter_skip_threshold_ms : 0.0;
+        if (threshold_ms < 0.0) {
+            threshold_ms = 0.0;
+        }
+
+        size_t required_slip_chunks = 0;
+        if (slip_ms > threshold_ms && chunk_ms > 0.0) {
+            double excess_ms = slip_ms - threshold_ms;
+            required_slip_chunks = static_cast<size_t>(std::ceil(excess_ms / chunk_ms));
+        }
+
+        double flush_ms = m_settings ? m_settings->mixer_tuning.host_jitter_skip_grace_ms : 0.0;
+        if (flush_ms < 0.0) {
+            flush_ms = 0.0;
+        }
+
+        if (flush_ms > 0.0 && slip_ms >= flush_ms) {
+            size_t payload_chunks_before = SINK_CHUNK_SIZE_BYTES > 0
+                                               ? payload_buffer_write_pos_ / SINK_CHUNK_SIZE_BYTES
+                                               : 0;
+            double payload_ms_before = chunk_ms * static_cast<double>(payload_chunks_before);
+
+            LOG_CPP_WARNING("[SinkMixer:%s] Slip %.3f ms exceeded reset threshold %.3f ms; dropping approx %zu chunk(s) (%.3f ms) and flushing queued audio",
+                            config_.sink_id.c_str(),
+                            slip_ms,
+                            flush_ms,
+                            payload_chunks_before,
+                            payload_ms_before);
+
+            profiling_payload_chunks_skipped_ += payload_chunks_before;
+            profiling_payload_bytes_skipped_ += payload_chunks_before * SINK_CHUNK_SIZE_BYTES;
+            telemetry_payload_chunks_skipped_total_ += payload_chunks_before;
+            slip_chunks_dropped_ += payload_chunks_before;
+
+            clear_pending_audio();
+            reset_slip_tracking(tick_timing.wake_time);
+            reset_telemetry_counters(std::chrono::steady_clock::now());
+            continue;
+        }
+
+        const uint64_t previous_pending = pending_skip_chunks_;
+        pending_skip_chunks_ = std::max<uint64_t>(required_slip_chunks, slip_chunks);
+
+        if (pending_skip_chunks_ > previous_pending && pending_skip_chunks_ > 0) {
+            LOG_CPP_DEBUG("[SinkMixer:%s] Slip %.3f ms requires dropping %llu chunk(s); pending skips now=%llu",
+                          config_.sink_id.c_str(),
+                          slip_ms,
+                          static_cast<unsigned long long>(pending_skip_chunks_),
+                          static_cast<unsigned long long>(pending_skip_chunks_));
+        }
+
+        if (pending_skip_chunks_ > 0) {
+            auto skipped_duration = dynamic_mix_interval_ * static_cast<int64_t>(pending_skip_chunks_);
+            profiling_last_skip_ms_ = static_cast<double>(skipped_duration.count()) / 1000.0;
+        } else {
+            profiling_last_skip_ms_ = 0.0;
+        }
+
+        telemetry_samples_++;
+        telemetry_pending_skip_chunks_total_ += pending_skip_chunks_;
+        telemetry_pending_skip_chunks_peak_ = std::max<uint64_t>(telemetry_pending_skip_chunks_peak_, pending_skip_chunks_);
+        emit_telemetry_if_due(tick_timing.wake_time);
 
         profiling_cycles_++;
         cleanup_closed_listeners();
@@ -1711,6 +1881,7 @@ void SinkAudioMixer::run() {
                 network_sender_->send_payload(payload_buffer_.data(), SINK_CHUNK_SIZE_BYTES, current_csrcs_);
             }
             profiling_chunks_sent_++;
+            slip_chunks_sent_++;
             profiling_payload_bytes_sent_ += SINK_CHUNK_SIZE_BYTES;
 
             if (frame_metrics_valid) {

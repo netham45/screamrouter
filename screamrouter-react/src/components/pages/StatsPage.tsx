@@ -371,8 +371,8 @@ const StatsPage: React.FC = () => {
                     {renderTuningControl('mixer_tuning', 'mp3_vbr_enabled', 'MP3 VBR Enabled', 1, true)}
                     {renderTuningControl('mixer_tuning', 'mp3_output_queue_max_size', 'MP3 Output Queue Max Size')}
                     {renderTuningControl('mixer_tuning', 'underrun_hold_timeout_ms', 'Underrun Hold Timeout (ms)')}
-                    {renderTuningControl('mixer_tuning', 'host_jitter_skip_threshold_ms', 'Host Jitter Skip Threshold (ms)', 0.1)}
-                    {renderTuningControl('mixer_tuning', 'host_jitter_skip_grace_ms', 'Host Jitter Grace Window (ms)', 0.1)}
+                    {renderTuningControl('mixer_tuning', 'host_jitter_skip_threshold_ms', 'Slip Drop Threshold (ms)', 0.1)}
+                    {renderTuningControl('mixer_tuning', 'host_jitter_skip_grace_ms', 'Slip Flush Threshold (ms)', 0.1)}
                   </SimpleGrid>
                 </Box>
 
