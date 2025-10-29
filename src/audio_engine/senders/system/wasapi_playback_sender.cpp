@@ -1,6 +1,6 @@
 #ifdef _WIN32
 
-#define NOMINMAX
+
 
 #include "wasapi_playback_sender.h"
 

@@ -33,10 +33,10 @@ using namespace screamrouter::audio;
 
 // Undefine min and max macros to prevent conflicts with std::min and std::max
 #ifdef min
-#undef min
+
 #endif
 #ifdef max
-#undef max
+
 #endif
 
 AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth,

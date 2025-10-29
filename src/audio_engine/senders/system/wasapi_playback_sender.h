@@ -2,7 +2,7 @@
 
 #ifdef _WIN32
 
-#define NOMINMAX
+
 
 #include "../i_network_sender.h"
 #include "../../audio_types.h"

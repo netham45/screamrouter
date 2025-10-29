@@ -350,7 +350,7 @@ class BuildExtCommand(build_ext):
                 # Windows-specific flags
                 ext.extra_compile_args.extend([
                     "/std:c++17", "/O2", "/W3", "/EHsc",
-                    "/D_CRT_SECURE_NO_WARNINGS", "/MP",
+                    "/D_CRT_SECURE_NO_WARNINGS", "/DNOMINMAX", "/MP",
                     # Define static linking for libdatachannel
                     "/DRTC_STATIC"
                 ])

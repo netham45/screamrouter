@@ -8,10 +8,10 @@
 #include <thread>    // For sleep_for
 
 #ifdef min
-#undef min
+
 #endif
 #ifdef max
-#undef max
+
 #endif
 
 // Use namespaces for clarity

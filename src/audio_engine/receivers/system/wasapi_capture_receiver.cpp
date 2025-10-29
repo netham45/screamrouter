@@ -1,5 +1,5 @@
 #ifdef _WIN32
-#define NOMINMAX
+
 
 #include "wasapi_capture_receiver.h"
 

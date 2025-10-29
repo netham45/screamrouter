@@ -9,7 +9,7 @@
 #ifndef SINK_AUDIO_MIXER_H
 #define SINK_AUDIO_MIXER_H
 #if defined(_WIN32) && !defined(NOMINMAX)
-#define NOMINMAX
+
 #endif
 
 #include "../utils/audio_component.h"
@@ -32,8 +32,8 @@
 #include <thread>
 
 #if defined(_WIN32)
-#undef max
-#undef min
+
+
 #endif
 
 class AudioProcessor;
