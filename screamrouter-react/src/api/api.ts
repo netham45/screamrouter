@@ -251,6 +251,10 @@ export interface TimeshiftTuning {
   min_playback_rate: number;
   max_playback_rate: number;
   loop_max_sleep_ms: number;
+  max_catchup_lag_ms: number;
+  max_processor_queue_packets: number;
+  min_processor_queue_packets: number;
+  max_clock_pending_packets: number;
 }
 
 export interface MixerTuning {
@@ -262,6 +266,9 @@ export interface MixerTuning {
   underrun_hold_timeout_ms: number;
   host_jitter_skip_threshold_ms: number;
   host_jitter_skip_grace_ms: number;
+  max_input_queue_chunks: number;
+  min_input_queue_chunks: number;
+  max_ready_chunks_per_source: number;
 }
 
 export interface SourceProcessorTuning {

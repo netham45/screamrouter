@@ -86,6 +86,10 @@ def settings_to_dict(settings: AudioEngineSettings):
             "min_playback_rate": settings.timeshift_tuning.min_playback_rate,
             "max_playback_rate": settings.timeshift_tuning.max_playback_rate,
             "loop_max_sleep_ms": settings.timeshift_tuning.loop_max_sleep_ms,
+            "max_catchup_lag_ms": settings.timeshift_tuning.max_catchup_lag_ms,
+            "max_processor_queue_packets": settings.timeshift_tuning.max_processor_queue_packets,
+            "min_processor_queue_packets": settings.timeshift_tuning.min_processor_queue_packets,
+            "max_clock_pending_packets": settings.timeshift_tuning.max_clock_pending_packets,
         },
         "mixer_tuning": {
             "grace_period_timeout_ms": settings.mixer_tuning.grace_period_timeout_ms,
@@ -96,6 +100,9 @@ def settings_to_dict(settings: AudioEngineSettings):
             "underrun_hold_timeout_ms": settings.mixer_tuning.underrun_hold_timeout_ms,
             "host_jitter_skip_threshold_ms": settings.mixer_tuning.host_jitter_skip_threshold_ms,
             "host_jitter_skip_grace_ms": settings.mixer_tuning.host_jitter_skip_grace_ms,
+            "max_input_queue_chunks": settings.mixer_tuning.max_input_queue_chunks,
+            "min_input_queue_chunks": settings.mixer_tuning.min_input_queue_chunks,
+            "max_ready_chunks_per_source": settings.mixer_tuning.max_ready_chunks_per_source,
         },
         "source_processor_tuning": {
             "command_loop_sleep_ms": settings.source_processor_tuning.command_loop_sleep_ms,

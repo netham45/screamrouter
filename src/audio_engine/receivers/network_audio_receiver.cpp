@@ -391,11 +391,21 @@ bool NetworkAudioReceiver::enqueue_clock_managed_packet(TaggedAudioPacket&& pack
             return false;
         }
 
-        constexpr std::size_t kMaxPendingPackets = 64;
-        if (kMaxPendingPackets > 0 && state->pending_packets.size() >= kMaxPendingPackets) {
+        constexpr std::size_t kDefaultMaxPendingPackets = 64;
+        std::size_t max_pending_packets = kDefaultMaxPendingPackets;
+        if (timeshift_manager_) {
+            auto settings = timeshift_manager_->get_settings();
+            if (settings) {
+                const auto configured = settings->timeshift_tuning.max_clock_pending_packets;
+                if (configured > 0) {
+                    max_pending_packets = configured;
+                }
+            }
+        }
+        if (max_pending_packets > 0 && state->pending_packets.size() >= max_pending_packets) {
             state->pending_packets.pop_front();
             log_warning("Pending packet queue capped for source " + packet.source_tag +
-                        " (limit=" + std::to_string(kMaxPendingPackets) + ")");
+                        " (limit=" + std::to_string(max_pending_packets) + ")");
         }
 
         state->pending_packets.push_back(std::move(packet));

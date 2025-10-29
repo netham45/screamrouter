@@ -248,10 +248,13 @@ void MixScheduler::append_ready_chunk(const std::string& instance_id,
     {
         std::lock_guard<std::mutex> lock(ready_mutex_);
         auto& queue = ready_chunks_[instance_id];
-        if (queue.size() >= kMaxReadyChunksPerSource) {
+        const std::size_t cap = (settings_ && settings_->mixer_tuning.max_ready_chunks_per_source > 0)
+            ? settings_->mixer_tuning.max_ready_chunks_per_source
+            : kMaxReadyChunksPerSource;
+        if (cap > 0 && queue.size() >= cap) {
             queue.pop_front();
             LOG_CPP_DEBUG("[MixScheduler:%s] Dropping oldest ready chunk for %s to enforce cap=%zu.",
-                          mixer_id_.c_str(), instance_id.c_str(), kMaxReadyChunksPerSource);
+                          mixer_id_.c_str(), instance_id.c_str(), cap);
         }
         queue.push_back(std::move(ready));
     }

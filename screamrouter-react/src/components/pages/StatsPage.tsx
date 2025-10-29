@@ -359,6 +359,10 @@ const StatsPage: React.FC = () => {
                     {renderTuningControl('timeshift_tuning', 'min_playback_rate', 'Min Playback Rate', 0.01)}
                     {renderTuningControl('timeshift_tuning', 'max_playback_rate', 'Max Playback Rate', 0.01)}
                     {renderTuningControl('timeshift_tuning', 'loop_max_sleep_ms', 'Loop Max Sleep (ms)')}
+                    {renderTuningControl('timeshift_tuning', 'max_catchup_lag_ms', 'Max Catch-up Lag (ms)')}
+                    {renderTuningControl('timeshift_tuning', 'max_processor_queue_packets', 'Max Processor Queue Packets')}
+                    {renderTuningControl('timeshift_tuning', 'min_processor_queue_packets', 'Min Processor Queue Packets')}
+                    {renderTuningControl('timeshift_tuning', 'max_clock_pending_packets', 'Max Clock Pending Packets')}
                   </SimpleGrid>
                 </Box>
 
@@ -373,6 +377,9 @@ const StatsPage: React.FC = () => {
                     {renderTuningControl('mixer_tuning', 'underrun_hold_timeout_ms', 'Underrun Hold Timeout (ms)')}
                     {renderTuningControl('mixer_tuning', 'host_jitter_skip_threshold_ms', 'Slip Drop Threshold (ms)', 0.1)}
                     {renderTuningControl('mixer_tuning', 'host_jitter_skip_grace_ms', 'Slip Flush Threshold (ms)', 0.1)}
+                    {renderTuningControl('mixer_tuning', 'max_input_queue_chunks', 'Max Source Output Chunks')}
+                    {renderTuningControl('mixer_tuning', 'min_input_queue_chunks', 'Min Source Output Chunks')}
+                    {renderTuningControl('mixer_tuning', 'max_ready_chunks_per_source', 'Max Mix Ready Chunks per Source')}
                   </SimpleGrid>
                 </Box>
 

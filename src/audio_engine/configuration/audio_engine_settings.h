@@ -32,6 +32,8 @@ struct TimeshiftTuning {
     double jitter_idle_decay_factor = 0.1;
     double max_adaptive_delay_ms = 200.0;
     std::size_t max_processor_queue_packets = 128;
+    std::size_t min_processor_queue_packets = 16;
+    std::size_t max_clock_pending_packets = 64;
 
     // --- Temporal Store / DVR defaults ---
     // Target playout delay (D) relative to now_ref; mixer follows head at D behind.
@@ -64,6 +66,8 @@ struct MixerTuning {
     double host_jitter_skip_threshold_ms = 1.5;
     double host_jitter_skip_grace_ms = 24.0;
     std::size_t max_input_queue_chunks = 16;
+    std::size_t min_input_queue_chunks = 8;
+    std::size_t max_ready_chunks_per_source = 12;
 };
 
 struct SourceProcessorTuning {

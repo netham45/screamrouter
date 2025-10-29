@@ -355,20 +355,22 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
              dynamic_cap = 1;
          }
 
-         // Allow a small cushion for slower devices so we don't trim too aggressively.
-         if (dynamic_cap < 4) {
-             dynamic_cap = 4;
+         std::size_t min_chunks = (m_settings && m_settings->mixer_tuning.min_input_queue_chunks > 0)
+             ? m_settings->mixer_tuning.min_input_queue_chunks
+             : static_cast<std::size_t>(8);
+         if (dynamic_cap < min_chunks) {
+             dynamic_cap = min_chunks;
          }
 
          std::size_t effective_cap = configured_cap > 0
              ? std::min(configured_cap, dynamic_cap)
              : dynamic_cap;
-         if (effective_cap < 8) {
-             effective_cap = 8;
+         if (effective_cap < min_chunks) {
+             effective_cap = min_chunks;
          }
 
          if (effective_cap > 0) {
-             bool logged_trim = false;
+            bool logged_trim = false;
              while (output_queue_->size() >= effective_cap) {
                  ProcessedAudioChunk discarded_chunk;
                  if (!output_queue_->try_pop(discarded_chunk)) {

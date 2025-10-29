@@ -218,6 +218,8 @@ public:
      */
     TimeshiftManagerStats get_stats();
 
+    std::shared_ptr<screamrouter::audio::AudioEngineSettings> get_settings() const { return m_settings; }
+
 
     /**
      * @brief Resets timing state and pending buffer indices for a specific source tag.

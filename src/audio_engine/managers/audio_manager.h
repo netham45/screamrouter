@@ -399,7 +399,10 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("min_playback_rate", &TimeshiftTuning::min_playback_rate)
         .def_readwrite("max_playback_rate", &TimeshiftTuning::max_playback_rate)
         .def_readwrite("loop_max_sleep_ms", &TimeshiftTuning::loop_max_sleep_ms)
-        .def_readwrite("max_catchup_lag_ms", &TimeshiftTuning::max_catchup_lag_ms);
+        .def_readwrite("max_catchup_lag_ms", &TimeshiftTuning::max_catchup_lag_ms)
+        .def_readwrite("max_processor_queue_packets", &TimeshiftTuning::max_processor_queue_packets)
+        .def_readwrite("min_processor_queue_packets", &TimeshiftTuning::min_processor_queue_packets)
+        .def_readwrite("max_clock_pending_packets", &TimeshiftTuning::max_clock_pending_packets);
 
     py::class_<ProfilerSettings>(m, "ProfilerSettings")
         .def(py::init<>())
@@ -415,7 +418,10 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("mp3_output_queue_max_size", &MixerTuning::mp3_output_queue_max_size)
         .def_readwrite("underrun_hold_timeout_ms", &MixerTuning::underrun_hold_timeout_ms)
         .def_readwrite("host_jitter_skip_threshold_ms", &MixerTuning::host_jitter_skip_threshold_ms)
-        .def_readwrite("host_jitter_skip_grace_ms", &MixerTuning::host_jitter_skip_grace_ms);
+        .def_readwrite("host_jitter_skip_grace_ms", &MixerTuning::host_jitter_skip_grace_ms)
+        .def_readwrite("max_input_queue_chunks", &MixerTuning::max_input_queue_chunks)
+        .def_readwrite("min_input_queue_chunks", &MixerTuning::min_input_queue_chunks)
+        .def_readwrite("max_ready_chunks_per_source", &MixerTuning::max_ready_chunks_per_source);
 
     py::class_<SourceProcessorTuning>(m, "SourceProcessorTuning")
         .def(py::init<>())
