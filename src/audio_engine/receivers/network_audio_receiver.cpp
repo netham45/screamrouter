@@ -17,6 +17,8 @@ namespace audio {
 
 #ifdef _WIN32
     std::atomic<int> NetworkAudioReceiver::winsock_user_count_(0);
+#undef min
+#undef max
 #endif
 
 NetworkAudioReceiver::NetworkAudioReceiver(
