@@ -359,6 +359,7 @@ struct PulseAudioReceiver::Impl {
     std::unordered_set<std::string> known_tags;
     std::unordered_map<std::string, std::unordered_set<std::string>> wildcard_to_composites;
     mutable std::mutex tag_map_mutex;
+    std::chrono::steady_clock::time_point telemetry_last_log_time{};
 
     PulseAudioReceiver::StreamTagResolvedCallback stream_tag_resolved_cb;
     PulseAudioReceiver::StreamTagRemovedCallback stream_tag_removed_cb;
@@ -370,6 +371,7 @@ struct PulseAudioReceiver::Impl {
     void shutdown_all();
 
     void event_loop(std::atomic<bool>& stop_flag);
+    void maybe_log_telemetry();
 
     void accept_connections(int listen_fd, bool is_unix);
 
@@ -2721,6 +2723,8 @@ void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
             }
         }
 
+        maybe_log_telemetry();
+
         std::vector<pollfd> pollfds;
         if (tcp_listen_fd >= 0) {
             pollfds.push_back(pollfd{tcp_listen_fd, POLLIN, 0});
@@ -2788,6 +2792,109 @@ void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
             ++i;
         }
     }
+}
+
+namespace {
+inline std::size_t bytes_per_frame_for_format(uint8_t format, uint8_t channels) {
+    std::size_t bytes_per_sample = 0;
+    switch (format) {
+        case kSampleFormatS16LE:
+            bytes_per_sample = 2;
+            break;
+        case kSampleFormatS32LE:
+        case kSampleFormatFloat32LE:
+            bytes_per_sample = 4;
+            break;
+        default:
+            bytes_per_sample = 0;
+            break;
+    }
+    return static_cast<std::size_t>(channels) * bytes_per_sample;
+}
+} // namespace
+
+void PulseAudioReceiver::Impl::maybe_log_telemetry() {
+    constexpr auto kTelemetryInterval = std::chrono::seconds(30);
+    const auto now = std::chrono::steady_clock::now();
+    if (telemetry_last_log_time.time_since_epoch().count() != 0 &&
+        now - telemetry_last_log_time < kTelemetryInterval) {
+        return;
+    }
+    telemetry_last_log_time = now;
+
+    std::size_t total_write_chunks = 0;
+    std::size_t total_write_bytes = 0;
+    std::size_t total_streams = 0;
+
+    for (const auto& connection_ptr : connections) {
+        if (!connection_ptr) {
+            continue;
+        }
+        const auto& connection = *connection_ptr;
+        std::size_t write_chunks = connection.write_queue.size();
+        std::size_t write_bytes = 0;
+        for (const auto& frame : connection.write_queue) {
+            write_bytes += frame.size();
+        }
+        total_write_chunks += write_chunks;
+        total_write_bytes += write_bytes;
+
+        const std::string& conn_id = !connection.peer_identity.empty() ? connection.peer_identity : connection.base_identity;
+        log("[Telemetry][Pulse][Conn " + conn_id + "] write_chunks=" + std::to_string(write_chunks) +
+            " write_bytes=" + std::to_string(write_bytes));
+
+        for (const auto& [stream_index, stream] : connection.streams) {
+            ++total_streams;
+            const std::size_t pending_payload_bytes = stream.pending_payload.size();
+            std::size_t bytes_per_frame = bytes_per_frame_for_format(stream.sample_spec.format, stream.sample_spec.channels);
+            double pending_payload_ms = 0.0;
+            if (bytes_per_frame > 0 && stream.sample_spec.rate > 0) {
+                const double frames = static_cast<double>(pending_payload_bytes) / static_cast<double>(bytes_per_frame);
+                pending_payload_ms = (frames * 1000.0) / static_cast<double>(stream.sample_spec.rate);
+            }
+
+            std::size_t pending_chunk_bytes = 0;
+            uint64_t pending_chunk_frames = 0;
+            double chunk_head_age_ms = 0.0;
+            if (!stream.pending_chunks.empty()) {
+                const auto& head = stream.pending_chunks.front();
+                pending_chunk_bytes += head.chunk_bytes;
+                pending_chunk_frames += head.chunk_frames;
+                if (head.play_time.time_since_epoch().count() != 0) {
+                    chunk_head_age_ms = std::chrono::duration<double, std::milli>(now - head.play_time).count();
+                    if (chunk_head_age_ms < 0.0) {
+                        chunk_head_age_ms = 0.0;
+                    }
+                }
+                for (std::size_t idx = 1; idx < stream.pending_chunks.size(); ++idx) {
+                    pending_chunk_bytes += stream.pending_chunks[idx].chunk_bytes;
+                    pending_chunk_frames += stream.pending_chunks[idx].chunk_frames;
+                }
+            }
+
+            double pending_chunks_ms = 0.0;
+            if (pending_chunk_frames > 0 && stream.sample_spec.rate > 0) {
+                pending_chunks_ms = (static_cast<double>(pending_chunk_frames) * 1000.0) /
+                                    static_cast<double>(stream.sample_spec.rate);
+            }
+
+            std::ostringstream oss;
+            oss << "[Telemetry][Pulse][Stream " << stream_index << " (" << stream.composite_tag << ")]"
+                << " pending_payload_bytes=" << pending_payload_bytes
+                << " (" << std::fixed << std::setprecision(3) << pending_payload_ms << " ms)"
+                << " pending_chunks=" << stream.pending_chunks.size()
+                << " pending_chunk_bytes=" << pending_chunk_bytes
+                << " (" << pending_chunks_ms << " ms)"
+                << " chunk_head_age_ms=" << chunk_head_age_ms
+                << " pending_payload_capacity=" << stream.pending_payload.capacity();
+            log(oss.str());
+        }
+    }
+
+    log("[Telemetry][Pulse] connections=" + std::to_string(connections.size()) +
+        " write_total_chunks=" + std::to_string(total_write_chunks) +
+        " write_total_bytes=" + std::to_string(total_write_bytes) +
+        " streams=" + std::to_string(total_streams));
 }
 
 PulseAudioReceiver::PulseAudioReceiver(PulseReceiverConfig config,

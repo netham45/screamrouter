@@ -355,9 +355,17 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
              dynamic_cap = 1;
          }
 
+         // Allow a small cushion for slower devices so we don't trim too aggressively.
+         if (dynamic_cap < 4) {
+             dynamic_cap = 4;
+         }
+
          std::size_t effective_cap = configured_cap > 0
              ? std::min(configured_cap, dynamic_cap)
              : dynamic_cap;
+         if (effective_cap < 8) {
+             effective_cap = 8;
+         }
 
          if (effective_cap > 0) {
              bool logged_trim = false;

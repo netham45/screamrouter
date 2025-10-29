@@ -391,7 +391,7 @@ bool NetworkAudioReceiver::enqueue_clock_managed_packet(TaggedAudioPacket&& pack
             return false;
         }
 
-        constexpr std::size_t kMaxPendingPackets = 8;
+        constexpr std::size_t kMaxPendingPackets = 64;
         if (kMaxPendingPackets > 0 && state->pending_packets.size() >= kMaxPendingPackets) {
             state->pending_packets.pop_front();
             log_warning("Pending packet queue capped for source " + packet.source_tag +

@@ -728,8 +728,14 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     const std::size_t configured_cap = (m_settings)
                         ? m_settings->timeshift_tuning.max_processor_queue_packets
                         : 0;
+                    if (dynamic_cap < 16) {
+                        dynamic_cap = 16;
+                    }
                     if (configured_cap > 0) {
                         dynamic_cap = std::min(dynamic_cap, configured_cap);
+                    }
+                    if (dynamic_cap < 16) {
+                        dynamic_cap = 16;
                     }
 
                     auto queue_ptr = target_info.target_queue;
