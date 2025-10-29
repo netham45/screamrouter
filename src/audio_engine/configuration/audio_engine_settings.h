@@ -65,8 +65,8 @@ struct MixerTuning {
     long underrun_hold_timeout_ms = 250;
     double host_jitter_skip_threshold_ms = 1.5;
     double host_jitter_skip_grace_ms = 24.0;
-    std::size_t max_input_queue_chunks = 16;
-    std::size_t min_input_queue_chunks = 8;
+    std::size_t max_input_queue_chunks = 128;
+    std::size_t min_input_queue_chunks = 128;
     std::size_t max_ready_chunks_per_source = 12;
 };
 

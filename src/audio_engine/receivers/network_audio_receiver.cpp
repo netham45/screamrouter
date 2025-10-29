@@ -391,7 +391,7 @@ bool NetworkAudioReceiver::enqueue_clock_managed_packet(TaggedAudioPacket&& pack
             return false;
         }
 
-        constexpr std::size_t kDefaultMaxPendingPackets = 64;
+        constexpr std::size_t kDefaultMaxPendingPackets = 128;
         std::size_t max_pending_packets = kDefaultMaxPendingPackets;
         if (timeshift_manager_) {
             auto settings = timeshift_manager_->get_settings();
