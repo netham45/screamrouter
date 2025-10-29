@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <chrono>
 
 #if defined(__linux__)
 #include <alsa/asoundlib.h>
@@ -37,6 +38,7 @@ private:
     bool handle_write_error(int err);
     bool write_frames(const void* data, size_t frame_count, size_t bytes_per_frame);
     void close_locked();
+    void maybe_log_telemetry_locked();
 
     SinkMixerConfig config_;
     std::string device_tag_;
@@ -53,6 +55,7 @@ private:
     size_t bytes_per_frame_ = 0;
 
     mutable std::mutex state_mutex_;
+    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
 #else
     SinkMixerConfig config_;
 #endif

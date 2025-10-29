@@ -367,7 +367,50 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
         }
     }
 
+    maybe_log_telemetry_locked();
     return true;
+}
+
+void AlsaPlaybackSender::maybe_log_telemetry_locked() {
+    static constexpr auto kTelemetryInterval = std::chrono::seconds(30);
+
+    if (!pcm_handle_ || sample_rate_ == 0) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (telemetry_last_log_time_.time_since_epoch().count() != 0 &&
+        now - telemetry_last_log_time_ < kTelemetryInterval) {
+        return;
+    }
+
+    telemetry_last_log_time_ = now;
+
+    snd_pcm_sframes_t delay_frames = 0;
+    double delay_ms = 0.0;
+    if (snd_pcm_delay(pcm_handle_, &delay_frames) == 0 && delay_frames >= 0) {
+        delay_ms = 1000.0 * static_cast<double>(delay_frames) / static_cast<double>(sample_rate_);
+    }
+
+    double buffer_ms = 0.0;
+    if (buffer_frames_ > 0) {
+        buffer_ms = 1000.0 * static_cast<double>(buffer_frames_) / static_cast<double>(sample_rate_);
+    }
+
+    double period_ms = 0.0;
+    if (period_frames_ > 0) {
+        period_ms = 1000.0 * static_cast<double>(period_frames_) / static_cast<double>(sample_rate_);
+    }
+
+    LOG_CPP_INFO(
+        "[Telemetry][AlsaPlayback:%s] delay_frames=%ld delay_ms=%.3f buffer_frames=%lu (%.3f ms) period_frames=%lu (%.3f ms)",
+        device_tag_.c_str(),
+        static_cast<long>(delay_frames),
+        delay_ms,
+        static_cast<unsigned long>(buffer_frames_),
+        buffer_ms,
+        static_cast<unsigned long>(period_frames_),
+        period_ms);
 }
 
 unsigned int AlsaPlaybackSender::get_effective_sample_rate() const {

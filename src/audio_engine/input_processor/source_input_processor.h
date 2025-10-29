@@ -151,6 +151,8 @@ private:
     std::vector<int32_t> process_buffer_; // This will be repurposed as the resampler output buffer
     std::vector<uint32_t> current_packet_ssrcs_;
     double m_current_playback_rate = 1.0;
+    double m_current_input_chunk_ms = 0.0;
+    double m_current_output_chunk_ms = 0.0;
 
     float current_volume_;
     std::vector<float> current_eq_;
@@ -164,6 +166,7 @@ private:
     std::atomic<uint64_t> m_total_packets_processed{0};
     std::atomic<uint64_t> m_reconfigurations{0};
     std::chrono::steady_clock::time_point m_last_packet_time;
+    std::chrono::steady_clock::time_point m_last_packet_origin_time;
     bool m_is_first_packet_after_discontinuity = true;
 
     /**
@@ -198,7 +201,9 @@ private:
     // --- Profiling ---
     void reset_profiler_counters();
     void maybe_log_profiler();
+    void maybe_log_telemetry(std::chrono::steady_clock::time_point now);
     std::chrono::steady_clock::time_point profiling_last_log_time_;
+    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
     uint64_t profiling_packets_received_{0};
     uint64_t profiling_chunks_pushed_{0};
     uint64_t profiling_discarded_packets_{0};

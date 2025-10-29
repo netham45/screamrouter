@@ -68,6 +68,7 @@ private:
     void append_ready_chunk(const std::string& instance_id,
                             ProcessedAudioChunk&& chunk,
                             std::chrono::steady_clock::time_point arrival_time);
+    void maybe_log_telemetry();
 
     const std::string mixer_id_;
     std::shared_ptr<AudioEngineSettings> settings_;
@@ -82,6 +83,7 @@ private:
     std::vector<std::string> drained_sources_;
 
     std::atomic<bool> shutting_down_{false};
+    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
 };
 
 } // namespace audio

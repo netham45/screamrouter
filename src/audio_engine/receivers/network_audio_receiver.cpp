@@ -2,13 +2,14 @@
 #include "../input_processor/timeshift_manager.h" // Ensure full definition is available
 #include "../utils/thread_safe_queue.h" // For full definition of ThreadSafeQueue
 #include "../utils/cpp_logger.h"       // For new C++ logger
-#include <iostream>      // For logging (cpp_logger fallback)
+#include <iostream>      // For logging (cpp_logger fallb_ack)
 #include <vector>
 #include <cstring>       // For memset
 #include <stdexcept>     // For runtime_error
 #include <system_error>  // For socket error checking
 #include <algorithm>     // For std::find
 #include <cstddef>
+#include <cmath>
 
 namespace screamrouter {
 namespace audio {
@@ -225,6 +226,7 @@ void NetworkAudioReceiver::run() {
     int poll_timeout = get_poll_timeout_ms();
 
     while (!stop_flag_) {
+        maybe_log_telemetry();
         if (socket_fd_ == NAR_INVALID_SOCKET_VALUE) { // Socket might have been closed by stop()
             log_warning("Socket is invalid, exiting run loop.");
             break;
@@ -400,6 +402,7 @@ bool NetworkAudioReceiver::enqueue_clock_managed_packet(TaggedAudioPacket&& pack
         if (!state->pending_packets.back().ssrcs.empty()) {
             state->last_ssrcs = state->pending_packets.back().ssrcs;
         }
+        state->current_playback_rate = state->pending_packets.back().playback_rate;
     }
 
     return true;
@@ -681,6 +684,10 @@ void NetworkAudioReceiver::handle_clock_tick(const std::string& source_tag) {
                 packet.rtp_timestamp.reset();
             }
 
+            if (packet.playback_rate <= 0.0) {
+                packet.playback_rate = state.current_playback_rate;
+            }
+
             have_packet = true;
         } else {
             if (chunk_size_bytes_ == 0 || state.sample_rate == 0 || state.channels == 0) {
@@ -703,6 +710,8 @@ void NetworkAudioReceiver::handle_clock_tick(const std::string& source_tag) {
             } else {
                 packet.rtp_timestamp.reset();
             }
+
+            packet.playback_rate = state.current_playback_rate;
 
             have_packet = true;
         }
@@ -730,6 +739,108 @@ uint32_t NetworkAudioReceiver::calculate_samples_per_chunk(int channels, int bit
     }
 
     return static_cast<uint32_t>(chunk_size_bytes_ / bytes_per_frame);
+}
+
+void NetworkAudioReceiver::maybe_log_telemetry() {
+    static constexpr auto kTelemetryInterval = std::chrono::seconds(30);
+
+    const auto now = std::chrono::steady_clock::now();
+    if (telemetry_last_log_time_.time_since_epoch().count() != 0 &&
+        now - telemetry_last_log_time_ < kTelemetryInterval) {
+        return;
+    }
+
+    telemetry_last_log_time_ = now;
+
+    size_t stream_count = 0;
+    size_t total_pending = 0;
+    size_t max_pending = 0;
+    double total_pending_ms = 0.0;
+    double max_pending_ms = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(stream_state_mutex_);
+        for (const auto& [tag, state_ptr] : stream_states_) {
+            (void)tag;
+            if (!state_ptr) {
+                continue;
+            }
+            stream_count++;
+            const size_t pending = state_ptr->pending_packets.size();
+            total_pending += pending;
+            if (pending > max_pending) {
+                max_pending = pending;
+            }
+            double chunk_ms = 0.0;
+            if (state_ptr->sample_rate > 0 && state_ptr->samples_per_chunk > 0) {
+                chunk_ms = (static_cast<double>(state_ptr->samples_per_chunk) * 1000.0) /
+                           static_cast<double>(state_ptr->sample_rate);
+            }
+            double pending_ms = chunk_ms > 0.0 ? chunk_ms * static_cast<double>(pending) : 0.0;
+            total_pending_ms += pending_ms;
+            if (pending_ms > max_pending_ms) {
+                max_pending_ms = pending_ms;
+            }
+            LOG_CPP_INFO(
+                "%s [Telemetry][Stream %s] pending_chunks=%zu backlog_ms=%.3f playback_rate=%.3f",
+                logger_prefix_.c_str(),
+                tag.c_str(),
+                pending,
+                pending_ms,
+                state_ptr->current_playback_rate);
+        }
+    }
+
+    size_t accumulator_count = 0;
+    size_t total_pcm_bytes = 0;
+    size_t max_pcm_bytes = 0;
+    double total_pcm_ms = 0.0;
+    double max_pcm_ms = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(pcm_accumulator_mutex_);
+        accumulator_count = pcm_accumulators_.size();
+        for (const auto& [key, accumulator] : pcm_accumulators_) {
+            (void)key;
+            const size_t bytes = accumulator.buffer.size();
+            total_pcm_bytes += bytes;
+            if (bytes > max_pcm_bytes) {
+                max_pcm_bytes = bytes;
+            }
+            double pcm_ms = 0.0;
+            if (accumulator.last_sample_rate > 0 && accumulator.last_channels > 0 && accumulator.last_bit_depth > 0 &&
+                (accumulator.last_bit_depth % 8) == 0) {
+                const std::size_t frame_bytes = static_cast<std::size_t>(accumulator.last_channels) *
+                                                static_cast<std::size_t>(accumulator.last_bit_depth / 8);
+                if (frame_bytes > 0) {
+                    const double frames = static_cast<double>(bytes) / static_cast<double>(frame_bytes);
+                    pcm_ms = (frames * 1000.0) / static_cast<double>(accumulator.last_sample_rate);
+                }
+            }
+            total_pcm_ms += pcm_ms;
+            if (pcm_ms > max_pcm_ms) {
+                max_pcm_ms = pcm_ms;
+            }
+            LOG_CPP_INFO(
+                "%s [Telemetry][Accumulator] key=%s bytes=%zu backlog_ms=%.3f",
+                logger_prefix_.c_str(),
+                key.c_str(),
+                bytes,
+                pcm_ms);
+        }
+    }
+
+    LOG_CPP_INFO(
+        "%s [Telemetry] streams=%zu pending_total=%zu (%.3f ms) pending_max=%zu (%.3f ms) accumulators=%zu pcm_total_bytes=%zu (%.3f ms) pcm_max_bytes=%zu (%.3f ms)",
+        logger_prefix_.c_str(),
+        stream_count,
+        total_pending,
+        total_pending_ms,
+        max_pending,
+        max_pending_ms,
+        accumulator_count,
+        total_pcm_bytes,
+        total_pcm_ms,
+        max_pcm_bytes,
+        max_pcm_ms);
 }
 } // namespace audio
 } // namespace screamrouter

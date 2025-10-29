@@ -321,6 +321,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          output_chunk.audio_data.assign(process_buffer_.begin(), process_buffer_.begin() + required_samples);
          output_chunk.ssrcs = current_packet_ssrcs_;
          output_chunk.produced_time = std::chrono::steady_clock::now();
+         output_chunk.origin_time = m_last_packet_origin_time;
          output_chunk.playback_rate = m_current_playback_rate;
          size_t pushed_samples = output_chunk.audio_data.size();
 
@@ -329,43 +330,77 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          if (pushed_samples != required_samples) {
              LOG_CPP_ERROR("[SourceProc:%s] PushOutput: Mismatch between pushed samples (%zu) and required samples (%zu).", config_.instance_id.c_str(), pushed_samples, required_samples);
          }
-         std::size_t queue_cap = 0;
+         if (!output_queue_) {
+             profiling_discarded_packets_++;
+             LOG_CPP_WARNING("[SourceProc:%s] Output queue missing; dropping chunk.",
+                             config_.instance_id.c_str());
+             continue;
+         }
+
+         std::size_t configured_cap = 0;
          if (m_settings) {
-             queue_cap = m_settings->mixer_tuning.max_input_queue_chunks;
+             configured_cap = m_settings->mixer_tuning.max_input_queue_chunks;
          }
 
-         auto push_result = output_queue_
-             ? output_queue_->push_bounded(std::move(output_chunk), queue_cap, true)
-             : OutputChunkQueue::PushResult::QueueFull;
-
-         switch (push_result) {
-             case OutputChunkQueue::PushResult::Pushed:
-                 profiling_chunks_pushed_++;
-                 break;
-             case OutputChunkQueue::PushResult::DroppedOldest:
-                 profiling_chunks_pushed_++;
-                 profiling_discarded_packets_++;
-                 LOG_CPP_WARNING("[SourceProc:%s] Output queue reached cap (%zu chunks); dropped oldest chunk.",
-                                 config_.instance_id.c_str(), queue_cap);
-                 break;
-             case OutputChunkQueue::PushResult::QueueStopped:
-                 profiling_discarded_packets_++;
-                 LOG_CPP_WARNING("[SourceProc:%s] Output queue stopped; dropping chunk.",
-                                 config_.instance_id.c_str());
-                 break;
-             case OutputChunkQueue::PushResult::QueueFull:
-                 profiling_discarded_packets_++;
-                 LOG_CPP_WARNING("[SourceProc:%s] Output queue missing or full; dropping chunk (cap=%zu).",
-                                 config_.instance_id.c_str(), queue_cap);
-                 break;
+         std::size_t dynamic_cap = 0;
+         if (m_settings && config_.output_samplerate > 0) {
+             const double chunk_duration_ms = (static_cast<double>(OUTPUT_CHUNK_SAMPLES) * 1000.0) /
+                 static_cast<double>(config_.output_samplerate);
+             if (chunk_duration_ms > 0.0) {
+                 dynamic_cap = static_cast<std::size_t>(std::ceil(
+                     m_settings->timeshift_tuning.target_buffer_level_ms / chunk_duration_ms));
+             }
          }
+         if (dynamic_cap == 0) {
+             dynamic_cap = 1;
+         }
+
+         std::size_t effective_cap = configured_cap > 0
+             ? std::min(configured_cap, dynamic_cap)
+             : dynamic_cap;
+
+         if (effective_cap > 0) {
+             bool logged_trim = false;
+             while (output_queue_->size() >= effective_cap) {
+                 ProcessedAudioChunk discarded_chunk;
+                 if (!output_queue_->try_pop(discarded_chunk)) {
+                     break;
+                 }
+                 profiling_discarded_packets_++;
+                 if (!logged_trim) {
+                     LOG_CPP_WARNING("[SourceProc:%s] Trimmed mixer queue to cap (%zu chunks).",
+                                     config_.instance_id.c_str(), effective_cap);
+                     logged_trim = true;
+                 }
+             }
+         }
+
+         auto push_result = (effective_cap > 0)
+             ? output_queue_->push_bounded(std::move(output_chunk), effective_cap, false)
+             : output_queue_->push_bounded(std::move(output_chunk), 0, false);
+
+         if (push_result == OutputChunkQueue::PushResult::QueueStopped) {
+             profiling_discarded_packets_++;
+             LOG_CPP_WARNING("[SourceProc:%s] Output queue stopped; dropping chunk.",
+                             config_.instance_id.c_str());
+             continue;
+         }
+
+         if (push_result != OutputChunkQueue::PushResult::Pushed) {
+             profiling_discarded_packets_++;
+             LOG_CPP_WARNING("[SourceProc:%s] Failed to enqueue chunk (result=%d, cap=%zu).",
+                             config_.instance_id.c_str(), static_cast<int>(push_result), effective_cap);
+             continue;
+         }
+
+         profiling_chunks_pushed_++;
 
          // Remove the copied samples from the process buffer
         process_buffer_.erase(process_buffer_.begin(), process_buffer_.begin() + required_samples);
         current_buffer_size = process_buffer_.size(); // Update size after erasing
 
-         LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Queue result=%d. Remaining process_buffer_ size=%zu samples.",
-                       config_.instance_id.c_str(), static_cast<int>(push_result), current_buffer_size);
+         LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Enqueued chunk. Remaining process_buffer_ size=%zu samples.",
+                       config_.instance_id.c_str(), current_buffer_size);
     }
 }
 
@@ -438,6 +473,73 @@ void SourceInputProcessor::maybe_log_profiler() {
     profiling_queue_samples_ = 0;
 }
 
+void SourceInputProcessor::maybe_log_telemetry(std::chrono::steady_clock::time_point now) {
+    if (!m_settings || !m_settings->telemetry.enabled) {
+        return;
+    }
+
+    long interval_ms = m_settings->telemetry.log_interval_ms;
+    if (interval_ms <= 0) {
+        interval_ms = 30000;
+    }
+    auto interval = std::chrono::milliseconds(interval_ms);
+    if (telemetry_last_log_time_.time_since_epoch().count() != 0 && now - telemetry_last_log_time_ < interval) {
+        return;
+    }
+
+    telemetry_last_log_time_ = now;
+
+    const size_t input_q_size = input_queue_ ? input_queue_->size() : 0;
+    const size_t output_q_size = output_queue_ ? output_queue_->size() : 0;
+    const size_t process_buf_size = process_buffer_.size();
+
+    const double input_q_ms = m_current_input_chunk_ms > 0.0
+        ? static_cast<double>(input_q_size) * m_current_input_chunk_ms
+        : 0.0;
+
+    const double output_q_ms = m_current_output_chunk_ms > 0.0
+        ? static_cast<double>(output_q_size) * m_current_output_chunk_ms
+        : 0.0;
+
+    double process_buf_ms = 0.0;
+    if (config_.output_samplerate > 0) {
+        const int output_channels = std::max(1, config_.output_channels);
+        const double frames = static_cast<double>(process_buf_size) / static_cast<double>(output_channels);
+        if (frames > 0.0) {
+            process_buf_ms = (frames * 1000.0) / static_cast<double>(config_.output_samplerate);
+        }
+    }
+
+    double last_packet_age_ms = 0.0;
+    if (m_last_packet_time.time_since_epoch().count() != 0) {
+        last_packet_age_ms = std::chrono::duration<double, std::milli>(now - m_last_packet_time).count();
+        if (last_packet_age_ms < 0.0) {
+            last_packet_age_ms = 0.0;
+        }
+    }
+
+    double last_origin_age_ms = 0.0;
+    if (m_last_packet_origin_time.time_since_epoch().count() != 0) {
+        last_origin_age_ms = std::chrono::duration<double, std::milli>(now - m_last_packet_origin_time).count();
+        if (last_origin_age_ms < 0.0) {
+            last_origin_age_ms = 0.0;
+        }
+    }
+
+    LOG_CPP_INFO(
+        "[Telemetry][SourceProc:%s] input_q=%zu (%.3f ms) output_q=%zu (%.3f ms) process_buf_samples=%zu (%.3f ms) last_packet_age_ms=%.3f last_origin_age_ms=%.3f playback_rate=%.3f",
+        config_.instance_id.c_str(),
+        input_q_size,
+        input_q_ms,
+        output_q_size,
+        output_q_ms,
+        process_buf_size,
+        process_buf_ms,
+        last_packet_age_ms,
+        last_origin_age_ms,
+        m_current_playback_rate);
+}
+
 // --- New/Modified Thread Loops ---
 
 void SourceInputProcessor::input_loop() {
@@ -485,6 +587,8 @@ void SourceInputProcessor::input_loop() {
             &audio_payload_size
         );
 
+        m_last_packet_origin_time = timed_packet.received_time;
+
         if (packet_ok_for_processing && audio_processor_) {
             if (audio_payload_ptr && audio_payload_size == INPUT_CHUNK_BYTES) {
                 current_packet_ssrcs_ = timed_packet.ssrcs;
@@ -514,6 +618,7 @@ void SourceInputProcessor::input_loop() {
         profiling_processing_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(loop_end - loop_start).count();
         profiling_processing_samples_++;
         maybe_log_profiler();
+        maybe_log_telemetry(loop_end);
     }
     LOG_CPP_INFO("[SourceProc:%s] Input loop exiting. StopFlag=%d", config_.instance_id.c_str(), stop_flag_.load());
 }
@@ -626,6 +731,26 @@ bool SourceInputProcessor::check_format_and_reconfigure(
             m_current_ap_input_channels = target_ap_input_channels;
             m_current_ap_input_samplerate = target_ap_input_samplerate;
             m_current_ap_input_bitdepth = target_ap_input_bitdepth;
+            // Update chunk duration estimates
+            m_current_input_chunk_ms = 0.0;
+            if (target_ap_input_samplerate > 0 && target_ap_input_channels > 0 && (target_ap_input_bitdepth % 8) == 0) {
+                const std::size_t bytes_per_frame = static_cast<std::size_t>(target_ap_input_channels) * static_cast<std::size_t>(target_ap_input_bitdepth / 8);
+                if (bytes_per_frame > 0) {
+                    const double frames_per_chunk = static_cast<double>(INPUT_CHUNK_BYTES) / static_cast<double>(bytes_per_frame);
+                    if (frames_per_chunk > 0.0) {
+                        m_current_input_chunk_ms = (frames_per_chunk * 1000.0) / static_cast<double>(target_ap_input_samplerate);
+                    }
+                }
+            }
+
+            m_current_output_chunk_ms = 0.0;
+            if (config_.output_samplerate > 0) {
+                const int output_channels = std::max(1, config_.output_channels);
+                const double frames_per_chunk = static_cast<double>(OUTPUT_CHUNK_SAMPLES) / static_cast<double>(output_channels);
+                if (frames_per_chunk > 0.0) {
+                    m_current_output_chunk_ms = (frames_per_chunk * 1000.0) / static_cast<double>(config_.output_samplerate);
+                }
+            }
             m_reconfigurations++;
             LOG_CPP_INFO("[SourceProc:%s] AudioProcessor reconfigured successfully.", config_.instance_id.c_str());
         } catch (const std::exception& e) {

@@ -410,6 +410,7 @@ void RtpReceiver::run() {
             } // End for n_events
         #endif
         service_clock_manager();
+        maybe_log_telemetry();
     } // End while is_running
     log_message("RTP receiver thread finished.");
 }
@@ -630,6 +631,40 @@ size_t RtpReceiver::get_receive_buffer_size() const {
 
 int RtpReceiver::get_poll_timeout_ms() const {
     return 5; // Reduced timeout to service clock-driven playout promptly
+}
+
+void RtpReceiver::maybe_log_telemetry() {
+    static constexpr auto kTelemetryInterval = std::chrono::seconds(30);
+
+    const auto now = std::chrono::steady_clock::now();
+    if (telemetry_last_log_time_.time_since_epoch().count() != 0 &&
+        now - telemetry_last_log_time_ < kTelemetryInterval) {
+        return;
+    }
+
+    telemetry_last_log_time_ = now;
+
+    size_t buffer_count = 0;
+    size_t total_packets = 0;
+    size_t max_packets = 0;
+    {
+        std::lock_guard<std::mutex> lock(reordering_buffer_mutex_);
+        buffer_count = reordering_buffers_.size();
+        for (const auto& [ssrc, buffer] : reordering_buffers_) {
+            (void)ssrc;
+            const size_t buffered = buffer.size();
+            total_packets += buffered;
+            if (buffered > max_packets) {
+                max_packets = buffered;
+            }
+        }
+    }
+
+    LOG_CPP_INFO(
+        "[Telemetry][RtpReceiver] reorder_buffers=%zu total_packets=%zu max_packets=%zu",
+        buffer_count,
+        total_packets,
+        max_packets);
 }
 
 } // namespace audio

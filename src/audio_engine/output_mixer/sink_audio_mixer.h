@@ -251,7 +251,9 @@ private:
     // --- Profiling ---
     void reset_profiler_counters();
     void maybe_log_profiler();
+    void maybe_log_telemetry(std::chrono::steady_clock::time_point now);
     std::chrono::steady_clock::time_point profiling_last_log_time_;
+    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
     uint64_t profiling_cycles_{0};
     uint64_t profiling_data_ready_cycles_{0};
     uint64_t profiling_chunks_sent_{0};

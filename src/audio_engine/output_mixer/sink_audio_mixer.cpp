@@ -1227,6 +1227,126 @@ void SinkAudioMixer::maybe_log_profiler() {
     }
 }
 
+void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point now) {
+    if (!m_settings || !m_settings->telemetry.enabled) {
+        return;
+    }
+
+    long interval_ms = m_settings->telemetry.log_interval_ms;
+    if (interval_ms <= 0) {
+        interval_ms = 30000;
+    }
+    auto interval = std::chrono::milliseconds(interval_ms);
+    if (telemetry_last_log_time_.time_since_epoch().count() != 0 && now - telemetry_last_log_time_ < interval) {
+        return;
+    }
+
+    telemetry_last_log_time_ = now;
+
+    size_t ready_sources = 0;
+    size_t ready_total = 0;
+    size_t ready_max = 0;
+    double ready_total_ms = 0.0;
+    double ready_max_ms = 0.0;
+    double chunk_duration_ms = 0.0;
+    const int active_channels = std::max(playback_channels_, 1);
+    if (playback_sample_rate_ > 0 && playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0) {
+        const std::size_t frame_bytes = static_cast<std::size_t>(active_channels) * static_cast<std::size_t>(playback_bit_depth_ / 8);
+        if (frame_bytes > 0) {
+            chunk_duration_ms = (static_cast<double>(SINK_CHUNK_SIZE_BYTES) / static_cast<double>(frame_bytes)) *
+                                (1000.0 / static_cast<double>(playback_sample_rate_));
+        }
+    }
+    if (mix_scheduler_) {
+        auto ready_depths = mix_scheduler_->get_ready_depths();
+        ready_sources = ready_depths.size();
+        for (const auto& [instance_id, depth] : ready_depths) {
+            (void)instance_id;
+            ready_total += depth;
+            if (depth > ready_max) {
+                ready_max = depth;
+            }
+            if (chunk_duration_ms > 0.0 && depth > 0) {
+                const double backlog_ms = static_cast<double>(depth) * chunk_duration_ms;
+                ready_total_ms += backlog_ms;
+                if (backlog_ms > ready_max_ms) {
+                    ready_max_ms = backlog_ms;
+                }
+                LOG_CPP_INFO(
+                    "[Telemetry][SinkMixer:%s][Source %s] ready_chunks=%zu backlog_ms=%.3f",
+                    config_.sink_id.c_str(),
+                    instance_id.c_str(),
+                    depth,
+                    backlog_ms);
+            }
+        }
+    }
+
+    double payload_ms = 0.0;
+    if (playback_sample_rate_ > 0 && playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0) {
+        const std::size_t frame_bytes = static_cast<std::size_t>(active_channels) * static_cast<std::size_t>(playback_bit_depth_ / 8);
+        if (frame_bytes > 0) {
+            const double frames = static_cast<double>(payload_buffer_write_pos_) / static_cast<double>(frame_bytes);
+            payload_ms = (frames * 1000.0) / static_cast<double>(playback_sample_rate_);
+        }
+    }
+
+    const double ready_avg_ms = (ready_sources > 0 && chunk_duration_ms > 0.0)
+        ? ready_total_ms / static_cast<double>(ready_sources)
+        : 0.0;
+
+    size_t mp3_queue_size = 0;
+    if (mp3_output_queue_) {
+        mp3_queue_size = mp3_output_queue_->size();
+    }
+
+    double head_skew_ms = std::chrono::duration<double, std::milli>(now - next_mix_time_).count();
+    if (head_skew_ms < 0.0) {
+        head_skew_ms = 0.0;
+    }
+
+    double source_avg_age_ms = 0.0;
+    double source_max_age_ms = 0.0;
+    size_t source_chunks_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        for (const auto& [instance_id, chunk] : source_buffers_) {
+            (void)instance_id;
+            if (chunk.audio_data.empty() || chunk.produced_time.time_since_epoch().count() == 0) {
+                continue;
+            }
+            double age_ms = std::chrono::duration<double, std::milli>(now - chunk.produced_time).count();
+            if (age_ms < 0.0) {
+                age_ms = 0.0;
+            }
+            source_avg_age_ms += age_ms;
+            if (age_ms > source_max_age_ms) {
+                source_max_age_ms = age_ms;
+            }
+            source_chunks_count++;
+        }
+    }
+    if (source_chunks_count > 0) {
+        source_avg_age_ms /= static_cast<double>(source_chunks_count);
+    }
+
+    LOG_CPP_INFO(
+        "[Telemetry][SinkMixer:%s] payload_bytes=%zu (%.3f ms) ready_sources=%zu ready_total=%zu ready_max=%zu ready_avg_ms=%.3f ready_max_ms=%.3f head_skew_ms=%.3f source_avg_age_ms=%.3f source_max_age_ms=%.3f underrun_active=%d mp3_queue=%zu",
+        config_.sink_id.c_str(),
+        payload_buffer_write_pos_,
+        payload_ms,
+        ready_sources,
+        ready_total,
+        ready_max,
+        ready_avg_ms,
+        ready_max_ms,
+        head_skew_ms,
+        source_avg_age_ms,
+        source_max_age_ms,
+        underrun_silence_active_ ? 1 : 0,
+        mp3_queue_size);
+}
+
 void SinkAudioMixer::set_playback_format(int sample_rate, int channels, int bit_depth) {
     int sanitized_rate = sample_rate > 0 ? sample_rate : 48000;
     int sanitized_channels = std::clamp(channels, 1, 8);
@@ -1480,7 +1600,9 @@ void SinkAudioMixer::run() {
                 LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordinator requested skip, yielding cycle.",
                               config_.sink_id.c_str());
                 lock.unlock();
+                auto telemetry_now = std::chrono::steady_clock::now();
                 maybe_log_profiler();
+                maybe_log_telemetry(telemetry_now);
                 continue;
             }
 
@@ -1588,7 +1710,9 @@ void SinkAudioMixer::run() {
             }
         }
 
+        auto telemetry_now = std::chrono::steady_clock::now();
         maybe_log_profiler();
+        maybe_log_telemetry(telemetry_now);
     }
 
     LOG_CPP_INFO("[SinkMixer:%s] Exiting run loop.", config_.sink_id.c_str());

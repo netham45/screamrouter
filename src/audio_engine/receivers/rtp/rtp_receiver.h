@@ -154,6 +154,9 @@ private:
     };
     std::map<socket_t, SessionInfo> socket_sessions_; // Maps socket FD to session info
     std::map<std::string, socket_t> unicast_source_to_socket_; // Maps "source_ip:dest_ip:port" to socket FD
+
+    void maybe_log_telemetry();
+    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
 };
 
 } // namespace audio

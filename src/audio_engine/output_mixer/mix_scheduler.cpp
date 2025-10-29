@@ -255,6 +255,80 @@ void MixScheduler::append_ready_chunk(const std::string& instance_id,
         }
         queue.push_back(std::move(ready));
     }
+
+    maybe_log_telemetry();
+}
+
+void MixScheduler::maybe_log_telemetry() {
+    if (!settings_ || !settings_->telemetry.enabled) {
+        return;
+    }
+
+    long interval_ms = settings_->telemetry.log_interval_ms;
+    if (interval_ms <= 0) {
+        interval_ms = 30000;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (telemetry_last_log_time_.time_since_epoch().count() != 0 &&
+        now - telemetry_last_log_time_ < std::chrono::milliseconds(interval_ms)) {
+        return;
+    }
+
+    telemetry_last_log_time_ = now;
+
+    std::unordered_map<std::string, std::deque<ReadyChunk>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(ready_mutex_);
+        snapshot = ready_chunks_;
+    }
+
+    size_t total_chunks = 0;
+    double total_head_age_ms = 0.0;
+    double max_head_age_ms = 0.0;
+
+    for (const auto& [instance_id, ready_queue] : snapshot) {
+        size_t queue_size = ready_queue.size();
+        total_chunks += queue_size;
+
+        double head_age_ms = 0.0;
+        double tail_age_ms = 0.0;
+        if (!ready_queue.empty()) {
+            head_age_ms = std::chrono::duration<double, std::milli>(now - ready_queue.front().arrival_time).count();
+            if (head_age_ms < 0.0) {
+                head_age_ms = 0.0;
+            }
+            tail_age_ms = std::chrono::duration<double, std::milli>(now - ready_queue.back().arrival_time).count();
+            if (tail_age_ms < 0.0) {
+                tail_age_ms = 0.0;
+            }
+            total_head_age_ms += head_age_ms;
+            if (head_age_ms > max_head_age_ms) {
+                max_head_age_ms = head_age_ms;
+            }
+        }
+
+        LOG_CPP_INFO(
+            "[Telemetry][MixScheduler:%s][Source %s] ready_chunks=%zu head_age_ms=%.3f tail_age_ms=%.3f",
+            mixer_id_.c_str(),
+            instance_id.c_str(),
+            queue_size,
+            head_age_ms,
+            tail_age_ms);
+    }
+
+    double avg_head_age_ms = 0.0;
+    if (!snapshot.empty()) {
+        avg_head_age_ms = total_head_age_ms / static_cast<double>(snapshot.size());
+    }
+
+    LOG_CPP_INFO(
+        "[Telemetry][MixScheduler:%s] total_ready_chunks=%zu avg_head_age_ms=%.3f max_head_age_ms=%.3f sources=%zu",
+        mixer_id_.c_str(),
+        total_chunks,
+        avg_head_age_ms,
+        max_head_age_ms,
+        snapshot.size());
 }
 
 } // namespace audio

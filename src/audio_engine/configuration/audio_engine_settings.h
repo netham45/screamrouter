@@ -49,6 +49,11 @@ struct ProfilerSettings {
     long log_interval_ms = 1000;
 };
 
+struct TelemetrySettings {
+    bool enabled = true;
+    long log_interval_ms = 30000;
+};
+
 struct MixerTuning {
     long grace_period_timeout_ms = 12;
     long grace_period_poll_interval_ms = 1;
@@ -95,6 +100,7 @@ class AudioEngineSettings {
 public:
     TimeshiftTuning timeshift_tuning;
     ProfilerSettings profiler;
+    TelemetrySettings telemetry;
     MixerTuning mixer_tuning;
     SourceProcessorTuning source_processor_tuning;
     ProcessorTuning processor_tuning;

@@ -77,6 +77,10 @@ struct StreamTimingState {
     double target_buffer_level_ms = 0.0;
     double buffer_target_fill_percentage = 0.0;
     std::chrono::steady_clock::time_point last_target_update_time{};
+    int sample_rate = 0;
+    int channels = 0;
+    int bit_depth = 0;
+    uint32_t samples_per_chunk = 0;
 
     // Stats
     std::atomic<uint64_t> total_packets{0};
@@ -256,6 +260,7 @@ private:
     void reset_profiler_counters_unlocked(std::chrono::steady_clock::time_point now);
     void maybe_log_profiler_unlocked(std::chrono::steady_clock::time_point now);
     std::chrono::steady_clock::time_point profiling_last_log_time_;
+    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
     uint64_t profiling_packets_dispatched_{0};
     uint64_t profiling_packets_dropped_{0};
     uint64_t profiling_packets_late_count_{0};
