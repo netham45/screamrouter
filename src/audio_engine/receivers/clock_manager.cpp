@@ -10,7 +10,8 @@ namespace {
 constexpr std::chrono::nanoseconds kMinimumPeriod{1};
 }
 
-ClockManager::ClockManager() {
+ClockManager::ClockManager(std::size_t chunk_size_bytes)
+    : chunk_size_bytes_(sanitize_chunk_size_bytes(chunk_size_bytes)) {
     worker_thread_ = std::thread([this]() { run(); });
 }
 
@@ -22,7 +23,7 @@ ClockManager::~ClockManager() {
     }
 }
 
-std::chrono::nanoseconds ClockManager::calculate_period(int sample_rate, int channels, int bit_depth) {
+std::chrono::nanoseconds ClockManager::calculate_period(int sample_rate, int channels, int bit_depth) const {
     if (sample_rate <= 0) {
         throw std::invalid_argument("ClockManager requires sample_rate > 0");
     }
@@ -44,7 +45,7 @@ std::chrono::nanoseconds ClockManager::calculate_period(int sample_rate, int cha
         throw std::invalid_argument("ClockManager calculated zero bytes-per-second");
     }
 
-    const long double seconds = static_cast<long double>(kChunkSizeBytes) /
+    const long double seconds = static_cast<long double>(chunk_size_bytes_) /
                                 static_cast<long double>(bytes_per_second);
     auto period = std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::duration<long double>(seconds));

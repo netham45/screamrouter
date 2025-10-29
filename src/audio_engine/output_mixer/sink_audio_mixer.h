@@ -61,13 +61,6 @@ struct SinkAudioMixerStats {
 using InputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using Mp3OutputQueue = utils::ThreadSafeQueue<EncodedMP3Data>;
 
-/** @brief The size of the network output payload in bytes. */
-const size_t SINK_CHUNK_SIZE_BYTES = 1152;
-/** @brief The number of 32-bit samples required in the mixing buffer to produce a full output chunk. */
-const size_t SINK_MIXING_BUFFER_SAMPLES = 576;
-/** @brief A generous buffer size for MP3 encoding output. */
-const size_t SINK_MP3_BUFFER_SIZE = SINK_CHUNK_SIZE_BYTES * 8;
-
 /**
  * @class SinkAudioMixer
  * @brief Mixes audio from multiple sources and sends it to a network sink.
@@ -174,6 +167,9 @@ public:
 private:
     SinkMixerConfig config_;
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
+    const std::size_t chunk_size_bytes_;
+    const std::size_t mixing_buffer_samples_;
+    const std::size_t mp3_buffer_size_;
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
     std::unique_ptr<INetworkSender> network_sender_;
     std::unique_ptr<MixScheduler> mix_scheduler_;

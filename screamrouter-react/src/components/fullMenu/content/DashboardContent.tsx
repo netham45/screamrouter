@@ -78,23 +78,6 @@ const DashboardContent: React.FC<ContentProps> = ({
         </StatusCard>
         
         <StatusCard
-          title="Now Listening"
-          icon="headphones"
-          status={listeningToSink ? "Active" : "None"}
-          isPositive={!!listeningToSink}
-          onClick={() => setCurrentCategory('now-listening')}
-        >
-          {listeningToSink && (
-            <Box>
-              <Text fontWeight="bold" mb={1}>{listeningToSink.name}</Text>
-              {listeningToSink.volume !== undefined && (
-                <Text>Volume: {listeningToSink.volume}%</Text>
-              )}
-            </Box>
-          )}
-        </StatusCard>
-        
-        <StatusCard
           title="System Status"
           icon="server"
           status="Online"

@@ -14,15 +14,12 @@
 #include <chrono>
 #include <cstdint> // For fixed-width integers like uint8_t, uint32_t
 #include <optional> // For std::optional
-#include "audio_constants.h" // Include the new constants file
+#include "audio_constants.h"
 #include <map>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/operators.h> // For operator overloads
 #include "utils/thread_safe_queue.h"
-
-// MAX_CHANNELS and EQ_BANDS are now in audio_constants.h
-// CHUNK_SIZE is still in audio_processor.h as it's more specific to its processing logic
 
 namespace screamrouter {
 
@@ -86,7 +83,7 @@ struct CppSpeakerLayout {
 struct TaggedAudioPacket {
     /** @brief Identifier for the source (e.g., IP address or user tag). */
     std::string source_tag;
-    /** @brief Raw audio payload (e.g., 1152 bytes of PCM). */
+    /** @brief Raw audio payload sized according to the configured chunk size. */
     std::vector<uint8_t> audio_data;
     /** @brief Timestamp for timeshifting/jitter buffer. */
     std::chrono::steady_clock::time_point received_time;

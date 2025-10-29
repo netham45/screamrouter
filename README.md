@@ -407,24 +407,22 @@ System & Engine
 Audio engine settings schema
 - Timeshift Tuning
   - `cleanup_interval_ms` — background cleanup interval for timeshift buffers
-  - `reanchor_interval_sec` — re‑anchor cadence for clock drift control
-  - `jitter_smoothing_factor` — smoothing for arrival jitter estimate
-  - `jitter_safety_margin_multiplier` — multiplier for buffer targets vs jitter
   - `late_packet_threshold_ms` — classification threshold for late packets
-  - `target_buffer_level_ms` — steady‑state target buffer depth
-  - `proportional_gain_kp` — proportional control gain for rate adjust
-  - `min_playback_rate`/`max_playback_rate` — bounds for resampling rate
+  - `target_buffer_level_ms` — steady-state target buffer depth
   - `loop_max_sleep_ms` — main loop sleep cap to reduce wakeups
+  - `max_catchup_lag_ms` — cap for rate catch-up when running behind
+  - `max_clock_pending_packets` — queue depth guard for clock packets
 - Mixer Tuning
-  - `grace_period_timeout_ms`, `grace_period_poll_interval_ms` — allow sources to (re)appear before considered inactive
   - `mp3_bitrate_kbps`, `mp3_vbr_enabled`, `mp3_output_queue_max_size` — MP3 encoder behavior for web streams
+  - `underrun_hold_timeout_ms` — grace period before resuming after underruns
+  - `max_input_queue_chunks`, `min_input_queue_chunks` — source queue sizing
+  - `max_ready_chunks_per_source` — limiter for mixer ready queue
 - Source Processor Tuning
   - `command_loop_sleep_ms` — control loop interval for source processors
 - Processor Tuning
   - `oversampling_factor` — internal oversampling for processing
   - `volume_smoothing_factor` — smoothing of volume changes
   - `dc_filter_cutoff_hz` — DC offset filter
-  - `soft_clip_threshold`, `soft_clip_knee` — soft clipper settings
   - `normalization_target_rms`, `normalization_attack_smoothing`, `normalization_decay_smoothing` — loudness normalization behavior
   - `dither_noise_shaping_factor` — dithering characteristics
 - Synchronization
@@ -736,10 +734,10 @@ Low‑latency monitoring (browser)
 - Keep normalization disabled on monitor routes to avoid extra dynamics processing.
 
 Unstable Wi‑Fi paths
-- Increase `jitter_safety_margin_multiplier` and `target_buffer_level_ms`; allow a small `proportional_gain_kp` to correct drift without audible artifacts.
+- Increase `target_buffer_level_ms` and lower `max_catchup_lag_ms` when recovering from jitter bursts.
 
 Burst‑y senders (variable CPU)
-- Give more headroom: raise `timeshift_tuning.late_packet_threshold_ms` and enable a slightly higher `grace_period_timeout_ms` to keep sources attached.
+- Give more headroom: raise `timeshift_tuning.late_packet_threshold_ms` and extend `underrun_hold_timeout_ms` to keep sources attached.
 
 Multi‑sink sync
 - Start conservative: lower `max_rate_adjustment`, increase `sync_smoothing_factor`; incrementally reduce `barrier_timeout_ms` once stable.

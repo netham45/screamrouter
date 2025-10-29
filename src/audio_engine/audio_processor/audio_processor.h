@@ -22,12 +22,6 @@
 // libsamplerate include
 #include <samplerate.h>
 
-/**
- * @def CHUNK_SIZE
- * @brief The size of the audio chunk in bytes to be processed at a time.
- */
-#define CHUNK_SIZE 1152
-
 class Biquad;
 
 /**
@@ -120,6 +114,7 @@ public:
 
 private:
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
+    const std::size_t chunk_size_bytes_;
     /** @brief Map of speaker layouts, keyed by the number of input channels. */
     std::map<int, screamrouter::audio::CppSpeakerLayout> speaker_layouts_config_;
     /** @brief Mutex to protect access to the speaker layouts configuration. */

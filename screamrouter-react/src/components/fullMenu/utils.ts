@@ -116,8 +116,6 @@ export const getCategoryTitle = (currentCategory: ContentCategory): string => {
       return 'Dashboard';
     case 'active-source':
       return 'Primary Source';
-    case 'now-listening':
-      return 'Now Listening';
     case 'sources':
       return 'Sources';
     case 'sinks':

@@ -1,13 +1,14 @@
 #include "network_audio_receiver.h"
 #include "../input_processor/timeshift_manager.h" // Ensure full definition is available
 #include "../utils/thread_safe_queue.h" // For full definition of ThreadSafeQueue
-#include "../utils/cpp_logger.h"       // For new C++ logger
+#include "../utils/cpp_logger.h"
 #include <iostream>      // For logging (cpp_logger fallb_ack)
 #include <vector>
 #include <cstring>       // For memset
 #include <stdexcept>     // For runtime_error
 #include <system_error>  // For socket error checking
 #include <algorithm>     // For std::find
+#include <limits>
 #include <cstddef>
 #include <cmath>
 
@@ -105,6 +106,10 @@ bool NetworkAudioReceiver::setup_socket() {
         return false;
     }
 
+    const auto desired_buffer_bytes = chunk_size_bytes_ * 10;
+    const int buffer_size = desired_buffer_bytes > static_cast<std::size_t>(std::numeric_limits<int>::max())
+                                ? std::numeric_limits<int>::max()
+                                : static_cast<int>(desired_buffer_bytes);
 #ifdef _WIN32
     char reuse = 1;
     if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR,
@@ -113,7 +118,6 @@ bool NetworkAudioReceiver::setup_socket() {
         close_socket();
         return false;
     }
-    int buffer_size = 1152 * 10;
     setsockopt(socket_fd_, SOL_SOCKET, SO_RCVBUF,
                reinterpret_cast<const char*>(&buffer_size), static_cast<int>(sizeof(buffer_size)));
 #else // POSIX
@@ -123,7 +127,6 @@ bool NetworkAudioReceiver::setup_socket() {
         close_socket();
         return false;
     }
-    int buffer_size = 1152 * 10;
     setsockopt(socket_fd_, SOL_SOCKET, SO_RCVBUF, &buffer_size, sizeof(buffer_size));
 #endif
 
@@ -752,11 +755,18 @@ uint32_t NetworkAudioReceiver::calculate_samples_per_chunk(int channels, int bit
 }
 
 void NetworkAudioReceiver::maybe_log_telemetry() {
-    static constexpr auto kTelemetryInterval = std::chrono::seconds(30);
-
     const auto now = std::chrono::steady_clock::now();
+    std::chrono::milliseconds telemetry_interval(30000);
+    if (timeshift_manager_) {
+        if (auto settings = timeshift_manager_->get_settings()) {
+            if (settings->telemetry.log_interval_ms > 0) {
+                telemetry_interval = std::chrono::milliseconds(settings->telemetry.log_interval_ms);
+            }
+        }
+    }
+
     if (telemetry_last_log_time_.time_since_epoch().count() != 0 &&
-        now - telemetry_last_log_time_ < kTelemetryInterval) {
+        now - telemetry_last_log_time_ < telemetry_interval) {
         return;
     }
 

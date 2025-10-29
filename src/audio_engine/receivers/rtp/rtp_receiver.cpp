@@ -1,7 +1,7 @@
 #include "rtp_receiver.h"
 #include "../../input_processor/timeshift_manager.h" // For TimeshiftManager operations
 #include "../../audio_constants.h"   // For SCREAM_PAYLOAD_TYPE_RTP, etc.
-#include <rtc/rtp.hpp> // Added for libdatachannel
+#include <rtc/rtp.hpp>
 #include <iostream>
 #include <vector>
 #include <cstring>      // For memcpy, memset, strerror
@@ -9,6 +9,7 @@
 #include <system_error> // For socket error checking
 #include <utility>      // For std::move
 #include <algorithm>    // For std::find, std::min
+#include <limits>
 #include <cerrno>       // For errno
 #ifndef _WIN32
     #include <sys/epoll.h>  // For epoll
@@ -19,6 +20,8 @@
         typedef SSIZE_T ssize_t;
     #endif
 #endif
+
+#include "../../configuration/audio_engine_settings.h"
  
  
  // Platform-specific includes for inet_ntoa, struct sockaddr_in etc. are in network_audio_receiver.h
@@ -46,8 +49,8 @@ void swap_endianness(uint8_t* data, size_t size, int bit_depth) {
 }
 } // namespace
 
-const size_t TARGET_PCM_CHUNK_SIZE = 1152;
-const size_t RAW_RECEIVE_BUFFER_SIZE = 2048; // Buffer for recvfrom
+constexpr std::size_t kMinimumReceiveBufferSize = 2048;
+constexpr std::size_t kRawReceiveBufferSize = 2048; // Buffer sized for recvfrom usage
 
 // RTP constants remain the same
 const int RTP_PAYLOAD_TYPE_L16_48K_STEREO = 127;
@@ -61,8 +64,14 @@ RtpReceiver::RtpReceiver(
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager,
     ClockManager* clock_manager)
-    : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, "[RtpReceiver]", clock_manager, TARGET_PCM_CHUNK_SIZE),
-      config_(config)
+    : NetworkAudioReceiver(config.listen_port,
+                           notification_queue,
+                           timeshift_manager,
+                           "[RtpReceiver]",
+                           clock_manager,
+                           resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
+      config_(config),
+      chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr))
       #ifdef _WIN32
           , max_fd_(NAR_INVALID_SOCKET_VALUE)
       #else
@@ -229,7 +238,7 @@ void RtpReceiver::run() {
         }
     #endif
  
-    unsigned char raw_buffer[RAW_RECEIVE_BUFFER_SIZE];
+    unsigned char raw_buffer[kRawReceiveBufferSize];
     struct sockaddr_in cliaddr;
     socklen_t len = sizeof(cliaddr);
  
@@ -289,13 +298,23 @@ void RtpReceiver::run() {
             std::lock_guard<std::mutex> lock(socket_fds_mutex_);
             for (socket_t current_socket_fd : socket_fds_) {
                 if (FD_ISSET(current_socket_fd, &read_fds)) {
-                    ssize_t n_received = recvfrom(current_socket_fd, (char*)raw_buffer, RAW_RECEIVE_BUFFER_SIZE, 0, (struct sockaddr *)&cliaddr, &len);
+                    ssize_t n_received = recvfrom(current_socket_fd,
+                                                  reinterpret_cast<char*>(raw_buffer),
+                                                  static_cast<int>(kRawReceiveBufferSize),
+                                                  0,
+                                                  (struct sockaddr *)&cliaddr,
+                                                  &len);
         #else
             // Linux epoll: iterate through ready events
             for (int i = 0; i < n_events; ++i) {
                 if ((events[i].events & EPOLLIN)) {
                     socket_t current_socket_fd = events[i].data.fd;
-                    ssize_t n_received = recvfrom(current_socket_fd, raw_buffer, RAW_RECEIVE_BUFFER_SIZE, 0, (struct sockaddr *)&cliaddr, &len);
+                    ssize_t n_received = recvfrom(current_socket_fd,
+                                                  raw_buffer,
+                                                  kRawReceiveBufferSize,
+                                                  0,
+                                                  (struct sockaddr *)&cliaddr,
+                                                  &len);
         #endif
 
                 if (!is_running()) break;
@@ -451,7 +470,9 @@ void RtpReceiver::open_dynamic_session(const std::string& ip, int port, const st
         log_warning("Failed to set SO_REUSEADDR for " + ip + ":" + std::to_string(port) + ": " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
     }
 
-    int recv_buf_size = 4000 * 1152; // TODO: Change to 4*1152 when done testing jitter
+    const auto desired_buffer_bytes = std::min<std::size_t>(chunk_size_bytes_ * 4000ULL,
+                                                            static_cast<std::size_t>(std::numeric_limits<int>::max()));
+    const int recv_buf_size = static_cast<int>(desired_buffer_bytes);
     if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&recv_buf_size), sizeof(recv_buf_size)) < 0) {
         log_warning("Failed to set SO_RCVBUF for " + ip + ":" + std::to_string(port) + ": " + std::string(strerror(NAR_GET_LAST_SOCK_ERROR)));
     }
@@ -624,9 +645,7 @@ bool RtpReceiver::process_and_validate_payload(
 }
 
 size_t RtpReceiver::get_receive_buffer_size() const {
-    // This was for the base class's recvfrom logic, which is not used.
-    // Return the size of the buffer used in our run() loop.
-    return RAW_RECEIVE_BUFFER_SIZE;
+    return std::max<std::size_t>(chunk_size_bytes_ * 4, kMinimumReceiveBufferSize);
 }
 
 int RtpReceiver::get_poll_timeout_ms() const {

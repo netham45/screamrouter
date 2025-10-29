@@ -1,5 +1,5 @@
 #include "source_input_processor.h"
-#include "../utils/cpp_logger.h" // For new C++ logger
+#include "../utils/cpp_logger.h"
 #include <iostream> // For logging (cpp_logger fallback)
 #include <stdexcept>
 #include <cstring> // For memcpy
@@ -17,15 +17,8 @@
 // Use namespaces for clarity
 using namespace screamrouter::audio;
 using namespace screamrouter::audio::utils;
- 
-// Old logger macros are removed. New macros (LOG_CPP_INFO, etc.) are in cpp_logger.h
-// The instance_id from config_ will be manually prepended in the new log calls.
 
-// Define how often to cleanup the timeshift buffer (e.g., every second)
 const std::chrono::milliseconds TIMESIFT_CLEANUP_INTERVAL(1000);
-
-// Constants are now defined in the header file (.h)
-
 
 SourceInputProcessor::SourceInputProcessor(
     SourceProcessorConfig config, // config now includes instance_id
@@ -38,16 +31,13 @@ SourceInputProcessor::SourceInputProcessor(
       output_queue_(output_queue),
       command_queue_(command_queue),
       m_settings(settings),
+      chunk_size_bytes_(resolve_chunk_size_bytes(settings)),
       profiling_last_log_time_(std::chrono::steady_clock::now()),
       current_volume_(config_.initial_volume), // Initialize from moved config_
       current_eq_(config_.initial_eq),
       current_delay_ms_(config_.initial_delay_ms),
-      // current_timeshift_backshift_sec_ is removed as a direct controller
       current_timeshift_backshift_sec_config_(config_.initial_timeshift_sec), // Initialize from config
       // current_speaker_layouts_map_ is default-initialized (empty)
-      // Old speaker mix members initializations are removed:
-      // current_use_auto_speaker_mix_(config_.use_auto_speaker_mix),
-      // current_speaker_mix_matrix_(config_.speaker_mix_matrix),
       m_current_ap_input_channels(0), // Initialize current format state
       m_current_ap_input_samplerate(0),
       m_current_ap_input_bitdepth(0)
@@ -56,7 +46,6 @@ SourceInputProcessor::SourceInputProcessor(
     // or when AudioProcessor is created if SourceProcessorConfig is updated.
     // For now, it starts empty.
 
-    // Use the new LOG macro which includes instance_id
     LOG_CPP_INFO("[SourceProc:%s] Initializing...", config_.instance_id.c_str());
     if (!input_queue_ || !output_queue_ || !command_queue_) {
         // Log before throwing
@@ -70,7 +59,6 @@ SourceInputProcessor::SourceInputProcessor(
         config_.initial_eq = current_eq_; // Update config_ member
     }
 
-    // initialize_audio_processor(); // Removed
     audio_processor_ = nullptr; // Set audio_processor_ to nullptr initially
     LOG_CPP_INFO("[SourceProc:%s] Initialization complete.", config_.instance_id.c_str());
 }
@@ -81,7 +69,6 @@ SourceInputProcessor::~SourceInputProcessor() {
         LOG_CPP_INFO("[SourceProc:%s] Destructor called while still running. Stopping...", config_.instance_id.c_str());
         stop(); // Ensure stop logic is triggered if not already stopped
     }
-    // Join input_thread_ here (output_thread_ is removed)
     if (input_thread_.joinable()) {
         LOG_CPP_INFO("[SourceProc:%s] Joining input thread in destructor...", config_.instance_id.c_str());
         try {
@@ -91,7 +78,6 @@ SourceInputProcessor::~SourceInputProcessor() {
             LOG_CPP_ERROR("[SourceProc:%s] Error joining input thread in destructor: %s", config_.instance_id.c_str(), e.what());
         }
     }
-    // timeshift_condition_ is removed, so no notification cleanup needed.
     LOG_CPP_INFO("[SourceProc:%s] Destructor finished.", config_.instance_id.c_str());
 }
 
@@ -113,21 +99,16 @@ SourceInputProcessorStats SourceInputProcessor::get_stats() {
 }
 // --- Initialization & Configuration ---
 
-
-
-void SourceInputProcessor::set_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map) { // Changed to audio namespace
+void SourceInputProcessor::set_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map) {
     std::lock_guard<std::mutex> lock(processor_config_mutex_); // Protect map and processor access
     current_speaker_layouts_map_ = layouts_map;
     LOG_CPP_DEBUG("[SourceProc:%s] Received %zu speaker layouts.", config_.instance_id.c_str(), layouts_map.size());
 
     if (audio_processor_) {
-        // AudioProcessor needs a method to accept this map (will be added in Task 17.11)
         audio_processor_->update_speaker_layouts_config(current_speaker_layouts_map_);
         LOG_CPP_DEBUG("[SourceProc:%s] Updated AudioProcessor with new speaker layouts.", config_.instance_id.c_str());
     }
 }
-
-// void SourceInputProcessor::initialize_audio_processor() { // Removed
 
 void SourceInputProcessor::start() {
      if (is_running()) {
@@ -136,7 +117,6 @@ void SourceInputProcessor::start() {
     }
     LOG_CPP_INFO("[SourceProc:%s] Starting...", config_.instance_id.c_str());
     // Reset state specific to this component
-    // timeshift_buffer_read_idx_ = 0; // Removed
     process_buffer_.clear();
     // Implementation for start: set flag, launch thread
     stop_flag_ = false; // Reset stop flag before launching threads
@@ -149,7 +129,6 @@ void SourceInputProcessor::start() {
     } catch (const std::system_error& e) {
         LOG_CPP_ERROR("[SourceProc:%s] Failed to start component thread: %s", config_.instance_id.c_str(), e.what());
         stop_flag_ = true; // Ensure stopped state if launch fails
-        // timeshift_condition_ is removed
         if(input_queue_) input_queue_->stop(); // Ensure queues are stopped
         if(command_queue_) command_queue_->stop();
         // Rethrow or handle error appropriately
@@ -175,7 +154,6 @@ void SourceInputProcessor::stop() {
     stop_flag_ = true; // Set the atomic flag
 
     // Notify condition variables/queues AFTER setting stop_flag_
-    // timeshift_condition_.notify_all(); // Removed
     if(input_queue_) input_queue_->stop(); // Signal the input queue to stop blocking pop calls
     if(command_queue_) command_queue_->stop(); // Stop command queue as well
 
@@ -251,33 +229,31 @@ void SourceInputProcessor::process_commands() {
     }
 }
 
-// handle_new_input_packet, update_timeshift_target_time, cleanup_timeshift_buffer, check_readiness_condition are removed.
-
 void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input_chunk_data) {
     if (!audio_processor_) {
         LOG_CPP_ERROR("[SourceProc:%s] AudioProcessor not initialized. Cannot process chunk.", config_.instance_id.c_str());
         return;
     }
-    size_t input_bytes = input_chunk_data.size();
-    LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Processing chunk. Input Size=%zu bytes. Expected=%zu bytes.", config_.instance_id.c_str(), input_bytes, static_cast<size_t>(CHUNK_SIZE));
-    if (input_bytes != CHUNK_SIZE) { // Use constant CHUNK_SIZE
+    const size_t input_bytes = input_chunk_data.size();
+    LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Processing chunk. Input Size=%zu bytes. Expected=%zu bytes.",
+                  config_.instance_id.c_str(), input_bytes, chunk_size_bytes_);
+    if (input_bytes != chunk_size_bytes_) {
          LOG_CPP_ERROR("[SourceProc:%s] process_audio_chunk called with incorrect data size: %zu. Skipping processing.", config_.instance_id.c_str(), input_bytes);
          return;
     }
     
     // Allocate a temporary output buffer large enough to hold the maximum possible output
     // from AudioProcessor::processAudio. Match the size of AudioProcessor's internal processed_buffer.
-    // Size = CHUNK_SIZE * MAX_CHANNELS * 4 = 1152 * 8 * 4 = 36864 samples
-    std::vector<int32_t> processor_output_buffer(CHUNK_SIZE * MAX_CHANNELS * 4);
+    std::vector<int32_t> processor_output_buffer(chunk_size_bytes_ * MAX_CHANNELS * 4);
 
-    int actual_samples_processed = 0; // Renamed variable for clarity
+    int actual_samples_processed = 0;
     { // Lock mutex for accessing AudioProcessor
         std::lock_guard<std::mutex> lock(processor_config_mutex_);
         if (!audio_processor_) {
              LOG_CPP_ERROR("[SourceProc:%s] AudioProcessor is null during process_audio_chunk call.", config_.instance_id.c_str());
              return; // Cannot proceed without a valid processor
         }
-        // Pass the data pointer and size (CHUNK_SIZE)
+        // Pass the data pointer and size (chunk_size_bytes_)
         // processAudio now returns the actual number of samples written to processor_output_buffer.data()
         actual_samples_processed = audio_processor_->processAudio(input_chunk_data.data(), processor_output_buffer.data());
     }
@@ -310,7 +286,7 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
 
 void SourceInputProcessor::push_output_chunk_if_ready() {
     // Check if we have enough samples for a full output chunk
-    size_t required_samples = OUTPUT_CHUNK_SAMPLES; // Should be 576 for 16-bit stereo sink target
+    const size_t required_samples = compute_processed_chunk_samples(chunk_size_bytes_);
     size_t current_buffer_size = process_buffer_.size();
 
     LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Checking buffer. Current=%zu samples. Required=%zu samples.", config_.instance_id.c_str(), current_buffer_size, required_samples);
@@ -322,11 +298,12 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          output_chunk.ssrcs = current_packet_ssrcs_;
          output_chunk.produced_time = std::chrono::steady_clock::now();
          output_chunk.origin_time = m_last_packet_origin_time;
-         output_chunk.playback_rate = m_current_playback_rate;
+         output_chunk.playback_rate = 1.0;
          size_t pushed_samples = output_chunk.audio_data.size();
 
          // Push to the output queue
-         LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Pushing chunk with %zu samples (Expected=%zu) to Sink queue.", config_.instance_id.c_str(), pushed_samples, required_samples);
+         LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Pushing chunk with %zu samples (Expected=%zu) to Sink queue.",
+                       config_.instance_id.c_str(), pushed_samples, required_samples);
          if (pushed_samples != required_samples) {
              LOG_CPP_ERROR("[SourceProc:%s] PushOutput: Mismatch between pushed samples (%zu) and required samples (%zu).", config_.instance_id.c_str(), pushed_samples, required_samples);
          }
@@ -344,7 +321,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
 
          std::size_t dynamic_cap = 0;
          if (m_settings && config_.output_samplerate > 0) {
-             const double chunk_duration_ms = (static_cast<double>(OUTPUT_CHUNK_SAMPLES) * 1000.0) /
+             const double chunk_duration_ms = (static_cast<double>(required_samples) * 1000.0) /
                  static_cast<double>(config_.output_samplerate);
              if (chunk_duration_ms > 0.0) {
                  dynamic_cap = static_cast<std::size_t>(std::ceil(
@@ -537,7 +514,7 @@ void SourceInputProcessor::maybe_log_telemetry(std::chrono::steady_clock::time_p
     }
 
     LOG_CPP_INFO(
-        "[Telemetry][SourceProc:%s] input_q=%zu (%.3f ms) output_q=%zu (%.3f ms) process_buf_samples=%zu (%.3f ms) last_packet_age_ms=%.3f last_origin_age_ms=%.3f playback_rate=%.3f",
+        "[Telemetry][SourceProc:%s] input_q=%zu (%.3f ms) output_q=%zu (%.3f ms) process_buf_samples=%zu (%.3f ms) last_packet_age_ms=%.3f last_origin_age_ms=%.3f",
         config_.instance_id.c_str(),
         input_q_size,
         input_q_ms,
@@ -546,8 +523,7 @@ void SourceInputProcessor::maybe_log_telemetry(std::chrono::steady_clock::time_p
         process_buf_size,
         process_buf_ms,
         last_packet_age_ms,
-        last_origin_age_ms,
-        m_current_playback_rate);
+        last_origin_age_ms);
 }
 
 // --- New/Modified Thread Loops ---
@@ -562,10 +538,17 @@ void SourceInputProcessor::input_loop() {
 
         // --- Discontinuity Detection ---
         auto now = std::chrono::steady_clock::now();
+        const long configured_discontinuity_ms =
+            (m_settings && m_settings->source_processor_tuning.discontinuity_threshold_ms > 0)
+                ? m_settings->source_processor_tuning.discontinuity_threshold_ms
+                : 100;
         if (!m_is_first_packet_after_discontinuity) {
             auto time_since_last_packet = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_packet_time).count();
-            if (time_since_last_packet > 100) { // 100ms threshold for a discontinuity
-                LOG_CPP_WARNING("[SourceProc:%s] Audio discontinuity detected (%lld ms). Flushing filters.", config_.instance_id.c_str(), time_since_last_packet);
+            if (time_since_last_packet > configured_discontinuity_ms) {
+                LOG_CPP_WARNING("[SourceProc:%s] Audio discontinuity detected (%lld ms > %ld ms). Flushing filters.",
+                                config_.instance_id.c_str(),
+                                time_since_last_packet,
+                                configured_discontinuity_ms);
                 if (audio_processor_) {
                     audio_processor_->flushFilters();
                 }
@@ -573,20 +556,6 @@ void SourceInputProcessor::input_loop() {
         }
         m_last_packet_time = now;
         m_is_first_packet_after_discontinuity = false;
-
-        LOG_CPP_DEBUG("[SourceProc:%s] Packet playback_rate=%.6f (current=%.6f)",
-                      config_.instance_id.c_str(), timed_packet.playback_rate, m_current_playback_rate);
-
-        // Check if the playback rate has changed and command the AudioProcessor.
-        if (audio_processor_ && std::abs(timed_packet.playback_rate - m_current_playback_rate) > 0.0001) {
-            std::lock_guard<std::mutex> lock(processor_config_mutex_);
-            if (audio_processor_) { // Double-check after lock
-                audio_processor_->set_playback_rate(timed_packet.playback_rate);
-                m_current_playback_rate = timed_packet.playback_rate;
-                LOG_CPP_DEBUG("[SourceProc:%s] Applied playback rate %.6f from timeshift packet.",
-                              config_.instance_id.c_str(), m_current_playback_rate);
-            }
-        }
 
         const uint8_t* audio_payload_ptr = nullptr;
         size_t audio_payload_size = 0;
@@ -600,7 +569,7 @@ void SourceInputProcessor::input_loop() {
         m_last_packet_origin_time = timed_packet.received_time;
 
         if (packet_ok_for_processing && audio_processor_) {
-            if (audio_payload_ptr && audio_payload_size == INPUT_CHUNK_BYTES) {
+            if (audio_payload_ptr && audio_payload_size == chunk_size_bytes_) {
                 current_packet_ssrcs_ = timed_packet.ssrcs;
                 std::vector<uint8_t> chunk_data_for_processing(audio_payload_ptr, audio_payload_ptr + audio_payload_size);
                 
@@ -633,7 +602,6 @@ void SourceInputProcessor::input_loop() {
     LOG_CPP_INFO("[SourceProc:%s] Input loop exiting. StopFlag=%d", config_.instance_id.c_str(), stop_flag_.load());
 }
 
-// output_loop() is removed entirely.
 
 bool SourceInputProcessor::check_format_and_reconfigure(
     const TaggedAudioPacket& packet,
@@ -647,12 +615,13 @@ bool SourceInputProcessor::check_format_and_reconfigure(
     int target_ap_input_samplerate = packet.sample_rate;
     int target_ap_input_bitdepth = packet.bit_depth;
     // Channel layout bytes (packet.chlayout1, packet.chlayout2) are available but not directly used by AudioProcessor constructor
-    const uint8_t* audio_data_start = packet.audio_data.data(); // Payload is always 1152 bytes now
+    const uint8_t* audio_data_start = packet.audio_data.data();
     size_t audio_data_len = packet.audio_data.size();
 
     // --- Validate Packet Format and Size ---
-    if (audio_data_len != CHUNK_SIZE) {
-         LOG_CPP_ERROR("[SourceProc:%s] Incorrect audio payload size. Expected %zu, got %zu", config_.instance_id.c_str(), static_cast<size_t>(CHUNK_SIZE), audio_data_len);
+    if (audio_data_len != chunk_size_bytes_) {
+         LOG_CPP_ERROR("[SourceProc:%s] Incorrect audio payload size. Expected %zu, got %zu",
+                       config_.instance_id.c_str(), chunk_size_bytes_, audio_data_len);
          return false;
     }
      if (target_ap_input_channels <= 0 || target_ap_input_channels > 8 ||
@@ -711,26 +680,6 @@ bool SourceInputProcessor::check_format_and_reconfigure(
                 current_speaker_layouts_map_, // Pass the currently configured speaker layouts
                 m_settings
             );
-            // The following lines will be adjusted once AudioProcessor constructor takes the map.
-            // For now, this is how it would be if AudioProcessor still took individual settings.
-            // This will be superseded by passing the map to the constructor.
-            // audio_processor_->setEqualizer(current_eq_.data()); 
-
-            // --- Initialize AudioProcessor with current_speaker_layouts_map_ ---
-            // This requires AudioProcessor constructor to be updated (Task 17.11)
-            // For now, we'll assume the constructor takes it.
-            // If not, we'd call audio_processor_->update_speaker_layouts_config() here.
-            // The line above creating AudioProcessor will be modified in Task 17.11 to pass the map.
-            // For this task, we ensure the map is ready.
-            // The actual application of the map to the new AudioProcessor instance
-            // will happen via its constructor or an immediate call to update_speaker_layouts_config.
-            // The task description for 17.10 says:
-            // "When a new AudioProcessor instance is created... it needs to be initialized with the current_speaker_layouts_map_."
-            // This implies the constructor of AudioProcessor will take it.
-            // So, the existing call to make_unique<AudioProcessor> will be modified in task 17.11.
-            // Here, we just ensure current_speaker_layouts_map_ is available.
-            // The old direct application of speaker_mix_matrix/auto_mode is removed.
-            
             // Apply other settings like EQ after construction
             audio_processor_->setEqualizer(current_eq_.data());
             
@@ -746,7 +695,7 @@ bool SourceInputProcessor::check_format_and_reconfigure(
             if (target_ap_input_samplerate > 0 && target_ap_input_channels > 0 && (target_ap_input_bitdepth % 8) == 0) {
                 const std::size_t bytes_per_frame = static_cast<std::size_t>(target_ap_input_channels) * static_cast<std::size_t>(target_ap_input_bitdepth / 8);
                 if (bytes_per_frame > 0) {
-                    const double frames_per_chunk = static_cast<double>(INPUT_CHUNK_BYTES) / static_cast<double>(bytes_per_frame);
+                    const double frames_per_chunk = static_cast<double>(chunk_size_bytes_) / static_cast<double>(bytes_per_frame);
                     if (frames_per_chunk > 0.0) {
                         m_current_input_chunk_ms = (frames_per_chunk * 1000.0) / static_cast<double>(target_ap_input_samplerate);
                     }
@@ -756,7 +705,8 @@ bool SourceInputProcessor::check_format_and_reconfigure(
             m_current_output_chunk_ms = 0.0;
             if (config_.output_samplerate > 0) {
                 const int output_channels = std::max(1, config_.output_channels);
-                const double frames_per_chunk = static_cast<double>(OUTPUT_CHUNK_SAMPLES) / static_cast<double>(output_channels);
+                const double frames_per_chunk = static_cast<double>(compute_processed_chunk_samples(chunk_size_bytes_)) /
+                    static_cast<double>(output_channels);
                 if (frames_per_chunk > 0.0) {
                     m_current_output_chunk_ms = (frames_per_chunk * 1000.0) / static_cast<double>(config_.output_samplerate);
                 }
@@ -783,11 +733,9 @@ void SourceInputProcessor::run() {
      try {
         input_thread_ = std::thread(&SourceInputProcessor::input_loop, this);
         LOG_CPP_INFO("[SourceProc:%s] Input thread launched by run().", config_.instance_id.c_str());
-        // output_thread_ is removed
      } catch (const std::system_error& e) {
          LOG_CPP_ERROR("[SourceProc:%s] Failed to start input_thread_ from run(): %s", config_.instance_id.c_str(), e.what());
          stop_flag_ = true; // Signal stop if thread failed to launch
-         // timeshift_condition_ is removed
          if(input_queue_) input_queue_->stop();
          if(command_queue_) command_queue_->stop();
          return; // Exit run() if input_thread_ failed
@@ -814,7 +762,6 @@ void SourceInputProcessor::run() {
              LOG_CPP_ERROR("[SourceProc:%s] Error joining input thread in run(): %s", config_.instance_id.c_str(), e.what());
          }
      }
-     // output_thread_ joining is removed.
 
      LOG_CPP_INFO("[SourceProc:%s] Component run() exiting.", config_.instance_id.c_str());
 }

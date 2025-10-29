@@ -73,6 +73,7 @@ void PulseAudioReceiver::run() {}
 #include <random>
 
 #include "../../audio_processor/audio_processor.h"
+#include "../../configuration/audio_engine_settings.h"
 
 #include <cerrno>
 #include <csignal>
@@ -106,7 +107,6 @@ constexpr const char* kVirtualSinkDescription = "ScreamRouter Virtual Pulse Sink
 constexpr uint32_t kPulseCookieLength = 256;
 constexpr uint32_t kInvalidIndex = 0xFFFFFFFFu;
 constexpr uint32_t kDefaultBufferLength = 48 * 1024; // 1 second @ 48kHz, 8ch, 32-bit
-constexpr uint32_t kDefaultMinReq = 1152;
 constexpr uint32_t kDefaultPrebuf = 0;
 constexpr uint32_t kDefaultMaxLength = kDefaultBufferLength * 2;
 constexpr int64_t kMaxCatchupUsecPerChunk = 50000; // limit to 20ms of catch-up per chunk to avoid pops
@@ -296,7 +296,7 @@ struct BufferAttr {
     uint32_t maxlength = kDefaultMaxLength;
     uint32_t tlength = kDefaultBufferLength;
     uint32_t prebuf = kDefaultPrebuf;
-    uint32_t minreq = kDefaultMinReq;
+    uint32_t minreq = 0;
 };
 
 struct StreamConfig {
@@ -360,6 +360,10 @@ struct PulseAudioReceiver::Impl {
     std::unordered_map<std::string, std::unordered_set<std::string>> wildcard_to_composites;
     mutable std::mutex tag_map_mutex;
     std::chrono::steady_clock::time_point telemetry_last_log_time{};
+
+    std::size_t chunk_size_bytes = kDefaultChunkSizeBytes;
+    uint32_t min_request_bytes = static_cast<uint32_t>(kDefaultChunkSizeBytes);
+    std::size_t chunk_queue_reserve_bytes = kDefaultChunkSizeBytes * 2;
 
     PulseAudioReceiver::StreamTagResolvedCallback stream_tag_resolved_cb;
     PulseAudioReceiver::StreamTagRemovedCallback stream_tag_removed_cb;
@@ -795,7 +799,9 @@ bool PulseAudioReceiver::Impl::initialize() {
             unix_listen_fd = -1;
             return false;
         }
-        int opt = 1152 * 10;
+        const auto desired_buffer_bytes = std::min<std::size_t>(chunk_size_bytes * 10ULL,
+                                                                static_cast<std::size_t>(std::numeric_limits<int>::max()));
+        const int opt = static_cast<int>(desired_buffer_bytes);
         ::setsockopt(unix_listen_fd, SOL_SOCKET, SO_RCVBUF, &opt, sizeof(opt));
         if (::listen(unix_listen_fd, static_cast<int>(kMaxConnections)) < 0) {
             log_error("Failed to listen on UNIX socket: " + errno_string(errno));
@@ -1187,10 +1193,11 @@ uint32_t PulseAudioReceiver::Impl::Connection::calculate_samples_per_chunk(const
         return 0;
     }
     const uint32_t frame_bytes = (bit_depth / 8u) * static_cast<uint32_t>(stream.sample_spec.channels);
-    if (frame_bytes == 0 || (CHUNK_SIZE % frame_bytes) != 0) {
+    const std::size_t chunk_bytes = owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes;
+    if (frame_bytes == 0 || (chunk_bytes % frame_bytes) != 0) {
         return 0;
     }
-    return CHUNK_SIZE / frame_bytes;
+    return static_cast<uint32_t>(chunk_bytes / frame_bytes);
 }
 
 void PulseAudioReceiver::Impl::Connection::register_stream_clock(StreamState& stream) {
@@ -1324,14 +1331,15 @@ void PulseAudioReceiver::Impl::Connection::handle_clock_tick(uint32_t stream_ind
             stream.next_rtp_frame = start_abs + pending.chunk_frames;
             stream.has_rtp_frame = true;
         } else {
+            const std::size_t chunk_bytes = owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes;
             record_chunk_metrics(stream,
-                                 CHUNK_SIZE,
+                                 chunk_bytes,
                                  stream.samples_per_chunk,
                                  false,
                                  false,
                                  0,
                                  now);
-            packet.audio_data.assign(CHUNK_SIZE, 0);
+            packet.audio_data.assign(chunk_bytes, 0);
             packet.received_time = std::chrono::steady_clock::now();
             if (!stream.has_rtp_frame) {
                 stream.has_rtp_frame = true;
@@ -1453,14 +1461,15 @@ uint32_t PulseAudioReceiver::Impl::Connection::sample_format_bit_depth(uint8_t f
 }
 
 uint32_t PulseAudioReceiver::Impl::Connection::effective_request_bytes(const StreamState& stream) const {
+    const uint32_t fallback = owner ? owner->min_request_bytes : static_cast<uint32_t>(kDefaultChunkSizeBytes);
     uint32_t request = stream.buffer_attr.minreq;
     if (request == 0 || request == static_cast<uint32_t>(-1)) {
-        request = kDefaultMinReq;
+        request = fallback;
     }
     if (stream.buffer_attr.tlength != 0 && stream.buffer_attr.tlength != static_cast<uint32_t>(-1)) {
         request = std::min(request, stream.buffer_attr.tlength);
     }
-    return std::max<uint32_t>(request, kDefaultMinReq);
+    return std::max<uint32_t>(request, fallback);
 }
 
 bool PulseAudioReceiver::Impl::Connection::handle_command(Command command,
@@ -1838,7 +1847,8 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     config.buffer_attr.maxlength = sanitize_buffer_value(*maxlength, kDefaultMaxLength);
     config.buffer_attr.tlength = sanitize_buffer_value(*tlength, kDefaultBufferLength);
     config.buffer_attr.prebuf = sanitize_buffer_value(*prebuf, kDefaultPrebuf);
-    config.buffer_attr.minreq = sanitize_buffer_value(*minreq, kDefaultMinReq);
+    const uint32_t fallback_minreq = owner ? owner->min_request_bytes : static_cast<uint32_t>(kDefaultChunkSizeBytes);
+    config.buffer_attr.minreq = sanitize_buffer_value(*minreq, fallback_minreq);
     config.sync_id = *sync_id;
     config.volume = *cvolume;
 
@@ -1983,7 +1993,8 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     auto [stream_it, inserted] = streams.emplace(stream.local_index, stream);
     stream_it->second.frame_cursor = 0;
     stream_it->second.pending_payload.clear();
-    stream_it->second.pending_payload.reserve(CHUNK_SIZE * 2);
+    const std::size_t reserve_bytes = owner ? owner->chunk_queue_reserve_bytes : kDefaultChunkSizeBytes * 2;
+    stream_it->second.pending_payload.reserve(reserve_bytes);
     stream_it->second.has_last_delivery = false;
     uint32_t initial_request = effective_request_bytes(stream_it->second);
     stream_it->second.pending_request_bytes = initial_request;
@@ -2163,7 +2174,8 @@ bool PulseAudioReceiver::Impl::Connection::handle_set_buffer_attr(uint32_t tag, 
     stream.buffer_attr.maxlength = sanitize_buffer_value(*maxlength, kDefaultMaxLength);
     stream.buffer_attr.tlength = sanitize_buffer_value(*tlength, kDefaultBufferLength);
     stream.buffer_attr.prebuf = sanitize_buffer_value(*prebuf, kDefaultPrebuf);
-    stream.buffer_attr.minreq = sanitize_buffer_value(*minreq, kDefaultMinReq);
+    const uint32_t fallback_minreq = owner ? owner->min_request_bytes : static_cast<uint32_t>(kDefaultChunkSizeBytes);
+    stream.buffer_attr.minreq = sanitize_buffer_value(*minreq, fallback_minreq);
     stream.adjust_latency = adjust_latency_flag;
     stream.early_requests = early_requests_flag;
 
@@ -2565,9 +2577,10 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
         enqueue_shm_release(release_block_id);
     }
 
-    while (stream.pending_payload.size() >= CHUNK_SIZE) {
-        std::vector<uint8_t> chunk(CHUNK_SIZE);
-        const std::size_t popped = stream.pending_payload.pop(chunk.data(), CHUNK_SIZE);
+    const std::size_t chunk_bytes = owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes;
+    while (stream.pending_payload.size() >= chunk_bytes) {
+        std::vector<uint8_t> chunk(chunk_bytes);
+        const std::size_t popped = stream.pending_payload.pop(chunk.data(), chunk_bytes);
         if (popped == 0) {
             break;
         }
@@ -2814,10 +2827,11 @@ inline std::size_t bytes_per_frame_for_format(uint8_t format, uint8_t channels) 
 } // namespace
 
 void PulseAudioReceiver::Impl::maybe_log_telemetry() {
-    constexpr auto kTelemetryInterval = std::chrono::seconds(30);
     const auto now = std::chrono::steady_clock::now();
+    std::chrono::milliseconds telemetry_interval(30000);
+
     if (telemetry_last_log_time.time_since_epoch().count() != 0 &&
-        now - telemetry_last_log_time < kTelemetryInterval) {
+        now - telemetry_last_log_time < telemetry_interval) {
         return;
     }
     telemetry_last_log_time = now;
@@ -2909,6 +2923,10 @@ PulseAudioReceiver::PulseAudioReceiver(PulseReceiverConfig config,
     impl_->timeshift_manager = timeshift_manager;
     impl_->clock_manager = clock_manager;
     impl_->logger_prefix = std::move(logger_prefix);
+    impl_->chunk_size_bytes = resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr);
+    const auto max_uint32 = static_cast<std::size_t>(std::numeric_limits<uint32_t>::max());
+    impl_->min_request_bytes = static_cast<uint32_t>(std::min(impl_->chunk_size_bytes, max_uint32));
+    impl_->chunk_queue_reserve_bytes = impl_->chunk_size_bytes * 2;
 }
 
 PulseAudioReceiver::~PulseAudioReceiver() {

@@ -8,6 +8,7 @@
 #include "sink_audio_mixer.h"
 #include "mix_scheduler.h"
 #include "../utils/cpp_logger.h"
+#include "../configuration/audio_engine_settings.h"
 #include <iostream>
 #include <stdexcept>
 #include <cstring>
@@ -57,15 +58,18 @@ SinkAudioMixer::SinkAudioMixer(
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
     : config_(config),
       m_settings(settings),
+      chunk_size_bytes_(resolve_chunk_size_bytes(m_settings)),
+      mixing_buffer_samples_(compute_processed_chunk_samples(chunk_size_bytes_)),
+      mp3_buffer_size_(chunk_size_bytes_ * 8),
       mp3_output_queue_(mp3_output_queue),
       network_sender_(nullptr),
       mix_scheduler_(std::make_unique<MixScheduler>(config_.sink_id, m_settings)),
-      mixing_buffer_(SINK_MIXING_BUFFER_SAMPLES, 0),
-      stereo_buffer_(SINK_MIXING_BUFFER_SAMPLES * 2, 0),
-      payload_buffer_(SINK_CHUNK_SIZE_BYTES * 8, 0),
+      mixing_buffer_(mixing_buffer_samples_, 0),
+      stereo_buffer_(mixing_buffer_samples_ * 2, 0),
+      payload_buffer_(mp3_buffer_size_, 0),
       lame_global_flags_(nullptr),
       stereo_preprocessor_(nullptr),
-      mp3_encode_buffer_(SINK_MP3_BUFFER_SIZE),
+      mp3_encode_buffer_(mp3_buffer_size_),
       profiling_last_log_time_(std::chrono::steady_clock::now())
 {
     LOG_CPP_INFO("[SinkMixer:%s] Initializing...", config_.sink_id.c_str());
@@ -206,7 +210,7 @@ void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared
         std::lock_guard<std::mutex> lock(queues_mutex_);
         input_queues_[instance_id] = queue;
         input_active_state_[instance_id] = false;
-        source_buffers_[instance_id].audio_data.assign(SINK_MIXING_BUFFER_SAMPLES, 0);
+        source_buffers_[instance_id].audio_data.assign(mixing_buffer_samples_, 0);
         LOG_CPP_INFO("[SinkMixer:%s] Added input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
 
@@ -621,7 +625,7 @@ bool SinkAudioMixer::wait_for_source_data() {
         ProcessedAudioChunk chunk = std::move(ready_entry.chunk);
         const size_t sample_count = chunk.audio_data.size();
 
-        if (sample_count != SINK_MIXING_BUFFER_SAMPLES) {
+        if (sample_count != mixing_buffer_samples_) {
             LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
                           config_.sink_id.c_str(), instance_id.c_str(), sample_count);
             ready_this_cycle[instance_id] = false;
@@ -908,7 +912,7 @@ size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
     }
 
     const size_t total_bytes_in_mixing_buffer = mixing_buffer_.size() * sizeof(int32_t);
-    const size_t input_chunk_bytes = SINK_CHUNK_SIZE_BYTES;
+    const size_t input_chunk_bytes = chunk_size_bytes_;
     size_t processed_samples_count = 0;
 
     for (size_t offset = 0; offset + input_chunk_bytes <= total_bytes_in_mixing_buffer; offset += input_chunk_bytes) {
@@ -1253,7 +1257,7 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
     if (playback_sample_rate_ > 0 && playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0) {
         const std::size_t frame_bytes = static_cast<std::size_t>(active_channels) * static_cast<std::size_t>(playback_bit_depth_ / 8);
         if (frame_bytes > 0) {
-            chunk_duration_ms = (static_cast<double>(SINK_CHUNK_SIZE_BYTES) / static_cast<double>(frame_bytes)) *
+            chunk_duration_ms = (static_cast<double>(chunk_size_bytes_) / static_cast<double>(frame_bytes)) *
                                 (1000.0 / static_cast<double>(playback_sample_rate_));
         }
     }
@@ -1403,7 +1407,7 @@ std::chrono::microseconds SinkAudioMixer::calculate_mix_period(int samplerate, i
         return std::chrono::microseconds(6000);
     }
 
-    const std::size_t frames_per_chunk = SINK_CHUNK_SIZE_BYTES / frame_bytes;
+    const std::size_t frames_per_chunk = chunk_size_bytes_ / frame_bytes;
     if (frames_per_chunk == 0) {
         return std::chrono::microseconds(6000);
     }
@@ -1432,7 +1436,8 @@ void SinkAudioMixer::register_mix_timer() {
 
     if (!clock_manager_) {
         try {
-            clock_manager_ = std::make_unique<ClockManager>();
+            const auto chunk_size_bytes = resolve_chunk_size_bytes(m_settings);
+            clock_manager_ = std::make_unique<ClockManager>(chunk_size_bytes);
         } catch (const std::exception& ex) {
             LOG_CPP_ERROR("[SinkMixer:%s] Failed to create ClockManager: %s",
                           config_.sink_id.c_str(), ex.what());
@@ -1626,8 +1631,8 @@ void SinkAudioMixer::run() {
         const std::size_t bytes_per_sample = static_cast<std::size_t>(effective_bit_depth) / 8;
         const int effective_channels = std::max(playback_channels_, 1);
         const std::size_t frame_bytes = bytes_per_sample * static_cast<std::size_t>(effective_channels);
-        const bool frame_metrics_valid = frame_bytes > 0 && (SINK_CHUNK_SIZE_BYTES % frame_bytes) == 0;
-        const std::size_t frames_per_chunk = frame_metrics_valid ? (SINK_CHUNK_SIZE_BYTES / frame_bytes) : 0;
+        const bool frame_metrics_valid = frame_bytes > 0 && (chunk_size_bytes_ % frame_bytes) == 0;
+        const std::size_t frames_per_chunk = frame_metrics_valid ? (chunk_size_bytes_ / frame_bytes) : 0;
         uint64_t frames_dispatched = 0;
 
         if (!frame_metrics_valid && coordination_active) {
@@ -1636,7 +1641,7 @@ void SinkAudioMixer::run() {
         }
 
         size_t chunks_dispatched = 0;
-        while (payload_buffer_write_pos_ >= SINK_CHUNK_SIZE_BYTES) {
+        while (payload_buffer_write_pos_ >= chunk_size_bytes_) {
             auto send_time = std::chrono::steady_clock::now();
             if (profiling_last_chunk_send_time_.time_since_epoch().count() != 0) {
                 double gap_ms = std::chrono::duration<double, std::milli>(send_time - profiling_last_chunk_send_time_).count();
@@ -1654,19 +1659,19 @@ void SinkAudioMixer::run() {
             profiling_last_chunk_send_time_ = send_time;
             if (network_sender_) {
                 std::lock_guard<std::mutex> lock(csrc_mutex_);
-                network_sender_->send_payload(payload_buffer_.data(), SINK_CHUNK_SIZE_BYTES, current_csrcs_);
+                network_sender_->send_payload(payload_buffer_.data(), chunk_size_bytes_, current_csrcs_);
             }
             profiling_chunks_sent_++;
-            profiling_payload_bytes_sent_ += SINK_CHUNK_SIZE_BYTES;
+            profiling_payload_bytes_sent_ += chunk_size_bytes_;
 
             if (frame_metrics_valid) {
                 frames_dispatched += frames_per_chunk;
             }
             chunks_dispatched++;
 
-            size_t bytes_remaining = payload_buffer_write_pos_ - SINK_CHUNK_SIZE_BYTES;
+            size_t bytes_remaining = payload_buffer_write_pos_ - chunk_size_bytes_;
             if (bytes_remaining > 0) {
-                memmove(payload_buffer_.data(), payload_buffer_.data() + SINK_CHUNK_SIZE_BYTES, bytes_remaining);
+                memmove(payload_buffer_.data(), payload_buffer_.data() + chunk_size_bytes_, bytes_remaining);
             }
             payload_buffer_write_pos_ = bytes_remaining;
 

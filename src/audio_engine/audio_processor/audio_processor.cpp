@@ -1,5 +1,5 @@
 #include "audio_processor.h"
-#include "../utils/cpp_logger.h" // For new C++ logger
+#include "../utils/cpp_logger.h"
 #include "../utils/profiler.h"
 #include "biquad/biquad.h"
 #include <algorithm>
@@ -11,8 +11,8 @@
 #include <chrono>
 #include <thread>
 #include <new> // Include for std::bad_alloc
-#include <sstream> // For logging matrix (will be replaced)
-#include <iomanip> // For std::fixed and std::setprecision (will be replaced)
+#include <sstream>
+#include <iomanip>
 #include <array>
 #if __has_include(<execution>)
 #include <execution>
@@ -39,19 +39,20 @@ using namespace screamrouter::audio;
 #undef max
 #endif
 
-#define CHUNK_SIZE 1152
-
 AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth,
                                int inputSampleRate, int outputSampleRate, float volume,
                                const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config,
                                std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
     : m_settings(settings),
+      chunk_size_bytes_(settings && settings->chunk_size_bytes > 0
+                            ? settings->chunk_size_bytes
+                            : kDefaultChunkSizeBytes),
       inputChannels(inputChannels), outputChannels(outputChannels), inputBitDepth(inputBitDepth),
       inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate),
       speaker_layouts_config_(initial_layouts_config), // Initialize the map
       monitor_running(true),
-      scaled_float_buffer_(CHUNK_SIZE * 8),
-      remixed_float_buffers_(MAX_CHANNELS, std::vector<float>(CHUNK_SIZE * 8 * m_settings->processor_tuning.oversampling_factor)),
+      scaled_float_buffer_(chunk_size_bytes_ * 8),
+      remixed_float_buffers_(MAX_CHANNELS, std::vector<float>(chunk_size_bytes_ * 8 * m_settings->processor_tuning.oversampling_factor)),
       isProcessingRequiredCache(false), isProcessingRequiredCacheSet(false), // Initialize cache flags
       volume_normalization_enabled_(false), eq_normalization_enabled_(false),
       playback_rate_(1.0),
@@ -142,7 +143,7 @@ int AudioProcessor::processAudio(const uint8_t* inputBuffer, int32_t* outputBuff
     // No re-initialization is needed for minor clock drift adjustments.
 
     // --- Processing Pipeline ---
-    scaleBuffer(inputBuffer, CHUNK_SIZE);
+    scaleBuffer(inputBuffer, chunk_size_bytes_);
     volumeAdjust();
     resample();
     splitBufferToChannels();
@@ -367,9 +368,8 @@ void AudioProcessor::scaleBuffer(const uint8_t* inputBuffer, size_t inputBytes) 
 float AudioProcessor::softClip(float sample) {
     // This is a standard cubic soft-clipping algorithm. It provides a smooth
     // transition into saturation, replacing the previous flawed implementation.
-    // NOTE: This simpler, correct implementation does not use the 'soft_clip_threshold' or 
-    // 'soft_clip_knee' parameters from the settings. It provides a fixed clipping curve
-    // that starts compressing at a level of ~0.67 and clips fully at 1.0.
+    // NOTE: This simpler implementation uses a fixed clipping curve that starts compressing
+    // near 0.67 and clips fully at 1.0.
 
     if (sample >= 1.0f) {
         return 1.0f;
@@ -769,8 +769,7 @@ void AudioProcessor::applyCustomSpeakerMix(const std::vector<std::vector<float>>
     rebuild_mix_taps_locked();
 }
 
-// void AudioProcessor::updateSpeakerMix() {
-void AudioProcessor::calculateAndApplyAutoSpeakerMix() { // Renamed
+void AudioProcessor::calculateAndApplyAutoSpeakerMix() {
     LOG_CPP_INFO("[AudioProc] calculateAndApplyAutoSpeakerMix called for inputChannels=%d, outputChannels=%d.", inputChannels, outputChannels);
     // Fills out the speaker mix table speaker_mix[][] with the current configuration.
     memset(speaker_mix, 0, sizeof(speaker_mix));
@@ -999,7 +998,7 @@ void AudioProcessor::calculateAndApplyAutoSpeakerMix() { // Renamed
 
 // --- New/Updated Methods for Speaker Layouts ---
 
-void AudioProcessor::update_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& new_layouts_config) { // Changed to audio namespace
+void AudioProcessor::update_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& new_layouts_config) {
     LOG_CPP_INFO("[AudioProc] update_speaker_layouts_config called. Received %zu layout entries.", new_layouts_config.size());
     for (const auto& pair : new_layouts_config) {
         LOG_CPP_INFO("[AudioProc]   New layout for %dch input: auto_mode=%s", pair.first, (pair.second.auto_mode ? "true" : "false"));
@@ -1040,7 +1039,7 @@ void AudioProcessor::select_active_speaker_mix_locked() {
     bool specific_layout_applied = false;
 
     if (it != speaker_layouts_config_.end()) {
-        const screamrouter::audio::CppSpeakerLayout& layout_for_current_input = it->second; // Changed to audio namespace
+        const screamrouter::audio::CppSpeakerLayout& layout_for_current_input = it->second;
         LOG_CPP_INFO("[AudioProc]   Found layout for %dch input. auto_mode=%s.",
                      this->inputChannels, (layout_for_current_input.auto_mode ? "true" : "false"));
         if (layout_for_current_input.auto_mode) {
@@ -1103,7 +1102,6 @@ void AudioProcessor::rebuild_mix_taps_locked() {
 }
 
 // --- End New/Updated Methods ---
-// void AudioProcessor::mixSpeakers() { // Original line before potential extra brace
 void AudioProcessor::mixSpeakers() {
     PROFILE_FUNCTION();
     if (outputChannels <= 0 || channel_buffer_pos == 0) {

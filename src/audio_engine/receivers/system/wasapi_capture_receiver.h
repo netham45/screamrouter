@@ -5,6 +5,7 @@
 #define SCREAMROUTER_WASAPI_CAPTURE_AVAILABLE 1
 
 #include "../network_audio_receiver.h"
+#include "../../configuration/audio_engine_settings.h"
 
 #include <windows.h>
 #include <wrl/client.h>
@@ -30,8 +31,6 @@ public:
         Float32,
         Unknown
     };
-
-    static constexpr size_t kChunkSize = 1152;
 
     WasapiCaptureReceiver(std::string device_tag,
                           CaptureParams capture_params,
@@ -91,7 +90,8 @@ private:
     unsigned int active_sample_rate_ = 48000;
     size_t source_bytes_per_frame_ = 0;
     size_t target_bytes_per_frame_ = 0;
-    size_t chunk_bytes_ = kChunkSize;
+    const std::size_t chunk_size_bytes_;
+    size_t chunk_bytes_ = 0;
 
     std::vector<uint8_t> chunk_accumulator_;
     std::vector<uint8_t> conversion_buffer_;

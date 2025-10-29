@@ -3,6 +3,7 @@
 #include "../../utils/cpp_logger.h"
 #include "../../input_processor/timeshift_manager.h"
 #include "../../audio_processor/audio_processor.h"
+#include "../../configuration/audio_engine_settings.h"
 
 #include <algorithm>
 #include <cstring>
@@ -35,12 +36,21 @@ AlsaCaptureReceiver::AlsaCaptureReceiver(
     CaptureParams capture_params,
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager)
-    : NetworkAudioReceiver(0, std::move(notification_queue), timeshift_manager, "[AlsaCapture]" + device_tag),
+    : NetworkAudioReceiver(0,
+                           std::move(notification_queue),
+                           timeshift_manager,
+                           "[AlsaCapture]" + device_tag,
+                           nullptr,
+                           resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       device_tag_(std::move(device_tag)),
       capture_params_(std::move(capture_params))
+#if SCREAMROUTER_ALSA_CAPTURE_AVAILABLE
+      , chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr))
+#endif
 {
 #if SCREAMROUTER_ALSA_CAPTURE_AVAILABLE
-    chunk_buffer_.reserve(CHUNK_SIZE * 2);
+    chunk_bytes_ = chunk_size_bytes_;
+    chunk_buffer_.reserve(chunk_size_bytes_ * 2);
 #endif
 }
 
@@ -123,7 +133,11 @@ bool AlsaCaptureReceiver::process_and_validate_payload(
 }
 
 size_t AlsaCaptureReceiver::get_receive_buffer_size() const {
-    return CHUNK_SIZE;
+#if SCREAMROUTER_ALSA_CAPTURE_AVAILABLE
+    return chunk_size_bytes_;
+#else
+    return 0;
+#endif
 }
 
 int AlsaCaptureReceiver::get_poll_timeout_ms() const {
@@ -285,13 +299,13 @@ bool AlsaCaptureReceiver::open_device_locked() {
 
     bytes_per_sample_ = active_bit_depth_ / 8;
     bytes_per_frame_ = bytes_per_sample_ * active_channels_;
-    if (bytes_per_frame_ == 0 || (CHUNK_SIZE % bytes_per_frame_) != 0) {
+    if (bytes_per_frame_ == 0 || (chunk_size_bytes_ % bytes_per_frame_) != 0) {
         LOG_CPP_ERROR("[AlsaCapture:%s] Incompatible format: chunk size %u not divisible by frame size %zu bytes.",
-                      device_tag_.c_str(), static_cast<unsigned int>(CHUNK_SIZE), bytes_per_frame_);
+                      device_tag_.c_str(), static_cast<unsigned int>(chunk_size_bytes_), bytes_per_frame_);
         close_device_locked();
         return false;
     }
-    chunk_bytes_ = CHUNK_SIZE;
+    chunk_bytes_ = chunk_size_bytes_;
 
     period_buffer_.assign(period_frames_ * bytes_per_frame_, 0u);
     chunk_buffer_.clear();

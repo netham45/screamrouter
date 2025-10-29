@@ -241,31 +241,20 @@ export interface SystemInfo {
 // --- Audio Engine Settings Interfaces ---
 export interface TimeshiftTuning {
   cleanup_interval_ms: number;
-  reanchor_interval_sec: number;
-  jitter_smoothing_factor: number;
-  jitter_safety_margin_multiplier: number;
   late_packet_threshold_ms: number;
   target_buffer_level_ms: number;
-  target_recovery_rate_ms_per_sec: number;
-  proportional_gain_kp: number;
-  min_playback_rate: number;
-  max_playback_rate: number;
   loop_max_sleep_ms: number;
   max_catchup_lag_ms: number;
-  max_processor_queue_packets: number;
-  min_processor_queue_packets: number;
   max_clock_pending_packets: number;
+  rtp_continuity_slack_seconds: number;
+  rtp_session_reset_threshold_seconds: number;
 }
 
 export interface MixerTuning {
-  grace_period_timeout_ms: number;
-  grace_period_poll_interval_ms: number;
   mp3_bitrate_kbps: number;
   mp3_vbr_enabled: boolean;
   mp3_output_queue_max_size: number;
   underrun_hold_timeout_ms: number;
-  host_jitter_skip_threshold_ms: number;
-  host_jitter_skip_grace_ms: number;
   max_input_queue_chunks: number;
   min_input_queue_chunks: number;
   max_ready_chunks_per_source: number;
@@ -273,14 +262,13 @@ export interface MixerTuning {
 
 export interface SourceProcessorTuning {
   command_loop_sleep_ms: number;
+  discontinuity_threshold_ms: number;
 }
 
 export interface ProcessorTuning {
   oversampling_factor: number;
   volume_smoothing_factor: number;
   dc_filter_cutoff_hz: number;
-  soft_clip_threshold: number;
-  soft_clip_knee: number;
   normalization_target_rms: number;
   normalization_attack_smoothing: number;
   normalization_decay_smoothing: number;

@@ -14,11 +14,11 @@
 #include "../../audio_types.h"
 #include <rtc/rtp.hpp>
 #include "sap_listener.h"
-#include "rtp_reordering_buffer.h" // Added for jitter buffer
+#include "rtp_reordering_buffer.h"
 #include <mutex>
 #include <memory>
 #include <vector>
-#include <map> // Added for SSRC -> buffer mapping
+#include <map>
 #include <cstdint>
 #ifndef _WIN32
     #include <sys/epoll.h>
@@ -99,6 +99,7 @@ protected:
 
 private:
     RtpReceiverConfig config_;
+    const std::size_t chunk_size_bytes_;
     #ifdef _WIN32
         fd_set master_read_fds_;  // Master set for select()
         socket_t max_fd_;          // Highest socket fd for select()
