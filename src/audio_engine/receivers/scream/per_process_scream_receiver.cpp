@@ -1,5 +1,6 @@
 #include "per_process_scream_receiver.h"
 #include "../../input_processor/timeshift_manager.h" // For TimeshiftManager operations
+#include "../../configuration/audio_engine_settings.h"
 #include <iostream>             // For std::cout, std::cerr (used by base logger)
 #include <vector>
 #include <cstring>              // For memcpy, memset, strncpy
@@ -12,13 +13,12 @@
 namespace screamrouter {
 namespace audio {
 
-// Define constants
-const size_t PPSR_PROGRAM_TAG_SIZE = 30;
-const size_t PPSR_SCREAM_HEADER_SIZE = 5;
-const size_t PPSR_CHUNK_SIZE = 1152;
-const size_t EXPECTED_PPSR_PACKET_SIZE = PPSR_PROGRAM_TAG_SIZE + PPSR_SCREAM_HEADER_SIZE + PPSR_CHUNK_SIZE; // 30 + 5 + 1152 = 1187
-const size_t PPSR_RECEIVE_BUFFER_SIZE_CONFIG = 2048; // Should be larger than EXPECTED_PPSR_PACKET_SIZE
-const int PPSR_POLL_TIMEOUT_MS_CONFIG = 5;   // Check for stop flag every 5ms to service clock ticks promptly
+namespace {
+constexpr std::size_t kProgramTagSize = 30;
+constexpr std::size_t kScreamHeaderSize = 5;
+constexpr std::size_t kMinimumReceiveBufferSize = 2048; // Should exceed expected packet size
+constexpr int kPollTimeoutMs = 5;   // Check for stop flag every 5ms to service clock ticks promptly
+}
 
 PerProcessScreamReceiver::PerProcessScreamReceiver(
     PerProcessScreamReceiverConfig config,
@@ -26,8 +26,15 @@ PerProcessScreamReceiver::PerProcessScreamReceiver(
     TimeshiftManager* timeshift_manager,
     ClockManager* clock_manager,
     std::string logger_prefix)
-    : NetworkAudioReceiver(config.listen_port, notification_queue, timeshift_manager, logger_prefix, clock_manager, PPSR_CHUNK_SIZE),
-      config_(config) {
+    : NetworkAudioReceiver(config.listen_port,
+                           notification_queue,
+                           timeshift_manager,
+                           logger_prefix,
+                           clock_manager,
+                           resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
+      config_(config),
+      chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
+      expected_packet_size_(kProgramTagSize + kScreamHeaderSize + chunk_size_bytes_) {
     if (!clock_manager_) {
         throw std::runtime_error("PerProcessScreamReceiver requires a valid ClockManager instance");
     }
@@ -44,7 +51,7 @@ bool PerProcessScreamReceiver::is_valid_packet_structure(const uint8_t* buffer, 
     (void)buffer;      // Buffer content not checked here, only size
     (void)client_addr; // Client address not used for this basic check
     
-    if (static_cast<size_t>(size) != EXPECTED_PPSR_PACKET_SIZE) {
+    if (static_cast<size_t>(size) != expected_packet_size_) {
         return false;
     }
     return true;
@@ -58,15 +65,15 @@ bool PerProcessScreamReceiver::validate_per_process_scream_content(
     std::string& out_composite_source_tag) {
 
     // Assumes buffer is not null and size is EXPECTED_PPSR_PACKET_SIZE
-     if (static_cast<size_t>(size) != EXPECTED_PPSR_PACKET_SIZE) { // Defensive check
+     if (static_cast<size_t>(size) != expected_packet_size_) { // Defensive check
         log_warning("validate_per_process_scream_content called with unexpected size: " + std::to_string(size));
         return false;
     }
 
     // Extract Program Tag
-    char program_tag_cstr[PPSR_PROGRAM_TAG_SIZE + 1];
-    strncpy(program_tag_cstr, reinterpret_cast<const char*>(buffer), PPSR_PROGRAM_TAG_SIZE);
-    program_tag_cstr[PPSR_PROGRAM_TAG_SIZE] = '\0'; // Ensure null termination
+    char program_tag_cstr[kProgramTagSize + 1];
+    strncpy(program_tag_cstr, reinterpret_cast<const char*>(buffer), kProgramTagSize);
+    program_tag_cstr[kProgramTagSize] = '\0'; // Ensure null termination
     std::string program_tag(program_tag_cstr);
     
     // Trim trailing spaces from program_tag
@@ -87,7 +94,7 @@ bool PerProcessScreamReceiver::validate_per_process_scream_content(
     out_composite_source_tag = fixed_sender_ip + program_tag;
 
     // --- Parse Header and Set Format ---
-    const uint8_t* header = buffer + PPSR_PROGRAM_TAG_SIZE;
+    const uint8_t* header = buffer + kProgramTagSize;
     bool is_44100_base = (header[0] >> 7) & 0x01;
     uint8_t samplerate_divisor = header[0] & 0x7F;
     if (samplerate_divisor == 0) samplerate_divisor = 1;
@@ -109,12 +116,12 @@ bool PerProcessScreamReceiver::validate_per_process_scream_content(
     }
 
     // --- Assign Payload Only ---
-    const uint8_t* audio_payload_start = buffer + PPSR_PROGRAM_TAG_SIZE + PPSR_SCREAM_HEADER_SIZE;
-    out_packet.audio_data.assign(audio_payload_start, audio_payload_start + PPSR_CHUNK_SIZE);
+    const uint8_t* audio_payload_start = buffer + kProgramTagSize + kScreamHeaderSize;
+    out_packet.audio_data.assign(audio_payload_start, audio_payload_start + chunk_size_bytes_);
 
-    if (out_packet.audio_data.size() != PPSR_CHUNK_SIZE) {
+    if (out_packet.audio_data.size() != chunk_size_bytes_) {
         log_error("Internal error: audio data size mismatch for " + out_composite_source_tag +
-                  ". Expected " + std::to_string(PPSR_CHUNK_SIZE) +
+                  ". Expected " + std::to_string(chunk_size_bytes_) +
                   ", got " + std::to_string(out_packet.audio_data.size()));
         return false;
     }
@@ -154,11 +161,11 @@ bool PerProcessScreamReceiver::process_and_validate_payload(
 }
 
 size_t PerProcessScreamReceiver::get_receive_buffer_size() const {
-    return PPSR_RECEIVE_BUFFER_SIZE_CONFIG;
+    return std::max<std::size_t>(expected_packet_size_, kMinimumReceiveBufferSize);
 }
 
 int PerProcessScreamReceiver::get_poll_timeout_ms() const {
-    return PPSR_POLL_TIMEOUT_MS_CONFIG;
+    return kPollTimeoutMs;
 }
 
 

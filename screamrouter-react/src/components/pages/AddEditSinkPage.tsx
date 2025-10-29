@@ -522,6 +522,7 @@ const AddEditSinkPage: React.FC = () => {
           channel_layout: sinkData.channel_layout,
           volume: sinkData.volume,
           delay: sinkData.delay,
+          timeshift: sinkData.timeshift,
           time_sync: sinkData.time_sync,
           time_sync_delay: sinkData.time_sync_delay,
           protocol: sinkData.protocol,

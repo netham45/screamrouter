@@ -1,5 +1,5 @@
 #ifdef _WIN32
-#define NOMINMAX
+
 
 #include "wasapi_capture_receiver.h"
 
@@ -77,13 +77,20 @@ WasapiCaptureReceiver::WasapiCaptureReceiver(std::string device_tag,
                                              CaptureParams capture_params,
                                              std::shared_ptr<NotificationQueue> notification_queue,
                                              TimeshiftManager* timeshift_manager)
-    : NetworkAudioReceiver(0, std::move(notification_queue), timeshift_manager, "[WasapiCapture]" + device_tag),
+    : NetworkAudioReceiver(0,
+                           std::move(notification_queue),
+                           timeshift_manager,
+                           "[WasapiCapture]" + device_tag,
+                           nullptr,
+                           resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       device_tag_(std::move(device_tag)),
-      capture_params_(std::move(capture_params))
+      capture_params_(std::move(capture_params)),
+      chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr))
 {
     loopback_mode_ = system_audio::tag_has_prefix(device_tag_, system_audio::kWasapiLoopbackPrefix) || capture_params_.loopback;
     exclusive_mode_ = capture_params_.exclusive_mode;
-    chunk_accumulator_.reserve(kChunkSize * 2);
+    chunk_bytes_ = chunk_size_bytes_;
+    chunk_accumulator_.reserve(chunk_size_bytes_ * 2);
 }
 
 WasapiCaptureReceiver::~WasapiCaptureReceiver() noexcept {
@@ -105,7 +112,7 @@ void WasapiCaptureReceiver::close_socket() {
 }
 
 size_t WasapiCaptureReceiver::get_receive_buffer_size() const {
-    return kChunkSize;
+    return chunk_size_bytes_;
 }
 
 int WasapiCaptureReceiver::get_poll_timeout_ms() const {
@@ -281,7 +288,7 @@ bool WasapiCaptureReceiver::initialize_capture_format(WAVEFORMATEX* mix_format) 
         return false;
     }
 
-    chunk_bytes_ = kChunkSize;
+    chunk_bytes_ = chunk_size_bytes_;
     if (chunk_bytes_ % target_bytes_per_frame_ != 0) {
         const size_t frames = std::max<size_t>(1, chunk_bytes_ / target_bytes_per_frame_);
         chunk_bytes_ = frames * target_bytes_per_frame_;
@@ -290,6 +297,8 @@ bool WasapiCaptureReceiver::initialize_capture_format(WAVEFORMATEX* mix_format) 
     if (chunk_bytes_ == 0) {
         chunk_bytes_ = target_bytes_per_frame_;
     }
+
+    chunk_accumulator_.reserve(chunk_bytes_ * 2);
 
     reset_chunk_state();
 

@@ -15,7 +15,7 @@ from typing import Optional, List, Dict, Any
 
 from .builders import BuildOrchestrator
 from .platform import PlatformDetector
-from .utils import Logger, Cache, Verifier
+from .utils import Logger, Cache, Verifier, ObjectCache
 from .config import ConfigLoader
 
 
@@ -98,6 +98,7 @@ class BuildSystem:
         cache_dir = self.root_dir / "build" / ".cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache = Cache(cache_dir)
+        self.object_cache = ObjectCache(cache_dir)
         
         # Initialize orchestrator
         self.orchestrator = BuildOrchestrator(
@@ -317,8 +318,10 @@ class BuildSystem:
             # Clean all
             self.orchestrator.clean_all()
             self.cache.clear()
-            
+
             if full:
+                self.logger.debug("Clearing object cache...")
+                self.object_cache.clear()
                 # Remove install directory
                 if self.install_dir.exists():
                     self.logger.info(f"Removing install directory: {self.install_dir}")

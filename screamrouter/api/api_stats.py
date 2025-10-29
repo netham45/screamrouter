@@ -76,33 +76,31 @@ def settings_to_dict(settings: AudioEngineSettings):
     return {
         "timeshift_tuning": {
             "cleanup_interval_ms": settings.timeshift_tuning.cleanup_interval_ms,
-            "reanchor_interval_sec": settings.timeshift_tuning.reanchor_interval_sec,
-            "jitter_smoothing_factor": settings.timeshift_tuning.jitter_smoothing_factor,
-            "jitter_safety_margin_multiplier": settings.timeshift_tuning.jitter_safety_margin_multiplier,
             "late_packet_threshold_ms": settings.timeshift_tuning.late_packet_threshold_ms,
             "target_buffer_level_ms": settings.timeshift_tuning.target_buffer_level_ms,
-            "target_recovery_rate_ms_per_sec": settings.timeshift_tuning.target_recovery_rate_ms_per_sec,
-            "proportional_gain_kp": settings.timeshift_tuning.proportional_gain_kp,
-            "min_playback_rate": settings.timeshift_tuning.min_playback_rate,
-            "max_playback_rate": settings.timeshift_tuning.max_playback_rate,
             "loop_max_sleep_ms": settings.timeshift_tuning.loop_max_sleep_ms,
+            "max_catchup_lag_ms": settings.timeshift_tuning.max_catchup_lag_ms,
+            "max_clock_pending_packets": settings.timeshift_tuning.max_clock_pending_packets,
+            "rtp_continuity_slack_seconds": settings.timeshift_tuning.rtp_continuity_slack_seconds,
+            "rtp_session_reset_threshold_seconds": settings.timeshift_tuning.rtp_session_reset_threshold_seconds,
         },
         "mixer_tuning": {
-            "grace_period_timeout_ms": settings.mixer_tuning.grace_period_timeout_ms,
-            "grace_period_poll_interval_ms": settings.mixer_tuning.grace_period_poll_interval_ms,
             "mp3_bitrate_kbps": settings.mixer_tuning.mp3_bitrate_kbps,
             "mp3_vbr_enabled": settings.mixer_tuning.mp3_vbr_enabled,
             "mp3_output_queue_max_size": settings.mixer_tuning.mp3_output_queue_max_size,
+            "underrun_hold_timeout_ms": settings.mixer_tuning.underrun_hold_timeout_ms,
+            "max_input_queue_chunks": settings.mixer_tuning.max_input_queue_chunks,
+            "min_input_queue_chunks": settings.mixer_tuning.min_input_queue_chunks,
+            "max_ready_chunks_per_source": settings.mixer_tuning.max_ready_chunks_per_source,
         },
         "source_processor_tuning": {
             "command_loop_sleep_ms": settings.source_processor_tuning.command_loop_sleep_ms,
+            "discontinuity_threshold_ms": settings.source_processor_tuning.discontinuity_threshold_ms,
         },
         "processor_tuning": {
             "oversampling_factor": settings.processor_tuning.oversampling_factor,
             "volume_smoothing_factor": settings.processor_tuning.volume_smoothing_factor,
             "dc_filter_cutoff_hz": settings.processor_tuning.dc_filter_cutoff_hz,
-            "soft_clip_threshold": settings.processor_tuning.soft_clip_threshold,
-            "soft_clip_knee": settings.processor_tuning.soft_clip_knee,
             "normalization_target_rms": settings.processor_tuning.normalization_target_rms,
             "normalization_attack_smoothing": settings.processor_tuning.normalization_attack_smoothing,
             "normalization_decay_smoothing": settings.processor_tuning.normalization_decay_smoothing,
@@ -121,18 +119,18 @@ def settings_to_dict(settings: AudioEngineSettings):
 
 def dict_to_settings(settings_dict: dict, existing_settings: AudioEngineSettings):
     """Updates an AudioEngineSettings object from a dictionary."""
-    for key, value in settings_dict.get("timeshift_tuning", {}).items():
-        setattr(existing_settings.timeshift_tuning, key, value)
-    for key, value in settings_dict.get("mixer_tuning", {}).items():
-        setattr(existing_settings.mixer_tuning, key, value)
-    for key, value in settings_dict.get("source_processor_tuning", {}).items():
-        setattr(existing_settings.source_processor_tuning, key, value)
-    for key, value in settings_dict.get("processor_tuning", {}).items():
-        setattr(existing_settings.processor_tuning, key, value)
-    for key, value in settings_dict.get("synchronization", {}).items():
-        setattr(existing_settings.synchronization, key, value)
-    for key, value in settings_dict.get("synchronization_tuning", {}).items():
-        setattr(existing_settings.synchronization_tuning, key, value)
+
+    def apply_updates(section, updates):
+        for key, value in updates.items():
+            if hasattr(section, key):
+                setattr(section, key, value)
+
+    apply_updates(existing_settings.timeshift_tuning, settings_dict.get("timeshift_tuning", {}))
+    apply_updates(existing_settings.mixer_tuning, settings_dict.get("mixer_tuning", {}))
+    apply_updates(existing_settings.source_processor_tuning, settings_dict.get("source_processor_tuning", {}))
+    apply_updates(existing_settings.processor_tuning, settings_dict.get("processor_tuning", {}))
+    apply_updates(existing_settings.synchronization, settings_dict.get("synchronization", {}))
+    apply_updates(existing_settings.synchronization_tuning, settings_dict.get("synchronization_tuning", {}))
     return existing_settings
 
 class APIStats:

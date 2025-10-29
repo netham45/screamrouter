@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+from .object_cache import ObjectCache
+
 
 class ColoredFormatter(logging.Formatter):
     """Colored log formatter for terminal output"""
@@ -361,4 +363,4 @@ class Verifier:
         return missing
 
 
-__all__ = ["Logger", "Cache", "Verifier"]
+__all__ = ["Logger", "Cache", "Verifier", "ObjectCache"]

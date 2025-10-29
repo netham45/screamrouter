@@ -139,6 +139,7 @@ const StatsPage: React.FC = () => {
   const renderTuningControl = (category: keyof AudioEngineSettings, field: string, label: string, step = 1, isSwitch = false) => {
     if (!settings) return null;
     const value = settings[category][field as keyof typeof settings[typeof category]];
+    const numericValue = typeof value === 'number' && !Number.isNaN(value) ? value : 0;
     
     return (
       <FormControl>
@@ -147,8 +148,11 @@ const StatsPage: React.FC = () => {
              <Switch isChecked={Boolean(value)} onChange={(e) => handleSettingsChange(category, field, e.target.checked)} />
         ) : (
             <NumberInput
-            value={value as number}
-            onChange={(valueString) => handleSettingsChange(category, field, parseFloat(valueString))}
+            value={numericValue}
+            onChange={(valueString) => {
+              const nextValue = valueString === '' ? 0 : parseFloat(valueString);
+              handleSettingsChange(category, field, Number.isNaN(nextValue) ? numericValue : nextValue);
+            }}
             step={step}
             >
             <NumberInputField />
@@ -349,27 +353,26 @@ const StatsPage: React.FC = () => {
                   <Heading size="sm" mb={4}>Timeshift Tuning</Heading>
                   <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
                     {renderTuningControl('timeshift_tuning', 'cleanup_interval_ms', 'Cleanup Interval (ms)')}
-                    {renderTuningControl('timeshift_tuning', 'reanchor_interval_sec', 'Re-anchor Interval (s)')}
-                    {renderTuningControl('timeshift_tuning', 'jitter_smoothing_factor', 'Jitter Smoothing Factor', 0.1)}
-                    {renderTuningControl('timeshift_tuning', 'jitter_safety_margin_multiplier', 'Jitter Safety Margin', 0.1)}
                     {renderTuningControl('timeshift_tuning', 'late_packet_threshold_ms', 'Late Packet Threshold (ms)', 1)}
                     {renderTuningControl('timeshift_tuning', 'target_buffer_level_ms', 'Target Buffer Level (ms)')}
-                    {renderTuningControl('timeshift_tuning', 'target_recovery_rate_ms_per_sec', 'Target Recovery Rate (ms/s)', 0.1)}
-                    {renderTuningControl('timeshift_tuning', 'proportional_gain_kp', 'Proportional Gain (Kp)', 0.0001)}
-                    {renderTuningControl('timeshift_tuning', 'min_playback_rate', 'Min Playback Rate', 0.01)}
-                    {renderTuningControl('timeshift_tuning', 'max_playback_rate', 'Max Playback Rate', 0.01)}
                     {renderTuningControl('timeshift_tuning', 'loop_max_sleep_ms', 'Loop Max Sleep (ms)')}
+                    {renderTuningControl('timeshift_tuning', 'max_catchup_lag_ms', 'Max Catch-up Lag (ms)')}
+                    {renderTuningControl('timeshift_tuning', 'max_clock_pending_packets', 'Max Clock Pending Packets')}
+                    {renderTuningControl('timeshift_tuning', 'rtp_continuity_slack_seconds', 'RTP Continuity Slack (s)', 0.01)}
+                    {renderTuningControl('timeshift_tuning', 'rtp_session_reset_threshold_seconds', 'RTP Session Reset Threshold (s)', 0.01)}
                   </SimpleGrid>
                 </Box>
 
                 <Box>
                   <Heading size="sm" mb={4}>Mixer Tuning</Heading>
                   <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-                    {renderTuningControl('mixer_tuning', 'grace_period_timeout_ms', 'Grace Period Timeout (ms)')}
-                    {renderTuningControl('mixer_tuning', 'grace_period_poll_interval_ms', 'Grace Period Poll (ms)')}
                     {renderTuningControl('mixer_tuning', 'mp3_bitrate_kbps', 'MP3 Bitrate (kbps)')}
                     {renderTuningControl('mixer_tuning', 'mp3_vbr_enabled', 'MP3 VBR Enabled', 1, true)}
                     {renderTuningControl('mixer_tuning', 'mp3_output_queue_max_size', 'MP3 Output Queue Max Size')}
+                    {renderTuningControl('mixer_tuning', 'underrun_hold_timeout_ms', 'Underrun Hold Timeout (ms)')}
+                    {renderTuningControl('mixer_tuning', 'max_input_queue_chunks', 'Max Source Output Chunks')}
+                    {renderTuningControl('mixer_tuning', 'min_input_queue_chunks', 'Min Source Output Chunks')}
+                    {renderTuningControl('mixer_tuning', 'max_ready_chunks_per_source', 'Max Mix Ready Chunks per Source')}
                   </SimpleGrid>
                 </Box>
 
@@ -377,6 +380,7 @@ const StatsPage: React.FC = () => {
                   <Heading size="sm" mb={4}>Source Processor Tuning</Heading>
                   <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
                     {renderTuningControl('source_processor_tuning', 'command_loop_sleep_ms', 'Command Loop Sleep (ms)')}
+                    {renderTuningControl('source_processor_tuning', 'discontinuity_threshold_ms', 'Discontinuity Threshold (ms)')}
                   </SimpleGrid>
                 </Box>
 
@@ -386,8 +390,6 @@ const StatsPage: React.FC = () => {
                     {renderTuningControl('processor_tuning', 'oversampling_factor', 'Oversampling Factor')}
                     {renderTuningControl('processor_tuning', 'volume_smoothing_factor', 'Volume Smoothing Factor', 0.001)}
                     {renderTuningControl('processor_tuning', 'dc_filter_cutoff_hz', 'DC Filter Cutoff (Hz)', 1)}
-                    {renderTuningControl('processor_tuning', 'soft_clip_threshold', 'Soft Clip Threshold', 0.1)}
-                    {renderTuningControl('processor_tuning', 'soft_clip_knee', 'Soft Clip Knee', 0.1)}
                     {renderTuningControl('processor_tuning', 'normalization_target_rms', 'Normalization Target RMS', 0.1)}
                     {renderTuningControl('processor_tuning', 'normalization_attack_smoothing', 'Normalization Attack Smoothing', 0.01)}
                     {renderTuningControl('processor_tuning', 'normalization_decay_smoothing', 'Normalization Decay Smoothing', 0.01)}

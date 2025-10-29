@@ -6,6 +6,10 @@
 namespace screamrouter {
 namespace audio {
 
+namespace {
+constexpr std::size_t kMaxReadyChunksPerSource = 12; // allow ~70ms backlog to accommodate slower devices
+}
+
 MixScheduler::MixScheduler(std::string mixer_id,
                            std::shared_ptr<AudioEngineSettings> settings)
     : mixer_id_(std::move(mixer_id)),
@@ -128,6 +132,59 @@ MixScheduler::HarvestResult MixScheduler::collect_ready_chunks() {
     return result;
 }
 
+std::map<std::string, std::size_t> MixScheduler::get_ready_depths() const {
+    std::lock_guard<std::mutex> lock(ready_mutex_);
+    std::map<std::string, std::size_t> depths;
+    for (const auto& entry : ready_chunks_) {
+        depths[entry.first] = entry.second.size();
+    }
+    return depths;
+}
+
+std::size_t MixScheduler::drop_ready_chunks(const std::string& instance_id, std::size_t count) {
+    if (count == 0) {
+        return 0;
+    }
+
+    std::lock_guard<std::mutex> lock(ready_mutex_);
+    auto it = ready_chunks_.find(instance_id);
+    if (it == ready_chunks_.end()) {
+        return 0;
+    }
+
+    auto& deque_ref = it->second;
+    std::size_t dropped = 0;
+
+    if (count >= deque_ref.size()) {
+        dropped = deque_ref.size();
+        deque_ref.clear();
+        ready_chunks_.erase(it);
+        return dropped;
+    }
+
+    while (dropped < count && !deque_ref.empty()) {
+        // Drop newest ready chunks first so the next-to-dispatch item stays intact.
+        deque_ref.pop_back();
+        ++dropped;
+    }
+
+    if (deque_ref.empty()) {
+        ready_chunks_.erase(it);
+    }
+
+    return dropped;
+}
+
+std::size_t MixScheduler::drop_all_ready_chunks() {
+    std::lock_guard<std::mutex> lock(ready_mutex_);
+    std::size_t dropped = 0;
+    for (auto& entry : ready_chunks_) {
+        dropped += entry.second.size();
+    }
+    ready_chunks_.clear();
+    return dropped;
+}
+
 void MixScheduler::shutdown() {
     if (shutting_down_.exchange(true)) {
         return;
@@ -190,8 +247,91 @@ void MixScheduler::append_ready_chunk(const std::string& instance_id,
 
     {
         std::lock_guard<std::mutex> lock(ready_mutex_);
-        ready_chunks_[instance_id].push_back(std::move(ready));
+        auto& queue = ready_chunks_[instance_id];
+        const std::size_t cap = (settings_ && settings_->mixer_tuning.max_ready_chunks_per_source > 0)
+            ? settings_->mixer_tuning.max_ready_chunks_per_source
+            : kMaxReadyChunksPerSource;
+        if (cap > 0 && queue.size() >= cap) {
+            queue.pop_front();
+            LOG_CPP_DEBUG("[MixScheduler:%s] Dropping oldest ready chunk for %s to enforce cap=%zu.",
+                          mixer_id_.c_str(), instance_id.c_str(), cap);
+        }
+        queue.push_back(std::move(ready));
     }
+
+    maybe_log_telemetry();
+}
+
+void MixScheduler::maybe_log_telemetry() {
+    if (!settings_ || !settings_->telemetry.enabled) {
+        return;
+    }
+
+    long interval_ms = settings_->telemetry.log_interval_ms;
+    if (interval_ms <= 0) {
+        interval_ms = 30000;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (telemetry_last_log_time_.time_since_epoch().count() != 0 &&
+        now - telemetry_last_log_time_ < std::chrono::milliseconds(interval_ms)) {
+        return;
+    }
+
+    telemetry_last_log_time_ = now;
+
+    std::unordered_map<std::string, std::deque<ReadyChunk>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(ready_mutex_);
+        snapshot = ready_chunks_;
+    }
+
+    size_t total_chunks = 0;
+    double total_head_age_ms = 0.0;
+    double max_head_age_ms = 0.0;
+
+    for (const auto& [instance_id, ready_queue] : snapshot) {
+        size_t queue_size = ready_queue.size();
+        total_chunks += queue_size;
+
+        double head_age_ms = 0.0;
+        double tail_age_ms = 0.0;
+        if (!ready_queue.empty()) {
+            head_age_ms = std::chrono::duration<double, std::milli>(now - ready_queue.front().arrival_time).count();
+            if (head_age_ms < 0.0) {
+                head_age_ms = 0.0;
+            }
+            tail_age_ms = std::chrono::duration<double, std::milli>(now - ready_queue.back().arrival_time).count();
+            if (tail_age_ms < 0.0) {
+                tail_age_ms = 0.0;
+            }
+            total_head_age_ms += head_age_ms;
+            if (head_age_ms > max_head_age_ms) {
+                max_head_age_ms = head_age_ms;
+            }
+        }
+
+        LOG_CPP_INFO(
+            "[Telemetry][MixScheduler:%s][Source %s] ready_chunks=%zu head_age_ms=%.3f tail_age_ms=%.3f",
+            mixer_id_.c_str(),
+            instance_id.c_str(),
+            queue_size,
+            head_age_ms,
+            tail_age_ms);
+    }
+
+    double avg_head_age_ms = 0.0;
+    if (!snapshot.empty()) {
+        avg_head_age_ms = total_head_age_ms / static_cast<double>(snapshot.size());
+    }
+
+    LOG_CPP_INFO(
+        "[Telemetry][MixScheduler:%s] total_ready_chunks=%zu avg_head_age_ms=%.3f max_head_age_ms=%.3f sources=%zu",
+        mixer_id_.c_str(),
+        total_chunks,
+        avg_head_age_ms,
+        max_head_age_ms,
+        snapshot.size());
 }
 
 } // namespace audio

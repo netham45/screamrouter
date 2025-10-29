@@ -144,7 +144,7 @@ class MDNSResponder(threading.Thread):
 
                 self.service_info = ServiceInfo(
                     type_=self.service_type,
-                    name=self.service_name,
+                    name=self.service_name[:15],
                     addresses=valid_inet_ips, # Use validated IPs
                     port=0, # No specific port needed for just hostname resolution
                     properties={}, # No properties needed for now

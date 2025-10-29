@@ -1,5 +1,6 @@
 #include "receiver_manager.h"
 #include "../utils/cpp_logger.h"
+#include "../configuration/audio_engine_settings.h"
 #include <exception>
 #include <chrono>
 
@@ -9,7 +10,9 @@ namespace audio {
 ReceiverManager::ReceiverManager(std::recursive_mutex& manager_mutex, TimeshiftManager* timeshift_manager)
     : m_manager_mutex(manager_mutex), m_timeshift_manager(timeshift_manager) {
     try {
-        m_clock_manager = std::make_unique<ClockManager>();
+        const auto settings = m_timeshift_manager ? m_timeshift_manager->get_settings() : nullptr;
+        const auto chunk_size_bytes = resolve_chunk_size_bytes(settings);
+        m_clock_manager = std::make_unique<ClockManager>(chunk_size_bytes);
     } catch (const std::exception& ex) {
         LOG_CPP_ERROR("Failed to create ClockManager: %s", ex.what());
         throw;

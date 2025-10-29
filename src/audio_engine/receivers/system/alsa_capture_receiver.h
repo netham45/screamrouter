@@ -8,7 +8,7 @@
 #include <atomic>
 #include <chrono>
 
-#define CHUNK_SIZE 1152
+#include "../../utils/byte_ring_buffer.h"
 
 #if defined(__linux__) && defined(__has_include)
 #  if __has_include(<alsa/asoundlib.h>)
@@ -67,6 +67,7 @@ private:
     std::string device_tag_;
     CaptureParams capture_params_;
     std::string hw_device_name_;
+    const std::size_t chunk_size_bytes_;
 
     snd_pcm_t* pcm_handle_ = nullptr;
     snd_pcm_format_t sample_format_ = SND_PCM_FORMAT_UNKNOWN;
@@ -77,12 +78,11 @@ private:
     snd_pcm_uframes_t buffer_frames_ = 0;
     size_t bytes_per_sample_ = 0;
     size_t bytes_per_frame_ = 0;
-    size_t chunk_bytes_ = CHUNK_SIZE;
+    size_t chunk_bytes_ = 0;
     uint32_t running_timestamp_ = 0;
 
     std::vector<uint8_t> period_buffer_;
-    std::vector<uint8_t> chunk_accumulator_;
-    std::vector<uint8_t> chunk_conversion_buffer_;
+    ::screamrouter::audio::utils::ByteRingBuffer chunk_buffer_;
 
     std::mutex device_mutex_;
 #else

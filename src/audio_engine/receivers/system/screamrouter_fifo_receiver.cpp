@@ -51,7 +51,7 @@ ScreamrouterFifoReceiver::ScreamrouterFifoReceiver(
     }
     chunk_bytes_ = bytes_per_frame_ * kFramesPerChunk;
     read_buffer_.resize(chunk_bytes_);
-    chunk_accumulator_.reserve(chunk_bytes_ * 2);
+    chunk_buffer_.reserve(chunk_bytes_ * 2);
 #endif
 }
 
@@ -117,11 +117,16 @@ void ScreamrouterFifoReceiver::run() {
             continue;
         }
 
-        chunk_accumulator_.insert(chunk_accumulator_.end(), read_buffer_.begin(), read_buffer_.begin() + bytes_read);
-        while (chunk_accumulator_.size() >= chunk_bytes_) {
+        chunk_buffer_.write(read_buffer_.data(), static_cast<std::size_t>(bytes_read));
+        while (chunk_buffer_.size() >= chunk_bytes_) {
             std::vector<uint8_t> chunk(chunk_bytes_);
-            std::copy_n(chunk_accumulator_.begin(), chunk_bytes_, chunk.begin());
-            chunk_accumulator_.erase(chunk_accumulator_.begin(), chunk_accumulator_.begin() + chunk_bytes_);
+            const std::size_t popped = chunk_buffer_.pop(chunk.data(), chunk_bytes_);
+            if (popped != chunk_bytes_) {
+                if (popped > 0) {
+                    chunk_buffer_.write(chunk.data(), popped);
+                }
+                break;
+            }
             dispatch_chunk(std::move(chunk));
         }
     }

@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <deque>
 #include <map>
 #include <memory>
@@ -49,6 +50,9 @@ public:
     void detach_source(const std::string& instance_id);
 
     HarvestResult collect_ready_chunks();
+    std::map<std::string, std::size_t> get_ready_depths() const;
+    std::size_t drop_ready_chunks(const std::string& instance_id, std::size_t count);
+    std::size_t drop_all_ready_chunks();
 
     void shutdown();
 
@@ -64,6 +68,7 @@ private:
     void append_ready_chunk(const std::string& instance_id,
                             ProcessedAudioChunk&& chunk,
                             std::chrono::steady_clock::time_point arrival_time);
+    void maybe_log_telemetry();
 
     const std::string mixer_id_;
     std::shared_ptr<AudioEngineSettings> settings_;
@@ -71,13 +76,14 @@ private:
     std::mutex sources_mutex_;
     std::unordered_map<std::string, std::unique_ptr<SourceState>> sources_;
 
-    std::mutex ready_mutex_;
+    mutable std::mutex ready_mutex_;
     std::unordered_map<std::string, std::deque<ReadyChunk>> ready_chunks_;
 
     std::mutex drained_mutex_;
     std::vector<std::string> drained_sources_;
 
     std::atomic<bool> shutting_down_{false};
+    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
 };
 
 } // namespace audio

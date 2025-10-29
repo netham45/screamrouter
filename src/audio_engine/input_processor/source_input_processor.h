@@ -47,16 +47,12 @@ using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
 
 /** @brief The size of the raw Scream protocol header in bytes. */
 const size_t SCREAM_HEADER_SIZE = 5;
-/** @brief The expected size of the audio data payload in a TaggedAudioPacket, in bytes. */
-const size_t INPUT_CHUNK_BYTES = 1152;
 /** @brief The default bit depth assumed for input audio if not specified. */
 const int DEFAULT_INPUT_BITDEPTH = 16;
 /** @brief The default number of channels assumed for input audio if not specified. */
 const int DEFAULT_INPUT_CHANNELS = 2;
 /** @brief The default sample rate assumed for input audio if not specified. */
 const int DEFAULT_INPUT_SAMPLERATE = 48000;
-/** @brief The number of interleaved 32-bit samples expected in a ProcessedAudioChunk. */
-const size_t OUTPUT_CHUNK_SAMPLES = 576;
 
 /**
  * @class SourceInputProcessor
@@ -135,6 +131,7 @@ protected:
     void output_loop();
 
 private:
+    const std::size_t chunk_size_bytes_;
     int m_current_ap_input_channels = 0;
     int m_current_ap_input_samplerate = 0;
     int m_current_ap_input_bitdepth = 0;
@@ -148,9 +145,10 @@ private:
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::mutex processor_config_mutex_;
 
-    std::vector<int32_t> process_buffer_; // This will be repurposed as the resampler output buffer
+    std::vector<int32_t> process_buffer_;
     std::vector<uint32_t> current_packet_ssrcs_;
-    double m_current_playback_rate = 1.0;
+    double m_current_input_chunk_ms = 0.0;
+    double m_current_output_chunk_ms = 0.0;
 
     float current_volume_;
     std::vector<float> current_eq_;
@@ -164,6 +162,7 @@ private:
     std::atomic<uint64_t> m_total_packets_processed{0};
     std::atomic<uint64_t> m_reconfigurations{0};
     std::chrono::steady_clock::time_point m_last_packet_time;
+    std::chrono::steady_clock::time_point m_last_packet_origin_time;
     bool m_is_first_packet_after_discontinuity = true;
 
     /**
@@ -198,7 +197,9 @@ private:
     // --- Profiling ---
     void reset_profiler_counters();
     void maybe_log_profiler();
+    void maybe_log_telemetry(std::chrono::steady_clock::time_point now);
     std::chrono::steady_clock::time_point profiling_last_log_time_;
+    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
     uint64_t profiling_packets_received_{0};
     uint64_t profiling_chunks_pushed_{0};
     uint64_t profiling_discarded_packets_{0};

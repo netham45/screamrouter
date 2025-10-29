@@ -22,12 +22,6 @@
 // libsamplerate include
 #include <samplerate.h>
 
-/**
- * @def CHUNK_SIZE
- * @brief The size of the audio chunk in bytes to be processed at a time.
- */
-#define CHUNK_SIZE 1152
-
 class Biquad;
 
 /**
@@ -120,6 +114,7 @@ public:
 
 private:
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
+    const std::size_t chunk_size_bytes_;
     /** @brief Map of speaker layouts, keyed by the number of input channels. */
     std::map<int, screamrouter::audio::CppSpeakerLayout> speaker_layouts_config_;
     /** @brief Mutex to protect access to the speaker layouts configuration. */
@@ -143,33 +138,28 @@ private:
     float current_gain_ = 1.0f;
 
     // --- Internal Buffers ---
-    std::vector<uint8_t> receive_buffer;
-    std::vector<int32_t> scaled_buffer;
-    std::vector<int32_t> resampled_buffer;
-    std::vector<std::vector<int32_t>> channel_buffers;
-    std::vector<std::vector<int32_t>> remixed_channel_buffers;
-    std::vector<int32_t> merged_buffer;
-    std::vector<int32_t> processed_buffer;
     std::vector<float> scaled_float_buffer_;
-    std::vector<std::vector<float>> channel_float_buffers_;
     std::vector<std::vector<float>> remixed_float_buffers_;
-    std::vector<float> merged_float_buffer_;
-    std::vector<float> resample_float_in_buffer_;
     std::vector<float> resample_float_out_buffer_;
     std::vector<float> downsample_float_in_buffer_;
     std::vector<float> downsample_float_out_buffer_;
-    std::vector<float> eq_temp_buffer_;
-    std::vector<float> eq_processed_buffer_;
-    std::vector<float> dc_temp_buffer_;
+
+    struct ChannelView {
+        const float* data = nullptr;
+        size_t stride = 0;
+    };
+    ChannelView input_channel_views_[screamrouter::audio::MAX_CHANNELS] = {};
 
     double setRatio = 1;
 
     // --- Buffer Position Trackers ---
     size_t scale_buffer_pos = 0;
     size_t process_buffer_pos = 0;
-    size_t merged_buffer_pos = 0;
     size_t resample_buffer_pos = 0;
     size_t channel_buffer_pos = 0;
+
+    int32_t* last_output_buffer_ = nullptr;
+    size_t last_output_samples_ = 0;
 
     // --- libsamplerate Resampler Members ---
     SRC_STATE* m_upsampler;
@@ -187,15 +177,14 @@ private:
     // --- Private Methods for Audio Pipeline Stages ---
     void setupBiquad();
     void initializeSampler();
-    void scaleBuffer();
+    void scaleBuffer(const uint8_t* inputBuffer, size_t inputBytes);
     void volumeAdjust();
     float softClip(float sample);
     void resample();
-    void downsample();
+    void downsample(int32_t* outputBuffer);
     void splitBufferToChannels();
     void mixSpeakers();
     void equalize();
-    void mergeChannelsToBuffer();
     void noiseShapingDither();
     void setupDCFilter();
     void removeDCOffset();

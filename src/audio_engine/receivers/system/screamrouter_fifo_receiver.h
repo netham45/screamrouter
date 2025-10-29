@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "../../utils/byte_ring_buffer.h"
+
 #if defined(__linux__)
 #define SCREAMROUTER_FIFO_CAPTURE_AVAILABLE 1
 #else
@@ -59,10 +61,9 @@ private:
     size_t chunk_bytes_ = 0;
     uint32_t running_timestamp_ = 0;
     std::vector<uint8_t> read_buffer_;
-    std::vector<uint8_t> chunk_accumulator_;
+    ::screamrouter::audio::utils::ByteRingBuffer chunk_buffer_;
 #endif
 };
 
 } // namespace audio
 } // namespace screamrouter
-

@@ -32,12 +32,12 @@ enum class LockType {
 };
 
 // Define lock duration thresholds for logging (tightened for faster detection)
-const std::chrono::milliseconds WRITE_LOCK_THRESHOLD(10);      // Changed from 20ms to 10ms
-const std::chrono::milliseconds READ_LOCK_THRESHOLD(100);      // Changed from 1000ms to 100ms
+const std::chrono::milliseconds WRITE_LOCK_THRESHOLD(10);
+const std::chrono::milliseconds READ_LOCK_THRESHOLD(100);
 
 // Define lock duration thresholds for the watchdog to terminate the program (tightened)
-const std::chrono::milliseconds WRITE_LOCK_WATCHDOG_THRESHOLD(100);   // Changed from 200ms to 100ms
-const std::chrono::milliseconds READ_LOCK_WATCHDOG_THRESHOLD(1000);   // Changed from 5000ms to 1000ms
+const std::chrono::milliseconds WRITE_LOCK_WATCHDOG_THRESHOLD(100);
+const std::chrono::milliseconds READ_LOCK_WATCHDOG_THRESHOLD(1000);
 
 class LockGuardProfiler;
 

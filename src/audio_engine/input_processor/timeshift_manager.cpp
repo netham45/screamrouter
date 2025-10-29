@@ -22,7 +22,6 @@ namespace audio {
 
 namespace {
 constexpr double kProcessingBudgetAlpha = 0.2;
-constexpr double kRtpContinuitySlackSeconds = 0.25; // allow ~250ms drift before declaring discontinuity
 
 bool has_prefix(const std::string& value, const std::string& prefix) {
     if (prefix.empty()) {
@@ -149,8 +148,12 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
      std::lock_guard<std::mutex> data_lock(data_mutex_);
      std::lock_guard<std::mutex> timing_lock(timing_mutex_);
 
-     const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
-     const uint32_t reset_threshold_frames = static_cast<uint32_t>(frames_per_second * 0.2f); // Treat >0.2s jumps as a new session by default
+    const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
+    const double configured_reset_threshold_sec =
+        (m_settings) ? m_settings->timeshift_tuning.rtp_session_reset_threshold_seconds : 0.2;
+    const double bounded_reset_threshold_sec = std::max(configured_reset_threshold_sec, 0.0);
+    const uint32_t reset_threshold_frames = static_cast<uint32_t>(
+        static_cast<double>(frames_per_second) * bounded_reset_threshold_sec);
 
      auto state_it = stream_timing_states_.find(packet.source_tag);
      if (state_it != stream_timing_states_.end()) {
@@ -168,8 +171,13 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
                     const double wallclock_gap_sec = std::chrono::duration<double>(wallclock_gap).count();
                     if (wallclock_gap_sec > 0.0) {
                         const auto delta_frames = static_cast<uint64_t>(delta);
-                        const auto expected_frames = static_cast<uint64_t>(std::llround(wallclock_gap_sec * static_cast<double>(frames_per_second)));
-                        const auto continuity_slack_frames = static_cast<uint64_t>(std::llround(static_cast<double>(frames_per_second) * kRtpContinuitySlackSeconds));
+                        const double configured_slack_seconds =
+                            (m_settings) ? m_settings->timeshift_tuning.rtp_continuity_slack_seconds : 0.25;
+                        const double bounded_slack_seconds = std::max(configured_slack_seconds, 0.0);
+                        const auto expected_frames = static_cast<uint64_t>(
+                            std::llround(wallclock_gap_sec * static_cast<double>(frames_per_second)));
+                        const auto continuity_slack_frames = static_cast<uint64_t>(
+                            std::llround(static_cast<double>(frames_per_second) * bounded_slack_seconds));
 
                         const auto lower_bound = (expected_frames > continuity_slack_frames)
                                                      ? (expected_frames - continuity_slack_frames)
@@ -229,14 +237,25 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
      }
  
      // 2. Update the stable clock model
-     state.clock->update(packet.rtp_timestamp.value(), packet.received_time);
- 
+    state.clock->update(packet.rtp_timestamp.value(), packet.received_time);
+
     state.is_first_packet = false;
     state.last_rtp_timestamp = packet.rtp_timestamp.value();
     state.last_wallclock = packet.received_time;
- 
-     global_timeshift_buffer_.push_back(std::move(packet));
-     m_total_packets_added++;
+    state.sample_rate = packet.sample_rate;
+    state.channels = packet.channels;
+    state.bit_depth = packet.bit_depth;
+    state.samples_per_chunk = 0;
+    if (packet.sample_rate > 0 && packet.channels > 0 && packet.bit_depth > 0 && (packet.bit_depth % 8) == 0) {
+        const std::size_t bytes_per_frame =
+            static_cast<std::size_t>(packet.channels) * static_cast<std::size_t>(packet.bit_depth / 8);
+        if (bytes_per_frame > 0) {
+            state.samples_per_chunk = static_cast<uint32_t>(packet.audio_data.size() / bytes_per_frame);
+        }
+    }
+
+    global_timeshift_buffer_.push_back(std::move(packet));
+    m_total_packets_added++;
 }
 
 TimeshiftManagerStats TimeshiftManager::get_stats() {
@@ -595,14 +614,14 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                 // 2. Add the adaptive playout delay
                 const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
-                const double base_latency_target_ms = std::max<double>(
+                double base_latency_ms = std::max<double>(
                     target_info.current_delay_ms,
                     m_settings->timeshift_tuning.target_buffer_level_ms);
-                double desired_latency_ms = base_latency_target_ms + timeshift_backshift_ms;
                 const double max_adaptive_delay_ms = m_settings->timeshift_tuning.max_adaptive_delay_ms;
                 if (max_adaptive_delay_ms > 0.0) {
-                    desired_latency_ms = std::min(desired_latency_ms, max_adaptive_delay_ms);
+                    base_latency_ms = std::min(base_latency_ms, max_adaptive_delay_ms);
                 }
+                const double desired_latency_ms = base_latency_ms + timeshift_backshift_ms;
 
                 timing_state->target_buffer_level_ms = desired_latency_ms;
                 timing_state->last_target_update_time = now;
@@ -888,7 +907,9 @@ void TimeshiftManager::cleanup_global_buffer_unlocked() {
                 }
             }
         }
-        global_timeshift_buffer_.erase(global_timeshift_buffer_.begin(), global_timeshift_buffer_.begin() + remove_count);
+        while (remove_count-- > 0 && !global_timeshift_buffer_.empty()) {
+            global_timeshift_buffer_.pop_front();
+        }
     } else {
         LOG_CPP_DEBUG("[TimeshiftManager] Cleanup: No packets older than max duration to remove.");
     }
@@ -937,14 +958,14 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
 
             auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(next_packet.rtp_timestamp.value());
             const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
-            const double base_latency_target_ms = std::max<double>(
+            double base_latency_ms = std::max<double>(
                 target_info.current_delay_ms,
                 m_settings->timeshift_tuning.target_buffer_level_ms);
-            double desired_latency_ms = base_latency_target_ms + timeshift_backshift_ms;
             const double max_adaptive_delay_ms = m_settings->timeshift_tuning.max_adaptive_delay_ms;
             if (max_adaptive_delay_ms > 0.0) {
-                desired_latency_ms = std::min(desired_latency_ms, max_adaptive_delay_ms);
+                base_latency_ms = std::min(base_latency_ms, max_adaptive_delay_ms);
             }
+            const double desired_latency_ms = base_latency_ms + timeshift_backshift_ms;
 
             const double state_target_ms = (timing_state->target_buffer_level_ms > 0.0)
                                                ? timing_state->target_buffer_level_ms

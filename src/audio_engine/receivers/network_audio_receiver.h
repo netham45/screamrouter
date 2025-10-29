@@ -5,7 +5,7 @@
  *          the core functionality for receiving audio packets from the network. It handles
  *          socket setup, the main receive loop, and management of seen source tags.
  *          Derived classes must implement the protocol-specific logic for packet validation
- *          and processing.
+ *          and proces1g.
  */
 #ifndef NETWORK_AUDIO_RECEIVER_H
 #define NETWORK_AUDIO_RECEIVER_H
@@ -229,6 +229,7 @@ protected:
         ClockManager::ConditionHandle clock_handle;
         uint64_t clock_last_sequence = 0;
         std::deque<TaggedAudioPacket> pending_packets;
+        double current_playback_rate = 1;
     };
 
     struct PcmAccumulatorState {
@@ -253,6 +254,8 @@ protected:
     void clear_clock_managed_streams();
     void handle_clock_tick(const std::string& source_tag);
     uint32_t calculate_samples_per_chunk(int channels, int bit_depth) const;
+    void maybe_log_telemetry();
+    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
 
 private:
     // --- Winsock Initialization Management (Windows specific) ---

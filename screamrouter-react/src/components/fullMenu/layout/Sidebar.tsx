@@ -215,33 +215,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                   if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile
                 }}
               />
-              <NavItem
-                icon="headphones"
-                label="Now Listening"
-                isActive={currentCategory === 'now-listening'}
-                onClick={() => {
-                  setCurrentCategory('now-listening');
-                  if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile
-                }}
-              />
-              <NavItem
-                icon="chart-bar"
-                label="Stats"
-                isActive={currentCategory === 'stats'}
-                onClick={() => {
-                  setCurrentCategory('stats');
-                  if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile
-                }}
-              />
-              <NavItem
-                icon="file-alt"
-                label="Logs"
-                isActive={currentCategory === 'logs'}
-                onClick={() => {
-                  setCurrentCategory('logs');
-                  if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile
-                }}
-              />
             </VStack>
           </Box>
           
@@ -322,6 +295,40 @@ const Sidebar: React.FC<SidebarProps> = ({
                 dataTutorialId="favorites-nav-item"
                 onClick={() => {
                   setCurrentCategory('favorites');
+                  if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile
+                }}
+              />
+            </VStack>
+          </Box>
+
+          <Divider />
+
+          <Box>
+            <Heading
+              as="h3"
+              size="sm"
+              mb={2}
+              color={sectionHeadingColor}
+              fontWeight="medium"
+            >
+              Tools
+            </Heading>
+            <VStack spacing={1} align="stretch">
+              <NavItem
+                icon="chart-bar"
+                label="Stats"
+                isActive={currentCategory === 'stats'}
+                onClick={() => {
+                  setCurrentCategory('stats');
+                  if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile
+                }}
+              />
+              <NavItem
+                icon="file-alt"
+                label="Logs"
+                isActive={currentCategory === 'logs'}
+                onClick={() => {
+                  setCurrentCategory('logs');
                   if (window.innerWidth < 768) toggleSidebar(); // Close sidebar on mobile
                 }}
               />

@@ -389,17 +389,13 @@ inline void bind_audio_manager(pybind11::module_ &m) {
     py::class_<TimeshiftTuning>(m, "TimeshiftTuning")
         .def(py::init<>())
         .def_readwrite("cleanup_interval_ms", &TimeshiftTuning::cleanup_interval_ms)
-        .def_readwrite("reanchor_interval_sec", &TimeshiftTuning::reanchor_interval_sec)
-        .def_readwrite("jitter_smoothing_factor", &TimeshiftTuning::jitter_smoothing_factor)
-        .def_readwrite("jitter_safety_margin_multiplier", &TimeshiftTuning::jitter_safety_margin_multiplier)
         .def_readwrite("late_packet_threshold_ms", &TimeshiftTuning::late_packet_threshold_ms)
         .def_readwrite("target_buffer_level_ms", &TimeshiftTuning::target_buffer_level_ms)
-        .def_readwrite("target_recovery_rate_ms_per_sec", &TimeshiftTuning::target_recovery_rate_ms_per_sec)
-        .def_readwrite("proportional_gain_kp", &TimeshiftTuning::proportional_gain_kp)
-        .def_readwrite("min_playback_rate", &TimeshiftTuning::min_playback_rate)
-        .def_readwrite("max_playback_rate", &TimeshiftTuning::max_playback_rate)
         .def_readwrite("loop_max_sleep_ms", &TimeshiftTuning::loop_max_sleep_ms)
-        .def_readwrite("max_catchup_lag_ms", &TimeshiftTuning::max_catchup_lag_ms);
+        .def_readwrite("max_catchup_lag_ms", &TimeshiftTuning::max_catchup_lag_ms)
+        .def_readwrite("max_clock_pending_packets", &TimeshiftTuning::max_clock_pending_packets)
+        .def_readwrite("rtp_continuity_slack_seconds", &TimeshiftTuning::rtp_continuity_slack_seconds)
+        .def_readwrite("rtp_session_reset_threshold_seconds", &TimeshiftTuning::rtp_session_reset_threshold_seconds);
 
     py::class_<ProfilerSettings>(m, "ProfilerSettings")
         .def(py::init<>())
@@ -408,24 +404,24 @@ inline void bind_audio_manager(pybind11::module_ &m) {
 
     py::class_<MixerTuning>(m, "MixerTuning")
         .def(py::init<>())
-        .def_readwrite("grace_period_timeout_ms", &MixerTuning::grace_period_timeout_ms)
-        .def_readwrite("grace_period_poll_interval_ms", &MixerTuning::grace_period_poll_interval_ms)
         .def_readwrite("mp3_bitrate_kbps", &MixerTuning::mp3_bitrate_kbps)
         .def_readwrite("mp3_vbr_enabled", &MixerTuning::mp3_vbr_enabled)
         .def_readwrite("mp3_output_queue_max_size", &MixerTuning::mp3_output_queue_max_size)
-        .def_readwrite("underrun_hold_timeout_ms", &MixerTuning::underrun_hold_timeout_ms);
+        .def_readwrite("underrun_hold_timeout_ms", &MixerTuning::underrun_hold_timeout_ms)
+        .def_readwrite("max_input_queue_chunks", &MixerTuning::max_input_queue_chunks)
+        .def_readwrite("min_input_queue_chunks", &MixerTuning::min_input_queue_chunks)
+        .def_readwrite("max_ready_chunks_per_source", &MixerTuning::max_ready_chunks_per_source);
 
     py::class_<SourceProcessorTuning>(m, "SourceProcessorTuning")
         .def(py::init<>())
-        .def_readwrite("command_loop_sleep_ms", &SourceProcessorTuning::command_loop_sleep_ms);
+        .def_readwrite("command_loop_sleep_ms", &SourceProcessorTuning::command_loop_sleep_ms)
+        .def_readwrite("discontinuity_threshold_ms", &SourceProcessorTuning::discontinuity_threshold_ms);
 
     py::class_<ProcessorTuning>(m, "ProcessorTuning")
         .def(py::init<>())
         .def_readwrite("oversampling_factor", &ProcessorTuning::oversampling_factor)
         .def_readwrite("volume_smoothing_factor", &ProcessorTuning::volume_smoothing_factor)
         .def_readwrite("dc_filter_cutoff_hz", &ProcessorTuning::dc_filter_cutoff_hz)
-        .def_readwrite("soft_clip_threshold", &ProcessorTuning::soft_clip_threshold)
-        .def_readwrite("soft_clip_knee", &ProcessorTuning::soft_clip_knee)
         .def_readwrite("normalization_target_rms", &ProcessorTuning::normalization_target_rms)
         .def_readwrite("normalization_attack_smoothing", &ProcessorTuning::normalization_attack_smoothing)
         .def_readwrite("normalization_decay_smoothing", &ProcessorTuning::normalization_decay_smoothing)
@@ -444,6 +440,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
 
     py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
         .def(py::init<>())
+        .def_readwrite("chunk_size_bytes", &AudioEngineSettings::chunk_size_bytes)
         .def_readwrite("timeshift_tuning", &AudioEngineSettings::timeshift_tuning)
         .def_readwrite("profiler", &AudioEngineSettings::profiler)
         .def_readwrite("mixer_tuning", &AudioEngineSettings::mixer_tuning)

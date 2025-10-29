@@ -13,6 +13,8 @@
 #include <tuple>
 #include <vector>
 
+#include "../configuration/audio_engine_settings.h"
+
 namespace screamrouter {
 namespace audio {
 
@@ -36,7 +38,7 @@ public:
         }
     };
 
-    ClockManager();
+    explicit ClockManager(std::size_t chunk_size_bytes = kDefaultChunkSizeBytes);
     ~ClockManager();
 
     ClockManager(const ClockManager&) = delete;
@@ -58,9 +60,7 @@ private:
         std::vector<std::shared_ptr<ConditionEntry>> conditions;
     };
 
-    static constexpr std::size_t kChunkSizeBytes = 1152;
-
-    static std::chrono::nanoseconds calculate_period(int sample_rate, int channels, int bit_depth);
+    std::chrono::nanoseconds calculate_period(int sample_rate, int channels, int bit_depth) const;
     bool has_active_conditions(const ClockEntry& entry) const;
     void cleanup_inactive_conditions(ClockEntry& entry);
     void run();
@@ -71,6 +71,7 @@ private:
     std::thread worker_thread_;
     std::atomic<bool> stop_requested_{false};
     std::atomic<std::uint64_t> next_condition_id_{1};
+    const std::size_t chunk_size_bytes_;
 };
 
 } // namespace audio

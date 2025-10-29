@@ -15,9 +15,6 @@ namespace audio {
 namespace logging {
 
 namespace { // Anonymous namespace for internal linkage
-    // LogCallback global_log_callback; // Removed
-    // std::mutex callback_mutex; // Replaced with queue-specific mutex
-
     std::deque<screamrouter::audio::logging::LogEntry> internal_log_queue;
     std::mutex internal_log_queue_mutex;
     std::condition_variable internal_log_queue_cv;
@@ -28,12 +25,7 @@ namespace { // Anonymous namespace for internal linkage
 }
 
 // Definition of the global log level variable
-std::atomic<LogLevel> current_log_level(LogLevel::INFO);
-
-// void set_log_callback(LogCallback callback) { // Removed
-//     std::lock_guard<std::mutex> lock(callback_mutex);
-//     global_log_callback = callback;
-// }
+std::atomic<LogLevel> current_log_level(LogLevel::DEBUG);
 
 const char* get_base_filename(const char* path) {
     if (!path) {

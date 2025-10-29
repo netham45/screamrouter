@@ -302,9 +302,8 @@ class ConfigurationManager(threading.Thread):
         """Updates fields on the sink indicated by old_sink_name to what is specified in new_sink
            Undefined fields are ignored"""
         print(f"Updating {old_sink_name}")
-        is_eq_only: bool = True
-        is_eq_found: bool = False
         changed_sink: SinkDescription = self.get_sink_by_name(old_sink_name)
+        notify_volume_eq: bool = False
         if new_sink.name != old_sink_name:
             for sink in self.sink_descriptions:
                 if sink.name == new_sink.name:
@@ -314,11 +313,11 @@ class ConfigurationManager(threading.Thread):
                 # config_id should never be modified after creation
                 _logger.warning(f"Attempt to modify config_id for sink {old_sink_name} - ignoring this change")
                 continue
-            if field == "equalizer":
-                is_eq_found = True
-            elif field != "name":
-                is_eq_only = False
-            setattr(changed_sink, field, getattr(new_sink, field))
+            old_value = getattr(changed_sink, field, None)
+            new_value = getattr(new_sink, field)
+            setattr(changed_sink, field, new_value)
+            if field in {"volume", "delay", "timeshift"} and new_value != old_value:
+                notify_volume_eq = True
 
         for sink in self.sink_descriptions:
             for index, group_member in enumerate(sink.group_members):
@@ -330,6 +329,8 @@ class ConfigurationManager(threading.Thread):
 
         # Always trigger a full reload for simplicity and robustness with C++ engine
         self.__reload_configuration()
+        if notify_volume_eq:
+            self.__notify_volume_eq_condition()
         return True
 
     def delete_sink(self, sink_name: SinkNameType) -> bool:
@@ -506,9 +507,8 @@ class ConfigurationManager(threading.Thread):
     def update_source(self, new_source: SourceDescription, old_source_name: SourceNameType) -> bool:
         """Updates fields on source 'old_source_name' to what's specified in new_source
            Undefined fields are not changed"""
-        is_eq_only: bool = True
-        is_eq_found: bool = False
         changed_source: SourceDescription = self.get_source_by_name(old_source_name)
+        notify_volume_eq: bool = False
         if new_source.name != old_source_name:
             for source in self.source_descriptions:
                 if source.name == new_source.name:
@@ -518,12 +518,11 @@ class ConfigurationManager(threading.Thread):
                 # config_id should never be modified after creation
                 _logger.warning(f"Attempt to modify config_id for source {old_source_name} - ignoring this change")
                 continue
-            if field == "equalizer":
-                is_eq_found = True
-            elif field != "name":
-                is_eq_only = False
-        
-            setattr(changed_source, field, getattr(new_source, field))
+            old_value = getattr(changed_source, field, None)
+            new_value = getattr(new_source, field)
+            setattr(changed_source, field, new_value)
+            if field in {"volume", "delay", "timeshift"} and new_value != old_value:
+                notify_volume_eq = True
         for source in self.source_descriptions:
             for index, group_member in enumerate(source.group_members):
                 if group_member == old_source_name:
@@ -534,6 +533,8 @@ class ConfigurationManager(threading.Thread):
 
         # Always trigger a full reload
         self.__reload_configuration()
+        if notify_volume_eq:
+            self.__notify_volume_eq_condition()
         return True
 
     def delete_source(self, source_name: SourceNameType) -> bool:
@@ -597,9 +598,8 @@ class ConfigurationManager(threading.Thread):
     def update_route(self, new_route: RouteDescription, old_route_name: RouteNameType) -> bool:
         """Updates fields on the route indicated by old_route_name to what is specified in new_route
            Undefined fields are ignored"""
-        is_eq_only: bool = True
-        is_eq_found: bool = False
         changed_route: RouteDescription = self.get_route_by_name(old_route_name)
+        notify_volume_eq: bool = False
         if new_route.name != old_route_name:
             for route in self.route_descriptions:
                 if route.name == new_route.name:
@@ -609,14 +609,28 @@ class ConfigurationManager(threading.Thread):
                 # config_id should never be modified after creation
                 _logger.warning(f"Attempt to modify config_id for route {old_route_name} - ignoring this change")
                 continue
-            if field == "equalizer":
-                is_eq_found = True
-            elif field != "name":
-                is_eq_only = False
-            setattr(changed_route, field, getattr(new_route, field))
+            old_value = getattr(changed_route, field, None)
+            new_value = getattr(new_route, field)
+            setattr(changed_route, field, new_value)
+            if field in {"volume", "delay", "timeshift"} and new_value != old_value:
+                notify_volume_eq = True
         # Always trigger a full reload
         self.__reload_configuration()
+        if notify_volume_eq:
+            self.__notify_volume_eq_condition()
         return True
+
+    def __notify_volume_eq_condition(self) -> None:
+        """Signal listeners that volume/delay/timeshift have changed."""
+        if not self.reload_condition.acquire(timeout=10):
+            _logger.warning("[Configuration Manager] Failed to acquire volume/eq condition semaphore")
+            return
+        try:
+            self.reload_condition.notify()
+        except RuntimeError:
+            pass
+        finally:
+            self.reload_condition.release()
 
     def delete_route(self, route_name: RouteNameType) -> bool:
         """Deletes a route by name"""
@@ -3048,7 +3062,7 @@ class ConfigurationManager(threading.Thread):
 
                     rtp_properties = {"source": "cpp_engine"}
                     if self._update_discovered_device_last_seen(
-                        method="rtp",
+                        method="cpp_rtp",
                         identifier=ip_value,
                         ip=ip_value,
                         device_type="rtp_stream",
@@ -3065,7 +3079,7 @@ class ConfigurationManager(threading.Thread):
                         known_source_ips.append(ip_value)
 
                     self._store_discovered_device(
-                        method="rtp",
+                        method="cpp_rtp",
                         role="source",
                         identifier=ip_value,
                         ip=ip_value,
@@ -3088,7 +3102,7 @@ class ConfigurationManager(threading.Thread):
 
                         raw_properties = {"receiver_port": port, "source": "cpp_engine"}
                         if self._update_discovered_device_last_seen(
-                            method="raw_scream",
+                            method="cpp_raw",
                             identifier=ip_value,
                             ip=ip_value,
                             port=port,
@@ -3107,7 +3121,7 @@ class ConfigurationManager(threading.Thread):
                             known_source_ips.append(ip_value)
 
                         self._store_discovered_device(
-                            method="raw_scream",
+                            method="cpp_raw",
                             role="source",
                             identifier=ip_value,
                             ip=ip_value,
@@ -3138,15 +3152,12 @@ class ConfigurationManager(threading.Thread):
                         "receiver_port": per_process_receiver_port,
                         "source": "cpp_engine",
                     }
-                    if self._update_discovered_device_last_seen(
-                        method="per_process",
-                        identifier=identifier,
-                        ip=parsed_ip,
-                        tag=identifier,
-                        device_type="per_process",
-                        properties=per_process_properties,
-                    ):
-                        continue
+                    # Per-process entries are auto-managed; exclude them from discovered list.
+                    for lookup_key in {
+                        f"per_process:{identifier}",
+                        f"per_process:{tag_str}",
+                    }:
+                        self.discovered_devices.pop(lookup_key, None)
 
                     is_new_source = identifier not in known_process_tags
                     if is_new_source:
@@ -3157,16 +3168,6 @@ class ConfigurationManager(threading.Thread):
                         )
                         known_process_tags.add(identifier)
                         known_source_tags.append(identifier)
-
-                        self._store_discovered_device(
-                            method="per_process",
-                            role="process",
-                            identifier=identifier,
-                            ip=parsed_ip,
-                            tag=identifier,
-                            device_type="per_process",
-                            properties=per_process_properties,
-                        )
 
                         try:
                             self.auto_add_process_source(identifier)
@@ -3206,15 +3207,12 @@ class ConfigurationManager(threading.Thread):
                         if not store_ip:
                             store_ip = tag_body
 
-                        if self._update_discovered_device_last_seen(
-                            method="pulse",
-                            identifier=identifier,
-                            ip=store_ip,
-                            tag=identifier,
-                            device_type="pulse_process",
-                            properties=pulse_properties,
-                        ):
-                            continue
+                        # Pulse process entries are also auto-managed, keep them out of discovery list.
+                        for lookup_key in {
+                            f"pulse:{identifier}",
+                            f"pulse:{tag_str}",
+                        }:
+                            self.discovered_devices.pop(lookup_key, None)
 
                         is_new_pulse_source = identifier not in known_process_tags
                         if is_new_pulse_source:
@@ -3225,16 +3223,6 @@ class ConfigurationManager(threading.Thread):
                             known_process_tags.add(identifier)
                             known_source_tags.append(identifier)
 
-                            self._store_discovered_device(
-                                method="pulse",
-                                role="process",
-                                identifier=identifier,
-                                ip=store_ip,
-                                tag=identifier,
-                                device_type="pulse_process",
-                                properties=pulse_properties,
-                            )
-
                             try:
                                 self.auto_add_process_source(identifier)
                             except Exception as auto_exc:  # pylint: disable=broad-except
@@ -3243,16 +3231,6 @@ class ConfigurationManager(threading.Thread):
                                     identifier,
                                     auto_exc,
                                 )
-                        else:
-                            self._store_discovered_device(
-                                method="pulse",
-                                role="process",
-                                identifier=identifier,
-                                ip=store_ip,
-                                tag=identifier,
-                                device_type="pulse_process",
-                                properties=pulse_properties,
-                            )
                 except Exception as e:  # pylint: disable=broad-except
                     _logger.error("[Configuration Manager] Error getting seen tags from PulseAudio Receiver: %s", e)
 
@@ -3264,12 +3242,30 @@ class ConfigurationManager(threading.Thread):
                         if not isinstance(announcement, dict):
                             continue
 
-                        ip_value = str(announcement.get("ip") or announcement.get("stream_ip") or "").strip()
+                        stream_ip = str(announcement.get("ip") or announcement.get("stream_ip") or "").strip()
+                        announcer_ip = str(announcement.get("announcer_ip") or "").strip()
+                        ip_value = announcer_ip or stream_ip
                         if not ip_value:
                             continue
 
                         port_value = announcement.get("port")
-                        identifier = f"{ip_value}:{port_value}" if port_value else ip_value
+
+                        legacy_device = None
+                        if stream_ip and stream_ip != ip_value:
+                            legacy_keys = {f"cpp_sap:{stream_ip}"}
+                            if port_value:
+                                legacy_keys.add(f"cpp_sap:{stream_ip}:{port_value}")
+                            for legacy_key in legacy_keys:
+                                popped = self.discovered_devices.pop(legacy_key, None)
+                                if popped and not legacy_device:
+                                    legacy_device = popped
+
+                        identifier_parts = [ip_value]
+                        if port_value:
+                            identifier_parts.append(str(port_value))
+                        if stream_ip and stream_ip != ip_value:
+                            identifier_parts.append(stream_ip)
+                        identifier = ":".join(identifier_parts)
 
                         properties = {
                             "source": "cpp_engine",
@@ -3279,23 +3275,51 @@ class ConfigurationManager(threading.Thread):
                             value = announcement.get(key)
                             if value is not None:
                                 properties[key] = value
+                        if stream_ip:
+                            properties.setdefault("stream_ip", stream_ip)
 
+                        if legacy_device:
+                            legacy_props = dict(legacy_device.properties or {})
+                            legacy_props.update(properties)
+                            properties = legacy_props
+
+                        if self._update_discovered_device_last_seen(
+                            method="cpp_sap",
+                            identifier=identifier,
+                            ip=ip_value,
+                            port=port_value,
+                            device_type="rtp_stream",
+                            properties=properties,
+                        ):
+                            continue
+
+                        display_port = port_value if port_value else "unknown"
                         if ip_value not in known_source_ips:
-                            _logger.info(
-                                "[Configuration Manager] Discovered SAP-announced source from C++ RTP Receiver: %s:%s",
-                                ip_value,
-                                port_value if port_value else "unknown",
-                            )
+                            if stream_ip and stream_ip != ip_value:
+                                _logger.info(
+                                    "[Configuration Manager] Discovered SAP-announced source from C++ RTP Receiver: announcer %s, stream %s:%s",
+                                    ip_value,
+                                    stream_ip,
+                                    display_port,
+                                )
+                            else:
+                                _logger.info(
+                                    "[Configuration Manager] Discovered SAP-announced source from C++ RTP Receiver: %s:%s",
+                                    ip_value,
+                                    display_port,
+                                )
                             known_source_ips.append(ip_value)
 
                         self._store_discovered_device(
-                            method="sap",
+                            method="cpp_sap",
                             role="source",
                             identifier=identifier,
                             ip=ip_value,
                             port=port_value,
                             device_type="rtp_stream",
                             properties=properties,
+                            name=legacy_device.name if legacy_device and legacy_device.name else None,
+                            tag=legacy_device.tag if legacy_device and legacy_device.tag else None,
                         )
             except Exception as e:
                 _logger.error("[Configuration Manager] Error processing SAP announcements from C++ RTP Receiver: %s", e)

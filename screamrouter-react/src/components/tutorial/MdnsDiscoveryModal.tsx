@@ -122,7 +122,9 @@ const methodColorMap: Record<string, string> = {
   mdns: 'purple',
   cpp_rtp: 'green',
   cpp_raw: 'teal',
-  cpp_per_process: 'orange',
+  per_process: 'orange',
+  pulse: 'pink',
+  cpp_sap: 'yellow',
 };
 
 const getMethodColor = (method: string): string => {

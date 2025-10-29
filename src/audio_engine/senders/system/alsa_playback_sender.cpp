@@ -3,7 +3,9 @@
 #include "../../utils/cpp_logger.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
+#include <limits>
 #include <sstream>
 
 namespace screamrouter {
@@ -147,7 +149,7 @@ bool AlsaPlaybackSender::configure_device() {
         return false;
     }
 
-    int err = snd_pcm_open(&pcm_handle_, hw_device_name_.c_str(), SND_PCM_STREAM_PLAYBACK, 0);
+    int err = snd_pcm_open(&pcm_handle_, hw_device_name_.c_str(), SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
     if (err < 0) {
         LOG_CPP_ERROR("[AlsaPlayback:%s] snd_pcm_open failed: %s", device_tag_.c_str(), snd_strerror(err));
         pcm_handle_ = nullptr;
@@ -184,6 +186,10 @@ bool AlsaPlaybackSender::configure_device() {
     snd_pcm_hw_params_t* hw_params = nullptr;
     snd_pcm_hw_params_malloc(&hw_params);
     snd_pcm_hw_params_any(pcm_handle_, hw_params);
+
+    // Disable hidden conversions so latency stays predictable.
+    snd_pcm_hw_params_set_rate_resample(pcm_handle_, hw_params, 0);
+
     snd_pcm_hw_params_set_access(pcm_handle_, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
     err = snd_pcm_hw_params_set_format(pcm_handle_, hw_params, sample_format_);
     if (err < 0) {
@@ -195,8 +201,8 @@ bool AlsaPlaybackSender::configure_device() {
     snd_pcm_hw_params_set_rate_near(pcm_handle_, hw_params, &rate, nullptr);
     sample_rate_ = rate;
 
-    constexpr unsigned int kTargetLatencyUs = 20000;      // 20 ms overall buffer target
-    constexpr unsigned int kPeriodsPerBuffer = 4;          // keep a few smaller periods for smoothness
+    constexpr unsigned int kTargetLatencyUs = 12000;      // 12 ms overall buffer target
+    constexpr unsigned int kPeriodsPerBuffer = 3;        // keep a few smaller periods for smoothness
     unsigned int buffer_time = kTargetLatencyUs;
     unsigned int period_time = std::max(1000u, buffer_time / kPeriodsPerBuffer);
     snd_pcm_hw_params_set_period_time_near(pcm_handle_, hw_params, &period_time, nullptr);
@@ -213,13 +219,20 @@ bool AlsaPlaybackSender::configure_device() {
     snd_pcm_hw_params_get_period_size(hw_params, &period_frames_, nullptr);
     snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_frames_);
 
+    unsigned int got_period_us = 0;
+    unsigned int got_buffer_us = 0;
+    snd_pcm_hw_params_get_period_time(hw_params, &got_period_us, nullptr);
+    snd_pcm_hw_params_get_buffer_time(hw_params, &got_buffer_us, nullptr);
+
     snd_pcm_hw_params_free(hw_params);
 
     snd_pcm_sw_params_t* sw_params = nullptr;
     snd_pcm_sw_params_malloc(&sw_params);
     snd_pcm_sw_params_current(pcm_handle_, sw_params);
-    snd_pcm_sw_params_set_start_threshold(pcm_handle_, sw_params, buffer_frames_ / 2);
+    snd_pcm_uframes_t start_threshold = std::max<snd_pcm_uframes_t>(1, period_frames_);
+    snd_pcm_sw_params_set_start_threshold(pcm_handle_, sw_params, start_threshold);
     snd_pcm_sw_params_set_avail_min(pcm_handle_, sw_params, period_frames_);
+    snd_pcm_sw_params_set_stop_threshold(pcm_handle_, sw_params, buffer_frames_);
     snd_pcm_sw_params(pcm_handle_, sw_params);
     snd_pcm_sw_params_free(sw_params);
 
@@ -230,8 +243,9 @@ bool AlsaPlaybackSender::configure_device() {
         return false;
     }
 
-    LOG_CPP_INFO("[AlsaPlayback:%s] Opened device %s (rate=%u Hz, channels=%u, bit_depth=%d, period=%lu frames).",
-                 device_tag_.c_str(), hw_device_name_.c_str(), sample_rate_, channels_, bit_depth_, period_frames_);
+    LOG_CPP_INFO("[AlsaPlayback:%s] Opened %s rate=%u Hz channels=%u bit_depth=%d period=%lu frames (%u us) buffer=%lu frames (%u us).",
+                 device_tag_.c_str(), hw_device_name_.c_str(), sample_rate_, channels_, bit_depth_, period_frames_,
+                 got_period_us, buffer_frames_, got_buffer_us);
 
     return true;
 }
@@ -264,20 +278,139 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
 
     const uint8_t* byte_ptr = static_cast<const uint8_t*>(data);
     size_t frames_remaining = frame_count;
+    // Treat a "chunk" as the ALSA period we negotiated; fall back to the buffer geometry if needed.
+    constexpr snd_pcm_sframes_t kMaxBufferedPeriods = 9;
+    snd_pcm_sframes_t period_frames = 0;
+    if (period_frames_ > 0) {
+        period_frames = static_cast<snd_pcm_sframes_t>(period_frames_);
+    } else if (buffer_frames_ >= static_cast<snd_pcm_uframes_t>(kMaxBufferedPeriods)) {
+        period_frames = static_cast<snd_pcm_sframes_t>(buffer_frames_ / kMaxBufferedPeriods);
+    }
+    const snd_pcm_sframes_t period_target = period_frames > 0 ? period_frames : static_cast<snd_pcm_sframes_t>(1);
+    // Bound the ALSA hardware queue to a few periods so resumes don't replay large backlogs.
+    const snd_pcm_sframes_t max_buffered_frames = period_frames > 0
+                                                      ? std::min(period_frames * kMaxBufferedPeriods,
+                                                                 std::numeric_limits<snd_pcm_sframes_t>::max())
+                                                      : static_cast<snd_pcm_sframes_t>(0);
 
     while (frames_remaining > 0) {
-        snd_pcm_sframes_t written = snd_pcm_writei(pcm_handle_, byte_ptr, frames_remaining);
+        int wait_rc = snd_pcm_wait(pcm_handle_, 50);
+        if (wait_rc <= 0) {
+            int wait_err = (wait_rc == 0) ? -EPIPE : wait_rc;
+            if (!handle_write_error(wait_err)) {
+                return false;
+            }
+            continue;
+        }
+
+        snd_pcm_sframes_t avail = snd_pcm_avail_update(pcm_handle_);
+        if (avail < 0) {
+            if (!handle_write_error(static_cast<int>(avail))) {
+                return false;
+            }
+            continue;
+        }
+
+        snd_pcm_sframes_t delay_frames = 0;
+        snd_pcm_sframes_t allowed_extra = std::numeric_limits<snd_pcm_sframes_t>::max();
+        if (max_buffered_frames > 0) {
+            int delay_rc = snd_pcm_delay(pcm_handle_, &delay_frames);
+            if (delay_rc < 0) {
+                if (!handle_write_error(delay_rc)) {
+                    return false;
+                }
+                continue;
+            }
+            if (delay_frames < 0) {
+                delay_frames = 0;
+            }
+
+            allowed_extra = max_buffered_frames - delay_frames;
+            if (allowed_extra <= 0) {
+                LOG_CPP_WARNING("[AlsaPlayback:%s] Dropping %zu frames to cap ALSA queue (queued=%ld frames, limit=%ld frames).",
+                                device_tag_.c_str(), frames_remaining, static_cast<long>(delay_frames),
+                                static_cast<long>(max_buffered_frames));
+                return true;
+            }
+        }
+
+        snd_pcm_sframes_t frames_desired = static_cast<snd_pcm_sframes_t>(std::min(frames_remaining, static_cast<size_t>(period_target)));
+        if (max_buffered_frames > 0) {
+            frames_desired = std::min(frames_desired, allowed_extra);
+        }
+        if (frames_desired <= 0) {
+            break;
+        }
+
+        if (avail < frames_desired) {
+            continue;
+        }
+
+        snd_pcm_sframes_t written = snd_pcm_writei(pcm_handle_, byte_ptr, frames_desired);
+        if (written == -EAGAIN) {
+            continue;
+        }
         if (written < 0) {
             if (!handle_write_error(static_cast<int>(written))) {
                 return false;
             }
             continue;
         }
+
         byte_ptr += static_cast<size_t>(written) * bytes_per_frame;
         frames_remaining -= static_cast<size_t>(written);
+
+        if (snd_pcm_delay(pcm_handle_, &delay_frames) == 0) {
+            double delay_ms = 1000.0 * static_cast<double>(delay_frames) / static_cast<double>(sample_rate_);
+            LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA reported delay: %.2f ms (%ld frames).",
+                          device_tag_.c_str(), delay_ms, static_cast<long>(delay_frames));
+        }
     }
 
+    maybe_log_telemetry_locked();
     return true;
+}
+
+void AlsaPlaybackSender::maybe_log_telemetry_locked() {
+    static constexpr auto kTelemetryInterval = std::chrono::seconds(30);
+
+    if (!pcm_handle_ || sample_rate_ == 0) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (telemetry_last_log_time_.time_since_epoch().count() != 0 &&
+        now - telemetry_last_log_time_ < kTelemetryInterval) {
+        return;
+    }
+
+    telemetry_last_log_time_ = now;
+
+    snd_pcm_sframes_t delay_frames = 0;
+    double delay_ms = 0.0;
+    if (snd_pcm_delay(pcm_handle_, &delay_frames) == 0 && delay_frames >= 0) {
+        delay_ms = 1000.0 * static_cast<double>(delay_frames) / static_cast<double>(sample_rate_);
+    }
+
+    double buffer_ms = 0.0;
+    if (buffer_frames_ > 0) {
+        buffer_ms = 1000.0 * static_cast<double>(buffer_frames_) / static_cast<double>(sample_rate_);
+    }
+
+    double period_ms = 0.0;
+    if (period_frames_ > 0) {
+        period_ms = 1000.0 * static_cast<double>(period_frames_) / static_cast<double>(sample_rate_);
+    }
+
+    LOG_CPP_INFO(
+        "[Telemetry][AlsaPlayback:%s] delay_frames=%ld delay_ms=%.3f buffer_frames=%lu (%.3f ms) period_frames=%lu (%.3f ms)",
+        device_tag_.c_str(),
+        static_cast<long>(delay_frames),
+        delay_ms,
+        static_cast<unsigned long>(buffer_frames_),
+        buffer_ms,
+        static_cast<unsigned long>(period_frames_),
+        period_ms);
 }
 
 unsigned int AlsaPlaybackSender::get_effective_sample_rate() const {

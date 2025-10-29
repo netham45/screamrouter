@@ -9,6 +9,7 @@
 #ifndef THREAD_SAFE_QUEUE_H
 #define THREAD_SAFE_QUEUE_H
 
+#include <cstddef>
 #include <deque>
 #include <mutex>
 #include <condition_variable>
@@ -27,6 +28,13 @@ namespace utils {
 template <typename T>
 class ThreadSafeQueue {
 public:
+    enum class PushResult {
+        Pushed,
+        DroppedOldest,
+        QueueStopped,
+        QueueFull
+    };
+
     /**
      * @brief Default constructor.
      */
@@ -51,6 +59,36 @@ public:
             queue_.push_back(std::move(item));
         }
         cond_.notify_one();
+    }
+
+    /**
+     * @brief Attempts to push an item while enforcing a maximum size.
+     * @param item Item to enqueue (moved on success).
+     * @param max_size Maximum number of items allowed (0 disables the bound).
+     * @param drop_oldest When true, the oldest queued item is discarded to make room.
+     * @return Outcome describing whether the item was queued or dropped.
+     */
+    PushResult push_bounded(T item, std::size_t max_size, bool drop_oldest) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (stop_requested_) {
+            return PushResult::QueueStopped;
+        }
+
+        if (max_size > 0 && queue_.size() >= max_size) {
+            if (!drop_oldest) {
+                return PushResult::QueueFull;
+            }
+            queue_.pop_front();
+            queue_.push_back(std::move(item));
+            lock.unlock();
+            cond_.notify_one();
+            return PushResult::DroppedOldest;
+        }
+
+        queue_.push_back(std::move(item));
+        lock.unlock();
+        cond_.notify_one();
+        return PushResult::Pushed;
     }
 
     /**

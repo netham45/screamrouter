@@ -9,7 +9,7 @@
 #ifndef SINK_AUDIO_MIXER_H
 #define SINK_AUDIO_MIXER_H
 #if defined(_WIN32) && !defined(NOMINMAX)
-#define NOMINMAX
+
 #endif
 
 #include "../utils/audio_component.h"
@@ -32,8 +32,8 @@
 #include <thread>
 
 #if defined(_WIN32)
-#undef max
-#undef min
+
+
 #endif
 
 class AudioProcessor;
@@ -60,13 +60,6 @@ struct SinkAudioMixerStats {
 
 using InputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using Mp3OutputQueue = utils::ThreadSafeQueue<EncodedMP3Data>;
-
-/** @brief The size of the network output payload in bytes. */
-const size_t SINK_CHUNK_SIZE_BYTES = 1152;
-/** @brief The number of 32-bit samples required in the mixing buffer to produce a full output chunk. */
-const size_t SINK_MIXING_BUFFER_SAMPLES = 576;
-/** @brief A generous buffer size for MP3 encoding output. */
-const size_t SINK_MP3_BUFFER_SIZE = SINK_CHUNK_SIZE_BYTES * 8;
 
 /**
  * @class SinkAudioMixer
@@ -174,6 +167,9 @@ public:
 private:
     SinkMixerConfig config_;
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
+    const std::size_t chunk_size_bytes_;
+    const std::size_t mixing_buffer_samples_;
+    const std::size_t mp3_buffer_size_;
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
     std::unique_ptr<INetworkSender> network_sender_;
     std::unique_ptr<MixScheduler> mix_scheduler_;
@@ -251,7 +247,9 @@ private:
     // --- Profiling ---
     void reset_profiler_counters();
     void maybe_log_profiler();
+    void maybe_log_telemetry(std::chrono::steady_clock::time_point now);
     std::chrono::steady_clock::time_point profiling_last_log_time_;
+    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
     uint64_t profiling_cycles_{0};
     uint64_t profiling_data_ready_cycles_{0};
     uint64_t profiling_chunks_sent_{0};

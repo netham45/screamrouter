@@ -11,8 +11,13 @@ Build Requirements:
 Parallel Build Support:
 - Automatically uses all CPU cores for compilation (configurable)
 - Override with: pip install -e . --config-settings="--build-option=--parallel=N"
-- Or set environment: export MAX_JOBS=N before building
+- Or set environment: export SCREAMROUTER_MAX_JOBS=N (falls back to MAX_JOBS or CPU count)
 - Linux: Install ccache for faster incremental rebuilds
+
+Extension Compilation Cache:
+- Incremental C++ builds reuse unchanged object files
+- Disable with SCREAMROUTER_DISABLE_OBJECT_CACHE=1
+- Cache stored under build/.cache/objects
 
 Cross-Compilation Support:
 - Set CC and CXX to your cross-compiler
@@ -25,11 +30,15 @@ import sys
 import shutil
 import subprocess
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from setuptools import setup, Extension, find_packages
 from setuptools.command.build_ext import build_ext
 from setuptools.command.build_py import build_py
 from distutils.command.build import build as _build
+from distutils import log
+from distutils.dep_util import newer_group
+from distutils.errors import DistutilsSetupError
 
 # Conditionally import bdist_wheel (not always installed)
 try:
@@ -219,13 +228,43 @@ class BuildExtCommand(build_ext):
     - Generates pybind11 type stubs automatically
     """
 
-    def run(self):
-        # Enable parallel compilation for faster builds
-        # Use all available CPU cores by default
-        if self.parallel is None:
-            self.parallel = os.cpu_count() or 1
+    def initialize_options(self):
+        super().initialize_options()
+        self.object_cache = None
+        self._cache_stats = {"reused": 0, "compiled": 0}
 
-        print(f"Building with {self.parallel} parallel jobs...")
+    def run(self):
+        env_jobs = None
+        if self.parallel is None:
+            env_value = os.environ.get("SCREAMROUTER_MAX_JOBS") or os.environ.get("MAX_JOBS")
+            if env_value:
+                try:
+                    env_jobs_int = int(env_value)
+                    if env_jobs_int > 0:
+                        env_jobs = env_jobs_int
+                except ValueError:
+                    print(f"WARNING: Ignoring invalid parallel job count '{env_value}'", file=sys.stderr)
+            if env_jobs:
+                self.parallel = env_jobs
+            else:
+                self.parallel = os.cpu_count() or 1
+        else:
+            env_value = os.environ.get("SCREAMROUTER_MAX_JOBS") or os.environ.get("MAX_JOBS")
+            if env_value:
+                try:
+                    env_jobs_int = int(env_value)
+                    if env_jobs_int > 0 and env_jobs_int != self.parallel:
+                        print(
+                            f"Ignoring SCREAMROUTER_MAX_JOBS={env_jobs_int} because --parallel={self.parallel} is set."
+                        )
+                except ValueError:
+                    pass
+
+        if self.parallel < 1:
+            self.parallel = 1
+
+        self._cache_stats = {"reused": 0, "compiled": 0}
+        print(f"Building with {self.parallel} parallel job{'s' if self.parallel != 1 else ''}...")
 
         # Enable ccache for faster incremental builds on Linux
         # Preserve existing CC/CXX for cross-compilation
@@ -246,17 +285,23 @@ class BuildExtCommand(build_ext):
             print(f"Error importing build_system: {e}", file=sys.stderr)
             print("Make sure the build_system directory exists in the project root.", file=sys.stderr)
             raise
-        
+
         # Initialize build system
         bs = BuildSystem(
             root_dir=Path.cwd(),
             verbose=self.verbose > 0
         )
-        
+
+        self.object_cache = getattr(bs, "object_cache", None)
+        if self.object_cache and self.object_cache.enabled:
+            print(f"Object cache directory: {self.object_cache.cache_dir}")
+        elif self.object_cache:
+            print("Object cache disabled via SCREAMROUTER_DISABLE_OBJECT_CACHE")
+
         # Show build info
         if self.verbose:
             bs.show_info()
-        
+
         # Check prerequisites
         print("Checking build prerequisites...")
         if not bs.check_prerequisites():
@@ -264,32 +309,31 @@ class BuildExtCommand(build_ext):
                 "Missing build prerequisites. Please install required packages.\n"
                 "See the error messages above for details."
             )
-        
+
         # Build all dependencies
         print("Building C++ dependencies...")
         if not bs.build_all():
             raise RuntimeError(
-                "Failed to build one or more dependencies.\n"
-                "See the error messages above for details."
+                "Failed to build one or more dependencies. Please inspect the log output above."
             )
-        
+
         # Get install directory
         install_dir = bs.install_dir
-        
+
         # Detect cross-compilation
         is_cross_compiling = bool(detect_cross_compile_platform())
-        
+
         # Update extension paths
         for ext in self.extensions:
             # Add include directories
             ext.include_dirs.insert(0, str(install_dir / "include"))
-            
+
             # When cross-compiling, ONLY use our built libraries
             # Clear any system library paths that distutils may have added
             if is_cross_compiling:
                 ext.library_dirs.clear()
                 ext.runtime_library_dirs = []
-            
+
             # Add library directories
             # On Windows, use only 'lib' directory (32-bit and 64-bit both use lib)
             # On Linux, check both lib and lib64
@@ -300,13 +344,13 @@ class BuildExtCommand(build_ext):
                 lib64_path = install_dir / "lib64"
                 if lib64_path.exists():
                     ext.library_dirs.insert(0, str(lib64_path))
-            
+
             # Platform-specific adjustments
             if sys.platform == "win32":
                 # Windows-specific flags
                 ext.extra_compile_args.extend([
                     "/std:c++17", "/O2", "/W3", "/EHsc",
-                    "/D_CRT_SECURE_NO_WARNINGS", "/MP",
+                    "/D_CRT_SECURE_NO_WARNINGS", "/DNOMINMAX", "/MP",
                     # Define static linking for libdatachannel
                     "/DRTC_STATIC"
                 ])
@@ -327,26 +371,226 @@ class BuildExtCommand(build_ext):
                 ext.extra_link_args.extend([
                     "-lpthread", "-ldl"
                 ])
-        
+
         # Run normal build
         super().run()
-        
+
+        if self.object_cache and self.object_cache.enabled:
+            reused = self._cache_stats.get("reused", 0)
+            compiled = self._cache_stats.get("compiled", 0)
+            if reused:
+                print(f"Object cache reused {reused} object file{'s' if reused != 1 else ''}")
+            if compiled:
+                print(f"Compiled {compiled} object file{'s' if compiled != 1 else ''}")
+
         # Generate pybind11 stubs
         if not self.dry_run:
             print("Generating pybind11 stubs...")
             try:
                 env = os.environ.copy()
                 env["PYTHONPATH"] = self.build_lib + os.pathsep + env.get("PYTHONPATH", "")
-                
+
                 subprocess.run([
                     sys.executable, "-m", "pybind11_stubgen",
                     "screamrouter_audio_engine",
                     "--output-dir", "."
                 ], check=True, env=env)
-                
+
                 print("Successfully generated stubs for screamrouter_audio_engine.")
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
                 print(f"WARNING: Failed to generate pybind11 stubs: {e}", file=sys.stderr)
+
+    def build_extension(self, ext):
+        sources = ext.sources
+        if sources is None or not isinstance(sources, (list, tuple)):
+            raise DistutilsSetupError(
+                "in 'ext_modules' option (extension '%s'), "
+                "'sources' must be present and must be "
+                "a list of source filenames" % ext.name
+            )
+        sources = sorted(sources)
+
+        ext_path = self.get_ext_fullpath(ext.name)
+        depends = sources + list(ext.depends)
+        if not (self.force or newer_group(depends, ext_path, 'newer')):
+            log.debug("skipping '%s' extension (up-to-date)", ext.name)
+            return
+        else:
+            log.info("building '%s' extension", ext.name)
+
+        sources = self.swig_sources(sources, ext)
+
+        macros = ext.define_macros[:]
+        for undef in ext.undef_macros:
+            macros.append((undef,))
+
+        extra_args = ext.extra_compile_args or []
+
+        objects = self._compile_with_cache(ext, sources, macros, extra_args)
+        self._built_objects = objects[:]
+
+        if ext.extra_objects:
+            objects.extend(ext.extra_objects)
+        extra_link_args = ext.extra_link_args or []
+
+        language = ext.language or self.compiler.detect_language(sources)
+
+        self.compiler.link_shared_object(
+            objects,
+            ext_path,
+            libraries=self.get_libraries(ext),
+            library_dirs=ext.library_dirs,
+            runtime_library_dirs=ext.runtime_library_dirs,
+            extra_postargs=extra_link_args,
+            export_symbols=self.get_export_symbols(ext),
+            debug=self.debug,
+            build_temp=self.build_temp,
+            target_lang=language,
+        )
+
+    def _compile_with_cache(self, ext, sources, macros, extra_postargs):
+        compiler = self.compiler
+        include_dirs = ext.include_dirs
+        depends = ext.depends
+        output_dir = self.build_temp
+
+        macros_for_setup = list(macros or [])
+        macros_for_compile = list(macros or [])
+        extra_postargs_input = list(extra_postargs or [])
+
+        macros_cfg, objects, extra_postargs_final, pp_opts, build_map = compiler._setup_compile(
+            output_dir, macros_for_setup, include_dirs, sources, depends, extra_postargs_input
+        )
+
+        object_cache = self.object_cache if getattr(self.object_cache, "enabled", False) else None
+        reused_count = 0
+        compiled_count = 0
+
+        compiler_descriptor = [
+            getattr(compiler, "compiler_type", "unknown"),
+            compiler.__class__.__name__,
+        ]
+        extra_key = [
+            repr(getattr(compiler, "executables", {})),
+            os.environ.get("CFLAGS", ""),
+            os.environ.get("CXXFLAGS", ""),
+            os.environ.get("LDFLAGS", ""),
+        ]
+        macros_key = self._serialise_macros(macros_cfg)
+        include_key = sorted(include_dirs or [])
+        postargs_key = list(extra_postargs_final or [])
+        pp_opts_key = list(pp_opts)
+        debug_flag = "debug=1" if self.debug else "debug=0"
+
+        compile_jobs = []
+        for obj_path in objects:
+            src, src_ext = build_map[obj_path]
+            obj_file = Path(obj_path)
+            obj_file.parent.mkdir(parents=True, exist_ok=True)
+
+            fingerprint = None
+            if object_cache:
+                compile_args = (
+                    pp_opts_key
+                    + postargs_key
+                    + macros_key
+                    + include_key
+                    + [debug_flag, src_ext]
+                )
+                fingerprint = object_cache.fingerprint(
+                    Path(src), compiler_descriptor, compile_args, extra_key=extra_key
+                )
+                cached_obj = object_cache.get_cached_object(fingerprint)
+                if cached_obj:
+                    shutil.copy2(cached_obj, obj_file)
+                    reused_count += 1
+                    continue
+
+            compile_jobs.append((obj_path, src, src_ext, fingerprint))
+
+        if compile_jobs:
+            extra_postargs_list = list(extra_postargs_final or [])
+            if compiler.compiler_type == "msvc":
+                compiled_paths = compiler.compile(
+                    [src for _, src, _, _ in compile_jobs],
+                    output_dir=output_dir,
+                    macros=macros_for_compile,
+                    include_dirs=include_dirs,
+                    debug=self.debug,
+                    extra_postargs=extra_postargs_list,
+                    depends=depends,
+                )
+                for (dest, _, _, fingerprint), produced in zip(compile_jobs, compiled_paths):
+                    produced_path = Path(produced)
+                    dest_path = Path(dest)
+                    if produced_path.resolve() != dest_path.resolve():
+                        shutil.copy2(produced_path, dest_path)
+                    if object_cache and fingerprint:
+                        object_cache.store_object(fingerprint, dest_path)
+                    compiled_count += 1
+            else:
+                cc_args = compiler._get_cc_args(pp_opts, self.debug, None)
+                max_workers = max(1, min(self.parallel or 1, len(compile_jobs)))
+                if max_workers > 1:
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = {
+                            executor.submit(
+                                self._compile_unix_job,
+                                compiler,
+                                job,
+                                cc_args,
+                                extra_postargs_list,
+                                pp_opts,
+                                object_cache,
+                            ): job for job in compile_jobs
+                        }
+                        for future in as_completed(futures):
+                            future.result()
+                            compiled_count += 1
+                else:
+                    for job in compile_jobs:
+                        self._compile_unix_job(
+                            compiler,
+                            job,
+                            cc_args,
+                            extra_postargs_list,
+                            pp_opts,
+                            object_cache,
+                        )
+                        compiled_count += 1
+
+        if object_cache:
+            log.info(
+                "Object cache for %s: reused %d, compiled %d",
+                ext.name,
+                reused_count,
+                compiled_count,
+            )
+
+        self._cache_stats["reused"] += reused_count
+        self._cache_stats["compiled"] += compiled_count
+
+        return objects
+
+    @staticmethod
+    def _serialise_macros(macros):
+        serialised = []
+        for macro in macros or []:
+            if len(macro) == 1:
+                serialised.append(f"U:{macro[0]}")
+            else:
+                name, value = macro
+                serialised.append(f"D:{name}={value}")
+        serialised.sort()
+        return serialised
+
+    def _compile_unix_job(self, compiler, job, cc_args, extra_postargs, pp_opts, object_cache):
+        obj_path, src, src_ext, fingerprint = job
+        postargs = list(extra_postargs) if extra_postargs else []
+        compiler._compile(obj_path, src, src_ext, cc_args, postargs, pp_opts)
+        if object_cache and fingerprint:
+            object_cache.store_object(fingerprint, Path(obj_path))
+        return obj_path
 
 
 # Find source files
