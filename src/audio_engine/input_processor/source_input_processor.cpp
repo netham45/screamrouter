@@ -329,14 +329,43 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          if (pushed_samples != required_samples) {
              LOG_CPP_ERROR("[SourceProc:%s] PushOutput: Mismatch between pushed samples (%zu) and required samples (%zu).", config_.instance_id.c_str(), pushed_samples, required_samples);
          }
-         output_queue_->push(std::move(output_chunk));
-         profiling_chunks_pushed_++;
+         std::size_t queue_cap = 0;
+         if (m_settings) {
+             queue_cap = m_settings->mixer_tuning.max_input_queue_chunks;
+         }
+
+         auto push_result = output_queue_
+             ? output_queue_->push_bounded(std::move(output_chunk), queue_cap, true)
+             : OutputChunkQueue::PushResult::QueueFull;
+
+         switch (push_result) {
+             case OutputChunkQueue::PushResult::Pushed:
+                 profiling_chunks_pushed_++;
+                 break;
+             case OutputChunkQueue::PushResult::DroppedOldest:
+                 profiling_chunks_pushed_++;
+                 profiling_discarded_packets_++;
+                 LOG_CPP_WARNING("[SourceProc:%s] Output queue reached cap (%zu chunks); dropped oldest chunk.",
+                                 config_.instance_id.c_str(), queue_cap);
+                 break;
+             case OutputChunkQueue::PushResult::QueueStopped:
+                 profiling_discarded_packets_++;
+                 LOG_CPP_WARNING("[SourceProc:%s] Output queue stopped; dropping chunk.",
+                                 config_.instance_id.c_str());
+                 break;
+             case OutputChunkQueue::PushResult::QueueFull:
+                 profiling_discarded_packets_++;
+                 LOG_CPP_WARNING("[SourceProc:%s] Output queue missing or full; dropping chunk (cap=%zu).",
+                                 config_.instance_id.c_str(), queue_cap);
+                 break;
+         }
 
          // Remove the copied samples from the process buffer
         process_buffer_.erase(process_buffer_.begin(), process_buffer_.begin() + required_samples);
         current_buffer_size = process_buffer_.size(); // Update size after erasing
 
-        LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Pushed chunk. Remaining process_buffer_ size=%zu samples.", config_.instance_id.c_str(), current_buffer_size);
+         LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Queue result=%d. Remaining process_buffer_ size=%zu samples.",
+                       config_.instance_id.c_str(), static_cast<int>(push_result), current_buffer_size);
     }
 }
 

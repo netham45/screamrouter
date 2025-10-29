@@ -31,6 +31,7 @@ struct TimeshiftTuning {
     long jitter_idle_decay_interval_ms = 500;
     double jitter_idle_decay_factor = 0.1;
     double max_adaptive_delay_ms = 200.0;
+    std::size_t max_processor_queue_packets = 32;
 
     // --- Temporal Store / DVR defaults ---
     // Target playout delay (D) relative to now_ref; mixer follows head at D behind.

@@ -279,7 +279,7 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
     const uint8_t* byte_ptr = static_cast<const uint8_t*>(data);
     size_t frames_remaining = frame_count;
     // Treat a "chunk" as the ALSA period we negotiated; fall back to the buffer geometry if needed.
-    constexpr snd_pcm_sframes_t kMaxBufferedPeriods = 6;
+    constexpr snd_pcm_sframes_t kMaxBufferedPeriods = 9;
     snd_pcm_sframes_t period_frames = 0;
     if (period_frames_ > 0) {
         period_frames = static_cast<snd_pcm_sframes_t>(period_frames_);

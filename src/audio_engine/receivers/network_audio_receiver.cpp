@@ -389,6 +389,13 @@ bool NetworkAudioReceiver::enqueue_clock_managed_packet(TaggedAudioPacket&& pack
             return false;
         }
 
+        constexpr std::size_t kMaxPendingPackets = 8;
+        if (kMaxPendingPackets > 0 && state->pending_packets.size() >= kMaxPendingPackets) {
+            state->pending_packets.pop_front();
+            log_warning("Pending packet queue capped for source " + packet.source_tag +
+                        " (limit=" + std::to_string(kMaxPendingPackets) + ")");
+        }
+
         state->pending_packets.push_back(std::move(packet));
         if (!state->pending_packets.back().ssrcs.empty()) {
             state->last_ssrcs = state->pending_packets.back().ssrcs;

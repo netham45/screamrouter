@@ -655,9 +655,51 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     timing_state->current_playback_rate = 1.0;
                     packet_to_send.playback_rate = 1.0;
 
-                    target_info.target_queue->push(std::move(packet_to_send));
-                    profiling_packets_dispatched_++;
-                    packets_processed++;
+                    const std::size_t queue_cap = (m_settings)
+                        ? m_settings->timeshift_tuning.max_processor_queue_packets
+                        : 0;
+                    const bool queue_missing = (target_info.target_queue == nullptr);
+                    auto push_result = queue_missing
+                        ? PacketQueue::PushResult::QueueFull
+                        : target_info.target_queue->push_bounded(std::move(packet_to_send), queue_cap, true);
+
+                    switch (push_result) {
+                        case PacketQueue::PushResult::Pushed:
+                            profiling_packets_dispatched_++;
+                            packets_processed++;
+                            break;
+                        case PacketQueue::PushResult::DroppedOldest:
+                            profiling_packets_dispatched_++;
+                            packets_processed++;
+                            timing_state->tm_packets_discarded++;
+                            profiling_packets_dropped_++;
+                            LOG_CPP_WARNING(
+                                "[TimeshiftManager] Dropped oldest queued chunk for %s to enforce processor queue cap (%zu).",
+                                instance_id.c_str(),
+                                queue_cap);
+                            break;
+                        case PacketQueue::PushResult::QueueStopped:
+                            LOG_CPP_WARNING(
+                                "[TimeshiftManager] Target queue for %s stopped; discarding packet.",
+                                instance_id.c_str());
+                            timing_state->tm_packets_discarded++;
+                            profiling_packets_dropped_++;
+                            break;
+                        case PacketQueue::PushResult::QueueFull:
+                            if (queue_missing) {
+                                LOG_CPP_WARNING(
+                                    "[TimeshiftManager] Target queue missing for %s; dropping packet.",
+                                    instance_id.c_str());
+                            } else {
+                                LOG_CPP_WARNING(
+                                    "[TimeshiftManager] Target queue for %s full; dropping newest packet (cap=%zu).",
+                                    instance_id.c_str(),
+                                    queue_cap);
+                            }
+                            timing_state->tm_packets_discarded++;
+                            profiling_packets_dropped_++;
+                            break;
+                    }
 
                     timing_state->last_played_rtp_timestamp = candidate_packet.rtp_timestamp.value();
 
