@@ -39,7 +39,8 @@ enum class Tag : uint8_t {
     ChannelMap = 'm',
     CVolume = 'v',
     Proplist = 'P',
-    Volume = 'V'
+    Volume = 'V',
+    FormatInfo = 'f'
 };
 
 struct SampleSpec {
@@ -108,6 +109,8 @@ public:
     void put_sample_spec(const SampleSpec& spec);
     void put_channel_map(const ChannelMap& map);
     void put_cvolume(const CVolume& volume);
+    void put_volume(uint32_t value);
+    void put_format_info(uint8_t encoding, const Proplist& plist);
     void put_proplist(const Proplist& plist);
     void put_usec(uint64_t value);
     void put_timeval(const timeval& tv);

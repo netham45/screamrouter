@@ -104,6 +104,15 @@ constexpr uint32_t kMaxConnections = 64;
 constexpr uint32_t kVirtualSinkIndex = 0;
 constexpr const char* kVirtualSinkName = "screamrouter.pulse";
 constexpr const char* kVirtualSinkDescription = "ScreamRouter Virtual Pulse Sink";
+constexpr const char* kVirtualSinkDriver = "screamrouter.virtual";
+constexpr const char* kVirtualChannelMapString = "front-left,front-right,front-center,lfe,side-left,side-right,rear-left,rear-right";
+constexpr uint32_t kVirtualSinkVolumeSteps = 65537;
+constexpr uint32_t kSinkStateRunning = 0; // PA_SINK_RUNNING
+constexpr uint32_t kVirtualSourceIndex = 1;
+constexpr const char* kVirtualSourceName = "screamrouter.monitor";
+constexpr const char* kVirtualSourceDescription = "Monitor of ScreamRouter Virtual Pulse Sink";
+constexpr uint32_t kVirtualSourceVolumeSteps = 65537;
+constexpr uint32_t kSourceStateRunning = 0; // PA_SOURCE_RUNNING
 constexpr uint32_t kPulseCookieLength = 256;
 constexpr uint32_t kInvalidIndex = 0xFFFFFFFFu;
 constexpr uint32_t kDefaultBufferLength = 48 * 1024; // 1 second @ 48kHz, 8ch, 32-bit
@@ -117,6 +126,7 @@ constexpr uint32_t kVolumeNorm = 0x10000u;
 constexpr uint8_t kSampleFormatS32LE = 7; // matches PulseAudio's PA_SAMPLE_S32LE
 constexpr uint8_t kSampleFormatS16LE = 3;
 constexpr uint8_t kSampleFormatFloat32LE = 5;
+constexpr uint8_t kFormatEncodingPCM = 1; // PA_ENCODING_PCM
 constexpr uint8_t kChannelLayoutMono = 0x01;
 constexpr uint8_t kChannelLayoutStereo = 0x03;
 constexpr uint32_t kDescriptorFlagShmData = 0x80000000u;
@@ -157,17 +167,54 @@ const char* command_name(Command c) {
         case Command::LookupSink: return "LookupSink";
         case Command::GetSinkInfo: return "GetSinkInfo";
         case Command::GetSinkInfoList: return "GetSinkInfoList";
+        case Command::LookupSource: return "LookupSource";
+        case Command::GetSourceInfo: return "GetSourceInfo";
+        case Command::GetSourceInfoList: return "GetSourceInfoList";
+        case Command::GetModuleInfo: return "GetModuleInfo";
+        case Command::GetModuleInfoList: return "GetModuleInfoList";
+        case Command::GetSampleInfo: return "GetSampleInfo";
+        case Command::GetSampleInfoList: return "GetSampleInfoList";
+        case Command::Stat: return "Stat";
+        case Command::GetClientInfo: return "GetClientInfo";
+        case Command::GetClientInfoList: return "GetClientInfoList";
+        case Command::GetSinkInputInfo: return "GetSinkInputInfo";
+        case Command::GetSinkInputInfoList: return "GetSinkInputInfoList";
+        case Command::GetSourceOutputInfo: return "GetSourceOutputInfo";
+        case Command::GetSourceOutputInfoList: return "GetSourceOutputInfoList";
         case Command::CreatePlaybackStream: return "CreatePlaybackStream";
         case Command::DeletePlaybackStream: return "DeletePlaybackStream";
         case Command::CorkPlaybackStream: return "CorkPlaybackStream";
         case Command::FlushPlaybackStream: return "FlushPlaybackStream";
         case Command::DrainPlaybackStream: return "DrainPlaybackStream";
+        case Command::TriggerPlaybackStream: return "TriggerPlaybackStream";
+        case Command::PrebufPlaybackStream: return "PrebufPlaybackStream";
         case Command::SetPlaybackStreamBufferAttr: return "SetPlaybackStreamBufferAttr";
         case Command::GetPlaybackLatency: return "GetPlaybackLatency";
+        case Command::SetSinkVolume: return "SetSinkVolume";
         case Command::SetSinkInputVolume: return "SetSinkInputVolume";
+        case Command::SetSinkMute: return "SetSinkMute";
+        case Command::SetSourceVolume: return "SetSourceVolume";
+        case Command::SetSourceMute: return "SetSourceMute";
+        case Command::SetSinkInputMute: return "SetSinkInputMute";
+        case Command::SetDefaultSink: return "SetDefaultSink";
+        case Command::SetDefaultSource: return "SetDefaultSource";
         case Command::SetPlaybackStreamName: return "SetPlaybackStreamName";
+        case Command::SetRecordStreamName: return "SetRecordStreamName";
+        case Command::MoveSinkInput: return "MoveSinkInput";
+        case Command::MoveSourceOutput: return "MoveSourceOutput";
+        case Command::SuspendSink: return "SuspendSink";
+        case Command::SuspendSource: return "SuspendSource";
+        case Command::SetSinkPort: return "SetSinkPort";
+        case Command::SetSourcePort: return "SetSourcePort";
+        case Command::SetSourceOutputVolume: return "SetSourceOutputVolume";
+        case Command::SetSourceOutputMute: return "SetSourceOutputMute";
+        case Command::SetPortLatencyOffset: return "SetPortLatencyOffset";
         case Command::UpdatePlaybackStreamProplist: return "UpdatePlaybackStreamProplist";
+        case Command::UpdateRecordStreamProplist: return "UpdateRecordStreamProplist";
         case Command::UpdateClientProplist: return "UpdateClientProplist";
+        case Command::RemoveRecordStreamProplist: return "RemoveRecordStreamProplist";
+        case Command::RemovePlaybackStreamProplist: return "RemovePlaybackStreamProplist";
+        case Command::RemoveClientProplist: return "RemoveClientProplist";
         case Command::Request: return "Request";
         case Command::RegisterMemfdShmid: return "RegisterMemfdShmid";
         case Command::PlaybackStreamEvent: return "PlaybackStreamEvent";
@@ -233,6 +280,22 @@ std::string make_wildcard_tag(const std::string& base) {
 
 inline uint32_t min_version(uint32_t client_version) {
     return std::min<uint32_t>(client_version, kPulseProtocolVersion);
+}
+
+std::string bytes_to_hex(const uint8_t* data, std::size_t length) {
+    if (!data || length == 0) {
+        return {};
+    }
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (std::size_t i = 0; i < length; ++i) {
+        oss << std::setw(2) << static_cast<int>(data[i]);
+    }
+    return oss.str();
+}
+
+std::string bytes_to_hex(const std::vector<uint8_t>& data) {
+    return bytes_to_hex(data.data(), data.size());
 }
 
 inline int set_non_blocking(int fd) {
@@ -312,8 +375,51 @@ struct StreamConfig {
 
 std::array<uint8_t, 8> default_channel_positions() {
     return {
-        0, 1, 2, 3, 4, 5, 8, 9 // FL, FR, FC, LFE, SL, SR, RL, RR
+        1, 2, 3, 7, 10, 11, 5, 6 // FL, FR, FC, LFE, SL, SR, RL, RR
     };
+}
+
+const char* sample_format_name(uint8_t format) {
+    switch (format) {
+        case kSampleFormatS16LE: return "s16le";
+        case kSampleFormatFloat32LE: return "float32le";
+        case kSampleFormatS32LE:
+        default:
+            return "s32le";
+    }
+}
+
+std::string channel_position_name(uint8_t position) {
+    switch (position) {
+        case 1: return "front-left";
+        case 2: return "front-right";
+        case 3: return "front-center";
+        case 4: return "rear-center";
+        case 5: return "rear-left";
+        case 6: return "rear-right";
+        case 7: return "lfe";
+        case 8: return "front-left-of-center";
+        case 9: return "front-right-of-center";
+        case 10: return "side-left";
+        case 11: return "side-right";
+        default:
+            return "aux";
+    }
+}
+
+std::string channel_map_to_string(const ChannelMap& map) {
+    if (map.channels == 0 || map.map.empty()) {
+        return kVirtualChannelMapString;
+    }
+    std::string out;
+    out.reserve(map.channels * 8);
+    for (size_t i = 0; i < map.map.size(); ++i) {
+        if (i > 0) {
+            out += ',';
+        }
+        out += channel_position_name(map.map[i]);
+    }
+    return out;
 }
 
 std::pair<uint8_t, uint8_t> guess_channel_layout(const ChannelMap& map) {
@@ -331,10 +437,11 @@ std::vector<uint8_t> convert_float_chunk_to_s32(const std::vector<uint8_t>& chun
     std::vector<uint8_t> converted(chunk.size());
     const float* input = reinterpret_cast<const float*>(chunk.data());
     int32_t* output = reinterpret_cast<int32_t*>(converted.data());
-    constexpr double kScale = 2147483647.0;
+    constexpr double kScale = 32767.0;
     for (size_t i = 0; i < samples; ++i) {
         double clamped = std::clamp(static_cast<double>(input[i]), -1.0, 1.0);
-        output[i] = static_cast<int32_t>(clamped * kScale);
+        int32_t sample16 = static_cast<int32_t>(clamped * kScale);
+        output[i] = sample16 << 16;
     }
     return converted;
 }
@@ -369,7 +476,7 @@ struct PulseAudioReceiver::Impl {
     PulseAudioReceiver::StreamTagRemovedCallback stream_tag_removed_cb;
 
     std::vector<uint8_t> auth_cookie;
-    bool debug_packets = false;
+    bool debug_packets = true;
 
     bool initialize();
     void shutdown_all();
@@ -559,11 +666,15 @@ struct PulseAudioReceiver::Impl::Connection {
         bool playback_started = false;
         std::chrono::steady_clock::time_point playback_start_time{};
         uint64_t underrun_usec = 0;
+        bool muted = false;
         ProfilingData profile;
         std::deque<PendingChunk> pending_chunks;
         ClockManager::ConditionHandle clock_handle;
         uint64_t clock_last_sequence = 0;
         uint32_t samples_per_chunk = 0;
+        std::size_t chunk_bytes = 0;
+        std::size_t bytes_since_request = 0;
+        uint32_t request_granularity = 0;
         // Extended RTP timeline state (audio clock units)
         // rtp_base is a randomized 32-bit offset to align with RTP best practices.
         // next_rtp_frame holds the next absolute 64-bit timestamp in RTP units
@@ -653,6 +764,17 @@ struct PulseAudioReceiver::Impl::Connection {
     bool handle_lookup_sink(uint32_t tag, TagReader& reader);
     bool handle_get_sink_info(uint32_t tag, TagReader& reader, bool list);
     bool handle_get_card_info(uint32_t tag, TagReader& reader, bool list);
+    bool handle_lookup_source(uint32_t tag, TagReader& reader);
+    bool handle_get_source_info(uint32_t tag, TagReader& reader, bool list);
+    bool handle_get_module_info(uint32_t tag, TagReader& reader, bool list);
+    bool handle_get_sample_info(uint32_t tag, TagReader& reader, bool list);
+    bool handle_stat(uint32_t tag, TagReader& reader);
+    bool handle_get_client_info(uint32_t tag, TagReader& reader, bool list);
+    bool handle_get_sink_input_info(uint32_t tag, TagReader& reader, bool list);
+    bool handle_get_source_output_info(uint32_t tag, TagReader& reader, bool list);
+    void write_virtual_sink_info(TagWriter& writer) const;
+    void write_virtual_source_info(TagWriter& writer) const;
+    void write_sink_input_info(TagWriter& writer, const StreamState& stream) const;
     bool handle_create_playback_stream(uint32_t tag, TagReader& reader);
     bool handle_delete_stream(uint32_t tag, TagReader& reader);
     bool handle_cork_stream(uint32_t tag, TagReader& reader);
@@ -661,6 +783,9 @@ struct PulseAudioReceiver::Impl::Connection {
     bool handle_set_buffer_attr(uint32_t tag, TagReader& reader);
     bool handle_get_playback_latency(uint32_t tag, TagReader& reader);
     bool handle_set_sink_input_volume(uint32_t tag, TagReader& reader);
+    bool handle_set_sink_mute(uint32_t tag, TagReader& reader);
+    bool handle_set_source_mute(uint32_t tag, TagReader& reader);
+    bool handle_set_sink_input_mute(uint32_t tag, TagReader& reader);
     bool handle_set_stream_name(uint32_t tag, TagReader& reader);
     bool handle_update_playback_stream_proplist(uint32_t tag, TagReader& reader);
     bool handle_update_client_proplist(uint32_t tag, TagReader& reader);
@@ -676,6 +801,7 @@ struct PulseAudioReceiver::Impl::Connection {
     void enqueue_request(uint32_t stream_index, uint32_t bytes);
     void enqueue_shm_release(uint32_t block_id);
     void enqueue_started(uint32_t stream_index);
+    bool handle_noop_ack(uint32_t tag, TagReader& reader, const char* command_name);
 
     bool ensure_authorized(uint32_t tag);
     bool sample_format_supported(const SampleSpec& spec) const;
@@ -964,6 +1090,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_read() {
             return false;
         }
         if (r == 0) {
+            owner->log_debug("Peer closed connection");
             return false; // peer closed
         }
 
@@ -993,6 +1120,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_read() {
         }
 
         if (!process_message(message)) {
+            owner->log_debug("process_message indicated shutdown for tag command");
             close_fd_vector(message.fds);
             return false;
         }
@@ -1026,10 +1154,19 @@ void PulseAudioReceiver::Impl::Connection::enqueue_tagstruct(const TagWriter& wr
     message.descriptor.length = static_cast<uint32_t>(writer.buffer().size());
     message.descriptor.channel = kChannelCommand;
     message.payload = writer.buffer();
+    auto frame = EncodeMessage(message);
     if (owner->debug_packets) {
-        owner->log_debug("SEND cmd frame len=" + std::to_string(message.payload.size()));
+        std::ostringstream oss;
+        oss << "SEND frame channel=" << message.descriptor.channel
+            << " length=" << message.descriptor.length
+            << " offset_hi=" << message.descriptor.offset_hi
+            << " offset_lo=" << message.descriptor.offset_lo
+            << " flags=0x" << std::hex << message.descriptor.flags
+            << " payload=" << bytes_to_hex(message.payload)
+            << " frame_hex=" << bytes_to_hex(frame);
+        owner->log_debug(oss.str());
     }
-    write_queue.push_back(EncodeMessage(message));
+    write_queue.push_back(std::move(frame));
 }
 
 void PulseAudioReceiver::Impl::Connection::enqueue_simple_reply(uint32_t tag) {
@@ -1193,7 +1330,10 @@ uint32_t PulseAudioReceiver::Impl::Connection::calculate_samples_per_chunk(const
         return 0;
     }
     const uint32_t frame_bytes = (bit_depth / 8u) * static_cast<uint32_t>(stream.sample_spec.channels);
-    const std::size_t chunk_bytes = owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes;
+    const std::size_t chunk_bytes =
+        stream.chunk_bytes != 0
+            ? stream.chunk_bytes
+            : (owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes);
     if (frame_bytes == 0 || (chunk_bytes % frame_bytes) != 0) {
         return 0;
     }
@@ -1330,33 +1470,53 @@ void PulseAudioReceiver::Impl::Connection::handle_clock_tick(uint32_t stream_ind
             packet.rtp_timestamp = static_cast<uint32_t>(start_abs & 0xFFFFFFFFu);
             stream.next_rtp_frame = start_abs + pending.chunk_frames;
             stream.has_rtp_frame = true;
-        } else {
-            const std::size_t chunk_bytes = owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes;
-            record_chunk_metrics(stream,
-                                 chunk_bytes,
-                                 stream.samples_per_chunk,
-                                 false,
-                                 false,
-                                 0,
-                                 now);
-            packet.audio_data.assign(chunk_bytes, 0);
-            packet.received_time = std::chrono::steady_clock::now();
-            if (!stream.has_rtp_frame) {
-                stream.has_rtp_frame = true;
+            packet.source_tag = stream.composite_tag;
+            packet.sample_rate = stream.sample_spec.rate;
+            packet.channels = stream.sample_spec.channels;
+            packet.bit_depth = bit_depth;
+            packet.chlayout1 = stream.chlayout1;
+            packet.chlayout2 = stream.chlayout2;
+            packet.playback_rate = 1.0;
+
+            const bool had_pending_requests = (stream.pending_request_bytes != 0);
+            stream.bytes_since_request += pending.chunk_bytes;
+            if (stream.request_granularity == 0) {
+                const std::size_t default_granularity = stream.chunk_bytes != 0 ? stream.chunk_bytes : pending.chunk_bytes;
+                stream.request_granularity = static_cast<uint32_t>(default_granularity);
             }
-            packet.rtp_timestamp = static_cast<uint32_t>(stream.next_rtp_frame & 0xFFFFFFFFu);
-            stream.next_rtp_frame += stream.samples_per_chunk;
+            bool added_request_bytes = false;
+            if (stream.request_granularity > 0) {
+                while (stream.bytes_since_request >= stream.request_granularity) {
+                    stream.pending_request_bytes += stream.request_granularity;
+                    stream.bytes_since_request -= stream.request_granularity;
+                    added_request_bytes = true;
+                }
+            }
+            if (added_request_bytes) {
+                auto ready_time = pending.play_time;
+                if (stream.sample_spec.rate > 0 && pending.chunk_frames > 0) {
+                    const uint64_t chunk_usec = (pending.chunk_frames * 1'000'000ULL) / stream.sample_spec.rate;
+                    ready_time += std::chrono::microseconds(chunk_usec);
+                }
+                if (ready_time.time_since_epoch().count() == 0 || ready_time < now) {
+                    ready_time = now;
+                }
+                if (had_pending_requests) {
+                    if (stream.next_request_time.time_since_epoch().count() == 0 || ready_time < stream.next_request_time) {
+                        stream.next_request_time = ready_time;
+                    }
+                } else {
+                    stream.next_request_time = ready_time;
+                }
+            }
+
+            should_send = true;
+        } else {
+            // No data ready; queue another request and exit without sending silence.
+            stream.pending_request_bytes += effective_request_bytes(stream);
+            stream.next_request_time = now;
+            return;
         }
-
-        packet.source_tag = stream.composite_tag;
-        packet.sample_rate = stream.sample_spec.rate;
-        packet.channels = stream.sample_spec.channels;
-        packet.bit_depth = bit_depth;
-        packet.chlayout1 = stream.chlayout1;
-        packet.chlayout2 = stream.chlayout2;
-        packet.playback_rate = 1.0;
-
-        should_send = true;
     }
 
     if (should_send && owner->timeshift_manager) {
@@ -1372,7 +1532,19 @@ void PulseAudioReceiver::Impl::Connection::enqueue_shm_release(uint32_t block_id
     message.descriptor.offset_hi = block_id;
     message.descriptor.offset_lo = 0;
     message.descriptor.flags = kDescriptorFlagShmRelease;
-    write_queue.push_back(EncodeMessage(message));
+    auto frame = EncodeMessage(message);
+    if (owner->debug_packets) {
+        std::ostringstream oss;
+        oss << "SEND frame channel=" << message.descriptor.channel
+            << " length=" << message.descriptor.length
+            << " offset_hi=" << message.descriptor.offset_hi
+            << " offset_lo=" << message.descriptor.offset_lo
+            << " flags=0x" << std::hex << message.descriptor.flags
+            << " payload=" << bytes_to_hex(message.payload)
+            << " frame_hex=" << bytes_to_hex(frame);
+        owner->log_debug(oss.str());
+    }
+    write_queue.push_back(std::move(frame));
 }
 
 void PulseAudioReceiver::Impl::Connection::enqueue_started(uint32_t stream_index) {
@@ -1382,7 +1554,35 @@ void PulseAudioReceiver::Impl::Connection::enqueue_started(uint32_t stream_index
     enqueue_tagstruct(writer);
 }
 
+bool PulseAudioReceiver::Impl::Connection::handle_noop_ack(uint32_t tag, TagReader& reader, const char* command_name) {
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+
+    size_t ignored = reader.bytes_remaining();
+    if (ignored > 0) {
+        reader.skip_remaining();
+        if (owner && owner->debug_packets) {
+            owner->log_debug(std::string(command_name) + " payload ignored (" + std::to_string(ignored) + " bytes)");
+        }
+    }
+
+    enqueue_simple_reply(tag);
+    return true;
+}
+
 bool PulseAudioReceiver::Impl::Connection::process_message(Message& message) {
+    if (owner->debug_packets) {
+        std::ostringstream oss;
+        oss << "RECV frame channel=" << message.descriptor.channel
+            << " length=" << message.descriptor.length
+            << " offset_hi=" << message.descriptor.offset_hi
+            << " offset_lo=" << message.descriptor.offset_lo
+            << " flags=0x" << std::hex << message.descriptor.flags
+            << " payload=" << bytes_to_hex(message.payload);
+        owner->log_debug(oss.str());
+    }
+
     if (message.descriptor.channel == kChannelCommand) {
         TagReader header_reader(message.payload.data(), message.payload.size());
         auto command_field = header_reader.read_u32();
@@ -1407,18 +1607,15 @@ bool PulseAudioReceiver::Impl::Connection::process_message(Message& message) {
             std::ostringstream oss;
             oss << "RECV cmd=" << command_name(command)
                 << " tag=" << tag
-                << " payload=" << std::hex;
-            for (size_t i = 0; i < message.payload.size(); ++i) {
-                oss << std::setw(2) << std::setfill('0')
-                    << static_cast<int>(message.payload[i]);
-            }
+                << " payload=" << bytes_to_hex(payload_ptr, payload_length);
             owner->log_debug(oss.str());
         }
         return handle_command(command, tag, payload_ptr, payload_length, message.fds);
     }
     if (owner->debug_packets) {
         owner->log_debug("RECV playback frame stream=" + std::to_string(message.descriptor.channel) +
-                         " payload=" + std::to_string(message.payload.size()));
+                         " payload_len=" + std::to_string(message.payload.size()) +
+                         " payload_hex=" + bytes_to_hex(message.payload));
     }
     return handle_playback_data(message);
 }
@@ -1496,6 +1693,34 @@ bool PulseAudioReceiver::Impl::Connection::handle_command(Command command,
             return handle_get_sink_info(tag, reader, false);
         case Command::GetSinkInfoList:
             return handle_get_sink_info(tag, reader, true);
+        case Command::LookupSource:
+            return handle_lookup_source(tag, reader);
+        case Command::GetSourceInfo:
+            return handle_get_source_info(tag, reader, false);
+        case Command::GetSourceInfoList:
+            return handle_get_source_info(tag, reader, true);
+        case Command::GetModuleInfo:
+            return handle_get_module_info(tag, reader, false);
+        case Command::GetModuleInfoList:
+            return handle_get_module_info(tag, reader, true);
+        case Command::GetSampleInfo:
+            return handle_get_sample_info(tag, reader, false);
+        case Command::GetSampleInfoList:
+            return handle_get_sample_info(tag, reader, true);
+        case Command::Stat:
+            return handle_stat(tag, reader);
+        case Command::GetClientInfo:
+            return handle_get_client_info(tag, reader, false);
+        case Command::GetClientInfoList:
+            return handle_get_client_info(tag, reader, true);
+        case Command::GetSinkInputInfo:
+            return handle_get_sink_input_info(tag, reader, false);
+        case Command::GetSinkInputInfoList:
+            return handle_get_sink_input_info(tag, reader, true);
+        case Command::GetSourceOutputInfo:
+            return handle_get_source_output_info(tag, reader, false);
+        case Command::GetSourceOutputInfoList:
+            return handle_get_source_output_info(tag, reader, true);
         case Command::GetCardInfo:
             return handle_get_card_info(tag, reader, false);
         case Command::GetCardInfoList:
@@ -1510,18 +1735,64 @@ bool PulseAudioReceiver::Impl::Connection::handle_command(Command command,
             return handle_flush_stream(tag, reader);
         case Command::DrainPlaybackStream:
             return handle_drain_stream(tag, reader);
+        case Command::TriggerPlaybackStream:
+            return handle_noop_ack(tag, reader, "TriggerPlaybackStream");
+        case Command::PrebufPlaybackStream:
+            return handle_noop_ack(tag, reader, "PrebufPlaybackStream");
         case Command::SetPlaybackStreamBufferAttr:
             return handle_set_buffer_attr(tag, reader);
         case Command::GetPlaybackLatency:
             return handle_get_playback_latency(tag, reader);
+        case Command::SetSinkVolume:
+            return handle_noop_ack(tag, reader, "SetSinkVolume");
         case Command::SetSinkInputVolume:
             return handle_set_sink_input_volume(tag, reader);
+        case Command::SetSourceVolume:
+            return handle_noop_ack(tag, reader, "SetSourceVolume");
+        case Command::SetSinkMute:
+            return handle_set_sink_mute(tag, reader);
+        case Command::SetSourceMute:
+            return handle_set_source_mute(tag, reader);
+        case Command::SetSinkInputMute:
+            return handle_set_sink_input_mute(tag, reader);
+        case Command::SetDefaultSink:
+            return handle_noop_ack(tag, reader, "SetDefaultSink");
+        case Command::SetDefaultSource:
+            return handle_noop_ack(tag, reader, "SetDefaultSource");
         case Command::SetPlaybackStreamName:
             return handle_set_stream_name(tag, reader);
+        case Command::SetRecordStreamName:
+            return handle_noop_ack(tag, reader, "SetRecordStreamName");
+        case Command::MoveSinkInput:
+            return handle_noop_ack(tag, reader, "MoveSinkInput");
+        case Command::MoveSourceOutput:
+            return handle_noop_ack(tag, reader, "MoveSourceOutput");
+        case Command::SuspendSink:
+            return handle_noop_ack(tag, reader, "SuspendSink");
+        case Command::SuspendSource:
+            return handle_noop_ack(tag, reader, "SuspendSource");
+        case Command::SetSinkPort:
+            return handle_noop_ack(tag, reader, "SetSinkPort");
+        case Command::SetSourcePort:
+            return handle_noop_ack(tag, reader, "SetSourcePort");
+        case Command::SetSourceOutputVolume:
+            return handle_noop_ack(tag, reader, "SetSourceOutputVolume");
+        case Command::SetSourceOutputMute:
+            return handle_noop_ack(tag, reader, "SetSourceOutputMute");
+        case Command::SetPortLatencyOffset:
+            return handle_noop_ack(tag, reader, "SetPortLatencyOffset");
         case Command::UpdatePlaybackStreamProplist:
             return handle_update_playback_stream_proplist(tag, reader);
+        case Command::UpdateRecordStreamProplist:
+            return handle_noop_ack(tag, reader, "UpdateRecordStreamProplist");
         case Command::UpdateClientProplist:
             return handle_update_client_proplist(tag, reader);
+        case Command::RemoveRecordStreamProplist:
+            return handle_noop_ack(tag, reader, "RemoveRecordStreamProplist");
+        case Command::RemovePlaybackStreamProplist:
+            return handle_noop_ack(tag, reader, "RemovePlaybackStreamProplist");
+        case Command::RemoveClientProplist:
+            return handle_noop_ack(tag, reader, "RemoveClientProplist");
         case Command::RegisterMemfdShmid:
             return handle_register_memfd(tag, reader, fds);
         case Command::Exit:
@@ -1639,8 +1910,20 @@ bool PulseAudioReceiver::Impl::Connection::handle_get_server_info(uint32_t tag) 
     writer.put_sample_spec(ss);
 
     writer.put_string(kVirtualSinkName);
-    writer.put_nullable_string(nullptr); // default source
+    writer.put_string(kVirtualSourceName);
     writer.put_u32(0);
+
+    if (negotiated_version >= 15) {
+        ChannelMap map{};
+        map.channels = ss.channels;
+        auto positions = default_channel_positions();
+        const size_t available = std::min<size_t>(map.channels, positions.size());
+        map.map.assign(positions.begin(), positions.begin() + available);
+        if (map.map.size() < map.channels) {
+            map.map.resize(map.channels, positions.empty() ? 0 : positions.front());
+        }
+        writer.put_channel_map(map);
+    }
 
     enqueue_tagstruct(writer);
     return true;
@@ -1682,6 +1965,228 @@ bool PulseAudioReceiver::Impl::Connection::handle_lookup_sink(uint32_t tag, TagR
     return true;
 }
 
+bool PulseAudioReceiver::Impl::Connection::handle_lookup_source(uint32_t tag, TagReader& reader) {
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+
+    auto name = reader.read_string();
+    if (!name || !reader.eof()) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+
+    if (!name->empty() && *name != kVirtualSourceName) {
+        enqueue_error(tag, PA_ERR_NOENTITY);
+        return true;
+    }
+
+    TagWriter writer;
+    writer.put_command(Command::Reply, tag);
+    writer.put_u32(kVirtualSourceIndex);
+    enqueue_tagstruct(writer);
+    return true;
+}
+
+void PulseAudioReceiver::Impl::Connection::write_virtual_sink_info(TagWriter& writer) const {
+    // Mirror PulseAudio's sink_fill_tagstruct ordering so newer clients can parse us.
+    SampleSpec ss{};
+    ss.format = kSampleFormatS32LE;
+    ss.channels = 8;
+    ss.rate = 48000;
+
+    ChannelMap map{};
+    map.channels = ss.channels;
+    auto positions = default_channel_positions();
+    map.map.assign(positions.begin(), positions.begin() + map.channels);
+
+    CVolume vol{};
+    vol.channels = ss.channels;
+    vol.values.assign(vol.channels, kVolumeNorm);
+
+    writer.put_u32(kVirtualSinkIndex);
+    writer.put_string(kVirtualSinkName);
+    writer.put_string(kVirtualSinkDescription);
+    writer.put_sample_spec(ss);
+    writer.put_channel_map(map);
+    writer.put_u32(kVirtualSourceIndex);
+    writer.put_cvolume(vol);
+    writer.put_bool(false);
+    writer.put_u32(kVirtualSourceIndex);
+    writer.put_string(kVirtualSourceName);
+    writer.put_usec(0);
+    writer.put_string(kVirtualSinkDriver);
+    writer.put_u32(0);
+
+    if (negotiated_version >= 13) {
+        Proplist props;
+        props["device.description"] = kVirtualSinkDescription;
+        props["device.product.name"] = "ScreamRouter";
+        props["device.icon_name"] = "audio-card";
+        props["device.class"] = "sound";
+        props["device.api"] = "native";
+        props["device.string"] = kVirtualSinkName;
+        props["device.name"] = kVirtualSinkName;
+        writer.put_proplist(props);
+        writer.put_usec(0);
+    }
+
+    if (negotiated_version >= 15) {
+        writer.put_volume(kVolumeNorm);
+        writer.put_u32(kSinkStateRunning);
+        writer.put_u32(kVirtualSinkVolumeSteps);
+        writer.put_u32(kInvalidIndex);
+    }
+
+    if (negotiated_version >= 16) {
+        writer.put_u32(0); // no ports
+        writer.put_nullable_string(nullptr); // active port
+    }
+
+    if (negotiated_version >= 21) {
+        writer.put_u8(1); // advertise a single PCM format
+        Proplist format_props;
+        format_props["format.sample_format"] =
+            std::string("\"") + sample_format_name(ss.format) + "\"";
+        format_props["format.rate"] = std::to_string(ss.rate);
+        format_props["format.channels"] = std::to_string(ss.channels);
+        format_props["format.channel_map"] =
+            std::string("\"") + channel_map_to_string(map) + "\"";
+        writer.put_format_info(kFormatEncodingPCM, format_props);
+    }
+}
+
+void PulseAudioReceiver::Impl::Connection::write_virtual_source_info(TagWriter& writer) const {
+    SampleSpec ss{};
+    ss.format = kSampleFormatS32LE;
+    ss.channels = 8;
+    ss.rate = 48000;
+
+    ChannelMap map{};
+    map.channels = ss.channels;
+    auto positions = default_channel_positions();
+    map.map.assign(positions.begin(), positions.begin() + map.channels);
+
+    CVolume vol{};
+    vol.channels = ss.channels;
+    vol.values.assign(vol.channels, kVolumeNorm);
+
+    writer.put_u32(kVirtualSourceIndex);
+    writer.put_string(kVirtualSourceName);
+    writer.put_string(kVirtualSourceDescription);
+    writer.put_sample_spec(ss);
+    writer.put_channel_map(map);
+    writer.put_u32(kInvalidIndex);
+    writer.put_cvolume(vol);
+    writer.put_bool(false);
+    writer.put_u32(kVirtualSinkIndex);
+    writer.put_string(kVirtualSinkName);
+    writer.put_usec(0);
+    writer.put_string(kVirtualSinkDriver);
+    writer.put_u32(0);
+
+    if (negotiated_version >= 13) {
+        Proplist props;
+        props["device.description"] = kVirtualSourceDescription;
+        props["device.product.name"] = "ScreamRouter";
+        props["device.class"] = "monitor";
+        props["device.api"] = "native";
+        props["device.string"] = kVirtualSourceName;
+        props["device.name"] = kVirtualSourceName;
+        props["device.monitor_of"] = kVirtualSinkName;
+        writer.put_proplist(props);
+        writer.put_usec(0);
+    }
+
+    if (negotiated_version >= 15) {
+        writer.put_volume(kVolumeNorm);
+        writer.put_u32(kSourceStateRunning);
+        writer.put_u32(kVirtualSourceVolumeSteps);
+        writer.put_u32(kInvalidIndex);
+    }
+
+    if (negotiated_version >= 16) {
+        writer.put_u32(0); // no ports
+        writer.put_nullable_string(nullptr);
+    }
+
+    if (negotiated_version >= 22) {
+        writer.put_u8(1);
+        Proplist format_props;
+        format_props["format.sample_format"] =
+            std::string("\"") + sample_format_name(ss.format) + "\"";
+        format_props["format.rate"] = std::to_string(ss.rate);
+        format_props["format.channels"] = std::to_string(ss.channels);
+        format_props["format.channel_map"] =
+            std::string("\"") + channel_map_to_string(map) + "\"";
+        writer.put_format_info(kFormatEncodingPCM, format_props);
+    }
+}
+
+void PulseAudioReceiver::Impl::Connection::write_sink_input_info(TagWriter& writer,
+                                                                 const StreamState& stream) const {
+    const std::string stream_name = !stream.stream_name.empty()
+        ? stream.stream_name
+        : (!stream.composite_tag.empty() ? stream.composite_tag : "Playback Stream");
+
+    SampleSpec ss = stream.sample_spec;
+    ChannelMap map = stream.channel_map;
+    if (map.channels != ss.channels) {
+        map.channels = ss.channels;
+        map.map.clear();
+        auto positions = default_channel_positions();
+        for (uint8_t i = 0; i < ss.channels; ++i) {
+            map.map.push_back(i < positions.size() ? positions[i] : positions.back());
+        }
+    }
+
+    CVolume volume = stream.volume;
+    if (volume.channels != ss.channels) {
+        volume.channels = ss.channels;
+        volume.values.assign(ss.channels, kVolumeNorm);
+    }
+
+    writer.put_u32(stream.sink_input_index);
+    writer.put_string(stream_name);
+    writer.put_u32(kInvalidIndex); // owner module
+    writer.put_u32(0); // client index (unknown)
+    writer.put_u32(kVirtualSinkIndex);
+    writer.put_sample_spec(ss);
+    writer.put_channel_map(map);
+    writer.put_cvolume(volume);
+    writer.put_usec(0); // buffer_usec
+    writer.put_usec(0); // sink_usec
+    writer.put_string(""); // resample method
+    writer.put_string(kVirtualSinkDriver);
+
+    if (negotiated_version >= 11) {
+        writer.put_bool(stream.muted);
+    }
+
+    if (negotiated_version >= 13) {
+        writer.put_proplist(stream.proplist);
+    }
+
+    if (negotiated_version >= 19) {
+        writer.put_bool(stream.corked);
+    }
+    if (negotiated_version >= 20) {
+        writer.put_bool(true);  // has_volume
+        writer.put_bool(true);  // volume_writable
+    }
+    if (negotiated_version >= 21) {
+        writer.put_u8(1);
+        Proplist format_props;
+        format_props["format.sample_format"] =
+            std::string("\"") + sample_format_name(ss.format) + "\"";
+        format_props["format.rate"] = std::to_string(ss.rate);
+        format_props["format.channels"] = std::to_string(ss.channels);
+        format_props["format.channel_map"] =
+            std::string("\"") + channel_map_to_string(map) + "\"";
+        writer.put_format_info(kFormatEncodingPCM, format_props);
+    }
+}
+
 bool PulseAudioReceiver::Impl::Connection::handle_get_sink_info(uint32_t tag, TagReader& reader, bool list) {
     if (!ensure_authorized(tag)) {
         return true;
@@ -1711,44 +2216,237 @@ bool PulseAudioReceiver::Impl::Connection::handle_get_sink_info(uint32_t tag, Ta
 
     TagWriter writer;
     writer.put_command(Command::Reply, tag);
-    writer.put_u32(kVirtualSinkIndex);
-    writer.put_string(kVirtualSinkName);
-    writer.put_string(kVirtualSinkDescription);
+    write_virtual_sink_info(writer);
+    enqueue_tagstruct(writer);
+    return true;
+}
 
-    SampleSpec ss{};
-    ss.format = kSampleFormatS32LE;
-    ss.channels = 8;
-    ss.rate = 48000;
-    writer.put_sample_spec(ss);
-
-    ChannelMap map;
-    map.channels = 8;
-    auto positions = default_channel_positions();
-    map.map.assign(positions.begin(), positions.begin() + map.channels);
-    writer.put_channel_map(map);
-
-    writer.put_u32(kInvalidIndex);
-
-    CVolume vol;
-    vol.channels = ss.channels;
-    vol.values.assign(vol.channels, kVolumeNorm);
-    writer.put_cvolume(vol);
-    writer.put_bool(false);
-    writer.put_u32(kInvalidIndex);
-    writer.put_nullable_string(nullptr);
-    writer.put_u64(0);
-    writer.put_string(kVirtualSinkName);
-    writer.put_u32(0);
-
-    if (negotiated_version >= 13) {
-        Proplist props;
-        props["device.description"] = kVirtualSinkDescription;
-        props["device.product.name"] = "ScreamRouter";
-        writer.put_proplist(props);
-        writer.put_u64(0);
+bool PulseAudioReceiver::Impl::Connection::handle_get_source_info(uint32_t tag, TagReader& reader, bool list) {
+    if (!ensure_authorized(tag)) {
+        return true;
     }
 
+    if (list) {
+        if (!reader.eof()) {
+            enqueue_error(tag, PA_ERR_PROTOCOL);
+            return false;
+        }
+        TagWriter writer;
+        writer.put_command(Command::Reply, tag);
+        write_virtual_source_info(writer);
+        enqueue_tagstruct(writer);
+        return true;
+    }
+
+    auto index = reader.read_u32();
+    auto name = reader.read_string();
+    if (!index || !name || !reader.eof()) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+
+    if (*index != kInvalidIndex && *index != kVirtualSourceIndex) {
+        enqueue_error(tag, PA_ERR_NOENTITY);
+        return true;
+    }
+    if (!name->empty() && *name != kVirtualSourceName) {
+        enqueue_error(tag, PA_ERR_NOENTITY);
+        return true;
+    }
+
+    TagWriter writer;
+    writer.put_command(Command::Reply, tag);
+    write_virtual_source_info(writer);
     enqueue_tagstruct(writer);
+    return true;
+}
+
+bool PulseAudioReceiver::Impl::Connection::handle_get_module_info(uint32_t tag, TagReader& reader, bool list) {
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+
+    if (list) {
+        if (!reader.eof()) {
+            enqueue_error(tag, PA_ERR_PROTOCOL);
+            return false;
+        }
+        TagWriter writer;
+        writer.put_command(Command::Reply, tag);
+        enqueue_tagstruct(writer);
+        return true;
+    }
+
+    auto index = reader.read_u32();
+    if (!index) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+    auto name = reader.read_string();
+    if (!name) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+    (void)name;
+    if (!reader.eof()) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+
+    enqueue_error(tag, PA_ERR_NOENTITY);
+    return true;
+}
+
+bool PulseAudioReceiver::Impl::Connection::handle_get_sample_info(uint32_t tag, TagReader& reader, bool list) {
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+
+    if (list) {
+        if (!reader.eof()) {
+            enqueue_error(tag, PA_ERR_PROTOCOL);
+            return false;
+        }
+        TagWriter writer;
+        writer.put_command(Command::Reply, tag);
+        enqueue_tagstruct(writer);
+        return true;
+    }
+
+    auto index = reader.read_u32();
+    if (!index) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+    auto name = reader.read_string();
+    if (!name) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+    (void)name;
+    if (!reader.eof()) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+
+    enqueue_error(tag, PA_ERR_NOENTITY);
+    return true;
+}
+
+bool PulseAudioReceiver::Impl::Connection::handle_stat(uint32_t tag, TagReader& reader) {
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+    if (!reader.eof()) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+
+    TagWriter writer;
+    writer.put_command(Command::Reply, tag);
+    writer.put_u32(0);
+    writer.put_u32(0);
+    writer.put_u32(0);
+    writer.put_u32(0);
+    writer.put_u32(0);
+    enqueue_tagstruct(writer);
+    return true;
+}
+
+bool PulseAudioReceiver::Impl::Connection::handle_get_client_info(uint32_t tag, TagReader& reader, bool list) {
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+
+    if (list) {
+        if (!reader.eof()) {
+            enqueue_error(tag, PA_ERR_PROTOCOL);
+            return false;
+        }
+        TagWriter writer;
+        writer.put_command(Command::Reply, tag);
+        enqueue_tagstruct(writer);
+        return true;
+    }
+
+    auto index = reader.read_u32();
+    if (!index || !reader.eof()) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+
+    enqueue_error(tag, PA_ERR_NOENTITY);
+    return true;
+}
+
+bool PulseAudioReceiver::Impl::Connection::handle_get_sink_input_info(uint32_t tag, TagReader& reader, bool list) {
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+
+    std::lock_guard<std::mutex> stream_lock(stream_mutex);
+
+    if (list) {
+        if (!reader.eof()) {
+            owner->log_warning("GetSinkInputInfoList trailing payload ignored");
+            reader.skip_remaining();
+        }
+        TagWriter writer;
+        writer.put_command(Command::Reply, tag);
+        for (const auto& [_, stream] : streams) {
+            write_sink_input_info(writer, stream);
+        }
+        enqueue_tagstruct(writer);
+        return true;
+    }
+
+    auto index = reader.read_u32();
+    if (!index || !reader.eof()) {
+        owner->log_warning("GetSinkInputInfo payload parse failure");
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return true;
+    }
+
+    auto it = std::find_if(streams.begin(), streams.end(),
+                           [&](const auto& entry) {
+                               return entry.second.sink_input_index == *index;
+                           });
+    if (it == streams.end()) {
+        enqueue_error(tag, PA_ERR_NOENTITY);
+        return true;
+    }
+
+    TagWriter writer;
+    writer.put_command(Command::Reply, tag);
+    write_sink_input_info(writer, it->second);
+    enqueue_tagstruct(writer);
+    return true;
+}
+
+bool PulseAudioReceiver::Impl::Connection::handle_get_source_output_info(uint32_t tag, TagReader& reader, bool list) {
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+
+    if (list) {
+        if (!reader.eof()) {
+            owner->log_warning("GetSourceOutputInfoList trailing payload ignored");
+            reader.skip_remaining();
+        }
+        TagWriter writer;
+        writer.put_command(Command::Reply, tag);
+        enqueue_tagstruct(writer);
+        return true;
+    }
+
+    auto index = reader.read_u32();
+    if (!index || !reader.eof()) {
+        owner->log_warning("GetSourceOutputInfo payload parse failure");
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return true;
+    }
+
+    enqueue_error(tag, PA_ERR_NOENTITY);
     return true;
 }
 
@@ -1962,7 +2660,8 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     stream.sample_spec = config.sample_spec;
     stream.channel_map = config.channel_map;
     stream.volume = config.volume;
-    stream.corked = muted;
+    stream.corked = *corked;
+    stream.muted = muted;
     stream.base_tag = composite_tag_for_stream(config.proplist);
     strip_nuls(stream.base_tag);
     stream.wildcard_tag = make_wildcard_tag(stream.base_tag);
@@ -1975,6 +2674,25 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     stream.playback_started = false;
     stream.playback_start_time = {};
     stream.underrun_usec = 0;
+    {
+        const uint32_t bit_depth = sample_format_bit_depth(stream.sample_spec.format);
+        const std::size_t bytes_per_sample = std::max<uint32_t>(bit_depth / 8u, 1);
+        const std::size_t frame_bytes = static_cast<std::size_t>(stream.sample_spec.channels) * bytes_per_sample;
+        std::size_t chunk_bytes = owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes;
+        if (frame_bytes > 0) {
+            const std::size_t remainder = chunk_bytes % frame_bytes;
+            if (remainder != 0) {
+                chunk_bytes += (frame_bytes - remainder);
+            }
+        }
+        stream.chunk_bytes = chunk_bytes;
+        stream.request_granularity = stream.buffer_attr.minreq != 0 && stream.buffer_attr.minreq != static_cast<uint32_t>(-1)
+            ? stream.buffer_attr.minreq
+            : static_cast<uint32_t>(stream.chunk_bytes);
+        if (stream.request_granularity == 0) {
+            stream.request_granularity = static_cast<uint32_t>(stream.chunk_bytes);
+        }
+    }
 
     auto media_name_it = stream.proplist.find("media.name");
     if (media_name_it != stream.proplist.end()) {
@@ -1993,7 +2711,9 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     auto [stream_it, inserted] = streams.emplace(stream.local_index, stream);
     stream_it->second.frame_cursor = 0;
     stream_it->second.pending_payload.clear();
-    const std::size_t reserve_bytes = owner ? owner->chunk_queue_reserve_bytes : kDefaultChunkSizeBytes * 2;
+    const std::size_t reserve_bytes = std::max<std::size_t>(
+        stream_it->second.chunk_bytes * 2,
+        owner ? owner->chunk_queue_reserve_bytes : kDefaultChunkSizeBytes * 2);
     stream_it->second.pending_payload.reserve(reserve_bytes);
     stream_it->second.has_last_delivery = false;
     uint32_t initial_request = effective_request_bytes(stream_it->second);
@@ -2086,13 +2806,32 @@ bool PulseAudioReceiver::Impl::Connection::handle_cork_stream(uint32_t tag, TagR
         enqueue_error(tag, PA_ERR_NOENTITY);
         return true;
     }
-    it->second.corked = *cork;
+    auto& stream = it->second;
     if (*cork) {
-        it->second.started_notified = false;
-        it->second.playback_started = false;
-        it->second.has_last_delivery = false;
-        it->second.playback_start_time = std::chrono::steady_clock::time_point{};
-        it->second.underrun_usec = 0;
+        stream.corked = true;
+        stream.started_notified = false;
+        stream.playback_started = false;
+        stream.has_last_delivery = false;
+        stream.playback_start_time = std::chrono::steady_clock::time_point{};
+        stream.underrun_usec = 0;
+        // Keep any buffered data so uncork can resume smoothly.
+    } else {
+        stream.corked = false;
+        stream.started_notified = false;
+        stream.playback_started = false;
+        stream.has_last_delivery = false;
+        stream.playback_start_time = std::chrono::steady_clock::time_point{};
+        stream.underrun_usec = 0;
+
+        const uint32_t request_bytes = effective_request_bytes(stream);
+        stream.pending_request_bytes = 0;
+        stream.next_request_time = std::chrono::steady_clock::now();
+        enqueue_request(stream.local_index, request_bytes);
+
+        if (!stream.pending_chunks.empty() && !stream.started_notified) {
+            enqueue_started(stream.local_index);
+            stream.started_notified = true;
+        }
     }
     enqueue_simple_reply(tag);
     return true;
@@ -2111,7 +2850,21 @@ bool PulseAudioReceiver::Impl::Connection::handle_flush_stream(uint32_t tag, Tag
         enqueue_error(tag, PA_ERR_NOENTITY);
         return true;
     }
-    it->second.started_notified = false;
+    auto& stream = it->second;
+    stream.pending_payload.clear();
+    stream.pending_chunks.clear();
+    stream.started_notified = false;
+    stream.playback_started = false;
+    stream.has_last_delivery = false;
+    stream.playback_start_time = std::chrono::steady_clock::time_point{};
+    stream.underrun_usec = 0;
+    stream.pending_request_bytes = 0;
+    stream.next_request_time = std::chrono::steady_clock::now();
+
+    const uint32_t request_bytes = effective_request_bytes(stream);
+    enqueue_request(stream.local_index, request_bytes);
+    stream.pending_request_bytes += request_bytes;
+
     enqueue_simple_reply(tag);
     return true;
 }
@@ -2329,6 +3082,77 @@ bool PulseAudioReceiver::Impl::Connection::handle_set_sink_input_volume(uint32_t
         enqueue_error(tag, PA_ERR_PROTOCOL);
         return false;
     }
+
+    auto it = std::find_if(streams.begin(), streams.end(),
+                           [&](auto& entry) {
+                               return entry.second.sink_input_index == *channel;
+                           });
+    if (it == streams.end()) {
+        enqueue_error(tag, PA_ERR_NOENTITY);
+        return true;
+    }
+    it->second.volume = *volume;
+
+    enqueue_simple_reply(tag);
+    return true;
+}
+
+bool PulseAudioReceiver::Impl::Connection::handle_set_sink_mute(uint32_t tag, TagReader& reader) {
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+
+    auto index = reader.read_u32();
+    auto name = reader.read_string();
+    auto mute = reader.read_bool();
+    if (!index || !name || !mute || !reader.eof()) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+
+    enqueue_simple_reply(tag);
+    return true;
+}
+
+bool PulseAudioReceiver::Impl::Connection::handle_set_source_mute(uint32_t tag, TagReader& reader) {
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+
+    auto index = reader.read_u32();
+    auto name = reader.read_string();
+    auto mute = reader.read_bool();
+    if (!index || !name || !mute || !reader.eof()) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+
+    enqueue_simple_reply(tag);
+    return true;
+}
+
+bool PulseAudioReceiver::Impl::Connection::handle_set_sink_input_mute(uint32_t tag, TagReader& reader) {
+    std::lock_guard<std::mutex> stream_lock(stream_mutex);
+    if (!ensure_authorized(tag)) {
+        return true;
+    }
+
+    auto channel = reader.read_u32();
+    auto mute = reader.read_bool();
+    if (!channel || !mute || !reader.eof()) {
+        enqueue_error(tag, PA_ERR_PROTOCOL);
+        return false;
+    }
+
+    auto it = std::find_if(streams.begin(), streams.end(),
+                           [&](auto& entry) {
+                               return entry.second.sink_input_index == *channel;
+                           });
+    if (it == streams.end()) {
+        enqueue_error(tag, PA_ERR_NOENTITY);
+        return true;
+    }
+    it->second.muted = *mute;
 
     enqueue_simple_reply(tag);
     return true;
@@ -2577,7 +3401,9 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
         enqueue_shm_release(release_block_id);
     }
 
-    const std::size_t chunk_bytes = owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes;
+    const std::size_t chunk_bytes = stream.chunk_bytes != 0
+        ? stream.chunk_bytes
+        : (owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes);
     while (stream.pending_payload.size() >= chunk_bytes) {
         std::vector<uint8_t> chunk(chunk_bytes);
         const std::size_t popped = stream.pending_payload.pop(chunk.data(), chunk_bytes);
@@ -2650,20 +3476,10 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
         }
     }
 
-    if (processed_frames > 0 && !stream.started_notified) {
+    if (!stream.corked && !stream.started_notified && !stream.pending_chunks.empty()) {
         enqueue_started(stream.local_index);
         stream.started_notified = true;
     }
-
-    if (frames_produced > 0 && stream.sample_spec.rate > 0) {
-        const double seconds = static_cast<double>(frames_produced) / static_cast<double>(stream.sample_spec.rate);
-        stream.next_request_time = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-            std::chrono::duration<double>(seconds));
-    } else {
-        stream.next_request_time = now;
-    }
-    const uint32_t request_bytes = effective_request_bytes(stream);
-    stream.pending_request_bytes = std::max(stream.pending_request_bytes, request_bytes);
 
     maybe_log_stream_profile(stream_index, stream, std::chrono::steady_clock::now());
 
@@ -2745,12 +3561,14 @@ void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
         if (unix_listen_fd >= 0) {
             pollfds.push_back(pollfd{unix_listen_fd, POLLIN, 0});
         }
+        const std::size_t connection_poll_offset = pollfds.size();
         for (auto& connection : connections) {
             pollfd pfd{};
             pfd.fd = connection->fd;
             pfd.events = connection->desired_poll_events();
             pollfds.push_back(pfd);
         }
+        const std::size_t polled_connection_count = connections.size();
 
         auto now = std::chrono::steady_clock::now();
         int timeout_ms = 5;
@@ -2791,9 +3609,13 @@ void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
             ++index;
         }
 
-        for (std::size_t i = 0; i < connections.size(); ) {
+        for (std::size_t processed = 0; processed < polled_connection_count; ++processed) {
+            const std::size_t i = polled_connection_count - 1 - processed;
+            if (i >= connections.size()) {
+                continue;
+            }
             auto& conn = connections[i];
-            short revents = pollfds[index + i].revents;
+            short revents = pollfds[connection_poll_offset + i].revents;
             if (revents != 0) {
                 if (!conn->handle_io(revents)) {
                     remove_connection(i);
@@ -2802,7 +3624,6 @@ void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
             }
             conn->process_due_requests();
             conn->dispatch_clock_ticks();
-            ++i;
         }
     }
 }

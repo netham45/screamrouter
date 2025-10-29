@@ -25,7 +25,7 @@ namespace { // Anonymous namespace for internal linkage
 }
 
 // Definition of the global log level variable
-std::atomic<LogLevel> current_log_level(LogLevel::INFO);
+std::atomic<LogLevel> current_log_level(LogLevel::DEBUG);
 
 const char* get_base_filename(const char* path) {
     if (!path) {

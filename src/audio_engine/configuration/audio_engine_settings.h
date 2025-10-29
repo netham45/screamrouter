@@ -47,7 +47,7 @@ struct MixerTuning {
     int mp3_output_queue_max_size = 10;
     long underrun_hold_timeout_ms = 250;
     std::size_t max_input_queue_chunks = 32;
-    std::size_t min_input_queue_chunks = 4;
+    std::size_t min_input_queue_chunks = 8;
     std::size_t max_ready_chunks_per_source = 12;
 };
 

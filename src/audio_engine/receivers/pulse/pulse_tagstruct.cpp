@@ -375,15 +375,24 @@ void TagWriter::put_cvolume(const CVolume& volume) {
     }
 }
 
+void TagWriter::put_volume(uint32_t value) {
+    put_tag(Tag::Volume);
+    put_u32_raw(value);
+}
+
+void TagWriter::put_format_info(uint8_t encoding, const Proplist& plist) {
+    put_tag(Tag::FormatInfo);
+    put_u8(encoding);
+    put_proplist(plist);
+}
+
 void TagWriter::put_proplist(const Proplist& plist) {
     put_tag(Tag::Proplist);
     for (const auto& [key, value] : plist) {
         put_string(key);
-        put_u32_raw(static_cast<uint32_t>(value.size()));
-        if (!value.empty()) {
-            const auto* bytes = reinterpret_cast<const uint8_t*>(value.data());
-            buffer_.insert(buffer_.end(), bytes, bytes + value.size());
-        }
+        put_u32(static_cast<uint32_t>(value.size()));
+        const auto* bytes = reinterpret_cast<const uint8_t*>(value.data());
+        put_arbitrary(bytes, value.size());
     }
     put_nullable_string(nullptr); // terminator
 }
