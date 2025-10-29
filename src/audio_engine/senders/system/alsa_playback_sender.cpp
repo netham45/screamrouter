@@ -201,7 +201,7 @@ bool AlsaPlaybackSender::configure_device() {
     snd_pcm_hw_params_set_rate_near(pcm_handle_, hw_params, &rate, nullptr);
     sample_rate_ = rate;
 
-    constexpr unsigned int kTargetLatencyUs = 8000;      // 8 ms overall buffer target (realistic baseline)
+    constexpr unsigned int kTargetLatencyUs = 12000;      // 12 ms overall buffer target
     constexpr unsigned int kPeriodsPerBuffer = 3;        // keep a few smaller periods for smoothness
     unsigned int buffer_time = kTargetLatencyUs;
     unsigned int period_time = std::max(1000u, buffer_time / kPeriodsPerBuffer);
@@ -279,7 +279,7 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
     const uint8_t* byte_ptr = static_cast<const uint8_t*>(data);
     size_t frames_remaining = frame_count;
     // Treat a "chunk" as the ALSA period we negotiated; fall back to the buffer geometry if needed.
-    constexpr snd_pcm_sframes_t kMaxBufferedPeriods = 3;
+    constexpr snd_pcm_sframes_t kMaxBufferedPeriods = 6;
     snd_pcm_sframes_t period_frames = 0;
     if (period_frames_ > 0) {
         period_frames = static_cast<snd_pcm_sframes_t>(period_frames_);

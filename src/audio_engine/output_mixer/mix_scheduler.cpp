@@ -7,7 +7,7 @@ namespace screamrouter {
 namespace audio {
 
 namespace {
-constexpr std::size_t kMaxReadyChunksPerSource = 2; // cap to ~12ms of backlog at 48kHz
+constexpr std::size_t kMaxReadyChunksPerSource = 5; // cap to ~12ms of backlog at 48kHz
 }
 
 MixScheduler::MixScheduler(std::string mixer_id,
@@ -163,7 +163,8 @@ std::size_t MixScheduler::drop_ready_chunks(const std::string& instance_id, std:
     }
 
     while (dropped < count && !deque_ref.empty()) {
-        deque_ref.pop_front();
+        // Drop newest ready chunks first so the next-to-dispatch item stays intact.
+        deque_ref.pop_back();
         ++dropped;
     }
 
