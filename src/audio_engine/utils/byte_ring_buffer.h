@@ -10,6 +10,9 @@ namespace screamrouter {
 namespace audio {
 namespace utils {
 
+#undef min
+#undef max
+
 class ByteRingBuffer {
 public:
     ByteRingBuffer() = default;
