@@ -1478,43 +1478,46 @@ void PulseAudioReceiver::Impl::Connection::handle_clock_tick(uint32_t stream_ind
             packet.chlayout2 = stream.chlayout2;
             packet.playback_rate = 1.0;
 
-            const bool had_pending_requests = (stream.pending_request_bytes != 0);
-            stream.bytes_since_request += pending.chunk_bytes;
-            if (stream.request_granularity == 0) {
-                const std::size_t default_granularity = stream.chunk_bytes != 0 ? stream.chunk_bytes : pending.chunk_bytes;
-                stream.request_granularity = static_cast<uint32_t>(default_granularity);
-            }
-            bool added_request_bytes = false;
-            if (stream.request_granularity > 0) {
-                while (stream.bytes_since_request >= stream.request_granularity) {
-                    stream.pending_request_bytes += stream.request_granularity;
-                    stream.bytes_since_request -= stream.request_granularity;
-                    added_request_bytes = true;
+            const bool deliver_chunk = !stream.corked;
+            if (deliver_chunk) {
+                const bool had_pending_requests = (stream.pending_request_bytes != 0);
+                stream.bytes_since_request += pending.chunk_bytes;
+                if (stream.request_granularity == 0) {
+                    const std::size_t default_granularity = stream.chunk_bytes != 0 ? stream.chunk_bytes : pending.chunk_bytes;
+                    stream.request_granularity = static_cast<uint32_t>(default_granularity);
                 }
-            }
-            if (added_request_bytes) {
-                auto ready_time = pending.play_time;
-                if (stream.sample_spec.rate > 0 && pending.chunk_frames > 0) {
-                    const uint64_t chunk_usec = (pending.chunk_frames * 1'000'000ULL) / stream.sample_spec.rate;
-                    ready_time += std::chrono::microseconds(chunk_usec);
+                bool added_request_bytes = false;
+                if (stream.request_granularity > 0) {
+                    while (stream.bytes_since_request >= stream.request_granularity) {
+                        stream.pending_request_bytes += stream.request_granularity;
+                        stream.bytes_since_request -= stream.request_granularity;
+                        added_request_bytes = true;
+                    }
                 }
-                if (ready_time.time_since_epoch().count() == 0 || ready_time < now) {
-                    ready_time = now;
-                }
-                if (had_pending_requests) {
-                    if (stream.next_request_time.time_since_epoch().count() == 0 || ready_time < stream.next_request_time) {
+                if (added_request_bytes) {
+                    auto ready_time = now;
+                    const bool queue_has_backlog = !stream.pending_chunks.empty();
+                    if (queue_has_backlog && stream.sample_spec.rate > 0 && pending.chunk_frames > 0) {
+                        const uint64_t chunk_usec = (pending.chunk_frames * 1'000'000ULL) / stream.sample_spec.rate;
+                        ready_time += std::chrono::microseconds(chunk_usec);
+                    }
+                    if (had_pending_requests) {
+                        if (stream.next_request_time.time_since_epoch().count() == 0 || ready_time < stream.next_request_time) {
+                            stream.next_request_time = ready_time;
+                        }
+                    } else {
                         stream.next_request_time = ready_time;
                     }
-                } else {
-                    stream.next_request_time = ready_time;
                 }
             }
 
-            should_send = true;
+            should_send = deliver_chunk;
         } else {
             // No data ready; queue another request and exit without sending silence.
-            stream.pending_request_bytes += effective_request_bytes(stream);
-            stream.next_request_time = now;
+            if (!stream.corked) {
+                stream.pending_request_bytes += effective_request_bytes(stream);
+                stream.next_request_time = now;
+            }
             return;
         }
     }
@@ -2814,6 +2817,9 @@ bool PulseAudioReceiver::Impl::Connection::handle_cork_stream(uint32_t tag, TagR
         stream.has_last_delivery = false;
         stream.playback_start_time = std::chrono::steady_clock::time_point{};
         stream.underrun_usec = 0;
+        stream.pending_request_bytes = 0;
+        stream.bytes_since_request = 0;
+        stream.next_request_time = std::chrono::steady_clock::now();
         // Keep any buffered data so uncork can resume smoothly.
     } else {
         stream.corked = false;
@@ -2825,6 +2831,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_cork_stream(uint32_t tag, TagR
 
         const uint32_t request_bytes = effective_request_bytes(stream);
         stream.pending_request_bytes = 0;
+        stream.bytes_since_request = 0;
         stream.next_request_time = std::chrono::steady_clock::now();
         enqueue_request(stream.local_index, request_bytes);
 
