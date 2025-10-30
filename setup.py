@@ -65,6 +65,34 @@ except ImportError:
     sys.exit(1)
 
 
+def _compute_limited_api_hex(python_tag: str) -> str:
+    """
+    Convert a CPython interpreter tag (e.g. 'cp310') into the corresponding
+    Py_LIMITED_API hex value understood by the CPython headers.
+    """
+    match = re.fullmatch(r"cp(?P<major>\d)(?P<minor>\d+)", python_tag)
+    if not match:
+        raise ValueError(f"Unsupported Python tag for limited API: {python_tag}")
+    major = int(match.group("major"))
+    minor = int(match.group("minor"))
+    return f"0x{major:02X}{minor:02X}0000"
+
+
+DEFAULT_PYTHON_TAG = f"cp{sys.version_info.major}{sys.version_info.minor}"
+PYTHON_TAG = os.environ.get("SCREAMROUTER_PYTHON_TAG", DEFAULT_PYTHON_TAG)
+PY_LIMITED_API_HEX = os.environ.get("SCREAMROUTER_PY_LIMITED_API")
+
+if not PY_LIMITED_API_HEX:
+    try:
+        PY_LIMITED_API_HEX = _compute_limited_api_hex(PYTHON_TAG)
+    except ValueError as exc:
+        raise SystemExit(f"Failed to derive Py_LIMITED_API value: {exc}") from exc
+
+os.environ.setdefault("SCREAMROUTER_PYTHON_TAG", PYTHON_TAG)
+os.environ.setdefault("SCREAMROUTER_PYTHON_ABI", "abi3")
+os.environ.setdefault("SCREAMROUTER_PY_LIMITED_API", PY_LIMITED_API_HEX)
+
+
 class BuildReactCommand(_build):
     """Custom command to build React frontend"""
     
@@ -206,6 +234,9 @@ if HAVE_WHEEL:
         
         def finalize_options(self):
             super().finalize_options()
+            self.py_limited_api = PYTHON_TAG
+            self.universal = False
+            print(f"Targeting Python limited API: {PYTHON_TAG} (Py_LIMITED_API={PY_LIMITED_API_HEX})")
             
             # Override platform name if cross-compiling
             cross_plat = detect_cross_compile_platform()
@@ -616,6 +647,11 @@ ext_modules = [
             "src/audio_engine",
             "src/audio_engine/json/include",  # If json headers are needed
         ],
+        define_macros=[
+            ("Py_LIMITED_API", PY_LIMITED_API_HEX),
+            ("PYBIND11_SIMPLE_GIL_MANAGEMENT", "1"),
+        ],
+        py_limited_api=PYTHON_TAG,
         libraries=[
             # Core dependencies
             "mp3lame",

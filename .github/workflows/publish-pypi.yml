@@ -78,6 +78,21 @@ jobs:
             echo "::warning::Expected 30 wheels but found $WHEEL_COUNT"
             echo "This may indicate a build failure for some platforms"
           fi
+
+          missing_abi3=0
+          for wheel in dist/*.whl; do
+            if [ -f "$wheel" ]; then
+              basename=$(basename "$wheel")
+              if ! echo "$basename" | grep -q 'abi3'; then
+                echo "::error::Wheel missing abi3 tag: $basename"
+                missing_abi3=$((missing_abi3 + 1))
+              fi
+            fi
+          done
+          if [ "$missing_abi3" -ne 0 ]; then
+            echo "::error::One or more wheels are not tagged as abi3; aborting publish"
+            exit 1
+          fi
           
           # List packages by platform for verification
           echo ""
@@ -144,12 +159,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Platform | Python Versions |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|----------------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux x86_64 (glibc) | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux x86_64 (musl) | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux ARM64 (glibc) | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux ARM64 (musl) | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows x64 | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows x86 | 3.10, 3.11, 3.12, 3.13, 3.14 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 (glibc) | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 (musl) | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 (glibc) | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 (musl) | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x64 | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x86 | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📦 View on PyPI:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

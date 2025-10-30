@@ -69,6 +69,18 @@ class BuildSystem:
             
         # Enhanced logging for architecture detection
         self.logger.info(f"Platform: {self.platform} ({self.arch})")
+
+        self.python_tag = os.environ.get("SCREAMROUTER_PYTHON_TAG")
+        self.python_abi = os.environ.get("SCREAMROUTER_PYTHON_ABI")
+        self.python_limited_api = os.environ.get("SCREAMROUTER_PY_LIMITED_API")
+
+        if self.python_tag or self.python_abi or self.python_limited_api:
+            abi_desc = self.python_abi or "default"
+            tag_desc = self.python_tag or f"cp{sys.version_info.major}{sys.version_info.minor}"
+            self.logger.info(f"Python ABI target: {abi_desc} (tag: {tag_desc})")
+            if self.python_limited_api:
+                self.logger.info(f"Limited API level: {self.python_limited_api}")
+
         if self.verbose or self.platform == "windows":
             # Always log detailed info on Windows to help diagnose x86/x64 issues
             self.logger.info(f"Platform info: {self.platform_info}")
@@ -362,6 +374,13 @@ class BuildSystem:
         print(f"Platform: {self.platform} ({self.arch})")
         print(f"Root Directory: {self.root_dir}")
         print(f"Install Directory: {self.install_dir}")
+        if self.python_tag or self.python_abi or self.python_limited_api:
+            abi_desc = self.python_abi or "default"
+            tag_desc = self.python_tag or f"cp{sys.version_info.major}{sys.version_info.minor}"
+            print(f"Python ABI target: {abi_desc}")
+            print(f"Python tag: {tag_desc}")
+            if self.python_limited_api:
+                print(f"Py_LIMITED_API: {self.python_limited_api}")
         print(f"\nDependencies ({len(self.config.get_dependencies())}):")
         
         for dep in self.config.get_dependencies():
