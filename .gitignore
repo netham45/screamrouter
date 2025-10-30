@@ -8,13 +8,13 @@ build/
 c_utils/bin/
 src/**/*.c
 **/callgrind.out.*
-src/site/**/*.js
-src/site/**/*.html
-src/site/**/*.txt
+screamrouter/site/**/*.js
+screamrouter/site/**/*.html
+screamrouter/site/**/*.txt
 site/**/*.js
 site/**/*.html
 site/**/*.txt
-!src/site/**/robots.txt
+!screamrouter/site/**/robots.txt
 **/node_modules/
 **/*.obj
 **/*.exe
