@@ -46,6 +46,16 @@ class Preferences(BaseModel):
 
     tutorial: TutorialProgress = Field(default_factory=TutorialProgress)
     """Tutorial progress information"""
+    mdns_responder_uuid: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("mdns_responder_uuid", "mdnsResponderUuid"),
+    )
+    """Persisted identifier for the mDNS responder instance"""
+    mdns_router_uuid: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("mdns_router_uuid", "mdnsRouterUuid"),
+    )
+    """Persisted identifier for the mDNS router advertiser instance"""
 
 
 __all__ = [

@@ -47,7 +47,7 @@ jobs:
       if: matrix.language == 'c-cpp'
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential debhelper dh-python python3-all python3-setuptools python3-venv libmp3lame0 libmp3lame-dev nodejs npm cmake autoconf automake libtool pkg-config libtool-bin
+        sudo apt-get install -y libasound2-dev build-essential debhelper dh-python python3-all python3-setuptools python3-venv libmp3lame0 libmp3lame-dev nodejs npm cmake autoconf automake libtool pkg-config libtool-bin
 
     - name: Build C++ Code
       if: matrix.language == 'c-cpp'

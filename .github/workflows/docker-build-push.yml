@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     # Only run if the PyPI workflow succeeded or if triggered manually
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     
     steps:
       - name: Checkout code
@@ -52,6 +54,7 @@ jobs:
             suffix=,onlatest=true
       
       - name: Build and push AMD64 Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -67,6 +70,8 @@ jobs:
     runs-on: [self-hosted, linux, arm64]
     # Only run if the PyPI workflow succeeded or if triggered manually
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     
     steps:
       - name: Checkout code
@@ -100,6 +105,7 @@ jobs:
             suffix=-arm64,onlatest=true
       
       - name: Build and push ARM64 Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -144,8 +150,8 @@ jobs:
           for TAG in "${TAGS[@]}"; do
             echo "Creating manifest for: $TAG"
             docker buildx imagetools create -t "$TAG" \
-              "${TAG}-amd64" \
-              "${TAG}-arm64"
+              "${{ needs.build-amd64.outputs.digest }}" \
+              "${{ needs.build-arm64.outputs.digest }}"
           done
           
           echo "Multi-platform manifests created successfully"

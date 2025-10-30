@@ -9,6 +9,11 @@ from typing import Dict, Optional
 
 from zeroconf import IPVersion, ServiceInfo, Zeroconf
 
+from screamrouter.preferences.preferences_manager import (
+    PreferencesManager,
+    PreferencesManagerError,
+)
+
 try:
     from screamrouter.screamrouter_logger.screamrouter_logger import get_logger
 except ImportError:  # pragma: no cover - fallback outside main runtime
@@ -43,8 +48,8 @@ class RouterServiceAdvertiser(threading.Thread):
         self.additional_txt = additional_txt or {}
 
         self.service_type = "_screamrouter._tcp.local."
-        self.instance_uuid = str(uuid.uuid4())
         self.mac_address = self._get_mac_address()
+        self.instance_uuid = self._load_or_create_instance_uuid()
         self.hostname = self._format_hostname()
         self.instance_name = self._build_instance_name()
         self.service_name = f"{self.instance_name}.{self.service_type}"
@@ -69,6 +74,47 @@ class RouterServiceAdvertiser(threading.Thread):
             return self._explicit_instance_name
         # Keep consistent naming with the Scream advertiser
         return self.hostname
+
+    def _load_or_create_instance_uuid(self) -> str:
+        manager: Optional[PreferencesManager] = None
+        try:
+            manager = PreferencesManager()
+        except PreferencesManagerError as exc:
+            logger.warning("Unable to initialise preferences manager for router advertiser UUID: %s", exc)
+
+        stored_uuid: Optional[str] = None
+        if manager:
+            try:
+                preferences = manager.get_preferences()
+                stored_uuid = getattr(preferences, "mdns_router_uuid", None)
+            except PreferencesManagerError as exc:
+                logger.warning("Failed to load persisted router advertiser UUID: %s", exc)
+            except Exception as exc:
+                logger.warning("Unexpected error reading router advertiser UUID from preferences: %s", exc)
+
+        if stored_uuid:
+            return stored_uuid
+
+        generated_uuid = self._generate_instance_uuid()
+
+        if manager:
+            try:
+                manager.update_preferences({"mdns_router_uuid": generated_uuid})
+            except PreferencesManagerError as exc:
+                logger.warning("Unable to persist router advertiser UUID: %s", exc)
+            except Exception as exc:
+                logger.warning("Unexpected error persisting router advertiser UUID: %s", exc)
+
+        return generated_uuid
+
+    def _generate_instance_uuid(self) -> str:
+        mac_hex = (self.mac_address or "").replace(":", "")
+        if mac_hex and mac_hex != "000000000000":
+            try:
+                return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"screamrouter-router-{mac_hex.upper()}"))
+            except ValueError as exc:
+                logger.warning("Failed deterministic router UUID generation; falling back to random UUID: %s", exc)
+        return str(uuid.uuid4())
 
     @staticmethod
     def _get_mac_address() -> str:

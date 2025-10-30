@@ -1,11 +1,17 @@
 import logging
 import socket
 import threading
+import uuid
 from typing import List, Optional
 
 from zeroconf import (InterfaceChoice, IPVersion,  # Import InterfaceChoice
                       ServiceInfo, Zeroconf)
 from zeroconf.asyncio import AsyncZeroconf
+
+from screamrouter.preferences.preferences_manager import (
+    PreferencesManager,
+    PreferencesManagerError,
+)
 
 # Ensure get_logger is imported if not already (assuming it's in the project structure)
 # If get_logger is defined elsewhere, adjust the import path accordingly.
@@ -54,7 +60,9 @@ class MDNSResponder(threading.Thread):
         self._listen_interfaces = listen_interfaces # Renamed from _interfaces
         self._explicit_ips = explicit_ips # Store explicit IPs
         self._should_stop = threading.Event() # Event to signal stopping
-        logger.info(f"MDNSResponder initializing. Listen interfaces: {listen_interfaces}, Explicit IPs: {explicit_ips}")
+        self.instance_uuid = self._load_or_create_instance_uuid()
+        logger.info("MDNSResponder initializing. Listen interfaces: %s, Explicit IPs: %s, Instance UUID: %s",
+                    listen_interfaces, explicit_ips, self.instance_uuid)
         # logger.info("MDNSResponder initialized.") # Original log
 
     def _get_local_ips(self) -> List[str]:
@@ -72,14 +80,46 @@ class MDNSResponder(threading.Thread):
             logger.error(f"Error getting local IP addresses via getaddrinfo: {e}")
             ips = [] # Ensure ips is empty list on error
         except Exception as e:
-             logger.exception(f"Unexpected error in _get_local_ips: {e}")
-             ips = []
+            logger.exception(f"Unexpected error in _get_local_ips: {e}")
+            ips = []
 
         # Fallback if getaddrinfo failed or returned only unsuitable IPs
         if not ips:
-             logger.warning("Could not determine specific local IPs via getaddrinfo. Will rely on Zeroconf's default interface selection unless specific interfaces were provided.")
-             return []
+            logger.warning("Could not determine specific local IPs via getaddrinfo. Will rely on Zeroconf's default interface selection unless specific interfaces were provided.")
+            return []
         return ips
+
+    def _load_or_create_instance_uuid(self) -> str:
+        manager: Optional[PreferencesManager] = None
+        try:
+            manager = PreferencesManager()
+        except PreferencesManagerError as exc:
+            logger.warning("Unable to initialise preferences manager for mDNS responder UUID: %s", exc)
+
+        uuid_from_preferences: Optional[str] = None
+        if manager:
+            try:
+                preferences = manager.get_preferences()
+                uuid_from_preferences = getattr(preferences, "mdns_responder_uuid", None)
+            except PreferencesManagerError as exc:
+                logger.warning("Failed to load persisted mDNS responder UUID: %s", exc)
+            except Exception as exc:
+                logger.warning("Unexpected error reading mDNS responder UUID from preferences: %s", exc)
+
+        if uuid_from_preferences:
+            return uuid_from_preferences
+
+        generated_uuid = str(uuid.uuid4())
+
+        if manager:
+            try:
+                manager.update_preferences({"mdns_responder_uuid": generated_uuid})
+            except PreferencesManagerError as exc:
+                logger.warning("Unable to persist mDNS responder UUID: %s", exc)
+            except Exception as exc:
+                logger.warning("Unexpected error persisting mDNS responder UUID: %s", exc)
+
+        return generated_uuid
 
     # start() is inherited from Thread
 
@@ -147,7 +187,7 @@ class MDNSResponder(threading.Thread):
                     name=self.service_name[:15],
                     addresses=valid_inet_ips, # Use validated IPs
                     port=0, # No specific port needed for just hostname resolution
-                    properties={}, # No properties needed for now
+                    properties={"uuid": self.instance_uuid},
                     server=f"{self.hostname}.local.", # Explicitly set server name for A record
                 )
                 logger.info(f"ServiceInfo created for registration: {self.service_info}")

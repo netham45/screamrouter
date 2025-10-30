@@ -487,11 +487,34 @@ def main():
     ntp_server.start()
     # --- End NTP Server Setup ---
 
-    screamrouter_configuration: ConfigurationManager = ConfigurationManager(webstream,
-                                                                            plugin_manager,
-                                                                            websocket_config,
-                                                                            audio_manager)
-    
+    configuration_manager_ready = threading.Event()
+    configuration_manager_error: list[BaseException] = []
+    screamrouter_configuration: ConfigurationManager | None = None
+
+    def _init_configuration_manager():
+        nonlocal screamrouter_configuration
+        try:
+            screamrouter_configuration = ConfigurationManager(webstream,
+                                                              plugin_manager,
+                                                              websocket_config,
+                                                              audio_manager)
+        except BaseException as exc:  # pylint: disable=broad-except
+            logger.exception("Failed to initialize ConfigurationManager: %s", exc)
+            configuration_manager_error.append(exc)
+        finally:
+            configuration_manager_ready.set()
+
+    threading.Thread(
+        target=_init_configuration_manager,
+        name="ConfigurationManagerInitThread",
+        daemon=True,
+    ).start()
+
+    configuration_manager_ready.wait()
+    if configuration_manager_error:
+        raise configuration_manager_error[0]
+    assert screamrouter_configuration is not None, "ConfigurationManager failed to initialize"
+
     # Now initialize webrtc_api with configuration_manager
     webrtc_api: APIWebRTC = APIWebRTC(app, audio_manager, screamrouter_configuration)
 
