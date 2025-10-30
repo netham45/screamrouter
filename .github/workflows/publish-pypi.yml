@@ -68,14 +68,14 @@ jobs:
           echo "Wheel count: $(ls dist/*.whl 2>/dev/null | wc -l)"
       
       # Verify we have the expected number of packages
-      # 6 platforms × 5 Python versions = 30 wheels
+      # 6 platform targets × 1 stable-ABI build = 6 wheels
       - name: Verify package integrity
         run: |
           WHEEL_COUNT=$(ls dist/*.whl 2>/dev/null | wc -l)
           echo "Found $WHEEL_COUNT wheels"
           
-          if [ "$WHEEL_COUNT" -ne 30 ]; then
-            echo "::warning::Expected 30 wheels but found $WHEEL_COUNT"
+          if [ "$WHEEL_COUNT" -ne 6 ]; then
+            echo "::warning::Expected 6 wheels but found $WHEEL_COUNT"
             echo "This may indicate a build failure for some platforms"
           fi
 
@@ -159,12 +159,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Platform | Python Versions |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|----------------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux x86_64 (glibc) | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux x86_64 (musl) | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux ARM64 (glibc) | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux ARM64 (musl) | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows x64 | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows x86 | abi3 (built with CPython 3.10–3.14) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 (glibc) | abi3 (targeting CPython 3.9+) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux x86_64 (musl) | abi3 (targeting CPython 3.9+) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 (glibc) | abi3 (targeting CPython 3.9+) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux ARM64 (musl) | abi3 (targeting CPython 3.9+) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x64 | abi3 (targeting CPython 3.9+) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows x86 | abi3 (targeting CPython 3.9+) |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📦 View on PyPI:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -179,5 +179,5 @@ jobs:
           echo "### ℹ️ Important Notes:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- 🔐 Trusted Publisher authentication is configured for this repository" >> $GITHUB_STEP_SUMMARY
-          echo "- 📦 Package supports Python 3.10, 3.11, 3.12, 3.13, and 3.14" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 Package supports Python 3.9 and newer" >> $GITHUB_STEP_SUMMARY
           echo "- 💻 Available for Linux (glibc/musl) and Windows (x64/x86)" >> $GITHUB_STEP_SUMMARY

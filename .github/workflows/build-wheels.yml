@@ -13,13 +13,13 @@ on:
 
 jobs:
   build-linux-x86_64:
-    name: Build Linux x86_64 Wheels
+    name: Build Linux x86_64 Wheel
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
-        manylinux-image: ['manylinux_2_28_x86_64']
-    
+    env:
+      SCREAMROUTER_PYTHON_TAG: cp39
+      SCREAMROUTER_PY_LIMITED_API: 0x03090000
+      SCREAMROUTER_PYTHON_ABI: abi3
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -28,20 +28,15 @@ jobs:
       
       - name: Build wheel in manylinux container
         run: |
-          # Map Python version to manylinux Python binary
-          case "${{ matrix.python-version }}" in
-            "3.10") PYBIN="/opt/python/cp310-cp310/bin" ;;
-            "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
-            "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
-            "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
-            "3.14") PYBIN="/opt/python/cp314-cp314/bin" ;;
-          esac
-          
+          PYBIN="/opt/python/cp311-cp311/bin"
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             -e PYBIN="${PYBIN}" \
-            quay.io/pypa/${{ matrix.manylinux-image }} \
+            -e SCREAMROUTER_PYTHON_TAG="${SCREAMROUTER_PYTHON_TAG}" \
+            -e SCREAMROUTER_PY_LIMITED_API="${SCREAMROUTER_PY_LIMITED_API}" \
+            -e SCREAMROUTER_PYTHON_ABI="${SCREAMROUTER_PYTHON_ABI}" \
+            quay.io/pypa/manylinux_2_28_x86_64 \
             bash -c "
               set -e
               
@@ -78,10 +73,10 @@ jobs:
               ls -lh dist/
             "
       
-      - name: Set up Python ${{ matrix.python-version }} for testing
+      - name: Set up Python 3.11 for testing
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.11'
       
       - name: Test wheel installation
         run: |
@@ -97,17 +92,17 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-linux-x86_64-py${{ matrix.python-version }}
+          name: wheels-linux-x86_64
           path: dist/*.whl
           retention-days: 7
 
   build-linux-arm64:
-    name: Build Linux ARM64 Wheels
+    name: Build Linux ARM64 Wheel
     runs-on: [self-hosted, linux, arm64]
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
-        manylinux-image: ['manylinux_2_28_aarch64']
+    env:
+      SCREAMROUTER_PYTHON_TAG: cp39
+      SCREAMROUTER_PY_LIMITED_API: 0x03090000
+      SCREAMROUTER_PYTHON_ABI: abi3
     
     steps:
       - name: Checkout code
@@ -117,20 +112,15 @@ jobs:
       
       - name: Build wheel in manylinux ARM64 container
         run: |
-          # Map Python version to manylinux Python binary
-          case "${{ matrix.python-version }}" in
-            "3.10") PYBIN="/opt/python/cp310-cp310/bin" ;;
-            "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
-            "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
-            "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
-            "3.14") PYBIN="/opt/python/cp314-cp314/bin" ;;
-          esac
-          
+          PYBIN="/opt/python/cp311-cp311/bin"
           docker run --rm --platform linux/arm64 \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             -e PYBIN="${PYBIN}" \
-            quay.io/pypa/${{ matrix.manylinux-image }} \
+            -e SCREAMROUTER_PYTHON_TAG="${SCREAMROUTER_PYTHON_TAG}" \
+            -e SCREAMROUTER_PY_LIMITED_API="${SCREAMROUTER_PY_LIMITED_API}" \
+            -e SCREAMROUTER_PYTHON_ABI="${SCREAMROUTER_PYTHON_ABI}" \
+            quay.io/pypa/manylinux_2_28_aarch64 \
             bash -c "
               set -e
               
@@ -167,6 +157,11 @@ jobs:
               ls -lh dist/
             "
       
+      - name: Set up Python 3.11 for testing
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
       - name: Test wheel installation
         run: |
           wheel=$(find dist -maxdepth 1 -name '*abi3*.whl' | head -n1)
@@ -175,23 +170,23 @@ jobs:
             ls -lh dist/
             exit 1
           fi
-          python${{ matrix.python-version }} -m pip install "$wheel"
-          python${{ matrix.python-version }} -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
+          python -m pip install "$wheel"
+          python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-linux-arm64-py${{ matrix.python-version }}
+          name: wheels-linux-arm64
           path: dist/*.whl
           retention-days: 7
 
   build-linux-x86_64-musl:
-    name: Build Linux x86_64 MUSL Wheels
+    name: Build Linux x86_64 MUSL Wheel
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
-        musllinux-image: ['musllinux_1_2_x86_64']
+    env:
+      SCREAMROUTER_PYTHON_TAG: cp39
+      SCREAMROUTER_PY_LIMITED_API: 0x03090000
+      SCREAMROUTER_PYTHON_ABI: abi3
 
     steps:
       - name: Checkout code
@@ -201,20 +196,15 @@ jobs:
 
       - name: Build wheel in musllinux container
         run: |
-          # Map Python version to musllinux Python binary
-          case "${{ matrix.python-version }}" in
-            "3.10") PYBIN="/opt/python/cp310-cp310/bin" ;;
-            "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
-            "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
-            "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
-            "3.14") PYBIN="/opt/python/cp314-cp314/bin" ;;
-          esac
-
+          PYBIN="/opt/python/cp311-cp311/bin"
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             -e PYBIN="${PYBIN}" \
-            quay.io/pypa/${{ matrix.musllinux-image }} \
+            -e SCREAMROUTER_PYTHON_TAG="${SCREAMROUTER_PYTHON_TAG}" \
+            -e SCREAMROUTER_PY_LIMITED_API="${SCREAMROUTER_PY_LIMITED_API}" \
+            -e SCREAMROUTER_PYTHON_ABI="${SCREAMROUTER_PYTHON_ABI}" \
+            quay.io/pypa/musllinux_1_2_x86_64 \
             sh -c "
               set -e
 
@@ -252,20 +242,15 @@ jobs:
 
       - name: Test wheel installation in MUSL container
         run: |
-          # Map Python version to musllinux Python binary
-          case "${{ matrix.python-version }}" in
-            "3.10") PYBIN="/opt/python/cp310-cp310/bin" ;;
-            "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
-            "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
-            "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
-            "3.14") PYBIN="/opt/python/cp314-cp314/bin" ;;
-          esac
-          
+          PYBIN="/opt/python/cp311-cp311/bin"
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             -e PYBIN="${PYBIN}" \
-            quay.io/pypa/${{ matrix.musllinux-image }} \
+            -e SCREAMROUTER_PYTHON_TAG="${SCREAMROUTER_PYTHON_TAG}" \
+            -e SCREAMROUTER_PY_LIMITED_API="${SCREAMROUTER_PY_LIMITED_API}" \
+            -e SCREAMROUTER_PYTHON_ABI="${SCREAMROUTER_PYTHON_ABI}" \
+            quay.io/pypa/musllinux_1_2_x86_64 \
             sh -c "
               wheel=\$(find dist -maxdepth 1 -name '*abi3*.whl' | head -n1)
               if [ -z \"\$wheel\" ]; then
@@ -280,17 +265,17 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-linux-x86_64-musl-py${{ matrix.python-version }}
+          name: wheels-linux-x86_64-musl
           path: dist/*.whl
           retention-days: 7
 
   build-linux-arm64-musl:
-    name: Build Linux ARM64 MUSL Wheels
+    name: Build Linux ARM64 MUSL Wheel
     runs-on: [self-hosted, linux, arm64]
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
-        musllinux-image: ['musllinux_1_2_aarch64']
+    env:
+      SCREAMROUTER_PYTHON_TAG: cp39
+      SCREAMROUTER_PY_LIMITED_API: 0x03090000
+      SCREAMROUTER_PYTHON_ABI: abi3
 
     steps:
       - name: Checkout code
@@ -300,20 +285,15 @@ jobs:
 
       - name: Build wheel in musllinux ARM64 container
         run: |
-          # Map Python version to musllinux Python binary
-          case "${{ matrix.python-version }}" in
-            "3.10") PYBIN="/opt/python/cp310-cp310/bin" ;;
-            "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
-            "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
-            "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
-            "3.14") PYBIN="/opt/python/cp314-cp314/bin" ;;
-          esac
-
+          PYBIN="/opt/python/cp311-cp311/bin"
           docker run --rm --platform linux/arm64 \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             -e PYBIN="${PYBIN}" \
-            quay.io/pypa/${{ matrix.musllinux-image }} \
+            -e SCREAMROUTER_PYTHON_TAG="${SCREAMROUTER_PYTHON_TAG}" \
+            -e SCREAMROUTER_PY_LIMITED_API="${SCREAMROUTER_PY_LIMITED_API}" \
+            -e SCREAMROUTER_PYTHON_ABI="${SCREAMROUTER_PYTHON_ABI}" \
+            quay.io/pypa/musllinux_1_2_aarch64 \
             sh -c "
               set -e
 
@@ -351,20 +331,15 @@ jobs:
 
       - name: Test wheel installation in MUSL container
         run: |
-          # Map Python version to musllinux Python binary
-          case "${{ matrix.python-version }}" in
-            "3.10") PYBIN="/opt/python/cp310-cp310/bin" ;;
-            "3.11") PYBIN="/opt/python/cp311-cp311/bin" ;;
-            "3.12") PYBIN="/opt/python/cp312-cp312/bin" ;;
-            "3.13") PYBIN="/opt/python/cp313-cp313/bin" ;;
-            "3.14") PYBIN="/opt/python/cp314-cp314/bin" ;;
-          esac
-          
+          PYBIN="/opt/python/cp311-cp311/bin"
           docker run --rm --platform linux/arm64 \
             -v ${{ github.workspace }}:/workspace \
             -w /workspace \
             -e PYBIN="${PYBIN}" \
-            quay.io/pypa/${{ matrix.musllinux-image }} \
+            -e SCREAMROUTER_PYTHON_TAG="${SCREAMROUTER_PYTHON_TAG}" \
+            -e SCREAMROUTER_PY_LIMITED_API="${SCREAMROUTER_PY_LIMITED_API}" \
+            -e SCREAMROUTER_PYTHON_ABI="${SCREAMROUTER_PYTHON_ABI}" \
+            quay.io/pypa/musllinux_1_2_aarch64 \
             sh -c "
               wheel=\$(find dist -maxdepth 1 -name '*abi3*.whl' | head -n1)
               if [ -z \"\$wheel\" ]; then
@@ -379,16 +354,17 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-linux-arm64-musl-py${{ matrix.python-version }}
+          name: wheels-linux-arm64-musl
           path: dist/*.whl
           retention-days: 7
 
   build-windows-x64:
-    name: Build Windows x64 Wheels
+    name: Build Windows x64 Wheel
     runs-on: windows-latest
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    env:
+      SCREAMROUTER_PYTHON_TAG: cp39
+      SCREAMROUTER_PY_LIMITED_API: 0x03090000
+      SCREAMROUTER_PYTHON_ABI: abi3
     
     steps:
       - name: Checkout code
@@ -396,10 +372,10 @@ jobs:
         with:
           submodules: recursive
       
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.11'
           architecture: x64
       
       - name: Set up Node.js
@@ -438,16 +414,17 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-windows-x64-py${{ matrix.python-version }}
+          name: wheels-windows-x64
           path: dist/*.whl
           retention-days: 7
 
   build-windows-x86:
-    name: Build Windows x86 Wheels
+    name: Build Windows x86 Wheel
     runs-on: windows-latest
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    env:
+      SCREAMROUTER_PYTHON_TAG: cp39
+      SCREAMROUTER_PY_LIMITED_API: 0x03090000
+      SCREAMROUTER_PYTHON_ABI: abi3
     
     steps:
       - name: Checkout code
@@ -455,10 +432,10 @@ jobs:
         with:
           submodules: recursive
       
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.11'
           architecture: x86
       
       - name: Set up Node.js
@@ -497,7 +474,7 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-windows-x86-py${{ matrix.python-version }}
+          name: wheels-windows-x86
           path: dist/*.whl
           retention-days: 7
 

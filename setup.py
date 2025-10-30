@@ -78,7 +78,10 @@ def _compute_limited_api_hex(python_tag: str) -> str:
     return f"0x{major:02X}{minor:02X}0000"
 
 
-DEFAULT_PYTHON_TAG = f"cp{sys.version_info.major}{sys.version_info.minor}"
+if sys.version_info.major == 3 and sys.version_info.minor >= 9:
+    DEFAULT_PYTHON_TAG = "cp39"
+else:
+    DEFAULT_PYTHON_TAG = f"cp{sys.version_info.major}{sys.version_info.minor}"
 PYTHON_TAG = os.environ.get("SCREAMROUTER_PYTHON_TAG", DEFAULT_PYTHON_TAG)
 PY_LIMITED_API_HEX = os.environ.get("SCREAMROUTER_PY_LIMITED_API")
 
@@ -713,7 +716,7 @@ setup(
         ],
     },
     zip_safe=False,
-    python_requires=">=3.10",
+    python_requires=">=3.9",
     install_requires=[
         "pybind11>=2.6",
         "pybind11-stubgen",
@@ -731,6 +734,7 @@ setup(
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
