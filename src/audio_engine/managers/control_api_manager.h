@@ -15,6 +15,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
+#include <cstdint>
 
 namespace screamrouter {
 namespace audio {
@@ -103,6 +105,8 @@ private:
     std::map<std::string, std::shared_ptr<CommandQueue>>& m_command_queues;
     TimeshiftManager* m_timeshift_manager;
     std::map<std::string, std::unique_ptr<SourceInputProcessor>>& m_sources;
+    std::unordered_map<std::string, uint32_t> m_plugin_rtp_counters;
+    std::mutex m_plugin_rtp_mutex;
 };
 
 } // namespace audio

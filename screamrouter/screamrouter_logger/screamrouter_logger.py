@@ -26,9 +26,9 @@ FORMATTER = logging.Formatter("".join(['[%(levelname)s:%(asctime)s]',
 MAIN_LOGGER = logging.getLogger()
 MAIN_LOGGER.setLevel(logging.DEBUG)
 
-# Console handler for root logger
+# Console handler for root logger (WARNING and above to console)
 root_console = logging.StreamHandler(sys.stdout)
-root_console.setLevel(logging.INFO)
+root_console.setLevel(logging.WARNING)
 root_console.setFormatter(FORMATTER)
 MAIN_LOGGER.addHandler(root_console)
 
@@ -52,17 +52,9 @@ def get_logger(name: str) -> logging.Logger:
     logger.setLevel(logging.DEBUG)  # Set base logger level to allow all messages through
 
     console = logging.StreamHandler(sys.stderr)
-    # Convert string log level from constants to integer log level
-    try:
-        level_int = logging.getLevelName(constants.CONSOLE_LOG_LEVEL.upper())
-        if not isinstance(level_int, int): # getLevelName returns int for valid names, string for invalid
-            MAIN_LOGGER.warning(f"Invalid CONSOLE_LOG_LEVEL string: '{constants.CONSOLE_LOG_LEVEL}'. Defaulting console for '{name}' to INFO.")
-            level_int = logging.INFO
-    except Exception as e:
-        MAIN_LOGGER.error(f"Error processing CONSOLE_LOG_LEVEL '{constants.CONSOLE_LOG_LEVEL}': {e}. Defaulting console for '{name}' to INFO.", exc_info=True)
-        level_int = logging.INFO
-        
-    console.setLevel(level_int)
+    # Set console handler to WARNING level (ignoring constants.CONSOLE_LOG_LEVEL)
+    # This ensures only WARNING and above are shown in console, while DEBUG continues to files
+    console.setLevel(logging.WARNING)
     console.setFormatter(FORMATTER)
     logger.addHandler(console)
 

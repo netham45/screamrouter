@@ -176,6 +176,25 @@ bool ControlApiManager::write_plugin_packet(
         return false;
     }
 
+    uint32_t assigned_rtp_timestamp = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_plugin_rtp_mutex);
+        const int bytes_per_sample = (bit_depth > 0 && (bit_depth % 8) == 0) ? (bit_depth / 8) : 0;
+        const int bytes_per_frame = (channels > 0 && bytes_per_sample > 0) ? (channels * bytes_per_sample) : 0;
+
+        uint32_t frame_count = 0;
+        if (bytes_per_frame > 0) {
+            frame_count = static_cast<uint32_t>(audio_payload.size() / static_cast<size_t>(bytes_per_frame));
+        }
+        if (frame_count == 0) {
+            frame_count = 1; // Fallback to ensure timestamp advances even on malformed packets.
+        }
+
+        uint32_t& counter = m_plugin_rtp_counters[source_instance_tag];
+        counter += frame_count;
+        assigned_rtp_timestamp = counter;
+    }
+
     // The 'source_instance_tag' passed to write_plugin_packet is the 'source_tag'
     // that TimeshiftManager will use for filtering.
     if (m_timeshift_manager) {
@@ -188,6 +207,7 @@ bool ControlApiManager::write_plugin_packet(
         packet.chlayout1 = chlayout1;
         packet.chlayout2 = chlayout2;
         packet.audio_data = audio_payload;
+        packet.rtp_timestamp = assigned_rtp_timestamp;
         m_timeshift_manager->add_packet(std::move(packet));
     } else {
         LOG_CPP_ERROR("TimeshiftManager is null. Cannot inject plugin packet.");
