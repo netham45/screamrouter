@@ -18,6 +18,7 @@ struct RtpPacketData {
     std::vector<uint8_t> payload;
     uint32_t ssrc;
     std::vector<uint32_t> csrcs;
+    uint8_t payload_type = 0;
 };
 
 /**

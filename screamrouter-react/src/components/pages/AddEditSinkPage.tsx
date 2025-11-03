@@ -377,6 +377,7 @@ const AddEditSinkPage: React.FC = () => {
       const knownProtocols: Record<string, string> = {
         scream: 'scream',
         rtp: 'rtp',
+        'rtp_opus': 'rtp_opus',
         'web_receiver': 'web_receiver',
         webreceiver: 'web_receiver',
         web: 'web_receiver',
@@ -492,7 +493,7 @@ const AddEditSinkPage: React.FC = () => {
     };
 
     // Add multi-device mode configuration if protocol is RTP
-    if (protocol === 'rtp' && outputMode === 'network') {
+    if ((protocol === 'rtp' || protocol === 'rtp_opus') && outputMode === 'network') {
       sinkData.multi_device_mode = multiDeviceMode;
       if (multiDeviceMode && rtpReceiverMappings.length > 0) {
         // Validate receiver mappings
@@ -914,9 +915,10 @@ const AddEditSinkPage: React.FC = () => {
                 bg={inputBg}
               >
                 <option value="scream">Scream</option>
-                <option value="rtp">RTP</option>
+                <option value="rtp">RTP (PCM)</option>
+                <option value="rtp_opus">RTP (Opus)</option>
                 <option value="web_receiver">Web Receiver</option>
-              </Select>
+          </Select>
             </FormControl>
           ) : (
             <FormControl>

@@ -75,6 +75,8 @@ bool MultiDeviceRtpSender::setup() {
             // Continue with other receivers even if one fails
             continue;
         }
+
+        receiver.sender->set_payload_type(127);
         
         // Pre-allocate buffers (max expected frame count * 2 channels * bytes per sample)
         const size_t max_frame_count = 4096;
@@ -230,7 +232,7 @@ void MultiDeviceRtpSender::send_payload(const uint8_t* payload_data, size_t payl
         
         // Send via RTP using pre-processed network buffer
         if (receiver.sender->send_rtp_packet(receiver.network_buffer.data(), stereo_bytes,
-                                            current_timestamp, csrcs)) {
+                                            current_timestamp, csrcs, false)) {
             total_packets_sent_++;
             total_bytes_sent_ += stereo_bytes;
             

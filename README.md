@@ -326,12 +326,12 @@ Core Models (selected)
   - Optional capture hints: `channels`, `sample_rate`, `bit_depth` (for capture/system inputs)
 
 - SinkDescription (endpoint or group)
-  - Network/system: `ip`, `port`, `protocol` (`scream`, `rtp`, `system_audio`, `web_receiver`)
+  - Network/system: `ip`, `port`, `protocol` (`scream`, `rtp`, `rtp_opus`, `system_audio`, `web_receiver`)
   - `enabled`, `is_group`, `group_members[]`, `volume`, `delay`, `timeshift`, `equalizer`, `speaker_layouts{}`
   - Format: `bit_depth`, `sample_rate`, `channels`, `channel_layout`
   - Sync: `time_sync`, `time_sync_delay`
   - Extra: `config_id` (GUID), `use_tcp`, `enable_mp3`
-  - RTP multi‑device: `multi_device_mode`, `rtp_receiver_mappings[] { receiver_sink_name, left_channel, right_channel }`
+  - RTP multi‑device: `multi_device_mode`, `rtp_receiver_mappings[] { receiver_sink_name, left_channel, right_channel }` (supported on `rtp` and `rtp_opus` sinks)
 
 - RouteDescription
   - `name`, `source`, `sink`, `enabled`, `volume`, `delay`, `timeshift`, `equalizer`, `speaker_layouts{}`, `config_id`
@@ -767,11 +767,11 @@ sinks:
           - [0,0,0,0,0,0,0,0]
 ```
 
-RTP multi‑device mapping
+RTP/RTP Opus multi‑device mapping
 ```yaml
 sinks:
   - name: "Patio Stereo Mesh"
-    protocol: rtp
+    protocol: rtp  # use rtp_opus to fan out encoded Opus packets
     ip: 239.10.0.1
     port: 5004
     multi_device_mode: true
@@ -783,6 +783,7 @@ sinks:
         left_channel: 1
         right_channel: 1
 ```
+> For `rtp_opus`, keep channel indices 0/1 — each receiver runs its own Opus encoder but shares the same RTP timestamp so playback stays aligned.
 
 Temporary listener for a route (WebRTC)
 ```bash

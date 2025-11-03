@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <system_error>
 #include <cerrno>
+#include <algorithm>
+#include <cctype>
 #ifndef _WIN32
     #include <sys/select.h>
 #else
@@ -412,21 +414,34 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         }
 
         StreamProperties props;
+        props.codec = StreamCodec::UNKNOWN;
         props.sample_rate = rate;
         props.channels = channels;
-        
-        if (strstr(encoding, "L16") != nullptr) {
+
+        std::string encoding_str(encoding);
+        std::transform(encoding_str.begin(), encoding_str.end(), encoding_str.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        if (encoding_str.find("l16") != std::string::npos) {
             props.bit_depth = 16;
             props.endianness = Endianness::BIG;
-        } else if (strstr(encoding, "L24") != nullptr) {
+            props.codec = StreamCodec::PCM;
+        } else if (encoding_str.find("l24") != std::string::npos) {
             props.bit_depth = 24;
             props.endianness = Endianness::BIG;
-        } else if (strstr(encoding, "S16LE") != nullptr) {
+            props.codec = StreamCodec::PCM;
+        } else if (encoding_str.find("s16le") != std::string::npos) {
             props.bit_depth = 16;
             props.endianness = Endianness::LITTLE;
+            props.codec = StreamCodec::PCM;
+        } else if (encoding_str.find("opus") != std::string::npos) {
+            props.bit_depth = 16; // Opus decoder outputs 16-bit PCM
+            props.endianness = Endianness::LITTLE;
+            props.codec = StreamCodec::OPUS;
         } else {
             props.bit_depth = 16; // default
             props.endianness = Endianness::BIG; // default
+            props.codec = StreamCodec::UNKNOWN;
         }
 
         props.port = port;

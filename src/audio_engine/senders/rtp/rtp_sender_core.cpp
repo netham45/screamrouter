@@ -192,7 +192,8 @@ void RtpSenderCore::close() {
 }
 
 bool RtpSenderCore::send_rtp_packet(const uint8_t* payload_data, size_t payload_size,
-                                    uint32_t timestamp, const std::vector<uint32_t>& csrcs) {
+                                    uint32_t timestamp, const std::vector<uint32_t>& csrcs,
+                                    bool marker) {
     if (udp_socket_fd_ == PLATFORM_INVALID_SOCKET || payload_size == 0) {
         return false;
     }
@@ -205,7 +206,7 @@ bool RtpSenderCore::send_rtp_packet(const uint8_t* payload_data, size_t payload_
     // Version (2 bits), Padding (1), Extension (1), CSRC Count (4)
     packet_buffer[0] = (2 << 6) | (csrc_count & 0x0F);
     // Marker (1 bit), Payload Type (7)
-    packet_buffer[1] = static_cast<uint8_t>(RTP_PAYLOAD_TYPE_L16_48K_STEREO & 0x7F);
+    packet_buffer[1] = static_cast<uint8_t>((marker ? 0x80 : 0x00) | (payload_type_ & 0x7F));
     
     // Sequence Number
     uint16_t seq_num = get_next_sequence_number();
@@ -261,8 +262,8 @@ bool RtpSenderCore::send_rtp_packet(const uint8_t* payload_data, size_t payload_
     packet_count_++;
     octet_count_ += payload_size;
     
-    LOG_CPP_DEBUG("[RtpSenderCore] Sent RTP packet: seq=%u, ts=%u, size=%zu",
-                 seq_num, timestamp, payload_size);
+    LOG_CPP_DEBUG("[RtpSenderCore] Sent RTP packet: seq=%u, ts=%u, size=%zu, marker=%d",
+                 seq_num, timestamp, payload_size, marker ? 1 : 0);
     
     return true;
 }

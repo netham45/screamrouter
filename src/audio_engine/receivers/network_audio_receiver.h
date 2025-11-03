@@ -97,6 +97,20 @@ public:
      */
     std::vector<std::string> get_seen_tags();
 
+    struct PcmAppendContext {
+        std::string accumulator_key;   ///< Identifier for the accumulator (e.g. SSRC or composite tag)
+        std::string source_tag;        ///< Final tag used for dispatching downstream
+        std::vector<uint8_t> payload;  ///< PCM payload fragment to append
+        int sample_rate = 0;
+        int channels = 0;
+        int bit_depth = 0;
+        uint8_t chlayout1 = 0;
+        uint8_t chlayout2 = 0;
+        std::vector<uint32_t> ssrcs;   ///< SSRC/CSRC list associated with the fragment
+        std::chrono::steady_clock::time_point received_time{};
+        std::optional<uint32_t> rtp_timestamp;
+    };
+
 protected:
     /** @brief The main processing loop for the receiver thread. */
     void run() override;
@@ -151,20 +165,6 @@ protected:
      * @return true if the packet was queued for scheduled dispatch, false if it was forwarded immediately.
      */
     bool enqueue_clock_managed_packet(TaggedAudioPacket&& packet);
-
-    struct PcmAppendContext {
-        std::string accumulator_key;   ///< Identifier for the accumulator (e.g. SSRC or composite tag)
-        std::string source_tag;        ///< Final tag used for dispatching downstream
-        std::vector<uint8_t> payload;  ///< PCM payload fragment to append
-        int sample_rate = 0;
-        int channels = 0;
-        int bit_depth = 0;
-        uint8_t chlayout1 = 0;
-        uint8_t chlayout2 = 0;
-        std::vector<uint32_t> ssrcs;   ///< SSRC/CSRC list associated with the fragment
-        std::chrono::steady_clock::time_point received_time{};
-        std::optional<uint32_t> rtp_timestamp;
-    };
 
     /**
      * @brief Appends PCM data to an accumulator and returns any completed chunks.

@@ -12,10 +12,12 @@
 #include "rtp_sender_core.h"
 #include <rtc/rtp.hpp>
 #include <cstdint>
+#include <string>
 #include <thread>
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <vector>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -62,6 +64,25 @@ public:
      * @param csrcs A vector of CSRC identifiers to include in the RTP header.
      */
     void send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) override;
+
+protected:
+    virtual uint8_t rtp_payload_type() const;
+    virtual uint32_t rtp_clock_rate() const;
+    virtual uint32_t rtp_channel_count() const;
+    virtual std::string sdp_payload_name() const;
+    virtual std::vector<std::string> sdp_format_specific_attributes() const;
+    virtual bool initialize_payload_pipeline();
+    virtual void teardown_payload_pipeline();
+    virtual bool handle_send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs);
+
+    bool send_rtp_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs, bool marker = false);
+    void advance_rtp_timestamp(uint32_t samples_per_channel);
+
+    const SinkMixerConfig& config() const { return config_; }
+    RtpSenderCore* rtp_core() const { return rtp_core_.get(); }
+    uint32_t current_rtp_timestamp() const { return rtp_timestamp_; }
+    void set_rtp_timestamp(uint32_t timestamp) { rtp_timestamp_ = timestamp; }
+    uint32_t ssrc() const { return ssrc_; }
 
 private:
     SinkMixerConfig config_;

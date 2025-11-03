@@ -70,15 +70,23 @@ public:
     void close();
 
     /**
+     * @brief Sets the RTP payload type that will be used for outgoing packets.
+     * @param payload_type RTP payload type (0-127).
+     */
+    void set_payload_type(uint8_t payload_type) { payload_type_ = payload_type & 0x7F; }
+
+    /**
      * @brief Sends an RTP packet with the given payload.
      * @param payload_data Pointer to the raw audio data.
      * @param payload_size The size of the audio data in bytes.
      * @param timestamp The RTP timestamp for this packet.
      * @param csrcs A vector of CSRC identifiers to include in the RTP header.
+     * @param marker Whether to set the marker bit on this packet.
      * @return true if the packet was sent successfully, false otherwise.
      */
     bool send_rtp_packet(const uint8_t* payload_data, size_t payload_size,
-                        uint32_t timestamp, const std::vector<uint32_t>& csrcs);
+                        uint32_t timestamp, const std::vector<uint32_t>& csrcs,
+                        bool marker = false);
 
     /**
      * @brief Gets the current sequence number.
@@ -120,6 +128,7 @@ private:
     
     uint32_t ssrc_;
     std::atomic<uint16_t> sequence_number_;
+    uint8_t payload_type_ = 127;
     
     // Statistics tracking
     std::atomic<uint32_t> packet_count_;

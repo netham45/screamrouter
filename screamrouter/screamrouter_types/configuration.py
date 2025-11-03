@@ -285,7 +285,7 @@ class SinkDescription(BaseModel):
     use_tcp: bool = False
     enable_mp3: bool = True
     protocol: str = "scream"
-    """Protocol selection for the sink. Use 'system_audio' for host playback or network protocols like 'scream', 'rtp', 'web_receiver'."""
+    """Protocol selection for the sink. Use 'system_audio' for host playback or network protocols like 'scream', 'rtp', 'rtp_opus', 'web_receiver'."""
     multi_device_mode: bool = False
     """Enable multi-device RTP output mode"""
     rtp_receiver_mappings: List[RtpReceiverMapping] = Field(default_factory=list)

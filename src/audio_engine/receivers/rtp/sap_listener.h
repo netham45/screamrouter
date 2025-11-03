@@ -51,6 +51,16 @@ enum class Endianness {
 };
 
 /**
+ * @enum StreamCodec
+ * @brief Enumerates the supported codecs announced for RTP streams.
+ */
+enum class StreamCodec {
+    PCM,    ///< Linear PCM variants (L16/L24/etc.).
+    OPUS,   ///< Opus-encoded audio carried over RTP.
+    UNKNOWN ///< Codec could not be determined from the announcement.
+};
+
+/**
  * @struct StreamProperties
  * @brief Holds the audio properties of a discovered stream.
  */
@@ -60,13 +70,15 @@ struct StreamProperties {
     int bit_depth;        ///< The bit depth of the audio samples.
     Endianness endianness;///< The byte order of the audio samples.
     int port;             ///< The media port announced for the stream.
+    StreamCodec codec;    ///< The codec used by the RTP stream payload.
 
     StreamProperties()
         : sample_rate(0),
           channels(0),
           bit_depth(0),
           endianness(Endianness::BIG),
-          port(0) {}
+          port(0),
+          codec(StreamCodec::UNKNOWN) {}
 };
 
 struct SapAnnouncement {

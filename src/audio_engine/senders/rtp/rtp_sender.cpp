@@ -6,6 +6,7 @@
 #include <cstring>
 #include <random>
 #include <vector>
+#include <algorithm>
 #include <thread>
 #include <chrono>
 #include <sstream>
@@ -207,6 +208,13 @@ bool RtpSender::setup() {
     // Setup RTP core
     if (!rtp_core_->setup(config_.output_ip, config_.output_port)) {
         LOG_CPP_ERROR("[RtpSender:%s] Failed to setup RTP core", config_.sink_id.c_str());
+        return false;
+    }
+
+    rtp_core_->set_payload_type(rtp_payload_type());
+
+    if (!initialize_payload_pipeline()) {
+        LOG_CPP_ERROR("[RtpSender:%s] Failed to initialize payload pipeline", config_.sink_id.c_str());
         return false;
     }
 
@@ -417,6 +425,8 @@ void RtpSender::close() {
         sap_socket_fd_ = PLATFORM_INVALID_SOCKET;
     }
 
+    teardown_payload_pipeline();
+
     if (rtp_core_) {
         LOG_CPP_INFO("[RtpSender:%s] Closing RTP core", config_.sink_id.c_str());
         rtp_core_->close();
@@ -426,20 +436,24 @@ void RtpSender::close() {
 
 // As seen in rtp_receiver.cpp, this is a common payload type for this format.
 const int RTP_PAYLOAD_TYPE_L16_48K_STEREO = 127;
- 
+
 void RtpSender::send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) {
     if (payload_size == 0 || !rtp_core_) {
         return;
     }
 
+    handle_send_payload(payload_data, payload_size, csrcs);
+}
+
+bool RtpSender::handle_send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) {
     // Convert payload to network byte order
     std::vector<uint8_t> network_payload(payload_size);
     memcpy(network_payload.data(), payload_data, payload_size);
-    
+
     size_t bytes_per_sample = config_.output_bitdepth / 8;
     if (bytes_per_sample > 0 && payload_size % bytes_per_sample == 0) {
         uint8_t* rtp_payload_ptr = network_payload.data();
-        
+
         if (config_.output_bitdepth == 16) {
             for (size_t i = 0; i < payload_size; i += bytes_per_sample) {
                 uint16_t* sample_ptr = reinterpret_cast<uint16_t*>(rtp_payload_ptr + i);
@@ -459,27 +473,74 @@ void RtpSender::send_payload(const uint8_t* payload_data, size_t payload_size, c
         }
     }
 
-    // Send via RTP core
-    if (rtp_core_->send_rtp_packet(network_payload.data(), network_payload.size(), rtp_timestamp_, csrcs)) {
-        // Update statistics for RTCP
-        uint32_t old_packet_count = packet_count_.fetch_add(1);
-        uint32_t old_octet_count = octet_count_.fetch_add(payload_size);
-        
-        // Log every 100th packet for debugging
-        if ((old_packet_count + 1) % 100 == 0) {
-            LOG_CPP_DEBUG("[RtpSender:%s] RTP Statistics: packets=%u, octets=%u, RTCP enabled=%s",
-                         config_.sink_id.c_str(),
-                         old_packet_count + 1,
-                         old_octet_count + payload_size,
-                         (rtcp_thread_running_.load() ? "true" : "false"));
-        }
+    if (!send_rtp_payload(network_payload.data(), network_payload.size(), csrcs, false)) {
+        return false;
     }
 
-    // Increment timestamp by number of samples in the packet
     size_t bytes_per_frame = (config_.output_bitdepth / 8) * config_.output_channels;
     if (bytes_per_frame > 0) {
-        rtp_timestamp_ += payload_size / bytes_per_frame;
+        advance_rtp_timestamp(static_cast<uint32_t>(payload_size / bytes_per_frame));
     }
+
+    return true;
+}
+
+bool RtpSender::initialize_payload_pipeline() {
+    return true;
+}
+
+void RtpSender::teardown_payload_pipeline() {
+    // No-op for PCM sender
+}
+
+uint8_t RtpSender::rtp_payload_type() const {
+    return static_cast<uint8_t>(RTP_PAYLOAD_TYPE_L16_48K_STEREO);
+}
+
+uint32_t RtpSender::rtp_clock_rate() const {
+    return static_cast<uint32_t>(config_.output_samplerate > 0 ? config_.output_samplerate : 48000);
+}
+
+uint32_t RtpSender::rtp_channel_count() const {
+    return static_cast<uint32_t>(config_.output_channels > 0 ? config_.output_channels : 2);
+}
+
+std::string RtpSender::sdp_payload_name() const {
+    return "L16";
+}
+
+std::vector<std::string> RtpSender::sdp_format_specific_attributes() const {
+    std::vector<std::string> attributes;
+    attributes.emplace_back("a=fmtp:" + std::to_string(rtp_payload_type()) + " buffer-time=20");
+    return attributes;
+}
+
+bool RtpSender::send_rtp_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs, bool marker) {
+    if (!rtp_core_) {
+        return false;
+    }
+
+    if (!rtp_core_->send_rtp_packet(payload_data, payload_size, rtp_timestamp_, csrcs, marker)) {
+        LOG_CPP_ERROR("[RtpSender:%s] Failed to send RTP packet", config_.sink_id.c_str());
+        return false;
+    }
+
+    uint32_t old_packet_count = packet_count_.fetch_add(1);
+    uint32_t old_octet_count = octet_count_.fetch_add(payload_size);
+
+    if ((old_packet_count + 1) % 100 == 0) {
+        LOG_CPP_DEBUG("[RtpSender:%s] RTP Statistics: packets=%u, octets=%u, RTCP enabled=%s",
+                      config_.sink_id.c_str(),
+                      old_packet_count + 1,
+                      old_octet_count + payload_size,
+                      (rtcp_thread_running_.load() ? "true" : "false"));
+    }
+
+    return true;
+}
+
+void RtpSender::advance_rtp_timestamp(uint32_t samples_per_channel) {
+    rtp_timestamp_ += samples_per_channel;
 }
 
 void RtpSender::sap_announcement_loop() {
@@ -496,9 +557,27 @@ void RtpSender::sap_announcement_loop() {
             sdp << "s=" << config_.sink_id << "\n";
             sdp << "c=IN IP4 " << config_.output_ip << "\n";
             sdp << "t=0 0\n";
-            sdp << "m=audio " << config_.output_port << " RTP/AVP " << RTP_PAYLOAD_TYPE_L16_48K_STEREO << "\n"; 
-            sdp << "a=rtpmap:" << RTP_PAYLOAD_TYPE_L16_48K_STEREO << " L16/48000/" << config_.output_channels << "\n";
-            sdp << "a=fmtp:" << RTP_PAYLOAD_TYPE_L16_48K_STEREO << " buffer-time=20\n";
+            const uint8_t payload_type = rtp_payload_type();
+            const uint32_t effective_clock_rate = rtp_clock_rate() == 0 ? 48000 : rtp_clock_rate();
+            const uint32_t channel_count = rtp_channel_count();
+            const std::string codec_name = sdp_payload_name();
+            const auto extra_attributes = sdp_format_specific_attributes();
+
+            sdp << "m=audio " << config_.output_port << " RTP/AVP " << static_cast<int>(payload_type) << "\n"; 
+            sdp << "a=rtpmap:" << static_cast<int>(payload_type) << " " << codec_name << "/" << effective_clock_rate;
+            if (channel_count > 0) {
+                sdp << "/" << channel_count;
+            }
+            sdp << "\n";
+            for (const auto& attribute : extra_attributes) {
+                if (attribute.empty()) {
+                    continue;
+                }
+                sdp << attribute;
+                if (attribute.back() != '\n') {
+                    sdp << "\n";
+                }
+            }
 
             // Add channel map if channels > 2, using the scream channel layout
             if (config_.output_channels > 2) {
@@ -507,7 +586,7 @@ void RtpSender::sap_announcement_loop() {
                 // Ensure the channel order size matches the channel count for a valid map
                 if (channel_order.size() == static_cast<size_t>(config_.output_channels)) {
                     std::stringstream channel_map_ss;
-                    channel_map_ss << "a=channelmap:" << RTP_PAYLOAD_TYPE_L16_48K_STEREO << " " << config_.output_channels;
+                    channel_map_ss << "a=channelmap:" << static_cast<int>(payload_type) << " " << config_.output_channels;
                     for (size_t i = 0; i < channel_order.size(); ++i) {
                         channel_map_ss << (i == 0 ? " " : ",") << channel_order[i];
                     }
@@ -661,11 +740,13 @@ uint32_t RtpSender::calculate_rtp_timestamp_for_ntp(uint64_t ntp_timestamp) {
         elapsed_us = 0;
     }
     
-    // Convert elapsed microseconds to samples at 48kHz
-    // samples = (elapsed_us * 48000) / 1000000
-    // To avoid overflow for large values, we can rearrange: (elapsed_us / 1000) * 48
-    uint64_t elapsed_ms = elapsed_us / 1000;
-    uint64_t elapsed_samples = (elapsed_ms * 48000) / 1000;
+    // Convert elapsed microseconds to samples using the RTP clock rate
+    uint32_t clock_rate = rtp_clock_rate();
+    if (clock_rate == 0) {
+        clock_rate = 48000;
+    }
+    long double elapsed_seconds = static_cast<long double>(elapsed_us) / 1000000.0L;
+    uint64_t elapsed_samples = static_cast<uint64_t>(elapsed_seconds * static_cast<long double>(clock_rate));
     
     // Add to the initial RTP timestamp
     uint32_t rtp_timestamp = stream_start_rtp_timestamp_ + static_cast<uint32_t>(elapsed_samples);

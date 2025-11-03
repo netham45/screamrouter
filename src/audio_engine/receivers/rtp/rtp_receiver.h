@@ -1,10 +1,6 @@
 /**
  * @file rtp_receiver.h
- * @brief Defines the RtpReceiver class for handling RTP audio streams.
- * @details This file contains the definition of the `RtpReceiver` class, which is a
- *          specialization of `NetworkAudioReceiver` for the Real-time Transport Protocol (RTP).
- *          It uses `libdatachannel` for RTP packet handling and also includes a `SapListener`
- *          to discover streams via the Session Announcement Protocol (SAP).
+ * @brief Declares RTP receiver classes for PCM and Opus payload handling.
  */
 #ifndef RTP_RECEIVER_H
 #define RTP_RECEIVER_H
@@ -12,77 +8,58 @@
 #include "../network_audio_receiver.h"
 #include "../clock_manager.h"
 #include "../../audio_types.h"
-#include <rtc/rtp.hpp>
 #include "sap_listener.h"
 #include "rtp_reordering_buffer.h"
-#include <mutex>
-#include <memory>
-#include <vector>
+
 #include <map>
-#include <cstdint>
-#ifndef _WIN32
-    #include <sys/epoll.h>
-    #include <sys/types.h>
-    #include <sys/socket.h>
-    #include <netinet/in.h>
-    #include <arpa/inet.h>
-    #include <unistd.h>
-#endif
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+struct OpusDecoder;
 
 namespace screamrouter {
 namespace audio {
 
-/**
- * @class RtpReceiver
- * @brief A network receiver specialized for handling RTP audio streams.
- * @details This class inherits from `NetworkAudioReceiver` and implements the logic
- *          for receiving and processing RTP packets. It uses an epoll-based loop to
- *          manage multiple sockets for both RTP data and SAP announcements.
- */
-class RtpReceiver : public NetworkAudioReceiver {
+class RtpPayloadReceiver {
 public:
-    /**
-     * @brief Constructs an RtpReceiver.
-     * @param config The configuration for the RTP receiver.
-     * @param notification_queue A queue for sending notifications about new sources.
-     * @param timeshift_manager A pointer to the `TimeshiftManager` for packet buffering.
-     */
-    RtpReceiver(
+    virtual ~RtpPayloadReceiver() = default;
+
+    virtual bool supports_payload_type(uint8_t payload_type) const = 0;
+    virtual bool populate_append_context(
+        const RtpPacketData& packet,
+        const StreamProperties& properties,
+        NetworkAudioReceiver::PcmAppendContext& context
+    ) = 0;
+    virtual void on_ssrc_state_cleared(uint32_t ssrc) { (void)ssrc; }
+    virtual void on_all_ssrcs_cleared() {}
+};
+
+/**
+ * @class RtpReceiverBase
+ * @brief Provides shared socket, reordering, and SAP logic for RTP receivers.
+ */
+class RtpReceiverBase : public NetworkAudioReceiver {
+public:
+    RtpReceiverBase(
         RtpReceiverConfig config,
         std::shared_ptr<NotificationQueue> notification_queue,
         TimeshiftManager* timeshift_manager,
         ClockManager* clock_manager
     );
 
-    /**
-     * @brief Destructor.
-     */
-    ~RtpReceiver() noexcept override;
+    ~RtpReceiverBase() noexcept override;
 
-    // Deleted copy and move constructors/assignments to prevent unintended copies.
-    RtpReceiver(const RtpReceiver&) = delete;
-    RtpReceiver& operator=(const RtpReceiver&) = delete;
-    RtpReceiver(RtpReceiver&&) = delete;
-    RtpReceiver& operator=(RtpReceiver&&) = delete;
-
-    /**
-     * @brief Retrieves the currently known SAP announcements processed by this receiver.
-     * @return A vector of SAP announcements containing stream metadata.
-     */
     std::vector<SapAnnouncement> get_sap_announcements();
 
 protected:
-    /** @brief The main processing loop using epoll to handle multiple sockets. */
     void run() override;
-    /** @brief Sets up the initial listening socket and epoll instance. */
     bool setup_socket() override;
-    /** @brief Closes all managed sockets and the epoll instance. */
     void close_socket() override;
 
-    /** @brief Validates the basic structure of an RTP packet. */
     bool is_valid_packet_structure(const uint8_t* buffer, int size, const struct sockaddr_in& client_addr) override;
-    
-    /** @brief Processes a valid RTP packet, extracting audio data and metadata. */
     bool process_and_validate_payload(
         const uint8_t* buffer,
         int size,
@@ -91,73 +68,112 @@ protected:
         TaggedAudioPacket& out_packet,
         std::string& out_source_tag
     ) override;
-    
-    /** @brief Returns the recommended receive buffer size. */
+
     size_t get_receive_buffer_size() const override;
-    /** @brief Returns the poll timeout for the epoll loop. */
     int get_poll_timeout_ms() const override;
 
-private:
-    RtpReceiverConfig config_;
-    const std::size_t chunk_size_bytes_;
-    #ifdef _WIN32
-        fd_set master_read_fds_;  // Master set for select()
-        socket_t max_fd_;          // Highest socket fd for select()
-    #else
-        int epoll_fd_;             // Linux epoll descriptor
-    #endif
-    std::vector<socket_t> socket_fds_;
-    std::mutex socket_fds_mutex_;
- 
-    /**
-     * @brief Opens a new socket to receive a dynamic RTP session announced via SAP.
-     * @param ip The IP address of the session.
-     * @param port The port of the session.
-     * @param source_ip The source IP for unicast streams (empty for multicast).
-     */
-    void open_dynamic_session(const std::string& ip, int port, const std::string& source_ip = "");
-    /**
-     * @brief Handles changes in the SSRC of an RTP stream.
-     * @param old_ssrc The old SSRC.
-     * @param new_ssrc The new SSRC.
-     * @param source_key The source identifier (IP:port).
-     */
-    void handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, const std::string& source_key);
-    /** @brief Processes packets that are ready from the reordering buffer. */
-    void process_ready_packets(uint32_t ssrc, const struct sockaddr_in& client_addr);
-    /** @brief Internal version of process_ready_packets that can optionally skip locking. */
-    void process_ready_packets_internal(uint32_t ssrc, const struct sockaddr_in& client_addr, bool take_lock);
-    
-    /**
-     * @brief Generates a unique key for identifying a source.
-     * @param addr The socket address of the source.
-     * @return A string in the format "IP:port".
-     */
+    void register_payload_receiver(std::unique_ptr<RtpPayloadReceiver> receiver);
+
+    bool supports_payload_type(uint8_t payload_type, uint32_t ssrc) const;
+    bool resolve_stream_properties(
+        uint32_t ssrc,
+        const struct sockaddr_in& client_addr,
+        uint8_t payload_type,
+        StreamProperties& out_properties
+    ) const;
+
     std::string get_source_key(const struct sockaddr_in& addr) const;
     std::string make_pcm_accumulator_key(uint32_t ssrc) const;
+    void handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, const std::string& source_key);
+    void open_dynamic_session(const std::string& ip, int port, const std::string& source_ip = "");
 
-    // Per-source SSRC tracking to handle multiple independent RTP streams
-    std::map<std::string, uint32_t> source_to_last_ssrc_;  // Map: "IP:port" -> last known SSRC
-    std::mutex source_ssrc_mutex_;  // Protects source_to_last_ssrc_
+    void process_ready_packets(uint32_t ssrc, const struct sockaddr_in& client_addr);
+    void process_ready_packets_internal(uint32_t ssrc, const struct sockaddr_in& client_addr, bool take_lock);
 
-    // Jitter and reordering handling
+    void maybe_log_telemetry();
+
+    struct SessionInfo {
+        socket_t socket_fd;
+        std::string destination_ip;
+        int port;
+        std::string source_ip;
+    };
+
+    RtpReceiverConfig config_;
+    const std::size_t chunk_size_bytes_;
+#ifdef _WIN32
+    fd_set master_read_fds_;
+    socket_t max_fd_;
+#else
+    int epoll_fd_;
+#endif
+    std::vector<socket_t> socket_fds_;
+    std::mutex socket_fds_mutex_;
+
+    std::map<std::string, uint32_t> source_to_last_ssrc_;
+    std::mutex source_ssrc_mutex_;
+
     std::map<uint32_t, RtpReorderingBuffer> reordering_buffers_;
     std::mutex reordering_buffer_mutex_;
 
     std::unique_ptr<SapListener> sap_listener_;
 
-    // Track unicast sessions by source IP -> socket mapping
-    struct SessionInfo {
-        socket_t socket_fd;
-        std::string destination_ip;
-        int port;
-        std::string source_ip; // Empty for multicast, specific IP for unicast
-    };
-    std::map<socket_t, SessionInfo> socket_sessions_; // Maps socket FD to session info
-    std::map<std::string, socket_t> unicast_source_to_socket_; // Maps "source_ip:dest_ip:port" to socket FD
+    std::map<socket_t, SessionInfo> socket_sessions_;
+    std::map<std::string, socket_t> unicast_source_to_socket_;
 
-    void maybe_log_telemetry();
+    std::vector<std::unique_ptr<RtpPayloadReceiver>> payload_receivers_;
+
     std::chrono::steady_clock::time_point telemetry_last_log_time_{};
+};
+
+class RtpPcmReceiver : public RtpPayloadReceiver {
+public:
+    bool supports_payload_type(uint8_t payload_type) const override;
+    bool populate_append_context(
+        const RtpPacketData& packet,
+        const StreamProperties& properties,
+        NetworkAudioReceiver::PcmAppendContext& context
+    ) override;
+};
+
+class RtpOpusReceiver : public RtpPayloadReceiver {
+public:
+    RtpOpusReceiver();
+    ~RtpOpusReceiver() noexcept override;
+
+    bool supports_payload_type(uint8_t payload_type) const override;
+    bool populate_append_context(
+        const RtpPacketData& packet,
+        const StreamProperties& properties,
+        NetworkAudioReceiver::PcmAppendContext& context
+    ) override;
+    void on_ssrc_state_cleared(uint32_t ssrc) override;
+    void on_all_ssrcs_cleared() override;
+
+private:
+    struct DecoderState {
+        OpusDecoder* handle = nullptr;
+        int sample_rate = 0;
+        int channels = 0;
+    };
+
+    void destroy_decoder(uint32_t ssrc);
+    void destroy_all_decoders();
+
+    static int maximum_frame_samples(int sample_rate);
+
+    std::unordered_map<uint32_t, DecoderState> decoder_states_;
+    mutable std::mutex decoder_mutex_;
+};
+
+class RtpReceiver : public RtpReceiverBase {
+public:
+    RtpReceiver(
+        RtpReceiverConfig config,
+        std::shared_ptr<NotificationQueue> notification_queue,
+        TimeshiftManager* timeshift_manager,
+        ClockManager* clock_manager
+    );
 };
 
 } // namespace audio

@@ -23,6 +23,8 @@
 #include "../audio_processor/audio_processor.h"
 #include "../senders/scream/scream_sender.h"
 #include "../senders/rtp/rtp_sender.h"
+#include "../senders/rtp/rtp_opus_sender.h"
+#include "../senders/rtp/multi_device_rtp_opus_sender.h"
 #include "../senders/rtp/multi_device_rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
 #include "../senders/system/alsa_playback_sender.h"
@@ -83,6 +85,24 @@ SinkAudioMixer::SinkAudioMixer(
          config_.output_channels = 2;
     }
 
+    if (config_.protocol == "rtp_opus") {
+        if (config_.output_samplerate != 48000) {
+            LOG_CPP_INFO("[SinkMixer:%s] RTP Opus requires 48000 Hz, overriding samplerate from %d to 48000.",
+                         config_.sink_id.c_str(), config_.output_samplerate);
+            config_.output_samplerate = 48000;
+        }
+        if (config_.output_channels != 2) {
+            LOG_CPP_INFO("[SinkMixer:%s] RTP Opus requires stereo, overriding channels from %d to 2.",
+                         config_.sink_id.c_str(), config_.output_channels);
+            config_.output_channels = 2;
+        }
+        if (config_.output_bitdepth != 16) {
+            LOG_CPP_INFO("[SinkMixer:%s] RTP Opus requires 16-bit PCM input, overriding bit depth from %d to 16.",
+                         config_.sink_id.c_str(), config_.output_bitdepth);
+            config_.output_bitdepth = 16;
+        }
+    }
+
     set_playback_format(config_.output_samplerate, config_.output_channels, config_.output_bitdepth);
 
     if (config_.protocol == "rtp") {
@@ -93,6 +113,15 @@ SinkAudioMixer::SinkAudioMixer(
         } else {
             LOG_CPP_INFO("[SinkMixer:%s] Creating RtpSender.", config_.sink_id.c_str());
             network_sender_ = std::make_unique<RtpSender>(config_);
+        }
+    } else if (config_.protocol == "rtp_opus") {
+        if (config_.multi_device_mode && !config_.rtp_receivers.empty()) {
+            LOG_CPP_INFO("[SinkMixer:%s] Creating MultiDeviceRtpOpusSender with %zu receivers.",
+                         config_.sink_id.c_str(), config_.rtp_receivers.size());
+            network_sender_ = std::make_unique<MultiDeviceRtpOpusSender>(config_);
+        } else {
+            LOG_CPP_INFO("[SinkMixer:%s] Creating RtpOpusSender.", config_.sink_id.c_str());
+            network_sender_ = std::make_unique<RtpOpusSender>(config_);
         }
     } else if (config_.protocol == "scream") {
         LOG_CPP_INFO("[SinkMixer:%s] Creating ScreamSender.", config_.sink_id.c_str());

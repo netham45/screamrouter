@@ -2004,42 +2004,62 @@ class ConfigurationManager(threading.Thread):
 
             # Handle multi-device RTP mode
             cpp_sink_engine_config.multi_device_mode = py_sink_desc.multi_device_mode
-            if py_sink_desc.protocol == "rtp" and py_sink_desc.multi_device_mode:
-                _logger.info("[Config Translator] Processing multi-device RTP mode for sink %s", py_sink_desc.name)
-                
-                # Process RTP receiver mappings
-                resolved_receivers = []
-                for mapping in py_sink_desc.rtp_receiver_mappings:
-                    # Look up the receiver sink by name
-                    receiver_sink = self.active_configuration.get_sink_from_name(mapping.receiver_sink_name)
-                    
-                    if receiver_sink and receiver_sink.name != "Not Found":
-                        # Create a proper RtpReceiverConfig object
-                        try:
-                            cpp_receiver = screamrouter_audio_engine.RtpReceiverConfig()
-                            cpp_receiver.receiver_id = receiver_sink.config_id or receiver_sink.name
-                            cpp_receiver.ip_address = str(receiver_sink.ip) if receiver_sink.ip else ""
-                            cpp_receiver.port = receiver_sink.port if receiver_sink.port else 0
-                            # Set channel_map as a tuple (left, right)
-                            cpp_receiver.channel_map = (mapping.left_channel, mapping.right_channel)
-                            cpp_receiver.enabled = True
-                            
-                            resolved_receivers.append(cpp_receiver)
-                            _logger.debug("[Config Translator]   Added receiver: %s:%d (L:%d, R:%d)",
-                                        cpp_receiver.ip_address, cpp_receiver.port,
-                                        mapping.left_channel, mapping.right_channel)
-                        except Exception as e:
-                            _logger.error("[Config Translator]   Failed to create RtpReceiverConfig: %s", e)
-                    else:
-                        _logger.warning("[Config Translator]   Receiver sink '%s' not found", mapping.receiver_sink_name)
-                
-                # Store the resolved receivers in a format the C++ engine can use
-                # This assumes the C++ engine has been updated to handle multi-device RTP
-                if hasattr(cpp_sink_engine_config, 'rtp_receivers'):
-                    cpp_sink_engine_config.rtp_receivers = resolved_receivers
-                    _logger.info("[Config Translator]   Configured %d RTP receivers for multi-device mode", len(resolved_receivers))
+            cpp_sink_engine_config.rtp_receivers = []
+
+            supported_multi_device_protocols = {"rtp", "rtp_opus"}
+            if py_sink_desc.multi_device_mode:
+                if py_sink_desc.protocol not in supported_multi_device_protocols:
+                    _logger.warning("[Config Translator] Multi-device mode requested for protocol '%s' on sink %s, disabling.",
+                                    py_sink_desc.protocol, py_sink_desc.name)
+                    cpp_sink_engine_config.multi_device_mode = False
                 else:
-                    _logger.warning("[Config Translator]   C++ engine does not support rtp_receivers field yet")
+                    _logger.info("[Config Translator] Processing multi-device mode (%s) for sink %s",
+                                 py_sink_desc.protocol, py_sink_desc.name)
+
+                    resolved_receivers = []
+                    for mapping in py_sink_desc.rtp_receiver_mappings:
+                        receiver_sink = self.active_configuration.get_sink_from_name(mapping.receiver_sink_name)
+
+                        if receiver_sink and receiver_sink.name != "Not Found":
+                            try:
+                                left = mapping.left_channel
+                                right = mapping.right_channel
+
+                                if py_sink_desc.protocol == "rtp_opus":
+                                    original = (left, right)
+                                    left = 0 if left not in (0, 1) else left
+                                    right = 1 if right not in (0, 1) else right
+                                    if original != (left, right):
+                                        _logger.warning("[Config Translator]   Receiver '%s' channel map adjusted to (%d,%d) for RTP Opus sink '%s'.",
+                                                        mapping.receiver_sink_name, left, right, py_sink_desc.name)
+
+                                cpp_receiver = screamrouter_audio_engine.RtpReceiverConfig()
+                                cpp_receiver.receiver_id = receiver_sink.config_id or receiver_sink.name
+                                cpp_receiver.ip_address = str(receiver_sink.ip) if receiver_sink.ip else ""
+                                cpp_receiver.port = receiver_sink.port if receiver_sink.port else 0
+                                cpp_receiver.channel_map = (left, right)
+                                cpp_receiver.enabled = True
+
+                                resolved_receivers.append(cpp_receiver)
+                                _logger.debug("[Config Translator]   Added receiver: %s:%d (L:%d, R:%d)",
+                                              cpp_receiver.ip_address, cpp_receiver.port,
+                                              left, right)
+                            except Exception as e:
+                                _logger.error("[Config Translator]   Failed to create RtpReceiverConfig: %s", e)
+                        else:
+                            _logger.warning("[Config Translator]   Receiver sink '%s' not found", mapping.receiver_sink_name)
+
+                    if resolved_receivers:
+                        if hasattr(cpp_sink_engine_config, 'rtp_receivers'):
+                            cpp_sink_engine_config.rtp_receivers = resolved_receivers
+                            _logger.info("[Config Translator]   Configured %d RTP receivers for multi-device mode",
+                                         len(resolved_receivers))
+                        else:
+                            _logger.warning("[Config Translator]   C++ engine does not support rtp_receivers field yet")
+                    else:
+                        cpp_sink_engine_config.multi_device_mode = False
+                        _logger.warning("[Config Translator] Multi-device mode disabled for sink %s (no valid receivers).",
+                                        py_sink_desc.name)
 
             cpp_applied_sink.sink_engine_config = cpp_sink_engine_config
 
