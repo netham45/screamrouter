@@ -258,6 +258,107 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
     m_total_packets_added++;
 }
 
+std::optional<TimeshiftBufferExport> TimeshiftManager::export_recent_buffer(
+    const std::string& source_tag,
+    std::chrono::milliseconds lookback_duration) {
+    if (source_tag.empty()) {
+        return std::nullopt;
+    }
+
+    if (lookback_duration.count() <= 0) {
+        lookback_duration = std::chrono::milliseconds(1);
+    }
+
+    TimeshiftBufferExport export_data;
+    export_data.lookback_seconds_requested = std::chrono::duration<double>(lookback_duration).count();
+
+    const auto now = std::chrono::steady_clock::now();
+    const auto cutoff_time = now - lookback_duration;
+
+    std::vector<const TaggedAudioPacket*> selected_packets;
+    std::chrono::steady_clock::time_point first_packet_time{};
+    std::chrono::steady_clock::time_point last_packet_time{};
+    std::size_t total_bytes = 0;
+    bool metadata_initialized = false;
+
+    {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        selected_packets.reserve(global_timeshift_buffer_.size());
+
+        for (const auto& packet : global_timeshift_buffer_) {
+            if (packet.source_tag != source_tag) {
+                continue;
+            }
+            if (packet.received_time < cutoff_time) {
+                continue;
+            }
+            if (packet.audio_data.empty()) {
+                continue;
+            }
+            if (packet.sample_rate <= 0 || packet.channels <= 0 || packet.bit_depth <= 0) {
+                LOG_CPP_WARNING("[TimeshiftManager] Skipping packet with invalid audio parameters for export: sample_rate=%d channels=%d bit_depth=%d",
+                                packet.sample_rate, packet.channels, packet.bit_depth);
+                continue;
+            }
+
+            if (!metadata_initialized) {
+                metadata_initialized = true;
+                export_data.sample_rate = packet.sample_rate;
+                export_data.channels = packet.channels;
+                export_data.bit_depth = packet.bit_depth;
+                export_data.chunk_size_bytes = packet.audio_data.size();
+                first_packet_time = packet.received_time;
+            } else {
+                if (packet.sample_rate != export_data.sample_rate ||
+                    packet.channels != export_data.channels ||
+                    packet.bit_depth != export_data.bit_depth) {
+                    LOG_CPP_WARNING("[TimeshiftManager] Dropping packet with mismatched format during export (expected sr=%d ch=%d bit_depth=%d, got sr=%d ch=%d bit_depth=%d)",
+                                    export_data.sample_rate,
+                                    export_data.channels,
+                                    export_data.bit_depth,
+                                    packet.sample_rate,
+                                    packet.channels,
+                                    packet.bit_depth);
+                    continue;
+                }
+            }
+
+            selected_packets.push_back(&packet);
+            total_bytes += packet.audio_data.size();
+            last_packet_time = packet.received_time;
+        }
+
+        if (!metadata_initialized || selected_packets.empty()) {
+            return std::nullopt;
+        }
+
+        export_data.pcm_data.reserve(total_bytes);
+        for (const auto* packet_ptr : selected_packets) {
+            const auto& packet = *packet_ptr;
+            export_data.pcm_data.insert(export_data.pcm_data.end(),
+                                        packet.audio_data.begin(),
+                                        packet.audio_data.end());
+        }
+    }
+
+    // Calculate timing metadata outside the lock.
+    export_data.earliest_packet_age_seconds =
+        std::chrono::duration<double>(now - first_packet_time).count();
+    export_data.latest_packet_age_seconds =
+        std::chrono::duration<double>(now - last_packet_time).count();
+
+    if (export_data.sample_rate > 0 && export_data.channels > 0 && export_data.bit_depth > 0) {
+        const double bytes_per_sample = static_cast<double>(export_data.bit_depth) / 8.0;
+        const double bytes_per_frame = bytes_per_sample * static_cast<double>(export_data.channels);
+        if (bytes_per_frame > 0.0) {
+            const double total_frames = static_cast<double>(export_data.pcm_data.size()) / bytes_per_frame;
+            export_data.duration_seconds = total_frames / static_cast<double>(export_data.sample_rate);
+        }
+    }
+
+    return export_data;
+}
+
 TimeshiftManagerStats TimeshiftManager::get_stats() {
     TimeshiftManagerStats stats;
     stats.total_packets_added = m_total_packets_added.load();

@@ -71,6 +71,9 @@ struct StreamProperties {
     Endianness endianness;///< The byte order of the audio samples.
     int port;             ///< The media port announced for the stream.
     StreamCodec codec;    ///< The codec used by the RTP stream payload.
+    int opus_streams;     ///< Number of Opus streams (multistream).
+    int opus_coupled_streams; ///< Number of coupled Opus streams.
+    std::vector<uint8_t> opus_channel_mapping; ///< Opus channel mapping table.
 
     StreamProperties()
         : sample_rate(0),
@@ -78,7 +81,10 @@ struct StreamProperties {
           bit_depth(0),
           endianness(Endianness::BIG),
           port(0),
-          codec(StreamCodec::UNKNOWN) {}
+          codec(StreamCodec::UNKNOWN),
+          opus_streams(0),
+          opus_coupled_streams(0),
+          opus_channel_mapping() {}
 };
 
 struct SapAnnouncement {

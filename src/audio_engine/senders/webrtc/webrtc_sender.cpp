@@ -10,9 +10,63 @@
 #include <random>
 #include <string>
 #include <algorithm>
+#include <sstream>
 
 namespace screamrouter {
 namespace audio {
+
+namespace {
+
+bool resolve_opus_multistream_layout(int channels, int& streams, int& coupled_streams, std::vector<unsigned char>& mapping) {
+    mapping.clear();
+
+    switch (channels) {
+        case 1:
+            streams = 1;
+            coupled_streams = 0;
+            mapping = {0};
+            return true;
+        case 2:
+            streams = 1;
+            coupled_streams = 1;
+            mapping = {0, 1};
+            return true;
+        case 3:
+            streams = 2;
+            coupled_streams = 1;
+            mapping = {0, 2, 1};
+            return true;
+        case 4:
+            streams = 2;
+            coupled_streams = 2;
+            mapping = {0, 1, 2, 3};
+            return true;
+        case 5:
+            streams = 3;
+            coupled_streams = 2;
+            mapping = {0, 2, 1, 3, 4};
+            return true;
+        case 6:
+            streams = 4;
+            coupled_streams = 2;
+            mapping = {0, 2, 1, 5, 3, 4};
+            return true;
+        case 7:
+            streams = 4;
+            coupled_streams = 3;
+            mapping = {0, 2, 1, 6, 3, 4, 5};
+            return true;
+        case 8:
+            streams = 5;
+            coupled_streams = 3;
+            mapping = {0, 2, 1, 6, 3, 4, 5, 7};
+            return true;
+        default:
+            return false;
+    }
+}
+
+} // namespace
 
 WebRtcSender::WebRtcSender(
     const SinkMixerConfig& config,
@@ -26,6 +80,7 @@ WebRtcSender::WebRtcSender(
       state_(rtc::PeerConnection::State::New),
       audio_track_(nullptr),
       current_timestamp_(0) {
+    opus_channels_ = std::clamp(config_.output_channels > 0 ? config_.output_channels : 2, 1, 8);
     LOG_CPP_INFO("[WebRtcSender] DEADLOCK_DEBUG: Constructor START for sink: %s", config_.sink_id.c_str());
     initialize_opus_encoder();
     LOG_CPP_INFO("[WebRtcSender] DEADLOCK_DEBUG: Constructor END for sink: %s", config_.sink_id.c_str());
@@ -36,22 +91,86 @@ WebRtcSender::~WebRtcSender() noexcept {
     if (opus_encoder_) {
         opus_encoder_destroy(opus_encoder_);
     }
+    if (opus_ms_encoder_) {
+        opus_multistream_encoder_destroy(opus_ms_encoder_);
+    }
 }
 
 void WebRtcSender::initialize_opus_encoder() {
-    int error;
-    opus_encoder_ = opus_encoder_create(config_.output_samplerate, 2, OPUS_APPLICATION_AUDIO, &error);
-    if (error != OPUS_OK) {
-        LOG_CPP_ERROR("[WebRtcSender:%s] Failed to create Opus encoder: %s", config_.sink_id.c_str(), opus_strerror(error));
+    if (opus_encoder_) {
+        opus_encoder_destroy(opus_encoder_);
         opus_encoder_ = nullptr;
-        return;
     }
-    opus_encoder_ctl(opus_encoder_, OPUS_SET_BITRATE(512000));
-    opus_encoder_ctl(opus_encoder_, OPUS_SET_VBR(0));
-    opus_encoder_ctl(opus_encoder_, OPUS_SET_INBAND_FEC(0));
-    opus_encoder_ctl(opus_encoder_, OPUS_SET_COMPLEXITY(10));
-    opus_encoder_ctl(opus_encoder_, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));
-    opus_buffer_.resize(4000); // Max opus packet size
+    if (opus_ms_encoder_) {
+        opus_multistream_encoder_destroy(opus_ms_encoder_);
+        opus_ms_encoder_ = nullptr;
+    }
+
+    opus_fmtp_profile_.clear();
+
+    int sample_rate = config_.output_samplerate > 0 ? config_.output_samplerate : 48000;
+    if (sample_rate != 48000) {
+        LOG_CPP_WARNING("[WebRtcSender:%s] Opus encoder expects 48kHz, overriding samplerate from %d to 48000.",
+                        config_.sink_id.c_str(), sample_rate);
+        sample_rate = 48000;
+    }
+
+    if (!configure_multistream_layout()) {
+        LOG_CPP_WARNING("[WebRtcSender:%s] Unsupported Opus layout for %d channels, reverting to stereo.",
+                        config_.sink_id.c_str(), opus_channels_);
+        opus_channels_ = 2;
+        if (!configure_multistream_layout()) {
+            opus_channels_ = 2;
+            use_multistream_ = false;
+        }
+    }
+
+    int error = OPUS_OK;
+    if (use_multistream_) {
+        opus_ms_encoder_ = opus_multistream_encoder_create(
+            sample_rate,
+            opus_channels_,
+            opus_streams_,
+            opus_coupled_streams_,
+            opus_mapping_.data(),
+            OPUS_APPLICATION_AUDIO,
+            &error);
+        if (error != OPUS_OK || !opus_ms_encoder_) {
+            LOG_CPP_ERROR("[WebRtcSender:%s] Failed to create Opus multistream encoder: %s",
+                          config_.sink_id.c_str(), opus_strerror(error));
+            opus_ms_encoder_ = nullptr;
+            use_multistream_ = false;
+        }
+    }
+
+    if (!use_multistream_) {
+        opus_mapping_.clear();
+        opus_streams_ = 0;
+        opus_coupled_streams_ = opus_channels_ >= 2 ? 1 : 0;
+        opus_encoder_ = opus_encoder_create(sample_rate, opus_channels_, OPUS_APPLICATION_AUDIO, &error);
+        if (error != OPUS_OK || !opus_encoder_) {
+            LOG_CPP_ERROR("[WebRtcSender:%s] Failed to create Opus encoder: %s", config_.sink_id.c_str(), opus_strerror(error));
+            opus_encoder_ = nullptr;
+            return;
+        }
+    }
+
+    if (use_multistream_) {
+        opus_multistream_encoder_ctl(opus_ms_encoder_, OPUS_SET_BITRATE(512000));
+        opus_multistream_encoder_ctl(opus_ms_encoder_, OPUS_SET_VBR(0));
+        opus_multistream_encoder_ctl(opus_ms_encoder_, OPUS_SET_INBAND_FEC(0));
+        opus_multistream_encoder_ctl(opus_ms_encoder_, OPUS_SET_COMPLEXITY(10));
+        opus_multistream_encoder_ctl(opus_ms_encoder_, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));
+    } else {
+        opus_encoder_ctl(opus_encoder_, OPUS_SET_BITRATE(512000));
+        opus_encoder_ctl(opus_encoder_, OPUS_SET_VBR(0));
+        opus_encoder_ctl(opus_encoder_, OPUS_SET_INBAND_FEC(0));
+        opus_encoder_ctl(opus_encoder_, OPUS_SET_COMPLEXITY(10));
+        opus_encoder_ctl(opus_encoder_, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));
+    }
+
+    opus_buffer_.resize(8192);
+    opus_fmtp_profile_ = build_opus_fmtp_profile();
 }
 
 bool WebRtcSender::setup() {
@@ -244,9 +363,19 @@ void WebRtcSender::setup_peer_connection() {
             auto* rtp_map = audio_description.rtpMap(payload_types[0]);
             if (rtp_map) {
                 negotiated_clock_rate = static_cast<uint32_t>(rtp_map->clockRate);
+                rtp_map->encParams = std::to_string(opus_channels_);
+                rtp_map->fmtps.clear();
+                rtp_map->fmtps.push_back(opus_fmtp_profile_);
                 LOG_CPP_INFO("[WebRtcSender:%s] Using negotiated payload type: %d, clock rate: %u, format: %s",
                            config_.sink_id.c_str(), negotiated_payload_type, negotiated_clock_rate, rtp_map->format.c_str());
             }
+        } else {
+            rtc::Description::Media::RtpMap opus_map(negotiated_payload_type);
+            opus_map.format = "opus";
+            opus_map.clockRate = static_cast<int>(negotiated_clock_rate);
+            opus_map.encParams = std::to_string(opus_channels_);
+            opus_map.fmtps.push_back(opus_fmtp_profile_);
+            audio_description.addRtpMap(std::move(opus_map));
         }
         
         // 1. Generate a new, unique SSRC for our sending stream.
@@ -333,14 +462,21 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
         LOG_CPP_ERROR("[WebRtcSender:%s] Audio track is not open", config_.sink_id.c_str());
         return;
     }
-    if (!opus_encoder_) {
-        LOG_CPP_ERROR("[WebRtcSender:%s] Opus encoder is null", config_.sink_id.c_str());
-        return;
+    if (use_multistream_) {
+        if (!opus_ms_encoder_) {
+            LOG_CPP_ERROR("[WebRtcSender:%s] Opus multistream encoder is null", config_.sink_id.c_str());
+            return;
+        }
+    } else {
+        if (!opus_encoder_) {
+            LOG_CPP_ERROR("[WebRtcSender:%s] Opus encoder is null", config_.sink_id.c_str());
+            return;
+        }
     }
 
     const int32_t* input = reinterpret_cast<const int32_t*>(payload_data);
     size_t num_samples_interleaved = payload_size / sizeof(int32_t);
-    
+
     std::vector<int16_t> pcm16_buffer(num_samples_interleaved);
     for (size_t i = 0; i < num_samples_interleaved; ++i) {
         pcm16_buffer[i] = static_cast<int16_t>(input[i] >> 16);
@@ -348,17 +484,26 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
 
     pcm_buffer_.insert(pcm_buffer_.end(), pcm16_buffer.begin(), pcm16_buffer.end());
 
-    const size_t OPUS_FRAME_SAMPLES_PER_CHANNEL = 120; // STOP CHANGING THIS! IF I WANTED 960 I WOULD HAVE IT SET TO 960!
-    const size_t required_samples_for_frame = OPUS_FRAME_SAMPLES_PER_CHANNEL * 2; // 20ms at 48kHz * 2 channels
+    const size_t frame_samples_per_channel = OPUS_SAMPLES_PER_FRAME; // Per-channel sample count (2.5 ms @ 48kHz)
+    const size_t required_samples_for_frame = frame_samples_per_channel * static_cast<size_t>(opus_channels_);
 
     while (pcm_buffer_.size() >= required_samples_for_frame) {
-        int encoded_bytes = opus_encode(
-            opus_encoder_,
-            pcm_buffer_.data(),
-            OPUS_FRAME_SAMPLES_PER_CHANNEL,
-            opus_buffer_.data(),
-            opus_buffer_.size()
-        );
+        int encoded_bytes = 0;
+        if (use_multistream_) {
+            encoded_bytes = opus_multistream_encode(
+                opus_ms_encoder_,
+                pcm_buffer_.data(),
+                static_cast<int>(frame_samples_per_channel),
+                opus_buffer_.data(),
+                static_cast<opus_int32>(opus_buffer_.size()));
+        } else {
+            encoded_bytes = opus_encode(
+                opus_encoder_,
+                pcm_buffer_.data(),
+                static_cast<int>(frame_samples_per_channel),
+                opus_buffer_.data(),
+                static_cast<opus_int32>(opus_buffer_.size()));
+        }
 
         if (encoded_bytes < 0) {
             LOG_CPP_ERROR("[WebRtcSender:%s] Failed to encode Opus packet: %s", config_.sink_id.c_str(), opus_strerror(encoded_bytes));
@@ -371,9 +516,9 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
             const auto* opus_data_byte_ptr = reinterpret_cast<const std::byte*>(opus_buffer_.data());
             audio_track_->sendFrame(rtc::binary(opus_data_byte_ptr, opus_data_byte_ptr + encoded_bytes), frame_info);
             m_total_packets_sent++;
-            current_timestamp_ += OPUS_FRAME_SAMPLES_PER_CHANNEL;
+            current_timestamp_ += static_cast<uint32_t>(frame_samples_per_channel);
         }
-        
+
         pcm_buffer_.erase(pcm_buffer_.begin(), pcm_buffer_.begin() + required_samples_for_frame);
     }
 }
@@ -420,6 +565,62 @@ bool WebRtcSender::should_cleanup_due_to_timeout() const {
         return elapsed > CLEANUP_TIMEOUT;
     }
     return false;
+}
+
+bool WebRtcSender::configure_multistream_layout() {
+    use_multistream_ = false;
+    opus_streams_ = 0;
+    opus_coupled_streams_ = 0;
+    opus_mapping_.clear();
+
+    if (opus_channels_ <= 2) {
+        // Mono/stereo use single-stream encoder
+        return true;
+    }
+
+    int streams = 0;
+    int coupled = 0;
+    std::vector<unsigned char> mapping;
+    if (!resolve_opus_multistream_layout(opus_channels_, streams, coupled, mapping)) {
+        return false;
+    }
+
+    use_multistream_ = true;
+    opus_streams_ = streams;
+    opus_coupled_streams_ = coupled;
+    opus_mapping_ = std::move(mapping);
+    return true;
+}
+
+std::string WebRtcSender::build_opus_fmtp_profile() const {
+    std::ostringstream ss;
+    ss << "minptime=10";
+    ss << ";maxaveragebitrate=512000";
+    ss << ";useinbandfec=0";
+
+    if (opus_channels_ >= 2) {
+        ss << ";stereo=1";
+        ss << ";sprop-stereo=1";
+    } else {
+        ss << ";stereo=0";
+        ss << ";sprop-stereo=0";
+    }
+
+    ss << ";channels=" << opus_channels_;
+
+    if (use_multistream_) {
+        ss << ";streams=" << opus_streams_;
+        ss << ";coupledstreams=" << opus_coupled_streams_;
+        ss << ";channel_mapping=";
+        for (size_t i = 0; i < opus_mapping_.size(); ++i) {
+            if (i > 0) {
+                ss << ",";
+            }
+            ss << static_cast<int>(opus_mapping_[i]);
+        }
+    }
+
+    return ss.str();
 }
 
 void WebRtcSender::set_cleanup_callback(const std::string& listener_id,

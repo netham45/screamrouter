@@ -544,9 +544,13 @@ std::vector<TaggedAudioPacket> NetworkAudioReceiver::append_pcm_payload(PcmAppen
 
         completed_chunks.push_back(std::move(packet));
 
-        accumulator.chunk_active = false;
-        accumulator.first_packet_rtp_timestamp.reset();
-        accumulator.first_packet_time = {};
+        if (accumulator.buffer.empty()) {
+            accumulator.chunk_active = false;
+            accumulator.first_packet_rtp_timestamp.reset();
+            accumulator.first_packet_time = {};
+        } else {
+            accumulator.first_packet_time = context.received_time;
+        }
     }
 
     if (accumulator.buffer.empty()) {

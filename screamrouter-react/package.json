@@ -19,6 +19,7 @@
     "axios": "^1.8.4",
     "butterchurn": "^2.6.7",
     "butterchurn-presets": "^2.4.7",
+    "fft.js": "^4.0.4",
     "framer-motion": "^6.5.1",
     "react": "^18.2.0",
     "react-beautiful-dnd": "^13.1.1",

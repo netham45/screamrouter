@@ -12,6 +12,7 @@
 #include "../system_audio/wasapi_device_enumerator.h"
 #endif
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
@@ -544,6 +545,27 @@ std::vector<uint8_t> AudioManager::get_mp3_data(const std::string& sink_id) {
 
 std::vector<uint8_t> AudioManager::get_mp3_data_by_ip(const std::string& ip_address) {
     return m_mp3_data_api_manager ? m_mp3_data_api_manager->get_mp3_data_by_ip(ip_address, m_running) : std::vector<uint8_t>();
+}
+
+std::optional<TimeshiftBufferExport> AudioManager::export_timeshift_buffer(
+    const std::string& source_tag,
+    double lookback_seconds) {
+    if (!m_timeshift_manager) {
+        LOG_CPP_WARNING("[AudioManager] export_timeshift_buffer called without an active TimeshiftManager.");
+        return std::nullopt;
+    }
+
+    if (!std::isfinite(lookback_seconds) || lookback_seconds <= 0.0) {
+        lookback_seconds = 0.001; // 1 ms minimum to avoid zero-duration requests.
+    }
+
+    auto lookback_duration = std::chrono::duration<double>(lookback_seconds);
+    auto lookback_ms = std::chrono::duration_cast<std::chrono::milliseconds>(lookback_duration);
+    if (lookback_ms.count() <= 0) {
+        lookback_ms = std::chrono::milliseconds(1);
+    }
+
+    return m_timeshift_manager->export_recent_buffer(source_tag, lookback_ms);
 }
 
 std::vector<std::string> AudioManager::get_rtp_receiver_seen_tags() {

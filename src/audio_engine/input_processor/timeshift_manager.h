@@ -25,11 +25,28 @@
 #include <condition_variable>
 #include <atomic>
 #include <limits>
+#include <optional>
 
 namespace screamrouter {
 namespace audio {
 
 using PacketQueue = utils::ThreadSafeQueue<TaggedAudioPacket>;
+
+/**
+ * @struct TimeshiftBufferExport
+ * @brief Represents a contiguous PCM dump taken from the timeshift buffer.
+ */
+struct TimeshiftBufferExport {
+    std::vector<uint8_t> pcm_data;               ///< Raw PCM payload concatenated from packets.
+    int sample_rate = 0;                         ///< Sample rate in Hz.
+    int channels = 0;                            ///< Channel count.
+    int bit_depth = 0;                           ///< Bits per sample per channel.
+    std::size_t chunk_size_bytes = 0;            ///< Size of the originating packet chunks.
+    double duration_seconds = 0.0;               ///< Approximate duration of the exported audio.
+    double earliest_packet_age_seconds = 0.0;    ///< Age of the oldest packet relative to export time.
+    double latest_packet_age_seconds = 0.0;      ///< Age of the newest packet relative to export time.
+    double lookback_seconds_requested = 0.0;     ///< Lookback window requested by caller.
+};
 
 /**
  * @struct ProcessorTargetInfo
@@ -185,6 +202,17 @@ public:
      * @param packet The packet to add.
      */
     void add_packet(TaggedAudioPacket&& packet);
+
+    /**
+     * @brief Export the most recent PCM window for a specific source.
+     * @param source_tag The source identifier to filter packets by.
+     * @param lookback_duration Duration of history to export.
+     * @return Populated export data on success, std::nullopt if no data found.
+     */
+    std::optional<TimeshiftBufferExport> export_recent_buffer(
+        const std::string& source_tag,
+        std::chrono::milliseconds lookback_duration);
+
     /**
      * @brief Registers a new processor as a consumer of the buffer.
      * @param instance_id A unique ID for the processor instance.

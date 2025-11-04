@@ -145,6 +145,16 @@ public:
      */
     std::vector<uint8_t> get_mp3_data_by_ip(const std::string& ip_address);
 
+    /**
+     * @brief Export a raw PCM window from the timeshift buffer for a given source.
+     * @param source_tag Identifier of the source stream.
+     * @param lookback_seconds Length of history to include, defaults to 300 seconds.
+     * @return Export payload with PCM data and metadata, or std::nullopt if unavailable.
+     */
+    std::optional<TimeshiftBufferExport> export_timeshift_buffer(
+        const std::string& source_tag,
+        double lookback_seconds = 300.0);
+
     // --- Receiver Info API ---
     /**
      * @brief Retrieves seen source tags from the main RTP receiver.
@@ -449,6 +459,27 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("synchronization", &AudioEngineSettings::synchronization)
         .def_readwrite("synchronization_tuning", &AudioEngineSettings::synchronization_tuning);
 
+    py::class_<TimeshiftBufferExport>(m, "TimeshiftBufferExport")
+        .def(py::init<>())
+        .def_property_readonly(
+            "pcm_data",
+            [](const TimeshiftBufferExport& self) {
+                return py::bytes(reinterpret_cast<const char*>(self.pcm_data.data()), self.pcm_data.size());
+            },
+            "Raw PCM payload as bytes.")
+        .def_property_readonly(
+            "pcm_byte_length",
+            [](const TimeshiftBufferExport& self) { return self.pcm_data.size(); },
+            "Total number of bytes in the PCM payload.")
+        .def_readonly("sample_rate", &TimeshiftBufferExport::sample_rate)
+        .def_readonly("channels", &TimeshiftBufferExport::channels)
+        .def_readonly("bit_depth", &TimeshiftBufferExport::bit_depth)
+        .def_readonly("chunk_size_bytes", &TimeshiftBufferExport::chunk_size_bytes)
+        .def_readonly("duration_seconds", &TimeshiftBufferExport::duration_seconds)
+        .def_readonly("earliest_packet_age_seconds", &TimeshiftBufferExport::earliest_packet_age_seconds)
+        .def_readonly("latest_packet_age_seconds", &TimeshiftBufferExport::latest_packet_age_seconds)
+        .def_readonly("lookback_seconds_requested", &TimeshiftBufferExport::lookback_seconds_requested);
+
     py::class_<AudioManager, std::shared_ptr<AudioManager>>(m, "AudioManager", "Main class for managing the C++ audio engine")
         .def(py::init<>(), "Constructor")
         .def("initialize", &AudioManager::initialize,
@@ -484,6 +515,12 @@ inline void bind_audio_manager(pybind11::module_ &m) {
             },
             py::arg("ip_address"),
             "Retrieves a chunk of MP3 data (as bytes) from a sink identified by its output IP address.")
+        .def("export_timeshift_buffer",
+             &AudioManager::export_timeshift_buffer,
+             py::arg("source_tag"),
+             py::arg("lookback_seconds") = 300.0,
+             "Exports a raw PCM window from the timeshift buffer for the specified source. "
+             "Returns a TimeshiftBufferExport instance or None if data is unavailable.")
         .def("get_rtp_receiver_seen_tags", &AudioManager::get_rtp_receiver_seen_tags,
              "Retrieves the list of seen source tags from the main RTP receiver.")
         .def("get_rtp_sap_announcements", &AudioManager::get_rtp_sap_announcements,

@@ -26,11 +26,12 @@ What You Can Do
 ---------------
 
 - Drive multi‑room audio while keeping rooms in sync.
-- Downmix 5.1 → stereo for phones or upmix stereo → multi‑speaker layouts.
+- Downmix 5.1 → stereo for phones or upmix stereo → multi-speaker layouts.
 - Monitor any route from your browser with low latency (WHEP).
 - Inject URLs (streams, files) directly into a sink or group.
-- Route per‑process audio from a desktop to any room.
+- Route per-process audio from a desktop to any room.
 - Inspect, tune, and recover issues quickly with live logs and stats.
+- Scrub and export the last five minutes of PCM from any source with the browser-based timeshift editor.
 
 Get Started in 2 Minutes
 ------------------------
@@ -403,6 +404,8 @@ System & Engine
 - `GET /api/stats` — Audio engine stats (global, per stream/source/sink)
 - `GET /api/settings` — Audio engine settings
 - `POST /api/settings` — Update partial settings
+- Timeshift buffer exports:
+  - `GET /api/timeshift/{source_tag}?lookback_seconds=300` — Raw PCM dump of the per-source rolling buffer (headers include sample rate, channels, bit depth, duration, and packet ages)
 
 Audio engine settings schema
 - Timeshift Tuning

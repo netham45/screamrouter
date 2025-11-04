@@ -22,7 +22,7 @@ import {
   VStack
 } from '@chakra-ui/react';
 import { StarIcon, SettingsIcon, DeleteIcon } from '@chakra-ui/icons';
-import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower, FaProjectDiagram, FaHeadphones, FaListUl } from 'react-icons/fa';
+import { FaPlay, FaStepBackward, FaStepForward, FaSlidersH, FaBroadcastTower, FaProjectDiagram, FaHeadphones, FaListUl, FaWaveSquare } from 'react-icons/fa';
 import { Source, Sink, Route } from '../../../api/api';
 import VolumeSlider from '../controls/VolumeSlider';
 import TimeshiftSlider from '../controls/TimeshiftSlider';
@@ -469,6 +469,31 @@ return (
             data-tutorial-id="resource-listen-control"
           >
             Listen
+          </Badge>
+        )}
+
+        {isSource(item) && !item.is_group && (item.tag || item.name) && (
+          <Badge
+            colorScheme="orange"
+            mr={1}
+            borderRadius="full"
+            px={2}
+            py={1}
+            userSelect="none"
+            cursor="pointer"
+            _hover={{ opacity: 0.8 }}
+            onClick={(event) => {
+              event.stopPropagation();
+              const tag = item.tag ?? item.name;
+              const url = `/site/timeshift?source=${encodeURIComponent(tag)}`;
+              window.open(url, '_blank', 'noopener,noreferrer');
+            }}
+            title="Open Timeshift Editor"
+          >
+            <HStack spacing={1} align="center">
+              <Box as={FaWaveSquare} />
+              <Text>Timeshift</Text>
+            </HStack>
           </Badge>
         )}
         

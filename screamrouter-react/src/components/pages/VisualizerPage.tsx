@@ -4,8 +4,8 @@
  * and managing the visualizer's lifecycle.
  * Uses Chakra UI components for consistent styling and butterchurn for visualization.
  */
-import React, { useEffect, useState, useRef } from 'react';
-import { Box, Button, Select, useColorModeValue, Flex, Text, IconButton } from '@chakra-ui/react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { Box, Button, Select, useColorModeValue, Flex, Text, IconButton, CloseButton } from '@chakra-ui/react';
 import ApiService from '../../api/api';
 import butterchurn from 'butterchurn';
 import butterchurnPresets from 'butterchurn-presets';
@@ -16,7 +16,21 @@ import { useAppContext } from '../../context/AppContext';
  * Interface defining the props for the Visualizer component.
  */
 interface VisualizerProps {
-  ip: string;
+  ip?: string;
+  stream?: MediaStream;
+  /**
+   * When true, visualization starts automatically once a stream or ip is available.
+   */
+  autoStart?: boolean;
+  /**
+   * Optional callback invoked when the user requests the visualizer to close.
+   */
+  onClose?: () => void;
+  /**
+   * Controls layout behavior. `fullscreen` is used for standalone page,
+   * `overlay` allows rendering on top of existing content.
+   */
+  mode?: 'fullscreen' | 'overlay';
 }
 
 /**
@@ -25,7 +39,13 @@ interface VisualizerProps {
  * @param {VisualizerProps} props - The props passed to the component.
  * @returns {JSX.Element} The rendered JSX element.
  */
-const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
+const Visualizer: React.FC<VisualizerProps> = ({
+  ip,
+  stream,
+  autoStart = false,
+  onClose,
+  mode = 'fullscreen'
+}) => {
   // Get app context
   const { sources, activeSource, controlSource } = useAppContext();
   
@@ -51,7 +71,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
   const visualizerRef = useRef<ReturnType<typeof butterchurn.createVisualizer> | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const sourceNodeRef = useRef<MediaElementAudioSourceNode | MediaStreamAudioSourceNode | null>(null);
   const delayNodeRef = useRef<DelayNode | null>(null);
   const presetsRef = useRef<Record<string, Preset>>({});
   const presetKeysRef = useRef<string[]>([]);
@@ -59,6 +79,60 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
   const cycleIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const activePresetNameRef = useRef<string | null>(null);
   const mediaControlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const visualizerStreamRef = useRef<MediaStream | null>(null);
+  const renderFrameRef = useRef<number | null>(null);
+  const containerLayoutProps = mode === 'overlay'
+    ? { position: 'fixed' as const, top: 0, left: 0, zIndex: 1400 }
+    : {};
+  
+  const teardownVisualizer = useCallback(() => {
+    if (renderFrameRef.current) {
+      cancelAnimationFrame(renderFrameRef.current);
+      renderFrameRef.current = null;
+    }
+    
+    if (visualizerRef.current) {
+      try {
+        visualizerRef.current.disconnectAudio();
+      } catch (error) {
+        console.warn('Visualizer: error disconnecting audio', error);
+      }
+      visualizerRef.current = null;
+    }
+    
+    if (delayNodeRef.current) {
+      try {
+        delayNodeRef.current.disconnect();
+      } catch (error) {
+        console.warn('Visualizer: error disconnecting delay node', error);
+      }
+      delayNodeRef.current = null;
+    }
+    
+    if (sourceNodeRef.current) {
+      try {
+        sourceNodeRef.current.disconnect();
+      } catch (error) {
+        console.warn('Visualizer: error disconnecting source node', error);
+      }
+      sourceNodeRef.current = null;
+    }
+    
+    if (visualizerStreamRef.current) {
+      visualizerStreamRef.current.getTracks().forEach(track => track.stop());
+      visualizerStreamRef.current = null;
+    }
+    
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = '';
+      try {
+        audioRef.current.srcObject = null;
+      } catch (error) {
+        // Older browsers might throw, ignore
+      }
+    }
+  }, []);
   
   /**
    * Effect hook to handle document title and canvas resizing on component mount and unmount.
@@ -206,22 +280,15 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
       window.removeEventListener('resize', handleResize);
       document.removeEventListener('keydown', handleKeyDown);
       
-      // Clean up audio context and nodes
-      if (sourceNodeRef.current) {
-        sourceNodeRef.current.disconnect();
-      }
-      
-      if (delayNodeRef.current) {
-        delayNodeRef.current.disconnect();
-      }
-      
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close();
-      }
-      
       // Clear cycle interval
       if (cycleIntervalRef.current) {
         clearInterval(cycleIntervalRef.current);
+      }
+      
+      teardownVisualizer();
+      
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
       }
       
       // Reset document title and overflow
@@ -256,23 +323,82 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
   }, [started, presetCycle, presetRandom, presetCycleLength]);
   
   /**
+   * Function to render a frame of the visualization.
+   */
+  const renderFrame = useCallback(() => {
+    if (visualizerRef.current) {
+      visualizerRef.current.render();
+      renderFrameRef.current = requestAnimationFrame(renderFrame);
+    }
+  }, []);
+  
+  /**
+   * Function to load a preset by index.
+   */
+  const loadPreset = useCallback((index: number, blendTime: number = 5.7) => {
+    if (visualizerRef.current && presetKeysRef.current[index]) {
+      const presetName = presetKeysRef.current[index];
+      activePresetNameRef.current = presetName;
+      console.log(`Loading preset: ${presetName}`);
+      
+      visualizerRef.current.loadPreset(
+        presetsRef.current[presetName],
+        blendTime
+      );
+    }
+  }, []);
+  
+  /**
    * Function to start the audio stream visualization.
    */
-  const startVisualization = () => {
-    const streamUrl = ApiService.getSinkStreamUrl(ip);
+  const startVisualization = useCallback(() => {
+    if (!audioRef.current || !canvasRef.current) {
+      return;
+    }
     
-    if (!audioRef.current || !canvasRef.current) return;
+    if (visualizerRef.current) {
+      // Already initialized, do nothing.
+      return;
+    }
     
-    // Set up audio
-    audioRef.current.src = streamUrl;
+    if (!stream && !ip) {
+      console.warn('Visualizer: No media stream or IP provided to start visualization.');
+      return;
+    }
+    
+    const initializeAudioContext = () => {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContext();
+      } else if (audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().catch(error => {
+          console.warn('Visualizer: failed to resume audio context', error);
+        });
+      }
+    };
+    
+    initializeAudioContext();
+    if (!audioContextRef.current) {
+      console.error('Visualizer: AudioContext not available.');
+      return;
+    }
+    
+    // Prepare audio element and source
+    let clonedStream: MediaStream | null = null;
+    if (stream) {
+      clonedStream = stream.clone();
+      visualizerStreamRef.current = clonedStream;
+      audioRef.current.srcObject = clonedStream;
+      audioRef.current.muted = true;
+    } else if (ip) {
+      const streamUrl = ApiService.getSinkStreamUrl(ip);
+      audioRef.current.src = streamUrl;
+    }
+    
     audioRef.current.play().catch(error => {
-      console.error('Error playing audio:', error);
+      console.error('Visualizer: Error playing audio element', error);
     });
     
-    // Set up visualizer
-    audioContextRef.current = new AudioContext();
-    
-    // Create visualizer
+    // Create visualizer with current canvas dimensions
     visualizerRef.current = butterchurn.createVisualizer(
       audioContextRef.current,
       canvasRef.current,
@@ -285,7 +411,17 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
     );
     
     // Connect audio to visualizer
-    sourceNodeRef.current = audioContextRef.current.createMediaElementSource(audioRef.current);
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.disconnect();
+    }
+    if (delayNodeRef.current) {
+      delayNodeRef.current.disconnect();
+    }
+    
+    sourceNodeRef.current = clonedStream
+      ? audioContextRef.current.createMediaStreamSource(clonedStream)
+      : audioContextRef.current.createMediaElementSource(audioRef.current);
+    
     delayNodeRef.current = audioContextRef.current.createDelay();
     delayNodeRef.current.delayTime.value = 0.26; // Delay for better visualization
     
@@ -298,36 +434,23 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
     loadPreset(presetIndex, 0);
     
     // Start rendering
-    requestAnimationFrame(renderFrame);
+    renderFrameRef.current = requestAnimationFrame(renderFrame);
     
     setStarted(true);
-  };
+  }, [ip, stream, presetIndex, loadPreset, renderFrame]);
   
-  /**
-   * Function to render a frame of the visualization.
-   */
-  const renderFrame = () => {
-    if (visualizerRef.current) {
-      visualizerRef.current.render();
+  useEffect(() => {
+    if (autoStart && !started && (stream || ip)) {
+      startVisualization();
     }
-    requestAnimationFrame(renderFrame);
-  };
+  }, [autoStart, started, stream, ip, startVisualization]);
   
-  /**
-   * Function to load a preset by index.
-   */
-  const loadPreset = (index: number, blendTime: number = 5.7) => {
-    if (visualizerRef.current && presetKeysRef.current[index]) {
-      const presetName = presetKeysRef.current[index];
-      activePresetNameRef.current = presetName;
-      console.log(`Loading preset: ${presetName}`);
-      
-      visualizerRef.current.loadPreset(
-        presetsRef.current[presetName],
-        blendTime
-      );
+  useEffect(() => {
+    if (mode === 'overlay' && started && !stream) {
+      teardownVisualizer();
+      onClose?.();
     }
-  };
+  }, [mode, started, stream, onClose, teardownVisualizer]);
   
   /**
    * Function to go to the next preset.
@@ -494,6 +617,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
 
   return (
     <Box
+      {...containerLayoutProps}
       width="100vw"
       height="100vh"
       margin={0}
@@ -502,6 +626,21 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
       bg="black"
       onClick={handleBackgroundClick}
     >
+      {onClose && (
+        <CloseButton
+          position="fixed"
+          top="16px"
+          right="16px"
+          zIndex={1001}
+          size="lg"
+          color="white"
+          onClick={(e) => {
+            e.stopPropagation();
+            teardownVisualizer();
+            onClose();
+          }}
+        />
+      )}
       {/* Media controls for VNC source */}
       {activeVncSource && showMediaControls && (
         <Flex
@@ -651,4 +790,3 @@ const Visualizer: React.FC<VisualizerProps> = ({ ip }) => {
 };
 
 export default Visualizer;
-

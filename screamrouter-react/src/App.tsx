@@ -23,6 +23,7 @@ import ProcessListPage from './components/pages/ProcessListPage'; // Import the 
 import SpeakerLayoutPage from './components/pages/SpeakerLayoutPage'; // Import the SpeakerLayoutPage component
 import StatsPage from './components/pages/StatsPage'; // Import the StatsPage component
 import ListenPage from './components/pages/ListenPage'; // Import the ListenPage component
+import TimeshiftPage from './components/pages/TimeshiftPage'; // Import Timeshift editor
 import DesktopMenu from './components/DesktopMenu'; // Import DesktopMenu
 import { ColorProvider } from './components/desktopMenu/context/ColorContext'; // Import ColorProvider
 import FullMenu from './components/FullMenu'; // Import the FullMenu component
@@ -147,6 +148,7 @@ const AppContent: React.FC = () => {
         <Route path="/speaker-layout-standalone" element={<SpeakerLayoutPage />} /> {/* Route to SpeakerLayoutPage component */}
         <Route path="/listen/:entityType/:entityName" element={<ListenPage />} /> {/* Route to ListenPage component with entity type and name */}
         <Route path="/stats" element={<StatsPage />} /> {/* Route to StatsPage component */}
+        <Route path="/timeshift" element={<TimeshiftPage />} /> {/* Route to Timeshift timeline editor */}
       </Routes>
       
       {showEqualizerModal && selectedItem && selectedItemType && (

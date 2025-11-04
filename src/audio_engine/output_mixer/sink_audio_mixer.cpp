@@ -91,11 +91,6 @@ SinkAudioMixer::SinkAudioMixer(
                          config_.sink_id.c_str(), config_.output_samplerate);
             config_.output_samplerate = 48000;
         }
-        if (config_.output_channels != 2) {
-            LOG_CPP_INFO("[SinkMixer:%s] RTP Opus requires stereo, overriding channels from %d to 2.",
-                         config_.sink_id.c_str(), config_.output_channels);
-            config_.output_channels = 2;
-        }
         if (config_.output_bitdepth != 16) {
             LOG_CPP_INFO("[SinkMixer:%s] RTP Opus requires 16-bit PCM input, overriding bit depth from %d to 16.",
                          config_.sink_id.c_str(), config_.output_bitdepth);

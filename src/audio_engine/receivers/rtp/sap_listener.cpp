@@ -9,6 +9,11 @@
 #include <cerrno>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <sstream>
+#include <unordered_map>
+#include <limits>
 #ifndef _WIN32
     #include <sys/select.h>
 #else
@@ -25,6 +30,55 @@ namespace audio {
 const int SAP_PORT = 9875;
 const std::vector<std::string> MULTICAST_GROUPS = {"224.2.127.254", "224.0.0.56"};
 const std::string UNICAST_ADDR = "0.0.0.0";
+
+namespace {
+
+std::string trim_copy(const std::string& input) {
+    const auto first = input.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return "";
+    }
+    const auto last = input.find_last_not_of(" \t\r\n");
+    return input.substr(first, last - first + 1);
+}
+
+int safe_atoi(const std::string& value, int fallback = 0) {
+    char* end_ptr = nullptr;
+    const long parsed = std::strtol(value.c_str(), &end_ptr, 10);
+    if (end_ptr == value.c_str() || *end_ptr != '\0') {
+        return fallback;
+    }
+    return static_cast<int>(parsed);
+}
+
+std::vector<uint8_t> parse_channel_mapping(const std::string& mapping_value) {
+    std::vector<uint8_t> mapping;
+    std::stringstream ss(mapping_value);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        token = trim_copy(token);
+        if (token.empty()) {
+            continue;
+        }
+        int value = safe_atoi(token, -1);
+        if (value < 0 || value > std::numeric_limits<uint8_t>::max()) {
+            mapping.clear();
+            return mapping;
+        }
+        mapping.push_back(static_cast<uint8_t>(value));
+    }
+    return mapping;
+}
+
+void lowercase_in_place(std::string& text) {
+    std::transform(
+        text.begin(),
+        text.end(),
+        text.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+}
+
+} // namespace
 
 SapListener::SapListener(std::string logger_prefix, const std::vector<std::string>& known_ips)
     : logger_prefix_(logger_prefix), known_ips_(known_ips) {
@@ -336,24 +390,42 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     
     std::string sdp_data(sdp_start, sdp_size);
 
-    // Find SSRC from o= line
-    uint32_t ssrc = 0;
-    size_t o_pos = sdp_data.find("o=");
-    if (o_pos != std::string::npos) {
-        std::string o_line = sdp_data.substr(o_pos);
-        o_line = o_line.substr(0, o_line.find('\n'));
-        
-        char username[64];
-        unsigned long long session_id;
-        int items_scanned = sscanf(o_line.c_str(), "o=%s %llu", username, &session_id);
-        if (items_scanned == 2) {
-            ssrc = static_cast<uint32_t>(session_id);
-        } else {
-            LOG_CPP_WARNING("%s Failed to parse SSRC from o-line: %s", logger_prefix_.c_str(), o_line.c_str());
-            return;
+    std::vector<std::string> sdp_lines;
+    sdp_lines.reserve(16);
+    {
+        std::istringstream sdp_stream(sdp_data);
+        std::string raw_line;
+        while (std::getline(sdp_stream, raw_line)) {
+            if (!raw_line.empty() && raw_line.back() == '\r') {
+                raw_line.pop_back();
+            }
+            sdp_lines.push_back(raw_line);
         }
-    } else {
-        LOG_CPP_WARNING("%s o-line not found in SAP packet", logger_prefix_.c_str());
+    }
+
+    if (sdp_lines.empty()) {
+        LOG_CPP_WARNING("%s SDP payload was empty in SAP packet from %s", logger_prefix_.c_str(), source_ip.c_str());
+        return;
+    }
+
+    uint32_t ssrc = 0;
+    bool ssrc_found = false;
+    for (const auto& line : sdp_lines) {
+        if (line.rfind("o=", 0) == 0) {
+            char username[64] = {0};
+            unsigned long long session_id = 0;
+            if (std::sscanf(line.c_str(), "o=%63s %llu", username, &session_id) == 2) {
+                ssrc = static_cast<uint32_t>(session_id);
+                ssrc_found = true;
+            } else {
+                LOG_CPP_WARNING("%s Failed to parse SSRC from o-line: %s", logger_prefix_.c_str(), line.c_str());
+            }
+            break;
+        }
+    }
+
+    if (!ssrc_found) {
+        LOG_CPP_WARNING("%s o-line not found or malformed in SAP packet", logger_prefix_.c_str());
         return;
     }
 
@@ -361,111 +433,323 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         return;
     }
 
-    // Find connection data from c= line
     std::string connection_ip;
-    size_t c_pos = sdp_data.find("c=IN IP4 ");
-    if (c_pos != std::string::npos) {
-        std::string c_line = sdp_data.substr(c_pos);
-        c_line = c_line.substr(0, c_line.find('\n'));
-        char ip_addr[INET_ADDRSTRLEN];
-        int items_scanned = sscanf(c_line.c_str(), "c=IN IP4 %s", ip_addr);
-        if (items_scanned == 1) {
-            connection_ip = ip_addr;
-        } else {
-            LOG_CPP_WARNING("%s Failed to parse IP from c-line: %s", logger_prefix_.c_str(), c_line.c_str());
+    for (const auto& line : sdp_lines) {
+        if (line.rfind("c=IN IP4 ", 0) == 0) {
+            char ip_addr[INET_ADDRSTRLEN];
+            if (std::sscanf(line.c_str(), "c=IN IP4 %15s", ip_addr) == 1) {
+                connection_ip = ip_addr;
+            } else {
+                LOG_CPP_WARNING("%s Failed to parse IP from c-line: %s", logger_prefix_.c_str(), line.c_str());
+            }
+            break;
         }
-    } else {
-        LOG_CPP_WARNING("%s c-line not found in SAP packet", logger_prefix_.c_str());
     }
 
     int port = 0;
-
-    // Find media port from m= line
-    size_t m_pos = sdp_data.find("m=audio ");
-    if (m_pos != std::string::npos) {
-        std::string m_line = sdp_data.substr(m_pos);
-        m_line = m_line.substr(0, m_line.find('\n'));
-        int items_scanned = sscanf(m_line.c_str(), "m=audio %d", &port);
-        if (items_scanned == 1 && port > 0) {
-            if (session_callback_ && !connection_ip.empty()) {
+    std::vector<int> audio_payload_types;
+    for (const auto& line : sdp_lines) {
+        if (line.rfind("m=audio ", 0) == 0) {
+            std::string m_body = line.substr(std::strlen("m=audio "));
+            std::stringstream m_stream(m_body);
+            m_stream >> port;
+            std::string proto;
+            m_stream >> proto;
+            int payload_type = 0;
+            while (m_stream >> payload_type) {
+                audio_payload_types.push_back(payload_type);
+            }
+            if (session_callback_ && !connection_ip.empty() && port > 0) {
                 session_callback_(connection_ip, port, source_ip);
             }
-        } else {
-            LOG_CPP_WARNING("%s Failed to parse port from m-line: %s", logger_prefix_.c_str(), m_line.c_str());
+            break;
         }
-    } else {
-        LOG_CPP_WARNING("%s m-line not found in SAP packet", logger_prefix_.c_str());
     }
- 
-    // Find rtpmap
-    size_t rtpmap_pos = sdp_data.find("a=rtpmap:");
-    if (rtpmap_pos != std::string::npos) {
-        std::string rtpmap_line = sdp_data.substr(rtpmap_pos);
-        rtpmap_line = rtpmap_line.substr(0, rtpmap_line.find('\n'));
 
-        int pt = 0, rate = 0, channels = 2; // default to 2 channels
-        char encoding[32] = {0};
+    struct RtpmapEntry {
+        std::string encoding;
+        int sample_rate = 0;
+        int channels = 0;
+        bool has_explicit_channels = false;
+    };
 
-        int items_scanned = sscanf(rtpmap_line.c_str(), "a=rtpmap:%d %[^/]/%d/%d", &pt, encoding, &rate, &channels);
-        
-        if (items_scanned < 3) {
-            LOG_CPP_ERROR("%s Failed to parse rtpmap line: %s", logger_prefix_.c_str(), rtpmap_line.c_str());
-            return;
+    std::unordered_map<int, RtpmapEntry> rtpmap_entries;
+    std::unordered_map<int, std::unordered_map<std::string, std::string>> fmtp_entries;
+
+    for (const auto& line : sdp_lines) {
+        if (line.rfind("a=rtpmap:", 0) == 0) {
+            std::string remainder = trim_copy(line.substr(std::strlen("a=rtpmap:")));
+            const auto space_pos = remainder.find(' ');
+            if (space_pos == std::string::npos) {
+                LOG_CPP_WARNING("%s Malformed rtpmap line (missing space): %s", logger_prefix_.c_str(), line.c_str());
+                continue;
+            }
+
+            const std::string pt_str = remainder.substr(0, space_pos);
+            const int payload_type = safe_atoi(pt_str, -1);
+            if (payload_type < 0) {
+                LOG_CPP_WARNING("%s Failed to parse payload type in rtpmap: %s", logger_prefix_.c_str(), line.c_str());
+                continue;
+            }
+
+            std::string encoding_block = trim_copy(remainder.substr(space_pos + 1));
+            const auto first_slash = encoding_block.find('/');
+            if (first_slash == std::string::npos) {
+                LOG_CPP_WARNING("%s Malformed rtpmap payload descriptor: %s", logger_prefix_.c_str(), line.c_str());
+                continue;
+            }
+
+            std::string encoding_name = encoding_block.substr(0, first_slash);
+            lowercase_in_place(encoding_name);
+            encoding_block.erase(0, first_slash + 1);
+
+            int sample_rate = 0;
+            int channels = 0;
+            bool has_explicit_channels = false;
+
+            const auto second_slash = encoding_block.find('/');
+            if (second_slash == std::string::npos) {
+                sample_rate = safe_atoi(trim_copy(encoding_block));
+            } else {
+                sample_rate = safe_atoi(trim_copy(encoding_block.substr(0, second_slash)));
+                const std::string channels_str = trim_copy(encoding_block.substr(second_slash + 1));
+                channels = safe_atoi(channels_str);
+                has_explicit_channels = channels > 0;
+            }
+
+            RtpmapEntry entry;
+            entry.encoding = encoding_name;
+            entry.sample_rate = sample_rate;
+            entry.channels = channels;
+            entry.has_explicit_channels = has_explicit_channels;
+            rtpmap_entries[payload_type] = entry;
+        } else if (line.rfind("a=fmtp:", 0) == 0) {
+            std::string remainder = trim_copy(line.substr(std::strlen("a=fmtp:")));
+            const auto space_pos = remainder.find(' ');
+            if (space_pos == std::string::npos) {
+                continue;
+            }
+            const std::string pt_str = remainder.substr(0, space_pos);
+            const int payload_type = safe_atoi(pt_str, -1);
+            if (payload_type < 0) {
+                continue;
+            }
+
+            std::string params_block = remainder.substr(space_pos + 1);
+            auto& params = fmtp_entries[payload_type];
+
+            std::stringstream param_stream(params_block);
+            std::string param;
+            while (std::getline(param_stream, param, ';')) {
+                param = trim_copy(param);
+                if (param.empty()) {
+                    continue;
+                }
+                const auto equals_pos = param.find('=');
+                std::string key;
+                std::string value;
+                if (equals_pos == std::string::npos) {
+                    key = param;
+                } else {
+                    key = trim_copy(param.substr(0, equals_pos));
+                    value = trim_copy(param.substr(equals_pos + 1));
+                }
+                lowercase_in_place(key);
+                params[key] = value;
+            }
         }
-
-        StreamProperties props;
-        props.codec = StreamCodec::UNKNOWN;
-        props.sample_rate = rate;
-        props.channels = channels;
-
-        std::string encoding_str(encoding);
-        std::transform(encoding_str.begin(), encoding_str.end(), encoding_str.begin(),
-            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-        if (encoding_str.find("l16") != std::string::npos) {
-            props.bit_depth = 16;
-            props.endianness = Endianness::BIG;
-            props.codec = StreamCodec::PCM;
-        } else if (encoding_str.find("l24") != std::string::npos) {
-            props.bit_depth = 24;
-            props.endianness = Endianness::BIG;
-            props.codec = StreamCodec::PCM;
-        } else if (encoding_str.find("s16le") != std::string::npos) {
-            props.bit_depth = 16;
-            props.endianness = Endianness::LITTLE;
-            props.codec = StreamCodec::PCM;
-        } else if (encoding_str.find("opus") != std::string::npos) {
-            props.bit_depth = 16; // Opus decoder outputs 16-bit PCM
-            props.endianness = Endianness::LITTLE;
-            props.codec = StreamCodec::OPUS;
-        } else {
-            props.bit_depth = 16; // default
-            props.endianness = Endianness::BIG; // default
-            props.codec = StreamCodec::UNKNOWN;
-        }
-
-        props.port = port;
-
-        std::lock_guard<std::mutex> lock(ssrc_map_mutex_);
-        ssrc_to_properties_[ssrc] = props;
-        
-        std::lock_guard<std::mutex> lock2(ip_map_mutex_);
-        ip_to_properties_[source_ip] = props;
-        if (!connection_ip.empty()) {
-            ip_to_properties_[connection_ip] = props;
-            SapAnnouncement announcement;
-            announcement.stream_ip = connection_ip;
-            announcement.announcer_ip = source_ip;
-            announcement.port = port;
-            announcement.properties = props;
-            announcements_by_stream_ip_[connection_ip] = announcement;
-        }
-
-        LOG_CPP_DEBUG("%s Updated stream properties for SSRC %u from %s: %d Hz, %d channels, %d bits",
-            logger_prefix_.c_str(), ssrc, source_ip.c_str(), props.sample_rate, props.channels, props.bit_depth);
-    } else {
-        LOG_CPP_WARNING("%s rtpmap not found in SAP packet", logger_prefix_.c_str());
     }
+
+    int chosen_payload_type = -1;
+    StreamCodec chosen_codec = StreamCodec::UNKNOWN;
+    const RtpmapEntry* chosen_entry = nullptr;
+
+    auto try_select_payload = [&](const std::string& needle, StreamCodec codec) -> bool {
+        for (int pt : audio_payload_types) {
+            auto it = rtpmap_entries.find(pt);
+            if (it != rtpmap_entries.end() && it->second.encoding.find(needle) != std::string::npos) {
+                chosen_payload_type = pt;
+                chosen_codec = codec;
+                chosen_entry = &it->second;
+                return true;
+            }
+        }
+        for (const auto& kv : rtpmap_entries) {
+            if (kv.second.encoding.find(needle) != std::string::npos) {
+                chosen_payload_type = kv.first;
+                chosen_codec = codec;
+                chosen_entry = &kv.second;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (!audio_payload_types.empty() || !rtpmap_entries.empty()) {
+        if (!try_select_payload("opus", StreamCodec::OPUS)) {
+            if (!try_select_payload("l24", StreamCodec::PCM) &&
+                !try_select_payload("l16", StreamCodec::PCM) &&
+                !try_select_payload("s16le", StreamCodec::PCM) &&
+                !try_select_payload("pcm", StreamCodec::PCM)) {
+                for (int pt : audio_payload_types) {
+                    auto it = rtpmap_entries.find(pt);
+                    if (it != rtpmap_entries.end()) {
+                        chosen_payload_type = pt;
+                        chosen_entry = &it->second;
+                        break;
+                    }
+                }
+                if (chosen_entry == nullptr && !rtpmap_entries.empty()) {
+                    chosen_payload_type = rtpmap_entries.begin()->first;
+                    chosen_entry = &rtpmap_entries.begin()->second;
+                }
+            }
+        }
+    }
+
+    if (!chosen_entry) {
+        LOG_CPP_WARNING("%s No usable rtpmap entry found in SAP packet for SSRC %u", logger_prefix_.c_str(), ssrc);
+        return;
+    }
+
+    if (chosen_codec == StreamCodec::UNKNOWN) {
+        if (chosen_entry->encoding.find("opus") != std::string::npos) {
+            chosen_codec = StreamCodec::OPUS;
+        } else if (chosen_entry->encoding.find("l24") != std::string::npos ||
+                   chosen_entry->encoding.find("l16") != std::string::npos ||
+                   chosen_entry->encoding.find("s16le") != std::string::npos ||
+                   chosen_entry->encoding.find("pcm") != std::string::npos) {
+            chosen_codec = StreamCodec::PCM;
+        }
+    }
+
+    int derived_channels = chosen_entry->has_explicit_channels ? chosen_entry->channels : 0;
+    int fmtp_streams = 0;
+    int fmtp_coupled_streams = 0;
+    std::vector<uint8_t> fmtp_channel_mapping;
+
+    const auto fmtp_it = fmtp_entries.find(chosen_payload_type);
+    if (fmtp_it != fmtp_entries.end()) {
+        const auto& params = fmtp_it->second;
+        auto channel_param = params.find("channels");
+        if (channel_param != params.end()) {
+            const int fmtp_channels = safe_atoi(channel_param->second, 0);
+            if (fmtp_channels > 0) {
+                derived_channels = fmtp_channels;
+            }
+        }
+
+        auto channel_mapping_param = params.find("channelmapping");
+        if (channel_mapping_param == params.end()) {
+            channel_mapping_param = params.find("channel_mapping");
+        }
+        if (channel_mapping_param != params.end()) {
+            const auto parsed_mapping = parse_channel_mapping(channel_mapping_param->second);
+            if (!parsed_mapping.empty()) {
+                fmtp_channel_mapping = parsed_mapping;
+                const int mapping_channels = static_cast<int>(fmtp_channel_mapping.size());
+                if (mapping_channels > 0) {
+                    derived_channels = mapping_channels;
+                }
+            }
+        }
+
+        auto stereo_param = params.find("stereo");
+        if (stereo_param == params.end()) {
+            stereo_param = params.find("sprop-stereo");
+        }
+        if (stereo_param != params.end()) {
+            const int stereo_flag = safe_atoi(stereo_param->second, -1);
+            if (stereo_flag == 1 && derived_channels < 2) {
+                derived_channels = 2;
+            } else if (stereo_flag == 0 && derived_channels == 0) {
+                derived_channels = 1;
+            }
+        }
+
+        auto streams_param = params.find("streams");
+        if (streams_param != params.end()) {
+            const int value = safe_atoi(streams_param->second, 0);
+            if (value > 0) {
+                fmtp_streams = value;
+            }
+        }
+
+        auto coupled_param = params.find("coupledstreams");
+        if (coupled_param == params.end()) {
+            coupled_param = params.find("coupled_streams");
+        }
+        if (coupled_param != params.end()) {
+            const int value = safe_atoi(coupled_param->second, 0);
+            if (value >= 0) {
+                fmtp_coupled_streams = value;
+            }
+        }
+    }
+
+    if (derived_channels <= 0 && chosen_entry->has_explicit_channels) {
+        derived_channels = chosen_entry->channels;
+    }
+
+    if (derived_channels <= 0) {
+        derived_channels = (chosen_codec == StreamCodec::OPUS) ? 2 : 1;
+    }
+
+    StreamProperties props;
+    props.codec = chosen_codec;
+    props.sample_rate = chosen_entry->sample_rate;
+    if (props.sample_rate <= 0 && chosen_codec == StreamCodec::OPUS) {
+        props.sample_rate = 48000;
+    }
+    props.channels = derived_channels;
+    props.opus_streams = fmtp_streams;
+    props.opus_coupled_streams = fmtp_coupled_streams;
+    props.opus_channel_mapping = fmtp_channel_mapping;
+    props.port = port;
+
+    if (chosen_codec == StreamCodec::OPUS) {
+        props.bit_depth = 16;
+        props.endianness = Endianness::LITTLE;
+    } else if (chosen_entry->encoding.find("l24") != std::string::npos) {
+        props.bit_depth = 24;
+        props.endianness = Endianness::BIG;
+        props.codec = StreamCodec::PCM;
+    } else if (chosen_entry->encoding.find("l16") != std::string::npos) {
+        props.bit_depth = 16;
+        props.endianness = Endianness::BIG;
+        props.codec = StreamCodec::PCM;
+    } else if (chosen_entry->encoding.find("s16le") != std::string::npos) {
+        props.bit_depth = 16;
+        props.endianness = Endianness::LITTLE;
+        props.codec = StreamCodec::PCM;
+    } else {
+        props.bit_depth = 16;
+        props.endianness = Endianness::BIG;
+    }
+
+    std::lock_guard<std::mutex> lock(ssrc_map_mutex_);
+    ssrc_to_properties_[ssrc] = props;
+
+    std::lock_guard<std::mutex> lock2(ip_map_mutex_);
+    ip_to_properties_[source_ip] = props;
+    if (!connection_ip.empty()) {
+        ip_to_properties_[connection_ip] = props;
+        SapAnnouncement announcement;
+        announcement.stream_ip = connection_ip;
+        announcement.announcer_ip = source_ip;
+        announcement.port = port;
+        announcement.properties = props;
+        announcements_by_stream_ip_[connection_ip] = announcement;
+    }
+
+    LOG_CPP_DEBUG(
+        "%s Updated stream properties for SSRC %u from %s: %d Hz, %d channels, %d bits",
+        logger_prefix_.c_str(),
+        ssrc,
+        source_ip.c_str(),
+        props.sample_rate,
+        props.channels,
+        props.bit_depth);
 }
 
 } // namespace audio

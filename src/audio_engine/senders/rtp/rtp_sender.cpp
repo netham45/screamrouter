@@ -580,7 +580,7 @@ void RtpSender::sap_announcement_loop() {
             }
 
             // Add channel map if channels > 2, using the scream channel layout
-            if (config_.output_channels > 2) {
+            if (config_.output_channels > 2 && codec_name != "opus") {
                 std::vector<int> channel_order = get_channel_order_from_mask(config_.output_chlayout1, config_.output_chlayout2);
                 
                 // Ensure the channel order size matches the channel count for a valid map

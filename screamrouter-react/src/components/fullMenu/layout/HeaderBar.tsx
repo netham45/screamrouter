@@ -10,7 +10,7 @@ import {
   Tooltip
 } from '@chakra-ui/react';
 import { RepeatIcon, SettingsIcon, SunIcon, MoonIcon, HamburgerIcon, QuestionIcon } from '@chakra-ui/icons';
-import { FaPlay, FaStepBackward, FaStepForward } from 'react-icons/fa';
+import { FaPlay, FaStepBackward, FaStepForward, FaWaveSquare } from 'react-icons/fa';
 import { HeaderBarProps } from '../types';
 import SearchBox from '../search/SearchBox';
 import VolumeSlider from '../controls/VolumeSlider';
@@ -171,7 +171,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
             _hover={{ bg: buttonHoverBg }}
             onClick={onStartTutorial}
           />
-        </Tooltip>
+        </Tooltip> 
         <IconButton
           aria-label="Refresh"
           icon={<RepeatIcon />}

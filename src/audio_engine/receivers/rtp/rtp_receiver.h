@@ -19,6 +19,7 @@
 #include <vector>
 
 struct OpusDecoder;
+struct OpusMSDecoder;
 
 namespace screamrouter {
 namespace audio {
@@ -153,8 +154,12 @@ public:
 private:
     struct DecoderState {
         OpusDecoder* handle = nullptr;
+        OpusMSDecoder* ms_handle = nullptr;
         int sample_rate = 0;
         int channels = 0;
+        int streams = 0;
+        int coupled_streams = 0;
+        std::vector<unsigned char> mapping;
     };
 
     void destroy_decoder(uint32_t ssrc);

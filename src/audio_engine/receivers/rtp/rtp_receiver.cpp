@@ -5,9 +5,11 @@
 
 #include <rtc/rtp.hpp>
 #include <opus/opus.h>
+#include <opus/opus_multistream.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -50,6 +52,55 @@ void swap_endianness(uint8_t* data, size_t size, int bit_depth) {
         for (size_t i = 0; i + 2 < size; i += 3) {
             std::swap(data[i], data[i + 2]);
         }
+    }
+}
+
+bool resolve_opus_multistream_layout(int channels, int& streams, int& coupled_streams, std::vector<unsigned char>& mapping) {
+    mapping.clear();
+
+    switch (channels) {
+        case 1:
+            streams = 1;
+            coupled_streams = 0;
+            mapping = {0};
+            return true;
+        case 2:
+            streams = 1;
+            coupled_streams = 1;
+            mapping = {0, 1};
+            return true;
+        case 3:
+            streams = 2;
+            coupled_streams = 1;
+            mapping = {0, 2, 1};
+            return true;
+        case 4:
+            streams = 2;
+            coupled_streams = 2;
+            mapping = {0, 1, 2, 3};
+            return true;
+        case 5:
+            streams = 3;
+            coupled_streams = 2;
+            mapping = {0, 2, 1, 3, 4};
+            return true;
+        case 6:
+            streams = 4;
+            coupled_streams = 2;
+            mapping = {0, 2, 1, 5, 3, 4};
+            return true;
+        case 7:
+            streams = 4;
+            coupled_streams = 3;
+            mapping = {0, 2, 1, 6, 3, 4, 5};
+            return true;
+        case 8:
+            streams = 5;
+            coupled_streams = 3;
+            mapping = {0, 2, 1, 6, 3, 4, 5, 7};
+            return true;
+        default:
+            return false;
     }
 }
 } // namespace
@@ -562,6 +613,9 @@ bool RtpReceiverBase::resolve_stream_properties(
         out_properties.endianness = Endianness::LITTLE;
         out_properties.port = packet_port;
         out_properties.codec = StreamCodec::OPUS;
+        out_properties.opus_streams = 0;
+        out_properties.opus_coupled_streams = 0;
+        out_properties.opus_channel_mapping.clear();
         return true;
     }
 
@@ -812,30 +866,93 @@ bool RtpOpusReceiver::populate_append_context(
 
     const int sample_rate = properties.sample_rate > 0 ? properties.sample_rate : kDefaultOpusSampleRate;
     const int channels = properties.channels > 0 ? properties.channels : kDefaultOpusChannels;
+    int streams = properties.opus_streams;
+    int coupled_streams = properties.opus_coupled_streams;
+    std::vector<unsigned char> mapping;
+    mapping.reserve(properties.opus_channel_mapping.size());
+    for (uint8_t value : properties.opus_channel_mapping) {
+        mapping.push_back(static_cast<unsigned char>(value));
+    }
+
+    const bool require_multistream = (channels > 2) || (streams > 0) || !mapping.empty();
+
+    if (require_multistream) {
+        if (streams <= 0 || mapping.size() != static_cast<size_t>(channels)) {
+            if (!resolve_opus_multistream_layout(channels, streams, coupled_streams, mapping)) {
+                LOG_CPP_ERROR("[RtpOpusReceiver] Unable to resolve Opus multistream layout for %d channels", channels);
+                return false;
+            }
+        }
+    }
 
     OpusDecoder* decoder_handle = nullptr;
+    OpusMSDecoder* ms_decoder_handle = nullptr;
     {
         std::lock_guard<std::mutex> lock(decoder_mutex_);
         DecoderState& state = decoder_states_[packet.ssrc];
-        if (!state.handle || state.sample_rate != sample_rate || state.channels != channels) {
+        const bool needs_reconfigure =
+            state.sample_rate != sample_rate ||
+            state.channels != channels ||
+            (require_multistream && (!state.ms_handle || state.streams != streams || state.coupled_streams != coupled_streams || state.mapping != mapping)) ||
+            (!require_multistream && !state.handle) ||
+            (require_multistream && state.handle != nullptr);
+
+        if (needs_reconfigure) {
             if (state.handle) {
                 opus_decoder_destroy(state.handle);
                 state.handle = nullptr;
             }
+            if (state.ms_handle) {
+                opus_multistream_decoder_destroy(state.ms_handle);
+                state.ms_handle = nullptr;
+            }
+
             int error = 0;
-            state.handle = opus_decoder_create(sample_rate, channels, &error);
-            if (error != OPUS_OK || !state.handle) {
-                LOG_CPP_ERROR("[RtpOpusReceiver] Failed to create Opus decoder: %s", opus_strerror(error));
-                state.handle = nullptr;
+            if (require_multistream) {
+                state.ms_handle = opus_multistream_decoder_create(
+                    sample_rate,
+                    channels,
+                    streams,
+                    coupled_streams,
+                    mapping.data(),
+                    &error);
+                if (error != OPUS_OK || !state.ms_handle) {
+                    LOG_CPP_ERROR("[RtpOpusReceiver] Failed to create Opus multistream decoder: %s", opus_strerror(error));
+                    state.ms_handle = nullptr;
+                }
             } else {
-                state.sample_rate = sample_rate;
-                state.channels = channels;
+                state.handle = opus_decoder_create(sample_rate, channels, &error);
+                if (error != OPUS_OK || !state.handle) {
+                    LOG_CPP_ERROR("[RtpOpusReceiver] Failed to create Opus decoder: %s", opus_strerror(error));
+                    state.handle = nullptr;
+                }
+            }
+
+            if ((require_multistream && !state.ms_handle) || (!require_multistream && !state.handle)) {
+                state.sample_rate = 0;
+                state.channels = 0;
+                state.streams = 0;
+                state.coupled_streams = 0;
+                state.mapping.clear();
+                return false;
+            }
+
+            state.sample_rate = sample_rate;
+            state.channels = channels;
+            state.streams = require_multistream ? streams : 0;
+            state.coupled_streams = require_multistream ? coupled_streams : 0;
+            if (require_multistream) {
+                state.mapping = mapping;
+            } else {
+                state.mapping.clear();
             }
         }
+
         decoder_handle = state.handle;
+        ms_decoder_handle = state.ms_handle;
     }
 
-    if (!decoder_handle) {
+    if (!decoder_handle && !ms_decoder_handle) {
         LOG_CPP_ERROR("[RtpOpusReceiver] No Opus decoder available for SSRC %u", packet.ssrc);
         return false;
     }
@@ -843,13 +960,24 @@ bool RtpOpusReceiver::populate_append_context(
     const int max_samples_per_channel = maximum_frame_samples(sample_rate);
     std::vector<opus_int16> decode_buffer(static_cast<size_t>(max_samples_per_channel) * channels);
 
-    int decoded_samples = opus_decode(
-        decoder_handle,
-        packet.payload.data(),
-        static_cast<opus_int32>(packet.payload.size()),
-        decode_buffer.data(),
-        max_samples_per_channel,
-        0);
+    int decoded_samples = 0;
+    if (ms_decoder_handle) {
+        decoded_samples = opus_multistream_decode(
+            ms_decoder_handle,
+            packet.payload.data(),
+            static_cast<opus_int32>(packet.payload.size()),
+            decode_buffer.data(),
+            max_samples_per_channel,
+            0);
+    } else {
+        decoded_samples = opus_decode(
+            decoder_handle,
+            packet.payload.data(),
+            static_cast<opus_int32>(packet.payload.size()),
+            decode_buffer.data(),
+            max_samples_per_channel,
+            0);
+    }
 
     if (decoded_samples < 0) {
         LOG_CPP_ERROR("[RtpOpusReceiver] Opus decoding failed for SSRC %u: %s", packet.ssrc, opus_strerror(decoded_samples));
@@ -884,6 +1012,9 @@ void RtpOpusReceiver::destroy_decoder(uint32_t ssrc) {
         if (it->second.handle) {
             opus_decoder_destroy(it->second.handle);
         }
+        if (it->second.ms_handle) {
+            opus_multistream_decoder_destroy(it->second.ms_handle);
+        }
         decoder_states_.erase(it);
     }
 }
@@ -895,13 +1026,20 @@ void RtpOpusReceiver::destroy_all_decoders() {
         if (state.handle) {
             opus_decoder_destroy(state.handle);
         }
+        if (state.ms_handle) {
+            opus_multistream_decoder_destroy(state.ms_handle);
+        }
     }
     decoder_states_.clear();
 }
 
 int RtpOpusReceiver::maximum_frame_samples(int sample_rate) {
     // Opus frames can be up to 120 ms.
-    return (sample_rate / 1000) * 120;
+    if (sample_rate <= 0) {
+        return 0;
+    }
+    const int64_t samples = (static_cast<int64_t>(sample_rate) * 120 + 999) / 1000;
+    return static_cast<int>(samples);
 }
 
 // ---- RtpReceiver (composite) ---------------------------------------------------------

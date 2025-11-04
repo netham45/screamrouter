@@ -2,13 +2,14 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAppContext } from '../../context/AppContext';
 import { Box, Heading, Text, Button, Center, VStack, Spinner, Icon, Badge } from '@chakra-ui/react';
-import { FaVolumeUp, FaMicrophone, FaRoute } from 'react-icons/fa';
+import { FaVolumeUp, FaMicrophone, FaRoute, FaEye } from 'react-icons/fa';
+import Visualizer from './VisualizerPage';
 
 type EntityType = 'sink' | 'source' | 'route';
 
 const ListenPage: React.FC = () => {
   const { entityType, entityName } = useParams<{ entityType: string; entityName: string }>();
-  const { onListenToEntity, listeningStatus, playbackError, silenceSessionAudioRef, isSilenceAudioPlaying, startedListeningSinks, setStartedListeningSinks } = useAppContext();
+  const { onListenToEntity, listeningStatus, playbackError, silenceSessionAudioRef, isSilenceAudioPlaying, startedListeningSinks, setStartedListeningSinks, audioStreams } = useAppContext();
 
   // Validate and cast entity type
   const validEntityType = (entityType as EntityType) || 'sink';
@@ -19,6 +20,23 @@ const ListenPage: React.FC = () => {
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'reconnecting'>('disconnected');
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
+  const [showVisualizer, setShowVisualizer] = useState(false);
+  const currentStream = entityName ? audioStreams.get(entityName) : undefined;
+  const hasStream = Boolean(currentStream);
+
+  useEffect(() => {
+    if (!hasStream && showVisualizer) {
+      setShowVisualizer(false);
+    }
+  }, [hasStream, showVisualizer]);
+
+  const previousEntityNameRef = useRef<string | undefined>();
+  useEffect(() => {
+    if (previousEntityNameRef.current && previousEntityNameRef.current !== entityName) {
+      setShowVisualizer(false);
+    }
+    previousEntityNameRef.current = entityName;
+  }, [entityName]);
 
   // Use a ref to hold the latest onListenToEntity function without causing the effect to re-run.
   const onListenToEntityRef = useRef(onListenToEntity);
@@ -233,6 +251,18 @@ const ListenPage: React.FC = () => {
         >
           {startedListening ? 'Stop Listening' : `Listen to ${entityName}`}
         </Button>
+
+        <Button
+          colorScheme="teal"
+          onClick={() => setShowVisualizer(prev => !prev)}
+          size="lg"
+          px={10}
+          py={6}
+          leftIcon={<Icon as={FaEye} />}
+          isDisabled={!hasStream || !startedListening}
+        >
+          {showVisualizer ? 'Hide Visualizer' : 'Open Visualizer'}
+        </Button>
         
         <Text color={`${entityColor}.200`}>
           {connectionStatus === 'connecting' && "Connecting..."}
@@ -242,6 +272,15 @@ const ListenPage: React.FC = () => {
           {connectionStatus === 'disconnected' && startedListening && "Disconnected"}
         </Text>
       </VStack>
+      {showVisualizer && currentStream && entityName && (
+        <Visualizer
+          key={entityName}
+          stream={currentStream}
+          autoStart
+          onClose={() => setShowVisualizer(false)}
+          mode="overlay"
+        />
+      )}
     </Center>
   );
 };

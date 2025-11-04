@@ -19,6 +19,7 @@
 #include <vector>
 #include <atomic>
 #include "../../deps/opus/include/opus.h"
+#include "../../deps/opus/include/opus_multistream.h"
 #include <random>
 #include <mutex>
 #include <chrono>
@@ -124,6 +125,7 @@ private:
     std::shared_ptr<rtc::Track> audio_track_;
 
     OpusEncoder* opus_encoder_ = nullptr;
+    OpusMSEncoder* opus_ms_encoder_ = nullptr;
     std::vector<int16_t> pcm_buffer_;
     std::vector<unsigned char> opus_buffer_;
     
@@ -137,6 +139,16 @@ private:
     std::atomic<bool> cleanup_requested_{false};
     std::atomic<bool> has_been_connected_{false};
     std::atomic<uint64_t> m_total_packets_sent{0};
+
+    int opus_channels_ = 2;
+    bool use_multistream_ = false;
+    int opus_streams_ = 0;
+    int opus_coupled_streams_ = 0;
+    std::vector<unsigned char> opus_mapping_;
+    std::string opus_fmtp_profile_;
+
+    bool configure_multistream_layout();
+    std::string build_opus_fmtp_profile() const;
 };
 
 } // namespace audio
