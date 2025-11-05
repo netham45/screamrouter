@@ -1465,7 +1465,10 @@ void SinkAudioMixer::register_mix_timer() {
     clock_pending_ticks_ = 0;
     clock_manager_enabled_.store(false, std::memory_order_release);
     hardware_clock_active_ = false;
+    can_use_hardware_clock_ = false;
+    hardware_clock_handle_ = {};
     hardware_frames_per_tick_ = 0;
+    hardware_clock_check_counter_ = 0;
 
     timer_sample_rate_ = playback_sample_rate_ > 0 ? playback_sample_rate_ : 48000;
     timer_channels_ = std::clamp(playback_channels_, 1, 8);
@@ -1508,57 +1511,36 @@ void SinkAudioMixer::register_mix_timer() {
         clock_manager_enabled_.store(true, std::memory_order_release);
     };
 
-    const bool can_use_hardware_clock = hardware_clock_consumer_ != nullptr &&
-                                        clock_manager_ != nullptr &&
-                                        hardware_frames_per_tick_ > 0;
+    // Check if hardware clock is available, but DON'T use it yet
+    can_use_hardware_clock_ = hardware_clock_consumer_ != nullptr &&
+                              clock_manager_ != nullptr &&
+                              hardware_frames_per_tick_ > 0;
 
-    if (can_use_hardware_clock) {
-        try {
-            auto external_handle = clock_manager_->register_external_clock_condition(
-                timer_sample_rate_, timer_channels_, timer_bit_depth_);
-            if (external_handle.valid()) {
-                if (hardware_clock_consumer_->start_hardware_clock(
-                        clock_manager_.get(), external_handle, hardware_frames_per_tick_)) {
-                    clock_condition_handle_ = std::move(external_handle);
-                    hardware_clock_active_ = true;
-                    LOG_CPP_INFO("[SinkMixer:%s] Using hardware playback clock for pacing (sr=%d ch=%d bit=%d frames/tick=%u).",
-                                 config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_,
-                                 hardware_frames_per_tick_);
-                } else {
-                    clock_manager_->unregister_clock_condition(external_handle);
-                    LOG_CPP_WARNING("[SinkMixer:%s] Hardware clock consumer declined pacing; falling back to software timer.",
-                                    config_.sink_id.c_str());
-                }
-            } else {
-                LOG_CPP_WARNING("[SinkMixer:%s] External clock registration failed; falling back to software timer.",
-                                config_.sink_id.c_str());
-            }
-        } catch (const std::exception& ex) {
-            LOG_CPP_WARNING("[SinkMixer:%s] Failed to enable hardware clock pacing: %s. Falling back to software timer.",
-                            config_.sink_id.c_str(), ex.what());
-            hardware_clock_active_ = false;
-        }
+    if (can_use_hardware_clock_) {
+        LOG_CPP_INFO("[SinkMixer:%s] Hardware clock available. Will switch to it once ALSA is actively playing.",
+                     config_.sink_id.c_str());
     }
 
-    if (!hardware_clock_active_) {
-        try {
-            clock_condition_handle_ = clock_manager_->register_clock_condition(
-                timer_sample_rate_, timer_channels_, timer_bit_depth_);
-            if (!clock_condition_handle_.valid()) {
-                throw std::runtime_error("ClockManager returned invalid condition handle");
-            }
-            LOG_CPP_DEBUG("[SinkMixer:%s] Registered software mix timer (sr=%d ch=%d bit=%d).",
-                          config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_);
-        } catch (const std::exception& ex) {
-            LOG_CPP_ERROR("[SinkMixer:%s] Failed to register mix timer condition with ClockManager: %s.",
-                          config_.sink_id.c_str(), ex.what());
-            clock_condition_handle_ = {};
-            clock_manager_enabled_.store(false, std::memory_order_release);
-            return;
+    // Always start with software timer to bootstrap playback
+    try {
+        clock_condition_handle_ = clock_manager_->register_clock_condition(
+            timer_sample_rate_, timer_channels_, timer_bit_depth_);
+        if (!clock_condition_handle_.valid()) {
+            throw std::runtime_error("ClockManager returned invalid condition handle");
         }
+        LOG_CPP_INFO("[SinkMixer:%s] Starting with software timer for pacing (sr=%d ch=%d bit=%d). %s",
+                     config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_,
+                     can_use_hardware_clock_ ? "Hardware clock will be activated once playback starts." : "");
+    } catch (const std::exception& ex) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to register software timer: %s",
+                      config_.sink_id.c_str(), ex.what());
+        clock_condition_handle_ = {};
+        clock_manager_enabled_.store(false, std::memory_order_release);
+        return;
     }
 
-    const bool prime_initial_tick = hardware_clock_active_;
+    // Don't prime initial tick when using software timer - let it run naturally
+    const bool prime_initial_tick = false;
     initialize_condition_state(prime_initial_tick);
 }
 
@@ -1579,12 +1561,15 @@ void SinkAudioMixer::unregister_mix_timer() {
 
     clock_manager_enabled_.store(false, std::memory_order_release);
     clock_condition_handle_ = {};
+    hardware_clock_handle_ = {};
     clock_last_sequence_ = 0;
     clock_pending_ticks_ = 0;
     timer_sample_rate_ = 0;
     timer_channels_ = 0;
     timer_bit_depth_ = 0;
     hardware_frames_per_tick_ = 0;
+    hardware_clock_check_counter_ = 0;
+    can_use_hardware_clock_ = false;
 }
 
 bool SinkAudioMixer::wait_for_mix_tick() {
@@ -1628,6 +1613,80 @@ bool SinkAudioMixer::wait_for_mix_tick() {
 
     --clock_pending_ticks_;
     return true;
+}
+
+void SinkAudioMixer::try_switch_to_hardware_clock() {
+    // Don't try if already using hardware clock or not available
+    if (hardware_clock_active_ || !can_use_hardware_clock_) {
+        return;
+    }
+
+    // Check if ALSA is actively playing
+#if defined(__linux__)
+    auto* alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get());
+    if (!alsa_sender || !alsa_sender->is_actively_playing()) {
+        return;  // ALSA not ready yet
+    }
+
+    LOG_CPP_INFO("[SinkMixer:%s] ALSA is actively playing. Switching to hardware clock...",
+                 config_.sink_id.c_str());
+
+    try {
+        // Register external clock condition
+        auto external_handle = clock_manager_->register_external_clock_condition(
+            timer_sample_rate_, timer_channels_, timer_bit_depth_);
+
+        if (!external_handle.valid()) {
+            LOG_CPP_WARNING("[SinkMixer:%s] Failed to register external clock condition.",
+                            config_.sink_id.c_str());
+            return;
+        }
+
+        // Start the hardware clock
+        if (!hardware_clock_consumer_->start_hardware_clock(
+                clock_manager_.get(), external_handle, hardware_frames_per_tick_)) {
+            clock_manager_->unregister_clock_condition(external_handle);
+            LOG_CPP_WARNING("[SinkMixer:%s] Hardware clock consumer declined pacing.",
+                            config_.sink_id.c_str());
+            return;
+        }
+
+        // Save old software clock handle
+        auto old_handle = clock_condition_handle_;
+        uint64_t old_sequence = clock_last_sequence_;
+        uint64_t old_pending_ticks = clock_pending_ticks_;
+
+        // Switch to hardware clock
+        hardware_clock_handle_ = external_handle;
+        clock_condition_handle_ = external_handle;
+        hardware_clock_active_ = true;
+
+        // Transfer state to preserve timing
+        if (auto condition = clock_condition_handle_.condition) {
+            std::lock_guard<std::mutex> condition_lock(condition->mutex);
+            condition->sequence = old_sequence;
+            clock_last_sequence_ = old_sequence;
+            clock_pending_ticks_ = old_pending_ticks;
+        }
+
+        // Unregister old software timer
+        if (old_handle.valid()) {
+            try {
+                clock_manager_->unregister_clock_condition(old_handle);
+            } catch (const std::exception& ex) {
+                LOG_CPP_WARNING("[SinkMixer:%s] Failed to unregister software timer: %s",
+                                config_.sink_id.c_str(), ex.what());
+            }
+        }
+
+        LOG_CPP_INFO("[SinkMixer:%s] Successfully switched to hardware playback clock (sr=%d ch=%d bit=%d frames/tick=%u).",
+                     config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_,
+                     hardware_frames_per_tick_);
+    } catch (const std::exception& ex) {
+        LOG_CPP_WARNING("[SinkMixer:%s] Failed to switch to hardware clock: %s. Continuing with software timer.",
+                        config_.sink_id.c_str(), ex.what());
+    }
+#endif
 }
 
 void SinkAudioMixer::cleanup_closed_listeners() {
@@ -1695,6 +1754,16 @@ void SinkAudioMixer::run() {
 
         profiling_cycles_++;
         cleanup_closed_listeners();
+
+        // Try to switch to hardware clock every 10 cycles after startup
+        // This gives ALSA time to start playing before we attempt the switch
+        if (!hardware_clock_active_ && can_use_hardware_clock_) {
+            hardware_clock_check_counter_++;
+            if (hardware_clock_check_counter_ >= 10) {
+                hardware_clock_check_counter_ = 0;
+                try_switch_to_hardware_clock();
+            }
+        }
 
         bool data_available = wait_for_source_data();
         LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Poll complete. Data available this cycle: %s",

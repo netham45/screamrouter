@@ -14,7 +14,7 @@ namespace audio {
 
 namespace {
 
-bool DetectRaspberryPi() {
+bool DetectRaspberryPi() {A
     std::ifstream model_file("/proc/device-tree/model");
     if (model_file.good()) {
         std::string model;
@@ -279,7 +279,6 @@ bool AlsaPlaybackSender::configure_device() {
                  got_period_us, buffer_frames_, got_buffer_us);
 
     reset_hardware_clock_state();
-    prime_hardware_clock_tick_if_needed();
     return true;
 }
 
@@ -512,6 +511,42 @@ unsigned int AlsaPlaybackSender::get_effective_bit_depth() const {
     return static_cast<unsigned int>(bit_depth_);
 }
 
+bool AlsaPlaybackSender::is_actively_playing() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+
+    if (!pcm_handle_) {
+        return false;
+    }
+
+    // Check if we've written any frames
+    const std::uint64_t written = frames_written_.load(std::memory_order_acquire);
+    if (written == 0) {
+        return false;  // Nothing written yet
+    }
+
+    // Check PCM state
+    snd_pcm_state_t state = snd_pcm_state(pcm_handle_);
+    if (state != SND_PCM_STATE_RUNNING && state != SND_PCM_STATE_PREPARED) {
+        return false;  // Not in a playing state
+    }
+
+    // Check if frames are being consumed (delay should be less than written)
+    snd_pcm_sframes_t delay_frames = 0;
+    if (snd_pcm_delay(pcm_handle_, &delay_frames) == 0) {
+        // If delay is less than written frames, ALSA is consuming frames
+        // Also ensure delay is positive and reasonable
+        if (delay_frames > 0 && static_cast<std::uint64_t>(delay_frames) < written) {
+            // Additional check: delay should be less than buffer size
+            // to ensure we're actively playing and not just buffering
+            if (buffer_frames_ > 0 && static_cast<snd_pcm_uframes_t>(delay_frames) < buffer_frames_) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 void AlsaPlaybackSender::reset_hardware_clock_state() {
     frames_written_.store(0, std::memory_order_release);
     std::lock_guard<std::mutex> lock(clock_mutex_);
@@ -672,6 +707,10 @@ void AlsaPlaybackSender::hardware_clock_loop() {
 #endif // __linux__
 
 #if !defined(__linux__)
+bool AlsaPlaybackSender::is_actively_playing() const {
+    return false;
+}
+
 bool AlsaPlaybackSender::start_hardware_clock(ClockManager* clock_manager,
                                               const ClockManager::ConditionHandle& handle,
                                               std::uint32_t frames_per_tick) {

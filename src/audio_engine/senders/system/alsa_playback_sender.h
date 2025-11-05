@@ -36,6 +36,7 @@ public:
     unsigned int get_effective_sample_rate() const;
     unsigned int get_effective_channels() const;
     unsigned int get_effective_bit_depth() const;
+    bool is_actively_playing() const;
 #endif
 
 private:
