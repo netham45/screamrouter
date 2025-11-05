@@ -397,6 +397,29 @@ std::vector<TaggedAudioPacket> NetworkAudioReceiver::append_pcm_payload(PcmAppen
         accumulator.first_packet_rtp_timestamp.reset();
     }
 
+    const std::size_t bytes_per_frame =
+        (samples_per_chunk > 0)
+            ? (chunk_size_bytes_ / static_cast<std::size_t>(samples_per_chunk))
+            : 0;
+
+    if (!accumulator.buffer.empty() &&
+        bytes_per_frame > 0 &&
+        accumulator.first_packet_rtp_timestamp.has_value() &&
+        context.rtp_timestamp.has_value()) {
+        const std::size_t buffered_frames = accumulator.buffer.size() / bytes_per_frame;
+        const uint32_t expected_timestamp =
+            accumulator.first_packet_rtp_timestamp.value() + static_cast<uint32_t>(buffered_frames);
+        if (expected_timestamp != context.rtp_timestamp.value()) {
+            log_warning("Timestamp gap detected for accumulator key " + context.accumulator_key +
+                        " (expected RTP " + std::to_string(expected_timestamp) +
+                        ", got " + std::to_string(context.rtp_timestamp.value()) + "). Resetting accumulator.");
+            accumulator.buffer.clear();
+            accumulator.chunk_active = false;
+            accumulator.first_packet_time = {};
+            accumulator.first_packet_rtp_timestamp = context.rtp_timestamp;
+        }
+    }
+
     accumulator.last_sample_rate = context.sample_rate;
     accumulator.last_channels = context.channels;
     accumulator.last_bit_depth = context.bit_depth;

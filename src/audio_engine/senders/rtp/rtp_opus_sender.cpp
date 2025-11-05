@@ -2,7 +2,6 @@
 #include "../../utils/cpp_logger.h"
 #include <algorithm>
 #include <cstring>
-#include <iterator>
 #include <numeric>
 #include <utility>
 
@@ -12,6 +11,16 @@ namespace audio {
 namespace {
 inline int16_t load_le_i16(const uint8_t* ptr) {
     return static_cast<int16_t>(static_cast<uint16_t>(ptr[0]) | (static_cast<uint16_t>(ptr[1]) << 8));
+}
+
+constexpr size_t kOpusMaxPacketBytesPerStream = 1275;
+constexpr size_t kOpusPacketSafetyOverhead = 32;
+
+inline size_t compute_max_opus_packet_bytes(int stream_count) {
+    if (stream_count <= 0) {
+        stream_count = 1;
+    }
+    return static_cast<size_t>(stream_count) * kOpusMaxPacketBytesPerStream + kOpusPacketSafetyOverhead;
 }
 } // namespace
 
@@ -30,7 +39,7 @@ RtpOpusSender::RtpOpusSender(const SinkMixerConfig& config)
       channel_remap_(static_cast<size_t>(opus_channels_)),
       needs_channel_reorder_(false) {
     pcm_buffer_.reserve(kDefaultFrameSamplesPerChannel * opus_channels_ * 4);
-    opus_buffer_.resize(4096);
+    opus_buffer_.resize(compute_max_opus_packet_bytes(1));
 }
 
 RtpOpusSender::~RtpOpusSender() noexcept {
@@ -72,9 +81,12 @@ std::vector<std::string> RtpOpusSender::sdp_format_specific_attributes() const {
         fmtp += "; streams=" + std::to_string(opus_streams_);
         fmtp += "; coupledstreams=" + std::to_string(opus_coupled_streams_);
         if (!opus_channel_mapping_.empty()) {
-            fmtp += "; channelmapping=" + std::to_string(opus_mapping_family_);
+            fmtp += "; channelmapping=";
             for (size_t i = 0; i < opus_channel_mapping_.size(); ++i) {
-                fmtp += "," + std::to_string(static_cast<int>(opus_channel_mapping_[i]));
+                if (i != 0) {
+                    fmtp += ",";
+                }
+                fmtp += std::to_string(static_cast<int>(opus_channel_mapping_[i]));
             }
         }
     }
@@ -199,6 +211,8 @@ bool RtpOpusSender::initialize_payload_pipeline() {
     }
 
     pcm_buffer_.clear();
+    const int stream_count = use_multistream_ ? opus_streams_ : 1;
+    opus_buffer_.resize(compute_max_opus_packet_bytes(stream_count));
     std::fill(opus_buffer_.begin(), opus_buffer_.end(), 0);
     pcm_buffer_.reserve(kDefaultFrameSamplesPerChannel * opus_channels_ * 4);
 
@@ -270,20 +284,35 @@ bool RtpOpusSender::handle_send_payload(const uint8_t* payload_data, size_t payl
         }
 
         int encoded_bytes = 0;
-        if (use_multistream_) {
-            encoded_bytes = opus_multistream_encode(
-                opus_ms_encoder_,
-                encode_input,
-                opus_frame_size_,
-                opus_buffer_.data(),
-                static_cast<opus_int32>(opus_buffer_.size()));
-        } else {
-            encoded_bytes = opus_encode(
-                opus_encoder_,
-                encode_input,
-                opus_frame_size_,
-                opus_buffer_.data(),
-                static_cast<opus_int32>(opus_buffer_.size()));
+        while (true) {
+            if (use_multistream_) {
+                encoded_bytes = opus_multistream_encode(
+                    opus_ms_encoder_,
+                    encode_input,
+                    opus_frame_size_,
+                    opus_buffer_.data(),
+                    static_cast<opus_int32>(opus_buffer_.size()));
+            } else {
+                encoded_bytes = opus_encode(
+                    opus_encoder_,
+                    encode_input,
+                    opus_frame_size_,
+                    opus_buffer_.data(),
+                    static_cast<opus_int32>(opus_buffer_.size()));
+            }
+
+            if (encoded_bytes == OPUS_BUFFER_TOO_SMALL) {
+                const size_t current_streams = static_cast<size_t>(use_multistream_ ? opus_streams_ : 1);
+                const size_t min_required = compute_max_opus_packet_bytes(static_cast<int>(current_streams));
+                const size_t new_capacity = (std::max)(opus_buffer_.size() * 2, min_required);
+                LOG_CPP_WARNING("[RtpOpusSender:%s] Opus packet buffer too small (capacity=%zu). Resizing to %zu bytes.",
+                                config().sink_id.c_str(),
+                                opus_buffer_.size(),
+                                new_capacity);
+                opus_buffer_.resize(new_capacity);
+                continue;
+            }
+            break;
         }
 
         if (encoded_bytes < 0) {
