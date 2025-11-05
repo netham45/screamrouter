@@ -49,11 +49,17 @@ private:
     std::vector<unsigned char> opus_channel_mapping_;
     bool use_multistream_;
     int opus_mapping_family_;
+    std::vector<int> channel_remap_; // Maps canonical channel index -> source index
+    bool needs_channel_reorder_;
+    std::vector<int16_t> reorder_frame_buffer_;
 
     bool derive_multistream_layout(int channels, int sample_rate,
-                                   int& mapping_family,
+                                   int mapping_family,
                                    int& streams, int& coupled_streams,
                                    std::vector<unsigned char>& mapping) const;
+    std::vector<int> compute_wave_channel_order(int channels) const;
+    std::vector<int> compute_canonical_channel_order(const std::vector<int>& wave_order, int channels) const;
+    void initialize_channel_reorder();
 }; 
 
 } // namespace audio
