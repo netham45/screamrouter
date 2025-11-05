@@ -50,6 +50,7 @@ private:
     void maybe_log_telemetry_locked();
     void hardware_clock_loop();
     void reset_hardware_clock_state();
+    void prime_hardware_clock_tick_if_needed();
 
     SinkMixerConfig config_;
     std::string device_tag_;

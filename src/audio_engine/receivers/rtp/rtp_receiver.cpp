@@ -104,6 +104,27 @@ bool resolve_opus_multistream_layout(int channels, int sample_rate, int& streams
     mapping.assign(temp.begin(), temp.end());
     return true;
 }
+
+uint32_t default_channel_mask_for_channels(int channels) {
+    switch (channels) {
+        case 1: return 0x0001u; // Front Left (fallback for mono)
+        case 2: return 0x0003u; // Front Left, Front Right
+        case 3: return 0x0007u; // + Front Center
+        case 4: return 0x0603u; // FL, FR, SL, SR
+        case 5: return 0x0607u; // + Front Center
+        case 6: return 0x060Fu; // + LFE
+        case 7: return 0x070Fu; // + Back Center
+        case 8: return 0x063Fu; // + Back Left/Right
+        default: {
+            uint32_t mask = 0;
+            const int clamped = std::min(channels, 16);
+            for (int i = 0; i < clamped; ++i) {
+                mask |= (1u << i);
+            }
+            return mask != 0 ? mask : 0x0001u;
+        }
+    }
+}
 } // namespace
 
 namespace screamrouter {
@@ -1016,8 +1037,9 @@ bool RtpOpusReceiver::populate_append_context(
     context.sample_rate = sample_rate;
     context.channels = channels;
     context.bit_depth = 16;
-    context.chlayout1 = (channels == 2) ? 0x03 : 0x00;
-    context.chlayout2 = 0x00;
+    const uint32_t channel_mask = default_channel_mask_for_channels(channels);
+    context.chlayout1 = static_cast<uint8_t>(channel_mask & 0xFFu);
+    context.chlayout2 = static_cast<uint8_t>((channel_mask >> 8) & 0xFFu);
 
     return true;
 }

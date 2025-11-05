@@ -279,6 +279,7 @@ bool AlsaPlaybackSender::configure_device() {
                  got_period_us, buffer_frames_, got_buffer_us);
 
     reset_hardware_clock_state();
+    prime_hardware_clock_tick_if_needed();
     return true;
 }
 
@@ -514,9 +515,27 @@ unsigned int AlsaPlaybackSender::get_effective_bit_depth() const {
 void AlsaPlaybackSender::reset_hardware_clock_state() {
     frames_written_.store(0, std::memory_order_release);
     std::lock_guard<std::mutex> lock(clock_mutex_);
-    frames_per_tick_ = 0;
+    if (!clock_handle_.valid()) {
+        frames_per_tick_ = 0;
+    }
     frames_consumed_total_ = 0;
     residual_frames_ = 0;
+}
+
+void AlsaPlaybackSender::prime_hardware_clock_tick_if_needed() {
+    ClockManager* manager = nullptr;
+    ClockManager::ConditionHandle handle;
+    {
+        std::lock_guard<std::mutex> lock(clock_mutex_);
+        if (clock_manager_ && clock_handle_.valid() && frames_per_tick_ != 0) {
+            manager = clock_manager_;
+            handle = clock_handle_;
+        }
+    }
+
+    if (manager && handle.valid()) {
+        manager->notify_external_clock_advance(handle, 1);
+    }
 }
 
 bool AlsaPlaybackSender::start_hardware_clock(ClockManager* clock_manager,

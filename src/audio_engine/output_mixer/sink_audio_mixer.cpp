@@ -1493,7 +1493,7 @@ void SinkAudioMixer::register_mix_timer() {
         }
     }
 
-    auto initialize_condition_state = [this]() {
+    auto initialize_condition_state = [this](bool prime_initial_tick) {
         if (!clock_condition_handle_.valid()) {
             return;
         }
@@ -1504,7 +1504,7 @@ void SinkAudioMixer::register_mix_timer() {
         } else {
             clock_last_sequence_ = 0;
         }
-        clock_pending_ticks_ = 0;
+        clock_pending_ticks_ = prime_initial_tick ? 1 : 0;
         clock_manager_enabled_.store(true, std::memory_order_release);
     };
 
@@ -1558,7 +1558,8 @@ void SinkAudioMixer::register_mix_timer() {
         }
     }
 
-    initialize_condition_state();
+    const bool prime_initial_tick = hardware_clock_active_;
+    initialize_condition_state(prime_initial_tick);
 }
 
 void SinkAudioMixer::unregister_mix_timer() {
