@@ -17,14 +17,12 @@
 #include <mutex>
 #include <atomic>
 #include <chrono>
-#include <deque>
 #include <map>
 #include <optional>
 
 #include "../utils/audio_component.h"
 #include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
-#include "clock_manager.h"
 
 // Platform-specific socket includes and type definitions
 #ifdef _WIN32
@@ -78,7 +76,6 @@ public:
         std::shared_ptr<NotificationQueue> notification_queue,
         TimeshiftManager* timeshift_manager,
         std::string logger_prefix,
-        ClockManager* clock_manager = nullptr,
         std::size_t chunk_size_bytes = 0
     );
     /**
@@ -157,15 +154,6 @@ protected:
      */
     virtual void dispatch_ready_packet(TaggedAudioPacket&& packet);
 
-    /** @brief Allows derived classes to trigger clock servicing when using custom loops. */
-    void service_clock_manager();
-
-    /**
-     * @brief Queues a packet for clock managed dispatch, falling back to direct dispatch on failure.
-     * @return true if the packet was queued for scheduled dispatch, false if it was forwarded immediately.
-     */
-    bool enqueue_clock_managed_packet(TaggedAudioPacket&& packet);
-
     /**
      * @brief Appends PCM data to an accumulator and returns any completed chunks.
      */
@@ -205,7 +193,6 @@ protected:
     std::shared_ptr<NotificationQueue> notification_queue_;
     TimeshiftManager* timeshift_manager_;
 
-    ClockManager* clock_manager_;
     std::size_t chunk_size_bytes_;
 
     std::set<std::string> known_source_tags_;
@@ -215,22 +202,6 @@ protected:
     std::mutex seen_tags_mutex_;
 
     std::string logger_prefix_;
-
-    struct ClockStreamState {
-        std::string source_tag;
-        int sample_rate = 0;
-        int channels = 0;
-        int bit_depth = 0;
-        uint8_t chlayout1 = 0;
-        uint8_t chlayout2 = 0;
-        uint32_t samples_per_chunk = 0;
-        uint32_t next_rtp_timestamp = 0;
-        std::vector<uint32_t> last_ssrcs;
-        ClockManager::ConditionHandle clock_handle;
-        uint64_t clock_last_sequence = 0;
-        std::deque<TaggedAudioPacket> pending_packets;
-        double current_playback_rate = 1;
-    };
 
     struct PcmAccumulatorState {
         std::vector<uint8_t> buffer;
@@ -244,15 +215,9 @@ protected:
         uint8_t last_chlayout2 = 0;
     };
 
-    std::map<std::string, std::shared_ptr<ClockStreamState>> stream_states_;
-    std::mutex stream_state_mutex_;
-
     std::map<std::string, PcmAccumulatorState> pcm_accumulators_;
     std::mutex pcm_accumulator_mutex_;
 
-    std::shared_ptr<ClockStreamState> get_or_create_stream_state_locked(const TaggedAudioPacket& packet);
-    void clear_clock_managed_streams();
-    void handle_clock_tick(const std::string& source_tag);
     uint32_t calculate_samples_per_chunk(int channels, int bit_depth) const;
     void maybe_log_telemetry();
     std::chrono::steady_clock::time_point telemetry_last_log_time_{};

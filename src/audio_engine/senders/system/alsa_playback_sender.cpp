@@ -75,6 +75,7 @@ bool AlsaPlaybackSender::setup() {
 
 void AlsaPlaybackSender::close() {
 #if defined(__linux__)
+    stop_hardware_clock();
     std::lock_guard<std::mutex> lock(state_mutex_);
     close_locked();
 #else
@@ -277,6 +278,7 @@ bool AlsaPlaybackSender::configure_device() {
                  device_tag_.c_str(), hw_device_name_.c_str(), sample_rate_, channels_, bit_depth_, period_frames_,
                  got_period_us, buffer_frames_, got_buffer_us);
 
+    reset_hardware_clock_state();
     return true;
 }
 
@@ -285,7 +287,12 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         return false;
     }
 
-    const bool detected_xrun = detect_xrun_locked();
+    const bool xrun_via_error_code = (err == -EPIPE);
+    const bool xrun_via_status = detect_xrun_locked();
+    if (xrun_via_error_code && !xrun_via_status) {
+        LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA reported write underrun (EPIPE).", device_tag_.c_str());
+    }
+    const bool detected_xrun = xrun_via_status || xrun_via_error_code;
 
     err = snd_pcm_recover(pcm_handle_, err, 1);
     if (err < 0) {
@@ -337,6 +344,10 @@ void AlsaPlaybackSender::close_locked() {
         snd_pcm_close(pcm_handle_);
         pcm_handle_ = nullptr;
     }
+    frames_written_.store(0, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(clock_mutex_);
+    frames_consumed_total_ = 0;
+    residual_frames_ = 0;
 }
 
 bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size_t bytes_per_frame) {
@@ -425,6 +436,10 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
             continue;
         }
 
+        if (written > 0) {
+            frames_written_.fetch_add(static_cast<uint64_t>(written), std::memory_order_release);
+        }
+
         byte_ptr += static_cast<size_t>(written) * bytes_per_frame;
         frames_remaining -= static_cast<size_t>(written);
 
@@ -496,7 +511,159 @@ unsigned int AlsaPlaybackSender::get_effective_bit_depth() const {
     return static_cast<unsigned int>(bit_depth_);
 }
 
+void AlsaPlaybackSender::reset_hardware_clock_state() {
+    frames_written_.store(0, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(clock_mutex_);
+    frames_per_tick_ = 0;
+    frames_consumed_total_ = 0;
+    residual_frames_ = 0;
+}
+
+bool AlsaPlaybackSender::start_hardware_clock(ClockManager* clock_manager,
+                                              const ClockManager::ConditionHandle& handle,
+                                              std::uint32_t frames_per_tick) {
+    if (!clock_manager || !handle.valid() || frames_per_tick == 0) {
+        return false;
+    }
+
+    stop_hardware_clock();
+
+    std::uint64_t baseline_consumed = 0;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (pcm_handle_ && sample_rate_ > 0) {
+            snd_pcm_sframes_t delay_frames = 0;
+            if (snd_pcm_delay(pcm_handle_, &delay_frames) == 0 && delay_frames >= 0) {
+                const std::uint64_t written = frames_written_.load(std::memory_order_acquire);
+                baseline_consumed = (written >= static_cast<std::uint64_t>(delay_frames))
+                                        ? written - static_cast<std::uint64_t>(delay_frames)
+                                        : 0;
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(clock_mutex_);
+        clock_manager_ = clock_manager;
+        clock_handle_ = handle;
+        frames_per_tick_ = frames_per_tick;
+        frames_consumed_total_ = baseline_consumed;
+        residual_frames_ = 0;
+    }
+
+    clock_thread_stop_requested_.store(false, std::memory_order_release);
+    clock_thread_running_.store(true, std::memory_order_release);
+    clock_thread_ = std::thread(&AlsaPlaybackSender::hardware_clock_loop, this);
+    return true;
+}
+
+void AlsaPlaybackSender::stop_hardware_clock() {
+    clock_thread_stop_requested_.store(true, std::memory_order_release);
+    if (clock_thread_running_.exchange(false, std::memory_order_acq_rel)) {
+        if (clock_thread_.joinable()) {
+            clock_thread_.join();
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(clock_mutex_);
+    clock_manager_ = nullptr;
+    clock_handle_ = {};
+    frames_per_tick_ = 0;
+    frames_consumed_total_ = 0;
+    residual_frames_ = 0;
+}
+
+void AlsaPlaybackSender::hardware_clock_loop() {
+    static constexpr auto kPollInterval = std::chrono::milliseconds(3);
+
+    while (!clock_thread_stop_requested_.load(std::memory_order_acquire)) {
+        ClockManager* manager = nullptr;
+        ClockManager::ConditionHandle handle;
+        std::uint32_t frames_per_tick = 0;
+        {
+            std::lock_guard<std::mutex> lock(clock_mutex_);
+            manager = clock_manager_;
+            handle = clock_handle_;
+            frames_per_tick = frames_per_tick_;
+        }
+
+        if (!manager || !handle.valid() || frames_per_tick == 0) {
+            std::this_thread::sleep_for(kPollInterval);
+            continue;
+        }
+
+        snd_pcm_t* pcm = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            pcm = pcm_handle_;
+        }
+
+        if (!pcm) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        snd_pcm_sframes_t delay_frames = 0;
+        int delay_rc = snd_pcm_delay(pcm, &delay_frames);
+        if (delay_rc < 0) {
+            std::this_thread::sleep_for(kPollInterval);
+            continue;
+        }
+
+        if (delay_frames < 0) {
+            delay_frames = 0;
+        }
+
+        const std::uint64_t written = frames_written_.load(std::memory_order_acquire);
+        std::uint64_t consumed = (written >= static_cast<std::uint64_t>(delay_frames))
+                                     ? written - static_cast<std::uint64_t>(delay_frames)
+                                     : 0;
+
+        std::uint64_t ticks_to_fire = 0;
+        {
+            std::lock_guard<std::mutex> lock(clock_mutex_);
+            if (!clock_handle_.valid() || clock_handle_.id != handle.id || frames_per_tick_ == 0) {
+                // Handle changed while we were sampling; retry.
+                continue;
+            }
+
+            if (consumed < frames_consumed_total_) {
+                frames_consumed_total_ = consumed;
+                residual_frames_ = 0;
+            } else {
+                const std::uint64_t delta = consumed - frames_consumed_total_;
+                frames_consumed_total_ = consumed;
+
+                if (delta > 0) {
+                    const std::uint64_t total = residual_frames_ + delta;
+                    ticks_to_fire = total / frames_per_tick_;
+                    residual_frames_ = total % frames_per_tick_;
+                }
+            }
+        }
+
+        if (ticks_to_fire > 0) {
+            manager->notify_external_clock_advance(handle, ticks_to_fire);
+        }
+
+        std::this_thread::sleep_for(kPollInterval);
+    }
+}
+
 #endif // __linux__
+
+#if !defined(__linux__)
+bool AlsaPlaybackSender::start_hardware_clock(ClockManager* clock_manager,
+                                              const ClockManager::ConditionHandle& handle,
+                                              std::uint32_t frames_per_tick) {
+    (void)clock_manager;
+    (void)handle;
+    (void)frames_per_tick;
+    return false;
+}
+
+void AlsaPlaybackSender::stop_hardware_clock() {}
+#endif
 
 } // namespace audio
 } // namespace screamrouter

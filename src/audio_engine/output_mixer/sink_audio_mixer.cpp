@@ -28,6 +28,7 @@
 #include "../senders/rtp/multi_device_rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
 #include "../senders/system/alsa_playback_sender.h"
+#include "../senders/system/hardware_clock_consumer.h"
 #if defined(__linux__)
 #include "../senders/system/screamrouter_fifo_sender.h"
 #endif
@@ -157,6 +158,10 @@ SinkAudioMixer::SinkAudioMixer(
         LOG_CPP_ERROR("[SinkMixer:%s] Failed to create network sender for protocol '%s'.", config_.sink_id.c_str(), config_.protocol.c_str());
         throw std::runtime_error("Failed to create network sender.");
     }
+
+    hardware_clock_consumer_ = network_sender_
+                                   ? dynamic_cast<IHardwareClockConsumer*>(network_sender_.get())
+                                   : nullptr;
 
     stereo_preprocessor_ = std::make_unique<AudioProcessor>(
         config_.output_channels, 2, 32, config_.output_samplerate, config_.output_samplerate, 1.0f, std::map<int, CppSpeakerLayout>(), m_settings
@@ -1459,12 +1464,22 @@ void SinkAudioMixer::register_mix_timer() {
     clock_last_sequence_ = 0;
     clock_pending_ticks_ = 0;
     clock_manager_enabled_.store(false, std::memory_order_release);
+    hardware_clock_active_ = false;
+    hardware_frames_per_tick_ = 0;
 
     timer_sample_rate_ = playback_sample_rate_ > 0 ? playback_sample_rate_ : 48000;
     timer_channels_ = std::clamp(playback_channels_, 1, 8);
     timer_bit_depth_ = playback_bit_depth_ > 0 ? playback_bit_depth_ : 16;
     if ((timer_bit_depth_ % 8) != 0) {
         timer_bit_depth_ = 16;
+    }
+
+    const std::size_t bytes_per_sample = static_cast<std::size_t>(timer_bit_depth_) / 8;
+    const std::size_t frame_bytes = bytes_per_sample * static_cast<std::size_t>(timer_channels_);
+    if (frame_bytes > 0 && (chunk_size_bytes_ % frame_bytes) == 0) {
+        hardware_frames_per_tick_ = static_cast<std::uint32_t>(chunk_size_bytes_ / frame_bytes);
+    } else {
+        hardware_frames_per_tick_ = 0;
     }
 
     if (!clock_manager_) {
@@ -1478,30 +1493,80 @@ void SinkAudioMixer::register_mix_timer() {
         }
     }
 
-    try {
-        clock_condition_handle_ = clock_manager_->register_clock_condition(
-            timer_sample_rate_, timer_channels_, timer_bit_depth_);
+    auto initialize_condition_state = [this]() {
         if (!clock_condition_handle_.valid()) {
-            throw std::runtime_error("ClockManager returned invalid condition handle");
+            return;
         }
         if (auto condition = clock_condition_handle_.condition) {
             std::lock_guard<std::mutex> condition_lock(condition->mutex);
             condition->sequence = 0;
             clock_last_sequence_ = condition->sequence;
+        } else {
+            clock_last_sequence_ = 0;
         }
         clock_pending_ticks_ = 0;
         clock_manager_enabled_.store(true, std::memory_order_release);
-        LOG_CPP_DEBUG("[SinkMixer:%s] Registered clock-managed mix timer (sr=%d ch=%d bit=%d) using conditions",
-                      config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_);
-    } catch (const std::exception& ex) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Failed to register mix timer condition with ClockManager: %s.",
-                      config_.sink_id.c_str(), ex.what());
-        clock_condition_handle_ = {};
-        clock_manager_enabled_.store(false, std::memory_order_release);
+    };
+
+    const bool can_use_hardware_clock = hardware_clock_consumer_ != nullptr &&
+                                        clock_manager_ != nullptr &&
+                                        hardware_frames_per_tick_ > 0;
+
+    if (can_use_hardware_clock) {
+        try {
+            auto external_handle = clock_manager_->register_external_clock_condition(
+                timer_sample_rate_, timer_channels_, timer_bit_depth_);
+            if (external_handle.valid()) {
+                if (hardware_clock_consumer_->start_hardware_clock(
+                        clock_manager_.get(), external_handle, hardware_frames_per_tick_)) {
+                    clock_condition_handle_ = std::move(external_handle);
+                    hardware_clock_active_ = true;
+                    LOG_CPP_INFO("[SinkMixer:%s] Using hardware playback clock for pacing (sr=%d ch=%d bit=%d frames/tick=%u).",
+                                 config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_,
+                                 hardware_frames_per_tick_);
+                } else {
+                    clock_manager_->unregister_clock_condition(external_handle);
+                    LOG_CPP_WARNING("[SinkMixer:%s] Hardware clock consumer declined pacing; falling back to software timer.",
+                                    config_.sink_id.c_str());
+                }
+            } else {
+                LOG_CPP_WARNING("[SinkMixer:%s] External clock registration failed; falling back to software timer.",
+                                config_.sink_id.c_str());
+            }
+        } catch (const std::exception& ex) {
+            LOG_CPP_WARNING("[SinkMixer:%s] Failed to enable hardware clock pacing: %s. Falling back to software timer.",
+                            config_.sink_id.c_str(), ex.what());
+            hardware_clock_active_ = false;
+        }
     }
+
+    if (!hardware_clock_active_) {
+        try {
+            clock_condition_handle_ = clock_manager_->register_clock_condition(
+                timer_sample_rate_, timer_channels_, timer_bit_depth_);
+            if (!clock_condition_handle_.valid()) {
+                throw std::runtime_error("ClockManager returned invalid condition handle");
+            }
+            LOG_CPP_DEBUG("[SinkMixer:%s] Registered software mix timer (sr=%d ch=%d bit=%d).",
+                          config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_);
+        } catch (const std::exception& ex) {
+            LOG_CPP_ERROR("[SinkMixer:%s] Failed to register mix timer condition with ClockManager: %s.",
+                          config_.sink_id.c_str(), ex.what());
+            clock_condition_handle_ = {};
+            clock_manager_enabled_.store(false, std::memory_order_release);
+            return;
+        }
+    }
+
+    initialize_condition_state();
 }
 
 void SinkAudioMixer::unregister_mix_timer() {
+    if (hardware_clock_active_ && hardware_clock_consumer_) {
+        hardware_clock_consumer_->stop_hardware_clock();
+        hardware_clock_active_ = false;
+    }
+
     if (clock_manager_ && clock_condition_handle_.valid()) {
         try {
             clock_manager_->unregister_clock_condition(clock_condition_handle_);
@@ -1518,6 +1583,7 @@ void SinkAudioMixer::unregister_mix_timer() {
     timer_sample_rate_ = 0;
     timer_channels_ = 0;
     timer_bit_depth_ = 0;
+    hardware_frames_per_tick_ = 0;
 }
 
 bool SinkAudioMixer::wait_for_mix_tick() {

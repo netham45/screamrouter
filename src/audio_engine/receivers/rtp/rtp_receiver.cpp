@@ -120,13 +120,11 @@ const int kDefaultOpusChannels = 2;
 RtpReceiverBase::RtpReceiverBase(
     RtpReceiverConfig config,
     std::shared_ptr<NotificationQueue> notification_queue,
-    TimeshiftManager* timeshift_manager,
-    ClockManager* clock_manager)
+    TimeshiftManager* timeshift_manager)
     : NetworkAudioReceiver(config.listen_port,
                            notification_queue,
                            timeshift_manager,
                            "[RtpReceiver]",
-                           clock_manager,
                            resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       config_(std::move(config)),
       chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr))
@@ -136,10 +134,6 @@ RtpReceiverBase::RtpReceiverBase(
     , epoll_fd_(NAR_INVALID_SOCKET_VALUE)
 #endif
 {
-    if (!clock_manager_) {
-        throw std::runtime_error("RtpReceiver requires a valid ClockManager instance");
-    }
-
 #ifdef _WIN32
     FD_ZERO(&master_read_fds_);
 #endif
@@ -321,7 +315,6 @@ void RtpReceiverBase::run() {
 #endif
 
     while (is_running()) {
-        service_clock_manager();
 
 #ifdef _WIN32
         fd_set read_fds = master_read_fds_;
@@ -360,7 +353,6 @@ void RtpReceiverBase::run() {
                 (void)_;
                 process_ready_packets_internal(ssrc, cliaddr, false);
             }
-            service_clock_manager();
             continue;
         }
 
@@ -1048,9 +1040,8 @@ int RtpOpusReceiver::maximum_frame_samples(int sample_rate) {
 RtpReceiver::RtpReceiver(
     RtpReceiverConfig config,
     std::shared_ptr<NotificationQueue> notification_queue,
-    TimeshiftManager* timeshift_manager,
-    ClockManager* clock_manager)
-    : RtpReceiverBase(std::move(config), std::move(notification_queue), timeshift_manager, clock_manager) {
+    TimeshiftManager* timeshift_manager)
+    : RtpReceiverBase(std::move(config), std::move(notification_queue), timeshift_manager) {
     register_payload_receiver(std::make_unique<RtpPcmReceiver>());
     register_payload_receiver(std::make_unique<RtpOpusReceiver>());
 }
