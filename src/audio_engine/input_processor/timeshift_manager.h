@@ -82,9 +82,13 @@ struct StreamTimingState {
     std::unique_ptr<StreamClock> clock;
 
     // Jitter estimation (RFC 3550)
+    bool jitter_initialized = false;
+    double rfc3550_jitter_sec = 0.0;
     double jitter_estimate = 1.0; // Start with 1ms default jitter
     double system_jitter_estimate_ms = 1.0;
     double last_system_delay_ms = 0.0;
+    double last_arrival_time_sec = 0.0;
+    double last_transit_sec = 0.0;
 
     // Playout buffer state
     double current_buffer_level_ms = 0.0;

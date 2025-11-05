@@ -38,6 +38,14 @@ public:
         }
     };
 
+    class PlatformTimer;
+
+    enum class TimerWaitResult {
+        TimerFired,
+        Notified,
+        Stopped
+    };
+
     explicit ClockManager(std::size_t chunk_size_bytes = kDefaultChunkSizeBytes);
     ~ClockManager();
 
@@ -69,6 +77,7 @@ private:
     std::mutex mutex_;
     std::condition_variable cv_;
     std::thread worker_thread_;
+    std::unique_ptr<PlatformTimer> platform_timer_;
     std::atomic<bool> stop_requested_{false};
     std::atomic<std::uint64_t> next_condition_id_{1};
     const std::size_t chunk_size_bytes_;

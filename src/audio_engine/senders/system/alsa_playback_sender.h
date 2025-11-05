@@ -37,6 +37,7 @@ private:
     bool configure_device();
     bool handle_write_error(int err);
     bool write_frames(const void* data, size_t frame_count, size_t bytes_per_frame);
+    bool detect_xrun_locked();
     void close_locked();
     void maybe_log_telemetry_locked();
 
@@ -53,6 +54,7 @@ private:
     snd_pcm_uframes_t period_frames_ = 0;
     snd_pcm_uframes_t buffer_frames_ = 0;
     size_t bytes_per_frame_ = 0;
+    bool is_raspberry_pi_ = false;
 
     mutable std::mutex state_mutex_;
     std::chrono::steady_clock::time_point telemetry_last_log_time_{};

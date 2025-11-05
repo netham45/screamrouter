@@ -22,6 +22,10 @@ namespace audio {
 
 namespace {
 constexpr double kProcessingBudgetAlpha = 0.2;
+constexpr double kPlaybackRatioMaxDeviation = 0.02; // +/- 2%
+constexpr double kPlaybackRatioSmoothing = 0.1;
+constexpr double kPlaybackRatioGain = 0.001;
+constexpr double kPlaybackDriftGain = 1.0 / 1'000'000.0; // Convert ppm to ratio
 
 bool has_prefix(const std::string& value, const std::string& prefix) {
     if (prefix.empty()) {
@@ -51,6 +55,16 @@ bool match_and_bind_source(ProcessorTargetInfo& info, const std::string& actual_
 
 const std::string& active_tag(const ProcessorTargetInfo& info) {
     return info.is_wildcard ? info.bound_source_tag : info.source_tag_filter;
+}
+
+uint32_t rtp_timestamp_diff(uint32_t current, uint32_t previous) {
+    return current - previous;
+}
+
+double smooth_playback_rate(double previous_rate, double target_rate) {
+    const double blended =
+        previous_rate * (1.0 - kPlaybackRatioSmoothing) + target_rate * kPlaybackRatioSmoothing;
+    return std::clamp(blended, 1.0 - kPlaybackRatioMaxDeviation, 1.0 + kPlaybackRatioMaxDeviation);
 }
 } // namespace
 
@@ -161,7 +175,7 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
         if (!existing_state.is_first_packet && existing_state.clock && reset_threshold_frames > 0) {
             const uint32_t last_ts = existing_state.last_rtp_timestamp;
             const uint32_t current_ts = packet.rtp_timestamp.value();
-            const uint32_t delta = std::abs((int)(current_ts) - (int)(last_ts)); // unsigned wrap-around friendly
+            const uint32_t delta = rtp_timestamp_diff(current_ts, last_ts);
             bool should_reset = delta > reset_threshold_frames;
 
             if (should_reset) {
@@ -238,6 +252,48 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
  
      // 2. Update the stable clock model
     state.clock->update(packet.rtp_timestamp.value(), packet.received_time);
+
+    if (state.clock->is_initialized()) {
+        state.last_clock_offset_ms = state.clock->get_offset_seconds() * 1000.0;
+        state.last_clock_drift_ppm = state.clock->get_drift_ppm();
+        state.last_clock_innovation_ms = state.clock->get_last_innovation_seconds() * 1000.0;
+        state.last_clock_measured_offset_ms = state.clock->get_last_measured_offset_seconds() * 1000.0;
+        state.clock_innovation_abs_sum_ms += std::abs(state.last_clock_innovation_ms);
+        state.clock_innovation_samples++;
+    }
+
+    const double arrival_time_sec =
+        std::chrono::duration<double>(packet.received_time.time_since_epoch()).count();
+
+    if (!state.is_first_packet && packet.sample_rate > 0 &&
+        state.last_wallclock.time_since_epoch().count() > 0) {
+        const double arrival_delta_sec =
+            std::chrono::duration<double>(packet.received_time - state.last_wallclock).count();
+        const uint32_t timestamp_diff =
+            rtp_timestamp_diff(packet.rtp_timestamp.value(), state.last_rtp_timestamp);
+        const double rtp_delta_sec =
+            static_cast<double>(timestamp_diff) / static_cast<double>(packet.sample_rate);
+        const double transit_delta_sec = arrival_delta_sec - rtp_delta_sec;
+        const double abs_transit_delta_sec = std::abs(transit_delta_sec);
+
+        if (!state.jitter_initialized) {
+            state.rfc3550_jitter_sec = abs_transit_delta_sec;
+            state.jitter_initialized = true;
+        } else {
+            state.rfc3550_jitter_sec += (abs_transit_delta_sec - state.rfc3550_jitter_sec) / 16.0;
+        }
+
+        state.jitter_estimate = state.rfc3550_jitter_sec * 1000.0;
+        state.system_jitter_estimate_ms = state.jitter_estimate;
+        state.last_system_delay_ms = transit_delta_sec * 1000.0;
+        state.last_transit_sec = transit_delta_sec;
+    } else {
+        state.jitter_estimate = std::max(state.jitter_estimate, 0.0);
+        state.system_jitter_estimate_ms = state.jitter_estimate;
+        state.last_system_delay_ms = 0.0;
+    }
+
+    state.last_arrival_time_sec = arrival_time_sec;
 
     state.is_first_packet = false;
     state.last_rtp_timestamp = packet.rtp_timestamp.value();
@@ -730,6 +786,15 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(desired_latency_ms);
                 auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
 
+                const double buffer_level_ms = std::max(time_until_playout_ms, 0.0);
+                timing_state->current_buffer_level_ms = buffer_level_ms;
+                if (desired_latency_ms > 1e-6) {
+                    timing_state->buffer_target_fill_percentage =
+                        std::clamp((buffer_level_ms / desired_latency_ms) * 100.0, 0.0, 100.0);
+                } else {
+                    timing_state->buffer_target_fill_percentage = 0.0;
+                }
+
                 double head_lag_ms = std::max(-time_until_playout_ms, 0.0);
                 timing_state->last_head_playout_lag_ms = head_lag_ms;
                 timing_state->head_playout_lag_ms_sum += head_lag_ms;
@@ -770,10 +835,31 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     }
 
                     TaggedAudioPacket packet_to_send = candidate_packet;
-                    timing_state->current_buffer_level_ms = 0.0;
-                    timing_state->buffer_target_fill_percentage = 0.0;
-                    timing_state->current_playback_rate = 1.0;
-                    packet_to_send.playback_rate = 1.0;
+                    const double drift_ratio = timing_state->last_clock_drift_ppm * kPlaybackDriftGain;
+                    const double lateness_adjust = std::max(lateness_ms, 0.0) * kPlaybackRatioGain;
+
+                    double target_rate = 1.0 + drift_ratio + lateness_adjust;
+                    if (!std::isfinite(target_rate)) {
+                        target_rate = 1.0;
+                    }
+                    target_rate = std::clamp(target_rate, 1.0 - kPlaybackRatioMaxDeviation, 1.0 + kPlaybackRatioMaxDeviation);
+
+                    const double smoothed_rate =
+                        smooth_playback_rate(timing_state->current_playback_rate, target_rate);
+
+                    if (std::abs(smoothed_rate - timing_state->current_playback_rate) > 5e-4) {
+                        LOG_CPP_DEBUG(
+                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f lateness_ms=%.3f target=%.6f smoothed=%.6f",
+                            candidate_packet.source_tag.c_str(),
+                            timing_state->last_clock_drift_ppm,
+                            lateness_ms,
+                            target_rate,
+                            smoothed_rate);
+                    }
+
+                    timing_state->current_playback_rate = smoothed_rate;
+                    timing_state->last_system_delay_ms = lateness_ms;
+                    packet_to_send.playback_rate = smoothed_rate;
 
                     target_info.target_queue->push(std::move(packet_to_send));
                     profiling_packets_dispatched_++;

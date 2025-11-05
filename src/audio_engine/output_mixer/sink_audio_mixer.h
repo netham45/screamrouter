@@ -197,8 +197,6 @@ private:
     int playback_bit_depth_{0};
 
     std::chrono::microseconds mix_period_{std::chrono::microseconds(12000)};
-    std::chrono::steady_clock::time_point next_mix_time_{};
-    std::chrono::microseconds dynamic_mix_interval_{std::chrono::microseconds(12000)};
 
     std::vector<int32_t> mixing_buffer_;
     std::vector<int32_t> stereo_buffer_;

@@ -355,12 +355,6 @@ void NetworkAudioReceiver::run() {
 }
 
 void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
-    if (clock_manager_ && chunk_size_bytes_ > 0) {
-        if (enqueue_clock_managed_packet(std::move(packet))) {
-            return;
-        }
-    }
-
     if (timeshift_manager_) {
         timeshift_manager_->add_packet(std::move(packet));
     } else {

@@ -6,7 +6,6 @@
 
 #include "rtp_sender.h"
 #include "../../deps/opus/include/opus.h"
-#include "../../deps/opus/include/opus_multistream.h"
 #include <vector>
 
 namespace screamrouter {
@@ -34,26 +33,17 @@ protected:
 private:
     static constexpr uint8_t kOpusPayloadType = 111;
     static constexpr int kDefaultFrameSamplesPerChannel = 960; // 20ms @ 48kHz
-    static constexpr int kOpusMinChannels = 1;
-    static constexpr int kOpusDefaultChannels = 2;
-    static constexpr int kOpusMaxChannels = 8;
+    static constexpr int kOpusChannels = 2;
     static constexpr int kOpusSampleRate = 48000;
 
     OpusEncoder* opus_encoder_;
-    OpusMSEncoder* opus_ms_encoder_;
     int opus_frame_size_;
     int target_bitrate_;
     bool use_fec_;
-    int opus_channels_;
-    bool use_multistream_;
-    int opus_streams_;
-    int opus_coupled_streams_;
-    std::vector<unsigned char> opus_mapping_;
     std::vector<int16_t> pcm_buffer_;
     std::vector<uint8_t> opus_buffer_;
-
-    bool configure_multistream_layout();
 };
 
 } // namespace audio
 } // namespace screamrouter
+

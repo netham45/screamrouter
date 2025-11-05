@@ -3,6 +3,7 @@
 #include "../../utils/cpp_logger.h"
 
 #include <algorithm>
+#include <fstream>
 #include <cerrno>
 #include <cstring>
 #include <limits>
@@ -11,10 +12,39 @@
 namespace screamrouter {
 namespace audio {
 
+namespace {
+
+bool DetectRaspberryPi() {
+    std::ifstream model_file("/proc/device-tree/model");
+    if (model_file.good()) {
+        std::string model;
+        std::getline(model_file, model);
+        if (model.find("Raspberry Pi") != std::string::npos) {
+            return true;
+        }
+    }
+
+    std::ifstream cpuinfo_file("/proc/cpuinfo");
+    if (cpuinfo_file.good()) {
+        std::string line;
+        while (std::getline(cpuinfo_file, line)) {
+            if (line.find("Raspberry Pi") != std::string::npos ||
+                line.find("BCM27") != std::string::npos) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+} // namespace
+
 AlsaPlaybackSender::AlsaPlaybackSender(const SinkMixerConfig& config)
 #if defined(__linux__)
     : config_(config),
-      device_tag_(config.output_ip)
+      device_tag_(config.output_ip),
+      is_raspberry_pi_(DetectRaspberryPi())
 #else
     : config_(config)
 #endif
@@ -250,25 +280,63 @@ bool AlsaPlaybackSender::configure_device() {
     return true;
 }
 
-void AlsaPlaybackSender::close_locked() {
-    if (pcm_handle_) {
-        snd_pcm_drop(pcm_handle_);
-        snd_pcm_close(pcm_handle_);
-        pcm_handle_ = nullptr;
-    }
-}
-
 bool AlsaPlaybackSender::handle_write_error(int err) {
     if (!pcm_handle_) {
         return false;
     }
+
+    const bool detected_xrun = detect_xrun_locked();
+
     err = snd_pcm_recover(pcm_handle_, err, 1);
     if (err < 0) {
         LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to recover from write error: %s", device_tag_.c_str(), snd_strerror(err));
         close_locked();
         return false;
     }
+
+    if (detected_xrun && is_raspberry_pi_) {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] ALSA x-run detected on Raspberry Pi; recreating playback device.", device_tag_.c_str());
+        close_locked();
+        if (!configure_device()) {
+            LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to reopen device after x-run recovery.", device_tag_.c_str());
+            return false;
+        }
+    }
     return true;
+}
+
+bool AlsaPlaybackSender::detect_xrun_locked() {
+    if (!pcm_handle_) {
+        return false;
+    }
+
+    if (snd_pcm_state(pcm_handle_) == SND_PCM_STATE_XRUN) {
+        return true;
+    }
+
+    snd_pcm_status_t* status = nullptr;
+    if (snd_pcm_status_malloc(&status) < 0 || !status) {
+        return false;
+    }
+
+    bool xrun_detected = false;
+    if (snd_pcm_status(pcm_handle_, status) == 0) {
+        xrun_detected = (snd_pcm_status_get_state(status) == SND_PCM_STATE_XRUN);
+        if (xrun_detected) {
+            LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA x-run state reported by driver.", device_tag_.c_str());
+        }
+    }
+
+    snd_pcm_status_free(status);
+    return xrun_detected;
+}
+
+void AlsaPlaybackSender::close_locked() {
+    if (pcm_handle_) {
+        snd_pcm_drop(pcm_handle_);
+        snd_pcm_close(pcm_handle_);
+        pcm_handle_ = nullptr;
+    }
 }
 
 bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size_t bytes_per_frame) {

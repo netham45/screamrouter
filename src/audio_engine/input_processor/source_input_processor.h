@@ -156,6 +156,7 @@ private:
     float current_timeshift_backshift_sec_config_;
 
     std::map<int, screamrouter::audio::CppSpeakerLayout> current_speaker_layouts_map_;
+    double current_playback_rate_ = 1.0;
 
     std::thread input_thread_;
 

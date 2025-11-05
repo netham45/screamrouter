@@ -55,53 +55,54 @@ void swap_endianness(uint8_t* data, size_t size, int bit_depth) {
     }
 }
 
-bool resolve_opus_multistream_layout(int channels, int& streams, int& coupled_streams, std::vector<unsigned char>& mapping) {
+bool resolve_opus_multistream_layout(int channels, int sample_rate, int& streams, int& coupled_streams, std::vector<unsigned char>& mapping) {
     mapping.clear();
 
-    switch (channels) {
-        case 1:
+    if (channels <= 0) {
+        return false;
+    }
+
+    if (channels <= 2) {
+        if (channels == 1) {
             streams = 1;
             coupled_streams = 0;
             mapping = {0};
-            return true;
-        case 2:
+        } else {
             streams = 1;
             coupled_streams = 1;
             mapping = {0, 1};
-            return true;
-        case 3:
-            streams = 2;
-            coupled_streams = 1;
-            mapping = {0, 2, 1};
-            return true;
-        case 4:
-            streams = 2;
-            coupled_streams = 2;
-            mapping = {0, 1, 2, 3};
-            return true;
-        case 5:
-            streams = 3;
-            coupled_streams = 2;
-            mapping = {0, 2, 1, 3, 4};
-            return true;
-        case 6:
-            streams = 4;
-            coupled_streams = 2;
-            mapping = {0, 2, 1, 5, 3, 4};
-            return true;
-        case 7:
-            streams = 4;
-            coupled_streams = 3;
-            mapping = {0, 2, 1, 6, 3, 4, 5};
-            return true;
-        case 8:
-            streams = 5;
-            coupled_streams = 3;
-            mapping = {0, 2, 1, 6, 3, 4, 5, 7};
-            return true;
-        default:
-            return false;
+        }
+        return true;
     }
+
+    std::vector<unsigned char> temp(static_cast<size_t>(channels), 0);
+    int derived_streams = 0;
+    int derived_coupled = 0;
+    int error = OPUS_OK;
+    OpusMSEncoder* probe = opus_multistream_surround_encoder_create(
+        sample_rate,
+        channels,
+        1,
+        &derived_streams,
+        &derived_coupled,
+        temp.data(),
+        OPUS_APPLICATION_AUDIO,
+        &error);
+
+    if (error != OPUS_OK || !probe) {
+        if (probe) {
+            opus_multistream_encoder_destroy(probe);
+        }
+        LOG_CPP_ERROR("[RtpOpusReceiver] Failed to derive Opus layout for %d channels: %s", channels, opus_strerror(error));
+        return false;
+    }
+
+    opus_multistream_encoder_destroy(probe);
+
+    streams = derived_streams;
+    coupled_streams = derived_coupled;
+    mapping.assign(temp.begin(), temp.end());
+    return true;
 }
 } // namespace
 
@@ -878,7 +879,7 @@ bool RtpOpusReceiver::populate_append_context(
 
     if (require_multistream) {
         if (streams <= 0 || mapping.size() != static_cast<size_t>(channels)) {
-            if (!resolve_opus_multistream_layout(channels, streams, coupled_streams, mapping)) {
+            if (!resolve_opus_multistream_layout(channels, sample_rate, streams, coupled_streams, mapping)) {
                 LOG_CPP_ERROR("[RtpOpusReceiver] Unable to resolve Opus multistream layout for %d channels", channels);
                 return false;
             }

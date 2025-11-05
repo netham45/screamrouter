@@ -567,6 +567,15 @@ bool SinkAudioMixer::start_internal() {
 
     register_mix_timer();
 
+    if (!clock_manager_enabled_.load(std::memory_order_acquire)) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Clock manager registration failed; mixer will not start.",
+                      config_.sink_id.c_str());
+        if (network_sender_) {
+            network_sender_->close();
+        }
+        return false;
+    }
+
     try {
         const auto t_thr0 = std::chrono::steady_clock::now();
         component_thread_ = std::thread(&SinkAudioMixer::run, this);
@@ -1328,9 +1337,10 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
         mp3_queue_size = mp3_output_queue_->size();
     }
 
-    double head_skew_ms = std::chrono::duration<double, std::milli>(now - next_mix_time_).count();
-    if (head_skew_ms < 0.0) {
-        head_skew_ms = 0.0;
+    const uint64_t pending_ticks = clock_pending_ticks_;
+    double tick_backlog_ms = 0.0;
+    if (chunk_duration_ms > 0.0 && pending_ticks > 0) {
+        tick_backlog_ms = chunk_duration_ms * static_cast<double>(pending_ticks);
     }
 
     double source_avg_age_ms = 0.0;
@@ -1359,7 +1369,7 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
     }
 
     LOG_CPP_INFO(
-        "[Telemetry][SinkMixer:%s] payload_bytes=%zu (%.3f ms) ready_sources=%zu ready_total=%zu ready_max=%zu ready_avg_ms=%.3f ready_max_ms=%.3f head_skew_ms=%.3f source_avg_age_ms=%.3f source_max_age_ms=%.3f underrun_active=%d mp3_queue=%zu",
+        "[Telemetry][SinkMixer:%s] payload_bytes=%zu (%.3f ms) ready_sources=%zu ready_total=%zu ready_max=%zu ready_avg_ms=%.3f ready_max_ms=%.3f pending_ticks=%llu tick_backlog_ms=%.3f source_avg_age_ms=%.3f source_max_age_ms=%.3f underrun_active=%d mp3_queue=%zu",
         config_.sink_id.c_str(),
         payload_buffer_write_pos_,
         payload_ms,
@@ -1368,7 +1378,8 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
         ready_max,
         ready_avg_ms,
         ready_max_ms,
-        head_skew_ms,
+        static_cast<unsigned long long>(pending_ticks),
+        tick_backlog_ms,
         source_avg_age_ms,
         source_max_age_ms,
         underrun_silence_active_ ? 1 : 0,
@@ -1388,8 +1399,6 @@ void SinkAudioMixer::set_playback_format(int sample_rate, int channels, int bit_
     playback_bit_depth_ = sanitized_bit_depth;
 
     mix_period_ = calculate_mix_period(playback_sample_rate_, playback_channels_, playback_bit_depth_);
-    dynamic_mix_interval_ = mix_period_;
-    next_mix_time_ = std::chrono::steady_clock::now();
 }
 
 void SinkAudioMixer::update_playback_format_from_sender() {
@@ -1478,14 +1487,14 @@ void SinkAudioMixer::register_mix_timer() {
         if (auto condition = clock_condition_handle_.condition) {
             std::lock_guard<std::mutex> condition_lock(condition->mutex);
             condition->sequence = 0;
+            clock_last_sequence_ = condition->sequence;
         }
-        clock_last_sequence_ = 0;
         clock_pending_ticks_ = 0;
         clock_manager_enabled_.store(true, std::memory_order_release);
         LOG_CPP_DEBUG("[SinkMixer:%s] Registered clock-managed mix timer (sr=%d ch=%d bit=%d) using conditions",
                       config_.sink_id.c_str(), timer_sample_rate_, timer_channels_, timer_bit_depth_);
     } catch (const std::exception& ex) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Failed to register mix timer condition with ClockManager: %s. Falling back to internal pacing.",
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to register mix timer condition with ClockManager: %s.",
                       config_.sink_id.c_str(), ex.what());
         clock_condition_handle_ = {};
         clock_manager_enabled_.store(false, std::memory_order_release);
@@ -1512,20 +1521,46 @@ void SinkAudioMixer::unregister_mix_timer() {
 }
 
 bool SinkAudioMixer::wait_for_mix_tick() {
-    const auto target_time = next_mix_time_ + dynamic_mix_interval_;
-
-    if (!clock_manager_enabled_.load(std::memory_order_acquire)) {
-        auto now = std::chrono::steady_clock::now();
-        if (target_time > now) {
-            std::this_thread::sleep_until(target_time);
-        }
-        next_mix_time_ = target_time;
-        return !stop_flag_;
+    if (stop_flag_) {
+        return false;
     }
 
-    std::this_thread::sleep_until(target_time);
-    next_mix_time_ = target_time;
-    return !stop_flag_;
+    if (!clock_manager_enabled_.load(std::memory_order_acquire)) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Clock manager not enabled; stopping mixer.", config_.sink_id.c_str());
+        stop_flag_ = true;
+        return false;
+    }
+
+    while (clock_pending_ticks_ == 0) {
+        if (stop_flag_) {
+            return false;
+        }
+
+        auto condition = clock_condition_handle_.condition;
+        if (!condition) {
+            LOG_CPP_ERROR("[SinkMixer:%s] Clock condition handle invalid; stopping mixer.", config_.sink_id.c_str());
+            stop_flag_ = true;
+            return false;
+        }
+
+        std::unique_lock<std::mutex> condition_lock(condition->mutex);
+        condition->cv.wait(condition_lock, [this, &condition]() {
+            return stop_flag_ || condition->sequence > clock_last_sequence_;
+        });
+
+        if (stop_flag_) {
+            return false;
+        }
+
+        const uint64_t sequence_snapshot = condition->sequence;
+        if (sequence_snapshot > clock_last_sequence_) {
+            clock_pending_ticks_ += (sequence_snapshot - clock_last_sequence_);
+            clock_last_sequence_ = sequence_snapshot;
+        }
+    }
+
+    --clock_pending_ticks_;
+    return true;
 }
 
 void SinkAudioMixer::cleanup_closed_listeners() {
@@ -1581,11 +1616,10 @@ void SinkAudioMixer::clear_pending_audio() {
  */
 void SinkAudioMixer::run() {
     LOG_CPP_INFO("[SinkMixer:%s] Entering run loop.", config_.sink_id.c_str());
-    next_mix_time_ = std::chrono::steady_clock::now();
 
     while (!stop_flag_) {
         if (!wait_for_mix_tick()) {
-            continue;
+            break;
         }
 
         if (stop_flag_) {
