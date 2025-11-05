@@ -867,14 +867,46 @@ bool RtpOpusReceiver::populate_append_context(
         mapping.push_back(static_cast<unsigned char>(value));
     }
 
-    const bool require_multistream = (channels > 2) || (streams > 0) || !mapping.empty();
+    const bool mapping_valid = !mapping.empty() && mapping.size() == static_cast<size_t>(channels);
+    const bool require_multistream = (channels > 2) || (streams > 0) || (coupled_streams > 0) || mapping_valid;
+
+    auto layout_matches = [&](int stream_count, int coupled_count) {
+        if (stream_count <= 0 || coupled_count < 0 || coupled_count > stream_count) {
+            return false;
+        }
+        const int decoded_channels = (coupled_count * 2) + (stream_count - coupled_count);
+        return decoded_channels == channels;
+    };
 
     if (require_multistream) {
-        if (streams <= 0 || mapping.size() != static_cast<size_t>(channels)) {
-            if (!resolve_opus_multistream_layout(channels, sample_rate, streams, coupled_streams, mapping)) {
+        bool must_resolve_layout = !mapping_valid || !layout_matches(streams, coupled_streams);
+
+        if (must_resolve_layout) {
+            int derived_streams = streams;
+            int derived_coupled = coupled_streams;
+            std::vector<unsigned char> derived_mapping;
+            if (!resolve_opus_multistream_layout(channels, sample_rate, derived_streams, derived_coupled, derived_mapping)) {
                 LOG_CPP_ERROR("[RtpOpusReceiver] Unable to resolve Opus multistream layout for %d channels", channels);
                 return false;
             }
+
+            streams = derived_streams;
+            coupled_streams = derived_coupled;
+
+            if (!mapping_valid) {
+                mapping = std::move(derived_mapping);
+            }
+        }
+
+        if (!layout_matches(streams, coupled_streams)) {
+            LOG_CPP_ERROR("[RtpOpusReceiver] Invalid Opus stream configuration for %d channels (streams=%d, coupled=%d)",
+                          channels, streams, coupled_streams);
+            return false;
+        }
+
+        if (mapping.empty() || mapping.size() != static_cast<size_t>(channels)) {
+            LOG_CPP_ERROR("[RtpOpusReceiver] Missing or invalid Opus channel mapping for %d channels", channels);
+            return false;
         }
     }
 

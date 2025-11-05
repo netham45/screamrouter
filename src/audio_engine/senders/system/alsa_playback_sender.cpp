@@ -287,12 +287,16 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         return false;
     }
 
+    const int original_err = err;
     const bool xrun_via_error_code = (err == -EPIPE);
+    const bool xrun_via_pi_quirks = (err == -ESTRPIPE || err == -EIO);
     const bool xrun_via_status = detect_xrun_locked();
     if (xrun_via_error_code && !xrun_via_status) {
         LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA reported write underrun (EPIPE).", device_tag_.c_str());
+    } else if (xrun_via_pi_quirks) {
+        LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA write error %s (%d) treated as x-run on Raspberry Pi.",
+                      device_tag_.c_str(), snd_strerror(original_err), original_err);
     }
-    const bool detected_xrun = xrun_via_status || xrun_via_error_code;
 
     err = snd_pcm_recover(pcm_handle_, err, 1);
     if (err < 0) {
@@ -301,8 +305,10 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         return false;
     }
 
+    const bool detected_xrun = xrun_via_status || xrun_via_error_code || (is_raspberry_pi_ && xrun_via_pi_quirks);
     if (detected_xrun && is_raspberry_pi_) {
-        LOG_CPP_WARNING("[AlsaPlayback:%s] ALSA x-run detected on Raspberry Pi; recreating playback device.", device_tag_.c_str());
+        LOG_CPP_WARNING("[AlsaPlayback:%s] ALSA x-run detected (err=%s); recreating playback device.", device_tag_.c_str(),
+                        snd_strerror(original_err));
         close_locked();
         if (!configure_device()) {
             LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to reopen device after x-run recovery.", device_tag_.c_str());
@@ -327,11 +333,17 @@ bool AlsaPlaybackSender::detect_xrun_locked() {
     }
 
     bool xrun_detected = false;
-    if (snd_pcm_status(pcm_handle_, status) == 0) {
+    const int status_rc = snd_pcm_status(pcm_handle_, status);
+    if (status_rc == 0) {
         xrun_detected = (snd_pcm_status_get_state(status) == SND_PCM_STATE_XRUN);
         if (xrun_detected) {
             LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA x-run state reported by driver.", device_tag_.c_str());
         }
+    } else if (status_rc == -EPIPE || status_rc == -ESTRPIPE || status_rc == -EIO) {
+        // Some drivers refuse to report status while underrun is active. Treat it as an x-run.
+        xrun_detected = true;
+        LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA status query failed with %s (%d); assuming x-run.",
+                      device_tag_.c_str(), snd_strerror(status_rc), status_rc);
     }
 
     snd_pcm_status_free(status);
