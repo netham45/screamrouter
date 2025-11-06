@@ -22,10 +22,8 @@ namespace audio {
 
 namespace {
 constexpr double kProcessingBudgetAlpha = 0.2;
-constexpr double kPlaybackRatioMaxDeviation = 0.02; // +/- 2%
-constexpr double kPlaybackRatioSmoothing = 0.1;
-constexpr double kPlaybackRatioGain = 0.001;
 constexpr double kPlaybackDriftGain = 1.0 / 1'000'000.0; // Convert ppm to ratio
+constexpr double kFallbackSmoothing = 0.1;
 
 bool has_prefix(const std::string& value, const std::string& prefix) {
     if (prefix.empty()) {
@@ -61,10 +59,18 @@ uint32_t rtp_timestamp_diff(uint32_t current, uint32_t previous) {
     return current - previous;
 }
 
-double smooth_playback_rate(double previous_rate, double target_rate) {
+double smooth_playback_rate(double previous_rate,
+                            double target_rate,
+                            double smoothing_factor,
+                            double max_deviation_ppm) {
+    const double max_deviation_ratio =
+        std::max(max_deviation_ppm, 0.0) * kPlaybackDriftGain;
+    const double clamped_target =
+        std::clamp(target_rate, 1.0 - max_deviation_ratio, 1.0 + max_deviation_ratio);
+    const double clamped_smoothing = std::clamp(smoothing_factor, 0.0, 1.0);
     const double blended =
-        previous_rate * (1.0 - kPlaybackRatioSmoothing) + target_rate * kPlaybackRatioSmoothing;
-    return std::clamp(blended, 1.0 - kPlaybackRatioMaxDeviation, 1.0 + kPlaybackRatioMaxDeviation);
+        previous_rate * (1.0 - clamped_smoothing) + clamped_target * clamped_smoothing;
+    return std::clamp(blended, 1.0 - max_deviation_ratio, 1.0 + max_deviation_ratio);
 }
 } // namespace
 
@@ -835,24 +841,68 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     }
 
                     TaggedAudioPacket packet_to_send = candidate_packet;
-                    const double drift_ratio = timing_state->last_clock_drift_ppm * kPlaybackDriftGain;
-                    const double lateness_adjust = std::max(lateness_ms, 0.0) * kPlaybackRatioGain;
+                    const auto& tuning = m_settings->timeshift_tuning;
+                    double controller_dt_sec = 0.0;
+                    if (timing_state->last_controller_update_time.time_since_epoch().count() != 0) {
+                        controller_dt_sec =
+                            std::chrono::duration<double>(now - timing_state->last_controller_update_time).count();
+                    }
+                    if (controller_dt_sec <= 0.0) {
+                        controller_dt_sec =
+                            std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
+                    }
+                    timing_state->last_controller_update_time = now;
 
-                    double target_rate = 1.0 + drift_ratio + lateness_adjust;
+                    const double buffer_error_ms = desired_latency_ms - buffer_level_ms;
+                    const double proportional_ppm = tuning.playback_ratio_kp * buffer_error_ms;
+                    timing_state->playback_ratio_integral_ppm +=
+                        tuning.playback_ratio_ki * buffer_error_ms * controller_dt_sec;
+                    const double integral_cap_ppm =
+                        std::max(tuning.playback_ratio_integral_limit_ppm,
+                                 tuning.playback_ratio_max_deviation_ppm);
+                    timing_state->playback_ratio_integral_ppm =
+                        std::clamp(timing_state->playback_ratio_integral_ppm,
+                                   -integral_cap_ppm,
+                                   integral_cap_ppm);
+
+                    double controller_ppm = proportional_ppm + timing_state->playback_ratio_integral_ppm;
+                    const double max_slew_ppm =
+                        std::max(tuning.playback_ratio_slew_ppm_per_sec, 0.0) * controller_dt_sec;
+                    if (max_slew_ppm > 0.0) {
+                        controller_ppm = std::clamp(controller_ppm,
+                                                    timing_state->playback_ratio_controller_ppm - max_slew_ppm,
+                                                    timing_state->playback_ratio_controller_ppm + max_slew_ppm);
+                    }
+
+                    const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
+                    controller_ppm = std::clamp(controller_ppm, -max_deviation_ppm, max_deviation_ppm);
+                    timing_state->playback_ratio_controller_ppm = controller_ppm;
+
+                    const double drift_ppm = timing_state->last_clock_drift_ppm;
+                    double combined_ppm = drift_ppm + controller_ppm;
+                    combined_ppm = std::clamp(combined_ppm, -max_deviation_ppm, max_deviation_ppm);
+
+                    double target_rate = 1.0 + combined_ppm * kPlaybackDriftGain;
                     if (!std::isfinite(target_rate)) {
                         target_rate = 1.0;
                     }
-                    target_rate = std::clamp(target_rate, 1.0 - kPlaybackRatioMaxDeviation, 1.0 + kPlaybackRatioMaxDeviation);
 
+                    const double smoothing_factor =
+                        m_settings ? tuning.playback_ratio_smoothing : kFallbackSmoothing;
                     const double smoothed_rate =
-                        smooth_playback_rate(timing_state->current_playback_rate, target_rate);
+                        smooth_playback_rate(timing_state->current_playback_rate,
+                                             target_rate,
+                                             smoothing_factor,
+                                             max_deviation_ppm);
 
                     if (std::abs(smoothed_rate - timing_state->current_playback_rate) > 5e-4) {
                         LOG_CPP_DEBUG(
-                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f lateness_ms=%.3f target=%.6f smoothed=%.6f",
+                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f error_ms=%.3f controller_ppm=%.3f combined_ppm=%.3f target=%.6f smoothed=%.6f",
                             candidate_packet.source_tag.c_str(),
-                            timing_state->last_clock_drift_ppm,
-                            lateness_ms,
+                            drift_ppm,
+                            buffer_error_ms,
+                            controller_ppm,
+                            combined_ppm,
                             target_rate,
                             smoothed_rate);
                     }

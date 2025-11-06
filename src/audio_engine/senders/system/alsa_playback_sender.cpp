@@ -14,7 +14,7 @@ namespace audio {
 
 namespace {
 
-bool DetectRaspberryPi() {A
+bool DetectRaspberryPi() {
     std::ifstream model_file("/proc/device-tree/model");
     if (model_file.good()) {
         std::string model;
@@ -544,13 +544,6 @@ bool AlsaPlaybackSender::is_actively_playing() const {
 }
 
 #endif // __linux__
-
-#if !defined(__linux__)
-bool AlsaPlaybackSender::is_actively_playing() const {
-    return false;
-}
-
-#endif
 
 } // namespace audio
 } // namespace screamrouter

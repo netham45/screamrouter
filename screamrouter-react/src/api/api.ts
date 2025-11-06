@@ -248,6 +248,12 @@ export interface TimeshiftTuning {
   max_clock_pending_packets: number;
   rtp_continuity_slack_seconds: number;
   rtp_session_reset_threshold_seconds: number;
+  playback_ratio_max_deviation_ppm: number;
+  playback_ratio_slew_ppm_per_sec: number;
+  playback_ratio_kp: number;
+  playback_ratio_ki: number;
+  playback_ratio_integral_limit_ppm: number;
+  playback_ratio_smoothing: number;
 }
 
 export interface MixerTuning {

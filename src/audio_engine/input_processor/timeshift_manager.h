@@ -102,6 +102,9 @@ struct StreamTimingState {
     int channels = 0;
     int bit_depth = 0;
     uint32_t samples_per_chunk = 0;
+    double playback_ratio_integral_ppm = 0.0;
+    double playback_ratio_controller_ppm = 0.0;
+    std::chrono::steady_clock::time_point last_controller_update_time{};
 
     // Stats
     std::atomic<uint64_t> total_packets{0};

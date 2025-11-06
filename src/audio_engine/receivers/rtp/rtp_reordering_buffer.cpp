@@ -1,5 +1,6 @@
 #include "rtp_reordering_buffer.h"
 #include "../../utils/cpp_logger.h" // For logging
+#include <limits>
 #include <utility>
 
 // The is_sequence_greater function is now a static member of the class.
@@ -33,10 +34,41 @@ void RtpReorderingBuffer::add_packet(RtpPacketData&& packet) {
         return;
     }
 
+    const uint16_t new_delta = static_cast<uint16_t>(packet.sequence_number - m_next_expected_seq);
+
     // Prevent buffer from growing indefinitely
     if (m_buffer.size() >= m_max_size) {
-        LOG_CPP_WARNING(("[RtpReorderingBuffer] Buffer full (size: " + std::to_string(m_buffer.size()) + "). Discarding oldest packet (Seq: " + std::to_string(m_buffer.begin()->first) + ") to make space for new packet (Seq: " + std::to_string(packet.sequence_number) + ").").c_str());
-        m_buffer.erase(m_buffer.begin());
+        auto drop_it = m_buffer.end();
+        uint16_t farthest_distance = 0;
+
+        for (auto it = m_buffer.begin(); it != m_buffer.end(); ++it) {
+            const uint16_t delta = static_cast<uint16_t>(it->first - m_next_expected_seq);
+
+            // Prefer discarding packets that are already stale (behind the expected sequence).
+            if (delta >= 32768) {
+                drop_it = it;
+                break;
+            }
+
+            if (drop_it == m_buffer.end() || delta > farthest_distance) {
+                drop_it = it;
+                farthest_distance = delta;
+            }
+        }
+
+        if (drop_it != m_buffer.end() && new_delta < 32768 && new_delta > farthest_distance) {
+            LOG_CPP_WARNING(("[RtpReorderingBuffer] Buffer full (size: " + std::to_string(m_buffer.size()) +
+                            "). Dropping incoming packet Seq: " + std::to_string(packet.sequence_number) +
+                            " (distance " + std::to_string(new_delta) + ") as it is farther than buffered packets.").c_str());
+            return;
+        }
+
+        if (drop_it != m_buffer.end()) {
+            LOG_CPP_WARNING(("[RtpReorderingBuffer] Buffer full (size: " + std::to_string(m_buffer.size()) +
+                            "). Discarding packet Seq: " + std::to_string(drop_it->first) +
+                            " to make space for new packet Seq: " + std::to_string(packet.sequence_number) + ".").c_str());
+            m_buffer.erase(drop_it);
+        }
     }
 
     m_buffer[packet.sequence_number] = std::move(packet);
@@ -48,35 +80,67 @@ std::vector<RtpPacketData> RtpReorderingBuffer::get_ready_packets() {
         return ready_packets;
     }
 
-    // NO WAITING - Process packets immediately in order or skip missing ones
-    for (auto it = m_buffer.begin(); it != m_buffer.end(); ) {
-        if (it->first == m_next_expected_seq) {
-            // This is the packet we expect, add it to the list
-            ready_packets.push_back(std::move(it->second));
-            it = m_buffer.erase(it);
-            m_next_expected_seq++; // Increment for the next expected packet
-        } else if (is_sequence_greater(it->first, m_next_expected_seq)) {
-            // We have a gap - packet(s) are missing
-            // Don't wait at all - immediately skip to the available packet
-            uint16_t num_missing = (uint16_t)(it->first - m_next_expected_seq);
-            
-            LOG_CPP_WARNING(("[RtpReorderingBuffer] Skipping " + std::to_string(num_missing) +
-                           " missing packet(s) from seq " + std::to_string(m_next_expected_seq) +
-                           " to " + std::to_string((uint16_t)(it->first - 1)) +
-                           ". Immediately advancing to available packet: " + std::to_string(it->first)).c_str());
-            
-            // Skip all missing packets and jump to the available one
-            m_next_expected_seq = it->first;
-            // Continue to process the now-current packet
+    const auto now = std::chrono::steady_clock::now();
+
+    while (true) {
+        auto exact_it = m_buffer.find(m_next_expected_seq);
+        if (exact_it != m_buffer.end()) {
+            ready_packets.push_back(std::move(exact_it->second));
+            m_buffer.erase(exact_it);
+            m_next_expected_seq++;
             continue;
-        } else {
-            // This packet is older than what we expect (late arrival)
-            // Discard it since we've already moved past this sequence number
-            LOG_CPP_DEBUG(("[RtpReorderingBuffer] Discarding late packet with seq " +
-                         std::to_string(it->first) + " (expecting " +
-                         std::to_string(m_next_expected_seq) + " or higher)").c_str());
-            it = m_buffer.erase(it);
         }
+
+        // Drop packets that are already behind the expected sequence number.
+        bool removed_late_packet = false;
+        for (auto it = m_buffer.begin(); it != m_buffer.end();) {
+            const uint16_t delta = static_cast<uint16_t>(it->first - m_next_expected_seq);
+            if (delta >= 32768) {
+                LOG_CPP_DEBUG(("[RtpReorderingBuffer] Discarding late packet with seq " +
+                               std::to_string(it->first) + " (expecting " +
+                               std::to_string(m_next_expected_seq) + " or higher)").c_str());
+                it = m_buffer.erase(it);
+                removed_late_packet = true;
+            } else {
+                ++it;
+            }
+        }
+        if (removed_late_packet) {
+            continue;
+        }
+
+        if (m_buffer.empty()) {
+            break;
+        }
+
+        auto candidate_it = m_buffer.end();
+        uint16_t best_distance = std::numeric_limits<uint16_t>::max();
+        for (auto it = m_buffer.begin(); it != m_buffer.end(); ++it) {
+            const uint16_t delta = static_cast<uint16_t>(it->first - m_next_expected_seq);
+            if (delta < 32768 && delta < best_distance) {
+                candidate_it = it;
+                best_distance = delta;
+            }
+        }
+
+        if (candidate_it == m_buffer.end()) {
+            break;
+        }
+
+        const auto wait_time = now - candidate_it->second.received_time;
+        if (wait_time >= m_max_delay) {
+            const uint16_t skipped = best_distance;
+            if (skipped > 0) {
+                LOG_CPP_WARNING(("[RtpReorderingBuffer] Timed out waiting for " +
+                                 std::to_string(skipped) + " packet(s) starting at seq " +
+                                 std::to_string(m_next_expected_seq) + ". Advancing to seq " +
+                                 std::to_string(candidate_it->first) + ".").c_str());
+            }
+            m_next_expected_seq = candidate_it->first;
+            continue;
+        }
+
+        break;
     }
 
     return ready_packets;
