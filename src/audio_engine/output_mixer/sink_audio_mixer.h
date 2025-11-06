@@ -44,8 +44,6 @@ namespace audio {
 
 class SinkSynchronizationCoordinator;
 class MixScheduler;
-class IHardwareClockConsumer;
-
 /**
  * @struct SinkAudioMixerStats
  * @brief Holds raw statistics collected from the SinkAudioMixer.
@@ -193,12 +191,6 @@ private:
     int timer_sample_rate_{0};
     int timer_channels_{0};
     int timer_bit_depth_{0};
-    IHardwareClockConsumer* hardware_clock_consumer_{nullptr};
-    bool hardware_clock_active_{false};
-    bool can_use_hardware_clock_{false};
-    ClockManager::ConditionHandle hardware_clock_handle_{};
-    std::uint32_t hardware_frames_per_tick_{0};
-    std::uint32_t hardware_clock_check_counter_{0};
 
     int playback_sample_rate_{0};
     int playback_channels_{0};
@@ -315,7 +307,6 @@ private:
     void register_mix_timer();
     void unregister_mix_timer();
     bool wait_for_mix_tick();
-    void try_switch_to_hardware_clock();
 };
 
 } // namespace audio

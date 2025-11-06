@@ -5,7 +5,6 @@
 
 
 #include "../i_network_sender.h"
-#include "hardware_clock_consumer.h"
 #include "../../audio_types.h"
 #include "../../system_audio/system_audio_tags.h"
 
@@ -17,16 +16,13 @@
 #include <string>
 #include <vector>
 #include <atomic>
-#include <thread>
-#include <mutex>
-#include <chrono>
 #include <cstdint>
 
 namespace screamrouter {
 namespace audio {
 namespace system_audio {
 
-class WasapiPlaybackSender : public INetworkSender, public IHardwareClockConsumer {
+class WasapiPlaybackSender : public INetworkSender {
 public:
     enum class SampleFormat {
         Int16,
@@ -42,10 +38,6 @@ public:
     bool setup() override;
     void close() override;
     void send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) override;
-    bool start_hardware_clock(ClockManager* clock_manager,
-                              const ClockManager::ConditionHandle& handle,
-                              std::uint32_t frames_per_tick) override;
-    void stop_hardware_clock() override;
 
 private:
 
@@ -58,8 +50,7 @@ private:
     void choose_device_format(WAVEFORMATEX* mix_format, bool format_supported);
     void update_conversion_state();
     void convert_frames(const uint8_t* src, UINT32 frames, BYTE* dst);
-    void hardware_clock_loop();
-    void reset_hardware_clock_state();
+    void reset_playback_counters();
 
     SinkMixerConfig config_;
 
@@ -88,15 +79,6 @@ private:
     UINT32 buffer_frames_ = 0;
     std::vector<uint8_t> conversion_buffer_;
 
-    std::mutex clock_mutex_;
-    ClockManager* clock_manager_ = nullptr;
-    ClockManager::ConditionHandle clock_handle_{};
-    std::uint32_t frames_per_tick_ = 0;
-    std::uint64_t last_clock_position_ = 0;
-    std::uint64_t residual_frames_ = 0;
-    std::atomic<bool> clock_thread_running_{false};
-    std::atomic<bool> clock_thread_stop_{false};
-    std::thread clock_thread_;
     std::atomic<std::uint64_t> frames_written_{0};
 };
 

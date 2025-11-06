@@ -117,7 +117,6 @@ bool WasapiPlaybackSender::setup() {
 
 void WasapiPlaybackSender::close() {
     if (!running_) {
-        stop_hardware_clock();
         uninitialize_com();
         return;
     }
@@ -125,7 +124,6 @@ void WasapiPlaybackSender::close() {
     if (audio_client_) {
         audio_client_->Stop();
     }
-    stop_hardware_clock();
     if (render_event_) {
         CloseHandle(render_event_);
         render_event_ = nullptr;
@@ -364,7 +362,7 @@ bool WasapiPlaybackSender::configure_audio_client() {
     }
 
     update_conversion_state();
-    reset_hardware_clock_state();
+    reset_playback_counters();
 
     return true;
 }
@@ -514,129 +512,8 @@ void WasapiPlaybackSender::send_payload(const uint8_t* payload_data, size_t payl
     }
 }
 
-void WasapiPlaybackSender::reset_hardware_clock_state() {
+void WasapiPlaybackSender::reset_playback_counters() {
     frames_written_.store(0, std::memory_order_release);
-    std::lock_guard<std::mutex> lock(clock_mutex_);
-    last_clock_position_ = 0;
-    residual_frames_ = 0;
-}
-
-bool WasapiPlaybackSender::start_hardware_clock(ClockManager* clock_manager,
-                                                const ClockManager::ConditionHandle& handle,
-                                                std::uint32_t frames_per_tick) {
-    if (!clock_manager || !handle.valid() || frames_per_tick == 0 || !audio_client_ || !running_) {
-        return false;
-    }
-
-    stop_hardware_clock();
-
-    UINT32 padding = 0;
-    HRESULT hr = audio_client_->GetCurrentPadding(&padding);
-    if (FAILED(hr)) {
-        LOG_CPP_WARNING("[WasapiPlayback:%s] GetCurrentPadding failed while starting hardware clock: 0x%lx",
-                        config_.sink_id.c_str(), hr);
-        return false;
-    }
-
-    const std::uint64_t written = frames_written_.load(std::memory_order_acquire);
-    const std::uint64_t consumed = (written >= static_cast<std::uint64_t>(padding))
-                                       ? written - static_cast<std::uint64_t>(padding)
-                                       : 0;
-
-    {
-        std::lock_guard<std::mutex> lock(clock_mutex_);
-        clock_manager_ = clock_manager;
-        clock_handle_ = handle;
-        frames_per_tick_ = frames_per_tick;
-        last_clock_position_ = consumed;
-        residual_frames_ = 0;
-    }
-
-    clock_thread_stop_.store(false, std::memory_order_release);
-    clock_thread_running_.store(true, std::memory_order_release);
-    clock_thread_ = std::thread(&WasapiPlaybackSender::hardware_clock_loop, this);
-    return true;
-}
-
-void WasapiPlaybackSender::stop_hardware_clock() {
-    clock_thread_stop_.store(true, std::memory_order_release);
-    if (clock_thread_running_.exchange(false, std::memory_order_acq_rel)) {
-        if (clock_thread_.joinable()) {
-            clock_thread_.join();
-        }
-    }
-
-    std::lock_guard<std::mutex> lock(clock_mutex_);
-    clock_manager_ = nullptr;
-    clock_handle_ = {};
-    frames_per_tick_ = 0;
-    last_clock_position_ = 0;
-    residual_frames_ = 0;
-}
-
-void WasapiPlaybackSender::hardware_clock_loop() {
-    static constexpr auto kPollInterval = std::chrono::milliseconds(3);
-
-    while (!clock_thread_stop_.load(std::memory_order_acquire)) {
-        ClockManager* manager = nullptr;
-        ClockManager::ConditionHandle handle;
-        std::uint32_t frames_per_tick = 0;
-        {
-            std::lock_guard<std::mutex> lock(clock_mutex_);
-            manager = clock_manager_;
-            handle = clock_handle_;
-            frames_per_tick = frames_per_tick_;
-        }
-
-        if (!manager || !handle.valid() || frames_per_tick == 0) {
-            std::this_thread::sleep_for(kPollInterval);
-            continue;
-        }
-
-        if (!audio_client_) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        }
-
-        UINT32 padding = 0;
-        HRESULT hr = audio_client_->GetCurrentPadding(&padding);
-        if (FAILED(hr)) {
-            std::this_thread::sleep_for(kPollInterval);
-            continue;
-        }
-
-        const std::uint64_t written = frames_written_.load(std::memory_order_acquire);
-        const std::uint64_t consumed = (written >= static_cast<std::uint64_t>(padding))
-                                           ? written - static_cast<std::uint64_t>(padding)
-                                           : 0;
-
-        std::uint64_t ticks_to_fire = 0;
-        {
-            std::lock_guard<std::mutex> lock(clock_mutex_);
-            if (!clock_handle_.valid() || clock_handle_.id != handle.id || frames_per_tick_ == 0) {
-                continue;
-            }
-
-            if (consumed < last_clock_position_) {
-                last_clock_position_ = consumed;
-                residual_frames_ = 0;
-            } else {
-                const std::uint64_t delta = consumed - last_clock_position_;
-                last_clock_position_ = consumed;
-                if (delta > 0) {
-                    const std::uint64_t total = residual_frames_ + delta;
-                    ticks_to_fire = total / frames_per_tick_;
-                    residual_frames_ = total % frames_per_tick_;
-                }
-            }
-        }
-
-        if (ticks_to_fire > 0) {
-            manager->notify_external_clock_advance(handle, ticks_to_fire);
-        }
-
-        std::this_thread::sleep_for(kPollInterval);
-    }
 }
 
 } // namespace system_audio
