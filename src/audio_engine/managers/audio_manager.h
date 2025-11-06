@@ -405,7 +405,13 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("max_catchup_lag_ms", &TimeshiftTuning::max_catchup_lag_ms)
         .def_readwrite("max_clock_pending_packets", &TimeshiftTuning::max_clock_pending_packets)
         .def_readwrite("rtp_continuity_slack_seconds", &TimeshiftTuning::rtp_continuity_slack_seconds)
-        .def_readwrite("rtp_session_reset_threshold_seconds", &TimeshiftTuning::rtp_session_reset_threshold_seconds);
+        .def_readwrite("rtp_session_reset_threshold_seconds", &TimeshiftTuning::rtp_session_reset_threshold_seconds)
+        .def_readwrite("playback_ratio_max_deviation_ppm", &TimeshiftTuning::playback_ratio_max_deviation_ppm)
+        .def_readwrite("playback_ratio_slew_ppm_per_sec", &TimeshiftTuning::playback_ratio_slew_ppm_per_sec)
+        .def_readwrite("playback_ratio_kp", &TimeshiftTuning::playback_ratio_kp)
+        .def_readwrite("playback_ratio_ki", &TimeshiftTuning::playback_ratio_ki)
+        .def_readwrite("playback_ratio_integral_limit_ppm", &TimeshiftTuning::playback_ratio_integral_limit_ppm)
+        .def_readwrite("playback_ratio_smoothing", &TimeshiftTuning::playback_ratio_smoothing);
 
     py::class_<ProfilerSettings>(m, "ProfilerSettings")
         .def(py::init<>())

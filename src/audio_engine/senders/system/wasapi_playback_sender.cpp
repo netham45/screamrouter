@@ -135,6 +135,7 @@ void WasapiPlaybackSender::close() {
     format_buffer_.clear();
     device_format_ = nullptr;
     running_ = false;
+    frames_written_.store(0, std::memory_order_release);
 
     uninitialize_com();
 }
@@ -361,6 +362,7 @@ bool WasapiPlaybackSender::configure_audio_client() {
     }
 
     update_conversion_state();
+    reset_playback_counters();
 
     return true;
 }
@@ -502,8 +504,16 @@ void WasapiPlaybackSender::send_payload(const uint8_t* payload_data, size_t payl
             return;
         }
 
+        if (frames_to_write > 0) {
+            frames_written_.fetch_add(static_cast<std::uint64_t>(frames_to_write), std::memory_order_release);
+        }
+
         frames_written += frames_to_write;
     }
+}
+
+void WasapiPlaybackSender::reset_playback_counters() {
+    frames_written_.store(0, std::memory_order_release);
 }
 
 } // namespace system_audio

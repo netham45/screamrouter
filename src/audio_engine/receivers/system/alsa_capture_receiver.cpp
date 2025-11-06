@@ -40,7 +40,6 @@ AlsaCaptureReceiver::AlsaCaptureReceiver(
                            std::move(notification_queue),
                            timeshift_manager,
                            "[AlsaCapture]" + device_tag,
-                           nullptr,
                            resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       device_tag_(std::move(device_tag)),
       capture_params_(std::move(capture_params))

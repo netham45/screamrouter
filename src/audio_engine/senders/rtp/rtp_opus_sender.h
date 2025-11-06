@@ -34,9 +34,6 @@ protected:
 private:
     static constexpr uint8_t kOpusPayloadType = 111;
     static constexpr int kDefaultFrameSamplesPerChannel = 960; // 20ms @ 48kHz
-    static constexpr int kOpusMinChannels = 1;
-    static constexpr int kOpusDefaultChannels = 2;
-    static constexpr int kOpusMaxChannels = 8;
     static constexpr int kOpusSampleRate = 48000;
 
     OpusEncoder* opus_encoder_;
@@ -44,16 +41,26 @@ private:
     int opus_frame_size_;
     int target_bitrate_;
     bool use_fec_;
-    int opus_channels_;
-    bool use_multistream_;
-    int opus_streams_;
-    int opus_coupled_streams_;
-    std::vector<unsigned char> opus_mapping_;
     std::vector<int16_t> pcm_buffer_;
     std::vector<uint8_t> opus_buffer_;
+    int opus_channels_;
+    int opus_streams_;
+    int opus_coupled_streams_;
+    std::vector<unsigned char> opus_channel_mapping_;
+    bool use_multistream_;
+    int opus_mapping_family_;
+    std::vector<int> channel_remap_; // Maps canonical channel index -> source index
+    bool needs_channel_reorder_;
+    std::vector<int16_t> reorder_frame_buffer_;
 
-    bool configure_multistream_layout();
-};
+    bool derive_multistream_layout(int channels, int sample_rate,
+                                   int mapping_family,
+                                   int& streams, int& coupled_streams,
+                                   std::vector<unsigned char>& mapping) const;
+    std::vector<int> compute_wave_channel_order(int channels) const;
+    std::vector<int> compute_canonical_channel_order(const std::vector<int>& wave_order, int channels) const;
+    void initialize_channel_reorder();
+}; 
 
 } // namespace audio
 } // namespace screamrouter

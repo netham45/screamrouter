@@ -24,20 +24,15 @@ PerProcessScreamReceiver::PerProcessScreamReceiver(
     PerProcessScreamReceiverConfig config,
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager,
-    ClockManager* clock_manager,
     std::string logger_prefix)
     : NetworkAudioReceiver(config.listen_port,
                            notification_queue,
                            timeshift_manager,
                            logger_prefix,
-                           clock_manager,
                            resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       config_(config),
       chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       expected_packet_size_(kProgramTagSize + kScreamHeaderSize + chunk_size_bytes_) {
-    if (!clock_manager_) {
-        throw std::runtime_error("PerProcessScreamReceiver requires a valid ClockManager instance");
-    }
     // Base class constructor handles WSAStartup, null checks for queue/manager, and initial logging.
 }
 

@@ -192,6 +192,7 @@ void AudioProcessor::set_playback_rate(double rate) {
     const double clamped = std::clamp(rate, 1e-6, 8.0);
     playback_rate_.store(clamped);
     setRatio = 1.0 / clamped;
+    m_last_known_playback_rate = clamped;
 }
 
 void AudioProcessor::setEqNormalization(bool enabled) {

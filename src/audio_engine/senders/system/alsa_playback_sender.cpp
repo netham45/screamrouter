@@ -3,6 +3,7 @@
 #include "../../utils/cpp_logger.h"
 
 #include <algorithm>
+#include <fstream>
 #include <cerrno>
 #include <cstring>
 #include <limits>
@@ -11,10 +12,39 @@
 namespace screamrouter {
 namespace audio {
 
+namespace {
+
+bool DetectRaspberryPi() {
+    std::ifstream model_file("/proc/device-tree/model");
+    if (model_file.good()) {
+        std::string model;
+        std::getline(model_file, model);
+        if (model.find("Raspberry Pi") != std::string::npos) {
+            return true;
+        }
+    }
+
+    std::ifstream cpuinfo_file("/proc/cpuinfo");
+    if (cpuinfo_file.good()) {
+        std::string line;
+        while (std::getline(cpuinfo_file, line)) {
+            if (line.find("Raspberry Pi") != std::string::npos ||
+                line.find("BCM27") != std::string::npos) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+} // namespace
+
 AlsaPlaybackSender::AlsaPlaybackSender(const SinkMixerConfig& config)
 #if defined(__linux__)
     : config_(config),
-      device_tag_(config.output_ip)
+      device_tag_(config.output_ip),
+      is_raspberry_pi_(DetectRaspberryPi())
 #else
     : config_(config)
 #endif
@@ -247,7 +277,64 @@ bool AlsaPlaybackSender::configure_device() {
                  device_tag_.c_str(), hw_device_name_.c_str(), sample_rate_, channels_, bit_depth_, period_frames_,
                  got_period_us, buffer_frames_, got_buffer_us);
 
+    frames_written_.store(0, std::memory_order_release);
     return true;
+}
+
+bool AlsaPlaybackSender::handle_write_error(int err) {
+    if (!pcm_handle_) {
+        return false;
+    }
+
+    const bool xrun_via_error_code = (err == -EPIPE);
+    const bool xrun_via_status = detect_xrun_locked();
+    if (xrun_via_error_code && !xrun_via_status) {
+        LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA reported write underrun (EPIPE).", device_tag_.c_str());
+    }
+    const bool detected_xrun = xrun_via_status || xrun_via_error_code;
+
+    err = snd_pcm_recover(pcm_handle_, err, 1);
+    if (err < 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to recover from write error: %s", device_tag_.c_str(), snd_strerror(err));
+        close_locked();
+        return false;
+    }
+
+    if (detected_xrun && is_raspberry_pi_) {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] ALSA x-run detected on Raspberry Pi; recreating playback device.", device_tag_.c_str());
+        close_locked();
+        if (!configure_device()) {
+            LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to reopen device after x-run recovery.", device_tag_.c_str());
+            return false;
+        }
+    }
+    return true;
+}
+
+bool AlsaPlaybackSender::detect_xrun_locked() {
+    if (!pcm_handle_) {
+        return false;
+    }
+
+    if (snd_pcm_state(pcm_handle_) == SND_PCM_STATE_XRUN) {
+        return true;
+    }
+
+    snd_pcm_status_t* status = nullptr;
+    if (snd_pcm_status_malloc(&status) < 0 || !status) {
+        return false;
+    }
+
+    bool xrun_detected = false;
+    if (snd_pcm_status(pcm_handle_, status) == 0) {
+        xrun_detected = (snd_pcm_status_get_state(status) == SND_PCM_STATE_XRUN);
+        if (xrun_detected) {
+            LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA x-run state reported by driver.", device_tag_.c_str());
+        }
+    }
+
+    snd_pcm_status_free(status);
+    return xrun_detected;
 }
 
 void AlsaPlaybackSender::close_locked() {
@@ -256,19 +343,7 @@ void AlsaPlaybackSender::close_locked() {
         snd_pcm_close(pcm_handle_);
         pcm_handle_ = nullptr;
     }
-}
-
-bool AlsaPlaybackSender::handle_write_error(int err) {
-    if (!pcm_handle_) {
-        return false;
-    }
-    err = snd_pcm_recover(pcm_handle_, err, 1);
-    if (err < 0) {
-        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to recover from write error: %s", device_tag_.c_str(), snd_strerror(err));
-        close_locked();
-        return false;
-    }
-    return true;
+    frames_written_.store(0, std::memory_order_release);
 }
 
 bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size_t bytes_per_frame) {
@@ -357,6 +432,10 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
             continue;
         }
 
+        if (written > 0) {
+            frames_written_.fetch_add(static_cast<uint64_t>(written), std::memory_order_release);
+        }
+
         byte_ptr += static_cast<size_t>(written) * bytes_per_frame;
         frames_remaining -= static_cast<size_t>(written);
 
@@ -426,6 +505,42 @@ unsigned int AlsaPlaybackSender::get_effective_channels() const {
 unsigned int AlsaPlaybackSender::get_effective_bit_depth() const {
     std::lock_guard<std::mutex> lock(state_mutex_);
     return static_cast<unsigned int>(bit_depth_);
+}
+
+bool AlsaPlaybackSender::is_actively_playing() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+
+    if (!pcm_handle_) {
+        return false;
+    }
+
+    // Check if we've written any frames
+    const std::uint64_t written = frames_written_.load(std::memory_order_acquire);
+    if (written == 0) {
+        return false;  // Nothing written yet
+    }
+
+    // Check PCM state
+    snd_pcm_state_t state = snd_pcm_state(pcm_handle_);
+    if (state != SND_PCM_STATE_RUNNING && state != SND_PCM_STATE_PREPARED) {
+        return false;  // Not in a playing state
+    }
+
+    // Check if frames are being consumed (delay should be less than written)
+    snd_pcm_sframes_t delay_frames = 0;
+    if (snd_pcm_delay(pcm_handle_, &delay_frames) == 0) {
+        // If delay is less than written frames, ALSA is consuming frames
+        // Also ensure delay is positive and reasonable
+        if (delay_frames > 0 && static_cast<std::uint64_t>(delay_frames) < written) {
+            // Additional check: delay should be less than buffer size
+            // to ensure we're actively playing and not just buffering
+            if (buffer_frames_ > 0 && static_cast<snd_pcm_uframes_t>(delay_frames) < buffer_frames_) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 #endif // __linux__

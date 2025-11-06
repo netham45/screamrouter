@@ -18,6 +18,12 @@
 using namespace screamrouter::audio;
 using namespace screamrouter::audio::utils;
 
+namespace {
+constexpr double kMinPlaybackRate = 0.5;
+constexpr double kMaxPlaybackRate = 2.0;
+constexpr double kPlaybackRateEpsilon = 1e-4;
+}
+
 const std::chrono::milliseconds TIMESIFT_CLEANUP_INTERVAL(1000);
 
 SourceInputProcessor::SourceInputProcessor(
@@ -298,7 +304,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          output_chunk.ssrcs = current_packet_ssrcs_;
          output_chunk.produced_time = std::chrono::steady_clock::now();
          output_chunk.origin_time = m_last_packet_origin_time;
-         output_chunk.playback_rate = 1.0;
+         output_chunk.playback_rate = current_playback_rate_;
          size_t pushed_samples = output_chunk.audio_data.size();
 
          // Push to the output queue
@@ -568,6 +574,19 @@ void SourceInputProcessor::input_loop() {
 
         m_last_packet_origin_time = timed_packet.received_time;
 
+        double requested_rate = timed_packet.playback_rate;
+        if (!std::isfinite(requested_rate) || requested_rate <= 0.0) {
+            requested_rate = 1.0;
+        }
+        requested_rate = std::clamp(requested_rate, kMinPlaybackRate, kMaxPlaybackRate);
+
+        if (std::abs(requested_rate - current_playback_rate_) > kPlaybackRateEpsilon) {
+            current_playback_rate_ = requested_rate;
+            if (audio_processor_) {
+                audio_processor_->set_playback_rate(current_playback_rate_);
+            }
+        }
+
         if (packet_ok_for_processing && audio_processor_) {
             if (audio_payload_ptr && audio_payload_size == chunk_size_bytes_) {
                 current_packet_ssrcs_ = timed_packet.ssrcs;
@@ -682,6 +701,9 @@ bool SourceInputProcessor::check_format_and_reconfigure(
             );
             // Apply other settings like EQ after construction
             audio_processor_->setEqualizer(current_eq_.data());
+            const double safe_rate =
+                std::clamp(current_playback_rate_, kMinPlaybackRate, kMaxPlaybackRate);
+            audio_processor_->set_playback_rate(safe_rate);
             
             // The AudioProcessor itself will use its copy of speaker_layouts_map
             // to select the appropriate mix based on its inputChannels.

@@ -26,13 +26,11 @@ NetworkAudioReceiver::NetworkAudioReceiver(
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager,
     std::string logger_prefix,
-    ClockManager* clock_manager,
     std::size_t chunk_size_bytes)
     : listen_port_(listen_port),
       socket_fd_(NAR_INVALID_SOCKET_VALUE),
       notification_queue_(notification_queue),
       timeshift_manager_(timeshift_manager),
-      clock_manager_(clock_manager),
       chunk_size_bytes_(chunk_size_bytes),
       logger_prefix_(std::move(logger_prefix)) {
 
@@ -47,10 +45,6 @@ NetworkAudioReceiver::NetworkAudioReceiver(
         log_error("TimeshiftManager pointer is null. Receiver will not function correctly.");
         // throw std::runtime_error(logger_prefix_ + " requires a valid TimeshiftManager.");
     }
-    if (clock_manager_ && chunk_size_bytes_ == 0) {
-        log_warning("ClockManager provided but chunk size is zero; clock scheduling will be disabled.");
-        clock_manager_ = nullptr;
-    }
     log_message("Initialized with port " + std::to_string(listen_port_));
 }
 
@@ -62,7 +56,6 @@ NetworkAudioReceiver::~NetworkAudioReceiver() noexcept {
 #ifdef _WIN32
     decrement_winsock_users();
 #endif
-    clear_clock_managed_streams();
     reset_all_pcm_accumulators();
     log_message("Destroyed.");
 }
@@ -210,7 +203,6 @@ void NetworkAudioReceiver::stop() {
         log_warning("Thread was not joinable (might not have started or already stopped).");
     }
 
-    clear_clock_managed_streams();
     reset_all_pcm_accumulators();
 }
 
@@ -355,12 +347,6 @@ void NetworkAudioReceiver::run() {
 }
 
 void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
-    if (clock_manager_ && chunk_size_bytes_ > 0) {
-        if (enqueue_clock_managed_packet(std::move(packet))) {
-            return;
-        }
-    }
-
     if (timeshift_manager_) {
         timeshift_manager_->add_packet(std::move(packet));
     } else {
@@ -369,11 +355,9 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
 }
 
 void NetworkAudioReceiver::on_before_poll_wait() {
-    service_clock_manager();
 }
 
 void NetworkAudioReceiver::on_after_poll_iteration() {
-    service_clock_manager();
 }
 
 std::vector<std::string> NetworkAudioReceiver::get_seen_tags() {
@@ -381,94 +365,6 @@ std::vector<std::string> NetworkAudioReceiver::get_seen_tags() {
     std::vector<std::string> tags;
     tags.swap(seen_tags_); // Return collected tags and clear for next poll
     return tags;
-}
-
-bool NetworkAudioReceiver::enqueue_clock_managed_packet(TaggedAudioPacket&& packet) {
-    if (!clock_manager_ || chunk_size_bytes_ == 0) {
-        return false;
-    }
-
-    std::shared_ptr<ClockStreamState> state;
-    {
-        std::lock_guard<std::mutex> lock(stream_state_mutex_);
-        state = get_or_create_stream_state_locked(packet);
-        if (!state) {
-            return false;
-        }
-
-        constexpr std::size_t kDefaultMaxPendingPackets = 128;
-        std::size_t max_pending_packets = kDefaultMaxPendingPackets;
-        if (timeshift_manager_) {
-            auto settings = timeshift_manager_->get_settings();
-            if (settings) {
-                const auto configured = settings->timeshift_tuning.max_clock_pending_packets;
-                if (configured > 0) {
-                    max_pending_packets = configured;
-                }
-            }
-        }
-        if (max_pending_packets > 0 && state->pending_packets.size() >= max_pending_packets) {
-            state->pending_packets.pop_front();
-            log_warning("Pending packet queue capped for source " + packet.source_tag +
-                        " (limit=" + std::to_string(max_pending_packets) + ")");
-        }
-
-        state->pending_packets.push_back(std::move(packet));
-        if (!state->pending_packets.back().ssrcs.empty()) {
-            state->last_ssrcs = state->pending_packets.back().ssrcs;
-        }
-        state->current_playback_rate = state->pending_packets.back().playback_rate;
-    }
-
-    return true;
-}
-
-void NetworkAudioReceiver::service_clock_manager() {
-    if (!clock_manager_ || chunk_size_bytes_ == 0) {
-        return;
-    }
-
-    std::vector<std::pair<std::string, uint64_t>> pending_ticks;
-
-    {
-        std::lock_guard<std::mutex> lock(stream_state_mutex_);
-        for (auto& [tag, state_ptr] : stream_states_) {
-            if (!state_ptr) {
-                continue;
-            }
-
-            auto& state = *state_ptr;
-            if (!state.clock_handle.valid()) {
-                continue;
-            }
-
-            auto condition = state.clock_handle.condition;
-            if (!condition) {
-                continue;
-            }
-
-            uint64_t sequence_snapshot = 0;
-            {
-                std::unique_lock<std::mutex> condition_lock(condition->mutex);
-                sequence_snapshot = condition->sequence;
-            }
-
-            if (sequence_snapshot > state.clock_last_sequence) {
-                uint64_t tick_count = sequence_snapshot - state.clock_last_sequence;
-                state.clock_last_sequence = sequence_snapshot;
-                pending_ticks.emplace_back(tag, tick_count);
-            }
-        }
-    }
-
-    for (const auto& [tag, tick_count] : pending_ticks) {
-        for (uint64_t i = 0; i < tick_count; ++i) {
-            if (stop_flag_) {
-                return;
-            }
-            handle_clock_tick(tag);
-        }
-    }
 }
 
 std::vector<TaggedAudioPacket> NetworkAudioReceiver::append_pcm_payload(PcmAppendContext&& context) {
@@ -499,6 +395,29 @@ std::vector<TaggedAudioPacket> NetworkAudioReceiver::append_pcm_payload(PcmAppen
         accumulator.buffer.clear();
         accumulator.chunk_active = false;
         accumulator.first_packet_rtp_timestamp.reset();
+    }
+
+    const std::size_t bytes_per_frame =
+        (samples_per_chunk > 0)
+            ? (chunk_size_bytes_ / static_cast<std::size_t>(samples_per_chunk))
+            : 0;
+
+    if (!accumulator.buffer.empty() &&
+        bytes_per_frame > 0 &&
+        accumulator.first_packet_rtp_timestamp.has_value() &&
+        context.rtp_timestamp.has_value()) {
+        const std::size_t buffered_frames = accumulator.buffer.size() / bytes_per_frame;
+        const uint32_t expected_timestamp =
+            accumulator.first_packet_rtp_timestamp.value() + static_cast<uint32_t>(buffered_frames);
+        if (expected_timestamp != context.rtp_timestamp.value()) {
+            log_warning("Timestamp gap detected for accumulator key " + context.accumulator_key +
+                        " (expected RTP " + std::to_string(expected_timestamp) +
+                        ", got " + std::to_string(context.rtp_timestamp.value()) + "). Resetting accumulator.");
+            accumulator.buffer.clear();
+            accumulator.chunk_active = false;
+            accumulator.first_packet_time = {};
+            accumulator.first_packet_rtp_timestamp = context.rtp_timestamp;
+        }
     }
 
     accumulator.last_sample_rate = context.sample_rate;
@@ -572,181 +491,6 @@ void NetworkAudioReceiver::reset_all_pcm_accumulators() {
     pcm_accumulators_.clear();
 }
 
-std::shared_ptr<NetworkAudioReceiver::ClockStreamState> NetworkAudioReceiver::get_or_create_stream_state_locked(const TaggedAudioPacket& packet) {
-    if (!clock_manager_) {
-        return nullptr;
-    }
-
-    auto it = stream_states_.find(packet.source_tag);
-    bool created = false;
-
-    if (it == stream_states_.end()) {
-        auto state = std::make_shared<ClockStreamState>();
-        state->source_tag = packet.source_tag;
-        it = stream_states_.emplace(packet.source_tag, std::move(state)).first;
-        created = true;
-    }
-
-    auto state = it->second;
-    if (!state) {
-        state = std::make_shared<ClockStreamState>();
-        state->source_tag = packet.source_tag;
-        it->second = state;
-        created = true;
-    }
-
-    const bool format_changed = created ||
-        state->sample_rate != packet.sample_rate ||
-        state->channels != packet.channels ||
-        state->bit_depth != packet.bit_depth ||
-        state->chlayout1 != packet.chlayout1 ||
-        state->chlayout2 != packet.chlayout2;
-
-    if (format_changed) {
-        if (state->clock_handle.valid()) {
-            try {
-                clock_manager_->unregister_clock_condition(state->clock_handle);
-            } catch (const std::exception& ex) {
-                log_error("Failed to unregister clock for " + state->source_tag + ": " + ex.what());
-            }
-            state->clock_handle = {};
-            state->clock_last_sequence = 0;
-        }
-
-        state->sample_rate = packet.sample_rate;
-        state->channels = packet.channels;
-        state->bit_depth = packet.bit_depth;
-        state->chlayout1 = packet.chlayout1;
-        state->chlayout2 = packet.chlayout2;
-        state->samples_per_chunk = calculate_samples_per_chunk(packet.channels, packet.bit_depth);
-        state->next_rtp_timestamp = 0;
-        state->pending_packets.clear();
-
-        if (state->samples_per_chunk == 0) {
-            log_error("Unsupported audio format for clock scheduling from " + packet.source_tag);
-            stream_states_.erase(it);
-            return nullptr;
-        }
-
-        try {
-            state->clock_handle = clock_manager_->register_clock_condition(
-                state->sample_rate, state->channels, state->bit_depth);
-            if (!state->clock_handle.valid()) {
-                throw std::runtime_error("ClockManager returned invalid condition handle");
-            }
-            if (auto condition = state->clock_handle.condition) {
-                std::lock_guard<std::mutex> condition_lock(condition->mutex);
-                state->clock_last_sequence = condition->sequence;
-            } else {
-                state->clock_last_sequence = 0;
-            }
-        } catch (const std::exception& ex) {
-            log_error("Failed to register clock for " + state->source_tag + ": " + ex.what());
-            stream_states_.erase(it);
-            return nullptr;
-        }
-    }
-
-    return state;
-}
-
-void NetworkAudioReceiver::clear_clock_managed_streams() {
-    std::lock_guard<std::mutex> lock(stream_state_mutex_);
-
-    if (clock_manager_) {
-        for (auto& [tag, state] : stream_states_) {
-            if (state && state->clock_handle.valid()) {
-                try {
-                    clock_manager_->unregister_clock_condition(state->clock_handle);
-                } catch (const std::exception& ex) {
-                    log_error("Failed to unregister clock for " + tag + ": " + ex.what());
-                }
-                state->clock_handle = {};
-                state->clock_last_sequence = 0;
-            }
-        }
-    }
-
-    stream_states_.clear();
-}
-
-void NetworkAudioReceiver::handle_clock_tick(const std::string& source_tag) {
-    TaggedAudioPacket packet;
-    bool have_packet = false;
-
-    {
-        std::lock_guard<std::mutex> lock(stream_state_mutex_);
-        auto it = stream_states_.find(source_tag);
-        if (it == stream_states_.end() || !it->second) {
-            return;
-        }
-
-        auto& state = *it->second;
-        const auto now = std::chrono::steady_clock::now();
-
-        if (!state.pending_packets.empty()) {
-            packet = std::move(state.pending_packets.front());
-            state.pending_packets.pop_front();
-            packet.received_time = now;
-            if (!packet.ssrcs.empty()) {
-                state.last_ssrcs = packet.ssrcs;
-            }
-
-            if (state.samples_per_chunk > 0) {
-                if (packet.rtp_timestamp.has_value()) {
-                    state.next_rtp_timestamp = packet.rtp_timestamp.value();
-                } else {
-                    state.next_rtp_timestamp += state.samples_per_chunk;
-                    packet.rtp_timestamp = state.next_rtp_timestamp;
-                }
-            } else {
-                packet.rtp_timestamp.reset();
-            }
-
-            if (packet.playback_rate <= 0.0) {
-                packet.playback_rate = state.current_playback_rate;
-            }
-
-            have_packet = true;
-        } else {
-            if (chunk_size_bytes_ == 0 || state.sample_rate == 0 || state.channels == 0) {
-                return;
-            }
-
-            packet.source_tag = state.source_tag;
-            packet.audio_data.assign(chunk_size_bytes_, 0);
-            packet.received_time = now;
-            packet.sample_rate = state.sample_rate;
-            packet.channels = state.channels;
-            packet.bit_depth = state.bit_depth;
-            packet.chlayout1 = state.chlayout1;
-            packet.chlayout2 = state.chlayout2;
-            packet.ssrcs = state.last_ssrcs;
-
-            if (state.samples_per_chunk > 0) {
-                state.next_rtp_timestamp += state.samples_per_chunk;
-                packet.rtp_timestamp = state.next_rtp_timestamp;
-            } else {
-                packet.rtp_timestamp.reset();
-            }
-
-            packet.playback_rate = state.current_playback_rate;
-
-            have_packet = true;
-        }
-    }
-
-    if (!have_packet) {
-        return;
-    }
-
-    if (timeshift_manager_) {
-        timeshift_manager_->add_packet(std::move(packet));
-    } else {
-        log_error("TimeshiftManager is null. Cannot add packet for source: " + packet.source_tag);
-    }
-}
-
 uint32_t NetworkAudioReceiver::calculate_samples_per_chunk(int channels, int bit_depth) const {
     if (chunk_size_bytes_ == 0 || channels <= 0 || bit_depth <= 0 || (bit_depth % 8) != 0) {
         return 0;
@@ -777,44 +521,6 @@ void NetworkAudioReceiver::maybe_log_telemetry() {
     }
 
     telemetry_last_log_time_ = now;
-
-    size_t stream_count = 0;
-    size_t total_pending = 0;
-    size_t max_pending = 0;
-    double total_pending_ms = 0.0;
-    double max_pending_ms = 0.0;
-    {
-        std::lock_guard<std::mutex> lock(stream_state_mutex_);
-        for (const auto& [tag, state_ptr] : stream_states_) {
-            (void)tag;
-            if (!state_ptr) {
-                continue;
-            }
-            stream_count++;
-            const size_t pending = state_ptr->pending_packets.size();
-            total_pending += pending;
-            if (pending > max_pending) {
-                max_pending = pending;
-            }
-            double chunk_ms = 0.0;
-            if (state_ptr->sample_rate > 0 && state_ptr->samples_per_chunk > 0) {
-                chunk_ms = (static_cast<double>(state_ptr->samples_per_chunk) * 1000.0) /
-                           static_cast<double>(state_ptr->sample_rate);
-            }
-            double pending_ms = chunk_ms > 0.0 ? chunk_ms * static_cast<double>(pending) : 0.0;
-            total_pending_ms += pending_ms;
-            if (pending_ms > max_pending_ms) {
-                max_pending_ms = pending_ms;
-            }
-            LOG_CPP_INFO(
-                "%s [Telemetry][Stream %s] pending_chunks=%zu backlog_ms=%.3f playback_rate=%.3f",
-                logger_prefix_.c_str(),
-                tag.c_str(),
-                pending,
-                pending_ms,
-                state_ptr->current_playback_rate);
-        }
-    }
 
     size_t accumulator_count = 0;
     size_t total_pcm_bytes = 0;
@@ -855,13 +561,8 @@ void NetworkAudioReceiver::maybe_log_telemetry() {
     }
 
     LOG_CPP_INFO(
-        "%s [Telemetry] streams=%zu pending_total=%zu (%.3f ms) pending_max=%zu (%.3f ms) accumulators=%zu pcm_total_bytes=%zu (%.3f ms) pcm_max_bytes=%zu (%.3f ms)",
+        "%s [Telemetry] accumulators=%zu pcm_total_bytes=%zu (%.3f ms) pcm_max_bytes=%zu (%.3f ms)",
         logger_prefix_.c_str(),
-        stream_count,
-        total_pending,
-        total_pending_ms,
-        max_pending,
-        max_pending_ms,
         accumulator_count,
         total_pcm_bytes,
         total_pcm_ms,

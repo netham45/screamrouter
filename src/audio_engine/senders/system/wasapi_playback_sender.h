@@ -15,6 +15,8 @@
 
 #include <string>
 #include <vector>
+#include <atomic>
+#include <cstdint>
 
 namespace screamrouter {
 namespace audio {
@@ -48,6 +50,7 @@ private:
     void choose_device_format(WAVEFORMATEX* mix_format, bool format_supported);
     void update_conversion_state();
     void convert_frames(const uint8_t* src, UINT32 frames, BYTE* dst);
+    void reset_playback_counters();
 
     SinkMixerConfig config_;
 
@@ -75,6 +78,8 @@ private:
 
     UINT32 buffer_frames_ = 0;
     std::vector<uint8_t> conversion_buffer_;
+
+    std::atomic<std::uint64_t> frames_written_{0};
 };
 
 } // namespace system_audio

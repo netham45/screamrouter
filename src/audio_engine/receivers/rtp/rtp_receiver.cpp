@@ -55,52 +55,74 @@ void swap_endianness(uint8_t* data, size_t size, int bit_depth) {
     }
 }
 
-bool resolve_opus_multistream_layout(int channels, int& streams, int& coupled_streams, std::vector<unsigned char>& mapping) {
+bool resolve_opus_multistream_layout(int channels, int sample_rate, int& streams, int& coupled_streams, std::vector<unsigned char>& mapping) {
     mapping.clear();
 
-    switch (channels) {
-        case 1:
+    if (channels <= 0) {
+        return false;
+    }
+
+    if (channels <= 2) {
+        if (channels == 1) {
             streams = 1;
             coupled_streams = 0;
             mapping = {0};
-            return true;
-        case 2:
+        } else {
             streams = 1;
             coupled_streams = 1;
             mapping = {0, 1};
-            return true;
-        case 3:
-            streams = 2;
-            coupled_streams = 1;
-            mapping = {0, 2, 1};
-            return true;
-        case 4:
-            streams = 2;
-            coupled_streams = 2;
-            mapping = {0, 1, 2, 3};
-            return true;
-        case 5:
-            streams = 3;
-            coupled_streams = 2;
-            mapping = {0, 2, 1, 3, 4};
-            return true;
-        case 6:
-            streams = 4;
-            coupled_streams = 2;
-            mapping = {0, 2, 1, 5, 3, 4};
-            return true;
-        case 7:
-            streams = 4;
-            coupled_streams = 3;
-            mapping = {0, 2, 1, 6, 3, 4, 5};
-            return true;
-        case 8:
-            streams = 5;
-            coupled_streams = 3;
-            mapping = {0, 2, 1, 6, 3, 4, 5, 7};
-            return true;
-        default:
-            return false;
+        }
+        return true;
+    }
+
+    std::vector<unsigned char> temp(static_cast<size_t>(channels), 0);
+    int derived_streams = 0;
+    int derived_coupled = 0;
+    int error = OPUS_OK;
+    OpusMSEncoder* probe = opus_multistream_surround_encoder_create(
+        sample_rate,
+        channels,
+        1,
+        &derived_streams,
+        &derived_coupled,
+        temp.data(),
+        OPUS_APPLICATION_AUDIO,
+        &error);
+
+    if (error != OPUS_OK || !probe) {
+        if (probe) {
+            opus_multistream_encoder_destroy(probe);
+        }
+        LOG_CPP_ERROR("[RtpOpusReceiver] Failed to derive Opus layout for %d channels: %s", channels, opus_strerror(error));
+        return false;
+    }
+
+    opus_multistream_encoder_destroy(probe);
+
+    streams = derived_streams;
+    coupled_streams = derived_coupled;
+    mapping.assign(temp.begin(), temp.end());
+    return true;
+}
+
+uint32_t default_channel_mask_for_channels(int channels) {
+    switch (channels) {
+        case 1: return 0x0001u; // Front Left (fallback for mono)
+        case 2: return 0x0003u; // Front Left, Front Right
+        case 3: return 0x0007u; // + Front Center
+        case 4: return 0x0603u; // FL, FR, SL, SR
+        case 5: return 0x0607u; // + Front Center
+        case 6: return 0x060Fu; // + LFE
+        case 7: return 0x070Fu; // + Back Center
+        case 8: return 0x063Fu; // + Back Left/Right
+        default: {
+            uint32_t mask = 0;
+            const int clamped = std::min(channels, 16);
+            for (int i = 0; i < clamped; ++i) {
+                mask |= (1u << i);
+            }
+            return mask != 0 ? mask : 0x0001u;
+        }
     }
 }
 } // namespace
@@ -119,13 +141,11 @@ const int kDefaultOpusChannels = 2;
 RtpReceiverBase::RtpReceiverBase(
     RtpReceiverConfig config,
     std::shared_ptr<NotificationQueue> notification_queue,
-    TimeshiftManager* timeshift_manager,
-    ClockManager* clock_manager)
+    TimeshiftManager* timeshift_manager)
     : NetworkAudioReceiver(config.listen_port,
                            notification_queue,
                            timeshift_manager,
                            "[RtpReceiver]",
-                           clock_manager,
                            resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       config_(std::move(config)),
       chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr))
@@ -135,10 +155,6 @@ RtpReceiverBase::RtpReceiverBase(
     , epoll_fd_(NAR_INVALID_SOCKET_VALUE)
 #endif
 {
-    if (!clock_manager_) {
-        throw std::runtime_error("RtpReceiver requires a valid ClockManager instance");
-    }
-
 #ifdef _WIN32
     FD_ZERO(&master_read_fds_);
 #endif
@@ -320,7 +336,6 @@ void RtpReceiverBase::run() {
 #endif
 
     while (is_running()) {
-        service_clock_manager();
 
 #ifdef _WIN32
         fd_set read_fds = master_read_fds_;
@@ -359,7 +374,6 @@ void RtpReceiverBase::run() {
                 (void)_;
                 process_ready_packets_internal(ssrc, cliaddr, false);
             }
-            service_clock_manager();
             continue;
         }
 
@@ -874,14 +888,46 @@ bool RtpOpusReceiver::populate_append_context(
         mapping.push_back(static_cast<unsigned char>(value));
     }
 
-    const bool require_multistream = (channels > 2) || (streams > 0) || !mapping.empty();
+    const bool mapping_valid = !mapping.empty() && mapping.size() == static_cast<size_t>(channels);
+    const bool require_multistream = (channels > 2) || (streams > 0) || (coupled_streams > 0) || mapping_valid;
+
+    auto layout_matches = [&](int stream_count, int coupled_count) {
+        if (stream_count <= 0 || coupled_count < 0 || coupled_count > stream_count) {
+            return false;
+        }
+        const int decoded_channels = (coupled_count * 2) + (stream_count - coupled_count);
+        return decoded_channels == channels;
+    };
 
     if (require_multistream) {
-        if (streams <= 0 || mapping.size() != static_cast<size_t>(channels)) {
-            if (!resolve_opus_multistream_layout(channels, streams, coupled_streams, mapping)) {
+        bool must_resolve_layout = !mapping_valid || !layout_matches(streams, coupled_streams);
+
+        if (must_resolve_layout) {
+            int derived_streams = streams;
+            int derived_coupled = coupled_streams;
+            std::vector<unsigned char> derived_mapping;
+            if (!resolve_opus_multistream_layout(channels, sample_rate, derived_streams, derived_coupled, derived_mapping)) {
                 LOG_CPP_ERROR("[RtpOpusReceiver] Unable to resolve Opus multistream layout for %d channels", channels);
                 return false;
             }
+
+            streams = derived_streams;
+            coupled_streams = derived_coupled;
+
+            if (!mapping_valid) {
+                mapping = std::move(derived_mapping);
+            }
+        }
+
+        if (!layout_matches(streams, coupled_streams)) {
+            LOG_CPP_ERROR("[RtpOpusReceiver] Invalid Opus stream configuration for %d channels (streams=%d, coupled=%d)",
+                          channels, streams, coupled_streams);
+            return false;
+        }
+
+        if (mapping.empty() || mapping.size() != static_cast<size_t>(channels)) {
+            LOG_CPP_ERROR("[RtpOpusReceiver] Missing or invalid Opus channel mapping for %d channels", channels);
+            return false;
         }
     }
 
@@ -991,8 +1037,9 @@ bool RtpOpusReceiver::populate_append_context(
     context.sample_rate = sample_rate;
     context.channels = channels;
     context.bit_depth = 16;
-    context.chlayout1 = (channels == 2) ? 0x03 : 0x00;
-    context.chlayout2 = 0x00;
+    const uint32_t channel_mask = default_channel_mask_for_channels(channels);
+    context.chlayout1 = static_cast<uint8_t>(channel_mask & 0xFFu);
+    context.chlayout2 = static_cast<uint8_t>((channel_mask >> 8) & 0xFFu);
 
     return true;
 }
@@ -1047,9 +1094,8 @@ int RtpOpusReceiver::maximum_frame_samples(int sample_rate) {
 RtpReceiver::RtpReceiver(
     RtpReceiverConfig config,
     std::shared_ptr<NotificationQueue> notification_queue,
-    TimeshiftManager* timeshift_manager,
-    ClockManager* clock_manager)
-    : RtpReceiverBase(std::move(config), std::move(notification_queue), timeshift_manager, clock_manager) {
+    TimeshiftManager* timeshift_manager)
+    : RtpReceiverBase(std::move(config), std::move(notification_queue), timeshift_manager) {
     register_payload_receiver(std::make_unique<RtpPcmReceiver>());
     register_payload_receiver(std::make_unique<RtpOpusReceiver>());
 }

@@ -25,6 +25,12 @@ struct TimeshiftTuning {
     std::size_t max_clock_pending_packets = 64;
     double rtp_continuity_slack_seconds = 0.25;
     double rtp_session_reset_threshold_seconds = 0.2;
+    double playback_ratio_max_deviation_ppm = 300.0;
+    double playback_ratio_slew_ppm_per_sec = 100.0;
+    double playback_ratio_kp = 5.0;
+    double playback_ratio_ki = 1.0;
+    double playback_ratio_integral_limit_ppm = 300.0;
+    double playback_ratio_smoothing = 0.05;
 
     // --- Temporal Store / DVR defaults ---
     // Target playout delay (D) relative to now_ref; mixer follows head at D behind.

@@ -9,7 +9,6 @@
 #define PER_PROCESS_SCREAM_RECEIVER_H
 
 #include "../network_audio_receiver.h"
-#include "../clock_manager.h"
 #include "../../audio_types.h"
 
 #include <cstdint>
@@ -39,7 +38,6 @@ public:
         PerProcessScreamReceiverConfig config,
         std::shared_ptr<NotificationQueue> notification_queue,
         TimeshiftManager* timeshift_manager,
-        ClockManager* clock_manager,
         std::string logger_prefix
     );
 
