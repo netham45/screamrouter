@@ -752,6 +752,7 @@ if sys.platform == "win32":
         "advapi32",
         "crypt32",
         "user32",
+        "gdi32",
         "shell32",
         "dwmapi",
         "shlwapi",

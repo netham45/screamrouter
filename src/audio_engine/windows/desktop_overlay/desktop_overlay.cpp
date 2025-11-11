@@ -7,6 +7,7 @@
 #include <ShlObj.h>
 #include <KnownFolders.h>
 #include <Strsafe.h>
+#include <comdef.h>
 
 #include <array>
 #include <chrono>
@@ -238,14 +239,7 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
 void DesktopOverlayController::InitWebView() {
     LOG_CPP_INFO("DesktopOverlay initializing WebView2");
 
-    Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> env_options;
-    HRESULT options_hr = CoCreateInstance(CLSID_CoreWebView2EnvironmentOptions, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&env_options));
-    if (SUCCEEDED(options_hr) && env_options) {
-        env_options->put_AdditionalBrowserArguments(L"--ignore-certificate-errors");
-    } else {
-        env_options.Reset();
-        LOG_CPP_WARNING("DesktopOverlay could not create WebView2 options (hr=0x%08X)", options_hr);
-    }
+    SetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", L"--ignore-certificate-errors");
 
     std::wstring user_data_folder;
     PWSTR local_appdata = nullptr;
@@ -308,7 +302,7 @@ void DesktopOverlayController::InitWebView() {
     HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
         nullptr,
         user_data_folder.empty() ? nullptr : user_data_folder.c_str(),
-        env_options.Get(),
+        nullptr,
         handler.Get());
     if (FAILED(hr)) {
         LOG_CPP_ERROR("DesktopOverlay CreateCoreWebView2EnvironmentWithOptions returned hr=0x%08X", hr);
@@ -479,21 +473,23 @@ void DesktopOverlayController::ShowTrayMenu() {
     TrackPopupMenuEx(tray_menu_, TPM_RIGHTALIGN | TPM_BOTTOMALIGN, pt.x, pt.y, window_, nullptr);
 }
 
-void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
-    UINT msg = LOWORD(lparam);
-    UINT icon_id = static_cast<UINT>(wparam);
-    LOG_CPP_DEBUG("DesktopOverlay tray event icon=%u msg=0x%04x", icon_id, msg);
+void DesktopOverlayController::HandleTrayEvent(WPARAM /*wparam*/, LPARAM lparam) {
+    UINT msg = static_cast<UINT>(lparam);
+    LOG_CPP_DEBUG("DesktopOverlay tray event msg=0x%04x", msg);
     switch (msg) {
     case WM_LBUTTONDOWN:
         LOG_CPP_DEBUG("DesktopOverlay tray WM_LBUTTONDOWN received");
         tray_left_down_ = true;
         break;
     case WM_LBUTTONUP:
-    case NIN_SELECT:
-    case NIN_KEYSELECT:
-        LOG_CPP_INFO("DesktopOverlay tray activation (msg=0x%04x)", msg);
+        LOG_CPP_INFO("DesktopOverlay tray left-click release");
         Toggle();
         tray_left_down_ = false;
+        break;
+    case NIN_SELECT:
+    case NIN_KEYSELECT:
+        LOG_CPP_INFO("DesktopOverlay tray activation (shell msg=0x%04x)", msg);
+        Toggle();
         break;
     case WM_RBUTTONDOWN:
         LOG_CPP_DEBUG("DesktopOverlay tray WM_RBUTTONDOWN received");
@@ -505,21 +501,6 @@ void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
         ShowTrayMenu();
         tray_right_down_ = false;
         break;
-    case WM_MOUSEMOVE: {
-        bool left_state = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-        bool right_state = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
-        if (tray_left_down_ && !left_state) {
-            LOG_CPP_INFO("DesktopOverlay tray left-click inferred from mouse move");
-            Toggle();
-        }
-        if (tray_right_down_ && !right_state) {
-            LOG_CPP_INFO("DesktopOverlay tray right-click inferred from mouse move");
-            ShowTrayMenu();
-        }
-        tray_left_down_ = left_state;
-        tray_right_down_ = right_state;
-        break;
-    }
     default:
         LOG_CPP_DEBUG("DesktopOverlay tray event ignored (msg=0x%04x)", msg);
         break;
