@@ -417,8 +417,16 @@ void DesktopOverlayController::DisableMouse() {
     }
     LOG_CPP_DEBUG("DesktopOverlay disabling mouse (making pass-through)");
 
-    // When disabling mouse, we add WS_EX_TRANSPARENT to make the window click-through
+    // Match C# implementation: ensure WS_EX_LAYERED is set
     LONG style = GetWindowLong(window_, GWL_EXSTYLE);
+    style |= WS_EX_LAYERED;
+    SetWindowLong(window_, GWL_EXSTYLE, style);
+
+    // Set layered attributes for transparency
+    SetLayeredWindowAttributes(window_, 0, 255, LWA_ALPHA);
+
+    // Now add WS_EX_TRANSPARENT to make it click-through
+    style = GetWindowLong(window_, GWL_EXSTYLE);
     style |= WS_EX_TRANSPARENT;
     SetWindowLong(window_, GWL_EXSTYLE, style);
 
@@ -436,10 +444,22 @@ void DesktopOverlayController::EnableMouse() {
     }
     LOG_CPP_DEBUG("DesktopOverlay enabling mouse (making interactive)");
 
-    // When enabling mouse, remove WS_EX_TRANSPARENT so window receives clicks
+    // Match C# implementation more closely
     LONG style = GetWindowLong(window_, GWL_EXSTYLE);
+
+    // Remove WS_EX_TRANSPARENT to allow clicks
     style &= ~WS_EX_TRANSPARENT;
+
+    // C# actually removes WS_EX_LAYERED when enabling mouse!
+    // This is the key difference
+    if (style & WS_EX_LAYERED) {
+        style &= ~WS_EX_LAYERED;
+    }
+
     SetWindowLong(window_, GWL_EXSTYLE, style);
+
+    // Still set opacity to full
+    SetLayeredWindowAttributes(window_, 0, 255, LWA_ALPHA);
 
     // Force the window to update with the new style
     SetWindowPos(window_, nullptr, 0, 0, 0, 0,
