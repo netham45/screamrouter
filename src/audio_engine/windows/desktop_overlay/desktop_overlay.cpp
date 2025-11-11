@@ -4,10 +4,13 @@
 #include "windows/resources/resource.h"
 
 #include <Shlwapi.h>
+#include <ShlObj.h>
+#include <KnownFolders.h>
 #include <Strsafe.h>
 
 #include <array>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <iterator>
 
@@ -87,6 +90,10 @@ bool DesktopOverlayController::Start(const std::wstring& url, int width, int hei
 
 void DesktopOverlayController::Show() {
     LOG_CPP_DEBUG("DesktopOverlay::Show");
+    if (!ready_.load()) {
+        LOG_CPP_DEBUG("DesktopOverlay not ready; Show deferred");
+        return;
+    }
     HWND hwnd = window_;
     if (hwnd) {
         PostMessage(hwnd, kControlMessage, static_cast<WPARAM>(ControlCommand::kShow), 0);
@@ -95,6 +102,9 @@ void DesktopOverlayController::Show() {
 
 void DesktopOverlayController::Hide() {
     LOG_CPP_DEBUG("DesktopOverlay::Hide");
+    if (!ready_.load()) {
+        return;
+    }
     HWND hwnd = window_;
     if (hwnd) {
         PostMessage(hwnd, kControlMessage, static_cast<WPARAM>(ControlCommand::kHide), 0);
@@ -103,6 +113,10 @@ void DesktopOverlayController::Hide() {
 
 void DesktopOverlayController::Toggle() {
     LOG_CPP_DEBUG("DesktopOverlay::Toggle");
+    if (!ready_.load()) {
+        LOG_CPP_DEBUG("DesktopOverlay not ready; toggle ignored");
+        return;
+    }
     HWND hwnd = window_;
     if (hwnd) {
         PostMessage(hwnd, kControlMessage, static_cast<WPARAM>(ControlCommand::kToggle), 0);
@@ -176,12 +190,20 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     LOG_CPP_INFO("DesktopOverlay window created (hwnd=%p)", hwnd);
     url_ = url;
 
-    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+    LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
+    SetWindowLong(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED);
+    if (!SetLayeredWindowAttributes(hwnd, RGB(0, 0, 0), 0, LWA_COLORKEY)) {
+        LOG_CPP_WARNING("DesktopOverlay failed to set layered window attributes (err=%lu)", GetLastError());
+    }
+    MARGINS margins = { -1 };
+    HRESULT dwm_hr = DwmExtendFrameIntoClientArea(hwnd, &margins);
+    if (FAILED(dwm_hr)) {
+        LOG_CPP_WARNING("DesktopOverlay failed to extend frame (hr=0x%08X)", dwm_hr);
+    }
     ShowWindow(hwnd, SW_HIDE);
 
     EnsureTrayIcon();
     LOG_CPP_INFO("DesktopOverlay tray icon initialized");
-    CreateExitButton();
 
     SetTimer(hwnd, kMouseTimerId, 50, nullptr);
     SetTimer(hwnd, kColorTimerId, 5000, nullptr);
@@ -205,14 +227,43 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     webview_.Reset();
     KillTimer(hwnd, kMouseTimerId);
     KillTimer(hwnd, kColorTimerId);
+    ready_.store(false);
     DestroyWindow(hwnd);
     window_ = nullptr;
     CoUninitialize();
+    UnregisterClassW(class_name.c_str(), hinstance_);
     LOG_CPP_INFO("DesktopOverlay UI thread exiting");
 }
 
 void DesktopOverlayController::InitWebView() {
     LOG_CPP_INFO("DesktopOverlay initializing WebView2");
+
+    Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions> env_options;
+    HRESULT options_hr = CoCreateInstance(CLSID_CoreWebView2EnvironmentOptions, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&env_options));
+    if (SUCCEEDED(options_hr) && env_options) {
+        env_options->put_AdditionalBrowserArguments(L"--ignore-certificate-errors");
+    } else {
+        env_options.Reset();
+        LOG_CPP_WARNING("DesktopOverlay could not create WebView2 options (hr=0x%08X)", options_hr);
+    }
+
+    std::wstring user_data_folder;
+    PWSTR local_appdata = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_appdata))) {
+        std::filesystem::path user_dir(local_appdata);
+        CoTaskMemFree(local_appdata);
+        user_dir /= L"ScreamRouter";
+        user_dir /= L"DesktopOverlay";
+        user_dir /= L"WebView2";
+        std::error_code ec;
+        std::filesystem::create_directories(user_dir, ec);
+        if (!ec) {
+            user_data_folder = user_dir.wstring();
+        } else {
+            LOG_CPP_WARNING("DesktopOverlay failed to create WebView2 user data dir (code=%d)", static_cast<int>(ec.value()));
+        }
+    }
+
     auto handler = Microsoft::WRL::Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
         [this](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
             if (FAILED(result) || !env) {
@@ -254,7 +305,11 @@ void DesktopOverlayController::InitWebView() {
             return S_OK;
         });
 
-    HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(nullptr, nullptr, nullptr, handler.Get());
+    HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
+        nullptr,
+        user_data_folder.empty() ? nullptr : user_data_folder.c_str(),
+        env_options.Get(),
+        handler.Get());
     if (FAILED(hr)) {
         LOG_CPP_ERROR("DesktopOverlay CreateCoreWebView2EnvironmentWithOptions returned hr=0x%08X", hr);
     } else {
@@ -317,7 +372,7 @@ void DesktopOverlayController::SetMouseMode(MouseMode mode) {
         style &= ~WS_EX_TRANSPARENT;
     }
     SetWindowLong(window_, GWL_EXSTYLE, style);
-    SetLayeredWindowAttributes(window_, 0, 255, LWA_ALPHA);
+    SetLayeredWindowAttributes(window_, RGB(0, 0, 0), 0, LWA_COLORKEY);
 }
 
 void DesktopOverlayController::HandleMouseTimer() {
@@ -345,11 +400,6 @@ void DesktopOverlayController::HandleMouseTimer() {
     const float scale = dpi / 96.0f;
     const int scaled_x = static_cast<int>(client_pt.x / scale);
     const int scaled_y = static_cast<int>(client_pt.y / scale);
-
-    if (IsPointInsideExitButton(pt)) {
-        SetMouseMode(MouseMode::kInteractive);
-        return;
-    }
 
     std::wstring script = L"(function(){return isPointOverBody(" +
                           std::to_wstring(scaled_x) + L"," + std::to_wstring(scaled_y) +
@@ -385,12 +435,16 @@ void DesktopOverlayController::EnsureTrayIcon() {
     nid_.hWnd = window_;
     nid_.uID = 1;
     nid_.uVersion = NOTIFYICON_VERSION_4;
-    nid_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    nid_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
     nid_.uCallbackMessage = kTrayCallbackMessage;
     nid_.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     StringCchCopyW(nid_.szTip, ARRAYSIZE(nid_.szTip), kTrayTooltip);
-    Shell_NotifyIconW(NIM_ADD, &nid_);
-    Shell_NotifyIconW(NIM_SETVERSION, &nid_);
+    if (!Shell_NotifyIconW(NIM_ADD, &nid_)) {
+        LOG_CPP_ERROR("DesktopOverlay failed to add tray icon (err=%lu)", GetLastError());
+    } else {
+        nid_.uVersion = NOTIFYICON_VERSION_4;
+        Shell_NotifyIconW(NIM_SETVERSION, &nid_);
+    }
 }
 
 void DesktopOverlayController::CleanupTrayIcon() {
@@ -425,30 +479,47 @@ void DesktopOverlayController::ShowTrayMenu() {
     TrackPopupMenuEx(tray_menu_, TPM_RIGHTALIGN | TPM_BOTTOMALIGN, pt.x, pt.y, window_, nullptr);
 }
 
-void DesktopOverlayController::HandleTrayEvent(WPARAM /*wparam*/, LPARAM lparam) {
+void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
     UINT msg = LOWORD(lparam);
-    UINT metadata = HIWORD(lparam);
-    LOG_CPP_DEBUG("DesktopOverlay tray raw event lParam=0x%08lx (msg=0x%04x meta=0x%04x)", lparam, msg, metadata);
+    UINT icon_id = static_cast<UINT>(wparam);
+    LOG_CPP_DEBUG("DesktopOverlay tray event icon=%u msg=0x%04x", icon_id, msg);
     switch (msg) {
     case WM_LBUTTONDOWN:
         LOG_CPP_DEBUG("DesktopOverlay tray WM_LBUTTONDOWN received");
+        tray_left_down_ = true;
         break;
     case WM_LBUTTONUP:
     case NIN_SELECT:
     case NIN_KEYSELECT:
         LOG_CPP_INFO("DesktopOverlay tray activation (msg=0x%04x)", msg);
         Toggle();
+        tray_left_down_ = false;
         break;
     case WM_RBUTTONDOWN:
         LOG_CPP_DEBUG("DesktopOverlay tray WM_RBUTTONDOWN received");
+        tray_right_down_ = true;
         break;
     case WM_RBUTTONUP:
     case WM_CONTEXTMENU:
-    case NIN_POPUPOPEN:
-    case NIN_POPUPCLOSE:
         LOG_CPP_INFO("DesktopOverlay tray context menu request (msg=0x%04x)", msg);
         ShowTrayMenu();
+        tray_right_down_ = false;
         break;
+    case WM_MOUSEMOVE: {
+        bool left_state = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        bool right_state = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+        if (tray_left_down_ && !left_state) {
+            LOG_CPP_INFO("DesktopOverlay tray left-click inferred from mouse move");
+            Toggle();
+        }
+        if (tray_right_down_ && !right_state) {
+            LOG_CPP_INFO("DesktopOverlay tray right-click inferred from mouse move");
+            ShowTrayMenu();
+        }
+        tray_left_down_ = left_state;
+        tray_right_down_ = right_state;
+        break;
+    }
     default:
         LOG_CPP_DEBUG("DesktopOverlay tray event ignored (msg=0x%04x)", msg);
         break;
@@ -467,39 +538,21 @@ void DesktopOverlayController::HandleCommand(WPARAM wparam) {
             SendDesktopMenuShow();
         }
     } else if (cmd == static_cast<UINT>(TrayCommand::kExit)) {
-        CleanupTrayIcon();
-        ExitProcess(0);
+        int response = MessageBoxW(
+            window_,
+            L"Exit ScreamRouter?",
+            L"ScreamRouter Desktop",
+            MB_ICONQUESTION | MB_OKCANCEL | MB_TOPMOST | MB_SETFOREGROUND);
+        if (response == IDOK) {
+            LOG_CPP_INFO("DesktopOverlay exit confirmed via tray");
+            CleanupTrayIcon();
+            SendDesktopMenuHide();
+            PostMessage(window_, kControlMessage, static_cast<WPARAM>(ControlCommand::kShutdown), 0);
+            ExitProcess(0);
+        } else {
+            LOG_CPP_INFO("DesktopOverlay exit canceled");
+        }
     }
-}
-
-bool DesktopOverlayController::IsPointInsideExitButton(POINT screen_pt) const {
-    if (!exit_button_) {
-        return false;
-    }
-    RECT rect{};
-    GetWindowRect(exit_button_, &rect);
-    return PtInRect(&rect, screen_pt);
-}
-
-void DesktopOverlayController::CreateExitButton() {
-    if (!window_) {
-        return;
-    }
-    const int button_width = 80;
-    const int button_height = 28;
-    exit_button_ = CreateWindowExW(
-        0,
-        L"BUTTON",
-        L"Exit",
-        WS_CHILD | WS_VISIBLE | BS_FLAT,
-        width_ - button_width - 16,
-        16,
-        button_width,
-        button_height,
-        window_,
-        reinterpret_cast<HMENU>(static_cast<UINT_PTR>(TrayCommand::kExit)),
-        hinstance_,
-        nullptr);
 }
 
 LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -516,6 +569,17 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        HBRUSH brush = CreateSolidBrush(RGB(0, 0, 0));
+        FillRect(hdc, &ps.rcPaint, brush);
+        DeleteObject(brush);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
     case WM_TIMER:
         if (controller) {
             if (wparam == kMouseTimerId) {

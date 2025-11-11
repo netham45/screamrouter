@@ -87,8 +87,6 @@ private:
     void HandleColorTimer();
     void HandleTrayEvent(WPARAM wparam, LPARAM lparam);
     void HandleCommand(WPARAM wparam);
-    bool IsPointInsideExitButton(POINT screen_pt) const;
-    void CreateExitButton();
 
     std::thread ui_thread_;
     std::atomic<bool> running_{false};
@@ -98,10 +96,11 @@ private:
     int height_{kDefaultHeight};
 
     HWND window_{nullptr};
-    HWND exit_button_{nullptr};
     HMENU tray_menu_{nullptr};
     NOTIFYICONDATAW nid_{};
     HINSTANCE hinstance_{nullptr};
+    bool tray_left_down_{false};
+    bool tray_right_down_{false};
 
     MouseMode mouse_mode_{MouseMode::kInteractive};
     POINT last_mouse_{};
