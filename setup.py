@@ -170,8 +170,22 @@ def _default_vcvarsall():
             return str(candidate)
     return None
 
+def _ensure_dotnet_nuget_tool(dotnet_binary: str) -> Path | None:
+    tool_path = Path.home() / ".dotnet" / "tools" / "nuget.exe"
+    if tool_path.exists():
+        return tool_path
+    try:
+        subprocess.run(
+            [dotnet_binary, "tool", "update", "--global", "NuGet.CommandLine"],
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return None
+    return tool_path if tool_path.exists() else None
+
+
 def _find_nuget_command():
-    """Return list representing the nuget invocation (e.g., ['nuget'] or ['dotnet','nuget'])."""
+    """Return list representing the nuget invocation (e.g., ['nuget'])."""
     env_hint = os.environ.get("NUGET_EXE")
     if env_hint:
         path = Path(env_hint)
@@ -182,7 +196,9 @@ def _find_nuget_command():
         return [exe]
     dotnet = shutil.which("dotnet")
     if dotnet:
-        return [dotnet, "nuget"]
+        tool = _ensure_dotnet_nuget_tool(dotnet)
+        if tool:
+            return [str(tool)]
     return None
 
 
