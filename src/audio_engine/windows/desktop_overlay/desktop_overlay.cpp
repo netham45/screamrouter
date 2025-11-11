@@ -295,12 +295,19 @@ void DesktopOverlayController::InitWebView() {
                     RECT bounds{};
                     GetClientRect(window_, &bounds);
                     webview_controller_->put_Bounds(bounds);
-                    COREWEBVIEW2_COLOR color{};
-                    color.A = 0;
-                    color.R = 0;
-                    color.G = 0;
-                    color.B = 0;
-                    webview_controller_->put_DefaultBackgroundColor(color);
+
+                    Microsoft::WRL::ComPtr<ICoreWebView2Controller2> controller2;
+                    if (SUCCEEDED(webview_controller_.As(&controller2)) && controller2) {
+                        COREWEBVIEW2_COLOR color{};
+                        color.A = 0;
+                        color.R = 0;
+                        color.G = 0;
+                        color.B = 0;
+                        controller2->put_DefaultBackgroundColor(color);
+                    } else {
+                        LOG_CPP_WARNING("WebView2 controller does not support DefaultBackgroundColor; relying on CSS script");
+                    }
+
                     webview_controller_->put_IsVisible(TRUE);
 
                     Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings;
