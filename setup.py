@@ -176,9 +176,7 @@ def _download_nuget_exe() -> Path | None:
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_file = dest_dir / "nuget.exe"
     try:
-        import urllib.request
         print(f"Downloading nuget.exe from {dist_url}")
-        with urllib.request.urlopen(dist_url) as resp, open(dest_file, "wb") as out:
             out.write(resp.read())
     except Exception as exc:
         print(f"Failed to download nuget.exe: {exc}")
@@ -210,12 +208,12 @@ def _run_nuget_command(args):
         return
     vcvars = _default_vcvarsall()
     arch_arg = "amd64" if platform.architecture()[0] == "64bit" else "x86"
-    command_line = subprocess.list2cmdline(cmd_list)
+
+    # Build command string preserving Windows paths
+    command_line = " ".join(cmd_list)
     if vcvars:
-        full_cmd = f'call "{vcvars}" {arch_arg} && {command_line}'
-    else:
-        full_cmd = command_line
-    subprocess.run(["cmd", "/d", "/s", "/c", full_cmd], check=True)
+        command_line = f'call "{vcvars}" {arch_arg} && {command_line}'
+    subprocess.run(["cmd", "/c", command_line], check=True)
 
 
 def ensure_webview2_sdk(version: str = "1.0.2846.51"):
@@ -228,27 +226,27 @@ def ensure_webview2_sdk(version: str = "1.0.2846.51"):
         base_dir = Path(explicit_dir).expanduser().resolve()
     else:
         deps_root = project_root / "build" / "_deps" / "webview2"
-        base_dir = deps_root / f"Microsoft.Web.WebView2.{version}"
-        if not base_dir.exists():
-            deps_root.mkdir(parents=True, exist_ok=True)
-            nuget_cmd = _find_nuget_command()
-            if not nuget_cmd:
-                raise RuntimeError(
-                    "WebView2 SDK not found. Install NuGet CLI (nuget.exe) or .NET SDK (for 'dotnet nuget'), "
-                    "or set WEBVIEW2_SDK_DIR to an extracted Microsoft.Web.WebView2 package."
-                )
-            print(f"Downloading Microsoft.Web.WebView2.{version} with {' '.join(nuget_cmd)}")
-            _run_nuget_command(
-                nuget_cmd
-                + [
-                    "install",
-                    "Microsoft.Web.WebView2",
-                    "-Version",
-                    version,
-                    "-OutputDirectory",
-                    str(deps_root),
-                ]
+        deps_root = project_root / "build" / "_deps" / "webview2"
+        deps_root.mkdir(parents=True, exist_ok=True)
+        nuget_cmd = _find_nuget_command()
+        if not nuget_cmd:
+            raise RuntimeError(
+                "WebView2 SDK not found. Install NuGet CLI (nuget.exe) or set WEBVIEW2_SDK_DIR to an extracted Microsoft.Web.WebView2 package."
             )
+        print(f"Downloading Microsoft.Web.WebView2 with {' '.join(nuget_cmd)}")
+        _run_nuget_command(
+            nuget_cmd
+            + [
+                "install",
+                "Microsoft.Web.WebView2",
+                "-OutputDirectory",
+                str(deps_root),
+            ]
+        )
+        candidates = sorted(deps_root.glob("Microsoft.Web.WebView2.*"), reverse=True)
+        if not candidates:
+            raise RuntimeError("NuGet did not produce a Microsoft.Web.WebView2 package")
+        base_dir = candidates[0]
 
     include_dir = base_dir / "build" / "native" / "include"
     if not include_dir.exists():
