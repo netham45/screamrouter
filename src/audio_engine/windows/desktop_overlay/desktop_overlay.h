@@ -91,6 +91,8 @@ private:
     void UpdateWebViewBounds();
     void FocusWebView();
 
+    bool IsMousePassthrough() const { return mouse_mode_ == MouseMode::kPassthrough; }
+
     std::thread ui_thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> ready_{false};
