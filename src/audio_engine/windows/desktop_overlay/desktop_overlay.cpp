@@ -8,6 +8,7 @@
 #include <KnownFolders.h>
 #include <Strsafe.h>
 #include <comdef.h>
+#include <windowsx.h>
 
 #include <array>
 #include <chrono>
@@ -25,6 +26,7 @@ namespace screamrouter::desktop {
 namespace {
 constexpr wchar_t kWindowClassName[] = L"ScreamRouterDesktopOverlayWindow";
 constexpr wchar_t kTrayTooltip[] = L"ScreamRouter Desktop Menu";
+static UINT g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
 #ifndef NIN_POPUPOPEN
 #define NIN_POPUPOPEN (WM_USER + 6)
 #endif
@@ -68,6 +70,7 @@ RECT GetExitButtonRect(HWND button) {
 
 DesktopOverlayController::DesktopOverlayController() {
     ZeroMemory(&nid_, sizeof(nid_));
+    tray_icon_ = LoadIconW(nullptr, IDI_APPLICATION);
 }
 
 DesktopOverlayController::~DesktopOverlayController() {
@@ -420,32 +423,48 @@ void DesktopOverlayController::HandleColorTimer() {
 }
 
 void DesktopOverlayController::EnsureTrayIcon() {
-    if (nid_.cbSize != 0) {
-        Shell_NotifyIconW(NIM_DELETE, &nid_);
+    if (!window_) {
+        return;
     }
 
-    ZeroMemory(&nid_, sizeof(NOTIFYICONDATAW));
-    nid_.cbSize = sizeof(NOTIFYICONDATAW);
-    nid_.hWnd = window_;
-    nid_.uID = kTrayIconId;
-    nid_.uVersion = NOTIFYICON_VERSION_4;
-    nid_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
-    nid_.uCallbackMessage = kTrayCallbackMessage;
-    nid_.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    StringCchCopyW(nid_.szTip, ARRAYSIZE(nid_.szTip), kTrayTooltip);
-    if (!Shell_NotifyIconW(NIM_ADD, &nid_)) {
+    NOTIFYICONDATAW remove{};
+    remove.cbSize = sizeof(remove);
+    remove.hWnd = window_;
+    remove.uID = kTrayIconId;
+    remove.guidItem = tray_guid_;
+    remove.uFlags = NIF_GUID;
+    Shell_NotifyIconW(NIM_DELETE, &remove);
+
+    NOTIFYICONDATAW add{};
+    add.cbSize = sizeof(add);
+    add.hWnd = window_;
+    add.uID = kTrayIconId;
+    add.guidItem = tray_guid_;
+    add.uCallbackMessage = kTrayCallbackMessage;
+    add.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_GUID | NIF_SHOWTIP;
+    add.hIcon = tray_icon_ ? tray_icon_ : LoadIconW(nullptr, IDI_APPLICATION);
+    StringCchCopyW(add.szTip, ARRAYSIZE(add.szTip), kTrayTooltip);
+
+    if (!Shell_NotifyIconW(NIM_ADD, &add)) {
         LOG_CPP_ERROR("DesktopOverlay failed to add tray icon (err=%lu)", GetLastError());
-    } else {
-        nid_.uVersion = NOTIFYICON_VERSION_4;
-        Shell_NotifyIconW(NIM_SETVERSION, &nid_);
+        return;
     }
+
+    add.uVersion = NOTIFYICON_VERSION_4;
+    Shell_NotifyIconW(NIM_SETVERSION, &add);
+
+    nid_ = add;
 }
 
 void DesktopOverlayController::CleanupTrayIcon() {
-    if (nid_.cbSize == sizeof(NOTIFYICONDATAW)) {
-        Shell_NotifyIconW(NIM_DELETE, &nid_);
-        nid_.cbSize = 0;
-    }
+    NOTIFYICONDATAW remove{};
+    remove.cbSize = sizeof(remove);
+    remove.hWnd = window_;
+    remove.uID = kTrayIconId;
+    remove.guidItem = tray_guid_;
+    remove.uFlags = NIF_GUID;
+    Shell_NotifyIconW(NIM_DELETE, &remove);
+    nid_.cbSize = 0;
     if (tray_menu_) {
         DestroyMenu(tray_menu_);
         tray_menu_ = nullptr;
@@ -462,47 +481,58 @@ void DesktopOverlayController::BuildTrayMenu() {
     AppendMenuW(tray_menu_, MF_STRING, static_cast<UINT>(TrayCommand::kExit), L"Exit ScreamRouter");
 }
 
-void DesktopOverlayController::ShowTrayMenu() {
+void DesktopOverlayController::ShowTrayMenu(const POINT& anchor) {
     if (!tray_menu_) {
         BuildTrayMenu();
     }
 
-    POINT pt{};
-    GetCursorPos(&pt);
+    POINT pt = anchor;
+    if (pt.x == 0 && pt.y == 0) {
+        GetCursorPos(&pt);
+    }
     SetForegroundWindow(window_);
-    TrackPopupMenuEx(tray_menu_, TPM_RIGHTALIGN | TPM_BOTTOMALIGN, pt.x, pt.y, window_, nullptr);
+    TrackPopupMenuEx(tray_menu_, TPM_RIGHTBUTTON | TPM_LEFTBUTTON, pt.x, pt.y, window_, nullptr);
+
+    NOTIFYICONDATAW focus{};
+    focus.cbSize = sizeof(focus);
+    focus.hWnd = window_;
+    focus.uID = kTrayIconId;
+    focus.guidItem = tray_guid_;
+    focus.uFlags = NIF_GUID;
+    Shell_NotifyIconW(NIM_SETFOCUS, &focus);
 }
 
 void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
-    if (static_cast<UINT>(wparam) != kTrayIconId) {
-        LOG_CPP_DEBUG("DesktopOverlay tray event for different icon (%llu)", static_cast<unsigned long long>(wparam));
+    UINT icon_id = HIWORD(lparam);
+    if (icon_id != kTrayIconId) {
+        LOG_CPP_DEBUG("DesktopOverlay tray event for different icon (%u)", icon_id);
         return;
     }
-    UINT msg = static_cast<UINT>(lparam);
-    LOG_CPP_DEBUG("DesktopOverlay tray event msg=0x%04x", msg);
-    switch (msg) {
-    case WM_LBUTTONDOWN:
-        tray_left_down_ = true;
-        break;
+    UINT event = LOWORD(lparam);
+    POINT anchor{ GET_X_LPARAM(static_cast<LPARAM>(wparam)), GET_Y_LPARAM(static_cast<LPARAM>(wparam)) };
+    if (anchor.x == 0 && anchor.y == 0) {
+        GetCursorPos(&anchor);
+    }
+
+    switch (event) {
     case WM_LBUTTONUP:
     case WM_LBUTTONDBLCLK:
     case NIN_SELECT:
     case NIN_KEYSELECT:
-        tray_left_down_ = false;
-        LOG_CPP_INFO("DesktopOverlay tray left click");
+        LOG_CPP_INFO("DesktopOverlay tray left activation (event=0x%04x)", event);
         Toggle();
-        break;
-    case WM_RBUTTONDOWN:
-        tray_right_down_ = true;
         break;
     case WM_RBUTTONUP:
     case WM_CONTEXTMENU:
-        tray_right_down_ = false;
-        LOG_CPP_INFO("DesktopOverlay tray right click");
-        ShowTrayMenu();
+        LOG_CPP_INFO("DesktopOverlay tray context request (event=0x%04x)", event);
+        ShowTrayMenu(anchor);
+        break;
+    case NIN_POPUPOPEN:
+    case NIN_POPUPCLOSE:
+        LOG_CPP_DEBUG("DesktopOverlay tray popup state change (event=0x%04x)", event);
         break;
     default:
-        LOG_CPP_DEBUG("DesktopOverlay tray event ignored (msg=0x%04x)", msg);
+        LOG_CPP_DEBUG("DesktopOverlay tray event ignored (event=0x%04x)", event);
         break;
     }
 }
@@ -538,6 +568,12 @@ void DesktopOverlayController::HandleCommand(WPARAM wparam) {
 
 LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     DesktopOverlayController* controller = GetController(hwnd);
+    if (msg == g_taskbar_created) {
+        if (controller) {
+            controller->EnsureTrayIcon();
+        }
+        return 0;
+    }
     switch (msg) {
     case WM_NCCREATE: {
         const auto* create = reinterpret_cast<LPCREATESTRUCT>(lparam);

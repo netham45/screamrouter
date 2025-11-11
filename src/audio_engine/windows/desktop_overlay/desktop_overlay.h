@@ -76,7 +76,7 @@ private:
     void CleanupTrayIcon();
     void EnsureTrayIcon();
     void BuildTrayMenu();
-    void ShowTrayMenu();
+    void ShowTrayMenu(const POINT& anchor);
     void InitWebView();
     void InjectHelpers();
     void Navigate();
@@ -102,6 +102,7 @@ private:
     HINSTANCE hinstance_{nullptr};
     bool tray_left_down_{false};
     bool tray_right_down_{false};
+    HICON tray_icon_{nullptr};
 
     MouseMode mouse_mode_{MouseMode::kInteractive};
     POINT last_mouse_{};
