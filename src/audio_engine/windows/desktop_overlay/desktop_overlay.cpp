@@ -411,6 +411,8 @@ void DesktopOverlayController::HandleMouseTimer() {
     const int scaled_x = static_cast<int>(client_pt.x / scale);
     const int scaled_y = static_cast<int>(client_pt.y / scale);
 
+    SetMouseMode(MouseMode::kInteractive);
+
     std::wstring script = L"(function(){return isPointOverBody(" +
                           std::to_wstring(scaled_x) + L"," + std::to_wstring(scaled_y) +
                           L");})()";
@@ -658,6 +660,11 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
     case WM_SIZE:
         if (controller) {
             controller->UpdateWebViewBounds();
+        }
+        return 0;
+    case WM_ACTIVATE:
+        if (controller && LOWORD(wparam) == WA_INACTIVE) {
+            controller->Hide();
         }
         return 0;
     case WM_SETFOCUS:
