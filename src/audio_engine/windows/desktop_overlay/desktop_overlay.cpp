@@ -160,10 +160,12 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     const int usable_w = std::max(work_w - margin_x * 2, 360);
     width_ = width > 0 ? std::min(width, usable_w)
                        : std::clamp(usable_w, 420, 640);
-    height_ = height > 0 ? std::min(height, work_h - margin_y)
-                         : std::max(work_h - margin_y, 400);
+    // Use almost full height of working area minus margins
+    height_ = height > 0 ? std::min(height, work_h - margin_y * 2)
+                         : work_h - margin_y * 2;
+    // Position at bottom-right corner
     const int left = work_area.right - width_ - margin_x;
-    const int top = work_area.top + margin_y;
+    const int top = work_area.bottom - height_ - margin_y;
 
     HWND hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
@@ -190,19 +192,23 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     LOG_CPP_INFO("DesktopOverlay window created (hwnd=%p)", hwnd);
     url_ = url;
 
-    EnableMouse();
-
+    // Set up the window as a layered window with transparency
     LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
     SetWindowLong(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED);
-    if (!SetLayeredWindowAttributes(hwnd, RGB(0, 0, 0), 0, LWA_COLORKEY)) {
+    // Use color key transparency - black pixels (RGB(0,0,0)) will be transparent
+    if (!SetLayeredWindowAttributes(hwnd, RGB(0, 0, 0), 255, LWA_COLORKEY | LWA_ALPHA)) {
         LOG_CPP_WARNING("DesktopOverlay failed to set layered window attributes (err=%lu)", GetLastError());
     }
+    // Extend frame into client area for glass effect
     MARGINS margins = { -1 };
     HRESULT dwm_hr = DwmExtendFrameIntoClientArea(hwnd, &margins);
     if (FAILED(dwm_hr)) {
         LOG_CPP_WARNING("DesktopOverlay failed to extend frame (hr=0x%08X)", dwm_hr);
     }
     ShowWindow(hwnd, SW_HIDE);
+
+    // Initialize with mouse enabled (interactive)
+    mouse_disabled_ = false;
 
     PositionWindow();
 
@@ -278,8 +284,13 @@ void DesktopOverlayController::InitWebView() {
                     }
                     webview_controller_ = controller;
                     webview_controller_->get_CoreWebView2(&webview_);
+                    // Set WebView to fill entire client area
                     RECT bounds{};
                     GetClientRect(window_, &bounds);
+                    LOG_CPP_DEBUG("DesktopOverlay setting WebView bounds: %d,%d %dx%d",
+                                  bounds.left, bounds.top,
+                                  bounds.right - bounds.left,
+                                  bounds.bottom - bounds.top);
                     webview_controller_->put_Bounds(bounds);
 
                     Microsoft::WRL::ComPtr<ICoreWebView2Controller2> controller2;
@@ -374,10 +385,14 @@ void DesktopOverlayController::DisableMouse() {
     if (mouse_disabled_ || !window_) {
         return;
     }
+    // When disabling mouse, we want clicks to pass through
+    // This is done by setting the window to be transparent to mouse events
+    // We use transparent color key to make transparent areas click-through
     LONG style = GetWindowLong(window_, GWL_EXSTYLE);
-    style |= WS_EX_LAYERED;
+    style |= WS_EX_LAYERED | WS_EX_TRANSPARENT;
     SetWindowLong(window_, GWL_EXSTYLE, style);
-    SetLayeredWindowAttributes(window_, 0, 255, LWA_ALPHA);
+    // Set transparent areas (black/RGB(0,0,0)) to be click-through
+    SetLayeredWindowAttributes(window_, RGB(0, 0, 0), 255, LWA_COLORKEY | LWA_ALPHA);
     mouse_disabled_ = true;
     LOG_CPP_DEBUG("DesktopOverlay mouse disabled (pass-through)");
 }
@@ -386,10 +401,12 @@ void DesktopOverlayController::EnableMouse() {
     if (!mouse_disabled_ || !window_) {
         return;
     }
+    // When enabling mouse, remove the transparent style so window receives clicks
     LONG style = GetWindowLong(window_, GWL_EXSTYLE);
-    style &= ~WS_EX_LAYERED;
+    style &= ~WS_EX_TRANSPARENT;
+    // Keep layered for transparency but remove click-through
     SetWindowLong(window_, GWL_EXSTYLE, style);
-    SetLayeredWindowAttributes(window_, 0, 255, LWA_ALPHA);
+    SetLayeredWindowAttributes(window_, RGB(0, 0, 0), 255, LWA_COLORKEY | LWA_ALPHA);
     mouse_disabled_ = false;
     LOG_CPP_DEBUG("DesktopOverlay mouse enabled (interactive)");
 }
@@ -578,6 +595,10 @@ void DesktopOverlayController::UpdateWebViewBounds() {
     }
     RECT bounds{};
     GetClientRect(window_, &bounds);
+    LOG_CPP_DEBUG("DesktopOverlay updating WebView bounds: %d,%d %dx%d",
+                  bounds.left, bounds.top,
+                  bounds.right - bounds.left,
+                  bounds.bottom - bounds.top);
     webview_controller_->put_Bounds(bounds);
 }
 
@@ -608,13 +629,24 @@ void DesktopOverlayController::PositionWindow() {
     const int work_w = work.right - work.left;
     const int work_h = work.bottom - work.top;
     const int usable_w = std::max(work_w - margin_x * 2, 360);
+
+    // Ensure we're using the full height minus margin (similar to C# implementation)
     width_ = std::clamp(width_, 360, usable_w);
-    height_ = std::clamp(height_, 400, work_h - margin_y);
+    height_ = std::clamp(height_, 400, work_h - margin_y * 2);  // margin on both top and bottom
+
+    // Position at bottom-right of working area
     int left = work.right - width_ - margin_x;
-    int top = work.top + margin_y;
+    int top = work.bottom - height_ - margin_y;  // Position from bottom like C# version
+
+    LOG_CPP_DEBUG("DesktopOverlay positioning window: pos=%d,%d size=%dx%d (work area=%d,%d %dx%d)",
+                  left, top, width_, height_,
+                  work.left, work.top, work_w, work_h);
+
     SetWindowPos(window_, nullptr, left, top, width_, height_, SWP_NOZORDER | SWP_NOACTIVATE);
     if (webview_controller_) {
         RECT bounds{0, 0, width_, height_};
+        LOG_CPP_DEBUG("DesktopOverlay setting WebView bounds after position: %dx%d",
+                      width_, height_);
         webview_controller_->put_Bounds(bounds);
     }
 }
@@ -728,7 +760,11 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
                     SetFocus(hwnd);
-                    controller->EnableMouse();
+                    // Start with mouse enabled (interactive)
+                    if (controller->mouse_disabled_) {
+                        controller->mouse_disabled_ = false;
+                        controller->EnableMouse();
+                    }
                     controller->FocusWebView();
                     controller->SendDesktopMenuShow();
                     LOG_CPP_INFO("DesktopOverlay shown");
@@ -747,10 +783,15 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
                     controller->SendDesktopMenuHide();
                     LOG_CPP_INFO("DesktopOverlay toggled hidden");
                 } else {
+                    controller->PositionWindow();
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
                     SetFocus(hwnd);
-                    controller->EnableMouse();
+                    // Start with mouse enabled (interactive)
+                    if (controller->mouse_disabled_) {
+                        controller->mouse_disabled_ = false;
+                        controller->EnableMouse();
+                    }
                     controller->FocusWebView();
                     controller->SendDesktopMenuShow();
                     LOG_CPP_INFO("DesktopOverlay toggled shown");
