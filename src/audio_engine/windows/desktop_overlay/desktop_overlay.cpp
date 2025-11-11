@@ -153,18 +153,17 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     }
 
     RECT work_area = GetWorkArea();
-    const int margen_x = 18;
-    const int margen_y = 12;
+    const int margin_x = 16;
+    const int margin_y = 8;
     const int work_w = work_area.right - work_area.left;
     const int work_h = work_area.bottom - work_area.top;
-    const int usable_w = std::max(work_w - margen_x * 2, 360);
-    const int usable_h = std::max(work_h - margen_y * 2, 480);
+    const int usable_w = std::max(work_w - margin_x * 2, 360);
     width_ = width > 0 ? std::min(width, usable_w)
                        : std::clamp(usable_w, 420, 640);
-    height_ = height > 0 ? std::min(height, usable_h)
-                         : usable_h;
-    const int left = work_area.right - width_ - margen_x;
-    const int top = work_area.bottom - height_ - margen_y;
+    height_ = height > 0 ? std::min(height, work_h - margin_y)
+                         : std::max(work_h - margin_y, 400);
+    const int left = work_area.right - width_ - margin_x;
+    const int top = work_area.top + margin_y;
 
     HWND hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
@@ -574,16 +573,15 @@ void DesktopOverlayController::PositionWindow() {
         return;
     }
     RECT work = GetWorkArea();
-    constexpr int margin_x = 18;
-    constexpr int margin_y = 12;
+    constexpr int margin_x = 16;
+    constexpr int margin_y = 8;
     const int work_w = work.right - work.left;
     const int work_h = work.bottom - work.top;
     const int usable_w = std::max(work_w - margin_x * 2, 360);
-    const int usable_h = std::max(work_h - margin_y * 2, 480);
     width_ = std::clamp(width_, 360, usable_w);
-    height_ = std::clamp(height_, 480, usable_h);
+    height_ = std::clamp(height_, 400, work_h - margin_y);
     int left = work.right - width_ - margin_x;
-    int top = work.bottom - height_ - margin_y;
+    int top = work.top + margin_y;
     SetWindowPos(window_, nullptr, left, top, width_, height_, SWP_NOZORDER | SWP_NOACTIVATE);
     if (webview_controller_) {
         RECT bounds{0, 0, width_, height_};
