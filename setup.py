@@ -170,22 +170,24 @@ def _default_vcvarsall():
             return str(candidate)
     return None
 
-def _ensure_dotnet_nuget_tool(dotnet_binary: str) -> Path | None:
-    tool_path = Path.home() / ".dotnet" / "tools" / "nuget.exe"
-    if tool_path.exists():
-        return tool_path
+def _download_nuget_exe() -> Path | None:
+    dist_url = "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
+    dest_dir = project_root / "build" / "_deps" / "nuget"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_file = dest_dir / "nuget.exe"
     try:
-        subprocess.run(
-            [dotnet_binary, "tool", "update", "--global", "NuGet.CommandLine"],
-            check=True,
-        )
-    except subprocess.CalledProcessError:
+        import urllib.request
+        print(f"Downloading nuget.exe from {dist_url}")
+        with urllib.request.urlopen(dist_url) as resp, open(dest_file, "wb") as out:
+            out.write(resp.read())
+    except Exception as exc:
+        print(f"Failed to download nuget.exe: {exc}")
         return None
-    return tool_path if tool_path.exists() else None
+    return dest_file
 
 
 def _find_nuget_command():
-    """Return list representing the nuget invocation (e.g., ['nuget'])."""
+    """Return list representing the nuget invocation (['nuget.exe'])."""
     env_hint = os.environ.get("NUGET_EXE")
     if env_hint:
         path = Path(env_hint)
@@ -194,11 +196,9 @@ def _find_nuget_command():
     exe = shutil.which("nuget")
     if exe:
         return [exe]
-    dotnet = shutil.which("dotnet")
-    if dotnet:
-        tool = _ensure_dotnet_nuget_tool(dotnet)
-        if tool:
-            return [str(tool)]
+    downloaded = _download_nuget_exe()
+    if downloaded and downloaded.exists():
+        return [str(downloaded)]
     return None
 
 
