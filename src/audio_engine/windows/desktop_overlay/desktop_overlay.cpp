@@ -174,10 +174,12 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     const int work_w = work_area.right - work_area.left;
     const int work_h = work_area.bottom - work_area.top;
     const int margin = 20;
-    width_ = width > 0 ? std::min(width, work_w - margin * 2)
-                       : std::clamp(work_w - margin * 3, 420, 640);
-    height_ = height > 0 ? std::min(height, work_h - margin * 2)
-                         : std::clamp(work_h - margin * 3, 520, 820);
+    const int usable_w = std::max(work_w - margin * 2, 360);
+    const int usable_h = std::max(work_h - margin * 2, 360);
+    width_ = width > 0 ? std::min(width, usable_w)
+                       : std::clamp(usable_w, 420, std::min(usable_w, 640));
+    height_ = height > 0 ? std::min(height, usable_h)
+                         : usable_h;
     const int left = std::max(work_area.left + margin, work_area.right - width_ - margin);
     const int top = std::max(work_area.top + margin, work_area.bottom - height_ - margin);
 
@@ -593,8 +595,10 @@ void DesktopOverlayController::PositionWindow() {
     constexpr int margin = 20;
     const int work_w = work.right - work.left;
     const int work_h = work.bottom - work.top;
-    width_ = std::clamp(width_, 360, work_w - margin * 2);
-    height_ = std::clamp(height_, 420, work_h - margin * 2);
+    const int usable_w = std::max(work_w - margin * 2, 360);
+    const int usable_h = std::max(work_h - margin * 2, 360);
+    width_ = std::clamp(width_, 360, usable_w);
+    height_ = std::clamp(height_, 420, usable_h);
     int left = std::max(work.left + margin, work.right - width_ - margin);
     int top = std::max(work.top + margin, work.bottom - height_ - margin);
     SetWindowPos(window_, nullptr, left, top, width_, height_, SWP_NOZORDER | SWP_NOACTIVATE);
