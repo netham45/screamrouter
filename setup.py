@@ -152,6 +152,8 @@ def _find_nuget_executable():
             return str(path)
     return None
 
+_VCVARS_ENV = None
+
 
 def _default_vcvarsall():
     candidates = []
@@ -172,20 +174,43 @@ def _default_vcvarsall():
     return None
 
 
+def _load_vcvars_environment():
+    global _VCVARS_ENV
+    if _VCVARS_ENV is not None:
+        return _VCVARS_ENV
+    vcvars = _default_vcvarsall()
+    if not vcvars:
+        _VCVARS_ENV = {}
+        return _VCVARS_ENV
+    arch_arg = "amd64" if platform.architecture()[0] == "64bit" else "x86"
+    cmd = f'call "{vcvars}" {arch_arg} >nul && set'
+    result = subprocess.run(
+        ["cmd", "/d", "/s", "/c", cmd],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    env = {}
+    for line in result.stdout.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            env[key] = value
+    _VCVARS_ENV = env
+    return _VCVARS_ENV
+
+
 def _run_nuget_command(args):
     """Run nuget command, optionally via vcvarsall for MSVC env."""
     nuget_exe = args[0]
     if sys.platform != "win32":
         subprocess.run(args, check=True)
         return
-    vcvars = _default_vcvarsall()
-    if vcvars:
-        arch_arg = "amd64" if platform.architecture()[0] == "64bit" else "x86"
-        inner_cmd = " ".join(f'"{a}"' if " " in a else a for a in [nuget_exe, *args[1:]])
-        full_cmd = f'call "{vcvars}" {arch_arg} && {inner_cmd}'
-        subprocess.run(["cmd", "/c", full_cmd], check=True)
-    else:
-        subprocess.run(args, check=True)
+    cmd_args = [str(a) for a in args]
+    env = os.environ.copy()
+    vc_env = _load_vcvars_environment()
+    if vc_env:
+        env.update(vc_env)
+    subprocess.run(cmd_args, check=True, env=env)
 
 
 def ensure_webview2_sdk(version: str = "1.0.2846.51"):
