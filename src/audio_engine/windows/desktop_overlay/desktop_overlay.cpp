@@ -28,12 +28,6 @@ namespace {
 constexpr wchar_t kWindowClassName[] = L"ScreamRouterDesktopOverlayWindow";
 constexpr wchar_t kTrayTooltip[] = L"ScreamRouter Desktop Menu";
 static UINT g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
-#ifndef NIN_POPUPOPEN
-#define NIN_POPUPOPEN (WM_USER + 6)
-#endif
-#ifndef NIN_POPUPCLOSE
-#define NIN_POPUPCLOSE (WM_USER + 7)
-#endif
 constexpr wchar_t kJsHelper[] = LR"JS(
     function isPointOverBody(x, y) {
         const el = document.elementFromPoint(x, y);
@@ -45,18 +39,6 @@ constexpr wchar_t kJsHelper[] = LR"JS(
         }
         return false;
     }
-)JS";
-constexpr wchar_t kTransparentBackgroundScript[] = LR"JS(
-    (function() {
-        const setTransparent = () => {
-            document.documentElement.style.background = 'transparent';
-            if (document.body) {
-                document.body.style.background = 'transparent';
-            }
-        };
-        setTransparent();
-        document.addEventListener('DOMContentLoaded', setTransparent, { once: true });
-    })();
 )JS";
 
 static COLORREF ExtractColor(ICoreWebView2Environment* /*env*/) {
@@ -171,17 +153,18 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     }
 
     RECT work_area = GetWorkArea();
+    const int margen_x = 18;
+    const int margen_y = 12;
     const int work_w = work_area.right - work_area.left;
     const int work_h = work_area.bottom - work_area.top;
-    const int margin = 20;
-    const int usable_w = std::max(work_w - margin * 2, 360);
-    const int usable_h = std::max(work_h - margin * 2, 360);
+    const int usable_w = std::max(work_w - margen_x * 2, 360);
+    const int usable_h = std::max(work_h - margen_y * 2, 480);
     width_ = width > 0 ? std::min(width, usable_w)
-                       : std::clamp(usable_w, 420, std::min(usable_w, 640));
+                       : std::clamp(usable_w, 420, 640);
     height_ = height > 0 ? std::min(height, usable_h)
                          : usable_h;
-    const int left = std::max(work_area.left + margin, work_area.right - width_ - margin);
-    const int top = std::max(work_area.top + margin, work_area.bottom - height_ - margin);
+    const int left = work_area.right - width_ - margen_x;
+    const int top = work_area.bottom - height_ - margen_y;
 
     HWND hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
@@ -592,15 +575,16 @@ void DesktopOverlayController::PositionWindow() {
         return;
     }
     RECT work = GetWorkArea();
-    constexpr int margin = 20;
+    constexpr int margin_x = 18;
+    constexpr int margin_y = 12;
     const int work_w = work.right - work.left;
     const int work_h = work.bottom - work.top;
-    const int usable_w = std::max(work_w - margin * 2, 360);
-    const int usable_h = std::max(work_h - margin * 2, 360);
+    const int usable_w = std::max(work_w - margin_x * 2, 360);
+    const int usable_h = std::max(work_h - margin_y * 2, 480);
     width_ = std::clamp(width_, 360, usable_w);
-    height_ = std::clamp(height_, 420, usable_h);
-    int left = std::max(work.left + margin, work.right - width_ - margin);
-    int top = std::max(work.top + margin, work.bottom - height_ - margin);
+    height_ = std::clamp(height_, 480, usable_h);
+    int left = work.right - width_ - margin_x;
+    int top = work.bottom - height_ - margin_y;
     SetWindowPos(window_, nullptr, left, top, width_, height_, SWP_NOZORDER | SWP_NOACTIVATE);
     if (webview_controller_) {
         RECT bounds{0, 0, width_, height_};
