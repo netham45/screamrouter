@@ -207,7 +207,7 @@ Feature Highlights
 - Preferences: persisted JSON preferences with schema validation and partial updates.
 - Frontend: drag‑drop full menu, add/edit dialogs for sources/sinks/routes/groups, equalizer UI, visualizer, VNC, stats, discovery, and a listen page.
 - ALSA: custom ALSA PCM plugin to bridge apps to FIFOs under `/var/run/screamrouter`.
-- Windows desktop menu: Windows hosts automatically spawn a WebView2 overlay + tray icon that renders `/site/DesktopMenu` with transparent mouse-through regions and a quick Exit action (requires the Microsoft Edge WebView2 SDK on Windows builds).
+- Windows desktop menu: Windows hosts automatically spawn a WebView2 overlay + tray icon that renders `/site/DesktopMenu` with transparent mouse-through regions and a quick Exit action (requires the Microsoft Edge WebView2 SDK on Windows builds; CMake will `nuget install Microsoft.Web.WebView2` if `nuget.exe` is on `PATH`, or set `WEBVIEW2_SDK_DIR` to point at an existing package). Swap the tray icon by replacing `src/audio_engine/windows/resources/screamrouter.ico` before building on Windows.
 
 Screenshots
 -----------

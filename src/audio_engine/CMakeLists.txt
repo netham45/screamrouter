@@ -27,6 +27,76 @@ find_package(pybind11 CONFIG REQUIRED)
 file(GLOB_RECURSE SCREAMROUTER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 
+# Windows resource script for tray icon
+if(WIN32)
+    set(WEBVIEW2_VERSION "1.0.2846.51")
+    set(SCREAMROUTER_RESOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/windows/resources/screamrouter.rc"
+    )
+    if(NOT DEFINED WEBVIEW2_SDK_DIR AND DEFINED ENV{WEBVIEW2_SDK_DIR})
+        set(WEBVIEW2_SDK_DIR "$ENV{WEBVIEW2_SDK_DIR}")
+    endif()
+    if(NOT DEFINED WEBVIEW2_SDK_DIR)
+        set(_webview2_package_root "${CMAKE_BINARY_DIR}/_deps/webview2")
+        set(WEBVIEW2_SDK_DIR "${_webview2_package_root}/Microsoft.Web.WebView2.${WEBVIEW2_VERSION}")
+        if(NOT EXISTS "${WEBVIEW2_SDK_DIR}")
+            if(DEFINED ENV{NUGET_EXE})
+                set(_nuget_hint "$ENV{NUGET_EXE}")
+            else()
+                set(_nuget_hint "")
+            endif()
+            find_program(NUGET_EXE nuget
+                HINTS
+                    "${_nuget_hint}"
+                    "$ENV{ProgramFiles(x86)}/NuGet"
+                    "$ENV{ProgramFiles}/NuGet"
+            )
+            if(NOT NUGET_EXE AND _nuget_hint)
+                if(EXISTS "${_nuget_hint}")
+                    set(NUGET_EXE "${_nuget_hint}")
+                endif()
+            endif()
+            if(NOT NUGET_EXE)
+                message(FATAL_ERROR
+                    "WebView2 SDK not found. Install nuget.exe or set WEBVIEW2_SDK_DIR to an existing Microsoft.Web.WebView2 package.")
+            endif()
+            file(MAKE_DIRECTORY "${_webview2_package_root}")
+            message(STATUS "Downloading Microsoft.Web.WebView2.${WEBVIEW2_VERSION} with nuget")
+            execute_process(
+                COMMAND "${NUGET_EXE}" install Microsoft.Web.WebView2 -Version ${WEBVIEW2_VERSION} -OutputDirectory "${_webview2_package_root}"
+                RESULT_VARIABLE _nuget_result
+                OUTPUT_QUIET
+                ERROR_VARIABLE _nuget_err
+            )
+            if(_nuget_result)
+                message(FATAL_ERROR "nuget failed to download WebView2 (${_nuget_result}): ${_nuget_err}")
+            endif()
+        endif()
+    endif()
+    if(NOT EXISTS "${WEBVIEW2_SDK_DIR}")
+        message(FATAL_ERROR "WEBVIEW2_SDK_DIR does not exist: ${WEBVIEW2_SDK_DIR}")
+    endif()
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(_webview2_arch "x64")
+        set(_webview2_runtime "win-x64")
+    else()
+        set(_webview2_arch "x86")
+        set(_webview2_runtime "win-x86")
+    endif()
+    set(WEBVIEW2_INCLUDE_DIR "${WEBVIEW2_SDK_DIR}/build/native/include")
+    set(WEBVIEW2_LOADER_LIB "${WEBVIEW2_SDK_DIR}/build/native/${_webview2_arch}/WebView2LoaderStatic.lib")
+    set(WEBVIEW2_LOADER_DLL "${WEBVIEW2_SDK_DIR}/runtimes/${_webview2_runtime}/native/WebView2Loader.dll")
+    if(NOT EXISTS "${WEBVIEW2_INCLUDE_DIR}/WebView2.h")
+        message(FATAL_ERROR "WebView2.h not found under ${WEBVIEW2_INCLUDE_DIR}")
+    endif()
+    if(NOT EXISTS "${WEBVIEW2_LOADER_LIB}")
+        message(FATAL_ERROR "WebView2LoaderStatic.lib not found (${WEBVIEW2_LOADER_LIB})")
+    endif()
+else()
+    set(SCREAMROUTER_RESOURCES "")
+    set(WEBVIEW2_INCLUDE_DIR "")
+endif()
+
 # Drop vendored dependency sources from the build.
 list(FILTER SCREAMROUTER_SOURCES EXCLUDE REGEX "/deps/")
 list(FILTER SCREAMROUTER_SOURCES EXCLUDE REGEX "/build/")
@@ -35,13 +105,14 @@ if(NOT SCREAMROUTER_SOURCES)
     message(FATAL_ERROR "No C++ sources found for screamrouter_audio_engine")
 endif()
 
-pybind11_add_module(screamrouter_audio_engine MODULE ${SCREAMROUTER_SOURCES})
+pybind11_add_module(screamrouter_audio_engine MODULE ${SCREAMROUTER_SOURCES} ${SCREAMROUTER_RESOURCES})
 
 target_include_directories(screamrouter_audio_engine
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/json/include"
         "${SCREAMROUTER_DEPS_PREFIX}/include"
+        $<$<PLATFORM_ID:Windows>:${WEBVIEW2_INCLUDE_DIR}>
 )
 
 target_compile_definitions(screamrouter_audio_engine
@@ -133,8 +204,16 @@ if(WIN32)
             mmdevapi
             uuid
             propsys
-            WebView2LoaderStatic
+            "${WEBVIEW2_LOADER_LIB}"
     )
+    if(EXISTS "${WEBVIEW2_LOADER_DLL}")
+        add_custom_command(TARGET screamrouter_audio_engine POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${WEBVIEW2_LOADER_DLL}" "$<TARGET_FILE_DIR:screamrouter_audio_engine>"
+            COMMENT "Copy WebView2Loader.dll"
+        )
+    else()
+        message(WARNING "WebView2Loader.dll not found at ${WEBVIEW2_LOADER_DLL}; runtime overlay may fail to load WebView2")
+    endif()
 else()
     target_link_libraries(screamrouter_audio_engine PRIVATE ssl crypto pthread dl)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

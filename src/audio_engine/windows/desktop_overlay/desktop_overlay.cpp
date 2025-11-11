@@ -1,6 +1,7 @@
 #ifdef _WIN32
 
 #include "windows/desktop_overlay/desktop_overlay.h"
+#include "windows/resources/resource.h"
 
 #include <Shlwapi.h>
 #include <Strsafe.h>
@@ -354,7 +355,11 @@ void DesktopOverlayController::EnsureTrayIcon() {
     nid_.uVersion = NOTIFYICON_VERSION_4;
     nid_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid_.uCallbackMessage = kTrayCallbackMessage;
-    nid_.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    HICON icon = LoadIcon(hinstance_, MAKEINTRESOURCE(IDI_SCREAMROUTER_ICON));
+    if (!icon) {
+        icon = LoadIcon(nullptr, IDI_APPLICATION);
+    }
+    nid_.hIcon = icon;
     StringCchCopy(nid_.szTip, ARRAYSIZE(nid_.szTip), kTrayTooltip);
     Shell_NotifyIcon(NIM_ADD, &nid_);
     Shell_NotifyIcon(NIM_SETVERSION, &nid_);
