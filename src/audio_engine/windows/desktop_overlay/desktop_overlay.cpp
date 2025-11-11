@@ -115,20 +115,20 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     hinstance_ = GetModuleHandle(nullptr);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
-    WNDCLASSEX wc{};
-    wc.cbSize = sizeof(WNDCLASSEX);
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(WNDCLASSEXW);
     wc.lpfnWndProc = OverlayWndProc;
     wc.hInstance = hinstance_;
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = kWindowClassName;
-    RegisterClassEx(&wc);
+    RegisterClassExW(&wc);
 
     const int screen_w = GetSystemMetrics(SM_CXSCREEN);
     const int screen_h = GetSystemMetrics(SM_CYSCREEN);
     const int left = (screen_w - width) / 2;
     const int top = screen_h - height - 80;
 
-    HWND hwnd = CreateWindowEx(
+    HWND hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
         kWindowClassName,
         L"ScreamRouter Desktop Menu",
@@ -202,12 +202,6 @@ void DesktopOverlayController::InitWebView() {
                     RECT bounds{};
                     GetClientRect(window_, &bounds);
                     webview_controller_->put_Bounds(bounds);
-                    COREWEBVIEW2_COLOR color{};
-                    color.A = 0;
-                    color.R = 0;
-                    color.G = 0;
-                    color.B = 0;
-                    webview_controller_->put_DefaultBackgroundColor(color);
                     webview_controller_->put_IsVisible(TRUE);
 
                     Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings;
@@ -216,7 +210,6 @@ void DesktopOverlayController::InitWebView() {
                         settings->put_AreDefaultContextMenusEnabled(TRUE);
                         settings->put_IsZoomControlEnabled(FALSE);
                         settings->put_AreDevToolsEnabled(TRUE);
-                        settings->put_AreBrowserAcceleratorKeysEnabled(TRUE);
                         settings->put_IsBuiltInErrorPageEnabled(FALSE);
                     }
 
@@ -255,7 +248,7 @@ void DesktopOverlayController::SendDesktopMenuShow() {
     int b = GetBValue(accent_color_);
     int a = 255;
     wchar_t script[256];
-    StringCchPrintf(script, std::size(script), L"DesktopMenuShow(%d,%d,%d,%d);", r, g, b, a);
+    StringCchPrintfW(script, std::size(script), L"DesktopMenuShow(%d,%d,%d,%d);", r, g, b, a);
     webview_->ExecuteScript(script, nullptr);
 }
 
@@ -345,29 +338,25 @@ void DesktopOverlayController::HandleColorTimer() {
 
 void DesktopOverlayController::EnsureTrayIcon() {
     if (nid_.cbSize != 0) {
-        Shell_NotifyIcon(NIM_DELETE, &nid_);
+        Shell_NotifyIconW(NIM_DELETE, &nid_);
     }
 
-    ZeroMemory(&nid_, sizeof(NOTIFYICONDATA));
-    nid_.cbSize = sizeof(NOTIFYICONDATA);
+    ZeroMemory(&nid_, sizeof(NOTIFYICONDATAW));
+    nid_.cbSize = sizeof(NOTIFYICONDATAW);
     nid_.hWnd = window_;
     nid_.uID = 1;
     nid_.uVersion = NOTIFYICON_VERSION_4;
     nid_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid_.uCallbackMessage = kTrayCallbackMessage;
-    HICON icon = LoadIcon(hinstance_, MAKEINTRESOURCE(IDI_SCREAMROUTER_ICON));
-    if (!icon) {
-        icon = LoadIcon(nullptr, IDI_APPLICATION);
-    }
-    nid_.hIcon = icon;
-    StringCchCopy(nid_.szTip, ARRAYSIZE(nid_.szTip), kTrayTooltip);
-    Shell_NotifyIcon(NIM_ADD, &nid_);
-    Shell_NotifyIcon(NIM_SETVERSION, &nid_);
+    nid_.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    StringCchCopyW(nid_.szTip, ARRAYSIZE(nid_.szTip), kTrayTooltip);
+    Shell_NotifyIconW(NIM_ADD, &nid_);
+    Shell_NotifyIconW(NIM_SETVERSION, &nid_);
 }
 
 void DesktopOverlayController::CleanupTrayIcon() {
-    if (nid_.cbSize == sizeof(NOTIFYICONDATA)) {
-        Shell_NotifyIcon(NIM_DELETE, &nid_);
+    if (nid_.cbSize == sizeof(NOTIFYICONDATAW)) {
+        Shell_NotifyIconW(NIM_DELETE, &nid_);
         nid_.cbSize = 0;
     }
     if (tray_menu_) {
@@ -381,9 +370,9 @@ void DesktopOverlayController::BuildTrayMenu() {
         DestroyMenu(tray_menu_);
     }
     tray_menu_ = CreatePopupMenu();
-    AppendMenu(tray_menu_, MF_STRING, static_cast<UINT>(TrayCommand::kToggle), L"Toggle Desktop Menu");
-    AppendMenu(tray_menu_, MF_SEPARATOR, 0, nullptr);
-    AppendMenu(tray_menu_, MF_STRING, static_cast<UINT>(TrayCommand::kExit), L"Exit ScreamRouter");
+    AppendMenuW(tray_menu_, MF_STRING, static_cast<UINT>(TrayCommand::kToggle), L"Toggle Desktop Menu");
+    AppendMenuW(tray_menu_, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(tray_menu_, MF_STRING, static_cast<UINT>(TrayCommand::kExit), L"Exit ScreamRouter");
 }
 
 void DesktopOverlayController::ShowTrayMenu() {
@@ -442,7 +431,7 @@ void DesktopOverlayController::CreateExitButton() {
     }
     const int button_width = 80;
     const int button_height = 28;
-    exit_button_ = CreateWindowEx(
+    exit_button_ = CreateWindowExW(
         0,
         L"BUTTON",
         L"Exit",

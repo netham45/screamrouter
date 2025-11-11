@@ -92,7 +92,7 @@ private:
     HWND window_{nullptr};
     HWND exit_button_{nullptr};
     HMENU tray_menu_{nullptr};
-    NOTIFYICONDATA nid_{};
+    NOTIFYICONDATAW nid_{};
     HINSTANCE hinstance_{nullptr};
 
     MouseMode mouse_mode_{MouseMode::kInteractive};
