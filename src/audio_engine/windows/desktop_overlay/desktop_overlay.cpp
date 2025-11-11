@@ -11,6 +11,8 @@
 #include <filesystem>
 #include <iterator>
 
+#include "utils/cpp_logger.h"
+
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shlwapi.lib")
 
@@ -64,9 +66,11 @@ DesktopOverlayController::~DesktopOverlayController() {
 
 bool DesktopOverlayController::Start(const std::wstring& url, int width, int height) {
     if (running_.load()) {
+        LOG_CPP_WARNING("DesktopOverlay Start requested while already running");
         return true;
     }
 
+    LOG_CPP_INFO("DesktopOverlay starting (url=%ls width=%d height=%d)", url.c_str(), width, height);
     width_ = width > 0 ? width : kDefaultWidth;
     height_ = height > 0 ? height : kDefaultHeight;
     running_.store(true);
@@ -76,6 +80,7 @@ bool DesktopOverlayController::Start(const std::wstring& url, int width, int hei
 }
 
 void DesktopOverlayController::Show() {
+    LOG_CPP_DEBUG("DesktopOverlay::Show");
     HWND hwnd = window_;
     if (hwnd) {
         PostMessage(hwnd, kControlMessage, static_cast<WPARAM>(ControlCommand::kShow), 0);
@@ -83,6 +88,7 @@ void DesktopOverlayController::Show() {
 }
 
 void DesktopOverlayController::Hide() {
+    LOG_CPP_DEBUG("DesktopOverlay::Hide");
     HWND hwnd = window_;
     if (hwnd) {
         PostMessage(hwnd, kControlMessage, static_cast<WPARAM>(ControlCommand::kHide), 0);
@@ -90,6 +96,7 @@ void DesktopOverlayController::Hide() {
 }
 
 void DesktopOverlayController::Toggle() {
+    LOG_CPP_DEBUG("DesktopOverlay::Toggle");
     HWND hwnd = window_;
     if (hwnd) {
         PostMessage(hwnd, kControlMessage, static_cast<WPARAM>(ControlCommand::kToggle), 0);
@@ -100,6 +107,7 @@ void DesktopOverlayController::Shutdown() {
     if (!running_.load()) {
         return;
     }
+    LOG_CPP_INFO("DesktopOverlay shutdown requested");
     running_.store(false);
     HWND hwnd = window_;
     if (hwnd) {
@@ -113,6 +121,7 @@ void DesktopOverlayController::Shutdown() {
 
 void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int height) {
     hinstance_ = GetModuleHandle(nullptr);
+    LOG_CPP_INFO("DesktopOverlay UI thread starting");
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     WNDCLASSEXW wc{};
@@ -143,6 +152,7 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
         this);
 
     if (!hwnd) {
+        LOG_CPP_ERROR("DesktopOverlay failed to create window (err=%lu)", GetLastError());
         running_.store(false);
         CoUninitialize();
         return;
@@ -181,12 +191,14 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     DestroyWindow(hwnd);
     window_ = nullptr;
     CoUninitialize();
+    LOG_CPP_INFO("DesktopOverlay UI thread exiting");
 }
 
 void DesktopOverlayController::InitWebView() {
     auto handler = Microsoft::WRL::Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
         [this](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
             if (FAILED(result) || !env) {
+                LOG_CPP_ERROR("DesktopOverlay WebView2 environment creation failed (hr=0x%08X)", result);
                 return result;
             }
             webview_env_ = env;
@@ -195,6 +207,7 @@ void DesktopOverlayController::InitWebView() {
             auto controllerHandler = Microsoft::WRL::Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                 [this](HRESULT createResult, ICoreWebView2Controller* controller) -> HRESULT {
                     if (FAILED(createResult) || !controller) {
+                        LOG_CPP_ERROR("DesktopOverlay WebView2 controller creation failed (hr=0x%08X)", createResult);
                         return createResult;
                     }
                     webview_controller_ = controller;
@@ -215,6 +228,7 @@ void DesktopOverlayController::InitWebView() {
 
                     InjectHelpers();
                     Navigate();
+                    LOG_CPP_INFO("DesktopOverlay WebView2 initialized successfully");
                     return S_OK;
                 });
 
@@ -242,6 +256,7 @@ void DesktopOverlayController::SendDesktopMenuShow() {
     if (!webview_) {
         return;
     }
+    LOG_CPP_DEBUG("DesktopOverlay sending DesktopMenuShow");
     RefreshAccentColor();
     int r = GetRValue(accent_color_);
     int g = GetGValue(accent_color_);
@@ -254,6 +269,7 @@ void DesktopOverlayController::SendDesktopMenuShow() {
 
 void DesktopOverlayController::SendDesktopMenuHide() {
     if (webview_) {
+        LOG_CPP_DEBUG("DesktopOverlay sending DesktopMenuHide");
         webview_->ExecuteScript(L"DesktopMenuHide();", nullptr);
     }
 }
@@ -388,13 +404,20 @@ void DesktopOverlayController::ShowTrayMenu() {
 
 void DesktopOverlayController::HandleTrayEvent(WPARAM /*wparam*/, LPARAM lparam) {
     switch (lparam) {
+    case WM_LBUTTONDOWN:
     case WM_LBUTTONUP:
+    case NIN_SELECT:
+    case NIN_KEYSELECT:
+        LOG_CPP_DEBUG("DesktopOverlay tray left-click event (code=%ld)", lparam);
         Toggle();
         break;
     case WM_RBUTTONUP:
+    case WM_CONTEXTMENU:
+        LOG_CPP_DEBUG("DesktopOverlay tray context menu event (code=%ld)", lparam);
         ShowTrayMenu();
         break;
     default:
+        LOG_CPP_DEBUG("DesktopOverlay tray event ignored (code=%ld)", lparam);
         break;
     }
 }
@@ -493,25 +516,30 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
                     controller->SendDesktopMenuShow();
+                    LOG_CPP_INFO("DesktopOverlay shown");
                 }
                 break;
             case ControlCommand::kHide:
                 if (IsWindowVisible(hwnd)) {
                     ShowWindow(hwnd, SW_HIDE);
                     controller->SendDesktopMenuHide();
+                    LOG_CPP_INFO("DesktopOverlay hidden");
                 }
                 break;
             case ControlCommand::kToggle:
                 if (IsWindowVisible(hwnd)) {
                     ShowWindow(hwnd, SW_HIDE);
                     controller->SendDesktopMenuHide();
+                    LOG_CPP_INFO("DesktopOverlay toggled hidden");
                 } else {
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
                     controller->SendDesktopMenuShow();
+                    LOG_CPP_INFO("DesktopOverlay toggled shown");
                 }
                 break;
             case ControlCommand::kShutdown:
+                LOG_CPP_INFO("DesktopOverlay shutting down window");
                 DestroyWindow(hwnd);
                 break;
             }
