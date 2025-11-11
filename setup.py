@@ -152,9 +152,6 @@ def _find_nuget_executable():
             return str(path)
     return None
 
-_VCVARS_ENV = None
-
-
 def _default_vcvarsall():
     candidates = []
     env_hint = os.environ.get("VCVARSALL_BAT")
@@ -173,44 +170,36 @@ def _default_vcvarsall():
             return str(candidate)
     return None
 
-
-def _load_vcvars_environment():
-    global _VCVARS_ENV
-    if _VCVARS_ENV is not None:
-        return _VCVARS_ENV
-    vcvars = _default_vcvarsall()
-    if not vcvars:
-        _VCVARS_ENV = {}
-        return _VCVARS_ENV
-    arch_arg = "amd64" if platform.architecture()[0] == "64bit" else "x86"
-    cmd = f'call "{vcvars}" {arch_arg} >nul && set'
-    result = subprocess.run(
-        ["cmd", "/d", "/s", "/c", cmd],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    env = {}
-    for line in result.stdout.splitlines():
-        if "=" in line:
-            key, value = line.split("=", 1)
-            env[key] = value
-    _VCVARS_ENV = env
-    return _VCVARS_ENV
+def _find_nuget_command():
+    """Return list representing the nuget invocation (e.g., ['nuget'] or ['dotnet','nuget'])."""
+    env_hint = os.environ.get("NUGET_EXE")
+    if env_hint:
+        path = Path(env_hint)
+        if path.is_file():
+            return [str(path)]
+    exe = shutil.which("nuget")
+    if exe:
+        return [exe]
+    dotnet = shutil.which("dotnet")
+    if dotnet:
+        return [dotnet, "nuget"]
+    return None
 
 
 def _run_nuget_command(args):
     """Run nuget command, optionally via vcvarsall for MSVC env."""
-    nuget_exe = args[0]
+    cmd_list = [str(a) for a in args]
     if sys.platform != "win32":
-        subprocess.run(args, check=True)
+        subprocess.run(cmd_list, check=True)
         return
-    cmd_args = [str(a) for a in args]
-    env = os.environ.copy()
-    vc_env = _load_vcvars_environment()
-    if vc_env:
-        env.update(vc_env)
-    subprocess.run(cmd_args, check=True, env=env)
+    vcvars = _default_vcvarsall()
+    arch_arg = "amd64" if platform.architecture()[0] == "64bit" else "x86"
+    command_line = subprocess.list2cmdline(cmd_list)
+    if vcvars:
+        full_cmd = f'call "{vcvars}" {arch_arg} && {command_line}'
+    else:
+        full_cmd = command_line
+    subprocess.run(["cmd", "/d", "/s", "/c", full_cmd], check=True)
 
 
 def ensure_webview2_sdk(version: str = "1.0.2846.51"):
@@ -226,22 +215,24 @@ def ensure_webview2_sdk(version: str = "1.0.2846.51"):
         base_dir = deps_root / f"Microsoft.Web.WebView2.{version}"
         if not base_dir.exists():
             deps_root.mkdir(parents=True, exist_ok=True)
-            nuget_exe = _find_nuget_executable()
-            if not nuget_exe:
+            nuget_cmd = _find_nuget_command()
+            if not nuget_cmd:
                 raise RuntimeError(
-                    "WebView2 SDK not found. Install nuget.exe (https://www.nuget.org/downloads) "
+                    "WebView2 SDK not found. Install NuGet CLI (nuget.exe) or .NET SDK (for 'dotnet nuget'), "
                     "or set WEBVIEW2_SDK_DIR to an extracted Microsoft.Web.WebView2 package."
                 )
-            print(f"Downloading Microsoft.Web.WebView2.{version} with nuget ({nuget_exe})")
-            _run_nuget_command([
-                nuget_exe,
-                "install",
-                "Microsoft.Web.WebView2",
-                "-Version",
-                version,
-                "-OutputDirectory",
-                str(deps_root),
-            ])
+            print(f"Downloading Microsoft.Web.WebView2.{version} with {' '.join(nuget_cmd)}")
+            _run_nuget_command(
+                nuget_cmd
+                + [
+                    "install",
+                    "Microsoft.Web.WebView2",
+                    "-Version",
+                    version,
+                    "-OutputDirectory",
+                    str(deps_root),
+                ]
+            )
 
     include_dir = base_dir / "build" / "native" / "include"
     if not include_dir.exists():
