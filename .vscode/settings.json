@@ -93,4 +93,5 @@
         "--enable=all"
     ],
     "C_Cpp.errorSquiggles": "enabled",
+    "remote.autoForwardPorts": false,
 }

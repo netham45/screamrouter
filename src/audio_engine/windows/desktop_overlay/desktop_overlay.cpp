@@ -427,9 +427,9 @@ void DesktopOverlayController::EnsureTrayIcon() {
     ZeroMemory(&nid_, sizeof(NOTIFYICONDATAW));
     nid_.cbSize = sizeof(NOTIFYICONDATAW);
     nid_.hWnd = window_;
-    nid_.uID = 1;
+    nid_.uID = kTrayIconId;
     nid_.uVersion = NOTIFYICON_VERSION_4;
-    nid_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+    nid_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid_.uCallbackMessage = kTrayCallbackMessage;
     nid_.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     StringCchCopyW(nid_.szTip, ARRAYSIZE(nid_.szTip), kTrayTooltip);
@@ -473,33 +473,33 @@ void DesktopOverlayController::ShowTrayMenu() {
     TrackPopupMenuEx(tray_menu_, TPM_RIGHTALIGN | TPM_BOTTOMALIGN, pt.x, pt.y, window_, nullptr);
 }
 
-void DesktopOverlayController::HandleTrayEvent(WPARAM /*wparam*/, LPARAM lparam) {
+void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
+    if (static_cast<UINT>(wparam) != kTrayIconId) {
+        LOG_CPP_DEBUG("DesktopOverlay tray event for different icon (%llu)", static_cast<unsigned long long>(wparam));
+        return;
+    }
     UINT msg = static_cast<UINT>(lparam);
     LOG_CPP_DEBUG("DesktopOverlay tray event msg=0x%04x", msg);
     switch (msg) {
     case WM_LBUTTONDOWN:
-        LOG_CPP_DEBUG("DesktopOverlay tray WM_LBUTTONDOWN received");
         tray_left_down_ = true;
         break;
     case WM_LBUTTONUP:
-        LOG_CPP_INFO("DesktopOverlay tray left-click release");
-        Toggle();
-        tray_left_down_ = false;
-        break;
+    case WM_LBUTTONDBLCLK:
     case NIN_SELECT:
     case NIN_KEYSELECT:
-        LOG_CPP_INFO("DesktopOverlay tray activation (shell msg=0x%04x)", msg);
+        tray_left_down_ = false;
+        LOG_CPP_INFO("DesktopOverlay tray left click");
         Toggle();
         break;
     case WM_RBUTTONDOWN:
-        LOG_CPP_DEBUG("DesktopOverlay tray WM_RBUTTONDOWN received");
         tray_right_down_ = true;
         break;
     case WM_RBUTTONUP:
     case WM_CONTEXTMENU:
-        LOG_CPP_INFO("DesktopOverlay tray context menu request (msg=0x%04x)", msg);
-        ShowTrayMenu();
         tray_right_down_ = false;
+        LOG_CPP_INFO("DesktopOverlay tray right click");
+        ShowTrayMenu();
         break;
     default:
         LOG_CPP_DEBUG("DesktopOverlay tray event ignored (msg=0x%04x)", msg);

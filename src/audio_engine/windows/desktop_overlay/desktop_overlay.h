@@ -62,8 +62,9 @@ private:
         kExit = 2,
     };
 
-    static constexpr UINT kTrayCallbackMessage = WM_APP + 42;
-    static constexpr UINT kControlMessage = WM_APP + 43;
+    static constexpr UINT kTrayCallbackMessage = WM_USER + 42;
+    static constexpr UINT kControlMessage = WM_USER + 43;
+    static constexpr UINT kTrayIconId = 1001;
     static constexpr UINT_PTR kMouseTimerId = 1001;
     static constexpr UINT_PTR kColorTimerId = 1002;
     static constexpr int kDefaultWidth = 900;
@@ -112,6 +113,7 @@ private:
     Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
 
     std::mutex state_mutex_;
+    GUID tray_guid_{0x9C9AA8C2, 0x5A45, 0x4F24, {0x93, 0xB2, 0x0A, 0x64, 0x78, 0xF9, 0x01, 0x72}};
 };
 
 }  // namespace screamrouter::desktop
