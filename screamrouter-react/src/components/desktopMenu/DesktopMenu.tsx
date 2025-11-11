@@ -447,7 +447,7 @@ const DesktopMenu: React.FC = () => {
   // The showSpeakerLayoutPage is now correctly part of actions object above
   
   return (
-    <Flex direction="column" height="950px" maxHeight="950px" justifyContent="flex-end" alignContent="flex-end">
+    <Flex direction="column" height="550px" maxHeight="550px" justifyContent="flex-end" alignContent="flex-end">
       {/* Delete Confirmation Dialog */}
       <ConfirmationDialog
         isOpen={deleteDialogOpen}

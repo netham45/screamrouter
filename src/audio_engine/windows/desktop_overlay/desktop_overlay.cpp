@@ -153,15 +153,16 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     }
 
     RECT work_area = GetWorkArea();
-    const int margin_x = 16;
-    const int margin_y = 8;
+    constexpr int margin_x = 16;
+    constexpr int margin_y = 8;
     const int work_w = work_area.right - work_area.left;
     const int work_h = work_area.bottom - work_area.top;
     const int usable_w = std::max(work_w - margin_x * 2, 360);
     width_ = width > 0 ? std::min(width, usable_w)
                        : std::clamp(usable_w, 420, 640);
-    height_ = height > 0 ? std::min(height, work_h - margin_y)
-                         : std::max(work_h - margin_y, 400);
+    const int full_height = std::max(work_h - margin_y * 2, 400);
+    height_ = height > 0 ? std::min(height, full_height)
+                         : full_height;
     const int left = work_area.right - width_ - margin_x;
     const int top = work_area.top + margin_y;
 
@@ -276,9 +277,7 @@ void DesktopOverlayController::InitWebView() {
                     }
                     webview_controller_ = controller;
                     webview_controller_->get_CoreWebView2(&webview_);
-                    RECT bounds{};
-                    GetClientRect(window_, &bounds);
-                    webview_controller_->put_Bounds(bounds);
+                    UpdateWebViewBounds();
 
                     Microsoft::WRL::ComPtr<ICoreWebView2Controller2> controller2;
                     if (SUCCEEDED(webview_controller_.As(&controller2)) && controller2) {
@@ -557,6 +556,15 @@ void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
     }
 }
 
+void DesktopOverlayController::UpdateWebViewBounds() {
+    if (!window_ || !webview_controller_) {
+        return;
+    }
+    RECT bounds{};
+    GetClientRect(window_, &bounds);
+    webview_controller_->put_Bounds(bounds);
+}
+
 RECT DesktopOverlayController::GetWorkArea() const {
     RECT work{};
     if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
@@ -579,14 +587,12 @@ void DesktopOverlayController::PositionWindow() {
     const int work_h = work.bottom - work.top;
     const int usable_w = std::max(work_w - margin_x * 2, 360);
     width_ = std::clamp(width_, 360, usable_w);
-    height_ = std::clamp(height_, 400, work_h - margin_y);
+    const int full_height = std::max(work_h - margin_y * 2, 400);
+    height_ = std::clamp(height_, 400, full_height);
     int left = work.right - width_ - margin_x;
     int top = work.top + margin_y;
     SetWindowPos(window_, nullptr, left, top, width_, height_, SWP_NOZORDER | SWP_NOACTIVATE);
-    if (webview_controller_) {
-        RECT bounds{0, 0, width_, height_};
-        webview_controller_->put_Bounds(bounds);
-    }
+    UpdateWebViewBounds();
 }
 
 void DesktopOverlayController::HandleCommand(WPARAM wparam) {
@@ -637,6 +643,11 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
         return 0;
     case WM_DESTROY:
         PostQuitMessage(0);
+        return 0;
+    case WM_SIZE:
+        if (controller) {
+            controller->UpdateWebViewBounds();
+        }
         return 0;
     case WM_ERASEBKGND:
         return 1;

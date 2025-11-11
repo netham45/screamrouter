@@ -88,6 +88,7 @@ private:
     void HandleColorTimer();
     void HandleTrayEvent(WPARAM wparam, LPARAM lparam);
     void HandleCommand(WPARAM wparam);
+    void UpdateWebViewBounds();
 
     std::thread ui_thread_;
     std::atomic<bool> running_{false};
