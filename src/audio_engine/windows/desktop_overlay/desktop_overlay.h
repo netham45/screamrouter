@@ -89,6 +89,7 @@ private:
     void HandleTrayEvent(WPARAM wparam, LPARAM lparam);
     void HandleCommand(WPARAM wparam);
     void UpdateWebViewBounds();
+    void FocusWebView();
 
     std::thread ui_thread_;
     std::atomic<bool> running_{false};

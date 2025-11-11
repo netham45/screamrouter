@@ -350,6 +350,7 @@ void DesktopOverlayController::SendDesktopMenuShow() {
     wchar_t script[256];
     StringCchPrintfW(script, std::size(script), L"DesktopMenuShow(%d,%d,%d,%d);", r, g, b, a);
     webview_->ExecuteScript(script, nullptr);
+    FocusWebView();
 }
 
 void DesktopOverlayController::SendDesktopMenuHide() {
@@ -380,6 +381,8 @@ void DesktopOverlayController::SetMouseMode(MouseMode mode) {
     }
     SetWindowLong(window_, GWL_EXSTYLE, style);
     SetLayeredWindowAttributes(window_, RGB(0, 0, 0), 0, LWA_COLORKEY);
+    SetWindowPos(window_, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
 
 void DesktopOverlayController::HandleMouseTimer() {
@@ -419,9 +422,11 @@ void DesktopOverlayController::HandleMouseTimer() {
             [this](HRESULT error, PCWSTR result) -> HRESULT {
                 script_pending_ = false;
                 if (FAILED(error) || !result) {
+                    LOG_CPP_WARNING("DesktopOverlay hit-test script failed (hr=0x%08X)", error);
                     return S_OK;
                 }
                 bool over_body = (wcscmp(result, L"true") == 0) || (wcscmp(result, L"\"true\"") == 0);
+                LOG_CPP_DEBUG("DesktopOverlay hit-test result over_body=%d", over_body);
                 SetMouseMode(over_body ? MouseMode::kPassthrough : MouseMode::kInteractive);
                 return S_OK;
             })
@@ -565,6 +570,12 @@ void DesktopOverlayController::UpdateWebViewBounds() {
     webview_controller_->put_Bounds(bounds);
 }
 
+void DesktopOverlayController::FocusWebView() {
+    if (webview_controller_) {
+        webview_controller_->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    }
+}
+
 RECT DesktopOverlayController::GetWorkArea() const {
     RECT work{};
     if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
@@ -649,6 +660,11 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
             controller->UpdateWebViewBounds();
         }
         return 0;
+    case WM_SETFOCUS:
+        if (controller) {
+            controller->FocusWebView();
+        }
+        return 0;
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT: {
@@ -693,6 +709,9 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
                     controller->PositionWindow();
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
+                    SetFocus(hwnd);
+                    controller->SetMouseMode(MouseMode::kInteractive);
+                    controller->FocusWebView();
                     controller->SendDesktopMenuShow();
                     LOG_CPP_INFO("DesktopOverlay shown");
                 }
@@ -712,6 +731,9 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
                 } else {
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
+                    SetFocus(hwnd);
+                    controller->SetMouseMode(MouseMode::kInteractive);
+                    controller->FocusWebView();
                     controller->SendDesktopMenuShow();
                     LOG_CPP_INFO("DesktopOverlay toggled shown");
                 }

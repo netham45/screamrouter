@@ -516,6 +516,7 @@ const DesktopMenu: React.FC = () => {
               "border": "0",
             },
           }}
+          
           backgroundColor={bgColor}
         >
           {renderContent()}
