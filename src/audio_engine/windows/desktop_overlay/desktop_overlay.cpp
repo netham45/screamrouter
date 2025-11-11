@@ -31,12 +31,42 @@ static UINT g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
 constexpr wchar_t kJsHelper[] = LR"JS(
     function isPointOverBody(x, y) {
         const el = document.elementFromPoint(x, y);
-        if (!el) { return true; }
-        if (el === document.body || el === document.documentElement) { return true; }
-        if (el.id === 'root' || (el.parentNode && el.parentNode.id === 'root')) { return true; }
-        if (el.classList && (el.classList.contains('chakra-modal__overlay') || el.classList.contains('chakra-modal__content-container') || el.classList.contains('chakra-modal__body'))) {
-            return false;
+
+        // If no element, consider it as body (transparent area)
+        if (!el) {
+            return true;
         }
+
+        // If it's body or html element, it's transparent area
+        if (el === document.body || el === document.documentElement) {
+            return true;
+        }
+
+        // If it's the root div without actual content, it's transparent
+        if (el.id === 'root') {
+            // Check if root has any visible children
+            const hasVisibleChildren = el.children.length > 0;
+            if (!hasVisibleChildren) {
+                return true;
+            }
+        }
+
+        // If parent is root and element has no substantial content, consider it transparent
+        if (el.parentNode && el.parentNode.id === 'root') {
+            // This is a direct child of root, likely background
+            return true;
+        }
+
+        // Modal overlays and content should be interactive (not body)
+        if (el.classList) {
+            if (el.classList.contains('chakra-modal__overlay') ||
+                el.classList.contains('chakra-modal__content-container') ||
+                el.classList.contains('chakra-modal__body')) {
+                return false;  // These are interactive elements
+            }
+        }
+
+        // Default: if we hit any other element, it's interactive content
         return false;
     }
 )JS";
@@ -168,7 +198,7 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     const int top = work_area.bottom - height_ - margin_y;
 
     HWND hwnd = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,  // No WS_EX_TRANSPARENT initially
         class_name.c_str(),
         L"ScreamRouter Desktop Menu",
         WS_POPUP,
@@ -385,30 +415,38 @@ void DesktopOverlayController::DisableMouse() {
     if (mouse_disabled_ || !window_) {
         return;
     }
-    // When disabling mouse, we want clicks to pass through
-    // This is done by setting the window to be transparent to mouse events
-    // We use transparent color key to make transparent areas click-through
+    LOG_CPP_DEBUG("DesktopOverlay disabling mouse (making pass-through)");
+
+    // When disabling mouse, we add WS_EX_TRANSPARENT to make the window click-through
     LONG style = GetWindowLong(window_, GWL_EXSTYLE);
-    style |= WS_EX_LAYERED | WS_EX_TRANSPARENT;
+    style |= WS_EX_TRANSPARENT;
     SetWindowLong(window_, GWL_EXSTYLE, style);
-    // Set transparent areas (black/RGB(0,0,0)) to be click-through
-    SetLayeredWindowAttributes(window_, RGB(0, 0, 0), 255, LWA_COLORKEY | LWA_ALPHA);
+
+    // Force the window to update with the new style
+    SetWindowPos(window_, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
     mouse_disabled_ = true;
-    LOG_CPP_DEBUG("DesktopOverlay mouse disabled (pass-through)");
+    LOG_CPP_DEBUG("DesktopOverlay mouse disabled (pass-through) - style=0x%08X", style);
 }
 
 void DesktopOverlayController::EnableMouse() {
     if (!mouse_disabled_ || !window_) {
         return;
     }
-    // When enabling mouse, remove the transparent style so window receives clicks
+    LOG_CPP_DEBUG("DesktopOverlay enabling mouse (making interactive)");
+
+    // When enabling mouse, remove WS_EX_TRANSPARENT so window receives clicks
     LONG style = GetWindowLong(window_, GWL_EXSTYLE);
     style &= ~WS_EX_TRANSPARENT;
-    // Keep layered for transparency but remove click-through
     SetWindowLong(window_, GWL_EXSTYLE, style);
-    SetLayeredWindowAttributes(window_, RGB(0, 0, 0), 255, LWA_COLORKEY | LWA_ALPHA);
+
+    // Force the window to update with the new style
+    SetWindowPos(window_, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
     mouse_disabled_ = false;
-    LOG_CPP_DEBUG("DesktopOverlay mouse enabled (interactive)");
+    LOG_CPP_DEBUG("DesktopOverlay mouse enabled (interactive) - style=0x%08X", style);
 }
 
 void DesktopOverlayController::HandleMouseTimer() {
@@ -444,16 +482,23 @@ void DesktopOverlayController::HandleMouseTimer() {
     webview_->ExecuteScript(
         script.c_str(),
         Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
-            [this](HRESULT error, PCWSTR result) -> HRESULT {
+            [this, scaled_x, scaled_y](HRESULT error, PCWSTR result) -> HRESULT {
                 script_pending_ = false;
                 if (FAILED(error) || !result) {
+                    LOG_CPP_WARNING("DesktopOverlay hit-test script failed (hr=0x%08X)", error);
                     return S_OK;
                 }
                 bool over_body = (wcscmp(result, L"true") == 0) || (wcscmp(result, L"\"true\"") == 0);
-                LOG_CPP_DEBUG("DesktopOverlay hit-test result over_body=%d", over_body);
+                LOG_CPP_DEBUG("DesktopOverlay hit-test at (%d,%d) result='%ls' over_body=%d mouse_disabled=%d",
+                              scaled_x, scaled_y, result, over_body, mouse_disabled_);
+
+                // over_body=true means we're over transparent area, should disable mouse (pass-through)
+                // over_body=false means we're over content, should enable mouse (interactive)
                 if (over_body && !mouse_disabled_) {
+                    LOG_CPP_INFO("DesktopOverlay detected transparent area, disabling mouse");
                     DisableMouse();
                 } else if (!over_body && mouse_disabled_) {
+                    LOG_CPP_INFO("DesktopOverlay detected content area, enabling mouse");
                     EnableMouse();
                 }
                 return S_OK;
@@ -658,6 +703,12 @@ void DesktopOverlayController::HandleCommand(WPARAM wparam) {
             ShowWindow(window_, SW_HIDE);
             SendDesktopMenuHide();
         } else {
+            PositionWindow();
+
+            // Force mouse to be enabled initially (interactive)
+            mouse_disabled_ = true;  // Set to true so EnableMouse will work
+            EnableMouse();
+
             ShowWindow(window_, SW_SHOWNOACTIVATE);
             SetForegroundWindow(window_);
             SendDesktopMenuShow();
@@ -757,17 +808,17 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
             case ControlCommand::kShow:
                 if (!IsWindowVisible(hwnd)) {
                     controller->PositionWindow();
+
+                    // Force mouse to be enabled initially (interactive)
+                    controller->mouse_disabled_ = true;  // Set to true so EnableMouse will work
+                    controller->EnableMouse();
+
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
                     SetFocus(hwnd);
-                    // Start with mouse enabled (interactive)
-                    if (controller->mouse_disabled_) {
-                        controller->mouse_disabled_ = false;
-                        controller->EnableMouse();
-                    }
                     controller->FocusWebView();
                     controller->SendDesktopMenuShow();
-                    LOG_CPP_INFO("DesktopOverlay shown");
+                    LOG_CPP_INFO("DesktopOverlay shown with mouse enabled");
                 }
                 break;
             case ControlCommand::kHide:
@@ -784,17 +835,17 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
                     LOG_CPP_INFO("DesktopOverlay toggled hidden");
                 } else {
                     controller->PositionWindow();
+
+                    // Force mouse to be enabled initially (interactive)
+                    controller->mouse_disabled_ = true;  // Set to true so EnableMouse will work
+                    controller->EnableMouse();
+
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
                     SetFocus(hwnd);
-                    // Start with mouse enabled (interactive)
-                    if (controller->mouse_disabled_) {
-                        controller->mouse_disabled_ = false;
-                        controller->EnableMouse();
-                    }
                     controller->FocusWebView();
                     controller->SendDesktopMenuShow();
-                    LOG_CPP_INFO("DesktopOverlay toggled shown");
+                    LOG_CPP_INFO("DesktopOverlay toggled shown with mouse enabled");
                 }
                 break;
             case ControlCommand::kShutdown:
