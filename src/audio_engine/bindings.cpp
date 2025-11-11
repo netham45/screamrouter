@@ -23,6 +23,11 @@
 // is imported when SCREAMROUTER_TRACE is set.
 #include "utils/fntrace.h"
 #include "utils/fntrace_probe.h"
+#ifdef _WIN32
+#include "windows/desktop_overlay/desktop_overlay.h"
+#else
+struct DesktopOverlayStub {};
+#endif
 #include <cstdlib>
 
 // Note: audio_types.h and audio_engine_config_types.h are included by the headers above.
@@ -94,4 +99,27 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
 
     // --- Bind Global Constants ---
     m.attr("EQ_BANDS") = py::int_(audio::EQ_BANDS);
+
+#ifdef _WIN32
+    py::class_<screamrouter::desktop::DesktopOverlayController>(m, "DesktopOverlay")
+        .def(py::init<>())
+        .def("start", [](screamrouter::desktop::DesktopOverlayController& self, const std::string& url, int width, int height) {
+            std::wstring wide_url(url.begin(), url.end());
+            return self.Start(wide_url, width, height);
+        }, py::arg("url"), py::arg("width") = 0, py::arg("height") = 0)
+        .def("show", &screamrouter::desktop::DesktopOverlayController::Show)
+        .def("hide", &screamrouter::desktop::DesktopOverlayController::Hide)
+        .def("toggle", &screamrouter::desktop::DesktopOverlayController::Toggle)
+        .def("shutdown", &screamrouter::desktop::DesktopOverlayController::Shutdown);
+#else
+    py::class_<DesktopOverlayStub>(m, "DesktopOverlay")
+        .def(py::init<>())
+        .def("start", [](DesktopOverlayStub&, const std::string&, int, int) {
+            throw std::runtime_error("DesktopOverlay not supported on this platform");
+        })
+        .def("show", [](DesktopOverlayStub&) {})
+        .def("hide", [](DesktopOverlayStub&) {})
+        .def("toggle", [](DesktopOverlayStub&) {})
+        .def("shutdown", [](DesktopOverlayStub&) {});
+#endif
 }

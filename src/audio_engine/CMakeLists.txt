@@ -122,6 +122,8 @@ if(WIN32)
             advapi32
             crypt32
             user32
+            dwmapi
+            shlwapi
             bcrypt
             ws2_32
             iphlpapi
@@ -131,6 +133,7 @@ if(WIN32)
             mmdevapi
             uuid
             propsys
+            WebView2LoaderStatic
     )
 else()
     target_link_libraries(screamrouter_audio_engine PRIVATE ssl crypto pthread dl)
