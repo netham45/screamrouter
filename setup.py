@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import platform
 import re
+import urllib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from setuptools import setup, Extension, find_packages
@@ -177,6 +178,7 @@ def _download_nuget_exe() -> Path | None:
     dest_file = dest_dir / "nuget.exe"
     try:
         print(f"Downloading nuget.exe from {dist_url}")
+        with urllib.request.urlopen(dist_url) as resp, open(dest_file, "wb") as out:
             out.write(resp.read())
     except Exception as exc:
         print(f"Failed to download nuget.exe: {exc}")
