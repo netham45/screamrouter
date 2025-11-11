@@ -153,6 +153,41 @@ def _find_nuget_executable():
     return None
 
 
+def _default_vcvarsall():
+    candidates = []
+    env_hint = os.environ.get("VCVARSALL_BAT")
+    if env_hint:
+        candidates.append(Path(env_hint))
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+    if program_files_x86:
+        base = Path(program_files_x86) / "Microsoft Visual Studio"
+        candidates.extend([
+            base / "2022" / "Community" / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat",
+            base / "2022" / "Professional" / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat",
+            base / "2022" / "Enterprise" / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat",
+        ])
+    for candidate in candidates:
+        if candidate and candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _run_nuget_command(args):
+    """Run nuget command, optionally via vcvarsall for MSVC env."""
+    nuget_exe = args[0]
+    if sys.platform != "win32":
+        subprocess.run(args, check=True)
+        return
+    vcvars = _default_vcvarsall()
+    if vcvars:
+        arch_arg = "amd64" if platform.architecture()[0] == "64bit" else "x86"
+        inner_cmd = " ".join(f'"{a}"' if " " in a else a for a in [nuget_exe, *args[1:]])
+        full_cmd = f'call "{vcvars}" {arch_arg} && {inner_cmd}'
+        subprocess.run(["cmd", "/c", full_cmd], check=True)
+    else:
+        subprocess.run(args, check=True)
+
+
 def ensure_webview2_sdk(version: str = "1.0.2846.51"):
     """Ensure the Microsoft.Web.WebView2 SDK is available; return paths dict or None on non-Windows."""
     if sys.platform != "win32":
@@ -173,10 +208,15 @@ def ensure_webview2_sdk(version: str = "1.0.2846.51"):
                     "or set WEBVIEW2_SDK_DIR to an extracted Microsoft.Web.WebView2 package."
                 )
             print(f"Downloading Microsoft.Web.WebView2.{version} with nuget ({nuget_exe})")
-            subprocess.run(
-                [nuget_exe, "install", "Microsoft.Web.WebView2", "-Version", version, "-OutputDirectory", str(deps_root)],
-                check=True,
-            )
+            _run_nuget_command([
+                nuget_exe,
+                "install",
+                "Microsoft.Web.WebView2",
+                "-Version",
+                version,
+                "-OutputDirectory",
+                str(deps_root),
+            ])
 
     include_dir = base_dir / "build" / "native" / "include"
     if not include_dir.exists():
