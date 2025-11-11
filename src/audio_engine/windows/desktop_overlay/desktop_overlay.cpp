@@ -190,6 +190,8 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     LOG_CPP_INFO("DesktopOverlay window created (hwnd=%p)", hwnd);
     url_ = url;
 
+    EnableMouse();
+
     LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
     SetWindowLong(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED);
     if (!SetLayeredWindowAttributes(hwnd, RGB(0, 0, 0), 0, LWA_COLORKEY)) {
@@ -368,23 +370,28 @@ void DesktopOverlayController::RefreshAccentColor() {
     }
 }
 
-void DesktopOverlayController::SetMouseMode(MouseMode mode) {
-    if (mouse_mode_ == mode || !window_) {
+void DesktopOverlayController::DisableMouse() {
+    if (mouse_disabled_ || !window_) {
         return;
     }
-    mouse_mode_ = mode;
     LONG style = GetWindowLong(window_, GWL_EXSTYLE);
-    if (mode == MouseMode::kPassthrough) {
-        style |= WS_EX_TRANSPARENT;
-        LOG_CPP_DEBUG("DesktopOverlay mouse mode => passthrough");
-    } else {
-        style &= ~WS_EX_TRANSPARENT;
-        LOG_CPP_DEBUG("DesktopOverlay mouse mode => interactive");
-    }
+    style |= WS_EX_LAYERED;
     SetWindowLong(window_, GWL_EXSTYLE, style);
-    SetLayeredWindowAttributes(window_, RGB(0, 0, 0), 0, LWA_COLORKEY);
-    SetWindowPos(window_, nullptr, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    SetLayeredWindowAttributes(window_, 0, 255, LWA_ALPHA);
+    mouse_disabled_ = true;
+    LOG_CPP_DEBUG("DesktopOverlay mouse disabled (pass-through)");
+}
+
+void DesktopOverlayController::EnableMouse() {
+    if (!mouse_disabled_ || !window_) {
+        return;
+    }
+    LONG style = GetWindowLong(window_, GWL_EXSTYLE);
+    style &= ~WS_EX_LAYERED;
+    SetWindowLong(window_, GWL_EXSTYLE, style);
+    SetLayeredWindowAttributes(window_, 0, 255, LWA_ALPHA);
+    mouse_disabled_ = false;
+    LOG_CPP_DEBUG("DesktopOverlay mouse enabled (interactive)");
 }
 
 void DesktopOverlayController::HandleMouseTimer() {
@@ -402,7 +409,6 @@ void DesktopOverlayController::HandleMouseTimer() {
     RECT rect{};
     GetWindowRect(window_, &rect);
     if (!PtInRect(&rect, pt)) {
-        SetMouseMode(MouseMode::kInteractive);
         return;
     }
 
@@ -428,7 +434,11 @@ void DesktopOverlayController::HandleMouseTimer() {
                 }
                 bool over_body = (wcscmp(result, L"true") == 0) || (wcscmp(result, L"\"true\"") == 0);
                 LOG_CPP_DEBUG("DesktopOverlay hit-test result over_body=%d", over_body);
-                SetMouseMode(over_body ? MouseMode::kPassthrough : MouseMode::kInteractive);
+                if (over_body && !mouse_disabled_) {
+                    DisableMouse();
+                } else if (!over_body && mouse_disabled_) {
+                    EnableMouse();
+                }
                 return S_OK;
             })
             .Get());
@@ -673,11 +683,6 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
             controller->FocusWebView();
         }
         return 0;
-    case WM_NCHITTEST:
-        if (controller && controller->IsMousePassthrough()) {
-            return HTTRANSPARENT;
-        }
-        return HTCLIENT;
     case WM_ERASEBKGND:
         return 1;
     case WM_PAINT: {
@@ -723,7 +728,7 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
                     SetFocus(hwnd);
-                    controller->SetMouseMode(MouseMode::kInteractive);
+                    controller->EnableMouse();
                     controller->FocusWebView();
                     controller->SendDesktopMenuShow();
                     LOG_CPP_INFO("DesktopOverlay shown");
@@ -745,7 +750,7 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
                     SetFocus(hwnd);
-                    controller->SetMouseMode(MouseMode::kInteractive);
+                    controller->EnableMouse();
                     controller->FocusWebView();
                     controller->SendDesktopMenuShow();
                     LOG_CPP_INFO("DesktopOverlay toggled shown");

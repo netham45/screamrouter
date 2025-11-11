@@ -45,11 +45,6 @@ public:
     void Shutdown();
 
 private:
-    enum class MouseMode {
-        kInteractive,
-        kPassthrough,
-    };
-
     enum class ControlCommand : WPARAM {
         kShow = 1,
         kHide = 2,
@@ -83,15 +78,14 @@ private:
     void SendDesktopMenuShow();
     void SendDesktopMenuHide();
     void RefreshAccentColor();
-    void SetMouseMode(MouseMode mode);
+    void DisableMouse();
+    void EnableMouse();
     void HandleMouseTimer();
     void HandleColorTimer();
     void HandleTrayEvent(WPARAM wparam, LPARAM lparam);
     void HandleCommand(WPARAM wparam);
     void UpdateWebViewBounds();
     void FocusWebView();
-
-    bool IsMousePassthrough() const { return mouse_mode_ == MouseMode::kPassthrough; }
 
     std::thread ui_thread_;
     std::atomic<bool> running_{false};
@@ -106,7 +100,7 @@ private:
     HINSTANCE hinstance_{nullptr};
     HICON tray_icon_{nullptr};
 
-    MouseMode mouse_mode_{MouseMode::kInteractive};
+    bool mouse_disabled_{false};
     POINT last_mouse_{};
     bool script_pending_{false};
     COLORREF accent_color_{RGB(0, 120, 215)};
