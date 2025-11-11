@@ -21,6 +21,12 @@ namespace screamrouter::desktop {
 namespace {
 constexpr wchar_t kWindowClassName[] = L"ScreamRouterDesktopOverlayWindow";
 constexpr wchar_t kTrayTooltip[] = L"ScreamRouter Desktop Menu";
+#ifndef NIN_POPUPOPEN
+#define NIN_POPUPOPEN (WM_USER + 6)
+#endif
+#ifndef NIN_POPUPCLOSE
+#define NIN_POPUPCLOSE (WM_USER + 7)
+#endif
 constexpr wchar_t kJsHelper[] = LR"JS(
     function isPointOverBody(x, y) {
         const el = document.elementFromPoint(x, y);
@@ -124,13 +130,21 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     LOG_CPP_INFO("DesktopOverlay UI thread starting");
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
+    srand(static_cast<unsigned int>(GetTickCount64()));
+    std::wstring class_name = std::wstring(kWindowClassName) + L"_" + std::to_wstring(rand());
+
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(WNDCLASSEXW);
     wc.lpfnWndProc = OverlayWndProc;
     wc.hInstance = hinstance_;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.lpszClassName = kWindowClassName;
-    RegisterClassExW(&wc);
+    wc.lpszClassName = class_name.c_str();
+    if (!RegisterClassExW(&wc)) {
+        LOG_CPP_ERROR("DesktopOverlay failed to register class (err=%lu)", GetLastError());
+        running_.store(false);
+        CoUninitialize();
+        return;
+    }
 
     const int screen_w = GetSystemMetrics(SM_CXSCREEN);
     const int screen_h = GetSystemMetrics(SM_CYSCREEN);
@@ -139,7 +153,7 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
 
     HWND hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        kWindowClassName,
+        class_name.c_str(),
         L"ScreamRouter Desktop Menu",
         WS_POPUP,
         left,
@@ -159,16 +173,19 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     }
 
     window_ = hwnd;
+    LOG_CPP_INFO("DesktopOverlay window created (hwnd=%p)", hwnd);
     url_ = url;
 
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
     ShowWindow(hwnd, SW_HIDE);
 
     EnsureTrayIcon();
+    LOG_CPP_INFO("DesktopOverlay tray icon initialized");
     CreateExitButton();
 
     SetTimer(hwnd, kMouseTimerId, 50, nullptr);
     SetTimer(hwnd, kColorTimerId, 5000, nullptr);
+    LOG_CPP_DEBUG("DesktopOverlay timers started");
 
     InitWebView();
 
@@ -195,6 +212,7 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
 }
 
 void DesktopOverlayController::InitWebView() {
+    LOG_CPP_INFO("DesktopOverlay initializing WebView2");
     auto handler = Microsoft::WRL::Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
         [this](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
             if (FAILED(result) || !env) {
@@ -236,7 +254,12 @@ void DesktopOverlayController::InitWebView() {
             return S_OK;
         });
 
-    CreateCoreWebView2EnvironmentWithOptions(nullptr, nullptr, nullptr, handler.Get());
+    HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(nullptr, nullptr, nullptr, handler.Get());
+    if (FAILED(hr)) {
+        LOG_CPP_ERROR("DesktopOverlay CreateCoreWebView2EnvironmentWithOptions returned hr=0x%08X", hr);
+    } else {
+        LOG_CPP_DEBUG("DesktopOverlay requested WebView2 environment creation");
+    }
 }
 
 void DesktopOverlayController::InjectHelpers() {
@@ -403,14 +426,17 @@ void DesktopOverlayController::ShowTrayMenu() {
 }
 
 void DesktopOverlayController::HandleTrayEvent(WPARAM /*wparam*/, LPARAM lparam) {
-    switch (lparam) {
+    UINT msg = LOWORD(lparam);
+    UINT metadata = HIWORD(lparam);
+    LOG_CPP_DEBUG("DesktopOverlay tray raw event lParam=0x%08lx (msg=0x%04x meta=0x%04x)", lparam, msg, metadata);
+    switch (msg) {
     case WM_LBUTTONDOWN:
         LOG_CPP_DEBUG("DesktopOverlay tray WM_LBUTTONDOWN received");
         break;
     case WM_LBUTTONUP:
     case NIN_SELECT:
     case NIN_KEYSELECT:
-        LOG_CPP_INFO("DesktopOverlay tray activation (code=%ld)", lparam);
+        LOG_CPP_INFO("DesktopOverlay tray activation (msg=0x%04x)", msg);
         Toggle();
         break;
     case WM_RBUTTONDOWN:
@@ -418,11 +444,13 @@ void DesktopOverlayController::HandleTrayEvent(WPARAM /*wparam*/, LPARAM lparam)
         break;
     case WM_RBUTTONUP:
     case WM_CONTEXTMENU:
-        LOG_CPP_INFO("DesktopOverlay tray context menu request (code=%ld)", lparam);
+    case NIN_POPUPOPEN:
+    case NIN_POPUPCLOSE:
+        LOG_CPP_INFO("DesktopOverlay tray context menu request (msg=0x%04x)", msg);
         ShowTrayMenu();
         break;
     default:
-        LOG_CPP_DEBUG("DesktopOverlay tray event ignored (code=%ld)", lparam);
+        LOG_CPP_DEBUG("DesktopOverlay tray event ignored (msg=0x%04x)", msg);
         break;
     }
 }
