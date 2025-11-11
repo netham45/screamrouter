@@ -331,7 +331,6 @@ void DesktopOverlayController::InjectHelpers() {
         return;
     }
     webview_->AddScriptToExecuteOnDocumentCreated(kJsHelper, nullptr);
-    webview_->AddScriptToExecuteOnDocumentCreated(kTransparentBackgroundScript, nullptr);
 }
 
 void DesktopOverlayController::Navigate() {
