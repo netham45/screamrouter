@@ -562,6 +562,21 @@ void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
     }
 }
 
+void DesktopOverlayController::UpdateWebViewBounds() {
+    if (!window_ || !webview_controller_) {
+        return;
+    }
+    RECT bounds{};
+    GetClientRect(window_, &bounds);
+    webview_controller_->put_Bounds(bounds);
+}
+
+void DesktopOverlayController::FocusWebView() {
+    if (webview_controller_) {
+        webview_controller_->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    }
+}
+
 RECT DesktopOverlayController::GetWorkArea() const {
     RECT work{};
     if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
