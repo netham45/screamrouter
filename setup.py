@@ -29,6 +29,7 @@ import os
 import sys
 import shutil
 import subprocess
+import platform
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -131,6 +132,76 @@ class BuildReactCommand(_build):
         shutil.copytree(site_dir, package_site_dir)
         
         print(f"React build completed successfully. Files copied to {package_site_dir}")
+
+
+def _find_nuget_executable():
+    """Locate nuget.exe via env or PATH."""
+    hints = []
+    if os.environ.get("NUGET_EXE"):
+        hints.append(os.environ["NUGET_EXE"])
+    hints.extend([
+        shutil.which("nuget"),
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "NuGet" / "nuget.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "NuGet" / "nuget.exe",
+    ])
+    for candidate in hints:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.is_file():
+            return str(path)
+    return None
+
+
+def ensure_webview2_sdk(version: str = "1.0.2846.51"):
+    """Ensure the Microsoft.Web.WebView2 SDK is available; return paths dict or None on non-Windows."""
+    if sys.platform != "win32":
+        return None
+
+    explicit_dir = os.environ.get("WEBVIEW2_SDK_DIR")
+    if explicit_dir:
+        base_dir = Path(explicit_dir).expanduser().resolve()
+    else:
+        deps_root = project_root / "build" / "_deps" / "webview2"
+        base_dir = deps_root / f"Microsoft.Web.WebView2.{version}"
+        if not base_dir.exists():
+            deps_root.mkdir(parents=True, exist_ok=True)
+            nuget_exe = _find_nuget_executable()
+            if not nuget_exe:
+                raise RuntimeError(
+                    "WebView2 SDK not found. Install nuget.exe (https://www.nuget.org/downloads) "
+                    "or set WEBVIEW2_SDK_DIR to an extracted Microsoft.Web.WebView2 package."
+                )
+            print(f"Downloading Microsoft.Web.WebView2.{version} with nuget ({nuget_exe})")
+            subprocess.run(
+                [nuget_exe, "install", "Microsoft.Web.WebView2", "-Version", version, "-OutputDirectory", str(deps_root)],
+                check=True,
+            )
+
+    include_dir = base_dir / "build" / "native" / "include"
+    if not include_dir.exists():
+        raise RuntimeError(f"WebView2 include directory not found: {include_dir}")
+
+    is_64bit = platform.architecture()[0] == "64bit"
+    arch = "x64" if is_64bit else "x86"
+    runtime = "win-x64" if is_64bit else "win-x86"
+
+    loader_lib = base_dir / "build" / "native" / arch / "WebView2LoaderStatic.lib"
+    loader_dll = base_dir / "runtimes" / runtime / "native" / "WebView2Loader.dll"
+    if not loader_lib.exists():
+        raise RuntimeError(f"WebView2 loader static library not found: {loader_lib}")
+    if not loader_dll.exists():
+        raise RuntimeError(f"WebView2 loader runtime DLL not found: {loader_dll}")
+
+    return {
+        "base_dir": base_dir,
+        "include_dir": include_dir,
+        "loader_lib": loader_lib,
+        "loader_dll": loader_dll,
+    }
+
+
+WEBVIEW2_SDK = ensure_webview2_sdk()
 
 
 def detect_cross_compile_platform():
@@ -448,6 +519,12 @@ class BuildExtCommand(build_ext):
             target_lang=language,
         )
 
+        if sys.platform == "win32" and WEBVIEW2_SDK:
+            loader_dll = WEBVIEW2_SDK.get("loader_dll")
+            if loader_dll and Path(loader_dll).exists():
+                dest = Path(ext_path).parent / Path(loader_dll).name
+                shutil.copy2(loader_dll, dest)
+
     def _compile_with_cache(self, ext, sources, macros, extra_postargs):
         compiler = self.compiler
         include_dirs = ext.include_dirs
@@ -593,6 +670,32 @@ class BuildExtCommand(build_ext):
         return obj_path
 
 
+# Platform-specific linker additions
+platform_include_dirs: list[str] = []
+platform_libraries: list[str] = []
+platform_link_args: list[str] = []
+
+if sys.platform == "win32":
+    platform_libraries.extend([
+        "advapi32",
+        "crypt32",
+        "user32",
+        "dwmapi",
+        "shlwapi",
+        "bcrypt",
+        "ws2_32",
+        "iphlpapi",
+        "ole32",
+        "oleaut32",
+        "avrt",
+        "mmdevapi",
+        "uuid",
+        "propsys",
+    ])
+    if WEBVIEW2_SDK:
+        platform_include_dirs.append(str(WEBVIEW2_SDK["include_dir"]))
+        platform_link_args.append(str(WEBVIEW2_SDK["loader_lib"]))
+
 # Find source files
 src_root = Path("src")
 source_files = []
@@ -615,7 +718,7 @@ ext_modules = [
         include_dirs=[
             "src/audio_engine",
             "src/audio_engine/json/include",  # If json headers are needed
-        ],
+        ] + platform_include_dirs,
         libraries=[
             # Core dependencies
             "mp3lame",
@@ -631,12 +734,8 @@ ext_modules = [
             "srtp2",
         ]
         + (["asound"] if sys.platform.startswith("linux") else [])
-        + (["ole32", "oleaut32", "avrt", "mmdevapi", "uuid", "propsys"] if sys.platform == "win32" else []),
-        extra_link_args=(
-            ["ole32.lib", "oleaut32.lib", "avrt.lib", "mmdevapi.lib", "uuid.lib", "propsys.lib"]
-            if sys.platform == "win32"
-            else []
-        ),
+        + platform_libraries,
+        extra_link_args=platform_link_args,
         language="c++",
         cxx_std=17
     )
