@@ -405,15 +405,20 @@ void DesktopOverlayController::ShowTrayMenu() {
 void DesktopOverlayController::HandleTrayEvent(WPARAM /*wparam*/, LPARAM lparam) {
     switch (lparam) {
     case WM_LBUTTONDOWN:
+        LOG_CPP_DEBUG("DesktopOverlay tray WM_LBUTTONDOWN received");
+        break;
     case WM_LBUTTONUP:
     case NIN_SELECT:
     case NIN_KEYSELECT:
-        LOG_CPP_DEBUG("DesktopOverlay tray left-click event (code=%ld)", lparam);
+        LOG_CPP_INFO("DesktopOverlay tray activation (code=%ld)", lparam);
         Toggle();
+        break;
+    case WM_RBUTTONDOWN:
+        LOG_CPP_DEBUG("DesktopOverlay tray WM_RBUTTONDOWN received");
         break;
     case WM_RBUTTONUP:
     case WM_CONTEXTMENU:
-        LOG_CPP_DEBUG("DesktopOverlay tray context menu event (code=%ld)", lparam);
+        LOG_CPP_INFO("DesktopOverlay tray context menu request (code=%ld)", lparam);
         ShowTrayMenu();
         break;
     default:
