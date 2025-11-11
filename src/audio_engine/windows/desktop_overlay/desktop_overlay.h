@@ -100,8 +100,6 @@ private:
     HMENU tray_menu_{nullptr};
     NOTIFYICONDATAW nid_{};
     HINSTANCE hinstance_{nullptr};
-    bool tray_left_down_{false};
-    bool tray_right_down_{false};
     HICON tray_icon_{nullptr};
 
     MouseMode mouse_mode_{MouseMode::kInteractive};
@@ -115,6 +113,9 @@ private:
 
     std::mutex state_mutex_;
     GUID tray_guid_{0x9C9AA8C2, 0x5A45, 0x4F24, {0x93, 0xB2, 0x0A, 0x64, 0x78, 0xF9, 0x01, 0x72}};
+
+    RECT GetWorkArea() const;
+    void PositionWindow();
 };
 
 }  // namespace screamrouter::desktop

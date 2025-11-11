@@ -10,6 +10,7 @@
 #include <comdef.h>
 #include <windowsx.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -45,6 +46,18 @@ constexpr wchar_t kJsHelper[] = LR"JS(
         return false;
     }
 )JS";
+constexpr wchar_t kTransparentBackgroundScript[] = LR"JS(
+    (function() {
+        const setTransparent = () => {
+            document.documentElement.style.background = 'transparent';
+            if (document.body) {
+                document.body.style.background = 'transparent';
+            }
+        };
+        setTransparent();
+        document.addEventListener('DOMContentLoaded', setTransparent, { once: true });
+    })();
+)JS";
 
 static COLORREF ExtractColor(ICoreWebView2Environment* /*env*/) {
     DWORD color = 0;
@@ -59,13 +72,6 @@ DesktopOverlayController* GetController(HWND hwnd) {
     return reinterpret_cast<DesktopOverlayController*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
 }
 
-RECT GetExitButtonRect(HWND button) {
-    RECT rect{};
-    if (button) {
-        GetWindowRect(button, &rect);
-    }
-    return rect;
-}
 }  // namespace
 
 DesktopOverlayController::DesktopOverlayController() {
@@ -164,10 +170,16 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
         return;
     }
 
-    const int screen_w = GetSystemMetrics(SM_CXSCREEN);
-    const int screen_h = GetSystemMetrics(SM_CYSCREEN);
-    const int left = (screen_w - width) / 2;
-    const int top = screen_h - height - 80;
+    RECT work_area = GetWorkArea();
+    const int work_w = work_area.right - work_area.left;
+    const int work_h = work_area.bottom - work_area.top;
+    const int margin = 20;
+    width_ = width > 0 ? std::min(width, work_w - margin * 2)
+                       : std::clamp(work_w - margin * 3, 420, 640);
+    height_ = height > 0 ? std::min(height, work_h - margin * 2)
+                         : std::clamp(work_h - margin * 3, 520, 820);
+    const int left = std::max(work_area.left + margin, work_area.right - width_ - margin);
+    const int top = std::max(work_area.top + margin, work_area.bottom - height_ - margin);
 
     HWND hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
@@ -176,8 +188,8 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
         WS_POPUP,
         left,
         top,
-        width,
-        height,
+        width_,
+        height_,
         nullptr,
         nullptr,
         hinstance_,
@@ -205,6 +217,8 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
         LOG_CPP_WARNING("DesktopOverlay failed to extend frame (hr=0x%08X)", dwm_hr);
     }
     ShowWindow(hwnd, SW_HIDE);
+
+    PositionWindow();
 
     EnsureTrayIcon();
     LOG_CPP_INFO("DesktopOverlay tray icon initialized");
@@ -281,6 +295,12 @@ void DesktopOverlayController::InitWebView() {
                     RECT bounds{};
                     GetClientRect(window_, &bounds);
                     webview_controller_->put_Bounds(bounds);
+                    COREWEBVIEW2_COLOR color{};
+                    color.A = 0;
+                    color.R = 0;
+                    color.G = 0;
+                    color.B = 0;
+                    webview_controller_->put_DefaultBackgroundColor(color);
                     webview_controller_->put_IsVisible(TRUE);
 
                     Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings;
@@ -319,6 +339,7 @@ void DesktopOverlayController::InjectHelpers() {
         return;
     }
     webview_->AddScriptToExecuteOnDocumentCreated(kJsHelper, nullptr);
+    webview_->AddScriptToExecuteOnDocumentCreated(kTransparentBackgroundScript, nullptr);
 }
 
 void DesktopOverlayController::Navigate() {
@@ -509,8 +530,13 @@ void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
         return;
     }
     UINT event = LOWORD(lparam);
-    POINT anchor{ GET_X_LPARAM(static_cast<LPARAM>(wparam)), GET_Y_LPARAM(static_cast<LPARAM>(wparam)) };
-    if (anchor.x == 0 && anchor.y == 0) {
+    DWORD_PTR anchor_raw = static_cast<DWORD_PTR>(wparam);
+    bool has_anchor = anchor_raw != 0;
+    POINT anchor{
+        GET_X_LPARAM(static_cast<LPARAM>(anchor_raw)),
+        GET_Y_LPARAM(static_cast<LPARAM>(anchor_raw))
+    };
+    if (!has_anchor) {
         GetCursorPos(&anchor);
     }
 
@@ -519,8 +545,12 @@ void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
     case WM_LBUTTONDBLCLK:
     case NIN_SELECT:
     case NIN_KEYSELECT:
-        LOG_CPP_INFO("DesktopOverlay tray left activation (event=0x%04x)", event);
-        Toggle();
+        if (!has_anchor) {
+            LOG_CPP_INFO("DesktopOverlay tray keyboard activation (event=0x%04x)", event);
+            Toggle();
+        } else {
+            LOG_CPP_DEBUG("DesktopOverlay tray skipped mouse-generated NIN event (event=0x%04x)", event);
+        }
         break;
     case WM_RBUTTONUP:
     case WM_CONTEXTMENU:
@@ -534,6 +564,36 @@ void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
     default:
         LOG_CPP_DEBUG("DesktopOverlay tray event ignored (event=0x%04x)", event);
         break;
+    }
+}
+
+RECT DesktopOverlayController::GetWorkArea() const {
+    RECT work{};
+    if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+        work.left = 0;
+        work.top = 0;
+        work.right = GetSystemMetrics(SM_CXSCREEN);
+        work.bottom = GetSystemMetrics(SM_CYSCREEN);
+    }
+    return work;
+}
+
+void DesktopOverlayController::PositionWindow() {
+    if (!window_) {
+        return;
+    }
+    RECT work = GetWorkArea();
+    constexpr int margin = 20;
+    const int work_w = work.right - work.left;
+    const int work_h = work.bottom - work.top;
+    width_ = std::clamp(width_, 360, work_w - margin * 2);
+    height_ = std::clamp(height_, 420, work_h - margin * 2);
+    int left = std::max(work.left + margin, work.right - width_ - margin);
+    int top = std::max(work.top + margin, work.bottom - height_ - margin);
+    SetWindowPos(window_, nullptr, left, top, width_, height_, SWP_NOZORDER | SWP_NOACTIVATE);
+    if (webview_controller_) {
+        RECT bounds{0, 0, width_, height_};
+        webview_controller_->put_Bounds(bounds);
     }
 }
 
@@ -627,6 +687,7 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
             switch (static_cast<ControlCommand>(wparam)) {
             case ControlCommand::kShow:
                 if (!IsWindowVisible(hwnd)) {
+                    controller->PositionWindow();
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     SetForegroundWindow(hwnd);
                     controller->SendDesktopMenuShow();
