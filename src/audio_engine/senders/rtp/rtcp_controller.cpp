@@ -167,21 +167,25 @@ void RtcpController::send_rtcp_sr(const ManagedStream& stream) {
     sr.ntp_timestamp_msw = htonl(ntp_seconds);
     sr.ntp_timestamp_lsw = htonl(ntp_fraction);
     
+    uint32_t packet_count_value = 0;
+    uint64_t octet_count_value = 0;
+    uint32_t rtp_timestamp = stream.stream_start_rtp_timestamp;
+
     // Get current RTP timestamp and statistics from the sender
     if (stream.info.sender) {
-        uint32_t packet_count;
-        uint64_t octet_count;
-        stream.info.sender->get_statistics(packet_count, octet_count);
+        stream.info.sender->get_statistics(packet_count_value, octet_count_value);
         
         // For RTP timestamp, we'd need to calculate based on elapsed time
         // This is simplified - in production, you'd track the actual RTP timestamps
         auto elapsed = std::chrono::system_clock::now() - stream.stream_start_time;
         auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
-        uint32_t rtp_timestamp = stream.stream_start_rtp_timestamp + static_cast<uint32_t>(elapsed_ms * 48); // 48kHz sample rate
+        rtp_timestamp = stream.stream_start_rtp_timestamp + static_cast<uint32_t>(elapsed_ms * 48); // 48kHz sample rate
         
         sr.rtp_timestamp = htonl(rtp_timestamp);
-        sr.packet_count = htonl(packet_count);
-        sr.octet_count = htonl(static_cast<uint32_t>(octet_count));
+        sr.packet_count = htonl(packet_count_value);
+        sr.octet_count = htonl(static_cast<uint32_t>(octet_count_value));
+    } else {
+        sr.rtp_timestamp = htonl(rtp_timestamp);
     }
     
     // Send the RTCP packet
@@ -204,9 +208,21 @@ void RtcpController::send_rtcp_sr(const ManagedStream& stream) {
     if (sent_bytes < 0) {
         LOG_CPP_ERROR("[RtcpController] Failed to send RTCP SR for stream %s",
                      stream.info.stream_id.c_str());
+    } else if (sent_bytes != static_cast<int>(sizeof(sr))) {
+        LOG_CPP_WARNING("[RtcpController] Partial RTCP SR send for stream %s: %d/%zu bytes",
+                        stream.info.stream_id.c_str(), sent_bytes, sizeof(sr));
     } else {
-        LOG_CPP_DEBUG("[RtcpController] Sent RTCP SR for stream %s (SSRC=0x%08X)",
-                     stream.info.stream_id.c_str(), stream.info.ssrc);
+        LOG_CPP_INFO(
+            "[RtcpController] Sent RTCP SR (%d bytes) stream=%s SSRC=0x%08X -> %s:%d | NTP=0x%016llX RTP=%u packets=%u octets=%llu",
+            sent_bytes,
+            stream.info.stream_id.c_str(),
+            stream.info.ssrc,
+            stream.info.dest_ip.c_str(),
+            stream.info.rtcp_port,
+            static_cast<unsigned long long>(ntp_ts),
+            rtp_timestamp,
+            packet_count_value,
+            static_cast<unsigned long long>(octet_count_value));
     }
 }
 

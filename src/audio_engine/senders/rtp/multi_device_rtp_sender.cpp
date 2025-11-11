@@ -27,14 +27,12 @@ MultiDeviceRtpSender::MultiDeviceRtpSender(const SinkMixerConfig& config)
     std::uniform_int_distribution<uint32_t> dis32;
     rtp_timestamp_ = dis32(gen);
     
-    // Create RTCP controller if time synchronization is enabled
-    if (config_.time_sync_enabled) {
-        LOG_CPP_INFO("[MultiDeviceRtpSender:%s] Creating RTCP controller (time_sync_delay=%dms)",
-                     config_.sink_id.c_str(), config_.time_sync_delay_ms);
-        rtcp_controller_ = std::make_unique<RtcpController>(config_.time_sync_delay_ms);
-    } else {
-        LOG_CPP_INFO("[MultiDeviceRtpSender:%s] RTCP disabled (time_sync_enabled=false)",
-                     config_.sink_id.c_str());
+    LOG_CPP_INFO("[MultiDeviceRtpSender:%s] Creating RTCP controller (time_sync_delay=%dms, forced on)",
+                 config_.sink_id.c_str(), config_.time_sync_delay_ms);
+    rtcp_controller_ = std::make_unique<RtcpController>(config_.time_sync_delay_ms);
+    if (!config_.time_sync_enabled) {
+        LOG_CPP_WARNING("[MultiDeviceRtpSender:%s] time_sync_enabled=false but RTCP is always enabled for multi-device RTP.",
+                        config_.sink_id.c_str());
     }
     
     // Pre-allocate receivers

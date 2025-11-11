@@ -1011,49 +1011,7 @@ const AddEditSinkPage: React.FC = () => {
               dataTutorialId="sink-timeshift-slider"
             />
           </FormControl>
-
-          <FormControl>
-            <Flex alignItems="center">
-              <Checkbox
-                data-tutorial-id="sink-volume-normalization-checkbox"
-                isChecked={volumeNormalization}
-                onChange={(e) => setVolumeNormalization(e.target.checked)}
-                mr={2}
-              />
-              <FormLabel mb={0}>Volume Normalization</FormLabel>
-            </Flex>
-          </FormControl>
           
-          <FormControl>
-            <Flex alignItems="center">
-              <Checkbox
-                data-tutorial-id="sink-time-sync-checkbox"
-                isChecked={timeSync}
-                onChange={(e) => setTimeSync(e.target.checked)}
-                mr={2}
-              />
-              <FormLabel mb={0}>Time Sync</FormLabel>
-            </Flex>
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Time Sync Delay (ms)</FormLabel>
-            <NumberInput
-              data-tutorial-id="sink-time-sync-delay-input"
-              value={timeSyncDelay}
-              onChange={(valueString) => setTimeSyncDelay(valueString)}
-              min={0}
-              max={5000}
-              bg={inputBg}
-              isDisabled={!timeSync}
-            >
-              <NumberInputField />
-              <NumberInputStepper>
-                <NumberIncrementStepper />
-                <NumberDecrementStepper />
-              </NumberInputStepper>
-            </NumberInput>
-          </FormControl>
         </Stack>
         
         <Flex mt={8} gap={3} justifyContent="flex-end">

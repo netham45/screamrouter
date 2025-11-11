@@ -53,7 +53,7 @@ class ScreamAdvertiser(threading.Thread):
         # Service configuration
         self.service_type = "_scream._udp.local."
         self.mac_address = self._get_mac_address()
-        self.hostname = self._format_hostname()
+        self.hostname = self._get_local_hostname()
         self.service_name = f"{self.hostname}.{self.service_type}"
 
         # Audio capability metadata advertised via TXT records
@@ -107,7 +107,7 @@ class ScreamAdvertiser(threading.Thread):
             if (mac_num >> 40) % 2:
                 # Bit 40 is set, which means it's a randomly generated number
                 logger.warning("Could not get real MAC address, using fallback")
-                mac_num = self._get_mac_from_interface()
+                raise RuntimeError("uuid.getnode returned random MAC")
             
             # Format as uppercase hex with colons
             mac_hex = '%012X' % mac_num
@@ -123,58 +123,18 @@ class ScreamAdvertiser(threading.Thread):
             logger.warning(f"Using fallback MAC: {fallback}")
             return fallback
     
-    def _get_mac_from_interface(self) -> int:
+    def _get_local_hostname(self) -> str:
         """
-        Fallback method to get MAC address by examining network interfaces.
-        
-        Returns:
-            MAC address as integer
+        Return the local system hostname suitable for mDNS advertising.
         """
         try:
-            import netifaces
-            
-            # Get all network interfaces
-            interfaces = netifaces.interfaces()
-            
-            for interface in interfaces:
-                # Skip loopback
-                if interface == 'lo':
-                    continue
-                    
-                # Get addresses for this interface
-                addrs = netifaces.ifaddresses(interface)
-                
-                # Check if it has a MAC address (AF_LINK)
-                if netifaces.AF_LINK in addrs:
-                    mac_info = addrs[netifaces.AF_LINK][0]
-                    if 'addr' in mac_info:
-                        mac_str = mac_info['addr']
-                        # Convert to integer
-                        mac_int = int(mac_str.replace(':', ''), 16)
-                        logger.debug(f"Got MAC from interface {interface}: {mac_str}")
-                        return mac_int
-                        
-        except ImportError:
-            logger.warning("netifaces not available for MAC detection")
+            hostname = socket.gethostname().split(".")[0]
+            hostname = hostname.strip() or "screamrouter"
         except Exception as e:
-            logger.error(f"Error getting MAC from interfaces: {e}")
+            logger.error(f"Error determining local hostname: {e}")
+            hostname = "screamrouter"
         
-        # If all else fails, return a generated number
-        return uuid.getnode()
-    
-    def _format_hostname(self) -> str:
-        """
-        Format the hostname as Screamrouter-<last-six-of-MAC>.
-        
-        Returns:
-            Formatted hostname (e.g., "Screamrouter-112B00")
-        """
-        # Get last 6 characters of MAC address (without colons)
-        mac_clean = self.mac_address.replace(':', '')
-        mac_suffix = mac_clean[-6:]
-        
-        hostname = f"Screamrouter-{mac_suffix}"
-        logger.debug(f"Formatted hostname: {hostname}")
+        logger.debug(f"Using hostname: {hostname}")
         return hostname
     
     def _get_local_ip(self) -> str:

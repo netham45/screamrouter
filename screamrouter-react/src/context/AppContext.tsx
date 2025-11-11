@@ -1,8 +1,8 @@
 /**
  * React context and provider for managing the application state.
  */
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { Sink, Source, Route, SystemAudioDeviceInfo, WebSocketUpdate } from '../api/api';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { Sink, Source, Route, SystemAudioDeviceInfo, WebSocketUpdate, WebSocketConnectionState, WebSocketMessageHandler } from '../api/api';
 import ApiService from '../api/api';
 const silenceMP3 = "/site/static/output_silence.mp3";
 
@@ -246,8 +246,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedItemType, setSelectedItemType] = useState<'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null>(null);
   const [selectedEqualizerItem, setSelectedEqualizerItem] = useState<ItemType | null>(null);
   const [selectedEqualizerType, setSelectedEqualizerType] = useState<'sources' | 'sinks' | 'routes' | 'group-sink' | 'group-source' | null>(null);
-  // Flag to track whether we need to refetch all data
-  const [needsFullRefresh, setNeedsFullRefresh] = useState<boolean>(false);
+  // Counter used to trigger full data refreshes
+  const [refreshRequestId, setRefreshRequestId] = useState<number>(0);
+  const refreshInFlightRef = useRef<boolean>(false);
+  const refreshQueuedRef = useRef<boolean>(false);
+  const refreshAfterReconnectRef = useRef<boolean>(false);
+  const isMountedRef = useRef<boolean>(true);
+  const webSocketHandlerRef = useRef<WebSocketMessageHandler | null>(null);
   // Flag to track whether initial data has been loaded
   const [initialDataLoaded, setInitialDataLoaded] = useState<boolean>(false);
   const [manuallyPausedSinks, setManuallyPausedSinks] = useState<Set<string>>(new Set());
@@ -329,7 +334,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       console.log("Initial data fetched successfully");
-      setNeedsFullRefresh(false);
       setInitialDataLoaded(true);
     } catch (error) {
       console.error('Error fetching initial data:', error);
@@ -496,6 +500,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const requestFullRefresh = useCallback((reason?: string) => {
+    if (reason) {
+      console.log(`Requesting full data refresh (${reason})`);
+    } else {
+      console.log("Requesting full data refresh");
+    }
+    setRefreshRequestId(prev => prev + 1);
+  }, []);
+
+  useEffect(() => {
+    webSocketHandlerRef.current = handleWebSocketUpdate;
+  });
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (refreshRequestId === 0) {
+      return;
+    }
+
+    if (refreshInFlightRef.current) {
+      refreshQueuedRef.current = true;
+      return;
+    }
+
+    refreshInFlightRef.current = true;
+
+    (async () => {
+      try {
+        await fetchInitialData();
+      } finally {
+        refreshInFlightRef.current = false;
+        if (refreshQueuedRef.current) {
+          refreshQueuedRef.current = false;
+          if (isMountedRef.current) {
+            setRefreshRequestId(prev => prev + 1);
+          }
+        }
+      }
+    })();
+  }, [refreshRequestId]);
+
   // Set up WebSocket and initial data
   useEffect(() => {
     const storedActiveSource = localStorage.getItem('activeSource');
@@ -506,25 +556,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Set up WebSocket handler before fetching initial data
     // This ensures any realtime updates that come in during/after initial load are processed
     ApiService.setWebSocketHandler((update: WebSocketUpdate) => {
-      handleWebSocketUpdate(update);
+      webSocketHandlerRef.current?.(update);
     });
 
-    // Now fetch initial data directly - this provides a clean initial state
-    fetchInitialData();
+    requestFullRefresh('initial load');
+  }, [requestFullRefresh]);
 
-    // Setup periodic check for full refresh
-    const refreshInterval = setInterval(() => {
-      if (needsFullRefresh) {
-        console.log("Performing full data refresh");
-        fetchInitialData();
+  useEffect(() => {
+    const cleanupConnectionListener = ApiService.onWebSocketStateChange((state: WebSocketConnectionState) => {
+      if (state === 'disconnected') {
+        refreshAfterReconnectRef.current = true;
+      } else if (state === 'connected') {
+        if (refreshAfterReconnectRef.current) {
+          refreshAfterReconnectRef.current = false;
+          requestFullRefresh('WebSocket reconnected');
+        }
       }
-    }, 30000); // Check every 30 seconds
+    });
 
-    // Cleanup on component unmount
-    return () => {
-      clearInterval(refreshInterval);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        ApiService.forceWebSocketReconnect();
+        requestFullRefresh('tab became visible');
+      }
     };
-  }, [needsFullRefresh]);
+
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        ApiService.forceWebSocketReconnect();
+        requestFullRefresh('page restored from bfcache');
+      }
+    };
+
+    const handleOnline = () => {
+      ApiService.forceWebSocketReconnect();
+      requestFullRefresh('browser came online');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pageshow', handlePageShow);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      cleanupConnectionListener();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [requestFullRefresh]);
 
   // Removed duplicate useEffect hooks that were setting mediaSessionAudioRef to silence MP3
   // mediaSessionAudioRef should ONLY be used for WebRTC streams, not silence audio

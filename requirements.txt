@@ -2,7 +2,6 @@ dnspython
 fastapi
 httpx
 Jinja2
-netifaces
 numpy
 pydantic
 pyOpenSSL

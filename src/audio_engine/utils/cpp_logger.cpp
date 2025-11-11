@@ -160,8 +160,9 @@ void shutdown_cpp_logger() {
     internal_log_queue_cv.notify_all(); // Wake up any waiting retrieve_log_entries calls
 }
 
-void set_cpp_log_level(LogLevel level) {
-    current_log_level.store(level, std::memory_order_relaxed);
+void set_cpp_log_level(LogLevel /*level*/) {
+    // Force debug-level filtering so every C++ log message is enqueued.
+    current_log_level.store(LogLevel::DEBUG, std::memory_order_relaxed);
 }
 
 void set_cpp_log_stderr_mirror(bool enable) {

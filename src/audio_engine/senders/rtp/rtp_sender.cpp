@@ -120,27 +120,21 @@ RtpSender::RtpSender(const SinkMixerConfig& config)
       rtcp_thread_running_(false),
       packet_count_(0),
       octet_count_(0),
-      time_sync_delay_ms_(config.time_sync_enabled ? config.time_sync_delay_ms : 0) {  // Use config values
+      time_sync_delay_ms_(config.time_sync_delay_ms) {
 
-    // IMMEDIATE LOGGING AT CONSTRUCTOR START
-    LOG_CPP_ERROR("[RtpSender:%s] ===== CONSTRUCTOR START =====", config_.sink_id.c_str());
-    LOG_CPP_ERROR("[RtpSender:%s] CONFIG VALUES:", config_.sink_id.c_str());
-    LOG_CPP_ERROR("[RtpSender:%s]   sink_id='%s'", config_.sink_id.c_str(), config_.sink_id.c_str());
-    LOG_CPP_ERROR("[RtpSender:%s]   protocol='%s'", config_.sink_id.c_str(), config_.protocol.c_str());
-    LOG_CPP_ERROR("[RtpSender:%s]   time_sync_enabled=%s", config_.sink_id.c_str(), config_.time_sync_enabled ? "TRUE" : "FALSE");
-    LOG_CPP_ERROR("[RtpSender:%s]   time_sync_delay_ms=%d", config_.sink_id.c_str(), config_.time_sync_delay_ms);
-    LOG_CPP_ERROR("[RtpSender:%s]   output_ip='%s'", config_.sink_id.c_str(), config_.output_ip.c_str());
-    LOG_CPP_ERROR("[RtpSender:%s]   output_port=%d", config_.sink_id.c_str(), config_.output_port);
-    LOG_CPP_ERROR("[RtpSender:%s]   output_channels=%d", config_.sink_id.c_str(), config_.output_channels);
-    LOG_CPP_ERROR("[RtpSender:%s]   output_bitdepth=%d", config_.sink_id.c_str(), config_.output_bitdepth);
-    LOG_CPP_ERROR("[RtpSender:%s] CALCULATED time_sync_delay_ms_=%d", config_.sink_id.c_str(), time_sync_delay_ms_);
-    LOG_CPP_ERROR("[RtpSender:%s] RTCP DECISION: protocol=='rtp'? %s, time_sync_enabled? %s",
-                  config_.sink_id.c_str(),
-                  (config_.protocol == "rtp") ? "YES" : "NO",
-                  config_.time_sync_enabled ? "YES" : "NO");
-    LOG_CPP_ERROR("[RtpSender:%s] RTCP WILL BE ENABLED: %s",
-                  config_.sink_id.c_str(),
-                  (config_.protocol == "rtp" && config_.time_sync_enabled) ? "YES!!!" : "NO");
+    LOG_CPP_INFO("[RtpSender:%s] ===== CONSTRUCTOR START =====", config_.sink_id.c_str());
+    LOG_CPP_INFO("[RtpSender:%s] CONFIG VALUES:", config_.sink_id.c_str());
+    LOG_CPP_INFO("[RtpSender:%s]   sink_id='%s'", config_.sink_id.c_str(), config_.sink_id.c_str());
+    LOG_CPP_INFO("[RtpSender:%s]   protocol='%s'", config_.sink_id.c_str(), config_.protocol.c_str());
+    LOG_CPP_INFO("[RtpSender:%s]   time_sync_enabled=%s", config_.sink_id.c_str(), config_.time_sync_enabled ? "TRUE" : "FALSE");
+    LOG_CPP_INFO("[RtpSender:%s]   time_sync_delay_ms=%d", config_.sink_id.c_str(), config_.time_sync_delay_ms);
+    LOG_CPP_INFO("[RtpSender:%s]   output_ip='%s'", config_.sink_id.c_str(), config_.output_ip.c_str());
+    LOG_CPP_INFO("[RtpSender:%s]   output_port=%d", config_.sink_id.c_str(), config_.output_port);
+    LOG_CPP_INFO("[RtpSender:%s]   output_channels=%d", config_.sink_id.c_str(), config_.output_channels);
+    LOG_CPP_INFO("[RtpSender:%s]   output_bitdepth=%d", config_.sink_id.c_str(), config_.output_bitdepth);
+    LOG_CPP_INFO("[RtpSender:%s] CALCULATED time_sync_delay_ms_=%d", config_.sink_id.c_str(), time_sync_delay_ms_);
+    LOG_CPP_INFO("[RtpSender:%s] RTCP is always enabled for this sender (time_sync_enabled flag is ignored for RTCP enablement)",
+                 config_.sink_id.c_str());
 
     // Initialize RTP state with random values for security
     std::random_device rd;
@@ -166,8 +160,8 @@ RtpSender::RtpSender(const SinkMixerConfig& config)
                  config_.protocol.c_str(),
                  config_.time_sync_enabled ? "true" : "false",
                  time_sync_delay_ms_);
-    
-    LOG_CPP_ERROR("[RtpSender:%s] ===== CONSTRUCTOR END =====", config_.sink_id.c_str());
+
+    LOG_CPP_INFO("[RtpSender:%s] ===== CONSTRUCTOR END =====", config_.sink_id.c_str());
 
 #ifdef _WIN32
     WSADATA wsaData;
@@ -186,18 +180,17 @@ RtpSender::~RtpSender() noexcept {
 }
 
 bool RtpSender::setup() {
-    // IMMEDIATE LOGGING AT SETUP START
-    LOG_CPP_ERROR("[RtpSender:%s] ===== SETUP() START =====", config_.sink_id.c_str());
-    LOG_CPP_ERROR("[RtpSender:%s] SETUP CONFIG CHECK:", config_.sink_id.c_str());
-    LOG_CPP_ERROR("[RtpSender:%s]   config_.protocol='%s'", config_.sink_id.c_str(), config_.protocol.c_str());
-    LOG_CPP_ERROR("[RtpSender:%s]   config_.time_sync_enabled=%s", config_.sink_id.c_str(), config_.time_sync_enabled ? "TRUE" : "FALSE");
-    LOG_CPP_ERROR("[RtpSender:%s]   config_.time_sync_delay_ms=%d", config_.sink_id.c_str(), config_.time_sync_delay_ms);
-    LOG_CPP_ERROR("[RtpSender:%s]   time_sync_delay_ms_=%d", config_.sink_id.c_str(), time_sync_delay_ms_);
-    LOG_CPP_ERROR("[RtpSender:%s]   config_.output_ip='%s'", config_.sink_id.c_str(), config_.output_ip.c_str());
-    LOG_CPP_ERROR("[RtpSender:%s]   config_.output_port=%d", config_.sink_id.c_str(), config_.output_port);
-    LOG_CPP_ERROR("[RtpSender:%s] RTCP SETUP DECISION: (protocol=='rtp' && time_sync_enabled) = %s",
-                  config_.sink_id.c_str(),
-                  (config_.protocol == "rtp" && config_.time_sync_enabled) ? "TRUE - WILL SETUP RTCP!" : "FALSE - NO RTCP");
+    LOG_CPP_INFO("[RtpSender:%s] ===== SETUP() START =====", config_.sink_id.c_str());
+    LOG_CPP_INFO("[RtpSender:%s] SETUP CONFIG CHECK:", config_.sink_id.c_str());
+    LOG_CPP_INFO("[RtpSender:%s]   config_.protocol='%s'", config_.sink_id.c_str(), config_.protocol.c_str());
+    LOG_CPP_INFO("[RtpSender:%s]   config_.time_sync_enabled=%s", config_.sink_id.c_str(), config_.time_sync_enabled ? "TRUE" : "FALSE");
+    LOG_CPP_INFO("[RtpSender:%s]   config_.time_sync_delay_ms=%d", config_.sink_id.c_str(), config_.time_sync_delay_ms);
+    LOG_CPP_INFO("[RtpSender:%s]   time_sync_delay_ms_=%d", config_.sink_id.c_str(), time_sync_delay_ms_);
+    LOG_CPP_INFO("[RtpSender:%s]   config_.output_ip='%s'", config_.sink_id.c_str(), config_.output_ip.c_str());
+    LOG_CPP_INFO("[RtpSender:%s]   config_.output_port=%d", config_.sink_id.c_str(), config_.output_port);
+    LOG_CPP_INFO("[RtpSender:%s] RTCP will be configured regardless of protocol (time_sync_enabled=%s)",
+                 config_.sink_id.c_str(),
+                 config_.time_sync_enabled ? "true" : "false");
     
     LOG_CPP_INFO("[RtpSender:%s] Setting up networking (protocol=%s, time_sync=%s, delay=%dms)...",
                  config_.sink_id.c_str(),
@@ -276,98 +269,70 @@ bool RtpSender::setup() {
         }
     }
 
-    // --- RTCP Setup (only for RTP protocol with time sync enabled) ---
-    LOG_CPP_ERROR("[RtpSender:%s] ===== RTCP SETUP SECTION START =====", config_.sink_id.c_str());
-    LOG_CPP_ERROR("[RtpSender:%s] RTCP Setup Check: protocol='%s', time_sync_enabled=%s",
-                 config_.sink_id.c_str(),
-                 config_.protocol.c_str(),
-                 config_.time_sync_enabled ? "true" : "false");
-    LOG_CPP_ERROR("[RtpSender:%s] Protocol comparison: '%s' == 'rtp' ? %s",
-                 config_.sink_id.c_str(),
-                 config_.protocol.c_str(),
-                 (config_.protocol == "rtp") ? "YES" : "NO");
-    LOG_CPP_ERROR("[RtpSender:%s] Time sync enabled? %s",
-                 config_.sink_id.c_str(),
-                 config_.time_sync_enabled ? "YES" : "NO");
+    // --- RTCP Setup (always attempt) ---
+    LOG_CPP_INFO("[RtpSender:%s] ===== RTCP SETUP SECTION START =====", config_.sink_id.c_str());
+    LOG_CPP_INFO("[RtpSender:%s] Configuring RTCP socket on port %d (RTP+1)",
+                 config_.sink_id.c_str(), config_.output_port + 1);
     
-    if (config_.protocol == "rtp" && config_.time_sync_enabled) {
-        LOG_CPP_ERROR("[RtpSender:%s] RTCP ENABLED!!! - Setting up RTCP socket for time synchronization on port %d...",
-                     config_.sink_id.c_str(), config_.output_port + 1);
-        LOG_CPP_INFO("[RtpSender:%s] RTCP ENABLED - Setting up RTCP socket for time synchronization on port %d...",
-                     config_.sink_id.c_str(), config_.output_port + 1);
-        
-        rtcp_socket_fd_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (rtcp_socket_fd_ == PLATFORM_INVALID_SOCKET) {
-            LOG_CPP_ERROR("[RtpSender:%s] RTCP SETUP FAILED - Failed to create RTCP socket (errno=%d: %s)",
-                         config_.sink_id.c_str(), errno, strerror(errno));
-            // RTCP is optional, continue without it
-        } else {
-            LOG_CPP_INFO("[RtpSender:%s] RTCP socket created successfully (fd=%d)",
-                        config_.sink_id.c_str(), rtcp_socket_fd_);
+    rtcp_socket_fd_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (rtcp_socket_fd_ == PLATFORM_INVALID_SOCKET) {
+        LOG_CPP_ERROR("[RtpSender:%s] RTCP SETUP FAILED - Failed to create RTCP socket (errno=%d: %s)",
+                      config_.sink_id.c_str(), errno, strerror(errno));
+        LOG_CPP_ERROR("[RtpSender:%s] RTCP remains unavailable for this sender due to socket failure.",
+                      config_.sink_id.c_str());
+    } else {
+        LOG_CPP_INFO("[RtpSender:%s] RTCP socket created successfully (fd=%d)",
+                    config_.sink_id.c_str(), rtcp_socket_fd_);
 #ifndef _WIN32
-            // Set socket priority for low latency on Linux
-            int priority = 6; // Corresponds to AC_VO (Access Category Voice)
-            if (setsockopt(rtcp_socket_fd_, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority)) < 0) {
-                LOG_CPP_WARNING("[RtpSender:%s] Failed to set socket priority on RTCP socket (errno=%d: %s)",
-                               config_.sink_id.c_str(), errno, strerror(errno));
-            } else {
-                LOG_CPP_DEBUG("[RtpSender:%s] RTCP socket priority set to %d", config_.sink_id.c_str(), priority);
-            }
-            // Allow reusing the address
-            int reuse = 1;
-            if (setsockopt(rtcp_socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-                LOG_CPP_WARNING("[RtpSender:%s] Failed to set SO_REUSEADDR on RTCP socket (errno=%d: %s)",
-                               config_.sink_id.c_str(), errno, strerror(errno));
-            } else {
-                LOG_CPP_DEBUG("[RtpSender:%s] RTCP socket SO_REUSEADDR enabled", config_.sink_id.c_str());
-            }
+        // Set socket priority for low latency on Linux
+        int priority = 6; // Corresponds to AC_VO (Access Category Voice)
+        if (setsockopt(rtcp_socket_fd_, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority)) < 0) {
+            LOG_CPP_WARNING("[RtpSender:%s] Failed to set socket priority on RTCP socket (errno=%d: %s)",
+                           config_.sink_id.c_str(), errno, strerror(errno));
+        } else {
+            LOG_CPP_DEBUG("[RtpSender:%s] RTCP socket priority set to %d", config_.sink_id.c_str(), priority);
+        }
+        // Allow reusing the address
+        int reuse = 1;
+        if (setsockopt(rtcp_socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+            LOG_CPP_WARNING("[RtpSender:%s] Failed to set SO_REUSEADDR on RTCP socket (errno=%d: %s)",
+                           config_.sink_id.c_str(), errno, strerror(errno));
+        } else {
+            LOG_CPP_DEBUG("[RtpSender:%s] RTCP socket SO_REUSEADDR enabled", config_.sink_id.c_str());
+        }
 #endif
 
-            // Set up RTCP destination address (RTP port + 1)
-            LOG_CPP_INFO("[RtpSender:%s] Configuring RTCP destination address: %s:%d",
+        // Set up RTCP destination address (RTP port + 1)
+        LOG_CPP_INFO("[RtpSender:%s] Configuring RTCP destination address: %s:%d",
+                    config_.sink_id.c_str(), config_.output_ip.c_str(), config_.output_port + 1);
+        
+        memset(&rtcp_dest_addr_, 0, sizeof(rtcp_dest_addr_));
+        rtcp_dest_addr_.sin_family = AF_INET;
+        rtcp_dest_addr_.sin_port = htons(config_.output_port + 1);
+        
+        int pton_result = inet_pton(AF_INET, config_.output_ip.c_str(), &rtcp_dest_addr_.sin_addr);
+        if (pton_result <= 0) {
+            if (pton_result == 0) {
+                LOG_CPP_ERROR("[RtpSender:%s] Invalid RTCP destination IP address format: %s",
+                             config_.sink_id.c_str(), config_.output_ip.c_str());
+            } else {
+                LOG_CPP_ERROR("[RtpSender:%s] inet_pton failed for RTCP destination IP: %s (errno=%d: %s)",
+                             config_.sink_id.c_str(), config_.output_ip.c_str(), errno, strerror(errno));
+            }
+            platform_close_socket(rtcp_socket_fd_);
+            rtcp_socket_fd_ = PLATFORM_INVALID_SOCKET;
+        } else {
+            LOG_CPP_INFO("[RtpSender:%s] RTCP socket setup complete (target: %s:%d)",
                         config_.sink_id.c_str(), config_.output_ip.c_str(), config_.output_port + 1);
             
-            memset(&rtcp_dest_addr_, 0, sizeof(rtcp_dest_addr_));
-            rtcp_dest_addr_.sin_family = AF_INET;
-            rtcp_dest_addr_.sin_port = htons(config_.output_port + 1);
-            
-            int pton_result = inet_pton(AF_INET, config_.output_ip.c_str(), &rtcp_dest_addr_.sin_addr);
-            if (pton_result <= 0) {
-                if (pton_result == 0) {
-                    LOG_CPP_ERROR("[RtpSender:%s] Invalid RTCP destination IP address format: %s",
-                                 config_.sink_id.c_str(), config_.output_ip.c_str());
-                } else {
-                    LOG_CPP_ERROR("[RtpSender:%s] inet_pton failed for RTCP destination IP: %s (errno=%d: %s)",
-                                 config_.sink_id.c_str(), config_.output_ip.c_str(), errno, strerror(errno));
-                }
-                platform_close_socket(rtcp_socket_fd_);
-                rtcp_socket_fd_ = PLATFORM_INVALID_SOCKET;
-            } else {
-                LOG_CPP_INFO("[RtpSender:%s] RTCP socket setup complete (target: %s:%d)",
-                            config_.sink_id.c_str(), config_.output_ip.c_str(), config_.output_port + 1);
-                
-                // Start RTCP thread
-                LOG_CPP_INFO("[RtpSender:%s] Starting RTCP thread...", config_.sink_id.c_str());
-                rtcp_thread_running_ = true;
-                rtcp_thread_ = std::thread(&RtpSender::rtcp_thread_loop, this);
-                LOG_CPP_INFO("[RtpSender:%s] RTCP thread started successfully", config_.sink_id.c_str());
-            }
-        }
-    } else {
-        LOG_CPP_ERROR("[RtpSender:%s] RTCP NOT ENABLED - Analyzing why...", config_.sink_id.c_str());
-        if (config_.protocol == "rtp" && !config_.time_sync_enabled) {
-            LOG_CPP_ERROR("[RtpSender:%s] RTCP DISABLED - protocol is 'rtp' BUT time_sync_enabled is FALSE",
-                           config_.sink_id.c_str());
-            LOG_CPP_WARNING("[RtpSender:%s] RTCP DISABLED - time synchronization not enabled in configuration",
-                           config_.sink_id.c_str());
-        } else if (config_.protocol != "rtp") {
-            LOG_CPP_ERROR("[RtpSender:%s] RTCP NOT APPLICABLE - protocol is '%s' (not 'rtp')",
-                        config_.sink_id.c_str(), config_.protocol.c_str());
-            LOG_CPP_INFO("[RtpSender:%s] RTCP NOT APPLICABLE - protocol is '%s' (not 'rtp')",
-                        config_.sink_id.c_str(), config_.protocol.c_str());
+            // Start RTCP thread
+            LOG_CPP_INFO("[RtpSender:%s] Starting RTCP thread...", config_.sink_id.c_str());
+            rtcp_thread_running_ = true;
+            rtcp_thread_ = std::thread(&RtpSender::rtcp_thread_loop, this);
+            LOG_CPP_INFO("[RtpSender:%s] RTCP thread started successfully", config_.sink_id.c_str());
         }
     }
-    LOG_CPP_ERROR("[RtpSender:%s] ===== RTCP SETUP SECTION END =====", config_.sink_id.c_str());
+    LOG_CPP_INFO("[RtpSender:%s] ===== RTCP SETUP SECTION END =====", config_.sink_id.c_str());
 
     // Log final RTCP status
     LOG_CPP_ERROR("[RtpSender:%s] ===== FINAL RTCP STATUS =====", config_.sink_id.c_str());
