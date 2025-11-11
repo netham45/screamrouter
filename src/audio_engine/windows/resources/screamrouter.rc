@@ -1,0 +1,4 @@
+#include "resource.h"
+
+IDI_SCREAMROUTER_ICON ICON "screamrouter.ico"
+
