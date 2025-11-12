@@ -90,57 +90,12 @@ DesktopOverlayController* GetController(HWND hwnd) {
 DesktopOverlayController::DesktopOverlayController() {
     ZeroMemory(&nid_, sizeof(nid_));
 
-    // Try to load icon from resources first
-    tray_icon_ = LoadIconW(GetModuleHandle(nullptr), MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
+    // Load the icon from the compiled resources using the resource ID
+    HINSTANCE hInstance = GetModuleHandle(nullptr);
+    tray_icon_ = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
 
-    // If that fails, try loading from the current module (in case we're in a DLL/PYD)
     if (!tray_icon_) {
-        HMODULE hModule = nullptr;
-        // Get handle to the current module (DLL/PYD) using a static function address
-        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                               reinterpret_cast<LPCWSTR>(&DesktopOverlayController::Start),
-                               &hModule)) {
-            tray_icon_ = LoadIconW(hModule, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
-            if (tray_icon_) {
-                LOG_CPP_INFO("Loaded ScreamRouter icon from module resources");
-            }
-        }
-    }
-
-    // If still no icon, try loading from file directly
-    if (!tray_icon_) {
-        // Try to load from a relative path
-        wchar_t exePath[MAX_PATH] = {0};
-        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-        std::wstring exeDir(exePath);
-        size_t lastSlash = exeDir.find_last_of(L"\\/");
-        if (lastSlash != std::wstring::npos) {
-            exeDir = exeDir.substr(0, lastSlash);
-
-            // Try several possible icon locations
-            std::vector<std::wstring> iconPaths = {
-                exeDir + L"\\screamrouter.ico",
-                exeDir + L"\\resources\\screamrouter.ico",
-                exeDir + L"\\..\\resources\\screamrouter.ico",
-                exeDir + L"\\src\\audio_engine\\windows\\resources\\screamrouter.ico",
-                L"C:\\screamrouter\\src\\audio_engine\\windows\\resources\\screamrouter.ico"
-            };
-
-            for (const auto& iconPath : iconPaths) {
-                tray_icon_ = (HICON)LoadImageW(nullptr, iconPath.c_str(), IMAGE_ICON,
-                                               0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
-                if (tray_icon_) {
-                    LOG_CPP_INFO("Loaded ScreamRouter icon from file: %ls", iconPath.c_str());
-                    break;
-                }
-            }
-        }
-    }
-
-    // Final fallback to default icon
-    if (!tray_icon_) {
-        LOG_CPP_WARNING("Failed to load ScreamRouter icon from any source, using default");
+        // Fallback to default application icon
         tray_icon_ = LoadIconW(nullptr, IDI_APPLICATION);
     }
 }
@@ -589,6 +544,7 @@ void DesktopOverlayController::EnsureTrayIcon() {
         return;
     }
 
+    // First, remove any existing icon with this GUID
     NOTIFYICONDATAW remove{};
     remove.cbSize = sizeof(remove);
     remove.hWnd = window_;
@@ -597,25 +553,32 @@ void DesktopOverlayController::EnsureTrayIcon() {
     remove.uFlags = NIF_GUID;
     Shell_NotifyIconW(NIM_DELETE, &remove);
 
-    NOTIFYICONDATAW add{};
-    add.cbSize = sizeof(add);
-    add.hWnd = window_;
-    add.uID = kTrayIconId;
-    add.guidItem = tray_guid_;
-    add.uCallbackMessage = kTrayCallbackMessage;
-    add.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_GUID | NIF_SHOWTIP;
-    add.hIcon = tray_icon_ ? tray_icon_ : LoadIconW(nullptr, IDI_APPLICATION);
-    StringCchCopyW(add.szTip, ARRAYSIZE(add.szTip), kTrayTooltip);
+    // Add the icon with all required flags
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = window_;
+    nid.uID = kTrayIconId;
+    nid.guidItem = tray_guid_;
+    nid.uCallbackMessage = kTrayCallbackMessage;
+    nid.hIcon = tray_icon_ ? tray_icon_ : LoadIconW(nullptr, IDI_APPLICATION);
+    StringCchCopyW(nid.szTip, ARRAYSIZE(nid.szTip), kTrayTooltip);
 
-    if (!Shell_NotifyIconW(NIM_ADD, &add)) {
+    // Required flags for V4
+    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_GUID | NIF_SHOWTIP;
+
+    if (!Shell_NotifyIconW(NIM_ADD, &nid)) {
         LOG_CPP_ERROR("DesktopOverlay failed to add tray icon (err=%lu)", GetLastError());
         return;
     }
 
-    add.uVersion = NOTIFYICON_VERSION_4;
-    Shell_NotifyIconW(NIM_SETVERSION, &add);
+    // CRITICAL: Must call NIM_SETVERSION immediately after NIM_ADD for V4 semantics
+    nid.uVersion = NOTIFYICON_VERSION_4;
+    if (!Shell_NotifyIconW(NIM_SETVERSION, &nid)) {
+        LOG_CPP_WARNING("Failed to set tray icon version to V4 (err=%lu)", GetLastError());
+    }
 
-    nid_ = add;
+    nid_ = nid;
+    LOG_CPP_INFO("Tray icon added with V4 semantics");
 }
 
 void DesktopOverlayController::CleanupTrayIcon() {
@@ -648,13 +611,16 @@ void DesktopOverlayController::ShowTrayMenu(const POINT& anchor) {
         BuildTrayMenu();
     }
 
+    // Use the anchor coordinates from V4 message (works in overflow too)
     POINT pt = anchor;
-    if (pt.x == 0 && pt.y == 0) {
-        GetCursorPos(&pt);
-    }
-    SetForegroundWindow(window_);
-    TrackPopupMenuEx(tray_menu_, TPM_RIGHTBUTTON | TPM_LEFTBUTTON, pt.x, pt.y, window_, nullptr);
 
+    // REQUIRED: Set foreground window before TrackPopupMenu so menu dismisses properly
+    SetForegroundWindow(window_);
+
+    // Show the menu at the anchor point
+    TrackPopupMenuEx(tray_menu_, TPM_RIGHTBUTTON, pt.x, pt.y, window_, nullptr);
+
+    // Optional: Return focus to tray after menu closes
     NOTIFYICONDATAW focus{};
     focus.cbSize = sizeof(focus);
     focus.hWnd = window_;
@@ -665,44 +631,54 @@ void DesktopOverlayController::ShowTrayMenu(const POINT& anchor) {
 }
 
 void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
-    UINT icon_id = HIWORD(lparam);
+    // V4 semantics: LOWORD(lparam) = event, HIWORD(lparam) = icon ID
+    const UINT event = LOWORD(lparam);
+    const UINT icon_id = HIWORD(lparam);
+
     if (icon_id != kTrayIconId) {
         LOG_CPP_DEBUG("DesktopOverlay tray event for different icon (%u)", icon_id);
         return;
     }
-    UINT event = LOWORD(lparam);
-    DWORD_PTR anchor_raw = static_cast<DWORD_PTR>(wparam);
-    bool has_anchor = anchor_raw != 0;
+
+    // V4 semantics: wParam contains anchor coordinates for mouse/keyboard events
     POINT anchor{
-        GET_X_LPARAM(static_cast<LPARAM>(anchor_raw)),
-        GET_Y_LPARAM(static_cast<LPARAM>(anchor_raw))
+        GET_X_LPARAM(wparam),
+        GET_Y_LPARAM(wparam)
     };
-    if (!has_anchor) {
-        GetCursorPos(&anchor);
-    }
 
     switch (event) {
-    case WM_LBUTTONUP:
-    case WM_LBUTTONDBLCLK:
-        LOG_CPP_INFO("DesktopOverlay tray left-click activation (event=0x%04x)", event);
+    case WM_LBUTTONUP:  // Single left click
+        LOG_CPP_INFO("DesktopOverlay tray left-click");
         Toggle();
         break;
-    case NIN_SELECT:
-    case NIN_KEYSELECT:
-        LOG_CPP_INFO("DesktopOverlay tray activation (event=0x%04x)", event);
+
+    case WM_LBUTTONDBLCLK:  // Double left click
+        LOG_CPP_INFO("DesktopOverlay tray double-click");
         Toggle();
         break;
-    case WM_RBUTTONUP:
-    case WM_CONTEXTMENU:
-        LOG_CPP_INFO("DesktopOverlay tray context request (event=0x%04x)", event);
+
+    case NIN_SELECT:  // Keyboard Enter after selection
+    case NIN_KEYSELECT:  // Keyboard Space/Enter
+        LOG_CPP_INFO("DesktopOverlay tray keyboard activation (event=0x%04x)", event);
+        Toggle();
+        break;
+
+    case WM_CONTEXTMENU:  // Keyboard context menu or right-click
+    case WM_RBUTTONUP:    // Right mouse button up
+        LOG_CPP_INFO("DesktopOverlay tray context menu request");
         ShowTrayMenu(anchor);
         break;
-    case NIN_POPUPOPEN:
-    case NIN_POPUPCLOSE:
-        LOG_CPP_DEBUG("DesktopOverlay tray popup state change (event=0x%04x)", event);
+
+    case NIN_POPUPOPEN:  // Overflow fly-out opened
+        LOG_CPP_DEBUG("DesktopOverlay tray popup opened");
         break;
+
+    case NIN_POPUPCLOSE:  // Overflow fly-out closed
+        LOG_CPP_DEBUG("DesktopOverlay tray popup closed");
+        break;
+
     default:
-        LOG_CPP_DEBUG("DesktopOverlay tray event ignored (event=0x%04x)", event);
+        LOG_CPP_DEBUG("DesktopOverlay tray event 0x%04x", event);
         break;
     }
 }

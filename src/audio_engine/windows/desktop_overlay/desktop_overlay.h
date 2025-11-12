@@ -57,9 +57,9 @@ private:
         kExit = 2,
     };
 
-    static constexpr UINT kTrayCallbackMessage = WM_USER + 42;
-    static constexpr UINT kControlMessage = WM_USER + 43;
-    static constexpr UINT kTrayIconId = 1001;
+    static constexpr UINT kTrayCallbackMessage = WM_APP + 1;  // Use WM_APP range for app messages
+    static constexpr UINT kControlMessage = WM_APP + 2;
+    static constexpr UINT kTrayIconId = 1;  // Must be <= 0xFFFF for V4
     static constexpr UINT_PTR kMouseTimerId = 1001;
     static constexpr UINT_PTR kColorTimerId = 1002;
     static constexpr int kDefaultWidth = 900;
