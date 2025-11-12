@@ -233,6 +233,10 @@ def parse_arguments():
                         help='Start a new instance even if another ScreamRouter is already running')
     parser.add_argument('--no-browser-on-duplicate', action='store_true',
                         help='Do not open a browser when an existing instance is detected')
+    parser.add_argument('--desktop-menu-only', action='store_true',
+                        help='Skip initializing the server/audio engine and only launch the desktop menu overlay (Windows only)')
+    parser.add_argument('--desktop-menu-url', type=str, default=None,
+                        help='Override the URL loaded by the desktop menu overlay. Defaults to https://<api_host>:<api_port>/site/desktopMenu')
 
     args = parser.parse_args()
     
@@ -259,7 +263,10 @@ def parse_arguments():
         'EQUALIZER_CONFIG_PATH': args.equalizer_config_path,
         'SCREAMROUTER_SKIP_INSTANCE_CHECK': 'True' if args.skip_instance_check else 'False',
         'SCREAMROUTER_NO_BROWSER_ON_DUPLICATE': 'True' if args.no_browser_on_duplicate else 'False',
+        'SCREAMROUTER_DESKTOP_MENU_ONLY': 'True' if args.desktop_menu_only else 'False',
     }
+    if args.desktop_menu_url:
+        env_mappings['SCREAMROUTER_DESKTOP_MENU_URL'] = args.desktop_menu_url
     
     for env_var, value in env_mappings.items():
         if env_var not in os.environ:
@@ -274,7 +281,58 @@ def main():
 
     skip_instance_check = args.skip_instance_check or _env_flag("SCREAMROUTER_SKIP_INSTANCE_CHECK")
     no_browser_on_duplicate = args.no_browser_on_duplicate or _env_flag("SCREAMROUTER_NO_BROWSER_ON_DUPLICATE")
+    desktop_menu_only = args.desktop_menu_only or _env_flag("SCREAMROUTER_DESKTOP_MENU_ONLY")
+    desktop_menu_url_override = args.desktop_menu_url or os.getenv("SCREAMROUTER_DESKTOP_MENU_URL")
     enable_desktop_overlay = sys.platform == "win32"
+    overlay_host = args.api_host
+    if overlay_host in ("0.0.0.0", "::"):
+        overlay_host = "localhost"
+    overlay_url = desktop_menu_url_override or f"https://{overlay_host}:{args.api_port}/site/desktopMenu"
+
+    if desktop_menu_only:
+        if not enable_desktop_overlay:
+            logger.error("Desktop menu only mode requires Windows desktop overlay support.")
+            sys.exit(1)
+        try:
+            desktop_overlay = DesktopOverlay()
+        except Exception as exc:  # pragma: no cover - handles missing overlay bindings
+            logger.error("Failed to initialize DesktopOverlay in desktop-menu-only mode: %s", exc, exc_info=True)
+            sys.exit(1)
+
+        try:
+            if not desktop_overlay.start(overlay_url, 0, 0):
+                logger.error("Desktop overlay failed to start in desktop-menu-only mode.")
+                sys.exit(1)
+        except Exception as exc:
+            logger.error("Error while starting desktop overlay: %s", exc, exc_info=True)
+            sys.exit(1)
+
+        logger.info("Desktop menu overlay running in desktop-menu-only mode with %s", overlay_url)
+        stop_event = threading.Event()
+
+        def _desktop_only_signal_handler(signum, _frame):
+            logger.info("Signal %s received, shutting down desktop overlay.", signum)
+            stop_event.set()
+
+        try:
+            signal.signal(signal.SIGINT, _desktop_only_signal_handler)
+            signal.signal(signal.SIGTERM, _desktop_only_signal_handler)
+        except Exception:
+            # On some Windows environments SIGTERM may not be available; ignore failures
+            pass
+
+        try:
+            while not stop_event.is_set():
+                stop_event.wait(timeout=1.0)
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received, shutting down desktop overlay.")
+            stop_event.set()
+        finally:
+            try:
+                desktop_overlay.shutdown()
+            except Exception as exc:
+                logger.error("Error shutting down desktop overlay: %s", exc)
+        return
 
     if not skip_instance_check:
         instance = detect_running_instance(api_host=args.api_host, api_port=args.api_port)
@@ -575,7 +633,6 @@ def main():
     preferences_api: APIPreferences = APIPreferences(app, preferences_manager)
 
     if enable_desktop_overlay:
-        overlay_url = f"https://localhost:{constants.API_PORT}/site/desktopMenu"
         try:
             desktop_overlay = DesktopOverlay()
             if desktop_overlay.start(overlay_url, 0, 0):

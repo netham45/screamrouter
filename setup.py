@@ -33,6 +33,7 @@ import subprocess
 import platform
 import re
 import urllib
+import shlex
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from setuptools import setup, Extension, find_packages
@@ -334,6 +335,27 @@ def detect_cross_compile_platform():
     return platform_tag
 
 
+_TARGET_PLATFORM_TAG: str | None = None
+
+
+def get_target_platform_tag() -> str | None:
+    """Return cached target platform tag (e.g. win_x86_64) if cross-compiling."""
+    global _TARGET_PLATFORM_TAG
+    if _TARGET_PLATFORM_TAG is None:
+        _TARGET_PLATFORM_TAG = detect_cross_compile_platform()
+    return _TARGET_PLATFORM_TAG
+
+
+def target_is_windows() -> bool:
+    """Determine whether the extension we are building targets Windows."""
+    if sys.platform == "win32":
+        return True
+    plat = get_target_platform_tag()
+    if plat:
+        return plat.startswith("win")
+    return False
+
+
 class BuildPyCommand(build_py):
     """Custom build_py that builds React frontend before copying Python files"""
     
@@ -465,7 +487,8 @@ class BuildExtCommand(build_ext):
         install_dir = bs.install_dir
 
         # Detect cross-compilation
-        is_cross_compiling = bool(detect_cross_compile_platform())
+        platform_tag = get_target_platform_tag()
+        is_cross_compiling = bool(platform_tag)
 
         # Update extension paths
         for ext in self.extensions:
@@ -562,36 +585,9 @@ class BuildExtCommand(build_ext):
         else:
             log.info("building '%s' extension", ext.name)
 
-        # Compile Windows resource files (.rc) if present
-        if sys.platform == "win32":
-            rc_files = [s for s in sources if s.endswith('.rc')]
-            if rc_files:
-                for rc_file in rc_files:
-                    res_file = rc_file.replace('.rc', '.res')
-                    # Try to find rc.exe (Resource Compiler)
-                    rc_exe = shutil.which('rc') or shutil.which('rc.exe')
-                    if not rc_exe:
-                        # Try to find it in Windows SDK
-                        import glob
-                        sdk_paths = glob.glob(r"C:\Program Files (x86)\Windows Kits\*\bin\*\x64\rc.exe")
-                        if sdk_paths:
-                            rc_exe = sdk_paths[0]
-
-                    if rc_exe:
-                        log.info("Compiling resource file %s", rc_file)
-                        try:
-                            subprocess.run([rc_exe, '/fo', res_file, rc_file], check=True)
-                            # Add .res file to extra objects for linking
-                            if not hasattr(ext, 'extra_objects'):
-                                ext.extra_objects = []
-                            ext.extra_objects.append(res_file)
-                            # Remove .rc from sources since we compiled it
-                            sources.remove(rc_file)
-                        except subprocess.CalledProcessError as e:
-                            log.warning("Failed to compile resource file %s: %s", rc_file, e)
-                    else:
-                        log.warning("rc.exe not found, skipping resource compilation")
-                        sources.remove(rc_file)  # Remove .rc file from sources
+        target_windows = target_is_windows()
+        if target_windows:
+            sources = self._prepare_windows_resources(ext, sources)
 
         sources = self.swig_sources(sources, ext)
 
@@ -773,6 +769,127 @@ class BuildExtCommand(build_ext):
             object_cache.store_object(fingerprint, Path(obj_path))
         return obj_path
 
+    def _prepare_windows_resources(self, ext, sources):
+        rc_files = [s for s in sources if s.endswith(".rc")]
+        if not rc_files:
+            return sources
+
+        compiler_cmd, compiler_type = self._find_resource_compiler()
+        if not compiler_cmd:
+            raise DistutilsSetupError(
+                "Unable to locate a Windows resource compiler (rc.exe or windres). "
+                "Install the Windows SDK or MinGW windres so the tray icon can be embedded."
+            )
+
+        extra_objects = list(getattr(ext, "extra_objects", []))
+        for rc_file in rc_files:
+            log.info("Compiling resource file %s", rc_file)
+            res_path = self._compile_resource_file(compiler_cmd, compiler_type, rc_file)
+            extra_objects.append(res_path)
+            sources.remove(rc_file)
+
+        ext.extra_objects = extra_objects
+        return sources
+
+    def _find_resource_compiler(self):
+        if sys.platform == "win32":
+            rc_exe = shutil.which("rc") or shutil.which("rc.exe")
+            if not rc_exe:
+                sdk_roots = [
+                    Path(os.environ.get("ProgramFiles(x86)", "")) / "Windows Kits",
+                    Path(os.environ.get("ProgramFiles", "")) / "Windows Kits",
+                ]
+                for root in sdk_roots:
+                    if not root or not root.exists():
+                        continue
+                    candidates = sorted(root.glob("**/rc.exe"), reverse=True)
+                    if candidates:
+                        rc_exe = str(candidates[0])
+                        break
+            if rc_exe:
+                return rc_exe, "rc"
+            return None, None
+
+        windres_env = os.environ.get("WINDRES")
+        candidate_names = []
+        if windres_env:
+            candidate_names.append(windres_env)
+
+        derived = self._derive_windres_from_cc()
+        if derived:
+            candidate_names.append(derived)
+
+        candidate_names.extend([
+            "x86_64-w64-mingw32-windres",
+            "i686-w64-mingw32-windres",
+            "windres",
+        ])
+
+        for candidate in candidate_names:
+            if not candidate:
+                continue
+            found = shutil.which(candidate)
+            if found:
+                return found, "windres"
+
+        return None, None
+
+    def _derive_windres_from_cc(self):
+        cc = os.environ.get("CC", "")
+        if not cc:
+            return None
+
+        tokens = shlex.split(cc)
+        if not tokens:
+            return None
+        if tokens[0] == "ccache" and len(tokens) > 1:
+            tokens = tokens[1:]
+        compiler_exe = tokens[0]
+
+        for suffix in ("-gcc", "-g++", "-clang", "-clang++"):
+            if compiler_exe.endswith(suffix):
+                prefix = compiler_exe[: -len(suffix)]
+                return prefix + "-windres"
+        return None
+
+    def _windres_target(self):
+        tag = get_target_platform_tag()
+        if not tag:
+            return None
+        # Expect tags like win_x86_64 or win_i686
+        if tag.endswith("i686") or tag.endswith("x86"):
+            return "pe-i386"
+        if tag.endswith("arm64"):
+            return "pe-arm64"
+        return "pe-x86-64"
+
+    def _compile_resource_file(self, compiler_cmd, compiler_type, rc_file):
+        rc_path = Path(rc_file)
+        output_dir = Path(self.build_temp) / "resources"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        suffix = ".res" if compiler_type == "rc" else ".o"
+        output_path = output_dir / f"{rc_path.stem}{suffix}"
+
+        rc_cwd = rc_path.parent
+        input_name = rc_path.name
+
+        if compiler_type == "rc":
+            cmd = [compiler_cmd, "/nologo", "/fo", str(output_path), input_name]
+        else:
+            cmd = [compiler_cmd]
+            target = self._windres_target()
+            if target:
+                cmd.extend(["--target", target])
+            cmd.extend(["-O", "coff", "-o", str(output_path), input_name])
+
+        try:
+            subprocess.run(cmd, check=True, cwd=rc_cwd)
+        except subprocess.CalledProcessError as exc:
+            raise DistutilsSetupError(f"Failed to compile resource {rc_file}: {exc}") from exc
+
+        return str(output_path)
+
 
 # Platform-specific linker additions
 platform_include_dirs: list[str] = []
@@ -804,6 +921,7 @@ if sys.platform == "win32":
 
 # Find source files
 src_root = Path("src")
+target_windows_build = target_is_windows()
 source_files = []
 for root, dirs, files in os.walk(str(src_root)):
     # Exclude deps directories
@@ -813,7 +931,7 @@ for root, dirs, files in os.walk(str(src_root)):
         if file.endswith(".cpp"):
             source_files.append(str(Path(root) / file))
         # Include Windows resource files
-        elif sys.platform == "win32" and file.endswith(".rc"):
+        elif target_windows_build and file.endswith(".rc"):
             source_files.append(str(Path(root) / file))
 
 # Sort for consistent ordering

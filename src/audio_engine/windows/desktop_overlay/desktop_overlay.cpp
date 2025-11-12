@@ -76,7 +76,12 @@ static COLORREF ExtractColor(ICoreWebView2Environment* /*env*/) {
     DWORD color = 0;
     BOOL opaque = FALSE;
     if (SUCCEEDED(DwmGetColorizationColor(&color, &opaque))) {
-        return static_cast<COLORREF>(color);
+        // DwmGetColorizationColor returns 0xAARRGGBB
+        // Convert to COLORREF which is 0x00BBGGRR
+        BYTE r = (color >> 16) & 0xFF;
+        BYTE g = (color >> 8) & 0xFF;
+        BYTE b = color & 0xFF;
+        return RGB(r, g, b);
     }
     return RGB(0, 120, 215);
 }
@@ -441,7 +446,13 @@ void DesktopOverlayController::RefreshAccentColor() {
     DWORD color = 0;
     BOOL opaque = FALSE;
     if (SUCCEEDED(DwmGetColorizationColor(&color, &opaque))) {
-        accent_color_ = static_cast<COLORREF>(color);
+        // DwmGetColorizationColor returns 0xAARRGGBB
+        // We need to convert to COLORREF which is 0x00BBGGRR
+        BYTE a = (color >> 24) & 0xFF;
+        BYTE r = (color >> 16) & 0xFF;
+        BYTE g = (color >> 8) & 0xFF;
+        BYTE b = color & 0xFF;
+        accent_color_ = RGB(r, g, b);  // RGB macro creates 0x00BBGGRR
     }
 }
 
@@ -832,9 +843,8 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
         }
         return 0;
     case WM_ACTIVATE:
-        if (controller && LOWORD(wparam) == WA_INACTIVE) {
-            controller->Hide();
-        }
+        // Don't auto-hide on focus loss - the C# example uses Deactivate event differently
+        // We'll handle hiding via explicit user action (click outside, ESC, etc.)
         return 0;
     case WM_SETFOCUS:
         if (controller) {

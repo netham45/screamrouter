@@ -272,6 +272,7 @@ Entry point: screamrouter/__main__.py:1
   - Paths: `--logs-dir`, `--config-path`, `--equalizer-config-path`, `--certificate`, `--certificate-key`
   - Logging: `--console-log-level`, `--log-to-file`, `--log-entries-to-retain`, `--show-ffmpeg-output`
   - Site: `--npm-react-debug-site` (use local dev server)
+  - Desktop menu: `--desktop-menu-only` (Windows overlay only, skip everything else) and `--desktop-menu-url` (custom target URL)
   - Audio: `--timeshift-duration`, `--configuration-reload-timeout`
 
 - TLS: self‑signed certificate auto‑generated if cert/key missing, including SANs for local usage.
