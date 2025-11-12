@@ -96,12 +96,11 @@ DesktopOverlayController::DesktopOverlayController() {
     // If that fails, try loading from the current module (in case we're in a DLL/PYD)
     if (!tray_icon_) {
         HMODULE hModule = nullptr;
-        // Get handle to the current module (DLL/PYD)
-        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                          reinterpret_cast<LPCWSTR>(&DesktopOverlayController::DesktopOverlayController),
-                          &hModule);
-        if (hModule) {
+        // Get handle to the current module (DLL/PYD) using a static function address
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCWSTR>(&DesktopOverlayController::Start),
+                               &hModule)) {
             tray_icon_ = LoadIconW(hModule, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
             if (tray_icon_) {
                 LOG_CPP_INFO("Loaded ScreamRouter icon from module resources");
