@@ -95,35 +95,54 @@ DesktopOverlayController* GetController(HWND hwnd) {
 DesktopOverlayController::DesktopOverlayController() {
     ZeroMemory(&nid_, sizeof(nid_));
 
-    // Get the module handle - try different approaches for Python extension
-    HINSTANCE hInstance = GetModuleHandle(nullptr);
+    const auto module_address =
+        reinterpret_cast<LPCWSTR>(&DesktopOverlayController::OverlayWndProc);
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            module_address, &resource_module_)) {
+        resource_module_ = nullptr;
+        LOG_CPP_WARNING("GetModuleHandleExW failed for resource module (err=%lu)", GetLastError());
+    }
 
-    // Try loading from resources first
-    tray_icon_ = LoadIconW(nullptr, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
+    auto load_icon_from = [](HMODULE module) -> HICON {
+        if (!module) {
+            return nullptr;
+        }
+        return LoadIconW(module, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
+    };
+
+    tray_icon_ = load_icon_from(resource_module_);
+    if (tray_icon_) {
+        LOG_CPP_INFO("Loaded tray icon from screamrouter_audio_engine module");
+    }
 
     if (!tray_icon_) {
-        // Pass the address of a function that definitely lives inside this module
-        // so GetModuleHandleExW returns the HMODULE of the .pyd.
-        HMODULE hModule = nullptr;
-        const auto module_address =
-            reinterpret_cast<LPCWSTR>(&DesktopOverlayController::OverlayWndProc);
-        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                               module_address, &hModule)) {
-            tray_icon_ = LoadIconW(hModule, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
-            if (tray_icon_) {
-                LOG_CPP_INFO("Loaded icon from DLL/PYD resources");
-            }
-        } else {
-            LOG_CPP_WARNING("GetModuleHandleExW failed for tray icon (err=%lu)", GetLastError());
+        HINSTANCE host_instance = GetModuleHandle(nullptr);
+        tray_icon_ = load_icon_from(host_instance);
+        if (tray_icon_) {
+            LOG_CPP_INFO("Loaded tray icon from host executable");
         }
     }
 
     if (!tray_icon_) {
         // Try LoadImage which might work better for resources
-        tray_icon_ = LoadIconW(hInstance, IDI_SCREAMROUTER_ICON);
+        auto load_image_from = [](HMODULE module) -> HICON {
+            if (!module) {
+                return nullptr;
+            }
+            return reinterpret_cast<HICON>(LoadImageW(module,
+                                                      MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON),
+                                                      IMAGE_ICON,
+                                                      0,
+                                                      0,
+                                                      LR_DEFAULTSIZE | LR_SHARED));
+        };
+        tray_icon_ = load_image_from(resource_module_);
+        if (!tray_icon_) {
+            tray_icon_ = load_image_from(GetModuleHandle(nullptr));
+        }
         if (tray_icon_) {
-            LOG_CPP_INFO("Loaded icon using LoadImage");
+            LOG_CPP_INFO("Loaded tray icon using LoadImage fallback");
         }
     }
 
@@ -319,6 +338,9 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
 void DesktopOverlayController::InitWebView() {
     LOG_CPP_INFO("DesktopOverlay initializing WebView2");
 
+    // Set browser arguments to ignore certificate errors for self-signed certs
+    SetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", L"--ignore-certificate-errors");
+
     std::wstring user_data_folder;
     PWSTR local_appdata = nullptr;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_appdata))) {
@@ -428,7 +450,7 @@ void DesktopOverlayController::InitWebView() {
     HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
         nullptr,
         user_data_folder.empty() ? nullptr : user_data_folder.c_str(),
-        L"--ignore-certificate-errors",
+        nullptr,  // No options object needed when using environment variable
         handler.Get());
     if (FAILED(hr)) {
         LOG_CPP_ERROR("DesktopOverlay CreateCoreWebView2EnvironmentWithOptions returned hr=0x%08X", hr);

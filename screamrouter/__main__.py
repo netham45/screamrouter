@@ -278,7 +278,10 @@ def main():
     desktop_menu_only = args.desktop_menu_only or _env_flag("SCREAMROUTER_DESKTOP_MENU_ONLY")
     enable_desktop_overlay = sys.platform == "win32"
 
-    overlay_url = f"https://localhost:{constants.API_PORT}/"
+    overlay_host = constants.API_HOST or args.api_host or "localhost"
+    if overlay_host in ("0.0.0.0", "::", None, ""):
+        overlay_host = "localhost"
+    overlay_url = f"https://{overlay_host}:{constants.API_PORT}/site/desktopMenu"
 
     if desktop_menu_only:
         if not enable_desktop_overlay:

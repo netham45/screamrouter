@@ -98,6 +98,7 @@ private:
     HMENU tray_menu_{nullptr};
     NOTIFYICONDATAW nid_{};
     HINSTANCE hinstance_{nullptr};
+    HMODULE resource_module_{nullptr};
     HICON tray_icon_{nullptr};
 
     bool mouse_disabled_{false};
