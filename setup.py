@@ -27,9 +27,13 @@ Cross-Compilation Support:
 
 import os
 import sys
+import glob
 import shutil
 import subprocess
+import platform
 import re
+import urllib
+import shlex
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from setuptools import setup, Extension, find_packages
@@ -133,6 +137,147 @@ class BuildReactCommand(_build):
         print(f"React build completed successfully. Files copied to {package_site_dir}")
 
 
+def _find_nuget_executable():
+    """Locate nuget.exe via env or PATH."""
+    hints = []
+    if os.environ.get("NUGET_EXE"):
+        hints.append(os.environ["NUGET_EXE"])
+    hints.extend([
+        shutil.which("nuget"),
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "NuGet" / "nuget.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "NuGet" / "nuget.exe",
+    ])
+    for candidate in hints:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.is_file():
+            return str(path)
+    return None
+
+def _default_vcvarsall():
+    candidates = []
+    env_hint = os.environ.get("VCVARSALL_BAT")
+    if env_hint:
+        candidates.append(Path(env_hint))
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+    if program_files_x86:
+        base = Path(program_files_x86) / "Microsoft Visual Studio"
+        candidates.extend([
+            base / "2022" / "Community" / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat",
+            base / "2022" / "Professional" / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat",
+            base / "2022" / "Enterprise" / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat",
+        ])
+    for candidate in candidates:
+        if candidate and candidate.is_file():
+            return str(candidate)
+    return None
+
+def _download_nuget_exe() -> Path | None:
+    dist_url = "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
+    dest_dir = project_root / "build" / "_deps" / "nuget"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_file = dest_dir / "nuget.exe"
+    try:
+        print(f"Downloading nuget.exe from {dist_url}")
+        with urllib.request.urlopen(dist_url) as resp, open(dest_file, "wb") as out:
+            out.write(resp.read())
+    except Exception as exc:
+        print(f"Failed to download nuget.exe: {exc}")
+        return None
+    return dest_file
+
+
+def _find_nuget_command():
+    """Return list representing the nuget invocation (['nuget.exe'])."""
+    env_hint = os.environ.get("NUGET_EXE")
+    if env_hint:
+        path = Path(env_hint)
+        if path.is_file():
+            return [str(path)]
+    exe = shutil.which("nuget")
+    if exe:
+        return [exe]
+    downloaded = _download_nuget_exe()
+    if downloaded and downloaded.exists():
+        return [str(downloaded)]
+    return None
+
+
+def _run_nuget_command(args):
+    """Run nuget command, optionally via vcvarsall for MSVC env."""
+    cmd_list = [str(a) for a in args]
+    if sys.platform != "win32":
+        subprocess.run(cmd_list, check=True)
+        return
+    vcvars = _default_vcvarsall()
+    arch_arg = "amd64" if platform.architecture()[0] == "64bit" else "x86"
+
+    # Build command string preserving Windows paths
+    command_line = " ".join(cmd_list)
+    if vcvars:
+        command_line = f'call "{vcvars}" {arch_arg} && {command_line}'
+    subprocess.run(["cmd", "/c", command_line], check=True)
+
+
+def ensure_webview2_sdk(version: str = "1.0.2846.51"):
+    """Ensure the Microsoft.Web.WebView2 SDK is available; return paths dict or None on non-Windows."""
+    if sys.platform != "win32":
+        return None
+
+    explicit_dir = os.environ.get("WEBVIEW2_SDK_DIR")
+    if explicit_dir:
+        base_dir = Path(explicit_dir).expanduser().resolve()
+    else:
+        deps_root = project_root / "build" / "_deps" / "webview2"
+        deps_root = project_root / "build" / "_deps" / "webview2"
+        deps_root.mkdir(parents=True, exist_ok=True)
+        nuget_cmd = _find_nuget_command()
+        if not nuget_cmd:
+            raise RuntimeError(
+                "WebView2 SDK not found. Install NuGet CLI (nuget.exe) or set WEBVIEW2_SDK_DIR to an extracted Microsoft.Web.WebView2 package."
+            )
+        print(f"Downloading Microsoft.Web.WebView2 with {' '.join(nuget_cmd)}")
+        _run_nuget_command(
+            nuget_cmd
+            + [
+                "install",
+                "Microsoft.Web.WebView2",
+                "-OutputDirectory",
+                str(deps_root),
+            ]
+        )
+        candidates = sorted(deps_root.glob("Microsoft.Web.WebView2.*"), reverse=True)
+        if not candidates:
+            raise RuntimeError("NuGet did not produce a Microsoft.Web.WebView2 package")
+        base_dir = candidates[0]
+
+    include_dir = base_dir / "build" / "native" / "include"
+    if not include_dir.exists():
+        raise RuntimeError(f"WebView2 include directory not found: {include_dir}")
+
+    is_64bit = platform.architecture()[0] == "64bit"
+    arch = "x64" if is_64bit else "x86"
+    runtime = "win-x64" if is_64bit else "win-x86"
+
+    loader_lib = base_dir / "build" / "native" / arch / "WebView2LoaderStatic.lib"
+    loader_dll = base_dir / "runtimes" / runtime / "native" / "WebView2Loader.dll"
+    if not loader_lib.exists():
+        raise RuntimeError(f"WebView2 loader static library not found: {loader_lib}")
+    if not loader_dll.exists():
+        raise RuntimeError(f"WebView2 loader runtime DLL not found: {loader_dll}")
+
+    return {
+        "base_dir": base_dir,
+        "include_dir": include_dir,
+        "loader_lib": loader_lib,
+        "loader_dll": loader_dll,
+    }
+
+
+WEBVIEW2_SDK = ensure_webview2_sdk()
+
+
 def detect_cross_compile_platform():
     """
     Detect cross-compilation target from CC environment variable.
@@ -188,6 +333,27 @@ def detect_cross_compile_platform():
     platform_tag = f"{wheel_os}_{wheel_arch}"
     print(f"Detected cross-compilation target from CC={cc}: {platform_tag}")
     return platform_tag
+
+
+_TARGET_PLATFORM_TAG: str | None = None
+
+
+def get_target_platform_tag() -> str | None:
+    """Return cached target platform tag (e.g. win_x86_64) if cross-compiling."""
+    global _TARGET_PLATFORM_TAG
+    if _TARGET_PLATFORM_TAG is None:
+        _TARGET_PLATFORM_TAG = detect_cross_compile_platform()
+    return _TARGET_PLATFORM_TAG
+
+
+def target_is_windows() -> bool:
+    """Determine whether the extension we are building targets Windows."""
+    if sys.platform == "win32":
+        return True
+    plat = get_target_platform_tag()
+    if plat:
+        return plat.startswith("win")
+    return False
 
 
 class BuildPyCommand(build_py):
@@ -321,7 +487,8 @@ class BuildExtCommand(build_ext):
         install_dir = bs.install_dir
 
         # Detect cross-compilation
-        is_cross_compiling = bool(detect_cross_compile_platform())
+        platform_tag = get_target_platform_tag()
+        is_cross_compiling = bool(platform_tag)
 
         # Update extension paths
         for ext in self.extensions:
@@ -418,6 +585,10 @@ class BuildExtCommand(build_ext):
         else:
             log.info("building '%s' extension", ext.name)
 
+        target_windows = target_is_windows()
+        if target_windows:
+            sources = self._prepare_windows_resources(ext, sources)
+
         sources = self.swig_sources(sources, ext)
 
         macros = ext.define_macros[:]
@@ -447,6 +618,12 @@ class BuildExtCommand(build_ext):
             build_temp=self.build_temp,
             target_lang=language,
         )
+
+        if sys.platform == "win32" and WEBVIEW2_SDK:
+            loader_dll = WEBVIEW2_SDK.get("loader_dll")
+            if loader_dll and Path(loader_dll).exists():
+                dest = Path(ext_path).parent / Path(loader_dll).name
+                shutil.copy2(loader_dll, dest)
 
     def _compile_with_cache(self, ext, sources, macros, extra_postargs):
         compiler = self.compiler
@@ -592,17 +769,177 @@ class BuildExtCommand(build_ext):
             object_cache.store_object(fingerprint, Path(obj_path))
         return obj_path
 
+    def _prepare_windows_resources(self, ext, sources):
+        rc_files = [s for s in sources if s.endswith(".rc")]
+        if not rc_files:
+            return sources
+
+        compiler_cmd, compiler_type = self._find_resource_compiler()
+        if not compiler_cmd:
+            raise DistutilsSetupError(
+                "Unable to locate a Windows resource compiler (rc.exe or windres). "
+                "Install the Windows SDK or MinGW windres so the tray icon can be embedded."
+            )
+
+        extra_objects = list(getattr(ext, "extra_objects", []))
+        for rc_file in rc_files:
+            log.info("Compiling resource file %s", rc_file)
+            res_path = self._compile_resource_file(compiler_cmd, compiler_type, rc_file)
+            extra_objects.append(res_path)
+            sources.remove(rc_file)
+
+        ext.extra_objects = extra_objects
+        return sources
+
+    def _find_resource_compiler(self):
+        if sys.platform == "win32":
+            rc_exe = shutil.which("rc") or shutil.which("rc.exe")
+            if not rc_exe:
+                sdk_roots = [
+                    Path(os.environ.get("ProgramFiles(x86)", "")) / "Windows Kits",
+                    Path(os.environ.get("ProgramFiles", "")) / "Windows Kits",
+                ]
+                for root in sdk_roots:
+                    if not root or not root.exists():
+                        continue
+                    candidates = sorted(root.glob("**/rc.exe"), reverse=True)
+                    if candidates:
+                        rc_exe = str(candidates[0])
+                        break
+            if rc_exe:
+                return rc_exe, "rc"
+            return None, None
+
+        windres_env = os.environ.get("WINDRES")
+        candidate_names = []
+        if windres_env:
+            candidate_names.append(windres_env)
+
+        derived = self._derive_windres_from_cc()
+        if derived:
+            candidate_names.append(derived)
+
+        candidate_names.extend([
+            "x86_64-w64-mingw32-windres",
+            "i686-w64-mingw32-windres",
+            "windres",
+        ])
+
+        for candidate in candidate_names:
+            if not candidate:
+                continue
+            found = shutil.which(candidate)
+            if found:
+                return found, "windres"
+
+        return None, None
+
+    def _derive_windres_from_cc(self):
+        cc = os.environ.get("CC", "")
+        if not cc:
+            return None
+
+        tokens = shlex.split(cc)
+        if not tokens:
+            return None
+        if tokens[0] == "ccache" and len(tokens) > 1:
+            tokens = tokens[1:]
+        compiler_exe = tokens[0]
+
+        for suffix in ("-gcc", "-g++", "-clang", "-clang++"):
+            if compiler_exe.endswith(suffix):
+                prefix = compiler_exe[: -len(suffix)]
+                return prefix + "-windres"
+        return None
+
+    def _windres_target(self):
+        tag = get_target_platform_tag()
+        if not tag:
+            return None
+        # Expect tags like win_x86_64 or win_i686
+        if tag.endswith("i686") or tag.endswith("x86"):
+            return "pe-i386"
+        if tag.endswith("arm64"):
+            return "pe-arm64"
+        return "pe-x86-64"
+
+    def _compile_resource_file(self, compiler_cmd, compiler_type, rc_file):
+        rc_path = Path(rc_file)
+        rc_full_path = rc_path.resolve()
+        output_dir = (Path(self.build_temp).resolve() / "resources")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        suffix = ".res" if compiler_type == "rc" else ".o"
+        output_path = output_dir / f"{rc_path.stem}{suffix}"
+
+        rc_cwd = rc_path.parent.resolve()
+        input_name = os.fspath(rc_full_path)
+
+        output_path_str = os.fspath(output_path)
+
+        if compiler_type == "rc":
+            cmd = [compiler_cmd, "/nologo", "/fo", output_path_str, input_name]
+        else:
+            cmd = [compiler_cmd]
+            target = self._windres_target()
+            if target:
+                cmd.extend(["--target", target])
+            cmd.extend(["-O", "coff", "-o", output_path_str, input_name])
+
+        try:
+            subprocess.run(cmd, check=True, cwd=rc_cwd)
+        except subprocess.CalledProcessError as exc:
+            raise DistutilsSetupError(f"Failed to compile resource {rc_file}: {exc}") from exc
+
+        return str(output_path)
+
+
+# Platform-specific linker additions
+platform_include_dirs: list[str] = []
+platform_libraries: list[str] = []
+platform_link_args: list[str] = []
+
+if sys.platform == "win32":
+    platform_libraries.extend([
+        "advapi32",
+        "crypt32",
+        "user32",
+        "gdi32",
+        "shell32",
+        "dwmapi",
+        "shlwapi",
+        "bcrypt",
+        "ws2_32",
+        "iphlpapi",
+        "ole32",
+        "oleaut32",
+        "avrt",
+        "mmdevapi",
+        "uuid",
+        "propsys",
+    ])
+    if WEBVIEW2_SDK:
+        platform_include_dirs.append(str(WEBVIEW2_SDK["include_dir"]))
+        platform_link_args.append(str(WEBVIEW2_SDK["loader_lib"]))
 
 # Find source files
 src_root = Path("src")
+target_windows_build = target_is_windows()
 source_files = []
+header_dependencies = []
 for root, dirs, files in os.walk(str(src_root)):
     # Exclude deps directories
     if 'deps' in dirs:
         dirs.remove('deps')
     for file in files:
+        path = Path(root) / file
         if file.endswith(".cpp"):
-            source_files.append(str(Path(root) / file))
+            source_files.append(str(path))
+        elif file.endswith(".h"):
+            header_dependencies.append(str(path))
+        # Include Windows resource files
+        elif target_windows_build and file.endswith(".rc"):
+            source_files.append(str(path))
 
 # Sort for consistent ordering
 source_files.sort()
@@ -615,7 +952,8 @@ ext_modules = [
         include_dirs=[
             "src/audio_engine",
             "src/audio_engine/json/include",  # If json headers are needed
-        ],
+        ] + platform_include_dirs,
+        depends=header_dependencies,
         libraries=[
             # Core dependencies
             "mp3lame",
@@ -631,12 +969,8 @@ ext_modules = [
             "srtp2",
         ]
         + (["asound"] if sys.platform.startswith("linux") else [])
-        + (["ole32", "oleaut32", "avrt", "mmdevapi", "uuid", "propsys"] if sys.platform == "win32" else []),
-        extra_link_args=(
-            ["ole32.lib", "oleaut32.lib", "avrt.lib", "mmdevapi.lib", "uuid.lib", "propsys.lib"]
-            if sys.platform == "win32"
-            else []
-        ),
+        + platform_libraries,
+        extra_link_args=platform_link_args,
         language="c++",
         cxx_std=17
     )

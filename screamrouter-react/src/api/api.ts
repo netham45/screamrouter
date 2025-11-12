@@ -4,7 +4,7 @@
  * as well as functions to manage WebSocket connections and perform HTTP requests.
  */
 
-import axios from 'axios';
+import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { Preferences, PreferencesUpdatePayload, UnifiedDiscoverySnapshot } from '../types/preferences';
 
 /**
@@ -313,9 +313,92 @@ export interface WebSocketUpdate {
  */
 export type WebSocketMessageHandler = (update: WebSocketUpdate) => void;
 
+export type WebSocketConnectionState = 'connected' | 'disconnected';
+export type WebSocketConnectionListener = (state: WebSocketConnectionState) => void;
+
+type CachedResponse = {
+  timestamp: number;
+  promise: Promise<AxiosResponse<any>>;
+};
+
+const CACHE_TTL_MS = 5000;
+const responseCache = new Map<string, CachedResponse>();
+
+const buildCacheKey = (url: string, config?: AxiosRequestConfig) => {
+  const paramsKey = config?.params ? JSON.stringify(config.params) : '';
+  return `${url}::${paramsKey}`;
+};
+
+const cachedGet = <T>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> => {
+  const key = buildCacheKey(url, config);
+  const now = Date.now();
+  const cached = responseCache.get(key);
+
+  if (cached && now - cached.timestamp < CACHE_TTL_MS) {
+    return cached.promise as Promise<AxiosResponse<T>>;
+  }
+
+  const requestPromise = axios.get<T>(url, config).then(response => {
+    responseCache.set(key, {
+      timestamp: Date.now(),
+      promise: Promise.resolve(response)
+    });
+    return response;
+  }).catch(error => {
+    responseCache.delete(key);
+    throw error;
+  });
+
+  responseCache.set(key, { timestamp: now, promise: requestPromise });
+  return requestPromise;
+};
+
+const invalidateCacheByUrl = (url: string) => {
+  const prefix = `${url}::`;
+  responseCache.forEach((_entry, key) => {
+    if (key === `${url}::` || key.startsWith(prefix)) {
+      responseCache.delete(key);
+    }
+  });
+};
+
+const invalidateCaches = (...urls: string[]) => {
+  urls.forEach(url => invalidateCacheByUrl(url));
+};
+
+const withCacheInvalidation = <T>(promise: Promise<T>, urlsToInvalidate: string[]): Promise<T> => {
+  return promise.then(result => {
+    invalidateCaches(...urlsToInvalidate);
+    return result;
+  });
+};
+
 let ws: WebSocket | null = null;
 let messageHandler: WebSocketMessageHandler | null = null;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+let manualReconnectRequested = false;
+const webSocketConnectionListeners = new Set<WebSocketConnectionListener>();
+
+const notifyWebSocketState = (state: WebSocketConnectionState) => {
+  webSocketConnectionListeners.forEach(listener => {
+    try {
+      listener(state);
+    } catch (listenerError) {
+      console.error('Error in WebSocket connection listener:', listenerError);
+    }
+  });
+};
+
+const scheduleWebSocketReconnect = (delayMs: number) => {
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+  }
+  console.log(`Attempting to reconnect WebSocket in ${delayMs}ms...`);
+  reconnectTimeout = setTimeout(() => {
+    reconnectTimeout = null;
+    createWebSocket();
+  }, Math.max(delayMs, 0));
+};
 
 // Function to create WebSocket connection
 const createWebSocket = () => {
@@ -353,12 +436,12 @@ const createWebSocket = () => {
     ws.onclose = (event) => {
       console.log(`WebSocket closed (code: ${event.code}, reason: ${event.reason})`);
       ws = null;
+      notifyWebSocketState('disconnected');
+      const reconnectDelay = manualReconnectRequested ? 0 : 5000;
+      manualReconnectRequested = false;
       
       // Attempt to reconnect after 5 seconds
-      reconnectTimeout = setTimeout(() => {
-        console.log("Attempting to reconnect WebSocket...");
-        createWebSocket();
-      }, 5000);
+      scheduleWebSocketReconnect(reconnectDelay);
     };
 
     ws.onerror = (error) => {
@@ -368,14 +451,16 @@ const createWebSocket = () => {
 
     ws.onopen = () => {
       console.log("WebSocket connected successfully");
+      manualReconnectRequested = false;
+      notifyWebSocketState('connected');
     };
   } catch (error) {
     console.error('Error creating WebSocket:', error);
+    notifyWebSocketState('disconnected');
     // Attempt to reconnect after 5 seconds
-    reconnectTimeout = setTimeout(() => {
-      console.log("Attempting to reconnect WebSocket...");
-      createWebSocket();
-    }, 5000);
+    const reconnectDelay = manualReconnectRequested ? 0 : 5000;
+    manualReconnectRequested = false;
+    scheduleWebSocketReconnect(reconnectDelay);
   }
 };
 
@@ -389,16 +474,16 @@ const setupWebSocket = async (handler: WebSocketMessageHandler) => {
   // Fetch initial state
   try {
     const [sourcesRes, sinksRes, routesRes] = await Promise.all([
-      axios.get<Record<string, Source>>('/sources'),
-      axios.get<Record<string, Sink>>('/sinks'),
-      axios.get<Record<string, Route>>('/routes')
+      cachedGet<Record<string, Source>>('/sources'),
+      cachedGet<Record<string, Sink>>('/sinks'),
+      cachedGet<Record<string, Route>>('/routes')
     ]);
 
     let systemCaptureDevices: SystemAudioDeviceInfo[] = [];
     let systemPlaybackDevices: SystemAudioDeviceInfo[] = [];
 
     try {
-      const systemDevicesRes = await axios.get<{
+      const systemDevicesRes = await cachedGet<{
         system_capture_devices?: SystemAudioDeviceInfo[] | Record<string, SystemAudioDeviceInfo>;
         system_playback_devices?: SystemAudioDeviceInfo[] | Record<string, SystemAudioDeviceInfo>;
       }>('/system_audio_devices');
@@ -434,74 +519,189 @@ const setupWebSocket = async (handler: WebSocketMessageHandler) => {
   }
 };
 
+const addWebSocketConnectionListener = (listener: WebSocketConnectionListener) => {
+  webSocketConnectionListeners.add(listener);
+  return () => {
+    webSocketConnectionListeners.delete(listener);
+  };
+};
+
+const forceWebSocketReconnect = () => {
+  manualReconnectRequested = true;
+  if (ws) {
+    try {
+      ws.close();
+      return;
+    } catch (error) {
+      console.error('Error closing WebSocket before reconnect:', error);
+    }
+  }
+  createWebSocket();
+};
+
 /**
  * ApiService object containing methods for interacting with the backend API
  */
 const ApiService = {
   // WebSocket handler setter that also fetches initial state
   setWebSocketHandler: setupWebSocket,
+  onWebSocketStateChange: addWebSocketConnectionListener,
+  forceWebSocketReconnect,
 
   // GET requests
-  getSources: () => axios.get<Record<string, Source>>('/sources'),
-  getSinks: () => axios.get<Record<string, Sink>>('/sinks'),
-  getRoutes: () => axios.get<Record<string, Route>>('/routes'),
-  getSystemAudioDevices: () => axios.get<{
+  getSources: () => cachedGet<Record<string, Source>>('/sources'),
+  getSinks: () => cachedGet<Record<string, Sink>>('/sinks'),
+  getRoutes: () => cachedGet<Record<string, Route>>('/routes'),
+  getSystemAudioDevices: () => cachedGet<{
     system_capture_devices?: SystemAudioDeviceInfo[] | Record<string, SystemAudioDeviceInfo>;
     system_playback_devices?: SystemAudioDeviceInfo[] | Record<string, SystemAudioDeviceInfo>;
   }>('/system_audio_devices'),
 
   // POST requests for adding new items
-  addSource: (data: Source) => axios.post<Source>('/sources', data),
-  addSink: (data: Sink) => axios.post<Sink>('/sinks', data),
-  addRoute: (data: Route) => axios.post<Route>('/routes', data),
+  addSource: (data: Source) => withCacheInvalidation(
+    axios.post<Source>('/sources', data),
+    ['/sources']
+  ),
+  addSink: (data: Sink) => withCacheInvalidation(
+    axios.post<Sink>('/sinks', data),
+    ['/sinks']
+  ),
+  addRoute: (data: Route) => withCacheInvalidation(
+    axios.post<Route>('/routes', data),
+    ['/routes']
+  ),
 
   // PUT requests for updating existing items
-  updateSource: (name: string, data: Partial<Source>) => axios.put<Source>( `/sources/${name}`, data),
-  updateSink: (name: string, data: Partial<Sink>) => axios.put<Sink>( `/sinks/${name}`, data),
-  updateRoute: (name: string, data: Partial<Route>) => axios.put<Route>( `/routes/${name}`, data),
+  updateSource: (name: string, data: Partial<Source>) => withCacheInvalidation(
+    axios.put<Source>( `/sources/${name}`, data),
+    ['/sources']
+  ),
+  updateSink: (name: string, data: Partial<Sink>) => withCacheInvalidation(
+    axios.put<Sink>( `/sinks/${name}`, data),
+    ['/sinks']
+  ),
+  updateRoute: (name: string, data: Partial<Route>) => withCacheInvalidation(
+    axios.put<Route>( `/routes/${name}`, data),
+    ['/routes']
+  ),
 
   // DELETE requests
-  deleteSource: (name: string) => axios.delete(`/sources/${name}`),
-  deleteSink: (name: string) => axios.delete(`/sinks/${name}`),
-  deleteRoute: (name: string) => axios.delete(`/routes/${name}`),
+  deleteSource: (name: string) => withCacheInvalidation(
+    axios.delete(`/sources/${name}`),
+    ['/sources']
+  ),
+  deleteSink: (name: string) => withCacheInvalidation(
+    axios.delete(`/sinks/${name}`),
+    ['/sinks']
+  ),
+  deleteRoute: (name: string) => withCacheInvalidation(
+    axios.delete(`/routes/${name}`),
+    ['/routes']
+  ),
 
   // Enable/Disable requests
-  enableSource: (name: string) => axios.get(`/sources/${name}/enable`),
-  disableSource: (name: string) => axios.get(`/sources/${name}/disable`),
-  enableSink: (name: string) => axios.get(`/sinks/${name}/enable`),
-  disableSink: (name: string) => axios.get(`/sinks/${name}/disable`),
-  enableRoute: (name: string) => axios.get(`/routes/${name}/enable`),
-  disableRoute: (name: string) => axios.get(`/routes/${name}/disable`),
+  enableSource: (name: string) => withCacheInvalidation(
+    axios.get(`/sources/${name}/enable`),
+    ['/sources']
+  ),
+  disableSource: (name: string) => withCacheInvalidation(
+    axios.get(`/sources/${name}/disable`),
+    ['/sources']
+  ),
+  enableSink: (name: string) => withCacheInvalidation(
+    axios.get(`/sinks/${name}/enable`),
+    ['/sinks']
+  ),
+  disableSink: (name: string) => withCacheInvalidation(
+    axios.get(`/sinks/${name}/disable`),
+    ['/sinks']
+  ),
+  enableRoute: (name: string) => withCacheInvalidation(
+    axios.get(`/routes/${name}/enable`),
+    ['/routes']
+  ),
+  disableRoute: (name: string) => withCacheInvalidation(
+    axios.get(`/routes/${name}/disable`),
+    ['/routes']
+  ),
 
   // Volume update requests
-  updateSourceVolume: (name: string, volume: number) => axios.get(`/sources/${name}/volume/${volume}`),
-  updateSinkVolume: (name: string, volume: number) => axios.get(`/sinks/${name}/volume/${volume}`),
-  updateRouteVolume: (name: string, volume: number) => axios.get(`/routes/${name}/volume/${volume}`),
+  updateSourceVolume: (name: string, volume: number) => withCacheInvalidation(
+    axios.get(`/sources/${name}/volume/${volume}`),
+    ['/sources']
+  ),
+  updateSinkVolume: (name: string, volume: number) => withCacheInvalidation(
+    axios.get(`/sinks/${name}/volume/${volume}`),
+    ['/sinks']
+  ),
+  updateRouteVolume: (name: string, volume: number) => withCacheInvalidation(
+    axios.get(`/routes/${name}/volume/${volume}`),
+    ['/routes']
+  ),
 
   // Delay update requests
-  updateSourceDelay: (name: string, delay: number) => axios.get(`/sources/${name}/delay/${delay}`),
-  updateSinkDelay: (name: string, delay: number) => axios.get(`/sinks/${name}/delay/${delay}`),
-  updateRouteDelay: (name: string, delay: number) => axios.get(`/routes/${name}/delay/${delay}`),
+  updateSourceDelay: (name: string, delay: number) => withCacheInvalidation(
+    axios.get(`/sources/${name}/delay/${delay}`),
+    ['/sources']
+  ),
+  updateSinkDelay: (name: string, delay: number) => withCacheInvalidation(
+    axios.get(`/sinks/${name}/delay/${delay}`),
+    ['/sinks']
+  ),
+  updateRouteDelay: (name: string, delay: number) => withCacheInvalidation(
+    axios.get(`/routes/${name}/delay/${delay}`),
+    ['/routes']
+  ),
 
   // Timeshift update requests
-  updateSourceTimeshift: (name: string, timeshift: number) => axios.get(`/sources/${name}/timeshift/${timeshift}`),
-  updateSinkTimeshift: (name: string, timeshift: number) => axios.get(`/sinks/${name}/timeshift/${timeshift}`),
-  updateRouteTimeshift: (name: string, timeshift: number) => axios.get(`/routes/${name}/timeshift/${timeshift}`),
+  updateSourceTimeshift: (name: string, timeshift: number) => withCacheInvalidation(
+    axios.get(`/sources/${name}/timeshift/${timeshift}`),
+    ['/sources']
+  ),
+  updateSinkTimeshift: (name: string, timeshift: number) => withCacheInvalidation(
+    axios.get(`/sinks/${name}/timeshift/${timeshift}`),
+    ['/sinks']
+  ),
+  updateRouteTimeshift: (name: string, timeshift: number) => withCacheInvalidation(
+    axios.get(`/routes/${name}/timeshift/${timeshift}`),
+    ['/routes']
+  ),
 
   // Equalizer update requests
-  updateSourceEqualizer: (name: string, equalizer: Equalizer) => axios.post(`/sources/${name}/equalizer`, equalizer),
-  updateSinkEqualizer: (name: string, equalizer: Equalizer) => axios.post(`/sinks/${name}/equalizer`, equalizer),
-  updateRouteEqualizer: (name: string, equalizer: Equalizer) => axios.post(`/routes/${name}/equalizer`, equalizer),
+  updateSourceEqualizer: (name: string, equalizer: Equalizer) => withCacheInvalidation(
+    axios.post(`/sources/${name}/equalizer`, equalizer),
+    ['/sources']
+  ),
+  updateSinkEqualizer: (name: string, equalizer: Equalizer) => withCacheInvalidation(
+    axios.post(`/sinks/${name}/equalizer`, equalizer),
+    ['/sinks']
+  ),
+  updateRouteEqualizer: (name: string, equalizer: Equalizer) => withCacheInvalidation(
+    axios.post(`/routes/${name}/equalizer`, equalizer),
+    ['/routes']
+  ),
   
 
   // Reorder requests
-  reorderSource: (name: string, newIndex: number) => axios.get(`/sources/${name}/reorder/${newIndex}`),
-  reorderSink: (name: string, newIndex: number) => axios.get(`/sinks/${name}/reorder/${newIndex}`),
-  reorderRoute: (name: string, newIndex: number) => axios.get(`/routes/${name}/reorder/${newIndex}`),
+  reorderSource: (name: string, newIndex: number) => withCacheInvalidation(
+    axios.get(`/sources/${name}/reorder/${newIndex}`),
+    ['/sources']
+  ),
+  reorderSink: (name: string, newIndex: number) => withCacheInvalidation(
+    axios.get(`/sinks/${name}/reorder/${newIndex}`),
+    ['/sinks']
+  ),
+  reorderRoute: (name: string, newIndex: number) => withCacheInvalidation(
+    axios.get(`/routes/${name}/reorder/${newIndex}`),
+    ['/routes']
+  ),
 
   // Control source playback
   controlSource: (sourceName: string, action: 'prevtrack' | 'play' | 'pause' | 'nexttrack') =>
-    axios.get(`/sources/${sourceName}/${action}`),
+    withCacheInvalidation(
+      axios.get(`/sources/${sourceName}/${action}`),
+      ['/sources']
+    ),
 
   // Utility methods
   getSinkStreamUrl: (sinkIp: string) => `/stream/${sinkIp}/?random=${Math.random()}`,
@@ -511,50 +711,83 @@ const ApiService = {
   saveEqualizer: (name: string, equalizer: Equalizer) => { 
     const new_eq = {... equalizer};
     new_eq.name = name;
-    return axios.post('/equalizers/', new_eq); } ,
-  listEqualizers: () => axios.get<{ equalizers: Equalizer[] }>('/equalizers/'),
-  deleteEqualizer: (name: string) => axios.delete(`/equalizers/${name}`),
+    return withCacheInvalidation(
+      axios.post('/equalizers/', new_eq),
+      ['/equalizers/']
+    );
+  } ,
+  listEqualizers: () => cachedGet<{ equalizers: Equalizer[] }>('/equalizers/'),
+  deleteEqualizer: (name: string) => withCacheInvalidation(
+    axios.delete(`/equalizers/${name}`),
+    ['/equalizers/']
+  ),
 
   // New method to update equalizer based on type and name
   updateEqualizer: (type: 'sources' | 'sinks' | 'routes', name: string, equalizer: Equalizer) => {
-    return axios.post(`/equalizers/${type}/${name}`, equalizer);
+    const targetUrl = `/equalizers/${type}/${name}`;
+    const listUrl = `/equalizers/${type}/`;
+    return withCacheInvalidation(
+      axios.post(targetUrl, equalizer),
+      ['/equalizers/', listUrl]
+    );
   },
 
   // --- Preferences ---
-  getPreferences: () => axios.get<Preferences>('/preferences'),
-  updatePreferences: (payload: PreferencesUpdatePayload) => axios.put<Preferences>('/preferences', payload),
+  getPreferences: () => cachedGet<Preferences>('/preferences'),
+  updatePreferences: (payload: PreferencesUpdatePayload) => withCacheInvalidation(
+    axios.put<Preferences>('/preferences', payload),
+    ['/preferences']
+  ),
 
   // --- Discovery ---
-  getDiscoverySnapshot: () => axios.get<UnifiedDiscoverySnapshot>('/discovery/snapshot'),
-  addDiscoveredSource: (deviceKey: string) => axios.post('/sources/add-discovered', { device_key: deviceKey }),
-  addDiscoveredSink: (deviceKey: string) => axios.post('/sinks/add-discovered', { device_key: deviceKey }),
-  getRouterServices: (timeout = 1.5) => axios.get<RouterServiceResponse>('/mdns/router-services', {
+  getDiscoverySnapshot: () => cachedGet<UnifiedDiscoverySnapshot>('/discovery/snapshot'),
+  addDiscoveredSource: (deviceKey: string) => withCacheInvalidation(
+    axios.post('/sources/add-discovered', { device_key: deviceKey }),
+    ['/sources', '/discovery/snapshot']
+  ),
+  addDiscoveredSink: (deviceKey: string) => withCacheInvalidation(
+    axios.post('/sinks/add-discovered', { device_key: deviceKey }),
+    ['/sinks', '/discovery/snapshot']
+  ),
+  getRouterServices: (timeout = 1.5) => cachedGet<RouterServiceResponse>('/mdns/router-services', {
     params: { timeout },
   }),
 
   // --- Speaker Layout Update Methods ---
   updateSourceSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
-      return axios.post(`/api/sources/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout);
+      return withCacheInvalidation(
+        axios.post(`/api/sources/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
+        ['/sources']
+      );
   },
 
   updateSinkSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
-      return axios.post(`/api/sinks/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout);
+      return withCacheInvalidation(
+        axios.post(`/api/sinks/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
+        ['/sinks']
+      );
   },
 
   updateRouteSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
-      return axios.post(`/api/routes/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout);
+      return withCacheInvalidation(
+        axios.post(`/api/routes/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
+        ['/routes']
+      );
   },
   // --- End Speaker Layout Update Methods ---
 
   // --- System ---
-  getSystemInfo: () => axios.get<SystemInfo>('/api/system/info'),
+  getSystemInfo: () => cachedGet<SystemInfo>('/api/system/info'),
 
   // --- Stats ---
-  getStats: () => axios.get<AudioEngineStats>('/api/stats'),
+  getStats: () => cachedGet<AudioEngineStats>('/api/stats'),
 
   // --- Settings ---
-  getSettings: () => axios.get<AudioEngineSettings>('/api/settings'),
-  updateSettings: (settings: AudioEngineSettings) => axios.post('/api/settings', settings),
+  getSettings: () => cachedGet<AudioEngineSettings>('/api/settings'),
+  updateSettings: (settings: AudioEngineSettings) => withCacheInvalidation(
+    axios.post('/api/settings', settings),
+    ['/api/settings']
+  ),
 };
 
 export default ApiService;

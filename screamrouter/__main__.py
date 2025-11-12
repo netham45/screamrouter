@@ -8,6 +8,7 @@ import signal
 import socket
 import sys
 import threading
+import webbrowser
 
 import OpenSSL.crypto  # For reading the SSL certificate
 import uvicorn
@@ -24,7 +25,7 @@ logger = get_logger(__name__) # Moved logger initialization up
 
 # Attempt to import AudioManager, build if necessary
 try:
-    from screamrouter_audio_engine import AudioManager
+    from screamrouter_audio_engine import AudioManager, DesktopOverlay
 except ImportError:
     logger.warning("Failed to import screamrouter_audio_engine. Attempting to build...")
     import subprocess
@@ -36,7 +37,7 @@ except ImportError:
         if process.returncode == 0:
             logger.info("Successfully built screamrouter_audio_engine. stdout:\n%s", stdout.decode())
             # Try importing again
-            from screamrouter_audio_engine import AudioManager
+            from screamrouter_audio_engine import AudioManager, DesktopOverlay
         else:
             logger.error("Failed to build screamrouter_audio_engine. Error code: %s", process.returncode)
             if stdout:
@@ -72,7 +73,16 @@ from screamrouter.screamrouter_types.configuration import AudioManagerConfig
 from screamrouter.utils.mdns_ptr_responder import ManualPTRResponder  # mDNS
 from screamrouter.utils.ntp_server import NTPServerProcess  # NTP Server
 # from screamrouter.screamrouter_logger.screamrouter_logger import get_logger # Moved up
+from screamrouter.utils.instance_detector import detect_running_instance
 from screamrouter.utils.utils import set_process_name
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Interpret environment variables as booleans."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
 
 
 def generate_self_signed_certificate(cert_path: str, key_path: str, hostname: str = "screamrouter.local"):
@@ -219,7 +229,12 @@ def parse_arguments():
                         help='Path to the configuration file')
     parser.add_argument('--equalizer-config-path', type=str, default='/etc/screamrouter/equalizers.yaml',
                         help='Path to the equalizer configurations file')
-    
+    parser.add_argument('--skip-instance-check', action='store_true',
+                        help='Start a new instance even if another ScreamRouter is already running')
+    parser.add_argument('--no-browser-on-duplicate', action='store_true',
+                        help='Do not open a browser when an existing instance is detected')
+    parser.add_argument('--desktop-menu-only', action='store_true',
+                        help='Skip initializing the server/audio engine and only launch the desktop menu overlay (Windows only)')
     args = parser.parse_args()
     
     # Set environment variables from arguments
@@ -243,6 +258,8 @@ def parse_arguments():
         'CONFIGURATION_RELOAD_TIMEOUT': str(args.configuration_reload_timeout),
         'CONFIG_PATH': args.config_path,
         'EQUALIZER_CONFIG_PATH': args.equalizer_config_path,
+        'SCREAMROUTER_SKIP_INSTANCE_CHECK': 'True' if args.skip_instance_check else 'False',
+        'SCREAMROUTER_NO_BROWSER_ON_DUPLICATE': 'True' if args.no_browser_on_duplicate else 'False',
     }
     
     for env_var, value in env_mappings.items():
@@ -254,8 +271,84 @@ def parse_arguments():
 
 def main():
     # Parse arguments and set environment variables before any imports that use constants
-    parse_arguments()
-    
+    args = parse_arguments()
+
+    skip_instance_check = args.skip_instance_check or _env_flag("SCREAMROUTER_SKIP_INSTANCE_CHECK")
+    no_browser_on_duplicate = args.no_browser_on_duplicate or _env_flag("SCREAMROUTER_NO_BROWSER_ON_DUPLICATE")
+    desktop_menu_only = args.desktop_menu_only or _env_flag("SCREAMROUTER_DESKTOP_MENU_ONLY")
+    enable_desktop_overlay = sys.platform == "win32"
+
+    overlay_host = constants.API_HOST or args.api_host or "localhost"
+    if overlay_host in ("0.0.0.0", "::", None, ""):
+        overlay_host = "localhost"
+    overlay_url = f"https://{overlay_host}:{constants.API_PORT}/site/desktopMenu"
+
+    if desktop_menu_only:
+        if not enable_desktop_overlay:
+            logger.error("Desktop menu only mode requires Windows desktop overlay support.")
+            sys.exit(1)
+        try:
+            desktop_overlay = DesktopOverlay()
+        except Exception as exc:  # pragma: no cover - handles missing overlay bindings
+            logger.error("Failed to initialize DesktopOverlay in desktop-menu-only mode: %s", exc, exc_info=True)
+            sys.exit(1)
+
+        try:
+            if not desktop_overlay.start(overlay_url, 0, 0):
+                logger.error("Desktop overlay failed to start in desktop-menu-only mode.")
+                sys.exit(1)
+        except Exception as exc:
+            logger.error("Error while starting desktop overlay: %s", exc, exc_info=True)
+            sys.exit(1)
+
+        logger.info("Desktop menu overlay running in desktop-menu-only mode with %s", overlay_url)
+        stop_event = threading.Event()
+
+        def _desktop_only_signal_handler(signum, _frame):
+            logger.info("Signal %s received, shutting down desktop overlay.", signum)
+            stop_event.set()
+
+        try:
+            signal.signal(signal.SIGINT, _desktop_only_signal_handler)
+            signal.signal(signal.SIGTERM, _desktop_only_signal_handler)
+        except Exception:
+            # On some Windows environments SIGTERM may not be available; ignore failures
+            pass
+
+        try:
+            while not stop_event.is_set():
+                stop_event.wait(timeout=1.0)
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received, shutting down desktop overlay.")
+            stop_event.set()
+        finally:
+            try:
+                desktop_overlay.shutdown()
+            except Exception as exc:
+                logger.error("Error shutting down desktop overlay: %s", exc)
+        return
+
+    if not skip_instance_check:
+        instance = detect_running_instance(api_host=args.api_host, api_port=args.api_port)
+        if instance:
+            logger.info("Detected existing ScreamRouter instance at %s", instance.api_url)
+            message = f"ScreamRouter is already running at {instance.ui_url}"
+            print(message)
+            if no_browser_on_duplicate:
+                logger.info("Browser auto-launch disabled. Not opening %s", instance.ui_url)
+            else:
+                try:
+                    opened = webbrowser.open(instance.ui_url, new=2)
+                    if opened:
+                        logger.info("Opened default browser to %s", instance.ui_url)
+                    else:
+                        logger.warning("Default browser reported failure to open %s", instance.ui_url)
+                        print(f"Please open {instance.ui_url} in your browser.")
+                except Exception as exc:  # pragma: no cover - browser availability varies
+                    logger.error("Failed to open browser: %s", exc)
+                    print(f"Please open {instance.ui_url} in your browser.")
+            sys.exit(0)
+
     # Verify SSL certificates exist, generate if missing
     cert_missing = not os.path.isfile(constants.CERTIFICATE)
     key_missing = not os.path.isfile(constants.CERTIFICATE_KEY)
@@ -286,6 +379,7 @@ def main():
     threading.current_thread().name = "ScreamRouter Main Thread"
     main_pid: int = os.getpid()
     ctrl_c_pressed: int = 0
+    desktop_overlay: DesktopOverlay | None = None
 
     def signal_handler(_signal, __):
         """Fired when Ctrl+C pressed"""
@@ -305,6 +399,8 @@ def main():
                 # Stop the NTP server process
                 if 'ntp_server' in locals() and hasattr(ntp_server, 'stop'):
                     ntp_server.stop()
+                if desktop_overlay:
+                    desktop_overlay.shutdown()
             except Exception as e:
                 logger.error(f"Error during signal handler cleanup: {e}")
             server.should_exit = True
@@ -530,6 +626,18 @@ def main():
     preferences_manager = PreferencesManager()
     preferences_api: APIPreferences = APIPreferences(app, preferences_manager)
 
+    if enable_desktop_overlay:
+        try:
+            desktop_overlay = DesktopOverlay()
+            if desktop_overlay.start(overlay_url, 0, 0):
+                logger.info("Windows desktop overlay initialized with %s", overlay_url)
+            else:
+                logger.error("Desktop overlay failed to start")
+                desktop_overlay = None
+        except Exception as exc:
+            logger.error("Failed to start desktop overlay: %s", exc, exc_info=True)
+            desktop_overlay = None
+
     @app.on_event("startup")
     async def on_startup():
         """
@@ -550,6 +658,11 @@ def main():
     server = uvicorn.Server(config)
     print(f"ssl_keyfile: {constants.CERTIFICATE_KEY} ssl_certfile: {constants.CERTIFICATE}")
     server.run()
+    if desktop_overlay:
+        try:
+            desktop_overlay.shutdown()
+        except Exception as exc:
+            logger.error("Error shutting down desktop overlay: %s", exc)
 
 
 if __name__ == "__main__":

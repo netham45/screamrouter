@@ -207,6 +207,7 @@ Feature Highlights
 - Preferences: persisted JSON preferences with schema validation and partial updates.
 - Frontend: drag‑drop full menu, add/edit dialogs for sources/sinks/routes/groups, equalizer UI, visualizer, VNC, stats, discovery, and a listen page.
 - ALSA: custom ALSA PCM plugin to bridge apps to FIFOs under `/var/run/screamrouter`.
+- Windows desktop menu: Windows hosts automatically spawn a WebView2 overlay + tray icon that renders `/site/DesktopMenu` with transparent mouse-through regions and a quick Exit action (the build auto-fetches the Microsoft Edge WebView2 SDK via `nuget.exe`; override with `WEBVIEW2_SDK_DIR` if you already have the package). Swap the tray icon by replacing `src/audio_engine/windows/resources/screamrouter.ico` before building on Windows.
 
 Screenshots
 -----------
@@ -271,6 +272,7 @@ Entry point: screamrouter/__main__.py:1
   - Paths: `--logs-dir`, `--config-path`, `--equalizer-config-path`, `--certificate`, `--certificate-key`
   - Logging: `--console-log-level`, `--log-to-file`, `--log-entries-to-retain`, `--show-ffmpeg-output`
   - Site: `--npm-react-debug-site` (use local dev server)
+  - Desktop menu: `--desktop-menu-only` (Windows overlay only, skip everything else)
   - Audio: `--timeshift-duration`, `--configuration-reload-timeout`
 
 - TLS: self‑signed certificate auto‑generated if cert/key missing, including SANs for local usage.

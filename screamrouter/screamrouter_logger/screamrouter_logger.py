@@ -22,25 +22,39 @@ if not os.path.exists(constants.LOGS_DIR):
 FORMATTER = logging.Formatter("".join(['[%(levelname)s:%(asctime)s]',
                                        '[%(filename)s:%(lineno)s:%(process)s]%(message)s']))
 
+def _create_console_handler(stream) -> logging.StreamHandler:
+    """Build a console handler that only surfaces warnings and above."""
+    handler = logging.StreamHandler(stream)
+    handler.setLevel(logging.WARNING)
+    handler.setFormatter(FORMATTER)
+    return handler
+
+
+def _create_rotating_file_handler(path: str, *, max_bytes: int, backup_count: int) -> logging.handlers.RotatingFileHandler:
+    """Build a rotating file handler that captures full debug output."""
+    handler = logging.handlers.RotatingFileHandler(path, maxBytes=max_bytes, backupCount=backup_count)
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(FORMATTER)
+    return handler
+
 # Configure root logger
 MAIN_LOGGER = logging.getLogger()
 MAIN_LOGGER.setLevel(logging.DEBUG)
 
 # Console handler for root logger (WARNING and above to console)
-root_console = logging.StreamHandler(sys.stdout)
-root_console.setLevel(logging.WARNING)
-root_console.setFormatter(FORMATTER)
+root_console = _create_console_handler(sys.stdout)
 MAIN_LOGGER.addHandler(root_console)
 
 if constants.LOG_TO_FILE:
-    all_rotating_handler = logging.handlers.RotatingFileHandler(os.path.join(constants.LOGS_DIR, "all.log"),
-                                    maxBytes=10000000, backupCount=constants.LOG_ENTRIES_TO_RETAIN)
-    all_rotating_handler.setLevel(logging.DEBUG)
-    all_rotating_handler.setFormatter(FORMATTER)
+    all_rotating_handler = _create_rotating_file_handler(
+        os.path.join(constants.LOGS_DIR, "all.log"),
+        max_bytes=10_000_000,
+        backup_count=constants.LOG_ENTRIES_TO_RETAIN,
+    )
     MAIN_LOGGER.addHandler(all_rotating_handler)
     try:
         all_rotating_handler.doRollover()
-    except:
+    except Exception:
         pass
 
 def get_logger(name: str) -> logging.Logger:
@@ -51,24 +65,19 @@ def get_logger(name: str) -> logging.Logger:
     logger.propagate = False
     logger.setLevel(logging.DEBUG)  # Set base logger level to allow all messages through
 
-    console = logging.StreamHandler(sys.stderr)
-    # Set console handler to WARNING level (ignoring constants.CONSOLE_LOG_LEVEL)
-    # This ensures only WARNING and above are shown in console, while DEBUG continues to files
-    console.setLevel(logging.WARNING)
-    console.setFormatter(FORMATTER)
+    console = _create_console_handler(sys.stderr)
     logger.addHandler(console)
 
     if constants.LOG_TO_FILE:
-        rotating_handler = logging.handlers.RotatingFileHandler(os.path.join(constants.LOGS_DIR, f"{name}.log"),
-                                    maxBytes=100000, backupCount=constants.LOG_ENTRIES_TO_RETAIN)
-        rotating_handler.setLevel(logging.DEBUG)
-        rotating_handler.setFormatter(FORMATTER)
-
-
+        rotating_handler = _create_rotating_file_handler(
+            os.path.join(constants.LOGS_DIR, f"{name}.log"),
+            max_bytes=100_000,
+            backup_count=constants.LOG_ENTRIES_TO_RETAIN,
+        )
         logger.addHandler(rotating_handler)
         try:
             rotating_handler.doRollover()
-        except:
+        except Exception:
             pass
     logger._screamrouter_configured = True
     return logger

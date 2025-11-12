@@ -62,6 +62,7 @@ void PulseAudioReceiver::run() {}
 #include <unordered_map>
 #include <unordered_set>
 #include <limits>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -476,7 +477,7 @@ struct PulseAudioReceiver::Impl {
     PulseAudioReceiver::StreamTagRemovedCallback stream_tag_removed_cb;
 
     std::vector<uint8_t> auth_cookie;
-    bool debug_packets = true;
+    bool debug_packets = false;
 
     bool initialize();
     void shutdown_all();
@@ -751,6 +752,7 @@ struct PulseAudioReceiver::Impl::Connection {
     bool handle_write();
 
     bool process_message(Message& message);
+    void apply_volume(StreamState& stream, std::vector<uint8_t>& audio_data) const;
     void handle_clock_tick(uint32_t stream_index);
     void unregister_stream_clock(StreamState& stream);
     void register_stream_clock(StreamState& stream);
@@ -861,7 +863,7 @@ bool PulseAudioReceiver::Impl::initialize() {
         return false;
     }
 
-    debug_packets = true;
+    debug_packets = false;
     log("PulseAudioReceiver protocol tracing enabled");
 
     // Setup TCP listener if requested.
@@ -1423,6 +1425,106 @@ void PulseAudioReceiver::Impl::Connection::dispatch_clock_ticks() {
     }
 }
 
+void PulseAudioReceiver::Impl::Connection::apply_volume(StreamState& stream,
+                                                        std::vector<uint8_t>& audio_data) const {
+    if (audio_data.empty()) {
+        return;
+    }
+
+    const uint8_t channels = stream.sample_spec.channels;
+    if (channels == 0 || channels > 8) {
+        return;
+    }
+
+    const uint32_t bit_depth = sample_format_bit_depth(stream.sample_spec.format);
+    const uint32_t bytes_per_sample = std::max<uint32_t>(bit_depth / 8u, 1u);
+    if (bytes_per_sample != 2u && bytes_per_sample != 4u) {
+        return;
+    }
+    if (audio_data.size() % bytes_per_sample != 0) {
+        return;
+    }
+
+    if (stream.muted) {
+        std::memset(audio_data.data(), 0, audio_data.size());
+        return;
+    }
+
+    std::array<double, 8> gains{};
+    gains.fill(1.0);
+    bool needs_scaling = false;
+
+    if (!stream.volume.values.empty()) {
+        const size_t available = stream.volume.values.size();
+        for (size_t ch = 0; ch < channels; ++ch) {
+            const uint32_t raw = stream.volume.values[ch < available ? ch : available - 1];
+            const double normalized = static_cast<double>(raw) / static_cast<double>(kVolumeNorm);
+            double gain = 1.0;
+            if (normalized <= 0.0) {
+                gain = 0.0;
+            } else if (normalized < 1.0) {
+                // Shape low-end response so perceived loudness tracks slider position.
+                constexpr double kPerceptualExponent = 2.5;
+                gain = std::pow(normalized, kPerceptualExponent);
+            } else {
+                // Preserve amplification above unity so clients can boost streams.
+                gain = normalized;
+            }
+            gains[ch] = gain;
+            if (!needs_scaling && std::fabs(gain - 1.0) > 1e-6) {
+                needs_scaling = true;
+            }
+        }
+    }
+
+    if (!needs_scaling) {
+        return;
+    }
+
+    const size_t total_samples = audio_data.size() / bytes_per_sample;
+    if (total_samples % channels != 0) {
+        return;
+    }
+    const size_t frame_count = total_samples / channels;
+    if (frame_count == 0) {
+        return;
+    }
+
+    if (bytes_per_sample == 2u) {
+        auto* samples = reinterpret_cast<int16_t*>(audio_data.data());
+        for (size_t frame = 0; frame < frame_count; ++frame) {
+            for (size_t ch = 0; ch < channels; ++ch) {
+                const size_t idx = frame * channels + ch;
+                const double scaled = static_cast<double>(samples[idx]) * gains[ch];
+                long value = std::lround(scaled);
+                if (value > std::numeric_limits<int16_t>::max()) {
+                    value = std::numeric_limits<int16_t>::max();
+                }
+                if (value < std::numeric_limits<int16_t>::min()) {
+                    value = std::numeric_limits<int16_t>::min();
+                }
+                samples[idx] = static_cast<int16_t>(value);
+            }
+        }
+    } else { // 4-byte samples
+        auto* samples = reinterpret_cast<int32_t*>(audio_data.data());
+        for (size_t frame = 0; frame < frame_count; ++frame) {
+            for (size_t ch = 0; ch < channels; ++ch) {
+                const size_t idx = frame * channels + ch;
+                const double scaled = static_cast<double>(samples[idx]) * gains[ch];
+                long long value = std::llround(scaled);
+                if (value > std::numeric_limits<int32_t>::max()) {
+                    value = std::numeric_limits<int32_t>::max();
+                }
+                if (value < std::numeric_limits<int32_t>::min()) {
+                    value = std::numeric_limits<int32_t>::min();
+                }
+                samples[idx] = static_cast<int32_t>(value);
+            }
+        }
+    }
+}
+
 void PulseAudioReceiver::Impl::Connection::handle_clock_tick(uint32_t stream_index) {
     TaggedAudioPacket packet;
     bool should_send = false;
@@ -1459,6 +1561,7 @@ void PulseAudioReceiver::Impl::Connection::handle_clock_tick(uint32_t stream_ind
                                  pending.play_time);
 
             packet.audio_data = std::move(pending.audio_data);
+            apply_volume(stream, packet.audio_data);
             auto now_stamped = std::chrono::steady_clock::now();
             if (pending.play_time.time_since_epoch().count() == 0) {
                 packet.received_time = now_stamped;
@@ -2833,7 +2936,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_cork_stream(uint32_t tag, TagR
         stream.pending_request_bytes = 0;
         stream.bytes_since_request = 0;
         stream.next_request_time = std::chrono::steady_clock::now();
-        enqueue_request(stream.local_index, request_bytes);
+        stream.pending_request_bytes = request_bytes;
 
         if (!stream.pending_chunks.empty() && !stream.started_notified) {
             enqueue_started(stream.local_index);
@@ -2867,10 +2970,10 @@ bool PulseAudioReceiver::Impl::Connection::handle_flush_stream(uint32_t tag, Tag
     stream.underrun_usec = 0;
     stream.pending_request_bytes = 0;
     stream.next_request_time = std::chrono::steady_clock::now();
+    stream.bytes_since_request = 0;
 
     const uint32_t request_bytes = effective_request_bytes(stream);
-    enqueue_request(stream.local_index, request_bytes);
-    stream.pending_request_bytes += request_bytes;
+    stream.pending_request_bytes = request_bytes;
 
     enqueue_simple_reply(tag);
     return true;
