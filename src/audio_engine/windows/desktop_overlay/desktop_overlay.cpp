@@ -90,12 +90,37 @@ DesktopOverlayController* GetController(HWND hwnd) {
 DesktopOverlayController::DesktopOverlayController() {
     ZeroMemory(&nid_, sizeof(nid_));
 
-    // Load the icon from the compiled resources using the resource ID
+    // Get the module handle - try different approaches for Python extension
     HINSTANCE hInstance = GetModuleHandle(nullptr);
+
+    // Try loading from resources first
     tray_icon_ = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
 
     if (!tray_icon_) {
-        // Fallback to default application icon
+        // Try getting the module handle of the DLL/PYD itself
+        HMODULE hModule = nullptr;
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               (LPCWSTR)this, &hModule)) {
+            tray_icon_ = LoadIconW(hModule, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
+            if (tray_icon_) {
+                LOG_CPP_INFO("Loaded icon from DLL/PYD resources");
+            }
+        }
+    }
+
+    if (!tray_icon_) {
+        // Try LoadImage which might work better for resources
+        tray_icon_ = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON),
+                                        IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED);
+        if (tray_icon_) {
+            LOG_CPP_INFO("Loaded icon using LoadImage");
+        }
+    }
+
+    // Fallback to default icon
+    if (!tray_icon_) {
+        LOG_CPP_WARNING("Failed to load ScreamRouter icon from resources (err=%lu), using default", GetLastError());
         tray_icon_ = LoadIconW(nullptr, IDI_APPLICATION);
     }
 }
@@ -758,8 +783,9 @@ void DesktopOverlayController::HandleCommand(WPARAM wparam) {
             mouse_disabled_ = true;  // Set to true so EnableMouse will work
             EnableMouse();
 
-            ShowWindow(window_, SW_SHOWNOACTIVATE);
+            ShowWindow(window_, SW_SHOW);
             SetForegroundWindow(window_);
+            SetFocus(window_);
             SendDesktopMenuShow();
         }
     } else if (cmd == static_cast<UINT>(TrayCommand::kExit)) {
@@ -862,7 +888,7 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
                     controller->mouse_disabled_ = true;  // Set to true so EnableMouse will work
                     controller->EnableMouse();
 
-                    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                    ShowWindow(hwnd, SW_SHOW);
                     SetForegroundWindow(hwnd);
                     SetFocus(hwnd);
                     controller->FocusWebView();
@@ -889,7 +915,7 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
                     controller->mouse_disabled_ = true;  // Set to true so EnableMouse will work
                     controller->EnableMouse();
 
-                    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                    ShowWindow(hwnd, SW_SHOW);
                     SetForegroundWindow(hwnd);
                     SetFocus(hwnd);
                     controller->FocusWebView();

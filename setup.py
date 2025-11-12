@@ -27,6 +27,7 @@ Cross-Compilation Support:
 
 import os
 import sys
+import glob
 import shutil
 import subprocess
 import platform
@@ -560,6 +561,37 @@ class BuildExtCommand(build_ext):
             return
         else:
             log.info("building '%s' extension", ext.name)
+
+        # Compile Windows resource files (.rc) if present
+        if sys.platform == "win32":
+            rc_files = [s for s in sources if s.endswith('.rc')]
+            if rc_files:
+                for rc_file in rc_files:
+                    res_file = rc_file.replace('.rc', '.res')
+                    # Try to find rc.exe (Resource Compiler)
+                    rc_exe = shutil.which('rc') or shutil.which('rc.exe')
+                    if not rc_exe:
+                        # Try to find it in Windows SDK
+                        import glob
+                        sdk_paths = glob.glob(r"C:\Program Files (x86)\Windows Kits\*\bin\*\x64\rc.exe")
+                        if sdk_paths:
+                            rc_exe = sdk_paths[0]
+
+                    if rc_exe:
+                        log.info("Compiling resource file %s", rc_file)
+                        try:
+                            subprocess.run([rc_exe, '/fo', res_file, rc_file], check=True)
+                            # Add .res file to extra objects for linking
+                            if not hasattr(ext, 'extra_objects'):
+                                ext.extra_objects = []
+                            ext.extra_objects.append(res_file)
+                            # Remove .rc from sources since we compiled it
+                            sources.remove(rc_file)
+                        except subprocess.CalledProcessError as e:
+                            log.warning("Failed to compile resource file %s: %s", rc_file, e)
+                    else:
+                        log.warning("rc.exe not found, skipping resource compilation")
+                        sources.remove(rc_file)  # Remove .rc file from sources
 
         sources = self.swig_sources(sources, ext)
 
