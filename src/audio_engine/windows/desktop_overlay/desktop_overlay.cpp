@@ -88,7 +88,13 @@ DesktopOverlayController* GetController(HWND hwnd) {
 
 DesktopOverlayController::DesktopOverlayController() {
     ZeroMemory(&nid_, sizeof(nid_));
-    tray_icon_ = LoadIconW(nullptr, IDI_APPLICATION);
+    // Load the ScreamRouter icon from resources
+    tray_icon_ = LoadIconW(GetModuleHandle(nullptr), MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
+    if (!tray_icon_) {
+        // Fall back to default application icon if custom icon fails to load
+        LOG_CPP_WARNING("Failed to load ScreamRouter icon, using default (err=%lu)", GetLastError());
+        tray_icon_ = LoadIconW(nullptr, IDI_APPLICATION);
+    }
 }
 
 DesktopOverlayController::~DesktopOverlayController() {
@@ -630,14 +636,13 @@ void DesktopOverlayController::HandleTrayEvent(WPARAM wparam, LPARAM lparam) {
     switch (event) {
     case WM_LBUTTONUP:
     case WM_LBUTTONDBLCLK:
+        LOG_CPP_INFO("DesktopOverlay tray left-click activation (event=0x%04x)", event);
+        Toggle();
+        break;
     case NIN_SELECT:
     case NIN_KEYSELECT:
-        if (!has_anchor) {
-            LOG_CPP_INFO("DesktopOverlay tray keyboard activation (event=0x%04x)", event);
-            Toggle();
-        } else {
-            LOG_CPP_DEBUG("DesktopOverlay tray skipped mouse-generated NIN event (event=0x%04x)", event);
-        }
+        LOG_CPP_INFO("DesktopOverlay tray activation (event=0x%04x)", event);
+        Toggle();
         break;
     case WM_RBUTTONUP:
     case WM_CONTEXTMENU:
