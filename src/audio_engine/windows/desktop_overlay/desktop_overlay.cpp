@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iterator>
+#include <vector>
 
 #include "utils/cpp_logger.h"
 
@@ -88,11 +89,59 @@ DesktopOverlayController* GetController(HWND hwnd) {
 
 DesktopOverlayController::DesktopOverlayController() {
     ZeroMemory(&nid_, sizeof(nid_));
-    // Load the ScreamRouter icon from resources
+
+    // Try to load icon from resources first
     tray_icon_ = LoadIconW(GetModuleHandle(nullptr), MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
+
+    // If that fails, try loading from the current module (in case we're in a DLL/PYD)
     if (!tray_icon_) {
-        // Fall back to default application icon if custom icon fails to load
-        LOG_CPP_WARNING("Failed to load ScreamRouter icon, using default (err=%lu)", GetLastError());
+        HMODULE hModule = nullptr;
+        // Get handle to the current module (DLL/PYD)
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                          GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          reinterpret_cast<LPCWSTR>(&DesktopOverlayController::DesktopOverlayController),
+                          &hModule);
+        if (hModule) {
+            tray_icon_ = LoadIconW(hModule, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
+            if (tray_icon_) {
+                LOG_CPP_INFO("Loaded ScreamRouter icon from module resources");
+            }
+        }
+    }
+
+    // If still no icon, try loading from file directly
+    if (!tray_icon_) {
+        // Try to load from a relative path
+        wchar_t exePath[MAX_PATH] = {0};
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        std::wstring exeDir(exePath);
+        size_t lastSlash = exeDir.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos) {
+            exeDir = exeDir.substr(0, lastSlash);
+
+            // Try several possible icon locations
+            std::vector<std::wstring> iconPaths = {
+                exeDir + L"\\screamrouter.ico",
+                exeDir + L"\\resources\\screamrouter.ico",
+                exeDir + L"\\..\\resources\\screamrouter.ico",
+                exeDir + L"\\src\\audio_engine\\windows\\resources\\screamrouter.ico",
+                L"C:\\screamrouter\\src\\audio_engine\\windows\\resources\\screamrouter.ico"
+            };
+
+            for (const auto& iconPath : iconPaths) {
+                tray_icon_ = (HICON)LoadImageW(nullptr, iconPath.c_str(), IMAGE_ICON,
+                                               0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE);
+                if (tray_icon_) {
+                    LOG_CPP_INFO("Loaded ScreamRouter icon from file: %ls", iconPath.c_str());
+                    break;
+                }
+            }
+        }
+    }
+
+    // Final fallback to default icon
+    if (!tray_icon_) {
+        LOG_CPP_WARNING("Failed to load ScreamRouter icon from any source, using default");
         tray_icon_ = LoadIconW(nullptr, IDI_APPLICATION);
     }
 }

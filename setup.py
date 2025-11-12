@@ -780,6 +780,9 @@ for root, dirs, files in os.walk(str(src_root)):
     for file in files:
         if file.endswith(".cpp"):
             source_files.append(str(Path(root) / file))
+        # Include Windows resource files
+        elif sys.platform == "win32" and file.endswith(".rc"):
+            source_files.append(str(Path(root) / file))
 
 # Sort for consistent ordering
 source_files.sort()
