@@ -99,25 +99,29 @@ DesktopOverlayController::DesktopOverlayController() {
     HINSTANCE hInstance = GetModuleHandle(nullptr);
 
     // Try loading from resources first
-    tray_icon_ = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
+    tray_icon_ = LoadIconW(nullptr, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
 
     if (!tray_icon_) {
-        // Try getting the module handle of the DLL/PYD itself
+        // Pass the address of a function that definitely lives inside this module
+        // so GetModuleHandleExW returns the HMODULE of the .pyd.
         HMODULE hModule = nullptr;
+        const auto module_address =
+            reinterpret_cast<LPCWSTR>(&DesktopOverlayController::OverlayWndProc);
         if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                               (LPCWSTR)this, &hModule)) {
+                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               module_address, &hModule)) {
             tray_icon_ = LoadIconW(hModule, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
             if (tray_icon_) {
                 LOG_CPP_INFO("Loaded icon from DLL/PYD resources");
             }
+        } else {
+            LOG_CPP_WARNING("GetModuleHandleExW failed for tray icon (err=%lu)", GetLastError());
         }
     }
 
     if (!tray_icon_) {
         // Try LoadImage which might work better for resources
-        tray_icon_ = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON),
-                                        IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED);
+        tray_icon_ = LoadIconW(hInstance, IDI_SCREAMROUTER_ICON);
         if (tray_icon_) {
             LOG_CPP_INFO("Loaded icon using LoadImage");
         }
@@ -315,8 +319,6 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
 void DesktopOverlayController::InitWebView() {
     LOG_CPP_INFO("DesktopOverlay initializing WebView2");
 
-    SetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", L"--ignore-certificate-errors");
-
     std::wstring user_data_folder;
     PWSTR local_appdata = nullptr;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &local_appdata))) {
@@ -383,6 +385,36 @@ void DesktopOverlayController::InitWebView() {
                         settings->put_IsBuiltInErrorPageEnabled(FALSE);
                     }
 
+                    // Add navigation event handlers for debugging
+                    webview_->add_NavigationStarting(
+                        Microsoft::WRL::Callback<ICoreWebView2NavigationStartingEventHandler>(
+                            [this](ICoreWebView2* sender, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+                                LPWSTR uri = nullptr;
+                                args->get_Uri(&uri);
+                                if (uri) {
+                                    LOG_CPP_INFO("DesktopOverlay navigation starting: %ls", uri);
+                                    CoTaskMemFree(uri);
+                                }
+                                return S_OK;
+                            }).Get(),
+                        nullptr);
+
+                    webview_->add_NavigationCompleted(
+                        Microsoft::WRL::Callback<ICoreWebView2NavigationCompletedEventHandler>(
+                            [this](ICoreWebView2* sender, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+                                BOOL success = FALSE;
+                                args->get_IsSuccess(&success);
+                                if (success) {
+                                    LOG_CPP_INFO("DesktopOverlay navigation completed successfully");
+                                } else {
+                                    COREWEBVIEW2_WEB_ERROR_STATUS error_status;
+                                    args->get_WebErrorStatus(&error_status);
+                                    LOG_CPP_ERROR("DesktopOverlay navigation failed with error status: %d", static_cast<int>(error_status));
+                                }
+                                return S_OK;
+                            }).Get(),
+                        nullptr);
+
                     InjectHelpers();
                     Navigate();
                     LOG_CPP_INFO("DesktopOverlay WebView2 initialized successfully");
@@ -396,7 +428,7 @@ void DesktopOverlayController::InitWebView() {
     HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
         nullptr,
         user_data_folder.empty() ? nullptr : user_data_folder.c_str(),
-        nullptr,
+        L"--ignore-certificate-errors",
         handler.Get());
     if (FAILED(hr)) {
         LOG_CPP_ERROR("DesktopOverlay CreateCoreWebView2EnvironmentWithOptions returned hr=0x%08X", hr);
@@ -414,7 +446,14 @@ void DesktopOverlayController::InjectHelpers() {
 
 void DesktopOverlayController::Navigate() {
     if (webview_ && !url_.empty()) {
-        webview_->Navigate(url_.c_str());
+        LOG_CPP_INFO("DesktopOverlay navigating to URL: %ls", url_.c_str());
+        HRESULT hr = webview_->Navigate(url_.c_str());
+        if (FAILED(hr)) {
+            LOG_CPP_ERROR("DesktopOverlay Navigate() failed with hr=0x%08X", hr);
+        }
+    } else {
+        LOG_CPP_WARNING("DesktopOverlay Navigate() called but webview_ is %p and url_ is %s",
+                        webview_.Get(), url_.empty() ? "empty" : "not empty");
     }
 }
 

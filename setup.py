@@ -784,8 +784,8 @@ class BuildExtCommand(build_ext):
         extra_objects = list(getattr(ext, "extra_objects", []))
         for rc_file in rc_files:
             log.info("Compiling resource file %s", rc_file)
-            resource_obj = self._compile_resource_file(compiler_cmd, compiler_type, rc_file)
-            extra_objects.append(resource_obj)
+            res_path = self._compile_resource_file(compiler_cmd, compiler_type, rc_file)
+            extra_objects.append(res_path)
             sources.remove(rc_file)
 
         ext.extra_objects = extra_objects
@@ -891,39 +891,7 @@ class BuildExtCommand(build_ext):
         except subprocess.CalledProcessError as exc:
             raise DistutilsSetupError(f"Failed to compile resource {rc_file}: {exc}") from exc
 
-        if compiler_type == "rc":
-            return self._convert_res_to_obj(output_path)
         return str(output_path)
-
-    def _convert_res_to_obj(self, res_path: Path) -> str:
-        cvtres = self._find_cvtres_executable()
-        if not cvtres:
-            raise DistutilsSetupError(
-                "Unable to locate cvtres.exe needed to convert .res to .obj for linking."
-            )
-        obj_path = res_path.with_suffix(".obj")
-        cmd = [cvtres, "/nologo", "/OUT", os.fspath(obj_path), os.fspath(res_path)]
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as exc:
-            raise DistutilsSetupError(f"Failed to convert {res_path} to COFF object: {exc}") from exc
-        return os.fspath(obj_path)
-
-    def _find_cvtres_executable(self):
-        candidates = [
-            shutil.which("cvtres"),
-            shutil.which("cvtres.exe"),
-        ]
-        sdk_root = Path(os.environ.get("ProgramFiles(x86)", "")) / "Windows Kits"
-        if sdk_root.exists():
-            candidates.extend(sorted(sdk_root.glob("**/cvtres.exe"), reverse=True))
-        for cand in candidates:
-            if not cand:
-                continue
-            path = Path(cand)
-            if path.exists():
-                return os.fspath(path)
-        return None
 
 
 # Platform-specific linker additions
