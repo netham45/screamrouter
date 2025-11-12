@@ -784,8 +784,8 @@ class BuildExtCommand(build_ext):
         extra_objects = list(getattr(ext, "extra_objects", []))
         for rc_file in rc_files:
             log.info("Compiling resource file %s", rc_file)
-            res_path = self._compile_resource_file(compiler_cmd, compiler_type, rc_file)
-            extra_objects.append(res_path)
+            resource_obj = self._compile_resource_file(compiler_cmd, compiler_type, rc_file)
+            extra_objects.append(resource_obj)
             sources.remove(rc_file)
 
         ext.extra_objects = extra_objects
@@ -865,30 +865,65 @@ class BuildExtCommand(build_ext):
 
     def _compile_resource_file(self, compiler_cmd, compiler_type, rc_file):
         rc_path = Path(rc_file)
-        output_dir = Path(self.build_temp) / "resources"
+        rc_full_path = rc_path.resolve()
+        output_dir = (Path(self.build_temp).resolve() / "resources")
         output_dir.mkdir(parents=True, exist_ok=True)
 
         suffix = ".res" if compiler_type == "rc" else ".o"
         output_path = output_dir / f"{rc_path.stem}{suffix}"
 
-        rc_cwd = rc_path.parent
-        input_name = rc_path.name
+        rc_cwd = rc_path.parent.resolve()
+        input_name = os.fspath(rc_full_path)
+
+        output_path_str = os.fspath(output_path)
 
         if compiler_type == "rc":
-            cmd = [compiler_cmd, "/nologo", "/fo", str(output_path), input_name]
+            cmd = [compiler_cmd, "/nologo", "/fo", output_path_str, input_name]
         else:
             cmd = [compiler_cmd]
             target = self._windres_target()
             if target:
                 cmd.extend(["--target", target])
-            cmd.extend(["-O", "coff", "-o", str(output_path), input_name])
+            cmd.extend(["-O", "coff", "-o", output_path_str, input_name])
 
         try:
             subprocess.run(cmd, check=True, cwd=rc_cwd)
         except subprocess.CalledProcessError as exc:
             raise DistutilsSetupError(f"Failed to compile resource {rc_file}: {exc}") from exc
 
+        if compiler_type == "rc":
+            return self._convert_res_to_obj(output_path)
         return str(output_path)
+
+    def _convert_res_to_obj(self, res_path: Path) -> str:
+        cvtres = self._find_cvtres_executable()
+        if not cvtres:
+            raise DistutilsSetupError(
+                "Unable to locate cvtres.exe needed to convert .res to .obj for linking."
+            )
+        obj_path = res_path.with_suffix(".obj")
+        cmd = [cvtres, "/nologo", "/OUT", os.fspath(obj_path), os.fspath(res_path)]
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as exc:
+            raise DistutilsSetupError(f"Failed to convert {res_path} to COFF object: {exc}") from exc
+        return os.fspath(obj_path)
+
+    def _find_cvtres_executable(self):
+        candidates = [
+            shutil.which("cvtres"),
+            shutil.which("cvtres.exe"),
+        ]
+        sdk_root = Path(os.environ.get("ProgramFiles(x86)", "")) / "Windows Kits"
+        if sdk_root.exists():
+            candidates.extend(sorted(sdk_root.glob("**/cvtres.exe"), reverse=True))
+        for cand in candidates:
+            if not cand:
+                continue
+            path = Path(cand)
+            if path.exists():
+                return os.fspath(path)
+        return None
 
 
 # Platform-specific linker additions
@@ -923,16 +958,20 @@ if sys.platform == "win32":
 src_root = Path("src")
 target_windows_build = target_is_windows()
 source_files = []
+header_dependencies = []
 for root, dirs, files in os.walk(str(src_root)):
     # Exclude deps directories
     if 'deps' in dirs:
         dirs.remove('deps')
     for file in files:
+        path = Path(root) / file
         if file.endswith(".cpp"):
-            source_files.append(str(Path(root) / file))
+            source_files.append(str(path))
+        elif file.endswith(".h"):
+            header_dependencies.append(str(path))
         # Include Windows resource files
         elif target_windows_build and file.endswith(".rc"):
-            source_files.append(str(Path(root) / file))
+            source_files.append(str(path))
 
 # Sort for consistent ordering
 source_files.sort()
@@ -946,6 +985,7 @@ ext_modules = [
             "src/audio_engine",
             "src/audio_engine/json/include",  # If json headers are needed
         ] + platform_include_dirs,
+        depends=header_dependencies,
         libraries=[
             # Core dependencies
             "mp3lame",

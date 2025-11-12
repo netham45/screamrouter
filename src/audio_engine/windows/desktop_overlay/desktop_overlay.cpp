@@ -178,10 +178,8 @@ void DesktopOverlayController::Toggle() {
         LOG_CPP_DEBUG("DesktopOverlay not ready; toggle ignored");
         return;
     }
-    HWND hwnd = window_;
-    if (hwnd) {
-        PostMessage(hwnd, kControlMessage, static_cast<WPARAM>(ControlCommand::kToggle), 0);
-    }
+    // Always show, never hide from tray click
+    Show();
 }
 
 void DesktopOverlayController::Shutdown() {
@@ -637,7 +635,7 @@ void DesktopOverlayController::BuildTrayMenu() {
         DestroyMenu(tray_menu_);
     }
     tray_menu_ = CreatePopupMenu();
-    AppendMenuW(tray_menu_, MF_STRING, static_cast<UINT>(TrayCommand::kToggle), L"Toggle Desktop Menu");
+    AppendMenuW(tray_menu_, MF_STRING, static_cast<UINT>(TrayCommand::kToggle), L"Show Desktop Menu");
     AppendMenuW(tray_menu_, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(tray_menu_, MF_STRING, static_cast<UINT>(TrayCommand::kExit), L"Exit ScreamRouter");
 }
@@ -784,10 +782,8 @@ void DesktopOverlayController::PositionWindow() {
 void DesktopOverlayController::HandleCommand(WPARAM wparam) {
     const UINT cmd = LOWORD(wparam);
     if (cmd == static_cast<UINT>(TrayCommand::kToggle)) {
-        if (IsWindowVisible(window_)) {
-            ShowWindow(window_, SW_HIDE);
-            SendDesktopMenuHide();
-        } else {
+        // Always show, don't toggle
+        if (!IsWindowVisible(window_)) {
             PositionWindow();
 
             // Force mouse to be enabled initially (interactive)
@@ -843,8 +839,9 @@ LRESULT CALLBACK DesktopOverlayController::OverlayWndProc(HWND hwnd, UINT msg, W
         }
         return 0;
     case WM_ACTIVATE:
-        // Don't auto-hide on focus loss - the C# example uses Deactivate event differently
-        // We'll handle hiding via explicit user action (click outside, ESC, etc.)
+        if (controller && LOWORD(wparam) == WA_INACTIVE) {
+            controller->Hide();
+        }
         return 0;
     case WM_SETFOCUS:
         if (controller) {
