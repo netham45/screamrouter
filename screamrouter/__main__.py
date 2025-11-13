@@ -4,10 +4,14 @@ import argparse
 import datetime
 import ipaddress
 import os
+import platform
 import signal
 import socket
 import sys
 import threading
+import tempfile
+import subprocess
+import urllib.request
 import webbrowser
 
 import OpenSSL.crypto  # For reading the SSL certificate
@@ -21,35 +25,63 @@ from fastapi import FastAPI
 from screamrouter.screamrouter_logger.screamrouter_logger import \
     get_logger  # Ensure this is here for logger
 
-logger = get_logger(__name__) # Moved logger initialization up
+logger = get_logger(__name__)  # Moved logger initialization up
 
-# Attempt to import AudioManager, build if necessary
-try:
-    from screamrouter_audio_engine import AudioManager, DesktopOverlay
-except ImportError:
-    logger.warning("Failed to import screamrouter_audio_engine. Attempting to build...")
-    import subprocess
+VC_REDIST_URLS = {
+    "x86": "https://aka.ms/vc14/vc_redist.x86.exe",
+    "x64": "https://aka.ms/vc14/vc_redist.x64.exe",
+}
+
+
+def _import_audio_engine():
+    """Attempt to import the compiled audio engine."""
     try:
-        # Ensure setup.py is executable or use python3 to run it
-        build_command = [sys.executable, "setup.py", "build_ext", "--inplace"]
-        process = subprocess.Popen(build_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate()
-        if process.returncode == 0:
-            logger.info("Successfully built screamrouter_audio_engine. stdout:\n%s", stdout.decode())
-            # Try importing again
-            from screamrouter_audio_engine import AudioManager, DesktopOverlay
-        else:
-            logger.error("Failed to build screamrouter_audio_engine. Error code: %s", process.returncode)
-            if stdout:
-                logger.error("Build stdout:\n%s", stdout.decode())
-            if stderr:
-                logger.error("Build stderr:\n%s", stderr.decode())
-            sys.exit(1)
-    except FileNotFoundError:
-        logger.error("setup.py not found. Cannot build screamrouter_audio_engine.")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"An unexpected error occurred during build: {e}")
+        from screamrouter_audio_engine import AudioManager, DesktopOverlay
+        return AudioManager, DesktopOverlay
+    except ImportError:
+        return None, None
+
+
+def _install_vcredist_on_windows():
+    """Download and install the Visual C++ redistributable when running on Windows."""
+    if not sys.platform.startswith("win"):
+        return False
+
+    arch = "x64" if platform.architecture()[0] == "64bit" else "x86"
+    url = VC_REDIST_URLS[arch]
+    logger.warning("Attempting to install Visual C++ Redistributable (%s) for screamrouter_audio_engine", arch)
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            installer_path = os.path.join(tmpdir, f"vc_redist_{arch}.exe")
+            logger.info("Downloading %s to %s", url, installer_path)
+            urllib.request.urlretrieve(url, installer_path)
+            install_cmd = [installer_path, "/install", "/quiet", "/norestart"]
+            result = subprocess.run(install_cmd, check=False)
+            if result.returncode == 0:
+                logger.info("Visual C++ Redistributable installation completed successfully.")
+                return True
+
+            logger.error("Visual C++ Redistributable installer exited with %s", result.returncode)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to install Visual C++ Redistributable: %s", exc)
+
+    return False
+
+
+AudioManager, DesktopOverlay = _import_audio_engine()
+
+if AudioManager is None:
+    logger.warning("Failed to import screamrouter_audio_engine on first attempt.")
+
+    installed = _install_vcredist_on_windows()
+    if installed:
+        AudioManager, DesktopOverlay = _import_audio_engine()
+        if AudioManager:
+            logger.info("Imported screamrouter_audio_engine after installing Visual C++ Redistributable.")
+
+    if AudioManager is None:
+        logger.error("Unable to import screamrouter_audio_engine after dependency installation attempts.")
         sys.exit(1)
 
 import screamrouter.constants.constants as constants
