@@ -25,3 +25,6 @@
 [submodule "src/audio_engine/deps/pulsecore"]
 	path = src/audio_engine/deps/pulsecore
 	url = https://gitlab.freedesktop.org/pulseaudio/pulseaudio.git
+[submodule "src/audio_engine/deps/live555"]
+	path = src/audio_engine/deps/live555
+	url = https://github.com/rgaufman/live555

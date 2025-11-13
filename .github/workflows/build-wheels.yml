@@ -91,7 +91,7 @@ jobs:
 
   build-linux-arm64:
     name: Build Linux ARM64 Wheels
-    runs-on: [self-hosted, linux, arm64]
+    runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
@@ -149,10 +149,16 @@ jobs:
               ls -lh dist/
             "
       
+      - name: Set up Python ${{ matrix.python-version }} for testing
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: arm64
+
       - name: Test wheel installation
         run: |
-          python${{ matrix.python-version }} -m pip install dist/*.whl
-          python${{ matrix.python-version }} -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
+          python -m pip install dist/*.whl
+          python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -250,7 +256,7 @@ jobs:
 
   build-linux-arm64-musl:
     name: Build Linux ARM64 MUSL Wheels
-    runs-on: [self-hosted, linux, arm64]
+    runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']

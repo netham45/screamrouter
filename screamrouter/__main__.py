@@ -235,6 +235,8 @@ def parse_arguments():
                         help='Do not open a browser when an existing instance is detected')
     parser.add_argument('--desktop-menu-only', action='store_true',
                         help='Skip initializing the server/audio engine and only launch the desktop menu overlay (Windows only)')
+    parser.add_argument('--desktop-menu-url', type=str, default=None,
+                        help='Override the URL loaded by the Windows desktop menu overlay')
     args = parser.parse_args()
     
     # Set environment variables from arguments
@@ -261,6 +263,8 @@ def parse_arguments():
         'SCREAMROUTER_SKIP_INSTANCE_CHECK': 'True' if args.skip_instance_check else 'False',
         'SCREAMROUTER_NO_BROWSER_ON_DUPLICATE': 'True' if args.no_browser_on_duplicate else 'False',
     }
+    if args.desktop_menu_url:
+        env_mappings['SCREAMROUTER_DESKTOP_MENU_URL'] = args.desktop_menu_url
     
     for env_var, value in env_mappings.items():
         if env_var not in os.environ:
@@ -276,12 +280,14 @@ def main():
     skip_instance_check = args.skip_instance_check or _env_flag("SCREAMROUTER_SKIP_INSTANCE_CHECK")
     no_browser_on_duplicate = args.no_browser_on_duplicate or _env_flag("SCREAMROUTER_NO_BROWSER_ON_DUPLICATE")
     desktop_menu_only = args.desktop_menu_only or _env_flag("SCREAMROUTER_DESKTOP_MENU_ONLY")
+    desktop_menu_url_override = args.desktop_menu_url or os.getenv("SCREAMROUTER_DESKTOP_MENU_URL")
     enable_desktop_overlay = sys.platform == "win32"
 
     overlay_host = constants.API_HOST or args.api_host or "localhost"
     if overlay_host in ("0.0.0.0", "::", None, ""):
         overlay_host = "localhost"
-    overlay_url = f"https://{overlay_host}:{constants.API_PORT}/site/desktopMenu"
+    default_overlay_url = f"https://{overlay_host}:{constants.API_PORT}/site/desktopMenu"
+    overlay_url = desktop_menu_url_override or default_overlay_url
 
     if desktop_menu_only:
         if not enable_desktop_overlay:

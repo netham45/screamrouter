@@ -15,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <Windows.h>
@@ -86,6 +87,48 @@ private:
     void HandleCommand(WPARAM wparam);
     void UpdateWebViewBounds();
     void FocusWebView();
+    void HandleNewWindowRequested(ICoreWebView2NewWindowRequestedEventArgs* args);
+    void EnsureProcessAppId();
+    void UpdateWindowAppId(HWND hwnd);
+    void InitializeIconResourcePath();
+
+    struct PopupWindow {
+        DesktopOverlayController* owner{nullptr};
+        HWND hwnd{nullptr};
+        bool is_transcription{false};
+        bool mouse_disabled{false};
+        bool script_pending{false};
+        bool in_fullscreen{false};
+        POINT last_mouse{};
+        UINT_PTR timer_id{0};
+        bool has_requested_size{false};
+        bool has_requested_position{false};
+        int requested_width{0};
+        int requested_height{0};
+        int requested_left{0};
+        int requested_top{0};
+        LONG original_style{0};
+        LONG original_ex_style{0};
+        WINDOWPLACEMENT original_placement{};
+        std::wstring initial_uri;
+        std::wstring name;
+        Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller;
+        Microsoft::WRL::ComPtr<ICoreWebView2> webview;
+    };
+
+    bool RegisterPopupWindowClass();
+    bool CreatePopupWindow(PopupWindow& popup);
+    void InitPopupWebView(HWND hwnd);
+    void ConfigurePopupWebView(PopupWindow& popup);
+    void StartPopupMouseTimer(PopupWindow& popup);
+    void HandlePopupMouseTimer(PopupWindow& popup);
+    void DisablePopupMouse(PopupWindow& popup);
+    void EnablePopupMouse(PopupWindow& popup);
+    void UpdatePopupWebViewBounds(PopupWindow& popup);
+    void TogglePopupFullscreen(PopupWindow& popup, bool enable);
+    void OnPopupDestroyed(HWND hwnd);
+    void CleanupPopupWindows();
+    static LRESULT CALLBACK PopupWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
     std::thread ui_thread_;
     std::atomic<bool> running_{false};
@@ -112,6 +155,12 @@ private:
 
     std::mutex state_mutex_;
     GUID tray_guid_{0x9C9AA8C2, 0x5A45, 0x4F24, {0x93, 0xB2, 0x0A, 0x64, 0x78, 0xF9, 0x01, 0x72}};
+    std::unordered_map<HWND, std::unique_ptr<PopupWindow>> popup_windows_;
+    ATOM popup_class_atom_{0};
+    std::wstring popup_class_name_{L"ScreamRouterDesktopPopupWindow"};
+    std::wstring app_user_model_id_{L"ScreamRouter.DesktopOverlay"};
+    std::wstring icon_resource_path_;
+    bool process_app_id_set_{false};
 
     RECT GetWorkArea() const;
     void PositionWindow();

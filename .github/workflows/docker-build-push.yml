@@ -67,7 +67,7 @@ jobs:
 
   build-arm64:
     name: Build ARM64 Docker Image
-    runs-on: [self-hosted, linux, arm64]
+    runs-on: ubuntu-24.04-arm
     # Only run if the PyPI workflow succeeded or if triggered manually
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     outputs:

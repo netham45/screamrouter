@@ -5,23 +5,29 @@
 
 #include <Shlwapi.h>
 #include <ShlObj.h>
+#include <Shobjidl.h>
 #include <KnownFolders.h>
 #include <Strsafe.h>
 #include <comdef.h>
 #include <windowsx.h>
+#include <propvarutil.h>
+#include <propkey.h>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
+#include <cwchar>
 #include <filesystem>
 #include <iterator>
+#include <utility>
 #include <vector>
 
 #include "utils/cpp_logger.h"
 
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "propsys.lib")
 
 namespace screamrouter::desktop {
 
@@ -71,6 +77,27 @@ constexpr wchar_t kJsHelper[] = LR"JS(
         return false;
     }
 )JS";
+constexpr wchar_t kPopupHelperScript[] = LR"JS(
+    window.close = function() {
+        try {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage(JSON.stringify({ action: 'close' }));
+                return;
+            }
+        } catch (e) {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage('{\"action\":\"close\"}');
+                return;
+            }
+        }
+        window.open('', '_self', '');
+    };
+)JS";
+constexpr UINT_PTR kPopupMouseTimerId = 2001;
+constexpr UINT kPopupTimerIntervalMs = 50;
+constexpr int kTranscriptionHeight = 600;
+constexpr int kTranscriptionBottomMargin = 100;
+constexpr double kTranscriptionWidthPercent = 0.8;
 
 static COLORREF ExtractColor(ICoreWebView2Environment* /*env*/) {
     DWORD color = 0;
@@ -151,6 +178,9 @@ DesktopOverlayController::DesktopOverlayController() {
         LOG_CPP_WARNING("Failed to load ScreamRouter icon from resources (err=%lu), using default", GetLastError());
         tray_icon_ = LoadIconW(nullptr, IDI_APPLICATION);
     }
+
+    InitializeIconResourcePath();
+    EnsureProcessAppId();
 }
 
 DesktopOverlayController::~DesktopOverlayController() {
@@ -234,6 +264,9 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     wc.lpfnWndProc = OverlayWndProc;
     wc.hInstance = hinstance_;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    HICON class_icon = tray_icon_ ? tray_icon_ : LoadIconW(nullptr, IDI_APPLICATION);
+    wc.hIcon = class_icon;
+    wc.hIconSm = class_icon;
     wc.lpszClassName = class_name.c_str();
     if (!RegisterClassExW(&wc)) {
         LOG_CPP_ERROR("DesktopOverlay failed to register class (err=%lu)", GetLastError());
@@ -281,6 +314,7 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
     window_ = hwnd;
     LOG_CPP_INFO("DesktopOverlay window created (hwnd=%p)", hwnd);
     url_ = url;
+    UpdateWindowAppId(window_);
 
     // Set up the window as a layered window with transparency
     LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
@@ -319,6 +353,7 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
         DispatchMessage(&msg);
     }
 
+    CleanupPopupWindows();
     CleanupTrayIcon();
     if (webview_controller_) {
         webview_controller_->Close();
@@ -433,6 +468,14 @@ void DesktopOverlayController::InitWebView() {
                                     args->get_WebErrorStatus(&error_status);
                                     LOG_CPP_ERROR("DesktopOverlay navigation failed with error status: %d", static_cast<int>(error_status));
                                 }
+                                return S_OK;
+                            }).Get(),
+                        nullptr);
+
+                    webview_->add_NewWindowRequested(
+                        Microsoft::WRL::Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+                            [this](ICoreWebView2* /*sender*/, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
+                                HandleNewWindowRequested(args);
                                 return S_OK;
                             }).Get(),
                         nullptr);
@@ -795,6 +838,620 @@ void DesktopOverlayController::FocusWebView() {
     if (webview_controller_) {
         webview_controller_->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
     }
+}
+
+void DesktopOverlayController::EnsureProcessAppId() {
+    if (process_app_id_set_) {
+        return;
+    }
+    if (app_user_model_id_.empty()) {
+        app_user_model_id_ = L"ScreamRouter.DesktopOverlay";
+    }
+    HRESULT hr = SetCurrentProcessExplicitAppUserModelID(app_user_model_id_.c_str());
+    if (FAILED(hr)) {
+        LOG_CPP_WARNING("DesktopOverlay failed to set process AppUserModelID (hr=0x%08X)", hr);
+        return;
+    }
+    process_app_id_set_ = true;
+}
+
+void DesktopOverlayController::InitializeIconResourcePath() {
+    if (!icon_resource_path_.empty()) {
+        return;
+    }
+    wchar_t module_path[MAX_PATH]{};
+    HMODULE icon_module = resource_module_ ? resource_module_ : GetModuleHandle(nullptr);
+    DWORD len = GetModuleFileNameW(icon_module, module_path, ARRAYSIZE(module_path));
+    if (len == 0 || len == ARRAYSIZE(module_path)) {
+        LOG_CPP_WARNING("DesktopOverlay failed to get module path for icon (err=%lu)", GetLastError());
+        return;
+    }
+    icon_resource_path_ = module_path;
+    icon_resource_path_ += L",";
+    icon_resource_path_ += std::to_wstring(IDI_SCREAMROUTER_ICON);
+}
+
+void DesktopOverlayController::UpdateWindowAppId(HWND hwnd) {
+    if (!hwnd) {
+        return;
+    }
+    EnsureProcessAppId();
+    InitializeIconResourcePath();
+
+    Microsoft::WRL::ComPtr<IPropertyStore> store;
+    HRESULT hr = SHGetPropertyStoreForWindow(hwnd, IID_PPV_ARGS(&store));
+    if (FAILED(hr) || !store) {
+        LOG_CPP_WARNING("DesktopOverlay failed to get property store for window (hr=0x%08X)", hr);
+        return;
+    }
+
+    bool changed = false;
+    PROPVARIANT value;
+    PropVariantInit(&value);
+
+    if (!app_user_model_id_.empty() &&
+        SUCCEEDED(InitPropVariantFromString(app_user_model_id_.c_str(), &value))) {
+        if (SUCCEEDED(store->SetValue(PKEY_AppUserModel_ID, value))) {
+            changed = true;
+        }
+        PropVariantClear(&value);
+    }
+
+    if (!icon_resource_path_.empty() &&
+        SUCCEEDED(InitPropVariantFromString(icon_resource_path_.c_str(), &value))) {
+        if (SUCCEEDED(store->SetValue(PKEY_AppUserModel_RelaunchIconResource, value))) {
+            changed = true;
+        }
+        PropVariantClear(&value);
+    }
+
+    if (changed) {
+        store->Commit();
+    }
+}
+
+void DesktopOverlayController::HandleNewWindowRequested(ICoreWebView2NewWindowRequestedEventArgs* args) {
+    if (!args) {
+        return;
+    }
+
+    args->put_Handled(TRUE);
+
+    std::wstring uri;
+    std::wstring name;
+
+    LPWSTR raw_uri = nullptr;
+    if (SUCCEEDED(args->get_Uri(&raw_uri)) && raw_uri) {
+        uri.assign(raw_uri);
+        CoTaskMemFree(raw_uri);
+    }
+    Microsoft::WRL::ComPtr<ICoreWebView2NewWindowRequestedEventArgs2> args2;
+    if (SUCCEEDED(args->QueryInterface(IID_PPV_ARGS(&args2))) && args2) {
+        LPWSTR raw_name = nullptr;
+        if (SUCCEEDED(args2->get_Name(&raw_name)) && raw_name) {
+            name.assign(raw_name);
+            CoTaskMemFree(raw_name);
+        }
+    }
+
+    bool is_transcription = (_wcsicmp(name.c_str(), L"Transcription") == 0);
+
+    auto popup = std::make_unique<PopupWindow>();
+    popup->owner = this;
+    popup->initial_uri = uri;
+    popup->name = name.empty() ? L"ScreamRouter Popup" : name;
+    popup->is_transcription = is_transcription;
+
+    Microsoft::WRL::ComPtr<ICoreWebView2WindowFeatures> window_features;
+    if (SUCCEEDED(args->get_WindowFeatures(&window_features)) && window_features) {
+        BOOL has_size = FALSE;
+        if (SUCCEEDED(window_features->get_HasSize(&has_size)) && has_size) {
+            UINT32 requested_width = 0;
+            UINT32 requested_height = 0;
+            if (SUCCEEDED(window_features->get_Width(&requested_width)) &&
+                SUCCEEDED(window_features->get_Height(&requested_height)) &&
+                requested_width > 0 && requested_height > 0) {
+                popup->has_requested_size = true;
+                popup->requested_width = static_cast<int>(requested_width);
+                popup->requested_height = static_cast<int>(requested_height);
+            }
+        }
+
+        BOOL has_position = FALSE;
+        if (SUCCEEDED(window_features->get_HasPosition(&has_position)) && has_position) {
+            UINT32 requested_left = 0;
+            UINT32 requested_top = 0;
+            if (SUCCEEDED(window_features->get_Left(&requested_left)) &&
+                SUCCEEDED(window_features->get_Top(&requested_top))) {
+                popup->has_requested_position = true;
+                popup->requested_left = static_cast<int>(requested_left);
+                popup->requested_top = static_cast<int>(requested_top);
+            }
+        }
+    }
+
+    if (!CreatePopupWindow(*popup)) {
+        LOG_CPP_ERROR("DesktopOverlay failed to create popup window for '%ls'", popup->name.c_str());
+        return;
+    }
+
+    HWND hwnd = popup->hwnd;
+    auto inserted = popup_windows_.emplace(hwnd, std::move(popup));
+    PopupWindow& popup_ref = *inserted.first->second;
+    StartPopupMouseTimer(popup_ref);
+    InitPopupWebView(hwnd);
+}
+
+bool DesktopOverlayController::RegisterPopupWindowClass() {
+    if (popup_class_atom_) {
+        return true;
+    }
+    if (!hinstance_) {
+        hinstance_ = GetModuleHandle(nullptr);
+    }
+
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.style = CS_DROPSHADOW;
+    wc.lpfnWndProc = PopupWndProc;
+    wc.hInstance = hinstance_;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+    wc.lpszClassName = popup_class_name_.c_str();
+
+    popup_class_atom_ = RegisterClassExW(&wc);
+    if (!popup_class_atom_) {
+        LOG_CPP_ERROR("DesktopOverlay failed to register popup class (err=%lu)", GetLastError());
+        return false;
+    }
+    return true;
+}
+
+bool DesktopOverlayController::CreatePopupWindow(PopupWindow& popup) {
+    if (!RegisterPopupWindowClass()) {
+        return false;
+    }
+
+    RECT work = GetWorkArea();
+    const int work_left = static_cast<int>(work.left);
+    const int work_top = static_cast<int>(work.top);
+    const int work_right = static_cast<int>(work.right);
+    const int work_bottom = static_cast<int>(work.bottom);
+    const int work_w = work_right - work_left;
+    const int work_h = work_bottom - work_top;
+
+    int width = 1366;
+    int height = 768;
+    int left = work_left + (work_w - width) / 2;
+    int top = work_top + (work_h - height) / 2;
+
+    DWORD style = WS_OVERLAPPEDWINDOW;
+    DWORD ex_style = WS_EX_APPWINDOW;
+
+    if (popup.is_transcription) {
+        width = static_cast<int>(work_w * kTranscriptionWidthPercent);
+        width = std::max(width, 640);
+        width = std::min(width, work_w);
+        height = kTranscriptionHeight;
+        left = work_left + static_cast<int>(work_w * (1.0 - kTranscriptionWidthPercent) / 2.0);
+        top = work_bottom - height - kTranscriptionBottomMargin;
+        top = std::max(top, work_top);
+        style = WS_POPUP;
+        ex_style = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED;
+    }
+
+    if (popup.has_requested_size) {
+        width = popup.requested_width;
+        height = popup.requested_height;
+    }
+    width = std::max(width, 100);
+    height = std::max(height, 100);
+    width = std::min(width, work_w);
+    height = std::min(height, work_h);
+
+    if (popup.has_requested_position) {
+        left = popup.requested_left;
+        top = popup.requested_top;
+    }
+
+    left = std::max(left, work_left);
+    top = std::max(top, work_top);
+    if (left + width > work_right) {
+        left = std::max(work_right - width, work_left);
+    }
+    if (top + height > work_bottom) {
+        top = std::max(work_bottom - height, work_top);
+    }
+
+    HWND hwnd = CreateWindowExW(
+        ex_style,
+        popup_class_name_.c_str(),
+        popup.name.c_str(),
+        style,
+        left,
+        top,
+        width,
+        height,
+        nullptr,
+        nullptr,
+        hinstance_,
+        &popup);
+
+    if (!hwnd) {
+        LOG_CPP_ERROR("DesktopOverlay failed to create popup window hwnd (err=%lu)", GetLastError());
+        return false;
+    }
+
+    popup.hwnd = hwnd;
+    if (tray_icon_) {
+        SendMessage(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(tray_icon_));
+        SendMessage(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(tray_icon_));
+    }
+    UpdateWindowAppId(hwnd);
+    popup.mouse_disabled = false;
+    popup.script_pending = false;
+    popup.original_style = GetWindowLong(hwnd, GWL_STYLE);
+    popup.original_ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
+    popup.original_placement.length = sizeof(WINDOWPLACEMENT);
+    GetWindowPlacement(hwnd, &popup.original_placement);
+
+    if (popup.is_transcription) {
+        SetLayeredWindowAttributes(hwnd, RGB(0, 0, 0), 255, LWA_COLORKEY | LWA_ALPHA);
+        SetWindowPos(hwnd, HWND_TOPMOST, left, top, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    } else {
+        ShowWindow(hwnd, SW_SHOWNORMAL);
+        UpdateWindow(hwnd);
+    }
+
+    return true;
+}
+
+void DesktopOverlayController::InitPopupWebView(HWND hwnd) {
+    if (!webview_env_) {
+        LOG_CPP_WARNING("DesktopOverlay cannot initialize popup WebView2 without environment");
+        return;
+    }
+    auto it = popup_windows_.find(hwnd);
+    if (it == popup_windows_.end()) {
+        return;
+    }
+
+    PopupWindow* popup = it->second.get();
+    webview_env_->CreateCoreWebView2Controller(
+        hwnd,
+        Microsoft::WRL::Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+            [this, hwnd](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
+                auto it = popup_windows_.find(hwnd);
+                if (it == popup_windows_.end()) {
+                    if (controller) {
+                        controller->Close();
+                    }
+                    return S_OK;
+                }
+                PopupWindow& popup = *it->second;
+                if (FAILED(result) || !controller) {
+                    LOG_CPP_ERROR("DesktopOverlay popup controller creation failed (hr=0x%08X)", result);
+                    DestroyWindow(hwnd);
+                    return result;
+                }
+                popup.controller = controller;
+                controller->get_CoreWebView2(&popup.webview);
+                ConfigurePopupWebView(popup);
+                if (!popup.initial_uri.empty()) {
+                    popup.webview->Navigate(popup.initial_uri.c_str());
+                }
+                return S_OK;
+            })
+            .Get());
+}
+
+void DesktopOverlayController::ConfigurePopupWebView(PopupWindow& popup) {
+    if (!popup.controller || !popup.webview) {
+        return;
+    }
+
+    UpdatePopupWebViewBounds(popup);
+    popup.controller->put_IsVisible(TRUE);
+
+    Microsoft::WRL::ComPtr<ICoreWebView2Controller2> controller2;
+    if (SUCCEEDED(popup.controller.As(&controller2)) && controller2) {
+        COREWEBVIEW2_COLOR color{};
+        color.A = popup.is_transcription ? 0 : 255;
+        color.R = 0;
+        color.G = 0;
+        color.B = 0;
+        controller2->put_DefaultBackgroundColor(color);
+    }
+
+    Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings;
+    if (SUCCEEDED(popup.webview->get_Settings(&settings)) && settings) {
+        settings->put_IsStatusBarEnabled(FALSE);
+        settings->put_AreDefaultContextMenusEnabled(TRUE);
+        settings->put_AreDevToolsEnabled(TRUE);
+        settings->put_IsBuiltInErrorPageEnabled(FALSE);
+        settings->put_IsZoomControlEnabled(FALSE);
+        settings->put_AreDefaultScriptDialogsEnabled(FALSE);
+    }
+
+    popup.webview->AddScriptToExecuteOnDocumentCreated(kJsHelper, nullptr);
+    popup.webview->AddScriptToExecuteOnDocumentCreated(kPopupHelperScript, nullptr);
+
+    popup.webview->add_WebMessageReceived(
+        Microsoft::WRL::Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+            [hwnd = popup.hwnd](ICoreWebView2* /*sender*/, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                LPWSTR json = nullptr;
+                if (SUCCEEDED(args->get_WebMessageAsJson(&json)) && json) {
+                    if (wcsstr(json, L"\"action\":\"close\"")) {
+                        PostMessage(hwnd, WM_CLOSE, 0, 0);
+                    }
+                    CoTaskMemFree(json);
+                }
+                return S_OK;
+            })
+            .Get(),
+        nullptr);
+
+    popup.webview->add_NewWindowRequested(
+        Microsoft::WRL::Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+            [this](ICoreWebView2* /*sender*/, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
+                HandleNewWindowRequested(args);
+                return S_OK;
+            })
+            .Get(),
+        nullptr);
+
+    if (!popup.is_transcription) {
+        popup.webview->add_DocumentTitleChanged(
+            Microsoft::WRL::Callback<ICoreWebView2DocumentTitleChangedEventHandler>(
+                [hwnd = popup.hwnd](ICoreWebView2* sender, IUnknown* /*args*/) -> HRESULT {
+                    LPWSTR title = nullptr;
+                    if (SUCCEEDED(sender->get_DocumentTitle(&title)) && title) {
+                        SetWindowTextW(hwnd, title);
+                        CoTaskMemFree(title);
+                    }
+                    return S_OK;
+                })
+                .Get(),
+            nullptr);
+
+        popup.webview->add_ContainsFullScreenElementChanged(
+            Microsoft::WRL::Callback<ICoreWebView2ContainsFullScreenElementChangedEventHandler>(
+                [this, hwnd = popup.hwnd](ICoreWebView2* sender, IUnknown* /*args*/) -> HRESULT {
+                    BOOL fullscreen = FALSE;
+                    sender->get_ContainsFullScreenElement(&fullscreen);
+                    auto it = popup_windows_.find(hwnd);
+                    if (it != popup_windows_.end()) {
+                        TogglePopupFullscreen(*it->second, fullscreen == TRUE);
+                    }
+                    return S_OK;
+                })
+                .Get(),
+            nullptr);
+    }
+}
+
+void DesktopOverlayController::StartPopupMouseTimer(PopupWindow& popup) {
+    if (!popup.is_transcription || popup.timer_id || !popup.hwnd) {
+        return;
+    }
+    popup.timer_id = SetTimer(popup.hwnd, kPopupMouseTimerId, kPopupTimerIntervalMs, nullptr);
+}
+
+void DesktopOverlayController::HandlePopupMouseTimer(PopupWindow& popup) {
+    if (!popup.is_transcription || !popup.webview || popup.script_pending) {
+        return;
+    }
+
+    POINT pt{};
+    GetCursorPos(&pt);
+    if (pt.x == popup.last_mouse.x && pt.y == popup.last_mouse.y) {
+        return;
+    }
+    popup.last_mouse = pt;
+
+    RECT rect{};
+    GetWindowRect(popup.hwnd, &rect);
+    if (!PtInRect(&rect, pt)) {
+        return;
+    }
+
+    POINT client_pt = pt;
+    ScreenToClient(popup.hwnd, &client_pt);
+    UINT dpi = GetDpiForWindow(popup.hwnd);
+    const float scale = dpi / 96.0f;
+    const int scaled_x = static_cast<int>(client_pt.x / scale);
+    const int scaled_y = static_cast<int>(client_pt.y / scale);
+
+    std::wstring script = L"(function(){return isPointOverBody(" +
+                          std::to_wstring(scaled_x) + L"," + std::to_wstring(scaled_y) +
+                          L");})()";
+
+    popup.script_pending = true;
+    popup.webview->ExecuteScript(
+        script.c_str(),
+        Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+            [this, hwnd = popup.hwnd](HRESULT error, PCWSTR result) -> HRESULT {
+                auto it = popup_windows_.find(hwnd);
+                if (it == popup_windows_.end()) {
+                    return S_OK;
+                }
+                PopupWindow& popup = *it->second;
+                popup.script_pending = false;
+                if (FAILED(error) || !result) {
+                    LOG_CPP_WARNING("DesktopOverlay popup hit-test script failed (hr=0x%08X)", error);
+                    return S_OK;
+                }
+                bool over_body = (wcscmp(result, L"true") == 0) || (wcscmp(result, L"\"true\"") == 0);
+                if (over_body && !popup.mouse_disabled) {
+                    DisablePopupMouse(popup);
+                } else if (!over_body && popup.mouse_disabled) {
+                    EnablePopupMouse(popup);
+                }
+                return S_OK;
+            })
+            .Get());
+}
+
+void DesktopOverlayController::DisablePopupMouse(PopupWindow& popup) {
+    if (!popup.hwnd || popup.mouse_disabled) {
+        return;
+    }
+    LONG style = GetWindowLong(popup.hwnd, GWL_EXSTYLE);
+    style |= WS_EX_LAYERED | WS_EX_TRANSPARENT;
+    SetWindowLong(popup.hwnd, GWL_EXSTYLE, style);
+    SetLayeredWindowAttributes(popup.hwnd, 0, 255, LWA_ALPHA);
+    SetWindowPos(popup.hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    popup.mouse_disabled = true;
+}
+
+void DesktopOverlayController::EnablePopupMouse(PopupWindow& popup) {
+    if (!popup.hwnd || !popup.mouse_disabled) {
+        return;
+    }
+    LONG style = GetWindowLong(popup.hwnd, GWL_EXSTYLE);
+    style &= ~WS_EX_TRANSPARENT;
+    if (style & WS_EX_LAYERED) {
+        style &= ~WS_EX_LAYERED;
+    }
+    SetWindowLong(popup.hwnd, GWL_EXSTYLE, style);
+    SetLayeredWindowAttributes(popup.hwnd, 0, 255, LWA_ALPHA);
+    SetWindowPos(popup.hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    popup.mouse_disabled = false;
+}
+
+void DesktopOverlayController::UpdatePopupWebViewBounds(PopupWindow& popup) {
+    if (!popup.hwnd || !popup.controller) {
+        return;
+    }
+    RECT bounds{};
+    GetClientRect(popup.hwnd, &bounds);
+    popup.controller->put_Bounds(bounds);
+}
+
+void DesktopOverlayController::TogglePopupFullscreen(PopupWindow& popup, bool enable) {
+    if (!popup.hwnd || popup.is_transcription || popup.in_fullscreen == enable) {
+        return;
+    }
+
+    if (enable) {
+        popup.original_style = GetWindowLong(popup.hwnd, GWL_STYLE);
+        popup.original_ex_style = GetWindowLong(popup.hwnd, GWL_EXSTYLE);
+        popup.original_placement.length = sizeof(WINDOWPLACEMENT);
+        GetWindowPlacement(popup.hwnd, &popup.original_placement);
+
+        MONITORINFO monitor_info{};
+        monitor_info.cbSize = sizeof(monitor_info);
+        GetMonitorInfoW(MonitorFromWindow(popup.hwnd, MONITOR_DEFAULTTONEAREST), &monitor_info);
+
+        SetWindowLong(popup.hwnd, GWL_STYLE, popup.original_style & ~(WS_CAPTION | WS_THICKFRAME));
+        SetWindowLong(popup.hwnd, GWL_EXSTYLE,
+                      popup.original_ex_style & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
+                                                  WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+        SetWindowPos(
+            popup.hwnd,
+            HWND_TOP,
+            monitor_info.rcMonitor.left,
+            monitor_info.rcMonitor.top,
+            monitor_info.rcMonitor.right - monitor_info.rcMonitor.left,
+            monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top,
+            SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    } else {
+        SetWindowLong(popup.hwnd, GWL_STYLE, popup.original_style);
+        SetWindowLong(popup.hwnd, GWL_EXSTYLE, popup.original_ex_style);
+        if (popup.original_placement.length == sizeof(WINDOWPLACEMENT)) {
+            SetWindowPlacement(popup.hwnd, &popup.original_placement);
+        }
+        SetWindowPos(popup.hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+
+    popup.in_fullscreen = enable;
+}
+
+void DesktopOverlayController::OnPopupDestroyed(HWND hwnd) {
+    auto it = popup_windows_.find(hwnd);
+    if (it == popup_windows_.end()) {
+        return;
+    }
+    PopupWindow& popup = *it->second;
+    if (popup.timer_id) {
+        KillTimer(hwnd, popup.timer_id);
+        popup.timer_id = 0;
+    }
+    if (popup.controller) {
+        popup.controller->Close();
+        popup.controller.Reset();
+    }
+    popup.webview.Reset();
+    popup_windows_.erase(it);
+}
+
+void DesktopOverlayController::CleanupPopupWindows() {
+    if (popup_windows_.empty()) {
+        return;
+    }
+    std::vector<HWND> handles;
+    handles.reserve(popup_windows_.size());
+    for (const auto& entry : popup_windows_) {
+        handles.push_back(entry.first);
+    }
+    for (HWND hwnd : handles) {
+        if (IsWindow(hwnd)) {
+            DestroyWindow(hwnd);
+        } else {
+            OnPopupDestroyed(hwnd);
+        }
+    }
+}
+
+LRESULT CALLBACK DesktopOverlayController::PopupWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    auto* popup = reinterpret_cast<PopupWindow*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+    switch (msg) {
+    case WM_NCCREATE: {
+        auto* create = reinterpret_cast<LPCREATESTRUCT>(lparam);
+        popup = static_cast<PopupWindow*>(create->lpCreateParams);
+        if (popup) {
+            popup->hwnd = hwnd;
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(popup));
+        }
+        return TRUE;
+    }
+    case WM_SIZE:
+        if (popup && popup->owner) {
+            popup->owner->UpdatePopupWebViewBounds(*popup);
+        }
+        return 0;
+    case WM_TIMER:
+        if (popup && popup->owner && popup->is_transcription && wparam == kPopupMouseTimerId) {
+            popup->owner->HandlePopupMouseTimer(*popup);
+        }
+        return 0;
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    case WM_DESTROY:
+        if (popup && popup->owner) {
+            popup->owner->OnPopupDestroyed(hwnd);
+        }
+        SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        HBRUSH brush = CreateSolidBrush(RGB(0, 0, 0));
+        FillRect(hdc, &ps.rcPaint, brush);
+        DeleteObject(brush);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    default:
+        break;
+    }
+    return DefWindowProc(hwnd, msg, wparam, lparam);
 }
 
 RECT DesktopOverlayController::GetWorkArea() const {
