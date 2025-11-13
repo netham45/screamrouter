@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import platform
 import re
+import urllib
 import urllib.request
 import shlex
 import time
@@ -771,35 +772,54 @@ class BuildExtCommand(build_ext):
 
         if compile_jobs:
             extra_postargs_list = list(extra_postargs_final or [])
-            cc_args = compiler._get_cc_args(pp_opts, self.debug, None)
-            max_workers = max(1, min(self.parallel or 1, len(compile_jobs)))
-            if max_workers > 1:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {
-                        executor.submit(
-                            self._compile_source_job,
+            if compiler.compiler_type == "msvc":
+                compiled_paths = compiler.compile(
+                    [src for _, src, _, _ in compile_jobs],
+                    output_dir=output_dir,
+                    macros=macros_for_compile,
+                    include_dirs=include_dirs,
+                    debug=self.debug,
+                    extra_postargs=extra_postargs_list,
+                    depends=depends,
+                )
+                for (dest, _, _, fingerprint), produced in zip(compile_jobs, compiled_paths):
+                    produced_path = Path(produced)
+                    dest_path = Path(dest)
+                    if produced_path.resolve() != dest_path.resolve():
+                        shutil.copy2(produced_path, dest_path)
+                    if object_cache and fingerprint:
+                        object_cache.store_object(fingerprint, dest_path)
+                    compiled_count += 1
+            else:
+                cc_args = compiler._get_cc_args(pp_opts, self.debug, None)
+                max_workers = max(1, min(self.parallel or 1, len(compile_jobs)))
+                if max_workers > 1:
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = {
+                            executor.submit(
+                                self._compile_unix_job,
+                                compiler,
+                                job,
+                                cc_args,
+                                extra_postargs_list,
+                                pp_opts,
+                                object_cache,
+                            ): job for job in compile_jobs
+                        }
+                        for future in as_completed(futures):
+                            future.result()
+                            compiled_count += 1
+                else:
+                    for job in compile_jobs:
+                        self._compile_unix_job(
                             compiler,
                             job,
                             cc_args,
                             extra_postargs_list,
                             pp_opts,
                             object_cache,
-                        ): job for job in compile_jobs
-                    }
-                    for future in as_completed(futures):
-                        future.result()
+                        )
                         compiled_count += 1
-            else:
-                for job in compile_jobs:
-                    self._compile_source_job(
-                        compiler,
-                        job,
-                        cc_args,
-                        extra_postargs_list,
-                        pp_opts,
-                        object_cache,
-                    )
-                    compiled_count += 1
 
         if object_cache:
             log.info(
@@ -826,7 +846,7 @@ class BuildExtCommand(build_ext):
         serialised.sort()
         return serialised
 
-    def _compile_source_job(self, compiler, job, cc_args, extra_postargs, pp_opts, object_cache):
+    def _compile_unix_job(self, compiler, job, cc_args, extra_postargs, pp_opts, object_cache):
         obj_path, src, src_ext, fingerprint = job
         postargs = list(extra_postargs) if extra_postargs else []
         compiler._compile(obj_path, src, src_ext, cc_args, postargs, pp_opts)
