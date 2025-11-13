@@ -1,77 +1,1126 @@
-[build-system]
-requires = [
-    "setuptools>=42",
-    "wheel",
-    "pybind11>=2.6",
-    "PyYAML>=5.0"  # Required for build_system config loading
+"""
+Minimal setup.py using the new modular build system
+
+Build Requirements:
+- C++ compiler (gcc/clang on Linux, MSVC on Windows)
+- CMake >= 3.14
+- Node.js and npm (for building React frontend)
+- Python development headers
+- OpenSSL development libraries
+
+Parallel Build Support:
+- Automatically uses all CPU cores for compilation (configurable)
+- Override with: pip install -e . --config-settings="--build-option=--parallel=N"
+- Or set environment: export SCREAMROUTER_MAX_JOBS=N (falls back to MAX_JOBS or CPU count)
+- Linux: Install ccache for faster incremental rebuilds
+
+Extension Compilation Cache:
+- Incremental C++ builds reuse unchanged object files
+- Disable with SCREAMROUTER_DISABLE_OBJECT_CACHE=1
+- Cache stored under build/.cache/objects
+
+Cross-Compilation Support:
+- Set CC and CXX to your cross-compiler
+- Set SCREAMROUTER_PLAT_NAME to override the wheel platform tag
+- Example: CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ SCREAMROUTER_PLAT_NAME=linux_aarch64 python3 setup.py bdist_wheel
+"""
+
+import os
+import sys
+import glob
+import shutil
+import subprocess
+import platform
+import re
+import urllib.request
+import shlex
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from setuptools import setup, Extension, find_packages
+from setuptools.command.build_ext import build_ext
+from setuptools.command.build_py import build_py
+from distutils.command.build import build as _build
+from distutils import log
+from distutils.dep_util import newer_group
+from distutils.errors import DistutilsSetupError
+
+# Conditionally import bdist_wheel (not always installed)
+try:
+    from setuptools.command.bdist_wheel import bdist_wheel
+    HAVE_WHEEL = True
+except ImportError:
+    try:
+        from wheel.bdist_wheel import bdist_wheel
+        HAVE_WHEEL = True
+    except ImportError:
+        HAVE_WHEEL = False
+        bdist_wheel = None
+
+# Ensure we can import from the project directory
+project_root = Path(__file__).parent.resolve()
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# Import pybind11 first (it's installed via pip)
+try:
+    from pybind11.setup_helpers import Pybind11Extension
+except ImportError:
+    print("Error: pybind11 not found. Please install it using 'pip install pybind11>=2.6'", file=sys.stderr)
+    sys.exit(1)
+
+
+class BuildReactCommand(_build):
+    """Custom command to build React frontend"""
+    
+    def run(self):
+        react_dir = Path("screamrouter-react")
+        site_dir = Path("site")
+        
+        if not react_dir.exists():
+            print(f"WARNING: React directory {react_dir} not found, skipping React build", file=sys.stderr)
+            return
+        
+        # Determine npm command based on platform
+        # On Windows, npm is typically npm.cmd
+        npm_cmd = 'npm.cmd' if sys.platform == 'win32' else 'npm'
+        
+        # Check if npm exists
+        if not shutil.which(npm_cmd):
+            raise RuntimeError(
+                f"{npm_cmd} not found. Please install Node.js and npm to build the React frontend.\n"
+                "Visit https://nodejs.org/ for installation instructions."
+            )
+        
+        print("Building React frontend...")
+        
+        # Run npm install
+        print("Running npm install...")
+        try:
+            subprocess.run(
+                [npm_cmd, "install"],
+                cwd=str(react_dir),
+                check=True,
+                capture_output=False
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"npm install failed: {e}")
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"{npm_cmd} not found. Please install Node.js and npm to build the React frontend.\n"
+                "Visit https://nodejs.org/ for installation instructions."
+            )
+        
+        # Run npm run build
+        print("Running npm run build...")
+        try:
+            subprocess.run(
+                [npm_cmd, "run", "build"],
+                cwd=str(react_dir),
+                check=True,
+                capture_output=False
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"npm run build failed: {e}")
+        
+        # Webpack is configured to output directly to ../site directory
+        # Copy site directory into screamrouter package for proper packaging
+        package_site_dir = Path("screamrouter/site")
+        
+        if not site_dir.exists():
+            raise RuntimeError(f"React build output not found at {site_dir}")
+        
+        # Copy site directory to screamrouter package directory
+        if package_site_dir.exists():
+            shutil.rmtree(package_site_dir)
+        shutil.copytree(site_dir, package_site_dir)
+        
+        print(f"React build completed successfully. Files copied to {package_site_dir}")
+
+
+def _find_nuget_executable():
+    """Locate nuget.exe via env or PATH."""
+    hints = []
+    if os.environ.get("NUGET_EXE"):
+        hints.append(os.environ["NUGET_EXE"])
+    hints.extend([
+        shutil.which("nuget"),
+        Path(os.environ.get("ProgramFiles(x86)", "")) / "NuGet" / "nuget.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "NuGet" / "nuget.exe",
+    ])
+    for candidate in hints:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.is_file():
+            return str(path)
+    return None
+
+def _default_vcvarsall():
+    candidates = []
+    env_hint = os.environ.get("VCVARSALL_BAT")
+    if env_hint:
+        candidates.append(Path(env_hint))
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+    if program_files_x86:
+        base = Path(program_files_x86) / "Microsoft Visual Studio"
+        candidates.extend([
+            base / "2022" / "Community" / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat",
+            base / "2022" / "Professional" / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat",
+            base / "2022" / "Enterprise" / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat",
+        ])
+    for candidate in candidates:
+        if candidate and candidate.is_file():
+            return str(candidate)
+    return None
+
+def _download_nuget_exe() -> Path | None:
+    dist_url = "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
+    dest_dir = project_root / "build" / "_deps" / "nuget"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_file = dest_dir / "nuget.exe"
+    try:
+        print(f"Downloading nuget.exe from {dist_url}")
+        with urllib.request.urlopen(dist_url) as resp, open(dest_file, "wb") as out:
+            out.write(resp.read())
+    except Exception as exc:
+        print(f"Failed to download nuget.exe: {exc}")
+        return None
+    return dest_file
+
+
+def _find_nuget_command():
+    """Return list representing the nuget invocation (['nuget.exe'])."""
+    env_hint = os.environ.get("NUGET_EXE")
+    if env_hint:
+        path = Path(env_hint)
+        if path.is_file():
+            return [str(path)]
+    exe = shutil.which("nuget")
+    if exe:
+        return [exe]
+    downloaded = _download_nuget_exe()
+    if downloaded and downloaded.exists():
+        return [str(downloaded)]
+    return None
+
+
+def _run_nuget_command(args):
+    """Run nuget command, optionally via vcvarsall for MSVC env."""
+    cmd_list = [str(a) for a in args]
+    if sys.platform != "win32":
+        subprocess.run(cmd_list, check=True)
+        return
+    vcvars = _default_vcvarsall()
+    arch_arg = "amd64" if platform.architecture()[0] == "64bit" else "x86"
+
+    # Build command string preserving Windows paths
+    command_line = " ".join(cmd_list)
+    if vcvars:
+        command_line = f'call "{vcvars}" {arch_arg} && {command_line}'
+    subprocess.run(["cmd", "/c", command_line], check=True)
+
+
+VC_REDIST_URLS = {
+    "x86": "https://aka.ms/vc14/vc_redist.x86.exe",
+    "x64": "https://aka.ms/vc14/vc_redist.x64.exe",
+}
+
+
+def _run_vcredist_installer(installer_path: Path, url: str, arch: str):
+    """Run installer with retries for transient MSI states."""
+    max_attempts = 3
+    wait_seconds = 30
+    for attempt in range(1, max_attempts + 1):
+        try:
+            subprocess.run(
+                [str(installer_path), "/install", "/quiet", "/norestart"],
+                check=True,
+            )
+            return
+        except subprocess.CalledProcessError as exc:  # pragma: no cover - Windows only
+            code = exc.returncode
+            if code == 3010:
+                print(
+                    "VC++ redistributable installer requested reboot (code 3010); "
+                    "continuing since files are in place."
+                )
+                return
+            if code == 1638:
+                print(
+                    f"VC++ redistributable ({arch}) already installed (code 1638); skipping."
+                )
+                return
+            if code == 1618 and attempt < max_attempts:
+                print(
+                    "Another installer is currently running (code 1618). "
+                    f"Waiting {wait_seconds}s before retry {attempt + 1}/{max_attempts}."
+                )
+                time.sleep(wait_seconds)
+                continue
+            if code == 1618:
+                raise RuntimeError(
+                    "Another installer is running (code 1618). Finish other installations "
+                    "or reboot Windows, then install screamrouter again."
+                ) from exc
+            raise RuntimeError(
+                "VC++ runtime installation failed. Run installer manually: "
+                f"{url} (exit code {code})"
+            ) from exc
+
+
+def ensure_vcredist_installed():
+    """Download and install the VC++ runtime redistributables on Windows."""
+    if sys.platform != "win32":
+        return
+
+    dest_dir = project_root / "build" / "_deps" / "vcredist"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    is_64bit = platform.architecture()[0] == "64bit"
+    for arch, url in VC_REDIST_URLS.items():
+        if arch == "x64" and not is_64bit:
+            continue
+
+        marker = dest_dir / f"vc_redist_{arch}.installed"
+        if marker.exists():
+            continue
+
+        installer_path = dest_dir / f"vc_redist.{arch}.exe"
+        if not installer_path.exists():
+            print(f"Downloading VC++ redistributable {arch} from {url}")
+            try:
+                with urllib.request.urlopen(url) as resp, open(installer_path, "wb") as fh:
+                    fh.write(resp.read())
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to download VC++ redistributable ({arch}) from {url}: {exc}"
+                ) from exc
+
+        print(f"Installing VC++ redistributable ({arch})")
+        _run_vcredist_installer(installer_path, url, arch)
+
+        marker.write_text("installed\n", encoding="utf-8")
+
+
+def ensure_webview2_sdk(version: str = "1.0.2846.51"):
+    """Ensure the Microsoft.Web.WebView2 SDK is available; return paths dict or None on non-Windows."""
+    if sys.platform != "win32":
+        return None
+
+    explicit_dir = os.environ.get("WEBVIEW2_SDK_DIR")
+    if explicit_dir:
+        base_dir = Path(explicit_dir).expanduser().resolve()
+    else:
+        deps_root = project_root / "build" / "_deps" / "webview2"
+        deps_root = project_root / "build" / "_deps" / "webview2"
+        deps_root.mkdir(parents=True, exist_ok=True)
+        nuget_cmd = _find_nuget_command()
+        if not nuget_cmd:
+            raise RuntimeError(
+                "WebView2 SDK not found. Install NuGet CLI (nuget.exe) or set WEBVIEW2_SDK_DIR to an extracted Microsoft.Web.WebView2 package."
+            )
+        print(f"Downloading Microsoft.Web.WebView2 with {' '.join(nuget_cmd)}")
+        _run_nuget_command(
+            nuget_cmd
+            + [
+                "install",
+                "Microsoft.Web.WebView2",
+                "-OutputDirectory",
+                str(deps_root),
+            ]
+        )
+        candidates = sorted(deps_root.glob("Microsoft.Web.WebView2.*"), reverse=True)
+        if not candidates:
+            raise RuntimeError("NuGet did not produce a Microsoft.Web.WebView2 package")
+        base_dir = candidates[0]
+
+    include_dir = base_dir / "build" / "native" / "include"
+    if not include_dir.exists():
+        raise RuntimeError(f"WebView2 include directory not found: {include_dir}")
+
+    is_64bit = platform.architecture()[0] == "64bit"
+    arch = "x64" if is_64bit else "x86"
+    runtime = "win-x64" if is_64bit else "win-x86"
+
+    loader_lib = base_dir / "build" / "native" / arch / "WebView2LoaderStatic.lib"
+    loader_dll = base_dir / "runtimes" / runtime / "native" / "WebView2Loader.dll"
+    if not loader_lib.exists():
+        raise RuntimeError(f"WebView2 loader static library not found: {loader_lib}")
+    if not loader_dll.exists():
+        raise RuntimeError(f"WebView2 loader runtime DLL not found: {loader_dll}")
+
+    return {
+        "base_dir": base_dir,
+        "include_dir": include_dir,
+        "loader_lib": loader_lib,
+        "loader_dll": loader_dll,
+    }
+
+
+ensure_vcredist_installed()
+WEBVIEW2_SDK = ensure_webview2_sdk()
+
+
+def detect_cross_compile_platform():
+    """
+    Detect cross-compilation target from CC environment variable.
+    Returns platform tag like 'linux_aarch64' or None if native build.
+    """
+    cc = os.environ.get('CC', '')
+    
+    # Check if SCREAMROUTER_PLAT_NAME is explicitly set
+    explicit_plat = os.environ.get('SCREAMROUTER_PLAT_NAME')
+    if explicit_plat:
+        print(f"Using explicit platform tag from SCREAMROUTER_PLAT_NAME: {explicit_plat}")
+        return explicit_plat
+    
+    # Try to detect from CC
+    if not cc:
+        return None
+    
+    # Extract target triplet from compiler name
+    # Examples: aarch64-linux-gnu-gcc, arm-linux-gnueabihf-gcc, x86_64-w64-mingw32-gcc
+    match = re.match(r'^(?:ccache\s+)?([^-\s]+)-([^-]+)-([^-]+)(?:-([^-]+))?-(?:gcc|g\+\+|clang)', cc)
+    if not match:
+        return None
+    
+    arch = match.group(1)
+    os_name = match.group(3)
+    
+    # Map architecture names to Python wheel tags
+    arch_map = {
+        'aarch64': 'aarch64',
+        'arm': 'armv7l',
+        'armv7': 'armv7l',
+        'x86_64': 'x86_64',
+        'i686': 'i686',
+        'i386': 'i686',
+        'mips': 'mips',
+        'mipsel': 'mipsel',
+        'powerpc': 'ppc',
+        'powerpc64': 'ppc64',
+        'powerpc64le': 'ppc64le',
+        's390x': 's390x',
+    }
+    
+    # Map OS names
+    os_map = {
+        'linux': 'linux',
+        'darwin': 'darwin',
+        'mingw32': 'win',
+    }
+    
+    wheel_arch = arch_map.get(arch, arch)
+    wheel_os = os_map.get(os_name, os_name)
+    
+    platform_tag = f"{wheel_os}_{wheel_arch}"
+    print(f"Detected cross-compilation target from CC={cc}: {platform_tag}")
+    return platform_tag
+
+
+_TARGET_PLATFORM_TAG: str | None = None
+
+
+def get_target_platform_tag() -> str | None:
+    """Return cached target platform tag (e.g. win_x86_64) if cross-compiling."""
+    global _TARGET_PLATFORM_TAG
+    if _TARGET_PLATFORM_TAG is None:
+        _TARGET_PLATFORM_TAG = detect_cross_compile_platform()
+    return _TARGET_PLATFORM_TAG
+
+
+def target_is_windows() -> bool:
+    """Determine whether the extension we are building targets Windows."""
+    if sys.platform == "win32":
+        return True
+    plat = get_target_platform_tag()
+    if plat:
+        return plat.startswith("win")
+    return False
+
+
+class BuildPyCommand(build_py):
+    """Custom build_py that builds React frontend before copying Python files"""
+    
+    def run(self):
+        # Build React frontend FIRST, before copying Python files
+        self.run_command('build_react')
+        # Now run the normal build_py
+        super().run()
+
+
+if HAVE_WHEEL:
+    class BdistWheelCommand(bdist_wheel):
+        """Custom bdist_wheel that supports cross-compilation platform tags"""
+        
+        def finalize_options(self):
+            super().finalize_options()
+            
+            # Override platform name if cross-compiling
+            cross_plat = detect_cross_compile_platform()
+            if cross_plat:
+                self.plat_name = cross_plat
+                self.plat_name_supplied = True
+                print(f"Building wheel for platform: {cross_plat}")
+else:
+    BdistWheelCommand = None
+
+
+class BuildExtCommand(build_ext):
+    """
+    Custom build_ext that uses our modular build system.
+
+    Features:
+    - Builds C++ dependencies (OpenSSL, Opus, libdatachannel, etc.)
+    - Compiles screamrouter C++ extension in parallel (uses all CPU cores)
+    - Supports ccache for faster incremental builds on Linux
+    - Generates pybind11 type stubs automatically
+    """
+
+    def initialize_options(self):
+        super().initialize_options()
+        self.object_cache = None
+        self._cache_stats = {"reused": 0, "compiled": 0}
+
+    def run(self):
+        env_jobs = None
+        if self.parallel is None:
+            env_value = os.environ.get("SCREAMROUTER_MAX_JOBS") or os.environ.get("MAX_JOBS")
+            if env_value:
+                try:
+                    env_jobs_int = int(env_value)
+                    if env_jobs_int > 0:
+                        env_jobs = env_jobs_int
+                except ValueError:
+                    print(f"WARNING: Ignoring invalid parallel job count '{env_value}'", file=sys.stderr)
+            if env_jobs:
+                self.parallel = env_jobs
+            else:
+                self.parallel = os.cpu_count() or 1
+        else:
+            env_value = os.environ.get("SCREAMROUTER_MAX_JOBS") or os.environ.get("MAX_JOBS")
+            if env_value:
+                try:
+                    env_jobs_int = int(env_value)
+                    if env_jobs_int > 0 and env_jobs_int != self.parallel:
+                        print(
+                            f"Ignoring SCREAMROUTER_MAX_JOBS={env_jobs_int} because --parallel={self.parallel} is set."
+                        )
+                except ValueError:
+                    pass
+
+        if self.parallel < 1:
+            self.parallel = 1
+
+        self._cache_stats = {"reused": 0, "compiled": 0}
+        print(f"Building with {self.parallel} parallel job{'s' if self.parallel != 1 else ''}...")
+
+        # Enable ccache for faster incremental builds on Linux
+        # Preserve existing CC/CXX for cross-compilation
+        if sys.platform != "win32" and shutil.which("ccache"):
+            current_cc = os.environ.get("CC", "gcc")
+            current_cxx = os.environ.get("CXX", "g++")
+            # Only prepend ccache if not already there
+            if not current_cc.startswith("ccache"):
+                os.environ["CC"] = "ccache " + current_cc
+            if not current_cxx.startswith("ccache"):
+                os.environ["CXX"] = "ccache " + current_cxx
+            print("Using ccache for faster incremental builds")
+
+        # Import BuildSystem here to avoid issues with pip's isolated build environment
+        try:
+            from build_system import BuildSystem
+        except ImportError as e:
+            print(f"Error importing build_system: {e}", file=sys.stderr)
+            print("Make sure the build_system directory exists in the project root.", file=sys.stderr)
+            raise
+
+        # Initialize build system
+        bs = BuildSystem(
+            root_dir=Path.cwd(),
+            verbose=self.verbose > 0
+        )
+
+        self.object_cache = getattr(bs, "object_cache", None)
+        if self.object_cache and self.object_cache.enabled:
+            print(f"Object cache directory: {self.object_cache.cache_dir}")
+        elif self.object_cache:
+            print("Object cache disabled via SCREAMROUTER_DISABLE_OBJECT_CACHE")
+
+        # Show build info
+        if self.verbose:
+            bs.show_info()
+
+        # Check prerequisites
+        print("Checking build prerequisites...")
+        if not bs.check_prerequisites():
+            raise RuntimeError(
+                "Missing build prerequisites. Please install required packages.\n"
+                "See the error messages above for details."
+            )
+
+        # Build all dependencies
+        print("Building C++ dependencies...")
+        if not bs.build_all():
+            raise RuntimeError(
+                "Failed to build one or more dependencies. Please inspect the log output above."
+            )
+
+        # Get install directory
+        install_dir = bs.install_dir
+
+        # Detect cross-compilation
+        platform_tag = get_target_platform_tag()
+        is_cross_compiling = bool(platform_tag)
+
+        # Update extension paths
+        for ext in self.extensions:
+            # Add include directories
+            ext.include_dirs.insert(0, str(install_dir / "include"))
+
+            # When cross-compiling, ONLY use our built libraries
+            # Clear any system library paths that distutils may have added
+            if is_cross_compiling:
+                ext.library_dirs.clear()
+                ext.runtime_library_dirs = []
+
+            # Add library directories
+            # On Windows, use only 'lib' directory (32-bit and 64-bit both use lib)
+            # On Linux, check both lib and lib64
+            if sys.platform == "win32":
+                ext.library_dirs.insert(0, str(install_dir / "lib"))
+            else:
+                ext.library_dirs.insert(0, str(install_dir / "lib"))
+                lib64_path = install_dir / "lib64"
+                if lib64_path.exists():
+                    ext.library_dirs.insert(0, str(lib64_path))
+
+            # Platform-specific adjustments
+            if sys.platform == "win32":
+                # Windows-specific flags
+                ext.extra_compile_args.extend([
+                    "/std:c++17", "/O2", "/W3", "/EHsc",
+                    "/D_CRT_SECURE_NO_WARNINGS", "/DNOMINMAX", "/MP",
+                    # Define static linking for libdatachannel
+                    "/DRTC_STATIC"
+                ])
+                # Add Windows system libraries required by OpenSSL and libjuice
+                ext.libraries.extend([
+                    "advapi32",  # Event logging, registry, crypto
+                    "crypt32",   # Certificate store
+                    "user32",    # MessageBox, window station
+                    "bcrypt",    # BCryptGenRandom
+                    "ws2_32",    # Winsock (network)
+                    "iphlpapi",  # IP Helper (network)
+                ])
+            else:
+                # Linux-specific flags
+                ext.extra_compile_args.extend([
+                    "-std=c++17", "-O2", "-Wall", "-fPIC"
+                ])
+                ext.extra_link_args.extend([
+                    "-lpthread", "-ldl"
+                ])
+
+        # Run normal build
+        super().run()
+
+        if self.object_cache and self.object_cache.enabled:
+            reused = self._cache_stats.get("reused", 0)
+            compiled = self._cache_stats.get("compiled", 0)
+            if reused:
+                print(f"Object cache reused {reused} object file{'s' if reused != 1 else ''}")
+            if compiled:
+                print(f"Compiled {compiled} object file{'s' if compiled != 1 else ''}")
+
+        # Generate pybind11 stubs
+        if not self.dry_run:
+            print("Generating pybind11 stubs...")
+            try:
+                env = os.environ.copy()
+                env["PYTHONPATH"] = self.build_lib + os.pathsep + env.get("PYTHONPATH", "")
+
+                subprocess.run([
+                    sys.executable, "-m", "pybind11_stubgen",
+                    "screamrouter_audio_engine",
+                    "--output-dir", "."
+                ], check=True, env=env)
+
+                print("Successfully generated stubs for screamrouter_audio_engine.")
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                print(f"WARNING: Failed to generate pybind11 stubs: {e}", file=sys.stderr)
+
+    def build_extension(self, ext):
+        sources = ext.sources
+        if sources is None or not isinstance(sources, (list, tuple)):
+            raise DistutilsSetupError(
+                "in 'ext_modules' option (extension '%s'), "
+                "'sources' must be present and must be "
+                "a list of source filenames" % ext.name
+            )
+        sources = sorted(sources)
+
+        ext_path = self.get_ext_fullpath(ext.name)
+        depends = sources + list(ext.depends)
+        if not (self.force or newer_group(depends, ext_path, 'newer')):
+            log.debug("skipping '%s' extension (up-to-date)", ext.name)
+            return
+        else:
+            log.info("building '%s' extension", ext.name)
+
+        target_windows = target_is_windows()
+        if target_windows:
+            sources = self._prepare_windows_resources(ext, sources)
+
+        sources = self.swig_sources(sources, ext)
+
+        macros = ext.define_macros[:]
+        for undef in ext.undef_macros:
+            macros.append((undef,))
+
+        extra_args = ext.extra_compile_args or []
+
+        objects = self._compile_with_cache(ext, sources, macros, extra_args)
+        self._built_objects = objects[:]
+
+        if ext.extra_objects:
+            objects.extend(ext.extra_objects)
+        extra_link_args = ext.extra_link_args or []
+
+        language = ext.language or self.compiler.detect_language(sources)
+
+        self.compiler.link_shared_object(
+            objects,
+            ext_path,
+            libraries=self.get_libraries(ext),
+            library_dirs=ext.library_dirs,
+            runtime_library_dirs=ext.runtime_library_dirs,
+            extra_postargs=extra_link_args,
+            export_symbols=self.get_export_symbols(ext),
+            debug=self.debug,
+            build_temp=self.build_temp,
+            target_lang=language,
+        )
+
+        if sys.platform == "win32" and WEBVIEW2_SDK:
+            loader_dll = WEBVIEW2_SDK.get("loader_dll")
+            if loader_dll and Path(loader_dll).exists():
+                dest = Path(ext_path).parent / Path(loader_dll).name
+                shutil.copy2(loader_dll, dest)
+
+    def _compile_with_cache(self, ext, sources, macros, extra_postargs):
+        compiler = self.compiler
+        include_dirs = ext.include_dirs
+        depends = ext.depends
+        output_dir = self.build_temp
+
+        macros_for_setup = list(macros or [])
+        macros_for_compile = list(macros or [])
+        extra_postargs_input = list(extra_postargs or [])
+
+        macros_cfg, objects, extra_postargs_final, pp_opts, build_map = compiler._setup_compile(
+            output_dir, macros_for_setup, include_dirs, sources, depends, extra_postargs_input
+        )
+
+        object_cache = self.object_cache if getattr(self.object_cache, "enabled", False) else None
+        reused_count = 0
+        compiled_count = 0
+
+        compiler_descriptor = [
+            getattr(compiler, "compiler_type", "unknown"),
+            compiler.__class__.__name__,
+        ]
+        extra_key = [
+            repr(getattr(compiler, "executables", {})),
+            os.environ.get("CFLAGS", ""),
+            os.environ.get("CXXFLAGS", ""),
+            os.environ.get("LDFLAGS", ""),
+        ]
+        macros_key = self._serialise_macros(macros_cfg)
+        include_key = sorted(include_dirs or [])
+        postargs_key = list(extra_postargs_final or [])
+        pp_opts_key = list(pp_opts)
+        debug_flag = "debug=1" if self.debug else "debug=0"
+
+        compile_jobs = []
+        for obj_path in objects:
+            src, src_ext = build_map[obj_path]
+            obj_file = Path(obj_path)
+            obj_file.parent.mkdir(parents=True, exist_ok=True)
+
+            fingerprint = None
+            if object_cache:
+                compile_args = (
+                    pp_opts_key
+                    + postargs_key
+                    + macros_key
+                    + include_key
+                    + [debug_flag, src_ext]
+                )
+                fingerprint = object_cache.fingerprint(
+                    Path(src), compiler_descriptor, compile_args, extra_key=extra_key
+                )
+                cached_obj = object_cache.get_cached_object(fingerprint)
+                if cached_obj:
+                    shutil.copy2(cached_obj, obj_file)
+                    reused_count += 1
+                    continue
+
+            compile_jobs.append((obj_path, src, src_ext, fingerprint))
+
+        if compile_jobs:
+            extra_postargs_list = list(extra_postargs_final or [])
+            if compiler.compiler_type == "msvc":
+                compiled_paths = compiler.compile(
+                    [src for _, src, _, _ in compile_jobs],
+                    output_dir=output_dir,
+                    macros=macros_for_compile,
+                    include_dirs=include_dirs,
+                    debug=self.debug,
+                    extra_postargs=extra_postargs_list,
+                    depends=depends,
+                )
+                for (dest, _, _, fingerprint), produced in zip(compile_jobs, compiled_paths):
+                    produced_path = Path(produced)
+                    dest_path = Path(dest)
+                    if produced_path.resolve() != dest_path.resolve():
+                        shutil.copy2(produced_path, dest_path)
+                    if object_cache and fingerprint:
+                        object_cache.store_object(fingerprint, dest_path)
+                    compiled_count += 1
+            else:
+                cc_args = compiler._get_cc_args(pp_opts, self.debug, None)
+                max_workers = max(1, min(self.parallel or 1, len(compile_jobs)))
+                if max_workers > 1:
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = {
+                            executor.submit(
+                                self._compile_unix_job,
+                                compiler,
+                                job,
+                                cc_args,
+                                extra_postargs_list,
+                                pp_opts,
+                                object_cache,
+                            ): job for job in compile_jobs
+                        }
+                        for future in as_completed(futures):
+                            future.result()
+                            compiled_count += 1
+                else:
+                    for job in compile_jobs:
+                        self._compile_unix_job(
+                            compiler,
+                            job,
+                            cc_args,
+                            extra_postargs_list,
+                            pp_opts,
+                            object_cache,
+                        )
+                        compiled_count += 1
+
+        if object_cache:
+            log.info(
+                "Object cache for %s: reused %d, compiled %d",
+                ext.name,
+                reused_count,
+                compiled_count,
+            )
+
+        self._cache_stats["reused"] += reused_count
+        self._cache_stats["compiled"] += compiled_count
+
+        return objects
+
+    @staticmethod
+    def _serialise_macros(macros):
+        serialised = []
+        for macro in macros or []:
+            if len(macro) == 1:
+                serialised.append(f"U:{macro[0]}")
+            else:
+                name, value = macro
+                serialised.append(f"D:{name}={value}")
+        serialised.sort()
+        return serialised
+
+    def _compile_unix_job(self, compiler, job, cc_args, extra_postargs, pp_opts, object_cache):
+        obj_path, src, src_ext, fingerprint = job
+        postargs = list(extra_postargs) if extra_postargs else []
+        compiler._compile(obj_path, src, src_ext, cc_args, postargs, pp_opts)
+        if object_cache and fingerprint:
+            object_cache.store_object(fingerprint, Path(obj_path))
+        return obj_path
+
+    def _prepare_windows_resources(self, ext, sources):
+        rc_files = [s for s in sources if s.endswith(".rc")]
+        if not rc_files:
+            return sources
+
+        compiler_cmd, compiler_type = self._find_resource_compiler()
+        if not compiler_cmd:
+            raise DistutilsSetupError(
+                "Unable to locate a Windows resource compiler (rc.exe or windres). "
+                "Install the Windows SDK or MinGW windres so the tray icon can be embedded."
+            )
+
+        extra_objects = list(getattr(ext, "extra_objects", []))
+        for rc_file in rc_files:
+            log.info("Compiling resource file %s", rc_file)
+            res_path = self._compile_resource_file(compiler_cmd, compiler_type, rc_file)
+            extra_objects.append(res_path)
+            sources.remove(rc_file)
+
+        ext.extra_objects = extra_objects
+        return sources
+
+    def _find_resource_compiler(self):
+        if sys.platform == "win32":
+            rc_exe = shutil.which("rc") or shutil.which("rc.exe")
+            if not rc_exe:
+                sdk_roots = [
+                    Path(os.environ.get("ProgramFiles(x86)", "")) / "Windows Kits",
+                    Path(os.environ.get("ProgramFiles", "")) / "Windows Kits",
+                ]
+                for root in sdk_roots:
+                    if not root or not root.exists():
+                        continue
+                    candidates = sorted(root.glob("**/rc.exe"), reverse=True)
+                    if candidates:
+                        rc_exe = str(candidates[0])
+                        break
+            if rc_exe:
+                return rc_exe, "rc"
+            return None, None
+
+        windres_env = os.environ.get("WINDRES")
+        candidate_names = []
+        if windres_env:
+            candidate_names.append(windres_env)
+
+        derived = self._derive_windres_from_cc()
+        if derived:
+            candidate_names.append(derived)
+
+        candidate_names.extend([
+            "x86_64-w64-mingw32-windres",
+            "i686-w64-mingw32-windres",
+            "windres",
+        ])
+
+        for candidate in candidate_names:
+            if not candidate:
+                continue
+            found = shutil.which(candidate)
+            if found:
+                return found, "windres"
+
+        return None, None
+
+    def _derive_windres_from_cc(self):
+        cc = os.environ.get("CC", "")
+        if not cc:
+            return None
+
+        tokens = shlex.split(cc)
+        if not tokens:
+            return None
+        if tokens[0] == "ccache" and len(tokens) > 1:
+            tokens = tokens[1:]
+        compiler_exe = tokens[0]
+
+        for suffix in ("-gcc", "-g++", "-clang", "-clang++"):
+            if compiler_exe.endswith(suffix):
+                prefix = compiler_exe[: -len(suffix)]
+                return prefix + "-windres"
+        return None
+
+    def _windres_target(self):
+        tag = get_target_platform_tag()
+        if not tag:
+            return None
+        # Expect tags like win_x86_64 or win_i686
+        if tag.endswith("i686") or tag.endswith("x86"):
+            return "pe-i386"
+        if tag.endswith("arm64"):
+            return "pe-arm64"
+        return "pe-x86-64"
+
+    def _compile_resource_file(self, compiler_cmd, compiler_type, rc_file):
+        rc_path = Path(rc_file)
+        rc_full_path = rc_path.resolve()
+        output_dir = (Path(self.build_temp).resolve() / "resources")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        suffix = ".res" if compiler_type == "rc" else ".o"
+        output_path = output_dir / f"{rc_path.stem}{suffix}"
+
+        rc_cwd = rc_path.parent.resolve()
+        input_name = os.fspath(rc_full_path)
+
+        output_path_str = os.fspath(output_path)
+
+        if compiler_type == "rc":
+            cmd = [compiler_cmd, "/nologo", "/fo", output_path_str, input_name]
+        else:
+            cmd = [compiler_cmd]
+            target = self._windres_target()
+            if target:
+                cmd.extend(["--target", target])
+            cmd.extend(["-O", "coff", "-o", output_path_str, input_name])
+
+        try:
+            subprocess.run(cmd, check=True, cwd=rc_cwd)
+        except subprocess.CalledProcessError as exc:
+            raise DistutilsSetupError(f"Failed to compile resource {rc_file}: {exc}") from exc
+
+        return str(output_path)
+
+
+# Platform-specific linker additions
+platform_include_dirs: list[str] = []
+platform_libraries: list[str] = []
+platform_link_args: list[str] = []
+
+if sys.platform == "win32":
+    platform_libraries.extend([
+        "advapi32",
+        "crypt32",
+        "user32",
+        "gdi32",
+        "shell32",
+        "dwmapi",
+        "shlwapi",
+        "bcrypt",
+        "ws2_32",
+        "iphlpapi",
+        "ole32",
+        "oleaut32",
+        "avrt",
+        "mmdevapi",
+        "uuid",
+        "propsys",
+    ])
+    if WEBVIEW2_SDK:
+        platform_include_dirs.append(str(WEBVIEW2_SDK["include_dir"]))
+        platform_link_args.append(str(WEBVIEW2_SDK["loader_lib"]))
+
+# Find source files
+src_root = Path("src")
+target_windows_build = target_is_windows()
+source_files = []
+header_dependencies = []
+for root, dirs, files in os.walk(str(src_root)):
+    # Exclude deps directories
+    if 'deps' in dirs:
+        dirs.remove('deps')
+    for file in files:
+        path = Path(root) / file
+        if file.endswith(".cpp"):
+            source_files.append(str(path))
+        elif file.endswith(".h"):
+            header_dependencies.append(str(path))
+        # Include Windows resource files
+        elif target_windows_build and file.endswith(".rc"):
+            source_files.append(str(path))
+
+# Sort for consistent ordering
+source_files.sort()
+
+# Create extension
+ext_modules = [
+    Pybind11Extension(
+        "screamrouter_audio_engine",
+        sources=source_files,
+        include_dirs=[
+            "src/audio_engine",
+            "src/audio_engine/json/include",  # If json headers are needed
+        ] + platform_include_dirs,
+        depends=header_dependencies,
+        libraries=[
+            # Core dependencies
+            "mp3lame",
+            "opus",
+            "samplerate",
+            "datachannel",
+            # OpenSSL (libssl/libcrypto on Windows, ssl/crypto on Linux)
+            "libssl" if sys.platform == "win32" else "ssl",
+            "libcrypto" if sys.platform == "win32" else "crypto",
+            # libdatachannel dependencies
+            "juice",
+            "usrsctp",
+            "srtp2",
+        ]
+        + (["asound"] if sys.platform.startswith("linux") else [])
+        + platform_libraries,
+        extra_link_args=platform_link_args,
+        language="c++",
+        cxx_std=17
+    )
 ]
-build-backend = "setuptools.build_meta"
 
-[project]
-name = "screamrouter"
-version = "0.3.55"
-description = "ScreamRouter audio routing system with web interface and C++ audio engine"
-readme = "README.md"
-requires-python = ">=3.11"
-license = {text = "AGPL-3.0"}
-authors = [
-    {name = "Netham45"}
-]
-keywords = ["audio", "routing", "scream", "network", "streaming", "webrtc"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
-    "Programming Language :: C++",
-    "Operating System :: Microsoft :: Windows",
-    "Operating System :: POSIX :: Linux",
-    "Topic :: Multimedia :: Sound/Audio",
-]
+# Read README for long description
+readme_path = Path("README.md")
+long_description = ""
+if readme_path.exists():
+    with open(readme_path, "r", encoding="utf-8") as f:
+        long_description = f.read()
 
-dependencies = [
-    "pybind11>=2.6",
-    "pybind11-stubgen",
-    "cryptography",
-    "dnspython",
-    "fastapi",
-    "httpx",
-    "Jinja2",
-    "numpy",
-    "pydantic",
-    "pyOpenSSL",
-    "PyYAML",
-    "setproctitle",
-    "starlette",
-    "uvicorn",
-    "websockets",
-    "zeroconf",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest",
-    "pytest-cov",
-    "black",
-    "flake8",
-    "mypy",
-]
-
-[project.urls]
-Homepage = "https://github.com/netham45/screamrouter"
-Repository = "https://github.com/netham45/screamrouter"
-Issues = "https://github.com/netham45/screamrouter/issues"
-
-[project.scripts]
-screamrouter = "screamrouter.__main__:main"
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["screamrouter*"]
-
-[tool.setuptools.package-data]
-screamrouter = ["site/**/*", "images/**/*", "*.yaml"]
+setup(
+    name="screamrouter",
+    version="0.3.55",
+    author="Netham45",
+    description="ScreamRouter audio routing system with web interface and C++ audio engine",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    ext_modules=ext_modules,
+    cmdclass={
+        "build_react": BuildReactCommand,
+        "build_py": BuildPyCommand,
+        "build_ext": BuildExtCommand,
+        **({} if not HAVE_WHEEL else {"bdist_wheel": BdistWheelCommand}),
+    },
+    packages=find_packages(include=["screamrouter", "screamrouter.*"]),
+    package_data={
+        "screamrouter": [
+            "site/**/*",
+            "uvicorn_log_config.yaml",
+        ]
+    },
+    include_package_data=True,
+    entry_points={
+        "console_scripts": [
+            "screamrouter=screamrouter.__main__:main",
+        ],
+    },
+    zip_safe=False,
+    python_requires=">=3.10",
+    install_requires=[
+        "pybind11>=2.6",
+        "pybind11-stubgen",
+    ],
+    extras_require={
+        "dev": [
+            "pytest",
+            "pytest-cov",
+            "black",
+            "flake8",
+            "mypy",
+        ]
+    },
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: C++",
+        "Operating System :: Microsoft :: Windows",
+        "Operating System :: POSIX :: Linux",
+        "Topic :: Multimedia :: Sound/Audio",
+    ],
+)
