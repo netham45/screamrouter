@@ -32,8 +32,9 @@ import shutil
 import subprocess
 import platform
 import re
-import urllib
+import urllib.request
 import shlex
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from setuptools import setup, Extension, find_packages
@@ -220,6 +221,88 @@ def _run_nuget_command(args):
     subprocess.run(["cmd", "/c", command_line], check=True)
 
 
+VC_REDIST_URLS = {
+    "x86": "https://aka.ms/vc14/vc_redist.x86.exe",
+    "x64": "https://aka.ms/vc14/vc_redist.x64.exe",
+}
+
+
+def _run_vcredist_installer(installer_path: Path, url: str, arch: str):
+    """Run installer with retries for transient MSI states."""
+    max_attempts = 3
+    wait_seconds = 30
+    for attempt in range(1, max_attempts + 1):
+        try:
+            subprocess.run(
+                [str(installer_path), "/install", "/quiet", "/norestart"],
+                check=True,
+            )
+            return
+        except subprocess.CalledProcessError as exc:  # pragma: no cover - Windows only
+            code = exc.returncode
+            if code == 3010:
+                print(
+                    "VC++ redistributable installer requested reboot (code 3010); "
+                    "continuing since files are in place."
+                )
+                return
+            if code == 1638:
+                print(
+                    f"VC++ redistributable ({arch}) already installed (code 1638); skipping."
+                )
+                return
+            if code == 1618 and attempt < max_attempts:
+                print(
+                    "Another installer is currently running (code 1618). "
+                    f"Waiting {wait_seconds}s before retry {attempt + 1}/{max_attempts}."
+                )
+                time.sleep(wait_seconds)
+                continue
+            if code == 1618:
+                raise RuntimeError(
+                    "Another installer is running (code 1618). Finish other installations "
+                    "or reboot Windows, then install screamrouter again."
+                ) from exc
+            raise RuntimeError(
+                "VC++ runtime installation failed. Run installer manually: "
+                f"{url} (exit code {code})"
+            ) from exc
+
+
+def ensure_vcredist_installed():
+    """Download and install the VC++ runtime redistributables on Windows."""
+    if sys.platform != "win32":
+        return
+
+    dest_dir = project_root / "build" / "_deps" / "vcredist"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    is_64bit = platform.architecture()[0] == "64bit"
+    for arch, url in VC_REDIST_URLS.items():
+        if arch == "x64" and not is_64bit:
+            continue
+
+        marker = dest_dir / f"vc_redist_{arch}.installed"
+        if marker.exists():
+            continue
+
+        installer_path = dest_dir / f"vc_redist.{arch}.exe"
+        if not installer_path.exists():
+            print(f"Downloading VC++ redistributable {arch} from {url}")
+            try:
+                with urllib.request.urlopen(url) as resp, open(installer_path, "wb") as fh:
+                    fh.write(resp.read())
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to download VC++ redistributable ({arch}) from {url}: {exc}"
+                ) from exc
+
+        print(f"Installing VC++ redistributable ({arch})")
+        _run_vcredist_installer(installer_path, url, arch)
+
+        marker.write_text("installed\n", encoding="utf-8")
+
+
 def ensure_webview2_sdk(version: str = "1.0.2846.51"):
     """Ensure the Microsoft.Web.WebView2 SDK is available; return paths dict or None on non-Windows."""
     if sys.platform != "win32":
@@ -275,6 +358,7 @@ def ensure_webview2_sdk(version: str = "1.0.2846.51"):
     }
 
 
+ensure_vcredist_installed()
 WEBVIEW2_SDK = ensure_webview2_sdk()
 
 
@@ -687,54 +771,35 @@ class BuildExtCommand(build_ext):
 
         if compile_jobs:
             extra_postargs_list = list(extra_postargs_final or [])
-            if compiler.compiler_type == "msvc":
-                compiled_paths = compiler.compile(
-                    [src for _, src, _, _ in compile_jobs],
-                    output_dir=output_dir,
-                    macros=macros_for_compile,
-                    include_dirs=include_dirs,
-                    debug=self.debug,
-                    extra_postargs=extra_postargs_list,
-                    depends=depends,
-                )
-                for (dest, _, _, fingerprint), produced in zip(compile_jobs, compiled_paths):
-                    produced_path = Path(produced)
-                    dest_path = Path(dest)
-                    if produced_path.resolve() != dest_path.resolve():
-                        shutil.copy2(produced_path, dest_path)
-                    if object_cache and fingerprint:
-                        object_cache.store_object(fingerprint, dest_path)
-                    compiled_count += 1
-            else:
-                cc_args = compiler._get_cc_args(pp_opts, self.debug, None)
-                max_workers = max(1, min(self.parallel or 1, len(compile_jobs)))
-                if max_workers > 1:
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        futures = {
-                            executor.submit(
-                                self._compile_unix_job,
-                                compiler,
-                                job,
-                                cc_args,
-                                extra_postargs_list,
-                                pp_opts,
-                                object_cache,
-                            ): job for job in compile_jobs
-                        }
-                        for future in as_completed(futures):
-                            future.result()
-                            compiled_count += 1
-                else:
-                    for job in compile_jobs:
-                        self._compile_unix_job(
+            cc_args = compiler._get_cc_args(pp_opts, self.debug, None)
+            max_workers = max(1, min(self.parallel or 1, len(compile_jobs)))
+            if max_workers > 1:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(
+                            self._compile_source_job,
                             compiler,
                             job,
                             cc_args,
                             extra_postargs_list,
                             pp_opts,
                             object_cache,
-                        )
+                        ): job for job in compile_jobs
+                    }
+                    for future in as_completed(futures):
+                        future.result()
                         compiled_count += 1
+            else:
+                for job in compile_jobs:
+                    self._compile_source_job(
+                        compiler,
+                        job,
+                        cc_args,
+                        extra_postargs_list,
+                        pp_opts,
+                        object_cache,
+                    )
+                    compiled_count += 1
 
         if object_cache:
             log.info(
@@ -761,7 +826,7 @@ class BuildExtCommand(build_ext):
         serialised.sort()
         return serialised
 
-    def _compile_unix_job(self, compiler, job, cc_args, extra_postargs, pp_opts, object_cache):
+    def _compile_source_job(self, compiler, job, cc_args, extra_postargs, pp_opts, object_cache):
         obj_path, src, src_ext, fingerprint = job
         postargs = list(extra_postargs) if extra_postargs else []
         compiler._compile(obj_path, src, src_ext, cc_args, postargs, pp_opts)

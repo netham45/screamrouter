@@ -5,6 +5,7 @@ Utility modules for the build system
 import sys
 import json
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -140,6 +141,7 @@ class Cache:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_file = self.cache_dir / "build_cache.json"
+        self._lock = threading.RLock()
         self.cache_data = self._load_cache()
     
     def _load_cache(self) -> Dict[str, Any]:
@@ -154,8 +156,9 @@ class Cache:
     
     def _save_cache(self):
         """Save cache to file"""
-        with open(self.cache_file, 'w') as f:
-            json.dump(self.cache_data, f, indent=2)
+        with self._lock:
+            with open(self.cache_file, 'w') as f:
+                json.dump(self.cache_data, f, indent=2)
     
     def _get_key(self, name: str, platform: str, arch: str) -> str:
         """Get cache key for dependency"""
@@ -174,7 +177,8 @@ class Cache:
             True if built and cached
         """
         key = self._get_key(name, platform, arch)
-        return key in self.cache_data and self.cache_data[key].get("built", False)
+        with self._lock:
+            return key in self.cache_data and self.cache_data[key].get("built", False)
     
     def mark_built(self, name: str, platform: str, arch: str):
         """
@@ -186,13 +190,14 @@ class Cache:
             arch: Architecture
         """
         key = self._get_key(name, platform, arch)
-        self.cache_data[key] = {
-            "built": True,
-            "timestamp": datetime.now().isoformat(),
-            "platform": platform,
-            "arch": arch
-        }
-        self._save_cache()
+        with self._lock:
+            self.cache_data[key] = {
+                "built": True,
+                "timestamp": datetime.now().isoformat(),
+                "platform": platform,
+                "arch": arch
+            }
+            self._save_cache()
     
     def clear_dependency(self, name: str):
         """
@@ -201,15 +206,17 @@ class Cache:
         Args:
             name: Dependency name
         """
-        keys_to_remove = [k for k in self.cache_data.keys() if k.startswith(f"{name}_")]
-        for key in keys_to_remove:
-            del self.cache_data[key]
-        self._save_cache()
+        with self._lock:
+            keys_to_remove = [k for k in self.cache_data.keys() if k.startswith(f"{name}_")]
+            for key in keys_to_remove:
+                del self.cache_data[key]
+            self._save_cache()
     
     def clear(self):
         """Clear all cache"""
-        self.cache_data = {}
-        self._save_cache()
+        with self._lock:
+            self.cache_data = {}
+            self._save_cache()
     
     def get_info(self, name: str, platform: str, arch: str) -> Optional[Dict[str, Any]]:
         """
@@ -224,7 +231,8 @@ class Cache:
             Cache info or None
         """
         key = self._get_key(name, platform, arch)
-        return self.cache_data.get(key)
+        with self._lock:
+            return self.cache_data.get(key)
 
 
 class Verifier:

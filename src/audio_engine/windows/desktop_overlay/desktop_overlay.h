@@ -64,7 +64,7 @@ private:
     static constexpr UINT_PTR kMouseTimerId = 1001;
     static constexpr UINT_PTR kColorTimerId = 1002;
     static constexpr int kDefaultWidth = 900;
-    static constexpr int kDefaultHeight = 600;
+    static constexpr int kDefaultHeight = 960;
 
     static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
