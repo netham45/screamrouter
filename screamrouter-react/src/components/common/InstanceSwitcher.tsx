@@ -13,7 +13,7 @@ import {
   MenuListProps,
   Spinner,
   Text,
-  Tooltip,
+  useColorModeValue,
 } from '@chakra-ui/react';
 import { ChevronDownIcon, RepeatIcon } from '@chakra-ui/icons';
 import { FiServer } from 'react-icons/fi';
@@ -37,6 +37,12 @@ const InstanceSwitcher: React.FC<InstanceSwitcherProps> = ({
   resolveHref,
 }) => {
   const { instances, loading, error, refresh } = useRouterInstances();
+  const buttonColorScheme = useColorModeValue('gray', 'whiteAlpha');
+  const primaryTextColor = useColorModeValue('gray.900', 'whiteAlpha.900');
+  const buttonLabelColor = 'whiteAlpha.900';
+  const subTextColor = useColorModeValue('gray.700', 'gray.400');
+  const errorTextColor = useColorModeValue('red.500', 'red.300');
+  const disabledTextColor = useColorModeValue('gray.700', 'gray.300');
   const currentInstance = instances.find(instance => instance.isCurrent) || null;
   const otherInstances = instances.filter(instance => !instance.isCurrent);
 
@@ -46,7 +52,7 @@ const InstanceSwitcher: React.FC<InstanceSwitcherProps> = ({
 
   const defaultButtonProps: ButtonProps = {
     variant: 'outline',
-    colorScheme: 'whiteAlpha',
+    colorScheme: buttonColorScheme,
     size,
     px: 3,
   };
@@ -70,34 +76,32 @@ const InstanceSwitcher: React.FC<InstanceSwitcherProps> = ({
 
   return (
     <Menu placement="bottom-end">
-      <Tooltip label="Switch between discovered ScreamRouter instances" hasArrow>
-        <MenuButton
-          as={Button}
-          {...defaultButtonProps}
-          {...buttonProps}
-        >
-          <HStack spacing={2}>
-            {showIcon && <Icon as={FiServer} />}
-            {!hideLabel && (
-              <Text whiteSpace="nowrap">
-                {loading ? 'Discovering…' : buttonLabel}
-              </Text>
-            )}
-            {loading ? <Spinner size="xs" /> : <ChevronDownIcon />}
-          </HStack>
-        </MenuButton>
-      </Tooltip>
+      <MenuButton style={{"margin":"5px"}}
+        as={Button}
+        {...defaultButtonProps}
+        {...buttonProps}
+      >
+        <HStack spacing={2}>
+          {showIcon && <Icon as={FiServer} />}
+          {!hideLabel && (
+            <Text whiteSpace="nowrap" color={buttonLabelColor}>
+              {buttonLabel}
+            </Text>
+          )}
+          {loading ? <Spinner size="xs" /> : <ChevronDownIcon />}
+        </HStack>
+      </MenuButton>
       <MenuList minW="260px" {...menuListProps}>
         {error && (
-          <MenuItem isDisabled color="red.400">
+          <MenuItem isDisabled color={errorTextColor}>
             {error}
           </MenuItem>
         )}
         {currentInstance && (
           <MenuItem icon={<Icon as={FiServer} />} isDisabled>
             <Box>
-              <Text fontWeight="semibold">{currentInstance.label}</Text>
-              <Text fontSize="xs" color="gray.500">
+              <Text fontWeight="semibold" color={primaryTextColor}>{currentInstance.label}</Text>
+              <Text fontSize="xs" color={subTextColor}>
                 This instance · {currentInstance.hostname}
               </Text>
             </Box>
@@ -112,8 +116,8 @@ const InstanceSwitcher: React.FC<InstanceSwitcherProps> = ({
               onClick={() => handleSelect(instance)}
             >
               <Box>
-                <Text fontWeight="semibold">{instance.label}</Text>
-                <Text fontSize="xs" color="gray.500">
+                <Text fontWeight="semibold" color={primaryTextColor}>{instance.label}</Text>
+                <Text fontSize="xs" color={subTextColor}>
                   {instance.hostname}:{instance.port}
                   {instance.address ? ` · ${instance.address}` : ''}
                 </Text>
@@ -121,14 +125,10 @@ const InstanceSwitcher: React.FC<InstanceSwitcherProps> = ({
             </MenuItem>
           ))
         ) : (
-          <MenuItem isDisabled>
+          <MenuItem isDisabled color={disabledTextColor}>
             No other instances discovered
           </MenuItem>
         )}
-        <MenuDivider />
-        <MenuItem icon={<RepeatIcon />} onClick={handleRefresh}>
-          Refresh discovery
-        </MenuItem>
       </MenuList>
     </Menu>
   );

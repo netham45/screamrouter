@@ -211,6 +211,9 @@ const SourceItem: React.FC<SourceItemProps> = ({
               Speaker Layout
             </MenuItem>
             {/* --- End New MenuItem --- */}
+            <MenuItem onClick={() => window.open(`/site/add-route?source=${encodeURIComponent(source.name)}`, '_blank')}>
+              ➕ Add Route from Source
+            </MenuItem>
             <MenuItem onClick={() => window.open(`/site/listen/source/${encodeURIComponent(source.name)}`, '_blank')}>
               🎧 Listen
             </MenuItem>
@@ -276,7 +279,7 @@ const SourceItem: React.FC<SourceItemProps> = ({
             <Box px={3} py={2}>
               <Text mb={2} fontSize="sm">Timeshift</Text>
               <Slider
-                min={-60}
+                min={-300}
                 max={0}
                 step={1}
                 value={-source.timeshift || 0}

@@ -96,6 +96,7 @@ export const TutorialProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const completedStepsRef = useRef<Set<string>>(completedSteps);
 
   const { registerSelectionHandler } = useMdnsDiscovery();
+  const isDesktopMode = typeof window !== 'undefined' && window.location.pathname.includes('desktopMenu');
 
   const currentStep = steps[currentStepIndex] ?? null;
 
@@ -487,11 +488,12 @@ export const TutorialProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const shouldDisplayStep = useMemo(() => {
     if (!currentStep) return false;
     if (!isActive) return false;
+    if (isDesktopMode) return false;
     const routeHint = currentStep.routeHint;
     if (!routeHint) return true;
     const path = window.location.pathname;
     return path.startsWith(routeHint);
-  }, [currentStep, isActive]);
+  }, [currentStep, isActive, isDesktopMode]);
 
   const contextValue = useMemo<TutorialContextValue>(() => ({
     steps,
@@ -534,19 +536,21 @@ export const TutorialProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   return (
     <TutorialContext.Provider value={contextValue}>
       {children}
-      <TutorialOverlay
-        isLoading={isLoading}
-        isActive={isActive}
-        step={currentStep}
-        stepIndex={currentStepIndex}
-        totalSteps={totalSteps}
-        onNext={nextStep}
-        onPrevious={previousStep}
-        onSkip={skipTutorial}
-        onSkipToStep={skipToStep}
-        onRestart={restartTutorial}
-        shouldDisplay={shouldDisplayStep}
-      />
+      {!isDesktopMode && (
+        <TutorialOverlay
+          isLoading={isLoading}
+          isActive={isActive}
+          step={currentStep}
+          stepIndex={currentStepIndex}
+          totalSteps={totalSteps}
+          onNext={nextStep}
+          onPrevious={previousStep}
+          onSkip={skipTutorial}
+          onSkipToStep={skipToStep}
+          onRestart={restartTutorial}
+          shouldDisplay={shouldDisplayStep}
+        />
+      )}
       <AlertDialog
         isOpen={Boolean(continuationForm && isActive)}
         leastDestructiveRef={continuationCancelRef}

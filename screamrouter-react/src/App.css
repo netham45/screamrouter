@@ -420,7 +420,7 @@ input[type="range"]::-moz-range-thumb {
 /* Button styles */
 button {
   padding: 10px 20px;
-  margin: 5px;
+  margin: 5px 5px 5px 0px;
   border: none;
   border-radius: 25px;
   background: linear-gradient(45deg, #3498db, #9b59b6);

@@ -74,10 +74,12 @@ const DesktopMenu: React.FC = () => {
   // Get colors from the global singleton
   const bgColor = colorContextInstance.getDarkerColor(.9, .9);
   const borderColor = colorContextInstance.getDarkerColor(.88, .9); // Subtle border
-  const buttonBgActive = colorContextInstance.getDarkerColor(.7); // Full color for active
+  const buttonBgActive = colorContextInstance.getDarkerColor(.55); // Highlighted background for active buttons
   const buttonBgInactive = colorContextInstance.getDarkerColor(0.5); // Darker for inactive
   const buttonTextActive = '#EEEEEE'; // White text on colored background
   const buttonTextInactive = '#EEE'; // Gray text for inactive
+  const buttonBorderDefault = 'rgba(255, 255, 255, 0.25)';
+  const recentHeadingColor = '#F5F5F5'; // Always-light headings for Recently Used section
   
   // Load starred items from localStorage - refresh when activeSource changes
   useEffect(() => {
@@ -342,8 +344,8 @@ const DesktopMenu: React.FC = () => {
       case MenuLevel.RecentlyUsed:
         return (
           <Box pl={2} pt={2}>
-            <Heading size="md" mb={3}>Recently Used</Heading>
-            <Heading size="x-sm" mb={3}>Sources</Heading>
+            <Heading size="md" mb={3} color={recentHeadingColor}>Recently Used</Heading>
+            <Heading size="x-sm" mb={3} color={recentHeadingColor}>Sources</Heading>
             <SourceList
               sources={getRecentSources()}
               routes={routes}
@@ -354,7 +356,7 @@ const DesktopMenu: React.FC = () => {
             />
             
             
-            <Heading size="x-sm" mt={5} mb={3}>Sinks</Heading>
+            <Heading size="x-sm" mt={5} mb={3} color={recentHeadingColor}>Sinks</Heading>
             <SinkList
               routes={routes}
               sinks={getRecentSinks()}
@@ -365,7 +367,7 @@ const DesktopMenu: React.FC = () => {
               selectedItem={selectedItem}
             />
             
-            <Heading size="x-sm" mt={5} mb={3}>Routes</Heading>
+            <Heading size="x-sm" mt={5} mb={3} color={recentHeadingColor}>Routes</Heading>
             <RouteList
               routes={getRecentRoutes()}
               starredRoutes={starredRoutes}
@@ -446,6 +448,17 @@ const DesktopMenu: React.FC = () => {
   actions.confirmDelete = openDeleteDialog;
   // The showSpeakerLayoutPage is now correctly part of actions object above
   
+  const buildTabStyle = (menu: MenuLevel) => ({
+    backgroundColor: currentMenu === menu ? buttonBgActive : buttonBgInactive,
+    borderWidth: currentMenu === menu ? '2px' : '1px',
+    margin: '5px',
+    borderColor: buttonBorderDefault,
+    borderStyle: 'solid',
+    color: currentMenu === menu ? buttonTextActive : buttonTextInactive,
+    boxShadow: currentMenu === menu ? '0 0 6px rgba(128, 128, 128, 128)' : 'none',
+    transition: 'border-width 0.15s ease, box-shadow 0.15s ease'
+  });
+
   return (
     <Flex direction="column" height="100vh" maxHeight="100vh" justifyContent="flex-end" alignContent="flex-end">
       {/* Delete Confirmation Dialog */}
@@ -545,10 +558,7 @@ const DesktopMenu: React.FC = () => {
           <HStack width="100%" justify="center" mb={1}>
             <ButtonGroup variant="outline" isAttached spacing={0} size="sm">
               <Button
-                style={{
-                  backgroundColor: currentMenu === MenuLevel.Main ? buttonBgActive : buttonBgInactive,
-                  color: currentMenu === MenuLevel.Main ? buttonTextActive : buttonTextInactive
-                }}
+                style={buildTabStyle(MenuLevel.Main)}
                 onClick={() => setCurrentMenu(MenuLevel.Main)}
                 _hover={{ opacity: 0.8 }}
                 size="xs"
@@ -556,10 +566,7 @@ const DesktopMenu: React.FC = () => {
                 Primary
               </Button>
               <Button
-                style={{
-                  backgroundColor: currentMenu === MenuLevel.Sources ? buttonBgActive : buttonBgInactive,
-                  color: currentMenu === MenuLevel.Sources ? buttonTextActive : buttonTextInactive
-                }}
+                style={buildTabStyle(MenuLevel.Sources)}
                 onClick={() => setCurrentMenu(MenuLevel.Sources)}
                 _hover={{ opacity: 0.8 }}
                 size="xs"
@@ -567,10 +574,7 @@ const DesktopMenu: React.FC = () => {
                 ★ Sources
               </Button>
               <Button
-                style={{
-                  backgroundColor: currentMenu === MenuLevel.Sinks ? buttonBgActive : buttonBgInactive,
-                  color: currentMenu === MenuLevel.Sinks ? buttonTextActive : buttonTextInactive
-                }}
+                style={buildTabStyle(MenuLevel.Sinks)}
                 onClick={() => setCurrentMenu(MenuLevel.Sinks)}
                 _hover={{ opacity: 0.8 }}
                 size="xs"
@@ -578,10 +582,7 @@ const DesktopMenu: React.FC = () => {
                 ★ Sinks
               </Button>
               <Button
-                style={{
-                  backgroundColor: currentMenu === MenuLevel.Routes ? buttonBgActive : buttonBgInactive,
-                  color: currentMenu === MenuLevel.Routes ? buttonTextActive : buttonTextInactive
-                }}
+                style={buildTabStyle(MenuLevel.Routes)}
                 onClick={() => setCurrentMenu(MenuLevel.Routes)}
                 _hover={{ opacity: 0.8 }}
                 size="xs"
@@ -589,10 +590,7 @@ const DesktopMenu: React.FC = () => {
                 ★ Routes
               </Button>
               <Button
-                style={{
-                  backgroundColor: currentMenu === MenuLevel.RecentlyUsed ? buttonBgActive : buttonBgInactive,
-                  color: currentMenu === MenuLevel.RecentlyUsed ? buttonTextActive : buttonTextInactive
-                }}
+                style={buildTabStyle(MenuLevel.RecentlyUsed)}
                 onClick={() => setCurrentMenu(MenuLevel.RecentlyUsed)}
                 _hover={{ opacity: 0.8 }}
                 size="xs"
@@ -602,7 +600,10 @@ const DesktopMenu: React.FC = () => {
               <Button
                 style={{
                   backgroundColor: buttonBgInactive,
-                  color: buttonTextInactive
+                  borderColor: buttonBorderDefault,
+                  borderWidth: '1px',
+                  color: buttonTextInactive,
+                  margin: '5px'
                 }}
                 onClick={openFullInterface}
                 _hover={{ opacity: 0.8 }}
@@ -617,10 +618,7 @@ const DesktopMenu: React.FC = () => {
           <HStack width="100%" justify="center">
             <ButtonGroup variant="outline" isAttached spacing={0} size="sm">
               <Button
-                style={{
-                  backgroundColor: currentMenu === MenuLevel.AllSources ? buttonBgActive : buttonBgInactive,
-                  color: currentMenu === MenuLevel.AllSources ? buttonTextActive : buttonTextInactive
-                }}
+                style={buildTabStyle(MenuLevel.AllSources)}
                 onClick={() => setCurrentMenu(MenuLevel.AllSources)}
                 _hover={{ opacity: 0.8 }}
                 size="xs"
@@ -628,10 +626,7 @@ const DesktopMenu: React.FC = () => {
                 All Sources
               </Button>
               <Button
-                style={{
-                  backgroundColor: currentMenu === MenuLevel.AllSinks ? buttonBgActive : buttonBgInactive,
-                  color: currentMenu === MenuLevel.AllSinks ? buttonTextActive : buttonTextInactive
-                }}
+                style={buildTabStyle(MenuLevel.AllSinks)}
                 onClick={() => setCurrentMenu(MenuLevel.AllSinks)}
                 _hover={{ opacity: 0.8 }}
                 size="xs"
@@ -639,10 +634,7 @@ const DesktopMenu: React.FC = () => {
                 All Sinks
               </Button>
               <Button
-                style={{
-                  backgroundColor: currentMenu === MenuLevel.AllRoutes ? buttonBgActive : buttonBgInactive,
-                  color: currentMenu === MenuLevel.AllRoutes ? buttonTextActive : buttonTextInactive
-                }}
+                style={buildTabStyle(MenuLevel.AllRoutes)}
                 onClick={() => setCurrentMenu(MenuLevel.AllRoutes)}
                 _hover={{ opacity: 0.8 }}
                 size="xs"
@@ -654,32 +646,30 @@ const DesktopMenu: React.FC = () => {
               <AddMenuDropdown
                 buttonBgInactive={buttonBgInactive}
                 buttonTextInactive={buttonTextInactive}
+                buttonBorderColor={buttonBorderDefault}
                 onAddSource={handleAddSource}
                 onAddSourceGroup={handleAddSourceGroup}
                 onAddSink={handleAddSink}
                 onAddSinkGroup={handleAddSinkGroup}
                 onAddRoute={handleAddRoute}
               />
+              <InstanceSwitcher
+                size="xs"
+                buttonProps={{
+                  variant: 'solid',
+                  bg: buttonBgInactive,
+                  color: buttonTextInactive,
+                  _hover: { bg: buttonBgActive },
+                  borderRadius: 'md',
+                }}
+                menuListProps={{ minW: '260px' }}
+                resolveHref={(instance) => {
+                  const base = instance.url.replace(/\/$/, '');
+                  return `${base}/desktopMenu`;
+                }}
+              />
             </ButtonGroup>
           </HStack>
-          <Box width="100%" mt={2} textAlign="center">
-            <InstanceSwitcher
-              size="xs"
-              buttonProps={{
-                width: '100%',
-                variant: 'solid',
-                bg: buttonBgInactive,
-                color: buttonTextInactive,
-                _hover: { bg: buttonBgActive },
-                borderRadius: 'md',
-              }}
-              menuListProps={{ minW: '260px' }}
-              resolveHref={(instance) => {
-                const base = instance.url.replace(/\/$/, '');
-                return `${base}/desktopMenu`;
-              }}
-            />
-          </Box>
         </Flex>
       </Box>
     </Flex>

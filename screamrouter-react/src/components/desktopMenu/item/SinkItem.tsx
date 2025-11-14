@@ -215,6 +215,9 @@ const SinkItem: React.FC<SinkItemProps> = ({
               Speaker Layout
             </MenuItem>
             {/* --- End New MenuItem --- */}
+            <MenuItem onClick={() => window.open(`/site/add-route?sink=${encodeURIComponent(sink.name)}`, '_blank')}>
+              ➕ Add Route to Sink
+            </MenuItem>
             <MenuItem onClick={() => actions.confirmDelete('sinks', sink.name)}>
               Delete
             </MenuItem>
@@ -275,7 +278,7 @@ const SinkItem: React.FC<SinkItemProps> = ({
             <Box px={3} py={2}>
               <Text mb={2} fontSize="sm">Timeshift</Text>
               <Slider
-                min={-60}
+                min={-300}
                 max={0}
                 step={1}
                 value={-sink.timeshift || 0}

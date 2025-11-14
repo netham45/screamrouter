@@ -171,21 +171,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
             _hover={{ bg: buttonHoverBg }}
             onClick={onStartTutorial}
           />
-        </Tooltip> 
-        <IconButton
-          aria-label="Refresh"
-          icon={<RepeatIcon />}
-          variant="ghost"
-          color="white"
-          _hover={{ bg: buttonHoverBg }}
-        />
-        <IconButton
-          aria-label="Settings"
-          icon={<SettingsIcon />}
-          variant="ghost"
-          color="white"
-          _hover={{ bg: buttonHoverBg }}
-        />
+        </Tooltip>
         <IconButton
           aria-label="Toggle color mode"
           icon={isDarkMode ? <SunIcon /> : <MoonIcon />}

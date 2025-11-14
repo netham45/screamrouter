@@ -186,7 +186,7 @@ const RouteItem: React.FC<RouteItemProps> = ({
             <Box px={3} py={2}>
               <Text mb={2} fontSize="sm">Timeshift</Text>
               <Slider
-                min={-60}
+                min={-300}
                 max={0}
                 step={1}
                 value={-route.timeshift || 0}

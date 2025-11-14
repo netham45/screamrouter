@@ -17,6 +17,7 @@ import { colorContextInstance } from '../context/ColorContext';
 interface AddMenuDropdownProps {
   buttonBgInactive: string;
   buttonTextInactive: string;
+  buttonBorderColor: string;
   onAddSource: () => void;
   onAddSourceGroup: () => void;
   onAddSink: () => void;
@@ -27,6 +28,7 @@ interface AddMenuDropdownProps {
 const AddMenuDropdown: React.FC<AddMenuDropdownProps> = ({
   buttonBgInactive,
   buttonTextInactive,
+  buttonBorderColor,
   onAddSource,
   onAddSourceGroup,
   onAddSink,
@@ -46,8 +48,9 @@ const AddMenuDropdown: React.FC<AddMenuDropdownProps> = ({
         style={{
           backgroundColor: buttonBgInactive,
           color: buttonTextInactive,
-          borderColor: 'rgba(255, 255, 255, 0.16)',
-          borderWidth: '1px'
+          borderColor: buttonBorderColor,
+          borderWidth: '1px',
+          margin: '5px'
         }}
         _hover={{ opacity: 0.8 }}
         _active={{ opacity: 0.9 }}

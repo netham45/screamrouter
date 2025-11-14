@@ -81,6 +81,24 @@ jobs:
         run: |
           python -m pip install dist/*.whl
           python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
+
+      - name: Build PyInstaller executable (Python 3.14)
+        if: matrix.python-version == '3.14'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          if [ -f pyinstaller-dist/ScreamRouter ]; then
+            mv pyinstaller-dist/ScreamRouter pyinstaller-dist/ScreamRouter-linux-x86_64
+          fi
+
+      - name: Upload PyInstaller executable
+        if: matrix.python-version == '3.14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyinstaller-linux-x86_64
+          path: pyinstaller-dist/ScreamRouter-linux-x86_64
+          retention-days: 7
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -159,6 +177,24 @@ jobs:
         run: |
           python -m pip install dist/*.whl
           python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
+
+      - name: Build PyInstaller executable (Python 3.14)
+        if: matrix.python-version == '3.14'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          if [ -f pyinstaller-dist/ScreamRouter ]; then
+            mv pyinstaller-dist/ScreamRouter pyinstaller-dist/ScreamRouter-linux-arm64
+          fi
+
+      - name: Upload PyInstaller executable
+        if: matrix.python-version == '3.14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyinstaller-linux-arm64
+          path: pyinstaller-dist/ScreamRouter-linux-arm64
+          retention-days: 7
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -247,6 +283,24 @@ jobs:
               \${PYBIN}/python -c 'import screamrouter; print(\"ScreamRouter version:\", getattr(screamrouter, \"__version__\", \"unknown\"))'
             "
 
+      - name: Build PyInstaller executable (Python 3.14)
+        if: matrix.python-version == '3.14'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          if [ -f pyinstaller-dist/ScreamRouter ]; then
+            mv pyinstaller-dist/ScreamRouter pyinstaller-dist/ScreamRouter-linux-x86_64-musl
+          fi
+
+      - name: Upload PyInstaller executable
+        if: matrix.python-version == '3.14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyinstaller-linux-x86_64-musl
+          path: pyinstaller-dist/ScreamRouter-linux-x86_64-musl
+          retention-days: 7
+
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
@@ -334,6 +388,24 @@ jobs:
               \${PYBIN}/python -c 'import screamrouter; print(\"ScreamRouter version:\", getattr(screamrouter, \"__version__\", \"unknown\"))'
             "
 
+      - name: Build PyInstaller executable (Python 3.14)
+        if: matrix.python-version == '3.14'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          if [ -f pyinstaller-dist/ScreamRouter ]; then
+            mv pyinstaller-dist/ScreamRouter pyinstaller-dist/ScreamRouter-linux-arm64-musl
+          fi
+
+      - name: Upload PyInstaller executable
+        if: matrix.python-version == '3.14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyinstaller-linux-arm64-musl
+          path: pyinstaller-dist/ScreamRouter-linux-arm64-musl
+          retention-days: 7
+
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
@@ -387,6 +459,25 @@ jobs:
         run: |
           pip install (Get-Item dist\*.whl).FullName
           python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
+
+      - name: Build PyInstaller executable (Python 3.14)
+        if: matrix.python-version == '3.14'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pyinstaller screamrouter\__main__.py --onefile -i src\audio_engine\windows\resources\screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          if (Test-Path "pyinstaller-dist\ScreamRouter.exe") {
+            Rename-Item "pyinstaller-dist\ScreamRouter.exe" "pyinstaller-dist\ScreamRouter-windows-x64.exe" -Force
+          }
+        shell: pwsh
+
+      - name: Upload PyInstaller executable
+        if: matrix.python-version == '3.14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyinstaller-windows-x64
+          path: pyinstaller-dist/ScreamRouter-windows-x64.exe
+          retention-days: 7
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -441,6 +532,25 @@ jobs:
         run: |
           pip install (Get-Item dist\*.whl).FullName
           python -c "import screamrouter; print('ScreamRouter version:', getattr(screamrouter, '__version__', 'unknown'))"
+
+      - name: Build PyInstaller executable (Python 3.14)
+        if: matrix.python-version == '3.14'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pyinstaller screamrouter\__main__.py --onefile -i src\audio_engine\windows\resources\screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          if (Test-Path "pyinstaller-dist\ScreamRouter.exe") {
+            Rename-Item "pyinstaller-dist\ScreamRouter.exe" "pyinstaller-dist\ScreamRouter-windows-x86.exe" -Force
+          }
+        shell: pwsh
+
+      - name: Upload PyInstaller executable
+        if: matrix.python-version == '3.14'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyinstaller-windows-x86
+          path: pyinstaller-dist/ScreamRouter-windows-x86.exe
+          retention-days: 7
       
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
@@ -499,3 +609,40 @@ jobs:
           echo "| Linux ARM64 (musl) | $(ls python-wheels/*musllinux*aarch64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows x64 | $(ls python-wheels/*win_amd64.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows x86 | $(ls python-wheels/*win32.whl 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+
+  release-pyinstaller:
+    name: Publish PyInstaller Executables
+    runs-on: ubuntu-latest
+    needs: [build-linux-x86_64, build-linux-arm64, build-linux-x86_64-musl, build-linux-arm64-musl, build-windows-x64, build-windows-x86]
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download PyInstaller artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: pyinstaller-artifacts
+          pattern: pyinstaller-*
+
+      - name: Prepare release assets
+        run: |
+          set -e
+          shopt -s nullglob
+          mkdir -p release-assets
+          found_assets=0
+          for file in pyinstaller-artifacts/*/ScreamRouter*; do
+            if [ -f "$file" ]; then
+              cp "$file" "release-assets/$(basename "$file")"
+              found_assets=1
+            fi
+          done
+          if [ "$found_assets" -eq 0 ]; then
+            echo "No PyInstaller assets found to release." >&2
+            exit 1
+          fi
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

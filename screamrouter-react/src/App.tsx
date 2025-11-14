@@ -125,7 +125,7 @@ const AppContent: React.FC = () => {
 
 
   return (
-    <Router basename="/site"> {/* Set the base URL for routing */}
+    <>
       {/* Include the GlobalFunctionsComponent in the React tree */}
       <GlobalFunctionsComponent />
       
@@ -167,7 +167,7 @@ const AppContent: React.FC = () => {
         />
       )}
       <WebRTCAudioPlayers /> {/* Add the WebRTC audio players */}
-    </Router>
+    </>
   );
 };
 
@@ -178,15 +178,17 @@ const AppContent: React.FC = () => {
 const App: React.FC = () => {
   return (
     <ChakraProvider theme={theme}> {/* Provide Chakra UI theme to the entire application */}
-      <MdnsDiscoveryProvider>
-        <TutorialProvider>
-          <AppProvider> {/* Provide context to the entire application */}
-            <WebRTCProvider>
-              <AppContent /> {/* Render the main content of the application */}
-            </WebRTCProvider>
-          </AppProvider>
-        </TutorialProvider>
-      </MdnsDiscoveryProvider>
+      <Router basename="/site"> {/* Set the base URL for routing */}
+        <MdnsDiscoveryProvider>
+          <TutorialProvider>
+            <AppProvider> {/* Provide context to the entire application */}
+              <WebRTCProvider>
+                <AppContent /> {/* Render the main content of the application */}
+              </WebRTCProvider>
+            </AppProvider>
+          </TutorialProvider>
+        </MdnsDiscoveryProvider>
+      </Router>
     </ChakraProvider>
   );
 };
