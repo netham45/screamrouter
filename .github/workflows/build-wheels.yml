@@ -467,7 +467,7 @@ jobs:
           pip install pyinstaller
           pyinstaller screamrouter\__main__.py --onefile -i src\audio_engine\windows\resources\screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
           if (Test-Path "pyinstaller-dist\ScreamRouter.exe") {
-            Rename-Item "pyinstaller-dist\ScreamRouter.exe" "pyinstaller-dist\ScreamRouter-windows-x64.exe" -Force
+            Move-Item -LiteralPath "pyinstaller-dist\ScreamRouter.exe" -Destination "pyinstaller-dist\ScreamRouter-windows-x64.exe" -Force
           }
         shell: pwsh
 
@@ -540,7 +540,7 @@ jobs:
           pip install pyinstaller
           pyinstaller screamrouter\__main__.py --onefile -i src\audio_engine\windows\resources\screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
           if (Test-Path "pyinstaller-dist\ScreamRouter.exe") {
-            Rename-Item "pyinstaller-dist\ScreamRouter.exe" "pyinstaller-dist\ScreamRouter-windows-x86.exe" -Force
+            Move-Item -LiteralPath "pyinstaller-dist\ScreamRouter.exe" -Destination "pyinstaller-dist\ScreamRouter-windows-x86.exe" -Force
           }
         shell: pwsh
 
