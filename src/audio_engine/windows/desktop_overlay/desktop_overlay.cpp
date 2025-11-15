@@ -864,8 +864,6 @@ void DesktopOverlayController::EnsureTrayIcon() {
     remove.cbSize = sizeof(remove);
     remove.hWnd = window_;
     remove.uID = kTrayIconId;
-    remove.guidItem = tray_guid_;
-    remove.uFlags = NIF_GUID;
     LogNotifyIconData("EnsureTrayIcon remove-before", remove);
     BOOL remove_result = Shell_NotifyIconW(NIM_DELETE, &remove);
     LogNotifyIconOperation("NIM_DELETE", NIM_DELETE, remove, remove_result != FALSE);
@@ -875,14 +873,13 @@ void DesktopOverlayController::EnsureTrayIcon() {
     nid.cbSize = sizeof(nid);
     nid.hWnd = window_;
     nid.uID = kTrayIconId;
-    nid.guidItem = tray_guid_;
     nid.uCallbackMessage = kTrayCallbackMessage;
     nid.hIcon = tray_icon_ ? tray_icon_ : LoadIconW(nullptr, IDI_APPLICATION);
     LogIconHandle("EnsureTrayIcon using icon", nid.hIcon);
     StringCchCopyW(nid.szTip, ARRAYSIZE(nid.szTip), kTrayTooltip);
 
     // Required flags for V4
-    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_GUID | NIF_SHOWTIP;
+    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
     LogNotifyIconData("EnsureTrayIcon add-before", nid);
 
     BOOL add_result = Shell_NotifyIconW(NIM_ADD, &nid);
@@ -912,8 +909,6 @@ void DesktopOverlayController::CleanupTrayIcon() {
     remove.cbSize = sizeof(remove);
     remove.hWnd = window_;
     remove.uID = kTrayIconId;
-    remove.guidItem = tray_guid_;
-    remove.uFlags = NIF_GUID;
     LogNotifyIconData("CleanupTrayIcon remove-before", remove);
     BOOL remove_result = Shell_NotifyIconW(NIM_DELETE, &remove);
     LogNotifyIconOperation("Cleanup NIM_DELETE", NIM_DELETE, remove, remove_result != FALSE);
@@ -954,8 +949,6 @@ void DesktopOverlayController::ShowTrayMenu(const POINT& anchor) {
     focus.cbSize = sizeof(focus);
     focus.hWnd = window_;
     focus.uID = kTrayIconId;
-    focus.guidItem = tray_guid_;
-    focus.uFlags = NIF_GUID;
     Shell_NotifyIconW(NIM_SETFOCUS, &focus);
 }
 
