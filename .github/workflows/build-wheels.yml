@@ -23,7 +23,7 @@ permissions:
 jobs:
   build-linux-x86_64:
     name: Build Linux x86_64 Wheels
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
@@ -214,7 +214,7 @@ jobs:
 
   build-linux-x86_64-musl:
     name: Build Linux x86_64 MUSL Wheels
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
