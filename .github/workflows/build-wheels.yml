@@ -87,7 +87,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build --collect-all screamrouter
           if [ -f pyinstaller-dist/ScreamRouter ]; then
             mv pyinstaller-dist/ScreamRouter pyinstaller-dist/ScreamRouter-linux-x86_64
           fi
@@ -96,7 +96,7 @@ jobs:
         if: matrix.python-version == '3.14'
         uses: actions/upload-artifact@v4
         with:
-          name: pyinstaller-linux-x86_64
+          name: screamrouter-linux-x86_64
           path: pyinstaller-dist/ScreamRouter-linux-x86_64
           retention-days: 7
       
@@ -183,7 +183,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build --collect-all screamrouter
           if [ -f pyinstaller-dist/ScreamRouter ]; then
             mv pyinstaller-dist/ScreamRouter pyinstaller-dist/ScreamRouter-linux-arm64
           fi
@@ -192,7 +192,7 @@ jobs:
         if: matrix.python-version == '3.14'
         uses: actions/upload-artifact@v4
         with:
-          name: pyinstaller-linux-arm64
+          name: screamrouter-linux-arm64
           path: pyinstaller-dist/ScreamRouter-linux-arm64
           retention-days: 7
       
@@ -288,7 +288,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build --collect-all screamrouter
           if [ -f pyinstaller-dist/ScreamRouter ]; then
             mv pyinstaller-dist/ScreamRouter pyinstaller-dist/ScreamRouter-linux-x86_64-musl
           fi
@@ -297,7 +297,7 @@ jobs:
         if: matrix.python-version == '3.14'
         uses: actions/upload-artifact@v4
         with:
-          name: pyinstaller-linux-x86_64-musl
+          name: screamrouter-linux-x86_64-musl
           path: pyinstaller-dist/ScreamRouter-linux-x86_64-musl
           retention-days: 7
 
@@ -393,7 +393,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          pyinstaller screamrouter/__main__.py --onefile --icon src/audio_engine/windows/resources/screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build --collect-all screamrouter
           if [ -f pyinstaller-dist/ScreamRouter ]; then
             mv pyinstaller-dist/ScreamRouter pyinstaller-dist/ScreamRouter-linux-arm64-musl
           fi
@@ -402,7 +402,7 @@ jobs:
         if: matrix.python-version == '3.14'
         uses: actions/upload-artifact@v4
         with:
-          name: pyinstaller-linux-arm64-musl
+          name: screamrouter-linux-arm64-musl
           path: pyinstaller-dist/ScreamRouter-linux-arm64-musl
           retention-days: 7
 
@@ -465,7 +465,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pyinstaller screamrouter\__main__.py --onefile -i src\audio_engine\windows\resources\screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          pyinstaller screamrouter\__main__.py --onefile -i src\audio_engine\windows\resources\screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build --collect-all screamrouter
           if (Test-Path "pyinstaller-dist\ScreamRouter.exe") {
             Move-Item -LiteralPath "pyinstaller-dist\ScreamRouter.exe" -Destination "pyinstaller-dist\ScreamRouter-windows-x64.exe" -Force
           }
@@ -475,7 +475,7 @@ jobs:
         if: matrix.python-version == '3.14'
         uses: actions/upload-artifact@v4
         with:
-          name: pyinstaller-windows-x64
+          name: screamrouter-windows-x64
           path: pyinstaller-dist/ScreamRouter-windows-x64.exe
           retention-days: 7
       
@@ -538,7 +538,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
-          pyinstaller screamrouter\__main__.py --onefile -i src\audio_engine\windows\resources\screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build
+          pyinstaller screamrouter\__main__.py --onefile -i src\audio_engine\windows\resources\screamrouter.ico -n ScreamRouter --distpath pyinstaller-dist --workpath pyinstaller-build --collect-all screamrouter
           if (Test-Path "pyinstaller-dist\ScreamRouter.exe") {
             Move-Item -LiteralPath "pyinstaller-dist\ScreamRouter.exe" -Destination "pyinstaller-dist\ScreamRouter-windows-x86.exe" -Force
           }
@@ -548,7 +548,7 @@ jobs:
         if: matrix.python-version == '3.14'
         uses: actions/upload-artifact@v4
         with:
-          name: pyinstaller-windows-x86
+          name: screamrouter-windows-x86
           path: pyinstaller-dist/ScreamRouter-windows-x86.exe
           retention-days: 7
       
@@ -621,7 +621,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: pyinstaller-artifacts
-          pattern: pyinstaller-*
+          pattern: screamrouter-*
 
       - name: Prepare release assets
         run: |

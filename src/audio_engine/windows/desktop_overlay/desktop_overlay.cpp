@@ -8,6 +8,7 @@
 #include <Shobjidl.h>
 #include <KnownFolders.h>
 #include <Strsafe.h>
+#include <Objbase.h>
 #include <comdef.h>
 #include <windowsx.h>
 #include <propvarutil.h>
@@ -20,6 +21,7 @@
 #include <cwchar>
 #include <filesystem>
 #include <iterator>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -117,66 +119,226 @@ DesktopOverlayController* GetController(HWND hwnd) {
     return reinterpret_cast<DesktopOverlayController*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
 }
 
+std::wstring ModulePathFromHandle(HMODULE module) {
+    if (!module) {
+        return L"<null>";
+    }
+
+    std::array<wchar_t, MAX_PATH> buffer{};
+    DWORD len =
+        GetModuleFileNameW(module, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (len == 0) {
+        DWORD err = GetLastError();
+        std::wstring result = L"<unknown err=";
+        result += std::to_wstring(err);
+        result += L">";
+        return result;
+    }
+    return std::wstring(buffer.data(), len);
+}
+
+void LogModuleDetails(const char* label, HMODULE module) {
+    const std::wstring module_path = ModulePathFromHandle(module);
+    LOG_CPP_INFO("%s (handle=%p path=%ls)", label, module, module_path.c_str());
+}
+
+std::wstring GuidToString(const GUID& guid) {
+    wchar_t buffer[64]{};
+    int chars = StringFromGUID2(guid, buffer, ARRAYSIZE(buffer));
+    if (chars > 0) {
+        return std::wstring(buffer, static_cast<size_t>(chars - 1));  // exclude null terminator
+    }
+    wchar_t fallback[64];
+    swprintf(fallback,
+             ARRAYSIZE(fallback),
+             L"{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+             guid.Data1,
+             guid.Data2,
+             guid.Data3,
+             guid.Data4[0],
+             guid.Data4[1],
+             guid.Data4[2],
+             guid.Data4[3],
+             guid.Data4[4],
+             guid.Data4[5],
+             guid.Data4[6],
+             guid.Data4[7]);
+    return fallback;
+}
+
+void LogIconHandle(const char* label, HICON icon) {
+    LOG_CPP_INFO("%s icon handle=%p", label, icon);
+}
+
+void LogNotifyIconData(const char* label, const NOTIFYICONDATAW& nid) {
+    std::wstring guid = GuidToString(nid.guidItem);
+    LOG_CPP_INFO(
+        "%s NotifyIconData hwnd=%p uID=%u guid=%ls flags=0x%08X callback=0x%08X version=%u "
+        "hIcon=%p tip=%ls state=0x%08X stateMask=0x%08X infoFlags=0x%08X",
+        label,
+        nid.hWnd,
+        nid.uID,
+        guid.c_str(),
+        nid.uFlags,
+        nid.uCallbackMessage,
+        nid.uVersion,
+        nid.hIcon,
+        nid.szTip,
+        nid.dwState,
+        nid.dwStateMask,
+        nid.dwInfoFlags);
+}
+
+void LogNotifyIconOperation(const char* operation,
+                            DWORD message,
+                            const NOTIFYICONDATAW& nid,
+                            bool result) {
+    const std::wstring guid_str = GuidToString(nid.guidItem);
+    LOG_CPP_INFO(
+        "Tray icon %s message=0x%08lX hwnd=%p uID=%u flags=0x%08X hIcon=%p guid=%ls tip=%ls result=%d",
+        operation,
+        message,
+        nid.hWnd,
+        nid.uID,
+        nid.uFlags,
+        nid.hIcon,
+        guid_str.c_str(),
+        nid.szTip,
+        result ? 1 : 0);
+    if (!result) {
+        LOG_CPP_WARNING("Tray icon %s failed (err=%lu)", operation, GetLastError());
+    }
+}
+
 }  // namespace
+
+extern "C" PyObject* PyInit_screamrouter_audio_engine();
 
 DesktopOverlayController::DesktopOverlayController() {
     ZeroMemory(&nid_, sizeof(nid_));
 
     const auto module_address =
-        reinterpret_cast<LPCWSTR>(&DesktopOverlayController::OverlayWndProc);
+        reinterpret_cast<LPCWSTR>(&PyInit_screamrouter_audio_engine);
+    LOG_CPP_INFO("DesktopOverlay constructor PyInit_screamrouter_audio_engine address=%p",
+                 module_address);
+
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                                 GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                             module_address, &resource_module_)) {
+        DWORD err = GetLastError();
         resource_module_ = nullptr;
-        LOG_CPP_WARNING("GetModuleHandleExW failed for resource module (err=%lu)", GetLastError());
+        LOG_CPP_WARNING("GetModuleHandleExW for PyInit_ module failed (err=%lu)", err);
+    } else {
+        LogModuleDetails("screamrouter_audio_engine resource module", resource_module_);
     }
 
-    auto load_icon_from = [](HMODULE module) -> HICON {
+    auto load_icon_from = [&](const char* label, HMODULE module) -> HICON {
+        const std::wstring module_path = ModulePathFromHandle(module);
         if (!module) {
+            LOG_CPP_INFO("%s LoadIconW skipped (handle=null)", label);
             return nullptr;
         }
-        return LoadIconW(module, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
+        HICON icon = LoadIconW(module, MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON));
+        if (icon) {
+            LOG_CPP_INFO("%s LoadIconW succeeded (module=%p path=%ls icon=%p)",
+                         label,
+                         module,
+                         module_path.c_str(),
+                         icon);
+        } else {
+            DWORD err = GetLastError();
+            LOG_CPP_WARNING("%s LoadIconW failed (module=%p path=%ls err=%lu)",
+                            label,
+                            module,
+                            module_path.c_str(),
+                            err);
+        }
+        return icon;
     };
 
-    tray_icon_ = load_icon_from(resource_module_);
+    tray_icon_ = load_icon_from("screamrouter_audio_engine module", resource_module_);
     if (tray_icon_) {
-        LOG_CPP_INFO("Loaded tray icon from screamrouter_audio_engine module");
+        LOG_CPP_INFO("Loaded tray icon from screamrouter_audio_engine module "
+                     "(module=%p path=%ls icon=%p)",
+                     resource_module_,
+                     ModulePathFromHandle(resource_module_).c_str(),
+                     tray_icon_);
     }
 
     if (!tray_icon_) {
         HINSTANCE host_instance = GetModuleHandle(nullptr);
-        tray_icon_ = load_icon_from(host_instance);
+        LogModuleDetails("Host executable module", host_instance);
+        tray_icon_ = load_icon_from("host executable module", host_instance);
         if (tray_icon_) {
-            LOG_CPP_INFO("Loaded tray icon from host executable");
+            LOG_CPP_INFO("Loaded tray icon from host executable (module=%p path=%ls icon=%p)",
+                         host_instance,
+                         ModulePathFromHandle(host_instance).c_str(),
+                         tray_icon_);
         }
     }
 
     if (!tray_icon_) {
-        // Try LoadImage which might work better for resources
-        auto load_image_from = [](HMODULE module) -> HICON {
+        auto load_image_from = [&](const char* label, HMODULE module) -> HICON {
+            const std::wstring module_path = ModulePathFromHandle(module);
             if (!module) {
+                LOG_CPP_INFO("%s LoadImageW skipped (handle=null)", label);
                 return nullptr;
             }
-            return reinterpret_cast<HICON>(LoadImageW(module,
-                                                      MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON),
-                                                      IMAGE_ICON,
-                                                      0,
-                                                      0,
-                                                      LR_DEFAULTSIZE | LR_SHARED));
+            HICON icon = reinterpret_cast<HICON>(LoadImageW(module,
+                                                            MAKEINTRESOURCEW(IDI_SCREAMROUTER_ICON),
+                                                            IMAGE_ICON,
+                                                            0,
+                                                            0,
+                                                            LR_DEFAULTSIZE | LR_SHARED));
+            if (icon) {
+                LOG_CPP_INFO("%s LoadImageW succeeded (module=%p path=%ls icon=%p)",
+                             label,
+                             module,
+                             module_path.c_str(),
+                             icon);
+            } else {
+                DWORD err = GetLastError();
+                LOG_CPP_WARNING("%s LoadImageW failed (module=%p path=%ls err=%lu)",
+                                label,
+                                module,
+                                module_path.c_str(),
+                                err);
+            }
+            return icon;
         };
-        tray_icon_ = load_image_from(resource_module_);
-        if (!tray_icon_) {
-            tray_icon_ = load_image_from(GetModuleHandle(nullptr));
-        }
+
+        tray_icon_ = load_image_from("screamrouter_audio_engine module (LoadImage)",
+                                     resource_module_);
         if (tray_icon_) {
-            LOG_CPP_INFO("Loaded tray icon using LoadImage fallback");
+            LOG_CPP_INFO("Loaded tray icon via LoadImage from screamrouter_audio_engine module "
+                         "(module=%p path=%ls icon=%p)",
+                         resource_module_,
+                         ModulePathFromHandle(resource_module_).c_str(),
+                         tray_icon_);
+        }
+        if (!tray_icon_) {
+            HINSTANCE host_instance = GetModuleHandle(nullptr);
+            tray_icon_ =
+                load_image_from("host executable module (LoadImage)", host_instance);
+            if (tray_icon_) {
+                LOG_CPP_INFO("Loaded tray icon via LoadImage from host executable "
+                             "(module=%p path=%ls icon=%p)",
+                             host_instance,
+                             ModulePathFromHandle(host_instance).c_str(),
+                             tray_icon_);
+            }
         }
     }
 
-    // Fallback to default icon
     if (!tray_icon_) {
-        LOG_CPP_WARNING("Failed to load ScreamRouter icon from resources (err=%lu), using default", GetLastError());
+        DWORD err = GetLastError();
+        LOG_CPP_WARNING(
+            "Failed to load ScreamRouter icon from resources (err=%lu), using default",
+            err);
         tray_icon_ = LoadIconW(nullptr, IDI_APPLICATION);
+        LOG_CPP_INFO("Loaded default application icon (icon=%p)", tray_icon_);
+    } else {
+        LOG_CPP_INFO("Tray icon selected (icon=%p)", tray_icon_);
     }
 
     InitializeIconResourcePath();
@@ -336,8 +498,14 @@ void DesktopOverlayController::UiThreadMain(std::wstring url, int width, int hei
 
     PositionWindow();
 
+    LOG_CPP_INFO("DesktopOverlay preparing tray icon (tray_icon_=%p resource_module=%p path=%ls)",
+                 tray_icon_,
+                 resource_module_,
+                 ModulePathFromHandle(resource_module_).c_str());
     EnsureTrayIcon();
-    LOG_CPP_INFO("DesktopOverlay tray icon initialized");
+    LOG_CPP_INFO("DesktopOverlay tray icon initialized (nid_icon=%p guid=%ls)",
+                 nid_.hIcon,
+                 GuidToString(tray_guid_).c_str());
 
     SetTimer(hwnd, kMouseTimerId, 50, nullptr);
     SetTimer(hwnd, kColorTimerId, 5000, nullptr);
@@ -679,8 +847,17 @@ void DesktopOverlayController::HandleColorTimer() {
 
 void DesktopOverlayController::EnsureTrayIcon() {
     if (!window_) {
+        LOG_CPP_WARNING("EnsureTrayIcon called with null window");
         return;
     }
+    const std::wstring guid_str = GuidToString(tray_guid_);
+    LOG_CPP_INFO(
+        "EnsureTrayIcon start window=%p tray_icon_=%p guid=%ls app_id_set=%d icon_resource_path=%ls",
+        window_,
+        tray_icon_,
+        guid_str.c_str(),
+        process_app_id_set_ ? 1 : 0,
+        icon_resource_path_.c_str());
 
     // First, remove any existing icon with this GUID
     NOTIFYICONDATAW remove{};
@@ -689,7 +866,9 @@ void DesktopOverlayController::EnsureTrayIcon() {
     remove.uID = kTrayIconId;
     remove.guidItem = tray_guid_;
     remove.uFlags = NIF_GUID;
-    Shell_NotifyIconW(NIM_DELETE, &remove);
+    LogNotifyIconData("EnsureTrayIcon remove-before", remove);
+    BOOL remove_result = Shell_NotifyIconW(NIM_DELETE, &remove);
+    LogNotifyIconOperation("NIM_DELETE", NIM_DELETE, remove, remove_result != FALSE);
 
     // Add the icon with all required flags
     NOTIFYICONDATAW nid{};
@@ -699,20 +878,29 @@ void DesktopOverlayController::EnsureTrayIcon() {
     nid.guidItem = tray_guid_;
     nid.uCallbackMessage = kTrayCallbackMessage;
     nid.hIcon = tray_icon_ ? tray_icon_ : LoadIconW(nullptr, IDI_APPLICATION);
+    LogIconHandle("EnsureTrayIcon using icon", nid.hIcon);
     StringCchCopyW(nid.szTip, ARRAYSIZE(nid.szTip), kTrayTooltip);
 
     // Required flags for V4
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_GUID | NIF_SHOWTIP;
+    LogNotifyIconData("EnsureTrayIcon add-before", nid);
 
-    if (!Shell_NotifyIconW(NIM_ADD, &nid)) {
-        LOG_CPP_ERROR("DesktopOverlay failed to add tray icon (err=%lu)", GetLastError());
+    BOOL add_result = Shell_NotifyIconW(NIM_ADD, &nid);
+    LogNotifyIconOperation("NIM_ADD", NIM_ADD, nid, add_result != FALSE);
+    if (!add_result) {
+        DWORD err = GetLastError();
+        LOG_CPP_ERROR("DesktopOverlay failed to add tray icon (err=%lu)", err);
         return;
     }
 
     // CRITICAL: Must call NIM_SETVERSION immediately after NIM_ADD for V4 semantics
     nid.uVersion = NOTIFYICON_VERSION_4;
-    if (!Shell_NotifyIconW(NIM_SETVERSION, &nid)) {
-        LOG_CPP_WARNING("Failed to set tray icon version to V4 (err=%lu)", GetLastError());
+    LogNotifyIconData("EnsureTrayIcon version-before", nid);
+    BOOL version_result = Shell_NotifyIconW(NIM_SETVERSION, &nid);
+    LogNotifyIconOperation("NIM_SETVERSION", NIM_SETVERSION, nid, version_result != FALSE);
+    if (!version_result) {
+        DWORD err = GetLastError();
+        LOG_CPP_WARNING("Failed to set tray icon version to V4 (err=%lu)", err);
     }
 
     nid_ = nid;
@@ -726,11 +914,14 @@ void DesktopOverlayController::CleanupTrayIcon() {
     remove.uID = kTrayIconId;
     remove.guidItem = tray_guid_;
     remove.uFlags = NIF_GUID;
-    Shell_NotifyIconW(NIM_DELETE, &remove);
+    LogNotifyIconData("CleanupTrayIcon remove-before", remove);
+    BOOL remove_result = Shell_NotifyIconW(NIM_DELETE, &remove);
+    LogNotifyIconOperation("Cleanup NIM_DELETE", NIM_DELETE, remove, remove_result != FALSE);
     nid_.cbSize = 0;
     if (tray_menu_) {
         DestroyMenu(tray_menu_);
         tray_menu_ = nullptr;
+        LOG_CPP_INFO("Tray menu destroyed during CleanupTrayIcon");
     }
 }
 
@@ -842,6 +1033,7 @@ void DesktopOverlayController::FocusWebView() {
 
 void DesktopOverlayController::EnsureProcessAppId() {
     if (process_app_id_set_) {
+        LOG_CPP_DEBUG("EnsureProcessAppId already set (%ls)", app_user_model_id_.c_str());
         return;
     }
     if (app_user_model_id_.empty()) {
@@ -852,15 +1044,19 @@ void DesktopOverlayController::EnsureProcessAppId() {
         LOG_CPP_WARNING("DesktopOverlay failed to set process AppUserModelID (hr=0x%08X)", hr);
         return;
     }
+    LOG_CPP_INFO("Process AppUserModelID set to %ls", app_user_model_id_.c_str());
     process_app_id_set_ = true;
 }
 
 void DesktopOverlayController::InitializeIconResourcePath() {
     if (!icon_resource_path_.empty()) {
+        LOG_CPP_DEBUG("InitializeIconResourcePath already resolved (%ls)",
+                      icon_resource_path_.c_str());
         return;
     }
     wchar_t module_path[MAX_PATH]{};
     HMODULE icon_module = resource_module_ ? resource_module_ : GetModuleHandle(nullptr);
+    LogModuleDetails("InitializeIconResourcePath module", icon_module);
     DWORD len = GetModuleFileNameW(icon_module, module_path, ARRAYSIZE(module_path));
     if (len == 0 || len == ARRAYSIZE(module_path)) {
         LOG_CPP_WARNING("DesktopOverlay failed to get module path for icon (err=%lu)", GetLastError());
@@ -869,6 +1065,8 @@ void DesktopOverlayController::InitializeIconResourcePath() {
     icon_resource_path_ = module_path;
     icon_resource_path_ += L",";
     icon_resource_path_ += std::to_wstring(IDI_SCREAMROUTER_ICON);
+    LOG_CPP_INFO("InitializeIconResourcePath resolved icon resource path to %ls",
+                 icon_resource_path_.c_str());
 }
 
 void DesktopOverlayController::UpdateWindowAppId(HWND hwnd) {
@@ -893,6 +1091,8 @@ void DesktopOverlayController::UpdateWindowAppId(HWND hwnd) {
         SUCCEEDED(InitPropVariantFromString(app_user_model_id_.c_str(), &value))) {
         if (SUCCEEDED(store->SetValue(PKEY_AppUserModel_ID, value))) {
             changed = true;
+            LOG_CPP_INFO("UpdateWindowAppId set PKEY_AppUserModel_ID=%ls",
+                         app_user_model_id_.c_str());
         }
         PropVariantClear(&value);
     }
@@ -901,12 +1101,17 @@ void DesktopOverlayController::UpdateWindowAppId(HWND hwnd) {
         SUCCEEDED(InitPropVariantFromString(icon_resource_path_.c_str(), &value))) {
         if (SUCCEEDED(store->SetValue(PKEY_AppUserModel_RelaunchIconResource, value))) {
             changed = true;
+            LOG_CPP_INFO("UpdateWindowAppId set PKEY_AppUserModel_RelaunchIconResource=%ls",
+                         icon_resource_path_.c_str());
         }
         PropVariantClear(&value);
     }
 
     if (changed) {
         store->Commit();
+        LOG_CPP_INFO("UpdateWindowAppId committed property changes");
+    } else {
+        LOG_CPP_DEBUG("UpdateWindowAppId found no property changes to commit");
     }
 }
 
