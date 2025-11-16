@@ -69,10 +69,13 @@ protected:
 
 private:
     PerProcessScreamReceiverConfig config_;
-    const std::size_t chunk_size_bytes_;
     const std::size_t expected_packet_size_;
 
-    bool validate_per_process_scream_content(const uint8_t* buffer, int size, const std::string& sender_ip, TaggedAudioPacket& out_packet, std::string& out_composite_source_tag);
+    bool populate_tagged_packet(const uint8_t* buffer,
+                                int size,
+                                const std::string& sender_ip,
+                                TaggedAudioPacket& packet,
+                                std::string& out_composite_source_tag);
 };
 
 } // namespace audio

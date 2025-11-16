@@ -1,4 +1,5 @@
 #include "rtp_opus_sender.h"
+#include "../../audio_channel_layout.h"
 #include "../../utils/cpp_logger.h"
 #include <algorithm>
 #include <cstring>
@@ -59,7 +60,7 @@ uint32_t RtpOpusSender::rtp_channel_count() const {
 }
 
 std::string RtpOpusSender::sdp_payload_name() const {
-    return "opus";
+    return use_multistream_ ? "multiopus" : "opus";
 }
 
 std::vector<std::string> RtpOpusSender::sdp_format_specific_attributes() const {
@@ -80,6 +81,7 @@ std::vector<std::string> RtpOpusSender::sdp_format_specific_attributes() const {
         fmtp += "; channels=" + std::to_string(effective_channels);
         fmtp += "; streams=" + std::to_string(opus_streams_);
         fmtp += "; coupledstreams=" + std::to_string(opus_coupled_streams_);
+        fmtp += "; mappingfamily=" + std::to_string(opus_mapping_family_);
         if (!opus_channel_mapping_.empty()) {
             fmtp += "; channelmapping=";
             for (size_t i = 0; i < opus_channel_mapping_.size(); ++i) {
@@ -124,7 +126,12 @@ bool RtpOpusSender::initialize_payload_pipeline() {
             opus_channel_mapping_[static_cast<size_t>(ch)] = static_cast<unsigned char>(ch);
         }
     } else {
-        if (!derive_multistream_layout(opus_channels_, kOpusSampleRate, opus_mapping_family_, opus_streams_, opus_coupled_streams_, opus_channel_mapping_)) {
+        if (!derive_multistream_layout(opus_channels_,
+                                       kOpusSampleRate,
+                                       opus_mapping_family_,
+                                       opus_streams_,
+                                       opus_coupled_streams_,
+                                       opus_channel_mapping_)) {
             LOG_CPP_ERROR("[RtpOpusSender:%s] Unable to derive Opus multistream layout for %d channels",
                           config().sink_id.c_str(), opus_channels_);
             return false;
@@ -219,6 +226,19 @@ bool RtpOpusSender::initialize_payload_pipeline() {
     LOG_CPP_INFO("[RtpOpusSender:%s] Opus encoder initialized (channels=%d, streams=%d, coupled=%d, bitrate=%d, fec=%s, frame=%d samples)",
                  config().sink_id.c_str(), opus_channels_, opus_streams_, opus_coupled_streams_,
                  target_bitrate_, use_fec_ ? "on" : "off", opus_frame_size_);
+    if (use_multistream_) {
+        std::string mapping_str;
+        for (size_t i = 0; i < opus_channel_mapping_.size(); ++i) {
+            if (i != 0) {
+                mapping_str += ",";
+            }
+            mapping_str += std::to_string(static_cast<int>(opus_channel_mapping_[i]));
+        }
+        LOG_CPP_DEBUG("[RtpOpusSender:%s] Opus layout: family=%d mapping=[%s]",
+                      config().sink_id.c_str(),
+                      opus_mapping_family_,
+                      mapping_str.c_str());
+    }
     return true;
 }
 
@@ -382,91 +402,6 @@ bool RtpOpusSender::derive_multistream_layout(int channels, int sample_rate,
     return true;
 }
 
-std::vector<int> RtpOpusSender::compute_wave_channel_order(int channels) const {
-    std::vector<int> order;
-    order.reserve(static_cast<size_t>(channels));
-
-    uint32_t mask = (static_cast<uint32_t>(config().output_chlayout2) << 8) | config().output_chlayout1;
-    if (mask == 0) {
-        for (int i = 0; i < channels; ++i) {
-            order.push_back(i);
-        }
-        return order;
-    }
-
-    auto append_if_bit = [&](uint32_t bit, int type) {
-        if ((mask & bit) && order.size() < static_cast<size_t>(channels)) {
-            order.push_back(type);
-        }
-    };
-
-    append_if_bit(0x00000001u, 1);  // Front Left
-    append_if_bit(0x00000002u, 2);  // Front Right
-    append_if_bit(0x00000004u, 3);  // Front Center
-    append_if_bit(0x00000008u, 4);  // LFE
-    append_if_bit(0x00000010u, 5);  // Back Left
-    append_if_bit(0x00000020u, 6);  // Back Right
-    append_if_bit(0x00000040u, 7);  // Front Left of Center
-    append_if_bit(0x00000080u, 8);  // Front Right of Center
-    append_if_bit(0x00000100u, 9);  // Back Center
-    append_if_bit(0x00000200u, 10); // Side Left
-    append_if_bit(0x00000400u, 11); // Side Right
-
-    if (order.size() < static_cast<size_t>(channels)) {
-        for (int i = 0; i < channels && order.size() < static_cast<size_t>(channels); ++i) {
-            if (std::find(order.begin(), order.end(), i) == order.end()) {
-                order.push_back(i);
-            }
-        }
-    }
-
-    if (order.size() > static_cast<size_t>(channels)) {
-        order.resize(static_cast<size_t>(channels));
-    }
-
-    return order;
-}
-
-std::vector<int> RtpOpusSender::compute_canonical_channel_order(const std::vector<int>& wave_order, int channels) const {
-    std::vector<int> canonical;
-    canonical.reserve(static_cast<size_t>(channels));
-
-    auto add_if_present = [&](int type) {
-        if (canonical.size() >= static_cast<size_t>(channels)) {
-            return;
-        }
-        if (std::find(wave_order.begin(), wave_order.end(), type) != wave_order.end() &&
-            std::find(canonical.begin(), canonical.end(), type) == canonical.end()) {
-            canonical.push_back(type);
-        }
-    };
-
-    const int preferred_sequence[] = {1, 3, 2, 10, 11, 5, 6, 7, 8, 4, 9};
-    for (int type : preferred_sequence) {
-        add_if_present(type);
-        if (canonical.size() == static_cast<size_t>(channels)) {
-            break;
-        }
-    }
-
-    if (canonical.size() < static_cast<size_t>(channels)) {
-        for (int type : wave_order) {
-            if (std::find(canonical.begin(), canonical.end(), type) == canonical.end()) {
-                canonical.push_back(type);
-                if (canonical.size() == static_cast<size_t>(channels)) {
-                    break;
-                }
-            }
-        }
-    }
-
-    if (canonical.size() != static_cast<size_t>(channels)) {
-        canonical.clear();
-    }
-
-    return canonical;
-}
-
 void RtpOpusSender::initialize_channel_reorder() {
     const int channels = opus_channels_;
     if (channels <= 0) {
@@ -475,38 +410,40 @@ void RtpOpusSender::initialize_channel_reorder() {
         return;
     }
 
-    std::vector<int> wave_order = compute_wave_channel_order(channels);
-    if (wave_order.size() != static_cast<size_t>(channels)) {
-        channel_remap_.resize(static_cast<size_t>(channels));
-        std::iota(channel_remap_.begin(), channel_remap_.end(), 0);
-        needs_channel_reorder_ = false;
-        return;
-    }
-
-    std::vector<int> canonical_order = compute_canonical_channel_order(wave_order, channels);
-    if (canonical_order.size() != static_cast<size_t>(channels)) {
-        channel_remap_.resize(static_cast<size_t>(channels));
-        std::iota(channel_remap_.begin(), channel_remap_.end(), 0);
-        needs_channel_reorder_ = false;
-        return;
-    }
+    uint32_t mask = (static_cast<uint32_t>(config().output_chlayout2) << 8) | config().output_chlayout1;
+    std::vector<ChannelRole> configured_roles = channel_order_from_mask(mask);
+    std::vector<ChannelRole> canonical_roles = family1_canonical_channel_order(channels);
 
     channel_remap_.resize(static_cast<size_t>(channels));
+
+    if (configured_roles.size() != static_cast<size_t>(channels) ||
+        canonical_roles.size() != static_cast<size_t>(channels)) {
+        std::iota(channel_remap_.begin(), channel_remap_.end(), 0);
+        needs_channel_reorder_ = false;
+        if (channels > 2) {
+            LOG_CPP_WARNING("[RtpOpusSender:%s] Channel mask/canonical mismatch (mask=%zu, canonical=%zu). Using identity ordering.",
+                            config().sink_id.c_str(),
+                            configured_roles.size(),
+                            canonical_roles.size());
+        }
+        return;
+    }
+
     bool remap_valid = true;
     for (int i = 0; i < channels; ++i) {
-        const int type = canonical_order[static_cast<size_t>(i)];
-        auto it = std::find(wave_order.begin(), wave_order.end(), type);
-        if (it == wave_order.end()) {
+        ChannelRole desired = canonical_roles[static_cast<size_t>(i)];
+        auto it = std::find(configured_roles.begin(), configured_roles.end(), desired);
+        if (it == configured_roles.end()) {
             remap_valid = false;
             break;
         }
-        channel_remap_[static_cast<size_t>(i)] = static_cast<int>(std::distance(wave_order.begin(), it));
+        channel_remap_[static_cast<size_t>(i)] = static_cast<int>(std::distance(configured_roles.begin(), it));
     }
 
     if (!remap_valid) {
         std::iota(channel_remap_.begin(), channel_remap_.end(), 0);
         needs_channel_reorder_ = false;
-        LOG_CPP_WARNING("[RtpOpusSender:%s] Unable to build channel remap; using input ordering",
+        LOG_CPP_WARNING("[RtpOpusSender:%s] Unable to map configured channel mask to Opus canonical order. Using input ordering.",
                         config().sink_id.c_str());
         return;
     }

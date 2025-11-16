@@ -66,10 +66,9 @@ protected:
 
 private:
     RawScreamReceiverConfig config_;
-    const std::size_t chunk_size_bytes_;
     const std::size_t expected_packet_size_;
 
-    bool validate_raw_scream_content(const uint8_t* buffer, int size, TaggedAudioPacket& out_packet);
+    bool populate_tagged_packet(const uint8_t* buffer, int size, TaggedAudioPacket& packet);
 };
 
 } // namespace audio

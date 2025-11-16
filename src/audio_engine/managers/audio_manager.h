@@ -236,6 +236,14 @@ public:
     std::vector<std::string> list_stream_tags_for_wildcard(const std::string& wildcard_tag);
 
     /**
+     * @brief Computes the chunk size in bytes for a given audio format using current settings.
+     * @param channels Number of channels.
+     * @param bit_depth Bit depth (multiple of 8).
+     * @return Chunk size in bytes, or 0 if the format is invalid.
+     */
+    std::size_t get_chunk_size_bytes_for_format(int channels, int bit_depth) const;
+
+    /**
      * @brief Injects a plugin-generated audio packet into the global timeshift buffer.
      * @param source_tag The source tag to associate with the packet.
      * @param audio_payload The raw audio data.
@@ -341,7 +349,7 @@ public:
 
 private:
     std::atomic<bool> m_running{false};
-    std::recursive_mutex m_manager_mutex;
+    mutable std::recursive_mutex m_manager_mutex;
     std::shared_ptr<AudioEngineSettings> m_settings;
 
     // --- Sub-Managers ---
@@ -426,7 +434,10 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("underrun_hold_timeout_ms", &MixerTuning::underrun_hold_timeout_ms)
         .def_readwrite("max_input_queue_chunks", &MixerTuning::max_input_queue_chunks)
         .def_readwrite("min_input_queue_chunks", &MixerTuning::min_input_queue_chunks)
-        .def_readwrite("max_ready_chunks_per_source", &MixerTuning::max_ready_chunks_per_source);
+        .def_readwrite("max_ready_chunks_per_source", &MixerTuning::max_ready_chunks_per_source)
+        .def_readwrite("max_input_queue_duration_ms", &MixerTuning::max_input_queue_duration_ms)
+        .def_readwrite("min_input_queue_duration_ms", &MixerTuning::min_input_queue_duration_ms)
+        .def_readwrite("max_ready_queue_duration_ms", &MixerTuning::max_ready_queue_duration_ms);
 
     py::class_<SourceProcessorTuning>(m, "SourceProcessorTuning")
         .def(py::init<>())
@@ -457,6 +468,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
     py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
         .def(py::init<>())
         .def_readwrite("chunk_size_bytes", &AudioEngineSettings::chunk_size_bytes)
+        .def_readwrite("base_frames_per_chunk_mono16", &AudioEngineSettings::base_frames_per_chunk_mono16)
         .def_readwrite("timeshift_tuning", &AudioEngineSettings::timeshift_tuning)
         .def_readwrite("profiler", &AudioEngineSettings::profiler)
         .def_readwrite("mixer_tuning", &AudioEngineSettings::mixer_tuning)
@@ -509,6 +521,9 @@ inline void bind_audio_manager(pybind11::module_ &m) {
              py::arg("source_instance_id"), py::arg("sink_id"),
              "Explicitly disconnects a source instance from a sink. Returns true on success.")
         .def("update_source_parameters", &AudioManager::update_source_parameters, py::arg("instance_id"), py::arg("params"), "Updates source parameters.")
+        .def("get_chunk_size_bytes_for_format", &AudioManager::get_chunk_size_bytes_for_format,
+             py::arg("channels"), py::arg("bit_depth"),
+             "Returns the chunk size in bytes for the provided channel count and bit depth.")
         .def("get_mp3_data", [](AudioManager &self, const std::string& sink_id) -> py::bytes {
                 std::vector<uint8_t> data_vec = self.get_mp3_data(sink_id);
                 return py::bytes(reinterpret_cast<const char*>(data_vec.data()), data_vec.size());

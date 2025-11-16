@@ -73,6 +73,7 @@ struct StreamProperties {
     StreamCodec codec;    ///< The codec used by the RTP stream payload.
     int opus_streams;     ///< Number of Opus streams (multistream).
     int opus_coupled_streams; ///< Number of coupled Opus streams.
+    int opus_mapping_family;  ///< Opus mapping family identifier.
     std::vector<uint8_t> opus_channel_mapping; ///< Opus channel mapping table.
 
     StreamProperties()
@@ -84,6 +85,7 @@ struct StreamProperties {
           codec(StreamCodec::UNKNOWN),
           opus_streams(0),
           opus_coupled_streams(0),
+          opus_mapping_family(0),
           opus_channel_mapping() {}
 };
 

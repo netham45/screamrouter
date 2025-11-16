@@ -469,6 +469,7 @@ struct PulseAudioReceiver::Impl {
     mutable std::mutex tag_map_mutex;
     std::chrono::steady_clock::time_point telemetry_last_log_time{};
 
+    std::size_t base_frames_per_chunk = kDefaultBaseFramesPerChunkMono16;
     std::size_t chunk_size_bytes = kDefaultChunkSizeBytes;
     uint32_t min_request_bytes = static_cast<uint32_t>(kDefaultChunkSizeBytes);
     std::size_t chunk_queue_reserve_bytes = kDefaultChunkSizeBytes * 2;

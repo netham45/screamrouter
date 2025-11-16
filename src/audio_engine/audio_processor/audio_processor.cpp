@@ -42,11 +42,12 @@ using namespace screamrouter::audio;
 AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth,
                                int inputSampleRate, int outputSampleRate, float volume,
                                const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config,
-                               std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
+                               std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings,
+                               std::size_t input_chunk_size_bytes)
     : m_settings(settings),
-      chunk_size_bytes_(settings && settings->chunk_size_bytes > 0
-                            ? settings->chunk_size_bytes
-                            : kDefaultChunkSizeBytes),
+      chunk_size_bytes_(input_chunk_size_bytes > 0
+                            ? input_chunk_size_bytes
+                            : (settings && settings->chunk_size_bytes > 0 ? settings->chunk_size_bytes : kDefaultChunkSizeBytes)),
       inputChannels(inputChannels), outputChannels(outputChannels), inputBitDepth(inputBitDepth),
       inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate),
       speaker_layouts_config_(initial_layouts_config), // Initialize the map

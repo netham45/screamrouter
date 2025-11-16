@@ -57,8 +57,6 @@ private:
                                    int mapping_family,
                                    int& streams, int& coupled_streams,
                                    std::vector<unsigned char>& mapping) const;
-    std::vector<int> compute_wave_channel_order(int channels) const;
-    std::vector<int> compute_canonical_channel_order(const std::vector<int>& wave_order, int channels) const;
     void initialize_channel_reorder();
 }; 
 

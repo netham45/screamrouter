@@ -46,7 +46,8 @@ public:
     AudioProcessor(int inputChannels, int outputChannels, int inputBitDepth,
                    int inputSampleRate, int outputSampleRate, float volume,
                    const std::map<int, screamrouter::audio::CppSpeakerLayout>& initial_layouts_config,
-                   std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings);
+                   std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings,
+                   std::size_t input_chunk_size_bytes);
     /**
      * @brief Destructor for the AudioProcessor.
      */

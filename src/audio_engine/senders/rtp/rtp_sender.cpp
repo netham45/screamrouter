@@ -1,5 +1,6 @@
 #include "rtp_sender.h"
 #include "rtp_sender_registry.h"
+#include "../../audio_channel_layout.h"
 #include "../../utils/cpp_logger.h"
 #include "../../audio_constants.h" // For RTP constants
 #include <stdexcept>
@@ -82,33 +83,6 @@ std::string get_primary_source_ip() {
         return "127.0.0.1"; // Fallback
     }
 }
-} // end anonymous namespace
-
-namespace { // Anonymous namespace for channel mapping helper
-
-// Based on Windows WAVEFORMATEXTENSIBLE dwChannelMask
-std::vector<int> get_channel_order_from_mask(uint8_t chlayout1, uint8_t chlayout2) {
-    uint32_t channel_mask = (static_cast<uint32_t>(chlayout2) << 8) | chlayout1;
-    std::vector<int> order;
-
-    // This is a simplified mapping based on common speaker setups.
-    // The order follows the typical WAV file channel order.
-    if (channel_mask & 0x00000001) order.push_back(1); // Front Left
-    if (channel_mask & 0x00000002) order.push_back(2); // Front Right
-    if (channel_mask & 0x00000004) order.push_back(3); // Front Center
-    if (channel_mask & 0x00000008) order.push_back(4); // LFE
-    if (channel_mask & 0x00000010) order.push_back(5); // Back Left
-    if (channel_mask & 0x00000020) order.push_back(6); // Back Right
-    if (channel_mask & 0x00000040) order.push_back(7); // Front Left of Center
-    if (channel_mask & 0x00000080) order.push_back(8); // Front Right of Center
-    if (channel_mask & 0x00000100) order.push_back(9); // Back Center
-    if (channel_mask & 0x00000200) order.push_back(10); // Side Left
-    if (channel_mask & 0x00000400) order.push_back(11); // Side Right
-    // Add other channels as needed based on the full dwChannelMask spec
-
-    return order;
-}
-
 } // end anonymous namespace
 
 RtpSender::RtpSender(const SinkMixerConfig& config)
@@ -401,6 +375,7 @@ void RtpSender::close() {
 
 // As seen in rtp_receiver.cpp, this is a common payload type for this format.
 const int RTP_PAYLOAD_TYPE_L16_48K_STEREO = 127;
+constexpr std::size_t kDefaultRtpPayloadMtu = 1152;
 
 void RtpSender::send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) {
     if (payload_size == 0 || !rtp_core_) {
@@ -411,11 +386,17 @@ void RtpSender::send_payload(const uint8_t* payload_data, size_t payload_size, c
 }
 
 bool RtpSender::handle_send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) {
-    // Convert payload to network byte order
+    if (payload_size == 0) {
+        return true;
+    }
+
+    // Convert payload to network byte order (entire buffer once).
     std::vector<uint8_t> network_payload(payload_size);
     memcpy(network_payload.data(), payload_data, payload_size);
 
-    size_t bytes_per_sample = config_.output_bitdepth / 8;
+    const size_t bytes_per_sample = static_cast<size_t>(std::max(1, config_.output_bitdepth / 8));
+    const size_t bytes_per_frame = bytes_per_sample * static_cast<size_t>(std::max(1, config_.output_channels));
+
     if (bytes_per_sample > 0 && payload_size % bytes_per_sample == 0) {
         uint8_t* rtp_payload_ptr = network_payload.data();
 
@@ -426,7 +407,6 @@ bool RtpSender::handle_send_payload(const uint8_t* payload_data, size_t payload_
             }
         } else if (config_.output_bitdepth == 24) {
             for (size_t i = 0; i < payload_size; i += bytes_per_sample) {
-                // Manual byte swap for 24-bit: [0][1][2] -> [2][1][0]
                 uint8_t* sample_bytes = rtp_payload_ptr + i;
                 std::swap(sample_bytes[0], sample_bytes[2]);
             }
@@ -438,13 +418,41 @@ bool RtpSender::handle_send_payload(const uint8_t* payload_data, size_t payload_
         }
     }
 
-    if (!send_rtp_payload(network_payload.data(), network_payload.size(), csrcs, false)) {
-        return false;
+    const std::size_t mtu_bytes = kDefaultRtpPayloadMtu;
+    std::size_t slice_cap = mtu_bytes;
+    if (bytes_per_frame > 0 && slice_cap > 0) {
+        const std::size_t frames_per_slice = std::max<std::size_t>(1, slice_cap / bytes_per_frame);
+        slice_cap = frames_per_slice * bytes_per_frame;
+    } else {
+        slice_cap = payload_size;
     }
 
-    size_t bytes_per_frame = (config_.output_bitdepth / 8) * config_.output_channels;
-    if (bytes_per_frame > 0) {
-        advance_rtp_timestamp(static_cast<uint32_t>(payload_size / bytes_per_frame));
+    size_t offset = 0;
+    while (offset < payload_size) {
+        const size_t remaining = payload_size - offset;
+        size_t slice_size = std::min(remaining, slice_cap);
+        if (bytes_per_frame > 0) {
+            const size_t remainder = slice_size % bytes_per_frame;
+            if (remainder != 0) {
+                // Ensure we never send partial frames.
+                slice_size -= remainder;
+            }
+        }
+        if (slice_size == 0) {
+            // Fallback: send one frame to avoid infinite loop.
+            slice_size = std::min(remaining, bytes_per_frame > 0 ? bytes_per_frame : remaining);
+        }
+
+        const bool marker = (offset + slice_size) >= payload_size;
+        if (!send_rtp_payload(network_payload.data() + offset, slice_size, csrcs, marker)) {
+            return false;
+        }
+
+        if (bytes_per_frame > 0) {
+            advance_rtp_timestamp(static_cast<uint32_t>(slice_size / bytes_per_frame));
+        }
+
+        offset += slice_size;
     }
 
     return true;
@@ -546,10 +554,11 @@ void RtpSender::sap_announcement_loop() {
 
             // Add channel map if channels > 2, using the scream channel layout
             if (config_.output_channels > 2 && codec_name != "opus") {
-                std::vector<int> channel_order = get_channel_order_from_mask(config_.output_chlayout1, config_.output_chlayout2);
-                
-                // Ensure the channel order size matches the channel count for a valid map
-                if (channel_order.size() == static_cast<size_t>(config_.output_channels)) {
+                const uint32_t ch_mask = (static_cast<uint32_t>(config_.output_chlayout2) << 8) | config_.output_chlayout1;
+                std::vector<ChannelRole> layout_roles = channel_order_from_mask(ch_mask);
+
+                if (layout_roles.size() == static_cast<size_t>(config_.output_channels)) {
+                    std::vector<int> channel_order = roles_to_indices(layout_roles);
                     std::stringstream channel_map_ss;
                     channel_map_ss << "a=channelmap:" << static_cast<int>(payload_type) << " " << config_.output_channels;
                     for (size_t i = 0; i < channel_order.size(); ++i) {

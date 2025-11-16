@@ -15,6 +15,7 @@ namespace audio {
 
 namespace {
 constexpr std::size_t kRawScreamHeaderSize = 5;
+constexpr std::size_t kRawScreamPayloadBytes = 1152;
 constexpr std::size_t kMinimumReceiveBufferSize = 2048; // Should be larger than packet size
 constexpr int kRawPollTimeoutMs = 5;   // Check for stop flag every 5ms to service clock ticks promptly
 }
@@ -28,10 +29,9 @@ RawScreamReceiver::RawScreamReceiver(
                            notification_queue,
                            timeshift_manager,
                            logger_prefix,
-                           resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
+                           resolve_base_frames_per_chunk(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       config_(config),
-      chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
-      expected_packet_size_(kRawScreamHeaderSize + chunk_size_bytes_) {
+      expected_packet_size_(kRawScreamHeaderSize + kRawScreamPayloadBytes) {
     // Base class constructor handles WSAStartup, null checks for queue/manager, and initial logging.
 }
 
@@ -55,43 +55,37 @@ bool RawScreamReceiver::is_valid_packet_structure(const uint8_t* buffer, int siz
     return true;
 }
 
-bool RawScreamReceiver::validate_raw_scream_content(const uint8_t* buffer, int size, TaggedAudioPacket& out_packet) {
-    // Assumes buffer is not null and size is EXPECTED_RAW_PACKET_SIZE based on is_valid_packet_structure
-    if (static_cast<size_t>(size) != expected_packet_size_) { // Defensive check
-        log_warning("validate_raw_scream_content called with unexpected size: " + std::to_string(size));
+bool RawScreamReceiver::populate_tagged_packet(const uint8_t* buffer,
+                                               int size,
+                                               TaggedAudioPacket& packet) {
+    if (static_cast<size_t>(size) != expected_packet_size_) {
+        log_warning("populate_tagged_packet called with unexpected size: " + std::to_string(size));
         return false;
     }
 
     const uint8_t* header = buffer;
     bool is_44100_base = (header[0] >> 7) & 0x01;
     uint8_t samplerate_divisor = header[0] & 0x7F;
-    if (samplerate_divisor == 0) samplerate_divisor = 1; // As per original logic
+    if (samplerate_divisor == 0) {
+        samplerate_divisor = 1;
+    }
 
-    out_packet.sample_rate = (is_44100_base ? 44100 : 48000) / samplerate_divisor;
-    out_packet.bit_depth = static_cast<int>(header[1]);
-    out_packet.channels = static_cast<int>(header[2]);
-    out_packet.chlayout1 = header[3];
-    out_packet.chlayout2 = header[4];
+    packet.sample_rate = (is_44100_base ? 44100 : 48000) / samplerate_divisor;
+    packet.bit_depth = static_cast<int>(header[1]);
+    packet.channels = static_cast<int>(header[2]);
+    packet.chlayout1 = header[3];
+    packet.chlayout2 = header[4];
 
-    // Basic validation of parsed format
-    if (out_packet.channels <= 0 || out_packet.channels > 64 || // Max channels reasonable limit
-        (out_packet.bit_depth != 8 && out_packet.bit_depth != 16 && out_packet.bit_depth != 24 && out_packet.bit_depth != 32) ||
-        out_packet.sample_rate <= 0) {
-        log_warning("Parsed invalid audio format from Raw Scream packet. SR=" + std::to_string(out_packet.sample_rate) +
-                      ", BD=" + std::to_string(out_packet.bit_depth) + ", CH=" + std::to_string(out_packet.channels));
+    if (packet.channels <= 0 || packet.channels > 64 ||
+        (packet.bit_depth != 8 && packet.bit_depth != 16 && packet.bit_depth != 24 && packet.bit_depth != 32) ||
+        packet.sample_rate <= 0) {
+        log_warning("Parsed invalid audio format from Raw Scream packet. SR=" + std::to_string(packet.sample_rate) +
+                    ", BD=" + std::to_string(packet.bit_depth) + ", CH=" + std::to_string(packet.channels));
         return false;
     }
 
-    // Assign Payload Only
-    out_packet.audio_data.assign(buffer + kRawScreamHeaderSize,
-                                 buffer + kRawScreamHeaderSize + chunk_size_bytes_);
-    
-    if (out_packet.audio_data.size() != chunk_size_bytes_) { // Should always be true if size matches
-        log_error("Internal error: audio data size mismatch. Expected " + std::to_string(chunk_size_bytes_) +
-                  ", got " + std::to_string(out_packet.audio_data.size()));
-        return false;
-    }
-    
+    packet.audio_data.assign(buffer + kRawScreamHeaderSize,
+                             buffer + kRawScreamHeaderSize + kRawScreamPayloadBytes);
     return true;
 }
 
@@ -112,17 +106,16 @@ bool RawScreamReceiver::process_and_validate_payload(
     inet_ntop(AF_INET, &(client_addr.sin_addr), sender_ip_cstr, INET_ADDRSTRLEN);
     out_source_tag = std::string(sender_ip_cstr);
 
-    // Populate common parts of the TaggedAudioPacket
     out_packet.source_tag = out_source_tag;
     out_packet.received_time = received_time;
 
-    // Parse header, set format, and assign payload
-    if (!validate_raw_scream_content(buffer, size, out_packet)) {
-        log_warning("Invalid Raw Scream packet content from " + out_source_tag + 
+    if (!populate_tagged_packet(buffer, size, out_packet)) {
+        log_warning("Invalid Raw Scream packet content from " + out_source_tag +
                     ". Size: " + std::to_string(size) + " bytes.");
         return false;
     }
-    
+
+    register_source_tag(out_source_tag);
     return true;
 }
 

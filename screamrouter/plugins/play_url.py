@@ -64,6 +64,7 @@ class PluginPlayURL(ScreamRouterPlugin):
         self.current_channels = _default_channels
         self.current_chlayout1 = self.stream_info.channel_layout[0]
         self.current_chlayout2 = self.stream_info.channel_layout[1]
+        self.current_chunk_size_bytes = self.get_chunk_size_bytes(self.current_channels, self.current_bit_depth)
 
         """This holds the bytes from a generated Scream Header so they can be
            prepended to data packets"""
@@ -186,6 +187,7 @@ class PluginPlayURL(ScreamRouterPlugin):
         temp_stream_info = create_stream_info(self.current_bit_depth, self.current_sample_rate, self.current_channels, "stereo")
         self.current_chlayout1 = self.stream_info.channel_layout[0]
         self.current_chlayout2 = self.stream_info.channel_layout[1]
+        self.current_chunk_size_bytes = self.get_chunk_size_bytes(self.current_channels, self.current_bit_depth)
 
         ffmpeg_command_parts.extend(["-f", f"s{self.current_bit_depth}le", # e.g., s16le for 16-bit
                                      "-ac", f"{self.current_channels}",
@@ -222,13 +224,14 @@ class PluginPlayURL(ScreamRouterPlugin):
             ready = select.select([self.ffmpeg_read], [], [], 0.1) # Short timeout
             if ready[0]:
                 # Read raw PCM data from ffmpeg
-                pcm_data = os.read(self.ffmpeg_read, constants.PACKET_DATA_SIZE)
+                chunk_size = self.current_chunk_size_bytes or constants.PACKET_DATA_SIZE
+                pcm_data = os.read(self.ffmpeg_read, chunk_size)
                 if not pcm_data: # EOF
                     logger.info(f"[Plugin PlayURL] ffmpeg for {self.current_source_instance_id} sent EOF.")
                     self.play_next_url() # Try to play next
                     continue
 
-                if len(pcm_data) == constants.PACKET_DATA_SIZE:
+                if len(pcm_data) == chunk_size:
                     self.write_data(
                         source_instance_id=self.current_source_instance_id,
                         pcm_data=pcm_data,

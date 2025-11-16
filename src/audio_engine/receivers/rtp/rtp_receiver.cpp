@@ -1,4 +1,5 @@
 #include "rtp_receiver.h"
+#include "../../audio_channel_layout.h"
 #include "../../configuration/audio_engine_settings.h"
 #include "../../input_processor/timeshift_manager.h"
 #include "../../utils/cpp_logger.h"
@@ -55,7 +56,12 @@ void swap_endianness(uint8_t* data, size_t size, int bit_depth) {
     }
 }
 
-bool resolve_opus_multistream_layout(int channels, int sample_rate, int& streams, int& coupled_streams, std::vector<unsigned char>& mapping) {
+bool resolve_opus_multistream_layout(int channels,
+                                     int sample_rate,
+                                     int mapping_family,
+                                     int& streams,
+                                     int& coupled_streams,
+                                     std::vector<unsigned char>& mapping) {
     mapping.clear();
 
     if (channels <= 0) {
@@ -82,7 +88,7 @@ bool resolve_opus_multistream_layout(int channels, int sample_rate, int& streams
     OpusMSEncoder* probe = opus_multistream_surround_encoder_create(
         sample_rate,
         channels,
-        1,
+        mapping_family <= 0 ? 1 : mapping_family,
         &derived_streams,
         &derived_coupled,
         temp.data(),
@@ -105,26 +111,6 @@ bool resolve_opus_multistream_layout(int channels, int sample_rate, int& streams
     return true;
 }
 
-uint32_t default_channel_mask_for_channels(int channels) {
-    switch (channels) {
-        case 1: return 0x0001u; // Front Left (fallback for mono)
-        case 2: return 0x0003u; // Front Left, Front Right
-        case 3: return 0x0007u; // + Front Center
-        case 4: return 0x0603u; // FL, FR, SL, SR
-        case 5: return 0x0607u; // + Front Center
-        case 6: return 0x060Fu; // + LFE
-        case 7: return 0x070Fu; // + Back Center
-        case 8: return 0x063Fu; // + Back Left/Right
-        default: {
-            uint32_t mask = 0;
-            const int clamped = std::min(channels, 16);
-            for (int i = 0; i < clamped; ++i) {
-                mask |= (1u << i);
-            }
-            return mask != 0 ? mask : 0x0001u;
-        }
-    }
-}
 } // namespace
 
 namespace screamrouter {
@@ -146,7 +132,7 @@ RtpReceiverBase::RtpReceiverBase(
                            notification_queue,
                            timeshift_manager,
                            "[RtpReceiver]",
-                           resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
+                           resolve_base_frames_per_chunk(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       config_(std::move(config)),
       chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr))
 #ifdef _WIN32
@@ -182,12 +168,6 @@ std::string RtpReceiverBase::get_source_key(const struct sockaddr_in& addr) cons
     return std::string(ip_str) + ":" + std::to_string(ntohs(addr.sin_port));
 }
 
-std::string RtpReceiverBase::make_pcm_accumulator_key(uint32_t ssrc) const {
-    char buffer[32];
-    snprintf(buffer, sizeof(buffer), "ssrc:%u", ssrc);
-    return std::string(buffer);
-}
-
 void RtpReceiverBase::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, const std::string& source_key) {
     char old_ssrc_hex[12];
     char new_ssrc_hex[12];
@@ -205,7 +185,6 @@ void RtpReceiverBase::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, 
         }
     }
 
-    reset_pcm_accumulator(make_pcm_accumulator_key(old_ssrc));
     for (auto& receiver : payload_receivers_) {
         receiver->on_ssrc_state_cleared(old_ssrc);
     }
@@ -270,14 +249,9 @@ void RtpReceiverBase::close_socket() {
     }
     {
         std::lock_guard<std::mutex> lock(source_ssrc_mutex_);
-        for (const auto& [_, ssrc] : source_to_last_ssrc_) {
-            (void)_; // unused key
-            reset_pcm_accumulator(make_pcm_accumulator_key(ssrc));
-        }
         source_to_last_ssrc_.clear();
     }
 
-    reset_all_pcm_accumulators();
     for (auto& receiver : payload_receivers_) {
         receiver->on_all_ssrcs_cleared();
     }
@@ -629,6 +603,7 @@ bool RtpReceiverBase::resolve_stream_properties(
         out_properties.codec = StreamCodec::OPUS;
         out_properties.opus_streams = 0;
         out_properties.opus_coupled_streams = 0;
+        out_properties.opus_mapping_family = 0;
         out_properties.opus_channel_mapping.clear();
         return true;
     }
@@ -689,8 +664,6 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
     inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
     std::string source_tag = client_ip_str;
 
-    const std::string accumulator_key = make_pcm_accumulator_key(ssrc);
-
     for (auto& packet_data : ready_packets) {
         RtpPayloadReceiver* handler = nullptr;
         for (const auto& receiver : payload_receivers_) {
@@ -722,35 +695,20 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
             continue;
         }
 
-        NetworkAudioReceiver::PcmAppendContext pcm_context;
-        pcm_context.accumulator_key = accumulator_key;
-        pcm_context.source_tag = source_tag;
-        pcm_context.received_time = packet_data.received_time;
-        pcm_context.rtp_timestamp = packet_data.rtp_timestamp;
-        pcm_context.ssrcs.reserve(1 + packet_data.csrcs.size());
-        pcm_context.ssrcs.push_back(packet_data.ssrc);
-        pcm_context.ssrcs.insert(pcm_context.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
+        TaggedAudioPacket packet;
+        packet.source_tag = source_tag;
+        packet.received_time = packet_data.received_time;
+        packet.rtp_timestamp = packet_data.rtp_timestamp;
+        packet.ssrcs.reserve(1 + packet_data.csrcs.size());
+        packet.ssrcs.push_back(packet_data.ssrc);
+        packet.ssrcs.insert(packet.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
 
-        if (!handler->populate_append_context(packet_data, props, pcm_context)) {
+        if (!handler->populate_packet(packet_data, props, packet)) {
             continue;
         }
 
-        auto completed_chunks = append_pcm_payload(std::move(pcm_context));
-        for (auto& chunk : completed_chunks) {
-            bool new_tag = false;
-            {
-                std::lock_guard<std::mutex> lock(seen_tags_mutex_);
-                if (std::find(seen_tags_.begin(), seen_tags_.end(), chunk.source_tag) == seen_tags_.end()) {
-                    seen_tags_.push_back(chunk.source_tag);
-                    new_tag = true;
-                }
-            }
-            if (new_tag && notification_queue_) {
-                notification_queue_->push({chunk.source_tag});
-            }
-
-            dispatch_ready_packet(std::move(chunk));
-        }
+        register_source_tag(packet.source_tag);
+        dispatch_ready_packet(std::move(packet));
     }
 }
 
@@ -826,10 +784,10 @@ bool RtpPcmReceiver::supports_payload_type(uint8_t payload_type) const {
     return payload_type == kRtpPayloadTypeL16Stereo;
 }
 
-bool RtpPcmReceiver::populate_append_context(
+bool RtpPcmReceiver::populate_packet(
     const RtpPacketData& packet,
     const StreamProperties& properties,
-    NetworkAudioReceiver::PcmAppendContext& context) {
+    TaggedAudioPacket& out_packet) {
     if (packet.payload.empty()) {
         return false;
     }
@@ -838,18 +796,18 @@ bool RtpPcmReceiver::populate_append_context(
         return false;
     }
 
-    context.payload = packet.payload;
+    out_packet.audio_data = packet.payload;
     const bool system_is_le = is_system_little_endian();
     if ((properties.endianness == Endianness::BIG && system_is_le) ||
         (properties.endianness == Endianness::LITTLE && !system_is_le)) {
-        swap_endianness(context.payload.data(), context.payload.size(), properties.bit_depth);
+        swap_endianness(out_packet.audio_data.data(), out_packet.audio_data.size(), properties.bit_depth);
     }
 
-    context.sample_rate = properties.sample_rate;
-    context.channels = properties.channels;
-    context.bit_depth = properties.bit_depth;
-    context.chlayout1 = (properties.channels == 2) ? 0x03 : 0x00;
-    context.chlayout2 = 0x00;
+    out_packet.sample_rate = properties.sample_rate;
+    out_packet.channels = properties.channels;
+    out_packet.bit_depth = properties.bit_depth;
+    out_packet.chlayout1 = (properties.channels == 2) ? 0x03 : 0x00;
+    out_packet.chlayout2 = 0x00;
 
     return true;
 }
@@ -866,10 +824,10 @@ bool RtpOpusReceiver::supports_payload_type(uint8_t payload_type) const {
     return payload_type == kRtpPayloadTypeOpus;
 }
 
-bool RtpOpusReceiver::populate_append_context(
+bool RtpOpusReceiver::populate_packet(
     const RtpPacketData& packet,
     const StreamProperties& properties,
-    NetworkAudioReceiver::PcmAppendContext& context) {
+    TaggedAudioPacket& out_packet) {
     if (packet.payload.empty()) {
         return false;
     }
@@ -889,7 +847,7 @@ bool RtpOpusReceiver::populate_append_context(
     }
 
     const bool mapping_valid = !mapping.empty() && mapping.size() == static_cast<size_t>(channels);
-    const bool require_multistream = (channels > 2) || (streams > 0) || (coupled_streams > 0) || mapping_valid;
+    bool require_multistream = channels > 2;
 
     auto layout_matches = [&](int stream_count, int coupled_count) {
         if (stream_count <= 0 || coupled_count < 0 || coupled_count > stream_count) {
@@ -900,39 +858,43 @@ bool RtpOpusReceiver::populate_append_context(
     };
 
     if (require_multistream) {
-        bool must_resolve_layout = !mapping_valid || !layout_matches(streams, coupled_streams);
+        bool tuple_valid = mapping_valid && layout_matches(streams, coupled_streams);
 
-        if (must_resolve_layout) {
+        if (!tuple_valid) {
             int derived_streams = streams;
             int derived_coupled = coupled_streams;
             std::vector<unsigned char> derived_mapping;
-            if (!resolve_opus_multistream_layout(channels, sample_rate, derived_streams, derived_coupled, derived_mapping)) {
+            if (!resolve_opus_multistream_layout(channels,
+                                                 sample_rate,
+                                                 properties.opus_mapping_family,
+                                                 derived_streams,
+                                                 derived_coupled,
+                                                 derived_mapping)) {
                 LOG_CPP_ERROR("[RtpOpusReceiver] Unable to resolve Opus multistream layout for %d channels", channels);
                 return false;
             }
 
             streams = derived_streams;
             coupled_streams = derived_coupled;
-
-            if (!mapping_valid) {
-                mapping = std::move(derived_mapping);
-            }
+            mapping = std::move(derived_mapping);
+            tuple_valid = !mapping.empty() && mapping.size() == static_cast<size_t>(channels) &&
+                          layout_matches(streams, coupled_streams);
         }
 
-        if (!layout_matches(streams, coupled_streams)) {
+        if (!tuple_valid) {
             LOG_CPP_ERROR("[RtpOpusReceiver] Invalid Opus stream configuration for %d channels (streams=%d, coupled=%d)",
                           channels, streams, coupled_streams);
             return false;
         }
-
-        if (mapping.empty() || mapping.size() != static_cast<size_t>(channels)) {
-            LOG_CPP_ERROR("[RtpOpusReceiver] Missing or invalid Opus channel mapping for %d channels", channels);
-            return false;
-        }
+    } else {
+        streams = 0;
+        coupled_streams = 0;
+        mapping.clear();
     }
 
     OpusDecoder* decoder_handle = nullptr;
     OpusMSDecoder* ms_decoder_handle = nullptr;
+    uint32_t negotiated_mask = 0;
     {
         std::lock_guard<std::mutex> lock(decoder_mutex_);
         DecoderState& state = decoder_states_[packet.ssrc];
@@ -980,6 +942,7 @@ bool RtpOpusReceiver::populate_append_context(
                 state.streams = 0;
                 state.coupled_streams = 0;
                 state.mapping.clear();
+                state.channel_mask = 0;
                 return false;
             }
 
@@ -992,10 +955,19 @@ bool RtpOpusReceiver::populate_append_context(
             } else {
                 state.mapping.clear();
             }
+            state.channel_mask = default_channel_mask_for_channels(channels);
+            LOG_CPP_DEBUG("[RtpOpusReceiver] Configured decoder for SSRC %u (rate=%d, channels=%d, streams=%d, coupled=%d, mask=0x%04X)",
+                          packet.ssrc,
+                          state.sample_rate,
+                          state.channels,
+                          state.streams,
+                          state.coupled_streams,
+                          state.channel_mask);
         }
 
         decoder_handle = state.handle;
         ms_decoder_handle = state.ms_handle;
+        negotiated_mask = state.channel_mask;
     }
 
     if (!decoder_handle && !ms_decoder_handle) {
@@ -1031,15 +1003,17 @@ bool RtpOpusReceiver::populate_append_context(
     }
 
     const size_t pcm_bytes = static_cast<size_t>(decoded_samples) * static_cast<size_t>(channels) * sizeof(opus_int16);
-    context.payload.resize(pcm_bytes);
-    std::memcpy(context.payload.data(), decode_buffer.data(), pcm_bytes);
+    out_packet.audio_data.resize(pcm_bytes);
+    std::memcpy(out_packet.audio_data.data(), decode_buffer.data(), pcm_bytes);
 
-    context.sample_rate = sample_rate;
-    context.channels = channels;
-    context.bit_depth = 16;
-    const uint32_t channel_mask = default_channel_mask_for_channels(channels);
-    context.chlayout1 = static_cast<uint8_t>(channel_mask & 0xFFu);
-    context.chlayout2 = static_cast<uint8_t>((channel_mask >> 8) & 0xFFu);
+    out_packet.sample_rate = sample_rate;
+    out_packet.channels = channels;
+    out_packet.bit_depth = 16;
+    const uint32_t channel_mask = negotiated_mask != 0
+                                      ? negotiated_mask
+                                      : default_channel_mask_for_channels(channels);
+    out_packet.chlayout1 = static_cast<uint8_t>(channel_mask & 0xFFu);
+    out_packet.chlayout2 = static_cast<uint8_t>((channel_mask >> 8) & 0xFFu);
 
     return true;
 }

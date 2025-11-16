@@ -849,6 +849,16 @@ void AudioManager::release_system_capture_device(const std::string& device_tag) 
     remove_system_capture_reference(device_tag);
 }
 
+std::size_t AudioManager::get_chunk_size_bytes_for_format(int channels, int bit_depth) const {
+    std::shared_ptr<AudioEngineSettings> local_settings;
+    {
+        std::scoped_lock lock(m_manager_mutex);
+        local_settings = m_settings;
+    }
+    const auto frames_per_chunk = resolve_base_frames_per_chunk(local_settings);
+    return compute_chunk_size_bytes_for_format(frames_per_chunk, channels, bit_depth);
+}
+
 bool AudioManager::write_plugin_packet(
     const std::string& source_instance_tag,
     const std::vector<uint8_t>& audio_payload,

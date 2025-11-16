@@ -154,6 +154,7 @@ class PluginPlayURLInstance(threading.Thread):
         # Correctly access channel layout bytes as per user feedback
         self.current_chlayout1 = self.stream_info.channel_layout[0]
         self.current_chlayout2 = self.stream_info.channel_layout[1]
+        self.current_chunk_size_bytes = self.plugin.get_chunk_size_bytes(self.current_channels, self.current_bit_depth)
         
         self.ffmpeg: Optional[subprocess.Popen] = None
         """Holds the ffmpeg process."""
@@ -183,6 +184,7 @@ class PluginPlayURLInstance(threading.Thread):
         temp_stream_info = create_stream_info(self.current_bit_depth, self.current_sample_rate, self.current_channels, "stereo")
         self.current_chlayout1 = temp_stream_info.channel_layout[0]
         self.current_chlayout2 = temp_stream_info.channel_layout[1]
+        self.current_chunk_size_bytes = self.plugin.get_chunk_size_bytes(self.current_channels, self.current_bit_depth)
 
         ffmpeg_command_parts.extend(["-f", f"s{self.current_bit_depth}le",
                                      "-ac", f"{self.current_channels}",
@@ -277,12 +279,13 @@ class PluginPlayURLInstance(threading.Thread):
 
                 ready = select.select([self.fifo_read], [], [], 0.1) # Short timeout
                 if ready[0]:
-                    pcm_data = os.read(self.fifo_read, constants.PACKET_DATA_SIZE)
+                    chunk_size = self.current_chunk_size_bytes or constants.PACKET_DATA_SIZE
+                    pcm_data = os.read(self.fifo_read, chunk_size)
                     if not pcm_data:  # EOF
                         logger.info(f"[PlayURLInstance {self.source_instance_id}] ffmpeg sent EOF.")
                         break # Exit loop on EOF
 
-                    if len(pcm_data) == constants.PACKET_DATA_SIZE:
+                    if len(pcm_data) == chunk_size:
                         # Use self.plugin.write_data which now calls the C++ engine
                         self.plugin.write_data(
                             source_instance_id=self.source_instance_id,
