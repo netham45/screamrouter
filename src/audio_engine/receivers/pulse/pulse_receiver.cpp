@@ -1336,7 +1336,7 @@ uint32_t PulseAudioReceiver::Impl::Connection::calculate_samples_per_chunk(const
     const std::size_t chunk_bytes =
         stream.chunk_bytes != 0
             ? stream.chunk_bytes
-            : (owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes);
+            : (frame_bytes * (owner ? owner->base_frames_per_chunk : kDefaultBaseFramesPerChunkMono16));
     if (frame_bytes == 0 || (chunk_bytes % frame_bytes) != 0) {
         return 0;
     }
@@ -2785,14 +2785,16 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
         const uint32_t bit_depth = sample_format_bit_depth(stream.sample_spec.format);
         const std::size_t bytes_per_sample = std::max<uint32_t>(bit_depth / 8u, 1);
         const std::size_t frame_bytes = static_cast<std::size_t>(stream.sample_spec.channels) * bytes_per_sample;
-        std::size_t chunk_bytes = owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes;
-        if (frame_bytes > 0) {
-            const std::size_t remainder = chunk_bytes % frame_bytes;
-            if (remainder != 0) {
-                chunk_bytes += (frame_bytes - remainder);
-            }
+        std::size_t base_frames = owner ? owner->base_frames_per_chunk : kDefaultBaseFramesPerChunkMono16;
+        if (base_frames == 0) {
+            base_frames = kDefaultBaseFramesPerChunkMono16;
+        }
+        std::size_t chunk_bytes = frame_bytes * base_frames;
+        if (chunk_bytes == 0) {
+            chunk_bytes = frame_bytes;
         }
         stream.chunk_bytes = chunk_bytes;
+        stream.samples_per_chunk = static_cast<uint32_t>(base_frames);
         stream.request_granularity = stream.buffer_attr.minreq != 0 && stream.buffer_attr.minreq != static_cast<uint32_t>(-1)
             ? stream.buffer_attr.minreq
             : static_cast<uint32_t>(stream.chunk_bytes);
@@ -2826,7 +2828,9 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     uint32_t initial_request = effective_request_bytes(stream_it->second);
     stream_it->second.pending_request_bytes = initial_request;
     stream_it->second.next_request_time = std::chrono::steady_clock::now();
-    stream_it->second.samples_per_chunk = calculate_samples_per_chunk(stream_it->second);
+    if (stream_it->second.samples_per_chunk == 0) {
+        stream_it->second.samples_per_chunk = calculate_samples_per_chunk(stream_it->second);
+    }
     stream_it->second.has_rtp_frame = false;
     // Initialize RTP base to a randomized 32-bit value and set the extended
     // timeline start. Using a random offset avoids timestamp collisions and
@@ -3514,7 +3518,7 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
 
     const std::size_t chunk_bytes = stream.chunk_bytes != 0
         ? stream.chunk_bytes
-        : (owner ? owner->chunk_size_bytes : kDefaultChunkSizeBytes);
+        : frame_bytes * (owner ? owner->base_frames_per_chunk : kDefaultBaseFramesPerChunkMono16);
     while (stream.pending_payload.size() >= chunk_bytes) {
         std::vector<uint8_t> chunk(chunk_bytes);
         const std::size_t popped = stream.pending_payload.pop(chunk.data(), chunk_bytes);

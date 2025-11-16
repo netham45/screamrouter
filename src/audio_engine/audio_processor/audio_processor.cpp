@@ -49,7 +49,7 @@ AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputB
                             ? input_chunk_size_bytes
                             : (settings && settings->chunk_size_bytes > 0 ? settings->chunk_size_bytes : kDefaultChunkSizeBytes)),
       inputChannels(inputChannels), outputChannels(outputChannels), inputBitDepth(inputBitDepth),
-      inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate),
+      inputSampleRate(inputSampleRate), outputSampleRate(outputSampleRate),_e
       speaker_layouts_config_(initial_layouts_config), // Initialize the map
       monitor_running(true),
       scaled_float_buffer_(chunk_size_bytes_ * 8),
