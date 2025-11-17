@@ -89,8 +89,15 @@ WasapiCaptureReceiver::WasapiCaptureReceiver(std::string device_tag,
 {
     loopback_mode_ = system_audio::tag_has_prefix(device_tag_, system_audio::kWasapiLoopbackPrefix) || capture_params_.loopback;
     exclusive_mode_ = capture_params_.exclusive_mode;
-    chunk_size_bytes_ = compute_chunk_size_bytes_for_format(
-        base_frames_per_chunk_, current_channels, current_bit_depth);
+    const int configured_channels = capture_params_.channels > 0
+        ? static_cast<int>(capture_params_.channels)
+        : 2;
+    const int configured_bit_depth = capture_params_.bit_depth == 32 ? 32 : 16;
+    const auto computed_bytes = compute_chunk_size_bytes_for_format(
+        base_frames_per_chunk_, configured_channels, configured_bit_depth);
+    if (computed_bytes > 0) {
+        chunk_size_bytes_ = computed_bytes;
+    }
     if (chunk_size_bytes_ == 0) {
         chunk_size_bytes_ = resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr);
     }
