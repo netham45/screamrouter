@@ -135,8 +135,6 @@ UVICORN_LOG_CONFIG_PATH = os.path.join(get_package_data_dir(), 'uvicorn_log_conf
 
 PACKET_DATA_SIZE: int = 1152
 """This is the packet size minus the header"""
-PACKET_DATA_SIZE_INT32: int = int(PACKET_DATA_SIZE / 4)
-"""This is the number of int32's in a packet"""
 PACKET_HEADER_SIZE: int = 5
 """This is the packet header size"""
 TAG_MAX_LENGTH: int = 45

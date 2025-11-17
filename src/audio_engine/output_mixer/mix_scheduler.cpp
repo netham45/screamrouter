@@ -14,6 +14,8 @@ MixScheduler::MixScheduler(std::string mixer_id,
                            std::shared_ptr<AudioEngineSettings> settings)
     : mixer_id_(std::move(mixer_id)),
       settings_(std::move(settings)) {
+    frames_per_chunk_ = resolve_base_frames_per_chunk(settings_);
+    timer_sample_rate_ = 48000;
     LOG_CPP_INFO("[MixScheduler:%s] Created.", mixer_id_.c_str());
 }
 
@@ -241,25 +243,28 @@ void MixScheduler::worker_loop(SourceState* state) {
 void MixScheduler::append_ready_chunk(const std::string& instance_id,
                                       ProcessedAudioChunk&& chunk,
                                       std::chrono::steady_clock::time_point arrival_time) {
-    ReadyChunk ready;
-    ready.chunk = std::move(chunk);
-    ready.arrival_time = arrival_time;
+    if (chunk.audio_data.empty()) {
+        return;
+    }
 
     {
         std::lock_guard<std::mutex> lock(ready_mutex_);
         auto& queue = ready_chunks_[instance_id];
-        const std::size_t cap = (settings_ && settings_->mixer_tuning.max_ready_chunks_per_source > 0)
-            ? settings_->mixer_tuning.max_ready_chunks_per_source
-            : kMaxReadyChunksPerSource;
+        const std::size_t cap = compute_ready_capacity();
         if (cap > 0 && queue.size() >= cap) {
             queue.pop_front();
             LOG_CPP_DEBUG("[MixScheduler:%s] Dropping oldest ready chunk for %s to enforce cap=%zu.",
                           mixer_id_.c_str(), instance_id.c_str(), cap);
         }
-        queue.push_back(std::move(ready));
+        queue.push_back(ReadyChunk{std::move(chunk), arrival_time});
     }
 
     maybe_log_telemetry();
+}
+
+void MixScheduler::set_timing_parameters(std::size_t frames_per_chunk, int sample_rate) {
+    frames_per_chunk_ = frames_per_chunk > 0 ? frames_per_chunk : frames_per_chunk_;
+    timer_sample_rate_ = sample_rate > 0 ? sample_rate : timer_sample_rate_;
 }
 
 void MixScheduler::maybe_log_telemetry() {
@@ -332,6 +337,27 @@ void MixScheduler::maybe_log_telemetry() {
         avg_head_age_ms,
         max_head_age_ms,
         snapshot.size());
+}
+
+std::size_t MixScheduler::compute_ready_capacity() const {
+    if (!settings_) {
+        return kMaxReadyChunksPerSource;
+    }
+
+    const double duration_ms = settings_->mixer_tuning.max_ready_queue_duration_ms;
+    if (duration_ms > 0.0 && frames_per_chunk_ > 0 && timer_sample_rate_ > 0) {
+        const double chunk_duration_ms =
+            (static_cast<double>(frames_per_chunk_) * 1000.0) / static_cast<double>(timer_sample_rate_);
+        if (chunk_duration_ms > 0.0) {
+            return std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(duration_ms / chunk_duration_ms)));
+        }
+    }
+
+    const std::size_t fallback = settings_->mixer_tuning.max_ready_chunks_per_source;
+    if (fallback > 0) {
+        return fallback;
+    }
+    return kMaxReadyChunksPerSource;
 }
 
 } // namespace audio

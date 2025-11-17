@@ -53,7 +53,9 @@ int safe_atoi(const std::string& value, int fallback = 0) {
 
 std::vector<uint8_t> parse_channel_mapping(const std::string& mapping_value) {
     std::vector<uint8_t> mapping;
-    std::stringstream ss(mapping_value);
+    std::string normalized = mapping_value;
+    std::replace(normalized.begin(), normalized.end(), '/', ',');
+    std::stringstream ss(normalized);
     std::string token;
     while (std::getline(ss, token, ',')) {
         token = trim_copy(token);
@@ -626,6 +628,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     int derived_channels = chosen_entry->has_explicit_channels ? chosen_entry->channels : 0;
     int fmtp_streams = 0;
     int fmtp_coupled_streams = 0;
+    int fmtp_mapping_family = -1;
     std::vector<uint8_t> fmtp_channel_mapping;
 
     const auto fmtp_it = fmtp_entries.find(chosen_payload_type);
@@ -651,6 +654,17 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                 if (mapping_channels > 0) {
                     derived_channels = mapping_channels;
                 }
+            }
+        }
+
+        auto mapping_family_param = params.find("mappingfamily");
+        if (mapping_family_param == params.end()) {
+            mapping_family_param = params.find("mapping_family");
+        }
+        if (mapping_family_param != params.end()) {
+            const int value = safe_atoi(mapping_family_param->second, -1);
+            if (value >= 0) {
+                fmtp_mapping_family = value;
             }
         }
 
@@ -704,6 +718,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     props.channels = derived_channels;
     props.opus_streams = fmtp_streams;
     props.opus_coupled_streams = fmtp_coupled_streams;
+    props.opus_mapping_family = (fmtp_mapping_family >= 0) ? fmtp_mapping_family : 0;
     props.opus_channel_mapping = fmtp_channel_mapping;
     props.port = port;
 

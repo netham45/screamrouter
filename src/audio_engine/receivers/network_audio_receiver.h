@@ -23,6 +23,7 @@
 #include "../utils/audio_component.h"
 #include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
+#include "../configuration/audio_engine_settings.h"
 
 // Platform-specific socket includes and type definitions
 #ifdef _WIN32
@@ -76,7 +77,7 @@ public:
         std::shared_ptr<NotificationQueue> notification_queue,
         TimeshiftManager* timeshift_manager,
         std::string logger_prefix,
-        std::size_t chunk_size_bytes = 0
+        std::size_t base_frames_per_chunk_mono16 = kDefaultBaseFramesPerChunkMono16
     );
     /**
      * @brief Virtual destructor.
@@ -93,20 +94,6 @@ public:
      * @return A vector of strings, each representing a source tag.
      */
     std::vector<std::string> get_seen_tags();
-
-    struct PcmAppendContext {
-        std::string accumulator_key;   ///< Identifier for the accumulator (e.g. SSRC or composite tag)
-        std::string source_tag;        ///< Final tag used for dispatching downstream
-        std::vector<uint8_t> payload;  ///< PCM payload fragment to append
-        int sample_rate = 0;
-        int channels = 0;
-        int bit_depth = 0;
-        uint8_t chlayout1 = 0;
-        uint8_t chlayout2 = 0;
-        std::vector<uint32_t> ssrcs;   ///< SSRC/CSRC list associated with the fragment
-        std::chrono::steady_clock::time_point received_time{};
-        std::optional<uint32_t> rtp_timestamp;
-    };
 
 protected:
     /** @brief The main processing loop for the receiver thread. */
@@ -154,16 +141,7 @@ protected:
      */
     virtual void dispatch_ready_packet(TaggedAudioPacket&& packet);
 
-    /**
-     * @brief Appends PCM data to an accumulator and returns any completed chunks.
-     */
-    std::vector<TaggedAudioPacket> append_pcm_payload(PcmAppendContext&& context);
-
-    /** @brief Clears a specific PCM accumulator. */
-    void reset_pcm_accumulator(const std::string& accumulator_key);
-
-    /** @brief Clears all PCM accumulators. */
-    void reset_all_pcm_accumulators();
+    bool register_source_tag(const std::string& tag);
 
     /**
      * @brief Gets the recommended size for the receive buffer.
@@ -193,7 +171,8 @@ protected:
     std::shared_ptr<NotificationQueue> notification_queue_;
     TimeshiftManager* timeshift_manager_;
 
-    std::size_t chunk_size_bytes_;
+    const std::size_t base_frames_per_chunk_mono16_;
+    const std::size_t default_chunk_size_bytes_;
 
     std::set<std::string> known_source_tags_;
     std::mutex known_tags_mutex_;
@@ -202,25 +181,6 @@ protected:
     std::mutex seen_tags_mutex_;
 
     std::string logger_prefix_;
-
-    struct PcmAccumulatorState {
-        std::vector<uint8_t> buffer;
-        bool chunk_active = false;
-        std::chrono::steady_clock::time_point first_packet_time{};
-        std::optional<uint32_t> first_packet_rtp_timestamp;
-        int last_sample_rate = 0;
-        int last_channels = 0;
-        int last_bit_depth = 0;
-        uint8_t last_chlayout1 = 0;
-        uint8_t last_chlayout2 = 0;
-    };
-
-    std::map<std::string, PcmAccumulatorState> pcm_accumulators_;
-    std::mutex pcm_accumulator_mutex_;
-
-    uint32_t calculate_samples_per_chunk(int channels, int bit_depth) const;
-    void maybe_log_telemetry();
-    std::chrono::steady_clock::time_point telemetry_last_log_time_{};
 
 private:
     // --- Winsock Initialization Management (Windows specific) ---

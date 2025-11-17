@@ -60,8 +60,14 @@ SinkAudioMixer::SinkAudioMixer(
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
     : config_(config),
       m_settings(settings),
-      chunk_size_bytes_(resolve_chunk_size_bytes(m_settings)),
-      mixing_buffer_samples_(compute_processed_chunk_samples(chunk_size_bytes_)),
+      frames_per_chunk_(resolve_base_frames_per_chunk(m_settings)),
+      chunk_size_bytes_([this]() {
+          const auto computed = compute_chunk_size_bytes_for_format(
+              frames_per_chunk_, config_.output_channels, config_.output_bitdepth);
+          const auto fallback = resolve_chunk_size_bytes(m_settings);
+          return computed > 0 ? computed : fallback;
+      }()),
+      mixing_buffer_samples_(compute_processed_chunk_samples(frames_per_chunk_, std::max(1, config_.output_channels))),
       mp3_buffer_size_(chunk_size_bytes_ * 8),
       mp3_output_queue_(mp3_output_queue),
       network_sender_(nullptr),
@@ -159,8 +165,8 @@ SinkAudioMixer::SinkAudioMixer(
     }
 
     stereo_preprocessor_ = std::make_unique<AudioProcessor>(
-        config_.output_channels, 2, 32, config_.output_samplerate, config_.output_samplerate, 1.0f, std::map<int, CppSpeakerLayout>(), m_settings
-    );
+        config_.output_channels, 2, 32, config_.output_samplerate, config_.output_samplerate, 1.0f,
+        std::map<int, CppSpeakerLayout>(), m_settings, chunk_size_bytes_);
 
     if (!stereo_preprocessor_) {
         LOG_CPP_ERROR("[SinkMixer:%s] Failed to create stereo preprocessor.", config_.sink_id.c_str());
@@ -171,6 +177,10 @@ SinkAudioMixer::SinkAudioMixer(
 
     if (mp3_output_queue_) {
         initialize_lame();
+    }
+
+    if (mix_scheduler_) {
+        mix_scheduler_->set_timing_parameters(frames_per_chunk_, config_.output_samplerate);
     }
 
     LOG_CPP_INFO("[SinkMixer:%s] Initialization complete.", config_.sink_id.c_str());
@@ -1469,8 +1479,7 @@ void SinkAudioMixer::register_mix_timer() {
 
     if (!clock_manager_) {
         try {
-            const auto chunk_size_bytes = resolve_chunk_size_bytes(m_settings);
-            clock_manager_ = std::make_unique<ClockManager>(chunk_size_bytes);
+            clock_manager_ = std::make_unique<ClockManager>(chunk_size_bytes_);
         } catch (const std::exception& ex) {
             LOG_CPP_ERROR("[SinkMixer:%s] Failed to create ClockManager: %s",
                           config_.sink_id.c_str(), ex.what());

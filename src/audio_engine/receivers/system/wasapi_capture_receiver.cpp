@@ -81,13 +81,26 @@ WasapiCaptureReceiver::WasapiCaptureReceiver(std::string device_tag,
                            std::move(notification_queue),
                            timeshift_manager,
                            "[WasapiCapture]" + device_tag,
-                           resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
+                           resolve_base_frames_per_chunk(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       device_tag_(std::move(device_tag)),
       capture_params_(std::move(capture_params)),
+      base_frames_per_chunk_(resolve_base_frames_per_chunk(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr))
 {
     loopback_mode_ = system_audio::tag_has_prefix(device_tag_, system_audio::kWasapiLoopbackPrefix) || capture_params_.loopback;
     exclusive_mode_ = capture_params_.exclusive_mode;
+    const int configured_channels = capture_params_.channels > 0
+        ? static_cast<int>(capture_params_.channels)
+        : 2;
+    const int configured_bit_depth = capture_params_.bit_depth == 32 ? 32 : 16;
+    const auto computed_bytes = compute_chunk_size_bytes_for_format(
+        base_frames_per_chunk_, configured_channels, configured_bit_depth);
+    if (computed_bytes > 0) {
+        chunk_size_bytes_ = computed_bytes;
+    }
+    if (chunk_size_bytes_ == 0) {
+        chunk_size_bytes_ = resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr);
+    }
     chunk_bytes_ = chunk_size_bytes_;
     chunk_accumulator_.reserve(chunk_size_bytes_ * 2);
 }
@@ -287,6 +300,12 @@ bool WasapiCaptureReceiver::initialize_capture_format(WAVEFORMATEX* mix_format) 
         return false;
     }
 
+    chunk_size_bytes_ = compute_chunk_size_bytes_for_format(
+        base_frames_per_chunk_, active_channels_,
+        capture_params_.bit_depth == 32 ? 32 : 16);
+    if (chunk_size_bytes_ == 0) {
+        chunk_size_bytes_ = target_bytes_per_frame_;
+    }
     chunk_bytes_ = chunk_size_bytes_;
     if (chunk_bytes_ % target_bytes_per_frame_ != 0) {
         const size_t frames = std::max<size_t>(1, chunk_bytes_ / target_bytes_per_frame_);

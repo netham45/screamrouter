@@ -25,6 +25,7 @@
 #include <condition_variable>
 #include <map>
 #include <atomic>
+#include <optional>
 
 namespace screamrouter {
 namespace audio {
@@ -131,7 +132,8 @@ protected:
     void output_loop();
 
 private:
-    const std::size_t chunk_size_bytes_;
+    const std::size_t base_frames_per_chunk_;
+    std::size_t current_input_chunk_bytes_;
     int m_current_ap_input_channels = 0;
     int m_current_ap_input_samplerate = 0;
     int m_current_ap_input_bitdepth = 0;
@@ -194,6 +196,12 @@ private:
         const uint8_t** out_audio_payload_ptr,
         size_t* out_audio_payload_size
     );
+    void reset_input_accumulator();
+    void append_to_input_accumulator(const TaggedAudioPacket& packet);
+    bool try_dequeue_input_chunk(std::vector<uint8_t>& chunk_data,
+                                 std::chrono::steady_clock::time_point& chunk_time,
+                                 std::optional<uint32_t>& chunk_timestamp,
+                                 std::vector<uint32_t>& chunk_ssrcs);
 
     // --- Profiling ---
     void reset_profiler_counters();
@@ -210,6 +218,21 @@ private:
     uint64_t profiling_input_queue_sum_{0};
     uint64_t profiling_output_queue_sum_{0};
     uint64_t profiling_queue_samples_{0};
+
+    struct InputFragmentMetadata {
+        std::size_t bytes = 0;
+        std::size_t consumed_bytes = 0;
+        std::chrono::steady_clock::time_point received_time{};
+        std::optional<uint32_t> rtp_timestamp;
+        std::vector<uint32_t> ssrcs;
+    };
+
+    std::vector<uint8_t> input_accumulator_buffer_;
+    std::deque<InputFragmentMetadata> input_fragments_;
+    bool input_chunk_active_ = false;
+    std::chrono::steady_clock::time_point first_fragment_time_{};
+    std::optional<uint32_t> first_fragment_rtp_timestamp_;
+    size_t input_bytes_per_frame_ = 0;
 };
 
 } // namespace audio

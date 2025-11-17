@@ -29,7 +29,11 @@ ScreamrouterFifoReceiver::ScreamrouterFifoReceiver(
     CaptureParams capture_params,
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager)
-    : NetworkAudioReceiver(0, std::move(notification_queue), timeshift_manager, "[SR-FIFO]" + device_tag),
+    : NetworkAudioReceiver(0,
+                           std::move(notification_queue),
+                           timeshift_manager,
+                           "[SR-FIFO]" + device_tag,
+                           resolve_base_frames_per_chunk(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       device_tag_(std::move(device_tag)),
       capture_params_(std::move(capture_params))
 {

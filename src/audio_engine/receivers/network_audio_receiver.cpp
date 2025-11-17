@@ -26,12 +26,13 @@ NetworkAudioReceiver::NetworkAudioReceiver(
     std::shared_ptr<NotificationQueue> notification_queue,
     TimeshiftManager* timeshift_manager,
     std::string logger_prefix,
-    std::size_t chunk_size_bytes)
+    std::size_t base_frames_per_chunk_mono16)
     : listen_port_(listen_port),
       socket_fd_(NAR_INVALID_SOCKET_VALUE),
       notification_queue_(notification_queue),
       timeshift_manager_(timeshift_manager),
-      chunk_size_bytes_(chunk_size_bytes),
+      base_frames_per_chunk_mono16_(sanitize_base_frames_per_chunk(base_frames_per_chunk_mono16)),
+      default_chunk_size_bytes_(compute_chunk_size_bytes_for_format(base_frames_per_chunk_mono16_, 2, 16)),
       logger_prefix_(std::move(logger_prefix)) {
 
 #ifdef _WIN32
@@ -56,7 +57,6 @@ NetworkAudioReceiver::~NetworkAudioReceiver() noexcept {
 #ifdef _WIN32
     decrement_winsock_users();
 #endif
-    reset_all_pcm_accumulators();
     log_message("Destroyed.");
 }
 
@@ -101,7 +101,7 @@ bool NetworkAudioReceiver::setup_socket() {
         return false;
     }
 
-    const auto desired_buffer_bytes = chunk_size_bytes_ * 10;
+    const auto desired_buffer_bytes = default_chunk_size_bytes_ * 10;
     const int buffer_size = desired_buffer_bytes > static_cast<std::size_t>(std::numeric_limits<int>::max())
                                 ? std::numeric_limits<int>::max()
                                 : static_cast<int>(desired_buffer_bytes);
@@ -203,7 +203,6 @@ void NetworkAudioReceiver::stop() {
         log_warning("Thread was not joinable (might not have started or already stopped).");
     }
 
-    reset_all_pcm_accumulators();
 }
 
 void NetworkAudioReceiver::run() {
@@ -223,7 +222,6 @@ void NetworkAudioReceiver::run() {
     int poll_timeout = get_poll_timeout_ms();
 
     while (!stop_flag_) {
-        maybe_log_telemetry();
         if (socket_fd_ == NAR_INVALID_SOCKET_VALUE) { // Socket might have been closed by stop()
             log_warning("Socket is invalid, exiting run loop.");
             break;
@@ -295,32 +293,22 @@ void NetworkAudioReceiver::run() {
                 std::string source_tag;
                 auto received_time = std::chrono::steady_clock::now();
 
-                if (process_and_validate_payload(receive_buffer.data(), bytes_received, client_addr, received_time, packet, source_tag)) {
-                    // Check if source is new and always track it for discovery polling
-                    bool is_new_source = false;
-                    {
-                        std::lock_guard<std::mutex> lock(known_tags_mutex_);
-                        auto insert_result = known_source_tags_.insert(source_tag);
-                        is_new_source = insert_result.second;
-                    }
+                bool valid_payload = process_and_validate_payload(receive_buffer.data(),
+                                                                   bytes_received,
+                                                                   client_addr,
+                                                                   received_time,
+                                                                   packet,
+                                                                   source_tag);
 
-                    {
-                        std::lock_guard<std::mutex> seen_lock(seen_tags_mutex_);
-                        if (std::find(seen_tags_.begin(), seen_tags_.end(), source_tag) == seen_tags_.end()) {
-                            seen_tags_.push_back(source_tag);
-                        }
-                    }
-
+                bool is_new_source = false;
+                if (!source_tag.empty()) {
+                    is_new_source = register_source_tag(source_tag);
                     if (is_new_source) {
                         log_message("New source detected: " + source_tag);
-                        if (notification_queue_) {
-                             notification_queue_->push(DeviceDiscoveryNotification{source_tag, DeviceDirection::CAPTURE, true});
-                        } else {
-                            log_warning("Notification queue is null, cannot notify for new source: " + source_tag);
-                        }
                     }
+                }
 
-                    // Let derived classes decide how to dispatch validated packets.
+                if (valid_payload) {
                     dispatch_ready_packet(std::move(packet));
                 } else {
                     // process_and_validate_payload should log specific reasons for failure
@@ -347,11 +335,12 @@ void NetworkAudioReceiver::run() {
 }
 
 void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
-    if (timeshift_manager_) {
-        timeshift_manager_->add_packet(std::move(packet));
-    } else {
+    if (!timeshift_manager_) {
         log_error("TimeshiftManager is null. Cannot add packet for source: " + packet.source_tag);
+        return;
     }
+
+    timeshift_manager_->add_packet(std::move(packet));
 }
 
 void NetworkAudioReceiver::on_before_poll_wait() {
@@ -367,207 +356,31 @@ std::vector<std::string> NetworkAudioReceiver::get_seen_tags() {
     return tags;
 }
 
-std::vector<TaggedAudioPacket> NetworkAudioReceiver::append_pcm_payload(PcmAppendContext&& context) {
-    std::vector<TaggedAudioPacket> completed_chunks;
-
-    if (chunk_size_bytes_ == 0 || context.payload.empty()) {
-        return completed_chunks;
+bool NetworkAudioReceiver::register_source_tag(const std::string& tag) {
+    if (tag.empty()) {
+        return false;
     }
 
-    auto samples_per_chunk = calculate_samples_per_chunk(context.channels, context.bit_depth);
-    if (samples_per_chunk == 0) {
-        log_warning("Unable to determine samples per chunk for accumulator key " + context.accumulator_key);
-        return completed_chunks;
-    }
-
-    std::lock_guard<std::mutex> lock(pcm_accumulator_mutex_);
-    auto& accumulator = pcm_accumulators_[context.accumulator_key];
-
-    const bool format_initialized = accumulator.last_sample_rate != 0;
-    const bool format_changed = format_initialized &&
-        (accumulator.last_sample_rate != context.sample_rate ||
-         accumulator.last_channels != context.channels ||
-         accumulator.last_bit_depth != context.bit_depth ||
-         accumulator.last_chlayout1 != context.chlayout1 ||
-         accumulator.last_chlayout2 != context.chlayout2);
-
-    if (format_changed) {
-        accumulator.buffer.clear();
-        accumulator.chunk_active = false;
-        accumulator.first_packet_rtp_timestamp.reset();
-    }
-
-    const std::size_t bytes_per_frame =
-        (samples_per_chunk > 0)
-            ? (chunk_size_bytes_ / static_cast<std::size_t>(samples_per_chunk))
-            : 0;
-
-    if (!accumulator.buffer.empty() &&
-        bytes_per_frame > 0 &&
-        accumulator.first_packet_rtp_timestamp.has_value() &&
-        context.rtp_timestamp.has_value()) {
-        const std::size_t buffered_frames = accumulator.buffer.size() / bytes_per_frame;
-        const uint32_t expected_timestamp =
-            accumulator.first_packet_rtp_timestamp.value() + static_cast<uint32_t>(buffered_frames);
-        if (expected_timestamp != context.rtp_timestamp.value()) {
-            log_warning("Timestamp gap detected for accumulator key " + context.accumulator_key +
-                        " (expected RTP " + std::to_string(expected_timestamp) +
-                        ", got " + std::to_string(context.rtp_timestamp.value()) + "). Resetting accumulator.");
-            accumulator.buffer.clear();
-            accumulator.chunk_active = false;
-            accumulator.first_packet_time = {};
-            accumulator.first_packet_rtp_timestamp = context.rtp_timestamp;
-        }
-    }
-
-    accumulator.last_sample_rate = context.sample_rate;
-    accumulator.last_channels = context.channels;
-    accumulator.last_bit_depth = context.bit_depth;
-    accumulator.last_chlayout1 = context.chlayout1;
-    accumulator.last_chlayout2 = context.chlayout2;
-
-    if (!accumulator.chunk_active) {
-        accumulator.chunk_active = true;
-        accumulator.first_packet_time = context.received_time;
-        accumulator.first_packet_rtp_timestamp = context.rtp_timestamp;
-    }
-
-    accumulator.buffer.insert(accumulator.buffer.end(), context.payload.begin(), context.payload.end());
-
-    while (accumulator.buffer.size() >= chunk_size_bytes_) {
-        if (!accumulator.chunk_active) {
-            accumulator.chunk_active = true;
-            accumulator.first_packet_time = context.received_time;
-            accumulator.first_packet_rtp_timestamp = context.rtp_timestamp;
-        }
-
-        TaggedAudioPacket packet;
-        packet.source_tag = context.source_tag;
-        packet.received_time = accumulator.first_packet_time;
-        if (accumulator.first_packet_rtp_timestamp.has_value()) {
-            packet.rtp_timestamp = accumulator.first_packet_rtp_timestamp;
-            accumulator.first_packet_rtp_timestamp = accumulator.first_packet_rtp_timestamp.value() + samples_per_chunk;
-        }
-
-        packet.sample_rate = context.sample_rate;
-        packet.channels = context.channels;
-        packet.bit_depth = context.bit_depth;
-        packet.chlayout1 = context.chlayout1;
-        packet.chlayout2 = context.chlayout2;
-        packet.ssrcs = context.ssrcs;
-
-        packet.audio_data.assign(accumulator.buffer.begin(),
-                                 accumulator.buffer.begin() + static_cast<std::ptrdiff_t>(chunk_size_bytes_));
-        accumulator.buffer.erase(accumulator.buffer.begin(),
-                                 accumulator.buffer.begin() + static_cast<std::ptrdiff_t>(chunk_size_bytes_));
-
-        completed_chunks.push_back(std::move(packet));
-
-        if (accumulator.buffer.empty()) {
-            accumulator.chunk_active = false;
-            accumulator.first_packet_rtp_timestamp.reset();
-            accumulator.first_packet_time = {};
-        } else {
-            accumulator.first_packet_time = context.received_time;
-        }
-    }
-
-    if (accumulator.buffer.empty()) {
-        accumulator.chunk_active = false;
-        accumulator.first_packet_rtp_timestamp.reset();
-        accumulator.first_packet_time = {};
-    }
-
-    return completed_chunks;
-}
-
-void NetworkAudioReceiver::reset_pcm_accumulator(const std::string& accumulator_key) {
-    std::lock_guard<std::mutex> lock(pcm_accumulator_mutex_);
-    pcm_accumulators_.erase(accumulator_key);
-}
-
-void NetworkAudioReceiver::reset_all_pcm_accumulators() {
-    std::lock_guard<std::mutex> lock(pcm_accumulator_mutex_);
-    pcm_accumulators_.clear();
-}
-
-uint32_t NetworkAudioReceiver::calculate_samples_per_chunk(int channels, int bit_depth) const {
-    if (chunk_size_bytes_ == 0 || channels <= 0 || bit_depth <= 0 || (bit_depth % 8) != 0) {
-        return 0;
-    }
-
-    const std::size_t bytes_per_frame = static_cast<std::size_t>(channels) * static_cast<std::size_t>(bit_depth / 8);
-    if (bytes_per_frame == 0 || (chunk_size_bytes_ % bytes_per_frame) != 0) {
-        return 0;
-    }
-
-    return static_cast<uint32_t>(chunk_size_bytes_ / bytes_per_frame);
-}
-
-void NetworkAudioReceiver::maybe_log_telemetry() {
-    const auto now = std::chrono::steady_clock::now();
-    std::chrono::milliseconds telemetry_interval(30000);
-    if (timeshift_manager_) {
-        if (auto settings = timeshift_manager_->get_settings()) {
-            if (settings->telemetry.log_interval_ms > 0) {
-                telemetry_interval = std::chrono::milliseconds(settings->telemetry.log_interval_ms);
-            }
-        }
-    }
-
-    if (telemetry_last_log_time_.time_since_epoch().count() != 0 &&
-        now - telemetry_last_log_time_ < telemetry_interval) {
-        return;
-    }
-
-    telemetry_last_log_time_ = now;
-
-    size_t accumulator_count = 0;
-    size_t total_pcm_bytes = 0;
-    size_t max_pcm_bytes = 0;
-    double total_pcm_ms = 0.0;
-    double max_pcm_ms = 0.0;
+    bool is_new_source = false;
     {
-        std::lock_guard<std::mutex> lock(pcm_accumulator_mutex_);
-        accumulator_count = pcm_accumulators_.size();
-        for (const auto& [key, accumulator] : pcm_accumulators_) {
-            (void)key;
-            const size_t bytes = accumulator.buffer.size();
-            total_pcm_bytes += bytes;
-            if (bytes > max_pcm_bytes) {
-                max_pcm_bytes = bytes;
-            }
-            double pcm_ms = 0.0;
-            if (accumulator.last_sample_rate > 0 && accumulator.last_channels > 0 && accumulator.last_bit_depth > 0 &&
-                (accumulator.last_bit_depth % 8) == 0) {
-                const std::size_t frame_bytes = static_cast<std::size_t>(accumulator.last_channels) *
-                                                static_cast<std::size_t>(accumulator.last_bit_depth / 8);
-                if (frame_bytes > 0) {
-                    const double frames = static_cast<double>(bytes) / static_cast<double>(frame_bytes);
-                    pcm_ms = (frames * 1000.0) / static_cast<double>(accumulator.last_sample_rate);
-                }
-            }
-            total_pcm_ms += pcm_ms;
-            if (pcm_ms > max_pcm_ms) {
-                max_pcm_ms = pcm_ms;
-            }
-            LOG_CPP_INFO(
-                "%s [Telemetry][Accumulator] key=%s bytes=%zu backlog_ms=%.3f",
-                logger_prefix_.c_str(),
-                key.c_str(),
-                bytes,
-                pcm_ms);
+        std::lock_guard<std::mutex> lock(known_tags_mutex_);
+        auto insert_result = known_source_tags_.insert(tag);
+        is_new_source = insert_result.second;
+    }
+
+    {
+        std::lock_guard<std::mutex> seen_lock(seen_tags_mutex_);
+        if (std::find(seen_tags_.begin(), seen_tags_.end(), tag) == seen_tags_.end()) {
+            seen_tags_.push_back(tag);
         }
     }
 
-    LOG_CPP_INFO(
-        "%s [Telemetry] accumulators=%zu pcm_total_bytes=%zu (%.3f ms) pcm_max_bytes=%zu (%.3f ms)",
-        logger_prefix_.c_str(),
-        accumulator_count,
-        total_pcm_bytes,
-        total_pcm_ms,
-        max_pcm_bytes,
-        max_pcm_ms);
+    if (is_new_source && notification_queue_) {
+        notification_queue_->push(DeviceDiscoveryNotification{tag, DeviceDirection::CAPTURE, true});
+    }
+
+    return is_new_source;
 }
+
 } // namespace audio
 } // namespace screamrouter

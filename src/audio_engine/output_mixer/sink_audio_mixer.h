@@ -167,6 +167,7 @@ public:
 private:
     SinkMixerConfig config_;
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
+    const std::size_t frames_per_chunk_;
     const std::size_t chunk_size_bytes_;
     const std::size_t mixing_buffer_samples_;
     const std::size_t mp3_buffer_size_;

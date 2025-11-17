@@ -28,10 +28,10 @@ public:
     virtual ~RtpPayloadReceiver() = default;
 
     virtual bool supports_payload_type(uint8_t payload_type) const = 0;
-    virtual bool populate_append_context(
+    virtual bool populate_packet(
         const RtpPacketData& packet,
         const StreamProperties& properties,
-        NetworkAudioReceiver::PcmAppendContext& context
+        TaggedAudioPacket& out_packet
     ) = 0;
     virtual void on_ssrc_state_cleared(uint32_t ssrc) { (void)ssrc; }
     virtual void on_all_ssrcs_cleared() {}
@@ -82,7 +82,6 @@ protected:
     ) const;
 
     std::string get_source_key(const struct sockaddr_in& addr) const;
-    std::string make_pcm_accumulator_key(uint32_t ssrc) const;
     void handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, const std::string& source_key);
     void open_dynamic_session(const std::string& ip, int port, const std::string& source_ip = "");
 
@@ -128,10 +127,10 @@ protected:
 class RtpPcmReceiver : public RtpPayloadReceiver {
 public:
     bool supports_payload_type(uint8_t payload_type) const override;
-    bool populate_append_context(
+    bool populate_packet(
         const RtpPacketData& packet,
         const StreamProperties& properties,
-        NetworkAudioReceiver::PcmAppendContext& context
+        TaggedAudioPacket& out_packet
     ) override;
 };
 
@@ -141,10 +140,10 @@ public:
     ~RtpOpusReceiver() noexcept override;
 
     bool supports_payload_type(uint8_t payload_type) const override;
-    bool populate_append_context(
+    bool populate_packet(
         const RtpPacketData& packet,
         const StreamProperties& properties,
-        NetworkAudioReceiver::PcmAppendContext& context
+        TaggedAudioPacket& out_packet
     ) override;
     void on_ssrc_state_cleared(uint32_t ssrc) override;
     void on_all_ssrcs_cleared() override;
@@ -158,6 +157,7 @@ private:
         int streams = 0;
         int coupled_streams = 0;
         std::vector<unsigned char> mapping;
+        uint32_t channel_mask = 0;
     };
 
     void destroy_decoder(uint32_t ssrc);

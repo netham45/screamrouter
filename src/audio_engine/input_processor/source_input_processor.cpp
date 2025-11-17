@@ -37,7 +37,8 @@ SourceInputProcessor::SourceInputProcessor(
       output_queue_(output_queue),
       command_queue_(command_queue),
       m_settings(settings),
-      chunk_size_bytes_(resolve_chunk_size_bytes(settings)),
+      base_frames_per_chunk_(resolve_base_frames_per_chunk(settings)),
+      current_input_chunk_bytes_(resolve_chunk_size_bytes(settings)),
       profiling_last_log_time_(std::chrono::steady_clock::now()),
       current_volume_(config_.initial_volume), // Initialize from moved config_
       current_eq_(config_.initial_eq),
@@ -242,15 +243,15 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
     }
     const size_t input_bytes = input_chunk_data.size();
     LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Processing chunk. Input Size=%zu bytes. Expected=%zu bytes.",
-                  config_.instance_id.c_str(), input_bytes, chunk_size_bytes_);
-    if (input_bytes != chunk_size_bytes_) {
+                  config_.instance_id.c_str(), input_bytes, current_input_chunk_bytes_);
+    if (input_bytes != current_input_chunk_bytes_) {
          LOG_CPP_ERROR("[SourceProc:%s] process_audio_chunk called with incorrect data size: %zu. Skipping processing.", config_.instance_id.c_str(), input_bytes);
          return;
     }
     
     // Allocate a temporary output buffer large enough to hold the maximum possible output
     // from AudioProcessor::processAudio. Match the size of AudioProcessor's internal processed_buffer.
-    std::vector<int32_t> processor_output_buffer(chunk_size_bytes_ * MAX_CHANNELS * 4);
+    std::vector<int32_t> processor_output_buffer(current_input_chunk_bytes_ * MAX_CHANNELS * 4);
 
     int actual_samples_processed = 0;
     { // Lock mutex for accessing AudioProcessor
@@ -259,7 +260,7 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
              LOG_CPP_ERROR("[SourceProc:%s] AudioProcessor is null during process_audio_chunk call.", config_.instance_id.c_str());
              return; // Cannot proceed without a valid processor
         }
-        // Pass the data pointer and size (chunk_size_bytes_)
+        // Pass the data pointer and size (current_input_chunk_bytes_)
         // processAudio now returns the actual number of samples written to processor_output_buffer.data()
         actual_samples_processed = audio_processor_->processAudio(input_chunk_data.data(), processor_output_buffer.data());
     }
@@ -292,7 +293,7 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
 
 void SourceInputProcessor::push_output_chunk_if_ready() {
     // Check if we have enough samples for a full output chunk
-    const size_t required_samples = compute_processed_chunk_samples(chunk_size_bytes_);
+    const size_t required_samples = compute_processed_chunk_samples(base_frames_per_chunk_, std::max(1, config_.output_channels));
     size_t current_buffer_size = process_buffer_.size();
 
     LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Checking buffer. Current=%zu samples. Required=%zu samples.", config_.instance_id.c_str(), current_buffer_size, required_samples);
@@ -320,27 +321,45 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
              continue;
          }
 
-         std::size_t configured_cap = 0;
-         if (m_settings) {
-             configured_cap = m_settings->mixer_tuning.max_input_queue_chunks;
-         }
+         auto compute_chunk_cap = [this](double duration_ms, int sample_rate) -> std::size_t {
+             if (duration_ms <= 0.0 || sample_rate <= 0) {
+                 return 0;
+             }
+             const double chunk_duration_ms = (static_cast<double>(base_frames_per_chunk_) * 1000.0) /
+                 static_cast<double>(sample_rate);
+             if (chunk_duration_ms <= 0.0) {
+                 return 0;
+             }
+             return static_cast<std::size_t>(std::ceil(duration_ms / chunk_duration_ms));
+         };
 
-         std::size_t dynamic_cap = 0;
-         if (m_settings && config_.output_samplerate > 0) {
-             const double chunk_duration_ms = (static_cast<double>(required_samples) * 1000.0) /
-                 static_cast<double>(config_.output_samplerate);
-             if (chunk_duration_ms > 0.0) {
-                 dynamic_cap = static_cast<std::size_t>(std::ceil(
-                     m_settings->timeshift_tuning.target_buffer_level_ms / chunk_duration_ms));
+         std::size_t configured_cap = 0;
+         std::size_t min_chunks = 0;
+         if (m_settings) {
+             if (m_settings->mixer_tuning.max_input_queue_duration_ms > 0.0) {
+                 configured_cap = compute_chunk_cap(
+                     m_settings->mixer_tuning.max_input_queue_duration_ms,
+                     config_.output_samplerate);
+             } else {
+                 configured_cap = m_settings->mixer_tuning.max_input_queue_chunks;
+             }
+             if (m_settings->mixer_tuning.min_input_queue_duration_ms > 0.0) {
+                 min_chunks = compute_chunk_cap(
+                     m_settings->mixer_tuning.min_input_queue_duration_ms,
+                     config_.output_samplerate);
+             } else {
+                 min_chunks = m_settings->mixer_tuning.min_input_queue_chunks;
+             }
+             if (min_chunks == 0) {
+                 min_chunks = 1;
              }
          }
+         std::size_t dynamic_cap = compute_chunk_cap(
+             m_settings ? m_settings->timeshift_tuning.target_buffer_level_ms : 0.0,
+             config_.output_samplerate);
          if (dynamic_cap == 0) {
              dynamic_cap = 1;
          }
-
-         std::size_t min_chunks = (m_settings && m_settings->mixer_tuning.min_input_queue_chunks > 0)
-             ? m_settings->mixer_tuning.min_input_queue_chunks
-             : static_cast<std::size_t>(8);
          if (dynamic_cap < min_chunks) {
              dynamic_cap = min_chunks;
          }
@@ -395,6 +414,132 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Enqueued chunk. Remaining process_buffer_ size=%zu samples.",
                        config_.instance_id.c_str(), current_buffer_size);
     }
+}
+
+void SourceInputProcessor::reset_input_accumulator() {
+    input_accumulator_buffer_.clear();
+    input_fragments_.clear();
+    input_chunk_active_ = false;
+    first_fragment_time_ = {};
+    first_fragment_rtp_timestamp_.reset();
+}
+
+void SourceInputProcessor::append_to_input_accumulator(const TaggedAudioPacket& packet) {
+    if (current_input_chunk_bytes_ == 0 || input_bytes_per_frame_ == 0) {
+        LOG_CPP_WARNING("[SourceProc:%s] Input accumulator not configured; dropping packet.",
+                        config_.instance_id.c_str());
+        return;
+    }
+
+    if (packet.audio_data.empty()) {
+        return;
+    }
+
+    if ((packet.audio_data.size() % input_bytes_per_frame_) != 0) {
+        LOG_CPP_ERROR("[SourceProc:%s] Packet payload not frame aligned (%zu bytes, frame=%zu). Resetting accumulator.",
+                      config_.instance_id.c_str(),
+                      packet.audio_data.size(),
+                      input_bytes_per_frame_);
+        reset_input_accumulator();
+        profiling_discarded_packets_++;
+        return;
+    }
+
+    if (!input_chunk_active_) {
+        first_fragment_time_ = packet.received_time;
+        first_fragment_rtp_timestamp_ = packet.rtp_timestamp;
+        input_chunk_active_ = true;
+    }
+
+    input_accumulator_buffer_.insert(input_accumulator_buffer_.end(),
+                                     packet.audio_data.begin(),
+                                     packet.audio_data.end());
+
+    InputFragmentMetadata meta;
+    meta.bytes = packet.audio_data.size();
+    meta.consumed_bytes = 0;
+    meta.received_time = packet.received_time;
+    meta.rtp_timestamp = packet.rtp_timestamp;
+    meta.ssrcs = packet.ssrcs;
+    input_fragments_.push_back(std::move(meta));
+}
+
+bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_data,
+                                                   std::chrono::steady_clock::time_point& chunk_time,
+                                                   std::optional<uint32_t>& chunk_timestamp,
+                                                   std::vector<uint32_t>& chunk_ssrcs) {
+    if (current_input_chunk_bytes_ == 0 || input_bytes_per_frame_ == 0) {
+        return false;
+    }
+
+    if (input_accumulator_buffer_.size() < current_input_chunk_bytes_) {
+        return false;
+    }
+
+    chunk_time = {};
+    chunk_timestamp.reset();
+    chunk_ssrcs.clear();
+
+    std::size_t remaining = current_input_chunk_bytes_;
+    while (remaining > 0 && !input_fragments_.empty()) {
+        auto& fragment = input_fragments_.front();
+        if (fragment.consumed_bytes >= fragment.bytes) {
+            input_fragments_.pop_front();
+            continue;
+        }
+
+        if (chunk_time == std::chrono::steady_clock::time_point{}) {
+            chunk_time = fragment.received_time;
+            chunk_ssrcs = fragment.ssrcs;
+            if (fragment.rtp_timestamp.has_value()) {
+                const std::size_t frame_offset = fragment.consumed_bytes / input_bytes_per_frame_;
+                chunk_timestamp = fragment.rtp_timestamp.value() + static_cast<uint32_t>(frame_offset);
+            } else if (first_fragment_rtp_timestamp_.has_value()) {
+                chunk_timestamp = first_fragment_rtp_timestamp_;
+            }
+        }
+
+        const std::size_t available = fragment.bytes - fragment.consumed_bytes;
+        const std::size_t take = std::min(available, remaining);
+        fragment.consumed_bytes += take;
+        remaining -= take;
+
+        if (fragment.consumed_bytes == fragment.bytes) {
+            input_fragments_.pop_front();
+        }
+    }
+
+    if (chunk_time == std::chrono::steady_clock::time_point{}) {
+        chunk_time = first_fragment_time_;
+        if (chunk_time == std::chrono::steady_clock::time_point{}) {
+            chunk_time = std::chrono::steady_clock::now();
+        }
+    }
+
+    chunk_data.assign(
+        input_accumulator_buffer_.begin(),
+        input_accumulator_buffer_.begin() + static_cast<std::ptrdiff_t>(current_input_chunk_bytes_));
+    input_accumulator_buffer_.erase(
+        input_accumulator_buffer_.begin(),
+        input_accumulator_buffer_.begin() + static_cast<std::ptrdiff_t>(current_input_chunk_bytes_));
+
+    if (!input_fragments_.empty()) {
+        input_chunk_active_ = true;
+        const auto& head = input_fragments_.front();
+        first_fragment_time_ = head.received_time;
+        if (head.rtp_timestamp.has_value()) {
+            const std::size_t frame_offset = head.consumed_bytes / input_bytes_per_frame_;
+            first_fragment_rtp_timestamp_ = head.rtp_timestamp.value() + static_cast<uint32_t>(frame_offset);
+        } else {
+            first_fragment_rtp_timestamp_.reset();
+        }
+    } else {
+        input_chunk_active_ = false;
+        first_fragment_time_ = {};
+        first_fragment_rtp_timestamp_.reset();
+    }
+
+    return true;
 }
 
 void SourceInputProcessor::reset_profiler_counters() {
@@ -558,6 +703,7 @@ void SourceInputProcessor::input_loop() {
                 if (audio_processor_) {
                     audio_processor_->flushFilters();
                 }
+                reset_input_accumulator();
             }
         }
         m_last_packet_time = now;
@@ -571,6 +717,8 @@ void SourceInputProcessor::input_loop() {
             &audio_payload_ptr,
             &audio_payload_size
         );
+        (void)audio_payload_ptr;
+        (void)audio_payload_size;
 
         m_last_packet_origin_time = timed_packet.received_time;
 
@@ -588,19 +736,26 @@ void SourceInputProcessor::input_loop() {
         }
 
         if (packet_ok_for_processing && audio_processor_) {
-            if (audio_payload_ptr && audio_payload_size == chunk_size_bytes_) {
-                current_packet_ssrcs_ = timed_packet.ssrcs;
-                std::vector<uint8_t> chunk_data_for_processing(audio_payload_ptr, audio_payload_ptr + audio_payload_size);
-                
-                // This function now appends variable-sized output to our internal buffer
+            append_to_input_accumulator(timed_packet);
+
+            std::vector<uint8_t> chunk_data_for_processing;
+            std::chrono::steady_clock::time_point chunk_origin{};
+            std::optional<uint32_t> chunk_rtp;
+            std::vector<uint32_t> chunk_ssrcs;
+
+            while (try_dequeue_input_chunk(
+                chunk_data_for_processing,
+                chunk_origin,
+                chunk_rtp,
+                chunk_ssrcs)) {
+                current_packet_ssrcs_ = chunk_ssrcs.empty() ? timed_packet.ssrcs : chunk_ssrcs;
+                m_last_packet_origin_time = chunk_origin;
+
                 process_audio_chunk(chunk_data_for_processing);
-                
-                // This function now deals out fixed-size chunks from the buffer
                 push_output_chunk_if_ready();
-            } else {
-                profiling_discarded_packets_++;
-                LOG_CPP_ERROR("[SourceProc:%s] Audio payload invalid after check_format_and_reconfigure. Size: %zu", config_.instance_id.c_str(), audio_payload_size);
+                chunk_data_for_processing.clear();
             }
+            (void)chunk_rtp;
         } else {
             profiling_discarded_packets_++;
             LOG_CPP_WARNING("[SourceProc:%s] Packet discarded by input_loop due to format/size issues or no audio processor.", config_.instance_id.c_str());
@@ -627,119 +782,111 @@ bool SourceInputProcessor::check_format_and_reconfigure(
     const uint8_t** out_audio_payload_ptr,
     size_t* out_audio_payload_size)
 {
-    LOG_CPP_DEBUG("[SourceProc:%s] Entering check_format_and_reconfigure for packet from tag: %s", config_.instance_id.c_str(), packet.source_tag.c_str());
-    
-    // --- Use format directly from packet ---
-    int target_ap_input_channels = packet.channels;
-    int target_ap_input_samplerate = packet.sample_rate;
-    int target_ap_input_bitdepth = packet.bit_depth;
-    // Channel layout bytes (packet.chlayout1, packet.chlayout2) are available but not directly used by AudioProcessor constructor
+    LOG_CPP_DEBUG("[SourceProc:%s] Entering check_format_and_reconfigure for packet from tag: %s",
+                  config_.instance_id.c_str(), packet.source_tag.c_str());
+
+    const int target_ap_input_channels = packet.channels;
+    const int target_ap_input_samplerate = packet.sample_rate;
+    const int target_ap_input_bitdepth = packet.bit_depth;
     const uint8_t* audio_data_start = packet.audio_data.data();
-    size_t audio_data_len = packet.audio_data.size();
+    const size_t audio_data_len = packet.audio_data.size();
 
-    // --- Validate Packet Format and Size ---
-    if (audio_data_len != chunk_size_bytes_) {
-         LOG_CPP_ERROR("[SourceProc:%s] Incorrect audio payload size. Expected %zu, got %zu",
-                       config_.instance_id.c_str(), chunk_size_bytes_, audio_data_len);
-         return false;
+    if (target_ap_input_channels <= 0 || target_ap_input_channels > 8 ||
+        (target_ap_input_bitdepth != 8 && target_ap_input_bitdepth != 16 && target_ap_input_bitdepth != 24 && target_ap_input_bitdepth != 32) ||
+        target_ap_input_samplerate <= 0) {
+        LOG_CPP_ERROR("[SourceProc:%s] Invalid format info in packet. SR=%d, BD=%d, CH=%d",
+                      config_.instance_id.c_str(), target_ap_input_samplerate, target_ap_input_bitdepth, target_ap_input_channels);
+        return false;
     }
-     if (target_ap_input_channels <= 0 || target_ap_input_channels > 8 ||
-         (target_ap_input_bitdepth != 8 && target_ap_input_bitdepth != 16 && target_ap_input_bitdepth != 24 && target_ap_input_bitdepth != 32) ||
-         target_ap_input_samplerate <= 0) {
-         LOG_CPP_ERROR("[SourceProc:%s] Invalid format info in packet. SR=%d, BD=%d, CH=%d",
-                       config_.instance_id.c_str(), target_ap_input_samplerate, target_ap_input_bitdepth, target_ap_input_channels);
-         return false;
-     }
-     LOG_CPP_DEBUG("[SourceProc:%s] Packet Format: CH=%d SR=%d BD=%d",
-                   config_.instance_id.c_str(), target_ap_input_channels, target_ap_input_samplerate, target_ap_input_bitdepth);
 
+    const std::size_t bytes_per_frame =
+        static_cast<std::size_t>(target_ap_input_channels) * static_cast<std::size_t>(target_ap_input_bitdepth / 8);
+    if (bytes_per_frame == 0 || (audio_data_len % bytes_per_frame) != 0) {
+        LOG_CPP_ERROR("[SourceProc:%s] Audio payload not frame aligned (payload=%zu bytes, frame=%zu).",
+                      config_.instance_id.c_str(),
+                      audio_data_len,
+                      bytes_per_frame);
+        return false;
+    }
 
-    // --- Check if Reconfiguration is Needed ---
-    bool needs_reconfig = !audio_processor_ ||
+    const std::size_t expected_chunk_bytes =
+        compute_chunk_size_bytes_for_format(base_frames_per_chunk_, target_ap_input_channels, target_ap_input_bitdepth);
+    if (expected_chunk_bytes == 0 || (expected_chunk_bytes % bytes_per_frame) != 0) {
+        LOG_CPP_ERROR("[SourceProc:%s] Unable to compute chunk size for incoming packet format.", config_.instance_id.c_str());
+        return false;
+    }
+
+    const bool chunk_size_changed = current_input_chunk_bytes_ != expected_chunk_bytes;
+
+    bool needs_reconfig = chunk_size_changed ||
+                          !audio_processor_ ||
                           m_current_ap_input_channels != target_ap_input_channels ||
                           m_current_ap_input_samplerate != target_ap_input_samplerate ||
                           m_current_ap_input_bitdepth != target_ap_input_bitdepth;
-   
-   LOG_CPP_DEBUG("[SourceProc:%s] Current AP Format: CH=%d SR=%d BD=%d",
-                 config_.instance_id.c_str(), m_current_ap_input_channels, m_current_ap_input_samplerate, m_current_ap_input_bitdepth);
-   LOG_CPP_DEBUG("[SourceProc:%s] Needs Reconfiguration Check: audio_processor_ null? %s, CH mismatch? %s, SR mismatch? %s, BD mismatch? %s",
-                 config_.instance_id.c_str(),
-                 (!audio_processor_ ? "Yes" : "No"),
-                 (m_current_ap_input_channels != target_ap_input_channels ? "Yes" : "No"),
-                 (m_current_ap_input_samplerate != target_ap_input_samplerate ? "Yes" : "No"),
-                 (m_current_ap_input_bitdepth != target_ap_input_bitdepth ? "Yes" : "No"));
-   LOG_CPP_DEBUG("[SourceProc:%s] Result of needs_reconfig: %s", config_.instance_id.c_str(), (needs_reconfig ? "true" : "false"));
 
-
-   if (needs_reconfig) {
-       LOG_CPP_DEBUG("[SourceProc:%s] Entering reconfiguration block...", config_.instance_id.c_str()); // Log entry into the block
-       // Add logging here to show the change
-       if (audio_processor_) { // Log only if it's a change, not initial creation
+    if (needs_reconfig) {
+        if (audio_processor_) {
             LOG_CPP_WARNING("[SourceProc:%s] Audio format changed! Reconfiguring AudioProcessor. Old Format: CH=%d SR=%d BD=%d. New Format: CH=%d SR=%d BD=%d",
                             config_.instance_id.c_str(), m_current_ap_input_channels, m_current_ap_input_samplerate, m_current_ap_input_bitdepth,
                             target_ap_input_channels, target_ap_input_samplerate, target_ap_input_bitdepth);
-       } else {
-            LOG_CPP_INFO("[SourceProc:%s] Initializing AudioProcessor for the first time. Format: CH=%d SR=%d BD=%d",
+        } else {
+            LOG_CPP_INFO("[SourceProc:%s] Initializing AudioProcessor. Format: CH=%d SR=%d BD=%d",
                          config_.instance_id.c_str(), target_ap_input_channels, target_ap_input_samplerate, target_ap_input_bitdepth);
-       }
-       
-       // Lock processor_config_mutex_ to protect all configuration and the processor itself
-       std::lock_guard<std::mutex> lock(processor_config_mutex_);
-       LOG_CPP_INFO("[SourceProc:%s] Reconfiguring AudioProcessor: Input CH=%d SR=%d BD=%d -> Output CH=%d SR=%d",
-                    config_.instance_id.c_str(), target_ap_input_channels, target_ap_input_samplerate, target_ap_input_bitdepth,
-                    config_.output_channels, config_.output_samplerate);
+        }
+
+        std::lock_guard<std::mutex> lock(processor_config_mutex_);
+        LOG_CPP_INFO("[SourceProc:%s] Reconfiguring AudioProcessor: Input CH=%d SR=%d BD=%d -> Output CH=%d SR=%d",
+                     config_.instance_id.c_str(), target_ap_input_channels, target_ap_input_samplerate, target_ap_input_bitdepth,
+                     config_.output_channels, config_.output_samplerate);
         try {
             audio_processor_ = std::make_unique<AudioProcessor>(
                 target_ap_input_channels,
-                config_.output_channels,    // Target output format from SIP config
+                config_.output_channels,
                 target_ap_input_bitdepth,
                 target_ap_input_samplerate,
-                config_.output_samplerate,  // Target output format from SIP config
+                config_.output_samplerate,
                 current_volume_,
-                current_speaker_layouts_map_, // Pass the currently configured speaker layouts
-                m_settings
-            );
-            // Apply other settings like EQ after construction
+                current_speaker_layouts_map_,
+                m_settings,
+                expected_chunk_bytes);
+
             audio_processor_->setEqualizer(current_eq_.data());
-            const double safe_rate =
-                std::clamp(current_playback_rate_, kMinPlaybackRate, kMaxPlaybackRate);
+            const double safe_rate = std::clamp(current_playback_rate_, kMinPlaybackRate, kMaxPlaybackRate);
             audio_processor_->set_playback_rate(safe_rate);
-            
-            // The AudioProcessor itself will use its copy of speaker_layouts_map
-            // to select the appropriate mix based on its inputChannels.
-            // No direct call to calculateAndApplyAutoSpeakerMix or applyCustomSpeakerMix here.
 
             m_current_ap_input_channels = target_ap_input_channels;
             m_current_ap_input_samplerate = target_ap_input_samplerate;
             m_current_ap_input_bitdepth = target_ap_input_bitdepth;
-            // Update chunk duration estimates
+            current_input_chunk_bytes_ = expected_chunk_bytes;
+            input_bytes_per_frame_ = bytes_per_frame;
+            reset_input_accumulator();
+
             m_current_input_chunk_ms = 0.0;
-            if (target_ap_input_samplerate > 0 && target_ap_input_channels > 0 && (target_ap_input_bitdepth % 8) == 0) {
-                const std::size_t bytes_per_frame = static_cast<std::size_t>(target_ap_input_channels) * static_cast<std::size_t>(target_ap_input_bitdepth / 8);
-                if (bytes_per_frame > 0) {
-                    const double frames_per_chunk = static_cast<double>(chunk_size_bytes_) / static_cast<double>(bytes_per_frame);
-                    if (frames_per_chunk > 0.0) {
-                        m_current_input_chunk_ms = (frames_per_chunk * 1000.0) / static_cast<double>(target_ap_input_samplerate);
-                    }
-                }
+            if (target_ap_input_samplerate > 0) {
+                m_current_input_chunk_ms =
+                    (static_cast<double>(base_frames_per_chunk_) * 1000.0) / static_cast<double>(target_ap_input_samplerate);
             }
 
             m_current_output_chunk_ms = 0.0;
             if (config_.output_samplerate > 0) {
-                const int output_channels = std::max(1, config_.output_channels);
-                const double frames_per_chunk = static_cast<double>(compute_processed_chunk_samples(chunk_size_bytes_)) /
-                    static_cast<double>(output_channels);
-                if (frames_per_chunk > 0.0) {
-                    m_current_output_chunk_ms = (frames_per_chunk * 1000.0) / static_cast<double>(config_.output_samplerate);
-                }
+                m_current_output_chunk_ms =
+                    (static_cast<double>(base_frames_per_chunk_) * 1000.0) / static_cast<double>(config_.output_samplerate);
             }
             m_reconfigurations++;
             LOG_CPP_INFO("[SourceProc:%s] AudioProcessor reconfigured successfully.", config_.instance_id.c_str());
         } catch (const std::exception& e) {
             LOG_CPP_ERROR("[SourceProc:%s] Failed to reconfigure AudioProcessor: %s", config_.instance_id.c_str(), e.what());
-            audio_processor_.reset(); // Ensure it's null on failure
-            return false; // Reconfiguration failed
+            audio_processor_.reset();
+            return false;
         }
+    } else if (chunk_size_changed) {
+        current_input_chunk_bytes_ = expected_chunk_bytes;
+        input_bytes_per_frame_ = bytes_per_frame;
+        reset_input_accumulator();
+    }
+
+    if (input_bytes_per_frame_ == 0) {
+        input_bytes_per_frame_ = bytes_per_frame;
     }
 
     *out_audio_payload_ptr = audio_data_start;

@@ -8,6 +8,7 @@ namespace screamrouter {
 namespace audio {
 
 inline constexpr std::size_t kDefaultChunkSizeBytes = 1152;
+inline constexpr std::size_t kDefaultBaseFramesPerChunkMono16 = 576; // 576/(16/8) = 288 = (<sample rate>/288)ms 
 
 class AudioEngineSettings;
 
@@ -15,12 +16,20 @@ inline std::size_t sanitize_chunk_size_bytes(std::size_t configured) {
     return configured > 0 ? configured : kDefaultChunkSizeBytes;
 }
 
+inline std::size_t compute_chunk_size_bytes_for_format(std::size_t frames_per_chunk, int channels, int bit_depth) {
+    if (channels <= 0 || bit_depth <= 0 || (bit_depth % 8) != 0) {
+        return 0;
+    }
+    const std::size_t bytes_per_frame = static_cast<std::size_t>(channels) * static_cast<std::size_t>(bit_depth / 8);
+    return frames_per_chunk * bytes_per_frame;
+}
+
 struct TimeshiftTuning {
     long cleanup_interval_ms = 1000;
     double late_packet_threshold_ms = 10.0;
     double target_buffer_level_ms = 8.0;
     long loop_max_sleep_ms = 10;
-    double max_catchup_lag_ms = 20.0;
+    double max_catchup_lag_ms = kDefaultBaseFramesPerChunkMono16 / 20;
     double max_adaptive_delay_ms = 200.0;
     std::size_t max_clock_pending_packets = 64;
     double rtp_continuity_slack_seconds = 0.25;
@@ -55,6 +64,9 @@ struct MixerTuning {
     std::size_t max_input_queue_chunks = 32;
     std::size_t min_input_queue_chunks = 8;
     std::size_t max_ready_chunks_per_source = 12;
+    double max_input_queue_duration_ms = 0.0;
+    double min_input_queue_duration_ms = 0.0;
+    double max_ready_queue_duration_ms = 0.0;
 };
 
 struct SourceProcessorTuning {
@@ -88,6 +100,7 @@ struct SynchronizationTuning {
 class AudioEngineSettings {
 public:
     std::size_t chunk_size_bytes = kDefaultChunkSizeBytes;
+    std::size_t base_frames_per_chunk_mono16 = kDefaultBaseFramesPerChunkMono16;
     TimeshiftTuning timeshift_tuning;
     ProfilerSettings profiler;
     TelemetrySettings telemetry;
@@ -102,10 +115,19 @@ inline std::size_t resolve_chunk_size_bytes(const std::shared_ptr<AudioEngineSet
     return sanitize_chunk_size_bytes(settings ? settings->chunk_size_bytes : kDefaultChunkSizeBytes);
 }
 
-inline std::size_t compute_processed_chunk_samples(std::size_t chunk_size_bytes) {
-    const auto sanitized = sanitize_chunk_size_bytes(chunk_size_bytes);
-    // Default assumption: 16-bit PCM converted to 32-bit samples => bytes / 2.
-    return sanitized / 2;
+inline std::size_t sanitize_base_frames_per_chunk(std::size_t configured_frames) {
+    return configured_frames > 0 ? configured_frames : kDefaultBaseFramesPerChunkMono16;
+}
+
+inline std::size_t resolve_base_frames_per_chunk(const std::shared_ptr<AudioEngineSettings>& settings) {
+    return sanitize_base_frames_per_chunk(settings ? settings->base_frames_per_chunk_mono16 : kDefaultBaseFramesPerChunkMono16);
+}
+
+inline std::size_t compute_processed_chunk_samples(std::size_t frames_per_chunk, int output_channels) {
+    if (frames_per_chunk == 0 || output_channels <= 0) {
+        return 0;
+    }
+    return frames_per_chunk * static_cast<std::size_t>(output_channels);
 }
 
 } // namespace audio

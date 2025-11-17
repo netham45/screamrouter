@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <vector>
 #include <cmath>
+#include <cstddef>
 
 namespace screamrouter {
 namespace audio {
@@ -95,82 +96,101 @@ void ScreamSender::close() {
 }
 
 void ScreamSender::send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) {
-    (void)csrcs; // Unused in ScreamSender
+    (void)csrcs;
     if (payload_size == 0) {
         LOG_CPP_ERROR("[ScreamSender:%s] Attempted to send empty payload.", config_.sink_id.c_str());
         return;
     }
 
-    // Silence check logic from SinkAudioMixer::send_network_buffer
-    bool all_samples_zero = true;
-    size_t bytes_per_sample = config_.output_bitdepth / 8;
-    if (bytes_per_sample > 0 && (payload_size % bytes_per_sample == 0)) {
-        size_t num_payload_samples = payload_size / bytes_per_sample;
-        if (num_payload_samples >= 1) {
-            size_t indices_to_check[5];
-            indices_to_check[0] = 0;
-            if (num_payload_samples > 1) {
-                indices_to_check[1] = static_cast<size_t>(std::floor(1.0 * (num_payload_samples - 1) / 4.0));
-                indices_to_check[2] = static_cast<size_t>(std::floor(2.0 * (num_payload_samples - 1) / 4.0));
-                indices_to_check[3] = static_cast<size_t>(std::floor(3.0 * (num_payload_samples - 1) / 4.0));
-                indices_to_check[4] = num_payload_samples - 1;
-            } else {
-                indices_to_check[1] = indices_to_check[2] = indices_to_check[3] = indices_to_check[4] = 0;
-            }
-
-            for (int i = 0; i < 5; ++i) {
-                const uint8_t* current_sample_ptr = payload_data + (indices_to_check[i] * bytes_per_sample);
-                bool current_sample_is_zero = true;
-                for (size_t byte_k = 0; byte_k < bytes_per_sample; ++byte_k) {
-                    if (current_sample_ptr[byte_k] != 0) { // Simplified check for exact zero
-                        current_sample_is_zero = false;
-                        break;
-                    }
-                }
-                if (!current_sample_is_zero) {
-                    all_samples_zero = false;
-                    break;
-                }
-            }
-        }
-    } else {
-        all_samples_zero = false; // Send if we can't perform a valid check
-    }
-
-    if (all_samples_zero) {
-        LOG_CPP_DEBUG("[ScreamSender:%s] Packet identified as silent. Skipping send.", config_.sink_id.c_str());
+    const bool chunk_is_silent = is_silence(payload_data, payload_size);
+    if (chunk_is_silent && packetizer_buffer_.empty() && (payload_size % kScreamPayloadBytes) == 0) {
+        LOG_CPP_DEBUG("[ScreamSender:%s] Chunk identified as silence. Skipping send.", config_.sink_id.c_str());
         return;
     }
 
-    // Create final packet with header + payload
-    std::vector<uint8_t> packet_buffer(scream_header_.size() + payload_size);
-    memcpy(packet_buffer.data(), scream_header_.data(), scream_header_.size());
-    memcpy(packet_buffer.data() + scream_header_.size(), payload_data, payload_size);
-    
-    size_t length = packet_buffer.size();
+    packetizer_buffer_.insert(packetizer_buffer_.end(), payload_data, payload_data + payload_size);
 
-    if (udp_socket_fd_ != PLATFORM_INVALID_SOCKET) {
-        LOG_CPP_DEBUG("[ScreamSender:%s] Sending %zu bytes via UDP", config_.sink_id.c_str(), length);
-#ifdef _WIN32
-        int sent_bytes = sendto(udp_socket_fd_,
-                                reinterpret_cast<const char*>(packet_buffer.data()),
-                                static_cast<int>(length),
-                                0,
-                                (struct sockaddr *)&udp_dest_addr_,
-                                sizeof(udp_dest_addr_));
-#else
-        int sent_bytes = sendto(udp_socket_fd_,
-                                packet_buffer.data(),
-                                length,
-                                0,
-                                (struct sockaddr *)&udp_dest_addr_,
-                                sizeof(udp_dest_addr_));
-#endif
-        if (sent_bytes < 0) {
-            LOG_CPP_ERROR("[ScreamSender:%s] UDP sendto failed", config_.sink_id.c_str());
-        } else if (static_cast<size_t>(sent_bytes) != length) {
-            LOG_CPP_ERROR("[ScreamSender:%s] UDP sendto sent partial data: %d/%zu", config_.sink_id.c_str(), sent_bytes, length);
+    while (packetizer_buffer_.size() >= kScreamPayloadBytes) {
+        send_scream_packet(packetizer_buffer_.data(), kScreamPayloadBytes);
+        packetizer_buffer_.erase(packetizer_buffer_.begin(),
+                                 packetizer_buffer_.begin() + static_cast<std::ptrdiff_t>(kScreamPayloadBytes));
+    }
+}
+
+bool ScreamSender::is_silence(const uint8_t* payload_data, size_t payload_size) const {
+    bool all_samples_zero = true;
+    size_t bytes_per_sample = config_.output_bitdepth / 8;
+    if (bytes_per_sample == 0 || (payload_size % bytes_per_sample) != 0) {
+        return false;
+    }
+
+    size_t num_payload_samples = payload_size / bytes_per_sample;
+    if (num_payload_samples == 0) {
+        return true;
+    }
+
+    size_t indices_to_check[5];
+    indices_to_check[0] = 0;
+    indices_to_check[4] = num_payload_samples - 1;
+    if (num_payload_samples > 1) {
+        indices_to_check[1] = static_cast<size_t>(std::floor(1.0 * (num_payload_samples - 1) / 4.0));
+        indices_to_check[2] = static_cast<size_t>(std::floor(2.0 * (num_payload_samples - 1) / 4.0));
+        indices_to_check[3] = static_cast<size_t>(std::floor(3.0 * (num_payload_samples - 1) / 4.0));
+    } else {
+        indices_to_check[1] = indices_to_check[2] = indices_to_check[3] = 0;
+    }
+
+    for (int i = 0; i < 5; ++i) {
+        const uint8_t* current_sample_ptr = payload_data + (indices_to_check[i] * bytes_per_sample);
+        bool current_sample_is_zero = true;
+        for (size_t byte_k = 0; byte_k < bytes_per_sample; ++byte_k) {
+            if (current_sample_ptr[byte_k] != 0) {
+                current_sample_is_zero = false;
+                break;
+            }
         }
+        if (!current_sample_is_zero) {
+            all_samples_zero = false;
+            break;
+        }
+    }
+    return all_samples_zero;
+}
+
+void ScreamSender::send_scream_packet(const uint8_t* payload_slice, size_t slice_size) {
+    if (slice_size == 0) {
+        return;
+    }
+
+    std::vector<uint8_t> packet_buffer(scream_header_.size() + kScreamPayloadBytes, 0);
+    memcpy(packet_buffer.data(), scream_header_.data(), scream_header_.size());
+    memcpy(packet_buffer.data() + scream_header_.size(), payload_slice, std::min(slice_size, kScreamPayloadBytes));
+
+    const size_t total_length = scream_header_.size() + kScreamPayloadBytes;
+    if (udp_socket_fd_ == PLATFORM_INVALID_SOCKET) {
+        return;
+    }
+
+#ifdef _WIN32
+    int sent_bytes = sendto(udp_socket_fd_,
+                            reinterpret_cast<const char*>(packet_buffer.data()),
+                            static_cast<int>(total_length),
+                            0,
+                            (struct sockaddr *)&udp_dest_addr_,
+                            sizeof(udp_dest_addr_));
+#else
+    int sent_bytes = sendto(udp_socket_fd_,
+                            packet_buffer.data(),
+                            total_length,
+                            0,
+                            (struct sockaddr *)&udp_dest_addr_,
+                            sizeof(udp_dest_addr_));
+#endif
+    if (sent_bytes < 0) {
+        LOG_CPP_ERROR("[ScreamSender:%s] UDP sendto failed", config_.sink_id.c_str());
+    } else if (static_cast<size_t>(sent_bytes) != total_length) {
+        LOG_CPP_ERROR("[ScreamSender:%s] UDP sendto sent partial data: %d/%zu",
+                      config_.sink_id.c_str(), sent_bytes, total_length);
     }
 }
 

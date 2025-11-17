@@ -61,10 +61,16 @@ private:
      */
     void build_scream_header();
 
+    static constexpr std::size_t kScreamPayloadBytes = 1152;
+
     SinkMixerConfig config_;
     socket_t udp_socket_fd_;
     struct sockaddr_in udp_dest_addr_;
     std::array<uint8_t, 5> scream_header_;
+    std::vector<uint8_t> packetizer_buffer_;
+
+    bool is_silence(const uint8_t* payload_data, size_t payload_size) const;
+    void send_scream_packet(const uint8_t* payload_slice, size_t slice_size);
 };
 
 } // namespace audio

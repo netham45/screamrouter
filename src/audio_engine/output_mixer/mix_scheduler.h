@@ -48,6 +48,7 @@ public:
     void attach_source(const std::string& instance_id,
                        std::shared_ptr<InputChunkQueue> queue);
     void detach_source(const std::string& instance_id);
+    void set_timing_parameters(std::size_t frames_per_chunk, int sample_rate);
 
     HarvestResult collect_ready_chunks();
     std::map<std::string, std::size_t> get_ready_depths() const;
@@ -69,9 +70,12 @@ private:
                             ProcessedAudioChunk&& chunk,
                             std::chrono::steady_clock::time_point arrival_time);
     void maybe_log_telemetry();
+    std::size_t compute_ready_capacity() const;
 
     const std::string mixer_id_;
     std::shared_ptr<AudioEngineSettings> settings_;
+    std::size_t frames_per_chunk_ = 0;
+    int timer_sample_rate_ = 0;
 
     std::mutex sources_mutex_;
     std::unordered_map<std::string, std::unique_ptr<SourceState>> sources_;

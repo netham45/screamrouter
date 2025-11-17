@@ -67,7 +67,8 @@ private:
     std::string device_tag_;
     CaptureParams capture_params_;
     std::string hw_device_name_;
-    const std::size_t chunk_size_bytes_;
+    const std::size_t base_frames_per_chunk_mono16_;
+    std::size_t chunk_size_bytes_;
 
     snd_pcm_t* pcm_handle_ = nullptr;
     snd_pcm_format_t sample_format_ = SND_PCM_FORMAT_UNKNOWN;

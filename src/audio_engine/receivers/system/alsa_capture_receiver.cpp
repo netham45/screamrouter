@@ -40,14 +40,21 @@ AlsaCaptureReceiver::AlsaCaptureReceiver(
                            std::move(notification_queue),
                            timeshift_manager,
                            "[AlsaCapture]" + device_tag,
-                           resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
+                           resolve_base_frames_per_chunk(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
       device_tag_(std::move(device_tag)),
       capture_params_(std::move(capture_params))
 #if SCREAMROUTER_ALSA_CAPTURE_AVAILABLE
-      , chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr))
+      , base_frames_per_chunk_mono16_(resolve_base_frames_per_chunk(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
+        chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr))
 #endif
 {
 #if SCREAMROUTER_ALSA_CAPTURE_AVAILABLE
+    chunk_size_bytes_ = compute_chunk_size_bytes_for_format(
+        base_frames_per_chunk_mono16_, std::max<int>(1, capture_params_.channels ? capture_params_.channels : 2),
+        capture_params_.bit_depth > 0 ? capture_params_.bit_depth : 16);
+    if (chunk_size_bytes_ == 0) {
+        chunk_size_bytes_ = resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr);
+    }
     chunk_bytes_ = chunk_size_bytes_;
     chunk_buffer_.reserve(chunk_size_bytes_ * 2);
 #endif

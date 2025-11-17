@@ -79,6 +79,7 @@ class ScreamRouterPlugin(threading.Thread):
         # Placeholder for the C++ AudioManager instance.
         # This needs to be injected by the PluginManager or a similar mechanism.
         self.audio_manager_instance: Any = None # Use Any for now, ideally should be AudioManager type
+        self.default_chunk_size_bytes: int = constants.PACKET_DATA_SIZE
 
     def plugin_start(self, api: FastAPI, audio_manager_instance: Any = None):
         """Start the plugin. AudioManager instance should be passed here."""
@@ -254,6 +255,23 @@ class ScreamRouterPlugin(threading.Thread):
                 logger.warning(f"[Plugin {self.name}] audio_manager.write_plugin_packet for {source_instance_id} reported failure.")
         except Exception as e:
             logger.error(f"[Plugin {self.name}] Error writing data for {source_instance_id} via C++ engine: {e}", exc_info=True)
+
+    def get_chunk_size_bytes(self, channels: int, bit_depth: int) -> int:
+        """Returns the current engine chunk size for a given format."""
+        default_size = self.default_chunk_size_bytes
+        if not self.audio_manager_instance:
+            return default_size
+
+        compute_fn = getattr(self.audio_manager_instance, "get_chunk_size_bytes_for_format", None)
+        if not compute_fn:
+            return default_size
+
+        try:
+            chunk_size = int(compute_fn(channels, bit_depth))
+            return chunk_size if chunk_size > 0 else default_size
+        except Exception as exc:
+            logger.error(f"[Plugin {self.name}] Failed to compute chunk size for channels={channels} bit_depth={bit_depth}: {exc}")
+            return default_size
 
 
     def start_plugin(self):
