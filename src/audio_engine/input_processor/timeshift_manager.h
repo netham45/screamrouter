@@ -287,10 +287,17 @@ private:
     std::chrono::seconds max_buffer_duration_sec_;
     std::chrono::steady_clock::time_point last_cleanup_time_;
 
+    // Inbound decoupling to avoid blocking capture threads on the main data mutex.
+    utils::ThreadSafeQueue<TaggedAudioPacket> inbound_queue_;
+    static constexpr std::size_t kInboundQueueMaxSize = 256;
+
     /** @brief A single iteration of the processing loop. Collects ready packets while data_mutex_ is held. */
     void processing_loop_iteration_unlocked(std::vector<PendingDispatch>& pending_dispatches);
     /** @brief Periodically cleans up old packets from the global buffer. Assumes data_mutex_ is held. */
     void cleanup_global_buffer_unlocked();
+
+    /** @brief Process one inbound packet while holding data_mutex_. */
+    void process_incoming_packet_unlocked(TaggedAudioPacket&& packet);
     /**
      * @brief Calculates the time point for the next event to occur.
      * @return The time point of the next scheduled event.

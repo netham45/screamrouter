@@ -215,10 +215,13 @@ bool WasapiCaptureReceiver::configure_audio_client() {
         stream_flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
     }
 
+    // Increase default buffer duration to tolerate brief scheduling stalls.
     REFERENCE_TIME buffer_duration = 0;
-    if (capture_params_.buffer_duration_ms > 0) {
-        buffer_duration = static_cast<REFERENCE_TIME>(capture_params_.buffer_duration_ms) * 10000;
+    unsigned int effective_buffer_ms = capture_params_.buffer_duration_ms;
+    if (effective_buffer_ms == 0) {
+        effective_buffer_ms = 80; // 80ms shared-mode buffer by default
     }
+    buffer_duration = static_cast<REFERENCE_TIME>(effective_buffer_ms) * 10000;
 
     hr = audio_client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
                                    stream_flags,
@@ -297,6 +300,12 @@ bool WasapiCaptureReceiver::start_stream() {
     if (FAILED(hr)) {
         LOG_CPP_ERROR("[WasapiCapture:%s] Failed to start IAudioClient: 0x%lx", device_tag_.c_str(), hr);
         return false;
+    }
+
+    // Boost thread priority for capture to reduce glitches.
+    HANDLE hThread = GetCurrentThread();
+    if (!SetThreadPriority(hThread, THREAD_PRIORITY_TIME_CRITICAL)) {
+        LOG_CPP_WARNING("[WasapiCapture:%s] Failed to set high thread priority (last_error=%lu).", device_tag_.c_str(), GetLastError());
     }
     return true;
 }

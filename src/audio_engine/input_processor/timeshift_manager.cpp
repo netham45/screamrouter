@@ -196,176 +196,15 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
          return;
      }
 
-    const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
-    const double configured_reset_threshold_sec =
-        (m_settings) ? m_settings->timeshift_tuning.rtp_session_reset_threshold_seconds : 0.2;
-    const double bounded_reset_threshold_sec = std::max(configured_reset_threshold_sec, 0.0);
-    const uint32_t reset_threshold_frames = static_cast<uint32_t>(
-        static_cast<double>(frames_per_second) * bounded_reset_threshold_sec);
-
-    const auto lock_start = std::chrono::steady_clock::now();
-    std::unique_lock<std::mutex> data_lock(data_mutex_);
-    const auto lock_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - lock_start).count();
-    if (lock_wait_ms > 20) {
-        LOG_CPP_WARNING("[TimeshiftManager] add_packet waited %lld ms for data mutex (source=%s)",
-                        static_cast<long long>(lock_wait_ms),
-                        packet.source_tag.c_str());
-    }
-    auto timing_access = get_or_create_timing_state(packet.source_tag);
-    StreamTimingState* state_ptr = timing_access.state;
-    if (!state_ptr) {
-        data_lock.unlock();
-        return;
-    }
-
-    const uint32_t current_ts = packet.rtp_timestamp.value();
-    const uint32_t last_ts = state_ptr->last_rtp_timestamp;
-
-    if (!state_ptr->is_first_packet && state_ptr->clock && reset_threshold_frames > 0) {
-        const uint32_t delta = rtp_timestamp_diff(current_ts, last_ts);
-        if (delta > reset_threshold_frames) {
-            const auto last_wallclock = state_ptr->last_wallclock;
-            if (last_wallclock.time_since_epoch().count() != 0) {
-                const auto wallclock_gap = packet.received_time - last_wallclock;
-                const double wallclock_gap_sec = std::chrono::duration<double>(wallclock_gap).count();
-                if (wallclock_gap_sec > 0.0) {
-                    const auto delta_frames = static_cast<uint64_t>(delta);
-                    const double configured_slack_seconds =
-                        (m_settings) ? m_settings->timeshift_tuning.rtp_continuity_slack_seconds : 0.25;
-                    const double bounded_slack_seconds = std::max(configured_slack_seconds, 0.0);
-                    const auto expected_frames = static_cast<uint64_t>(
-                        std::llround(wallclock_gap_sec * static_cast<double>(frames_per_second)));
-                    const auto continuity_slack_frames = static_cast<uint64_t>(
-                        std::llround(static_cast<double>(frames_per_second) * bounded_slack_seconds));
-
-                    const auto lower_bound = (expected_frames > continuity_slack_frames)
-                                                 ? (expected_frames - continuity_slack_frames)
-                                                 : 0ULL;
-                    const auto upper_bound = expected_frames + continuity_slack_frames;
-
-                    const bool within_bounds = delta_frames >= lower_bound && delta_frames <= upper_bound;
-                    if (within_bounds) {
-                        LOG_CPP_DEBUG("[TimeshiftManager] RTP jump matches wall-clock advance for '%s' (delta=%u frames, expected=%llu, slack=%llu). Keeping timing state.",
-                                      packet.source_tag.c_str(), delta,
-                                      static_cast<unsigned long long>(expected_frames),
-                                      static_cast<unsigned long long>(continuity_slack_frames));
-                        return;
-                    }
-                }
-            }
+    auto result = inbound_queue_.push_bounded(std::move(packet), kInboundQueueMaxSize, true);
+    if (result == utils::ThreadSafeQueue<TaggedAudioPacket>::PushResult::QueueFull) {
+        static thread_local int throttle = 0;
+        if ((throttle++ % 50) == 0) {
+            LOG_CPP_WARNING("[TimeshiftManager] Inbound queue full, dropping packet(s)");
         }
-
-        LOG_CPP_INFO("[TimeshiftManager] Detected RTP jump for '%s' (delta=%u frames). Resetting timing state.",
-                     packet.source_tag.c_str(), delta);
-
-        size_t reset_position = global_timeshift_buffer_.size();
-        auto targets_it = processor_targets_.find(packet.source_tag);
-        if (targets_it != processor_targets_.end()) {
-            for (auto& [instance_id, info] : targets_it->second) {
-                (void)instance_id;
-                info.next_packet_read_index = reset_position;
-                if (info.target_queue) {
-                    TaggedAudioPacket discarded;
-                    while (info.target_queue->try_pop(discarded)) {
-                        // Drain stale packets so consumers restart immediately.
-                    }
-                }
-            }
-        }
-
-        timing_access.lock.unlock();
-        {
-            std::unique_lock<std::mutex> map_lock(timing_map_mutex_);
-            auto lock_it = timing_locks_.find(packet.source_tag);
-            if (lock_it == timing_locks_.end() || !lock_it->second) {
-                lock_it = timing_locks_.emplace(packet.source_tag, std::make_shared<std::mutex>()).first;
-            }
-            std::unique_lock<std::mutex> per_stream_lock(*lock_it->second);
-            stream_timing_states_.erase(packet.source_tag);
-            auto [new_state_it, _] = stream_timing_states_.try_emplace(packet.source_tag);
-            (void)_;
-            state_ptr = &new_state_it->second;
-            map_lock.unlock();
-        }
-        m_state_version_++;
-        run_loop_cv_.notify_one();
     }
-
-    StreamTimingState& state = *state_ptr;
-    (void)packet;
-    state.total_packets++;
-
-    if (!state.clock) {
-        state.clock = std::make_unique<StreamClock>(packet.sample_rate);
-    }
-
-    state.clock->update(packet.rtp_timestamp.value(), packet.received_time);
-
-    if (state.clock->is_initialized()) {
-        state.last_clock_offset_ms = state.clock->get_offset_seconds() * 1000.0;
-        state.last_clock_drift_ppm = state.clock->get_drift_ppm();
-        state.last_clock_innovation_ms = state.clock->get_last_innovation_seconds() * 1000.0;
-        state.last_clock_measured_offset_ms = state.clock->get_last_measured_offset_seconds() * 1000.0;
-        state.clock_innovation_abs_sum_ms += std::abs(state.last_clock_innovation_ms);
-        state.clock_innovation_samples++;
-    }
-
-    global_timeshift_buffer_.push_back(packet); // copy to keep packet available for timing updates
-    m_total_packets_added++;
-    data_lock.unlock();
-
-    // Wake the run loop promptly so we don't wait for the max sleep interval.
     m_state_version_++;
     run_loop_cv_.notify_one();
-
-    const double arrival_time_sec =
-        std::chrono::duration<double>(packet.received_time.time_since_epoch()).count();
-
-    if (!state.is_first_packet && packet.sample_rate > 0 &&
-        state.last_wallclock.time_since_epoch().count() > 0) {
-        const double arrival_delta_sec =
-            std::chrono::duration<double>(packet.received_time - state.last_wallclock).count();
-        const uint32_t timestamp_diff =
-            rtp_timestamp_diff(packet.rtp_timestamp.value(), state.last_rtp_timestamp);
-        const double rtp_delta_sec =
-            static_cast<double>(timestamp_diff) / static_cast<double>(packet.sample_rate);
-        const double transit_delta_sec = arrival_delta_sec - rtp_delta_sec;
-        const double abs_transit_delta_sec = std::abs(transit_delta_sec);
-
-        if (!state.jitter_initialized) {
-            state.rfc3550_jitter_sec = abs_transit_delta_sec;
-            state.jitter_initialized = true;
-        } else {
-            state.rfc3550_jitter_sec += (abs_transit_delta_sec - state.rfc3550_jitter_sec) / 16.0;
-        }
-
-        state.jitter_estimate = state.rfc3550_jitter_sec * 1000.0;
-        state.system_jitter_estimate_ms = state.jitter_estimate;
-        state.last_system_delay_ms = transit_delta_sec * 1000.0;
-        state.last_transit_sec = transit_delta_sec;
-    } else {
-        state.jitter_estimate = std::max(state.jitter_estimate, 0.0);
-        state.system_jitter_estimate_ms = state.jitter_estimate;
-        state.last_system_delay_ms = 0.0;
-    }
-
-    state.last_arrival_time_sec = arrival_time_sec;
-
-    state.is_first_packet = false;
-    state.last_rtp_timestamp = packet.rtp_timestamp.value();
-    state.last_wallclock = packet.received_time;
-    state.sample_rate = packet.sample_rate;
-    state.channels = packet.channels;
-    state.bit_depth = packet.bit_depth;
-    state.samples_per_chunk = 0;
-    if (packet.sample_rate > 0 && packet.channels > 0 && packet.bit_depth > 0 && (packet.bit_depth % 8) == 0) {
-        const std::size_t bytes_per_frame =
-            static_cast<std::size_t>(packet.channels) * static_cast<std::size_t>(packet.bit_depth / 8);
-        if (bytes_per_frame > 0) {
-            state.samples_per_chunk = static_cast<uint32_t>(packet.audio_data.size() / bytes_per_frame);
-        }
-    }
 }
 
 std::optional<TimeshiftBufferExport> TimeshiftManager::export_recent_buffer(
@@ -763,9 +602,18 @@ void TimeshiftManager::run() {
     while (!stop_flag_) {
         std::vector<PendingDispatch> pending_dispatches;
         std::chrono::steady_clock::time_point next_wakeup_time;
+        std::vector<TaggedAudioPacket> newly_drained_packets;
+        TaggedAudioPacket packet_tmp;
+        while (inbound_queue_.try_pop(packet_tmp)) {
+            newly_drained_packets.push_back(std::move(packet_tmp));
+        }
 
         {
             std::unique_lock<std::mutex> lock(data_mutex_);
+
+            for (auto& pkt : newly_drained_packets) {
+                process_incoming_packet_unlocked(std::move(pkt));
+            }
 
             // Process any packets that are already due, but defer queue pushes.
             processing_loop_iteration_unlocked(pending_dispatches);
@@ -967,13 +815,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
     }
 
     const auto iteration_end = std::chrono::steady_clock::now();
-    const auto iteration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(iteration_end - iteration_start).count();
-    if (iteration_ms > 20) {
-        LOG_CPP_WARNING("[TimeshiftManager] processing_loop_iteration_unlocked took %lld ms (pending_dispatches=%zu, buffer=%zu)",
-                        static_cast<long long>(iteration_ms),
-                        pending_dispatches.size(),
-                        global_timeshift_buffer_.size());
-    }
     last_iteration_finish_time_ = iteration_end;
 
     if (packets_processed > 0) {
@@ -992,6 +833,163 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
 
     if (m_settings->profiler.enabled) {
         maybe_log_profiler_unlocked(iteration_end);
+    }
+}
+
+void TimeshiftManager::process_incoming_packet_unlocked(TaggedAudioPacket&& packet) {
+    const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
+    const double configured_reset_threshold_sec =
+        (m_settings) ? m_settings->timeshift_tuning.rtp_session_reset_threshold_seconds : 0.2;
+    const double bounded_reset_threshold_sec = std::max(configured_reset_threshold_sec, 0.0);
+    const uint32_t reset_threshold_frames = static_cast<uint32_t>(
+        static_cast<double>(frames_per_second) * bounded_reset_threshold_sec);
+
+    auto timing_access = get_or_create_timing_state(packet.source_tag);
+    StreamTimingState* state_ptr = timing_access.state;
+    if (!state_ptr) {
+        return;
+    }
+
+    const uint32_t current_ts = packet.rtp_timestamp.value();
+    const uint32_t last_ts = state_ptr->last_rtp_timestamp;
+
+    if (!state_ptr->is_first_packet && state_ptr->clock && reset_threshold_frames > 0) {
+        const uint32_t delta = rtp_timestamp_diff(current_ts, last_ts);
+        if (delta > reset_threshold_frames) {
+            const auto last_wallclock = state_ptr->last_wallclock;
+            if (last_wallclock.time_since_epoch().count() != 0) {
+                const auto wallclock_gap = packet.received_time - last_wallclock;
+                const double wallclock_gap_sec = std::chrono::duration<double>(wallclock_gap).count();
+                if (wallclock_gap_sec > 0.0) {
+                    const auto delta_frames = static_cast<uint64_t>(delta);
+                    const double configured_slack_seconds =
+                        (m_settings) ? m_settings->timeshift_tuning.rtp_continuity_slack_seconds : 0.25;
+                    const double bounded_slack_seconds = std::max(configured_slack_seconds, 0.0);
+                    const auto expected_frames = static_cast<uint64_t>(
+                        std::llround(wallclock_gap_sec * static_cast<double>(frames_per_second)));
+                    const auto continuity_slack_frames = static_cast<uint64_t>(
+                        std::llround(static_cast<double>(frames_per_second) * bounded_slack_seconds));
+
+                    const auto lower_bound = (expected_frames > continuity_slack_frames)
+                                                 ? (expected_frames - continuity_slack_frames)
+                                                 : 0ULL;
+                    const auto upper_bound = expected_frames + continuity_slack_frames;
+
+                    const bool within_bounds = delta_frames >= lower_bound && delta_frames <= upper_bound;
+                    if (within_bounds) {
+                        LOG_CPP_DEBUG("[TimeshiftManager] RTP jump matches wall-clock advance for '%s' (delta=%u frames, expected=%llu, slack=%llu). Keeping timing state.",
+                                      packet.source_tag.c_str(), delta,
+                                      static_cast<unsigned long long>(expected_frames),
+                                      static_cast<unsigned long long>(continuity_slack_frames));
+                        return;
+                    }
+                }
+            }
+        }
+
+        LOG_CPP_INFO("[TimeshiftManager] Detected RTP jump for '%s' (delta=%u frames). Resetting timing state.",
+                     packet.source_tag.c_str(), delta);
+
+        size_t reset_position = global_timeshift_buffer_.size();
+        auto targets_it = processor_targets_.find(packet.source_tag);
+        if (targets_it != processor_targets_.end()) {
+            for (auto& [instance_id, info] : targets_it->second) {
+                (void)instance_id;
+                info.next_packet_read_index = reset_position;
+                if (info.target_queue) {
+                    TaggedAudioPacket discarded;
+                    while (info.target_queue->try_pop(discarded)) {
+                        // Drain stale packets so consumers restart immediately.
+                    }
+                }
+            }
+        }
+
+        timing_access.lock.unlock();
+        {
+            std::unique_lock<std::mutex> map_lock(timing_map_mutex_);
+            auto lock_it = timing_locks_.find(packet.source_tag);
+            if (lock_it == timing_locks_.end() || !lock_it->second) {
+                lock_it = timing_locks_.emplace(packet.source_tag, std::make_shared<std::mutex>()).first;
+            }
+            std::unique_lock<std::mutex> per_stream_lock(*lock_it->second);
+            stream_timing_states_.erase(packet.source_tag);
+            auto [new_state_it, _] = stream_timing_states_.try_emplace(packet.source_tag);
+            (void)_;
+            state_ptr = &new_state_it->second;
+            map_lock.unlock();
+        }
+        m_state_version_++;
+        run_loop_cv_.notify_one();
+    }
+
+    StreamTimingState& state = *state_ptr;
+    state.total_packets++;
+
+    if (!state.clock) {
+        state.clock = std::make_unique<StreamClock>(packet.sample_rate);
+    }
+
+    state.clock->update(packet.rtp_timestamp.value(), packet.received_time);
+
+    if (state.clock->is_initialized()) {
+        state.last_clock_offset_ms = state.clock->get_offset_seconds() * 1000.0;
+        state.last_clock_drift_ppm = state.clock->get_drift_ppm();
+        state.last_clock_innovation_ms = state.clock->get_last_innovation_seconds() * 1000.0;
+        state.last_clock_measured_offset_ms = state.clock->get_last_measured_offset_seconds() * 1000.0;
+        state.clock_innovation_abs_sum_ms += std::abs(state.last_clock_innovation_ms);
+        state.clock_innovation_samples++;
+    }
+
+    global_timeshift_buffer_.push_back(packet); // copy to keep packet available for timing updates
+    m_total_packets_added++;
+
+    const double arrival_time_sec =
+        std::chrono::duration<double>(packet.received_time.time_since_epoch()).count();
+
+    if (!state.is_first_packet && packet.sample_rate > 0 &&
+        state.last_wallclock.time_since_epoch().count() > 0) {
+        const double arrival_delta_sec =
+            std::chrono::duration<double>(packet.received_time - state.last_wallclock).count();
+        const uint32_t timestamp_diff =
+            rtp_timestamp_diff(packet.rtp_timestamp.value(), state.last_rtp_timestamp);
+        const double rtp_delta_sec =
+            static_cast<double>(timestamp_diff) / static_cast<double>(packet.sample_rate);
+        const double transit_delta_sec = arrival_delta_sec - rtp_delta_sec;
+        const double abs_transit_delta_sec = std::abs(transit_delta_sec);
+
+        if (!state.jitter_initialized) {
+            state.rfc3550_jitter_sec = abs_transit_delta_sec;
+            state.jitter_initialized = true;
+        } else {
+            state.rfc3550_jitter_sec += (abs_transit_delta_sec - state.rfc3550_jitter_sec) / 16.0;
+        }
+
+        state.jitter_estimate = state.rfc3550_jitter_sec * 1000.0;
+        state.system_jitter_estimate_ms = state.jitter_estimate;
+        state.last_system_delay_ms = transit_delta_sec * 1000.0;
+        state.last_transit_sec = transit_delta_sec;
+    } else {
+        state.jitter_estimate = std::max(state.jitter_estimate, 0.0);
+        state.system_jitter_estimate_ms = state.jitter_estimate;
+        state.last_system_delay_ms = 0.0;
+    }
+
+    state.last_arrival_time_sec = arrival_time_sec;
+
+    state.is_first_packet = false;
+    state.last_rtp_timestamp = packet.rtp_timestamp.value();
+    state.last_wallclock = packet.received_time;
+    state.sample_rate = packet.sample_rate;
+    state.channels = packet.channels;
+    state.bit_depth = packet.bit_depth;
+    state.samples_per_chunk = 0;
+    if (packet.sample_rate > 0 && packet.channels > 0 && packet.bit_depth > 0 && (packet.bit_depth % 8) == 0) {
+        const std::size_t bytes_per_frame =
+            static_cast<std::size_t>(packet.channels) * static_cast<std::size_t>(packet.bit_depth / 8);
+        if (bytes_per_frame > 0) {
+            state.samples_per_chunk = static_cast<uint32_t>(packet.audio_data.size() / bytes_per_frame);
+        }
     }
 }
 
