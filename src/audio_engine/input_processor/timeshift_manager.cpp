@@ -24,6 +24,7 @@ namespace {
 constexpr double kProcessingBudgetAlpha = 0.2;
 constexpr double kPlaybackDriftGain = 1.0 / 1'000'000.0; // Convert ppm to ratio
 constexpr double kFallbackSmoothing = 0.1;
+constexpr std::chrono::milliseconds kMaxProcessingHold = std::chrono::milliseconds(5);
 
 bool has_prefix(const std::string& value, const std::string& prefix) {
     if (prefix.empty()) {
@@ -800,6 +801,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
     }
 
     const auto iteration_start = std::chrono::steady_clock::now();
+    bool time_budget_exhausted = false;
     auto now = iteration_start;
     const double max_catchup_lag_ms = m_settings->timeshift_tuning.max_catchup_lag_ms;
     size_t packets_processed = 0;
@@ -944,6 +946,15 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
                     break;
                 }
             }
+
+            if (std::chrono::steady_clock::now() - iteration_start > kMaxProcessingHold) {
+                time_budget_exhausted = true;
+                break;
+            }
+        }
+
+        if (time_budget_exhausted) {
+            break;
         }
     }
 
