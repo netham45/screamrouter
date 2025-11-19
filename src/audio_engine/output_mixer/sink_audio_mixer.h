@@ -311,13 +311,14 @@ private:
     std::atomic<double> smoothed_buffer_level_ms_{0.0};
     std::chrono::steady_clock::time_point last_drain_check_;
 
-    struct PayloadBufferMetrics {
-        double buffered_ms = 0.0;
-        double capacity_ms = 0.0;
-        size_t buffered_bytes = 0;
-        size_t capacity_bytes = 0;
-        double fill_ratio = 0.0;
-        bool format_valid = false;
+    struct InputBufferMetrics {
+        double total_ms = 0.0;
+        double avg_per_source_ms = 0.0;
+        double max_per_source_ms = 0.0;
+        std::size_t queued_blocks = 0;
+        std::size_t active_sources = 0;
+        double block_duration_ms = 0.0;
+        bool valid = false;
     };
 
     void set_playback_format(int sample_rate, int channels, int bit_depth);
@@ -332,8 +333,7 @@ private:
     void cleanup_drain_resampler();
     bool apply_drain_resampling();
     void update_drain_ratio();
-    PayloadBufferMetrics compute_payload_buffer_metrics() const;
-    double calculate_buffer_level_ms() const;
+    InputBufferMetrics compute_input_buffer_metrics();
 };
 
 } // namespace audio

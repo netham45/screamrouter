@@ -2047,14 +2047,19 @@ void SinkAudioMixer::update_drain_ratio() {
 
     last_drain_check_ = now;
 
-    // Measure the payload ring buffer directly
-    PayloadBufferMetrics metrics = compute_payload_buffer_metrics();
-    double buffer_ms = metrics.buffered_ms;
-    double fill_percent = metrics.capacity_bytes > 0 ? metrics.fill_ratio * 100.0 : 0.0;
+    // Measure the upstream input buffer backlog (data waiting before downscale/output)
+    InputBufferMetrics metrics = compute_input_buffer_metrics();
+    double buffer_ms = metrics.total_ms;
 
-    LOG_CPP_DEBUG("[BufferDrain:%s] Payload buffer queued=%.2fms (%.2f%% of %.2fms capacity, %zu/%zu bytes)",
-                  config_.sink_id.c_str(), buffer_ms, fill_percent, metrics.capacity_ms,
-                  metrics.buffered_bytes, metrics.capacity_bytes);
+    if (!metrics.valid) {
+        LOG_CPP_WARNING("[BufferDrain:%s] Unable to evaluate input buffer backlog (invalid timing parameters).",
+                        config_.sink_id.c_str());
+        return;
+    }
+
+    LOG_CPP_DEBUG("[BufferDrain:%s] Input backlog: total=%.2fms avg=%.2fms max=%.2fms blocks=%zu sources=%zu block_dur=%.2fms",
+                  config_.sink_id.c_str(), buffer_ms, metrics.avg_per_source_ms, metrics.max_per_source_ms,
+                  metrics.queued_blocks, metrics.active_sources, metrics.block_duration_ms);
 
     // Apply exponential smoothing
     double alpha = 1.0 - m_settings->mixer_tuning.drain_smoothing_factor;
@@ -2141,56 +2146,55 @@ void SinkAudioMixer::update_drain_ratio() {
     }
 }
 
-SinkAudioMixer::PayloadBufferMetrics SinkAudioMixer::compute_payload_buffer_metrics() const {
-    PayloadBufferMetrics metrics;
-    metrics.buffered_bytes = payload_buffer_write_pos_;
-    metrics.capacity_bytes = payload_buffer_.size();
+SinkAudioMixer::InputBufferMetrics SinkAudioMixer::compute_input_buffer_metrics() {
+    InputBufferMetrics metrics;
+
+    if (!mix_scheduler_) {
+        return metrics;
+    }
 
     const int sample_rate = playback_sample_rate_;
-    const int bit_depth = playback_bit_depth_;
-    const int channels = std::max(playback_channels_, 1);
-
-    if (sample_rate <= 0 || bit_depth <= 0 || (bit_depth % 8) != 0) {
-        LOG_CPP_DEBUG("[BufferCalc:%s] Invalid playback format (rate=%d, depth=%d, channels=%d)",
-                      config_.sink_id.c_str(), sample_rate, bit_depth, channels);
+    if (sample_rate <= 0 || frames_per_chunk_ == 0) {
         return metrics;
     }
 
-    const std::size_t bytes_per_sample = static_cast<std::size_t>(bit_depth) / 8;
-    const std::size_t frame_bytes = bytes_per_sample * static_cast<std::size_t>(channels);
-    if (frame_bytes == 0) {
-        LOG_CPP_WARNING("[BufferCalc:%s] Frame size is zero (bit_depth=%d, channels=%d)",
-                        config_.sink_id.c_str(), bit_depth, channels);
+    metrics.block_duration_ms = (static_cast<double>(frames_per_chunk_) * 1000.0) /
+                                static_cast<double>(sample_rate);
+    if (metrics.block_duration_ms <= 0.0) {
         return metrics;
     }
 
-    auto bytes_to_ms = [&](std::size_t bytes) -> double {
-        double frames = static_cast<double>(bytes) / static_cast<double>(frame_bytes);
-        return (frames * 1000.0) / static_cast<double>(sample_rate);
-    };
+    std::map<std::string, std::size_t> backlog_depths = mix_scheduler_->get_ready_depths();
 
-    metrics.buffered_ms = bytes_to_ms(metrics.buffered_bytes);
-    metrics.capacity_ms = bytes_to_ms(metrics.capacity_bytes);
-    if (metrics.capacity_bytes > 0) {
-        metrics.fill_ratio = static_cast<double>(metrics.buffered_bytes) /
-                             static_cast<double>(metrics.capacity_bytes);
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        for (const auto& [instance_id, buffer] : source_buffers_) {
+            (void)instance_id;
+            if (!buffer.audio_data.empty()) {
+                backlog_depths[instance_id] += 1;
+            }
+        }
     }
-    metrics.format_valid = true;
+
+    metrics.active_sources = backlog_depths.size();
+
+    for (const auto& [instance_id, depth] : backlog_depths) {
+        (void)instance_id;
+        if (depth == 0) {
+            continue;
+        }
+        double backlog_ms = metrics.block_duration_ms * static_cast<double>(depth);
+        metrics.total_ms += backlog_ms;
+        metrics.queued_blocks += depth;
+        if (backlog_ms > metrics.max_per_source_ms) {
+            metrics.max_per_source_ms = backlog_ms;
+        }
+    }
+
+    if (metrics.active_sources > 0) {
+        metrics.avg_per_source_ms = metrics.total_ms / static_cast<double>(metrics.active_sources);
+    }
+
+    metrics.valid = true;
     return metrics;
-}
-
-double SinkAudioMixer::calculate_buffer_level_ms() const {
-    PayloadBufferMetrics metrics = compute_payload_buffer_metrics();
-    double fill_percent = metrics.capacity_bytes > 0 ? metrics.fill_ratio * 100.0 : 0.0;
-
-    LOG_CPP_DEBUG("[BufferCalc:%s] Payload buffer: %.2fms queued (%.2f%% of %.2fms capacity, %zu/%zu bytes)",
-                  config_.sink_id.c_str(), metrics.buffered_ms, fill_percent,
-                  metrics.capacity_ms, metrics.buffered_bytes, metrics.capacity_bytes);
-
-    if (metrics.buffered_ms > 100.0) {
-        LOG_CPP_WARNING("[BufferCalc:%s] High buffer level detected: %.2fms (%.2f%% full)",
-                        config_.sink_id.c_str(), metrics.buffered_ms, fill_percent);
-    }
-
-    return metrics.buffered_ms;
 }
