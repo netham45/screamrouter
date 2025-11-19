@@ -390,7 +390,20 @@ void WasapiCaptureReceiver::process_packet(BYTE* data, UINT32 frames, DWORD flag
     }
 
     if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) {
-        LOG_CPP_WARNING("[WasapiCapture:%s] Data discontinuity signaled by WASAPI. Resetting capture state.", device_tag_.c_str());
+        discontinuity_count_++;
+
+        // Only log every second to avoid spam, but always reset the state
+        auto now = std::chrono::steady_clock::now();
+        auto time_since_last_log = std::chrono::duration_cast<std::chrono::seconds>(
+            now - last_discontinuity_log_time_).count();
+
+        if (time_since_last_log >= 1) {
+            LOG_CPP_WARNING("[WasapiCapture:%s] Data discontinuity signaled by WASAPI (%zu times in last second). Resetting capture state.",
+                           device_tag_.c_str(), discontinuity_count_);
+            last_discontinuity_log_time_ = now;
+            discontinuity_count_ = 0;
+        }
+
         reset_chunk_state();
     }
 
@@ -479,13 +492,24 @@ void WasapiCaptureReceiver::process_packet(BYTE* data, UINT32 frames, DWORD flag
     } else {
         size_t frames_in_accumulator = chunk_accumulator_.size() / target_bytes_per_frame_;
         uint64_t expected_position = accumulator_frame_position_ + frames_in_accumulator;
-        if (device_frame_position != expected_position) {
-            LOG_CPP_WARNING("[WasapiCapture:%s] Device position jump detected. expected=%llu actual=%llu. Resetting accumulator.",
+
+        // Add tolerance for small position differences (up to 10ms at 48kHz = ~480 frames)
+        const uint64_t position_tolerance = static_cast<uint64_t>(active_sample_rate_ * 0.010); // 10ms tolerance
+        uint64_t position_diff = (device_frame_position > expected_position)
+            ? (device_frame_position - expected_position)
+            : (expected_position - device_frame_position);
+
+        if (position_diff > position_tolerance) {
+            LOG_CPP_WARNING("[WasapiCapture:%s] Device position jump detected. expected=%llu actual=%llu diff=%llu. Resetting accumulator.",
                             device_tag_.c_str(),
                             static_cast<unsigned long long>(expected_position),
-                            static_cast<unsigned long long>(device_frame_position));
+                            static_cast<unsigned long long>(device_frame_position),
+                            static_cast<unsigned long long>(position_diff));
             chunk_accumulator_.clear();
             accumulator_frame_position_ = device_frame_position;
+        } else if (position_diff > 0) {
+            // Small drift - adjust position without resetting
+            accumulator_frame_position_ = device_frame_position - frames_in_accumulator;
         }
     }
 

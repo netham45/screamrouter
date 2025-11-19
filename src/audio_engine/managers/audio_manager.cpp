@@ -946,27 +946,6 @@ void AudioManager::set_audio_settings(const AudioEngineSettings& new_settings) {
     }
 }
 
-pybind11::dict AudioManager::get_sync_statistics() {
-    namespace py = pybind11;
-    std::scoped_lock lock(m_manager_mutex);
-    
-    py::dict stats;
-    
-    for (const auto& [rate, clock] : sync_clocks_) {
-        auto clock_stats = clock->get_stats();
-        py::dict rate_stats;
-        rate_stats["active_sinks"] = clock_stats.active_sinks;
-        rate_stats["current_playback_timestamp"] = clock_stats.current_playback_timestamp;
-        rate_stats["max_drift_ppm"] = clock_stats.max_drift_ppm;
-        rate_stats["avg_barrier_wait_ms"] = clock_stats.avg_barrier_wait_ms;
-        rate_stats["total_barrier_timeouts"] = clock_stats.total_barrier_timeouts;
-        
-        stats[py::cast(rate)] = rate_stats;
-    }
-    
-    return stats;
-}
-
 SystemDeviceRegistry AudioManager::list_system_devices() {
     if (m_system_device_enumerator) {
         auto snapshot = m_system_device_enumerator->get_registry_snapshot();

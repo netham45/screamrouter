@@ -105,6 +105,10 @@ private:
     uint64_t stream_start_frame_position_ = 0;
     double seconds_per_frame_ = 0.0;
 
+    // Discontinuity tracking for throttled logging
+    std::chrono::steady_clock::time_point last_discontinuity_log_time_{};
+    size_t discontinuity_count_ = 0;
+
     std::mutex device_mutex_;
 };
 

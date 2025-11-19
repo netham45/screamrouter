@@ -82,7 +82,7 @@ public:
     /**
      * @brief Destructor. Stops the processing thread.
      */
-    ~SourceInputProcessor() noexcept override;
+    ~SourceInputProcessor() override;
 
     // --- AudioComponent Interface ---
     /**

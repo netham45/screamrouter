@@ -429,16 +429,6 @@ struct PerProcessScreamReceiverConfig {
 };
 
 /**
- * @enum InputProtocolType
- * @brief Enum to specify the expected input data format for a SourceInputProcessor.
- */
-enum class InputProtocolType {
-    RTP_SCREAM_PAYLOAD,       ///< Expects raw PCM audio data (from an RTP payload).
-    RAW_SCREAM_PACKET,        ///< Expects a full Scream packet (5-byte header + PCM).
-    PER_PROCESS_SCREAM_PACKET ///< Expects a per-process packet (Program Tag + 5-byte header + PCM).
-};
-
-/**
  * @struct SourceProcessorConfig
  * @brief Configuration for a SourceInputProcessor component.
  */
@@ -594,13 +584,6 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
     inline void bind_audio_types(pybind11::module_ &m) {
         namespace py = pybind11;
     
-        py::class_<SourceConfig>(m, "SourceConfig", "Configuration for an audio source")
-            .def(py::init<>())
-            .def_readwrite("tag", &SourceConfig::tag, "Unique identifier (e.g., IP address or user tag)")
-            .def_readwrite("initial_volume", &SourceConfig::initial_volume, "Initial volume level (default: 1.0)")
-            .def_readwrite("initial_eq", &SourceConfig::initial_eq, "Initial equalizer settings (list of floats, size EQ_BANDS)")
-            .def_readwrite("initial_delay_ms", &SourceConfig::initial_delay_ms, "Initial delay in milliseconds (default: 0)");
-    
         py::class_<SinkConfig>(m, "SinkConfig", "Configuration for an audio sink")
             .def(py::init<>()) // Bind the default constructor
             .def_readwrite("id", &SinkConfig::id, "Unique identifier for this sink instance")
@@ -616,35 +599,11 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("time_sync_delay_ms", &SinkConfig::time_sync_delay_ms, "Time synchronization delay in milliseconds")
             .def_readwrite("rtp_receivers", &SinkConfig::rtp_receivers, "List of RTP receivers for multi-device mode")
             .def_readwrite("multi_device_mode", &SinkConfig::multi_device_mode, "Enable multi-device RTP mode");
-    
-        py::class_<RawScreamReceiverConfig>(m, "RawScreamReceiverConfig", "Configuration for a raw Scream receiver")
-            .def(py::init<>()) // Default constructor
-            .def_readwrite("listen_port", &RawScreamReceiverConfig::listen_port, "UDP port to listen on");
-    
-        py::class_<PerProcessScreamReceiverConfig>(m, "PerProcessScreamReceiverConfig", "Configuration for a per-process Scream receiver")
-            .def(py::init<>())
-            .def_readwrite("listen_port", &PerProcessScreamReceiverConfig::listen_port, "UDP port to listen on for per-process receiver");
-    
-        py::enum_<InputProtocolType>(m, "InputProtocolType", "Specifies the expected input packet type")
-            .value("RTP_SCREAM_PAYLOAD", InputProtocolType::RTP_SCREAM_PAYLOAD)
-            .value("RAW_SCREAM_PACKET", InputProtocolType::RAW_SCREAM_PACKET)
-            .value("PER_PROCESS_SCREAM_PACKET", InputProtocolType::PER_PROCESS_SCREAM_PACKET)
-            .export_values();
-    
+
         py::class_<CppSpeakerLayout>(m, "CppSpeakerLayout", "C++ structure for speaker layout configuration")
             .def(py::init<>()) // Default constructor
             .def_readwrite("auto_mode", &CppSpeakerLayout::auto_mode, "True for auto mix, false for custom matrix")
             .def_readwrite("matrix", &CppSpeakerLayout::matrix, "8x8 speaker mix matrix");
-    
-        py::enum_<CommandType>(m, "CommandType", "Type of control command for a source")
-            .value("SET_VOLUME", CommandType::SET_VOLUME)
-            .value("SET_EQ", CommandType::SET_EQ)
-            .value("SET_DELAY", CommandType::SET_DELAY)
-            .value("SET_TIMESHIFT", CommandType::SET_TIMESHIFT)
-            .value("SET_EQ_NORMALIZATION", CommandType::SET_EQ_NORMALIZATION)
-            .value("SET_VOLUME_NORMALIZATION", CommandType::SET_VOLUME_NORMALIZATION)
-            .value("SET_SPEAKER_MIX", CommandType::SET_SPEAKER_MIX)
-            .export_values();
 
         py::enum_<DeviceDirection>(m, "DeviceDirection", "Direction for system audio devices")
             .value("CAPTURE", DeviceDirection::CAPTURE)
@@ -676,25 +635,6 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("direction", &DeviceDiscoveryNotification::direction)
             .def_readwrite("present", &DeviceDiscoveryNotification::present);
     
-        py::class_<SourceParameterUpdates>(m, "SourceParameterUpdates", "Holds optional parameter updates for a source")
-            .def(py::init<>())
-            .def_readwrite("volume", &SourceParameterUpdates::volume, "Optional volume level")
-            .def_readwrite("eq_values", &SourceParameterUpdates::eq_values, "Optional list of EQ values")
-            .def_readwrite("eq_normalization", &SourceParameterUpdates::eq_normalization, "Optional EQ normalization flag")
-            .def_readwrite("volume_normalization", &SourceParameterUpdates::volume_normalization, "Optional volume normalization flag")
-            .def_readwrite("delay_ms", &SourceParameterUpdates::delay_ms, "Optional delay in milliseconds")
-            .def_readwrite("timeshift_sec", &SourceParameterUpdates::timeshift_sec, "Optional timeshift in seconds")
-            .def_readwrite("speaker_layouts_map", &SourceParameterUpdates::speaker_layouts_map, "Optional map of input channel counts to speaker layouts");
-    
-        py::class_<ControlCommand>(m, "ControlCommand", "Command structure for SourceInputProcessor")
-            .def(py::init<>())
-            .def_readwrite("type", &ControlCommand::type, "The type of the command")
-            .def_readwrite("float_value", &ControlCommand::float_value, "Floating point value for the command")
-            .def_readwrite("int_value", &ControlCommand::int_value, "Integer value for the command")
-            .def_readwrite("eq_values", &ControlCommand::eq_values, "List of float values for EQ")
-            .def_readwrite("input_channel_key", &ControlCommand::input_channel_key, "Input channel key for speaker mix")
-            .def_readwrite("speaker_layout_for_key", &ControlCommand::speaker_layout_for_key, "Speaker layout for the given key");
-
         py::class_<StreamStats>(m, "StreamStats", "Statistics for a single audio stream")
             .def(py::init<>())
             .def_readwrite("jitter_estimate_ms", &StreamStats::jitter_estimate_ms)

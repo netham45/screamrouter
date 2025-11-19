@@ -179,32 +179,6 @@ bool WebRtcManager::remove_webrtc_listener(const std::string& sink_id, const std
     return true;
 }
 
-void WebRtcManager::set_webrtc_remote_description(const std::string& sink_id, const std::string& listener_id, const std::string& sdp, const std::string& type, bool running) {
-    // Step 1: Validate and get the sender under lock
-    WebRtcSender* webrtc_sender = nullptr;
-    {
-        std::scoped_lock lock(m_manager_mutex);
-        if (!running) return;
-
-        INetworkSender* sender = m_sink_manager->get_listener_from_sink(sink_id, listener_id);
-        if (sender) {
-            webrtc_sender = dynamic_cast<WebRtcSender*>(sender);
-            if (!webrtc_sender) {
-                LOG_CPP_ERROR("[WebRtcManager] Listener %s on sink %s is not a WebRtcSender.", listener_id.c_str(), sink_id.c_str());
-                return;
-            }
-        } else {
-            return;
-        }
-    } // Release m_manager_mutex here
-
-    // Step 2: Call into WebRTC without holding m_manager_mutex
-    // This prevents deadlock with libdatachannel callbacks that need the GIL
-    if (webrtc_sender) {
-        webrtc_sender->set_remote_description(sdp, type);
-    }
-}
-
 void WebRtcManager::add_webrtc_remote_ice_candidate(const std::string& sink_id, const std::string& listener_id, const std::string& candidate, const std::string& sdpMid, bool running) {
     // Step 1: Validate and get the sender under lock
     WebRtcSender* webrtc_sender = nullptr;
@@ -230,6 +204,36 @@ void WebRtcManager::add_webrtc_remote_ice_candidate(const std::string& sink_id, 
         webrtc_sender->add_remote_ice_candidate(candidate, sdpMid);
     }
 }
+
+void WebRtcManager::set_webrtc_remote_description(const std::string& sink_id,
+                                                  const std::string& listener_id,
+                                                  const std::string& sdp,
+                                                  const std::string& type,
+                                                  bool running) {
+    WebRtcSender* webrtc_sender = nullptr;
+    {
+        std::scoped_lock lock(m_manager_mutex);
+        if (!running) {
+            return;
+        }
+
+        INetworkSender* sender = m_sink_manager->get_listener_from_sink(sink_id, listener_id);
+        if (!sender) {
+            return;
+        }
+
+        webrtc_sender = dynamic_cast<WebRtcSender*>(sender);
+        if (!webrtc_sender) {
+            LOG_CPP_ERROR("[WebRtcManager] Listener %s on sink %s is not a WebRtcSender.", listener_id.c_str(), sink_id.c_str());
+            return;
+        }
+    }
+
+    if (webrtc_sender) {
+        webrtc_sender->set_remote_description(sdp, type);
+    }
+}
+
 
 } // namespace audio
 } // namespace screamrouter

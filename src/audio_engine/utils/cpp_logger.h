@@ -127,11 +127,8 @@ inline void bind_logger(pybind11::module_ &m) {
     m.def("shutdown_cpp_logger", &screamrouter::audio::logging::shutdown_cpp_logger,
           "Signals the C++ logger to prepare for shutdown, unblocking any waiting log retrieval calls.");
  
-    m.def("set_cpp_log_level", &screamrouter::audio::logging::set_cpp_log_level,
-          py::arg("level"),
-          "Sets the C++ global log level.");
 }
- 
+
 } // namespace logging
 } // namespace audio
 } // namespace screamrouter
