@@ -81,28 +81,12 @@ WasapiCaptureReceiver::WasapiCaptureReceiver(std::string device_tag,
                            std::move(notification_queue),
                            timeshift_manager,
                            "[WasapiCapture]" + device_tag,
-                           resolve_base_frames_per_chunk(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
+                           1024),  // Use a reasonable default, doesn't matter since we're not accumulating
       device_tag_(std::move(device_tag)),
-      capture_params_(std::move(capture_params)),
-      base_frames_per_chunk_(resolve_base_frames_per_chunk(timeshift_manager ? timeshift_manager->get_settings() : nullptr)),
-      chunk_size_bytes_(resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr))
+      capture_params_(std::move(capture_params))
 {
     loopback_mode_ = system_audio::tag_has_prefix(device_tag_, system_audio::kWasapiLoopbackPrefix) || capture_params_.loopback;
     exclusive_mode_ = capture_params_.exclusive_mode;
-    const int configured_channels = capture_params_.channels > 0
-        ? static_cast<int>(capture_params_.channels)
-        : 2;
-    const int configured_bit_depth = capture_params_.bit_depth == 32 ? 32 : 16;
-    const auto computed_bytes = compute_chunk_size_bytes_for_format(
-        base_frames_per_chunk_, configured_channels, configured_bit_depth);
-    if (computed_bytes > 0) {
-        chunk_size_bytes_ = computed_bytes;
-    }
-    if (chunk_size_bytes_ == 0) {
-        chunk_size_bytes_ = resolve_chunk_size_bytes(timeshift_manager ? timeshift_manager->get_settings() : nullptr);
-    }
-    chunk_bytes_ = chunk_size_bytes_;
-    chunk_accumulator_.reserve(chunk_size_bytes_ * 2);
 }
 
 WasapiCaptureReceiver::~WasapiCaptureReceiver() noexcept {
@@ -124,7 +108,9 @@ void WasapiCaptureReceiver::close_socket() {
 }
 
 size_t WasapiCaptureReceiver::get_receive_buffer_size() const {
-    return chunk_size_bytes_;
+    // Return a reasonable buffer size for Windows to work with
+    // 100ms at 48kHz stereo 16-bit = 48000 * 0.1 * 2 * 2 = 19200 bytes/5=20ms
+    return 19200/5;
 }
 
 int WasapiCaptureReceiver::get_poll_timeout_ms() const {
@@ -300,24 +286,7 @@ bool WasapiCaptureReceiver::initialize_capture_format(WAVEFORMATEX* mix_format) 
         return false;
     }
 
-    chunk_size_bytes_ = compute_chunk_size_bytes_for_format(
-        base_frames_per_chunk_, active_channels_,
-        capture_params_.bit_depth == 32 ? 32 : 16);
-    if (chunk_size_bytes_ == 0) {
-        chunk_size_bytes_ = target_bytes_per_frame_;
-    }
-    chunk_bytes_ = chunk_size_bytes_;
-    if (chunk_bytes_ % target_bytes_per_frame_ != 0) {
-        const size_t frames = std::max<size_t>(1, chunk_bytes_ / target_bytes_per_frame_);
-        chunk_bytes_ = frames * target_bytes_per_frame_;
-    }
-
-    if (chunk_bytes_ == 0) {
-        chunk_bytes_ = target_bytes_per_frame_;
-    }
-
-    chunk_accumulator_.reserve(chunk_bytes_ * 2);
-
+    // No chunk accumulation needed anymore
     reset_chunk_state();
 
     return true;
@@ -479,49 +448,21 @@ void WasapiCaptureReceiver::process_packet(BYTE* data, UINT32 frames, DWORD flag
         }
     }
 
-    const uint8_t* src_ptr = conversion_buffer_.empty() ? reinterpret_cast<uint8_t*>(data) : conversion_buffer_.data();
-    const size_t bytes_from_packet = conversion_buffer_.empty()
-        ? static_cast<size_t>(frames) * target_bytes_per_frame_
-        : conversion_buffer_.size();
+    // Directly dispatch whatever Windows gives us - no accumulation needed!
+    std::vector<uint8_t> packet_data;
+    if (!conversion_buffer_.empty()) {
+        packet_data = std::move(conversion_buffer_);
+    } else {
+        // No conversion needed, just copy the data
+        const size_t bytes_to_copy = static_cast<size_t>(frames) * target_bytes_per_frame_;
+        packet_data.assign(reinterpret_cast<uint8_t*>(data),
+                          reinterpret_cast<uint8_t*>(data) + bytes_to_copy);
+    }
 
     const uint64_t device_frame_position = static_cast<uint64_t>(device_position);
 
-    if (!accumulator_position_initialized_) {
-        accumulator_frame_position_ = device_frame_position;
-        accumulator_position_initialized_ = true;
-    } else {
-        size_t frames_in_accumulator = chunk_accumulator_.size() / target_bytes_per_frame_;
-        uint64_t expected_position = accumulator_frame_position_ + frames_in_accumulator;
-
-        // Add tolerance for small position differences (up to 10ms at 48kHz = ~480 frames)
-        const uint64_t position_tolerance = static_cast<uint64_t>(active_sample_rate_ * 0.010); // 10ms tolerance
-        uint64_t position_diff = (device_frame_position > expected_position)
-            ? (device_frame_position - expected_position)
-            : (expected_position - device_frame_position);
-
-        if (position_diff > position_tolerance) {
-            LOG_CPP_WARNING("[WasapiCapture:%s] Device position jump detected. expected=%llu actual=%llu diff=%llu. Resetting accumulator.",
-                            device_tag_.c_str(),
-                            static_cast<unsigned long long>(expected_position),
-                            static_cast<unsigned long long>(device_frame_position),
-                            static_cast<unsigned long long>(position_diff));
-            chunk_accumulator_.clear();
-            accumulator_frame_position_ = device_frame_position;
-        } else if (position_diff > 0) {
-            // Small drift - adjust position without resetting
-            accumulator_frame_position_ = device_frame_position - frames_in_accumulator;
-        }
-    }
-
-    chunk_accumulator_.insert(chunk_accumulator_.end(), src_ptr, src_ptr + bytes_from_packet);
-
-    while (chunk_accumulator_.size() >= chunk_bytes_) {
-        std::vector<uint8_t> chunk(chunk_bytes_);
-        std::copy_n(chunk_accumulator_.begin(), chunk_bytes_, chunk.begin());
-        chunk_accumulator_.erase(chunk_accumulator_.begin(), chunk_accumulator_.begin() + chunk_bytes_);
-        dispatch_chunk(std::move(chunk), accumulator_frame_position_);
-        accumulator_frame_position_ += chunk_bytes_ / target_bytes_per_frame_;
-    }
+    // Dispatch the packet directly with whatever size Windows gave us
+    dispatch_chunk(std::move(packet_data), device_frame_position);
 }
 
 void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data, uint64_t frame_position) {
@@ -577,10 +518,8 @@ void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data, ui
 }
 
 void WasapiCaptureReceiver::reset_chunk_state() {
-    chunk_accumulator_.clear();
+    // No more accumulator needed - just reset timing state
     running_timestamp_ = 0;
-    accumulator_position_initialized_ = false;
-    accumulator_frame_position_ = 0;
     stream_time_initialized_ = false;
     stream_start_frame_position_ = 0;
 }

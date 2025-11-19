@@ -90,16 +90,10 @@ private:
     unsigned int active_sample_rate_ = 48000;
     size_t source_bytes_per_frame_ = 0;
     size_t target_bytes_per_frame_ = 0;
-    const std::size_t base_frames_per_chunk_;
-    std::size_t chunk_size_bytes_;
-    size_t chunk_bytes_ = 0;
-
-    std::vector<uint8_t> chunk_accumulator_;
+    // Buffer for format conversion only (not accumulation)
     std::vector<uint8_t> conversion_buffer_;
 
     uint32_t running_timestamp_ = 0;
-    bool accumulator_position_initialized_ = false;
-    uint64_t accumulator_frame_position_ = 0;
     bool stream_time_initialized_ = false;
     std::chrono::steady_clock::time_point stream_start_time_{};
     uint64_t stream_start_frame_position_ = 0;
