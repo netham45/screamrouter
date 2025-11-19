@@ -140,9 +140,10 @@ private:
 
     // --- Internal Buffers ---
     std::vector<float> scaled_float_buffer_;
-    std::vector<std::vector<float>> remixed_float_buffers_;
+    std::vector<std::vector<float>> remixed_float_buffers_;  // DEPRECATED: Will be removed after migration
+    std::vector<float> remixed_interleaved_buffer_;          // NEW: Interleaved format [ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]
     std::vector<float> resample_float_out_buffer_;
-    std::vector<float> downsample_float_in_buffer_;
+    std::vector<float> downsample_float_in_buffer_;          // DEPRECATED: No longer needed with interleaved format
     std::vector<float> downsample_float_out_buffer_;
 
     struct ChannelView {

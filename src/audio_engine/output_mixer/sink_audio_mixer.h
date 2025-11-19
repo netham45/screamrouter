@@ -26,6 +26,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <lame/lame.h>
+#include <samplerate.h>
 #include <atomic>
 #include <chrono>
 #include <limits>
@@ -302,12 +303,27 @@ private:
     // Per-source underrun counters
     std::map<std::string, uint64_t> profiling_source_underruns_;
 
+    // Buffer drain control members
+    SRC_STATE* drain_resampler_ = nullptr;
+    std::vector<float> drain_input_buffer_;
+    std::vector<float> drain_output_buffer_;
+    std::atomic<double> current_drain_ratio_{1.0};
+    std::atomic<double> smoothed_buffer_level_ms_{0.0};
+    std::chrono::steady_clock::time_point last_drain_check_;
+
     void set_playback_format(int sample_rate, int channels, int bit_depth);
     void update_playback_format_from_sender();
     std::chrono::microseconds calculate_mix_period(int sample_rate, int channels, int bit_depth) const;
     void register_mix_timer();
     void unregister_mix_timer();
     bool wait_for_mix_tick();
+
+    // Buffer drain control methods
+    void init_drain_resampler();
+    void cleanup_drain_resampler();
+    bool apply_drain_resampling();
+    void update_drain_ratio();
+    double calculate_buffer_level_ms() const;
 };
 
 } // namespace audio

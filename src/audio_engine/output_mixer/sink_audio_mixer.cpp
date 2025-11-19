@@ -183,6 +183,9 @@ SinkAudioMixer::SinkAudioMixer(
         mix_scheduler_->set_timing_parameters(frames_per_chunk_, config_.output_samplerate);
     }
 
+    // Initialize buffer drain resampler if enabled
+    init_drain_resampler();
+
     LOG_CPP_INFO("[SinkMixer:%s] Initialization complete.", config_.sink_id.c_str());
 }
 
@@ -196,6 +199,7 @@ SinkAudioMixer::~SinkAudioMixer() {
     if (mix_scheduler_) {
         mix_scheduler_->shutdown();
     }
+    cleanup_drain_resampler();
     join_startup_thread();
     if (component_thread_.joinable()) {
         LOG_CPP_WARNING("[SinkMixer:%s] Warning: Joining thread in destructor, stop() might not have been called properly.", config_.sink_id.c_str());
@@ -1703,6 +1707,12 @@ void SinkAudioMixer::run() {
 
         lock.unlock();
 
+        // Apply adaptive buffer draining if enabled
+        if (m_settings && m_settings->mixer_tuning.enable_adaptive_buffer_drain) {
+            update_drain_ratio();
+            apply_drain_resampling();
+        }
+
         downscale_buffer();
 
         const int effective_bit_depth = (playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0)
@@ -1801,4 +1811,405 @@ void SinkAudioMixer::run() {
     }
 
     LOG_CPP_INFO("[SinkMixer:%s] Exiting run loop.", config_.sink_id.c_str());
+}
+
+// Buffer drain control implementation
+
+void SinkAudioMixer::init_drain_resampler() {
+    if (!m_settings || !m_settings->mixer_tuning.enable_adaptive_buffer_drain) {
+        LOG_CPP_DEBUG("[SinkMixer:%s] Adaptive buffer drain disabled, skipping resampler init.",
+                     config_.sink_id.c_str());
+        return;
+    }
+
+    int error = 0;
+    drain_resampler_ = src_new(SRC_SINC_FASTEST, config_.output_channels, &error);
+    if (error != 0 || !drain_resampler_) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to create drain resampler: %s",
+                      config_.sink_id.c_str(), src_strerror(error));
+        drain_resampler_ = nullptr;
+        return;
+    }
+
+    // Pre-allocate buffers - allow for some expansion
+    size_t max_frames = frames_per_chunk_ * 2;
+    drain_input_buffer_.resize(max_frames * config_.output_channels);
+    drain_output_buffer_.resize(max_frames * config_.output_channels);
+
+    // Initialize tracking
+    current_drain_ratio_ = 1.0;
+    smoothed_buffer_level_ms_ = 0.0;
+    last_drain_check_ = std::chrono::steady_clock::now();
+
+    LOG_CPP_INFO("[SinkMixer:%s] Initialized drain resampler for adaptive buffer control (target=%.1fms)",
+                 config_.sink_id.c_str(), m_settings->mixer_tuning.target_buffer_level_ms);
+}
+
+void SinkAudioMixer::cleanup_drain_resampler() {
+    if (drain_resampler_) {
+        src_delete(drain_resampler_);
+        drain_resampler_ = nullptr;
+        LOG_CPP_DEBUG("[SinkMixer:%s] Cleaned up drain resampler.", config_.sink_id.c_str());
+    }
+}
+
+bool SinkAudioMixer::apply_drain_resampling() {
+    if (!drain_resampler_) {
+        LOG_CPP_DEBUG("[DrainResample:%s] No resampler initialized, skipping",
+                      config_.sink_id.c_str());
+        return false;
+    }
+
+    double ratio = current_drain_ratio_.load();
+
+    // No adjustment needed if ratio is 1.0
+    if (std::abs(ratio - 1.0) < 0.0001) {
+        static int skip_count = 0;
+        if (++skip_count % 100 == 0) {
+            LOG_CPP_DEBUG("[DrainResample:%s] Ratio is 1.0 (%.6f), no resampling needed [skipped %d times]",
+                          config_.sink_id.c_str(), ratio, skip_count);
+        }
+        return false;
+    }
+
+    // We want to produce exactly mixing_buffer_samples_ output samples
+    // When ratio > 1.0, we're speeding up, so we need MORE input samples
+    size_t target_output_samples = mixing_buffer_samples_;
+    size_t target_output_frames = target_output_samples / config_.output_channels;
+
+    // Calculate how many input samples we need to produce the target output
+    // src_ratio = output_frames / input_frames
+    // Since we're speeding up (ratio > 1.0), src_ratio = 1.0 / ratio < 1.0
+    // input_frames = output_frames / src_ratio = output_frames * ratio
+    size_t required_input_frames = static_cast<size_t>(std::ceil(target_output_frames * ratio));
+    size_t required_input_samples = required_input_frames * config_.output_channels;
+
+    // Use the actual available samples (can't use more than we have)
+    size_t num_samples = std::min(required_input_samples, mixing_buffer_samples_);
+
+    if (num_samples == 0 || num_samples > drain_input_buffer_.size()) {
+        LOG_CPP_ERROR("[DrainResample:%s] Invalid sample count: %zu (buffer size=%zu, drain_input size=%zu)",
+                      config_.sink_id.c_str(), num_samples, mixing_buffer_samples_, drain_input_buffer_.size());
+        return false;
+    }
+
+    LOG_CPP_DEBUG("[DrainResample:%s] Drain resampling: ratio=%.5f, using %zu input samples to produce %zu output samples",
+                  config_.sink_id.c_str(), ratio, num_samples, target_output_samples);
+
+    // Convert to float [-1.0, 1.0]
+    int32_t max_val = 0;
+    int32_t min_val = 0;
+    for (size_t i = 0; i < num_samples; ++i) {
+        max_val = std::max(max_val, mixing_buffer_[i]);
+        min_val = std::min(min_val, mixing_buffer_[i]);
+        drain_input_buffer_[i] = mixing_buffer_[i] / 2147483648.0f;
+    }
+
+    double input_peak_db = 20.0 * std::log10(std::max(std::abs(max_val), std::abs(min_val)) / 2147483648.0);
+    LOG_CPP_DEBUG("[DrainResample:%s] Input signal: peak=%.1fdB, range=[%d, %d]",
+                  config_.sink_id.c_str(), input_peak_db, min_val, max_val);
+
+    // Setup SRC_DATA structure
+    SRC_DATA src_data;
+    src_data.data_in = drain_input_buffer_.data();
+    src_data.data_out = drain_output_buffer_.data();
+    src_data.input_frames = num_samples / config_.output_channels;
+    src_data.output_frames = drain_output_buffer_.size() / config_.output_channels;
+    src_data.src_ratio = 1.0 / ratio;  // Inverse: ratio > 1.0 speeds up playback
+    src_data.end_of_input = 0;
+
+    LOG_CPP_DEBUG("[DrainResample:%s] SRC config: input_frames=%ld, max_output_frames=%ld, src_ratio=%.6f (1/%.6f)",
+                  config_.sink_id.c_str(), src_data.input_frames, src_data.output_frames,
+                  src_data.src_ratio, ratio);
+
+    // Estimate expected output
+    size_t expected_output_frames = static_cast<size_t>(src_data.input_frames * src_data.src_ratio);
+    size_t expected_output_samples = expected_output_frames * config_.output_channels;
+    LOG_CPP_DEBUG("[DrainResample:%s] Expecting ~%zu output frames (~%zu samples)",
+                  config_.sink_id.c_str(), expected_output_frames, expected_output_samples);
+
+    // Process resampling
+    auto resample_start = std::chrono::steady_clock::now();
+    int error = src_process(drain_resampler_, &src_data);
+    auto resample_end = std::chrono::steady_clock::now();
+    auto resample_us = std::chrono::duration_cast<std::chrono::microseconds>(resample_end - resample_start).count();
+
+    if (error != 0) {
+        LOG_CPP_ERROR("[DrainResample:%s] Resampling FAILED after %ldus: %s (error=%d)",
+                      config_.sink_id.c_str(), resample_us, src_strerror(error), error);
+        return false;
+    }
+
+    // Convert back to int32 and update mixing_buffer_
+    size_t output_samples = src_data.output_frames_gen * config_.output_channels;
+    size_t frames_used = src_data.input_frames_used;
+
+    LOG_CPP_INFO("[DrainResample:%s] Resampling SUCCESS in %ldus: %zu->%zu samples, used %zu/%zu input frames",
+                 config_.sink_id.c_str(), resample_us, num_samples, output_samples,
+                 frames_used, src_data.input_frames);
+
+    // Calculate timing impact
+    if (playback_sample_rate_ > 0) {
+        double input_duration_ms = (src_data.input_frames_used * 1000.0) / playback_sample_rate_;
+        double output_duration_ms = (src_data.output_frames_gen * 1000.0) / playback_sample_rate_;
+        double time_saved_ms = input_duration_ms - output_duration_ms;
+        LOG_CPP_INFO("[DrainResample:%s] Time impact: %.3fms input -> %.3fms output (saved %.3fms this chunk)",
+                     config_.sink_id.c_str(), input_duration_ms, output_duration_ms, time_saved_ms);
+    }
+
+    // We need exactly mixing_buffer_samples_ output samples
+    // If we got fewer, duplicate the last sample
+    // If we got more (shouldn't happen), truncate
+    size_t target_samples = mixing_buffer_samples_;
+
+    if (output_samples != target_samples) {
+        LOG_CPP_DEBUG("[DrainResample:%s] Adjusting output from %zu to %zu samples (target)",
+                      config_.sink_id.c_str(), output_samples, target_samples);
+    }
+
+    // Convert back with peak detection
+    float out_max = 0.0f;
+    float out_min = 0.0f;
+    int clip_count = 0;
+
+    // First, copy what we have
+    size_t samples_to_copy = std::min(output_samples, target_samples);
+    for (size_t i = 0; i < samples_to_copy; ++i) {
+        float sample = drain_output_buffer_[i];
+        out_max = std::max(out_max, sample);
+        out_min = std::min(out_min, sample);
+
+        if (sample > 1.0f || sample < -1.0f) {
+            clip_count++;
+            sample = std::clamp(sample, -1.0f, 1.0f);
+        }
+        mixing_buffer_[i] = static_cast<int32_t>(sample * 2147483647.0f);
+    }
+
+    // If we need more samples, duplicate the last sample or use zeros
+    if (output_samples < target_samples) {
+        int32_t fill_value = 0;
+        if (samples_to_copy > 0) {
+            // Duplicate the last sample for smoother transition
+            fill_value = mixing_buffer_[samples_to_copy - 1];
+        }
+
+        size_t samples_added = target_samples - output_samples;
+        for (size_t i = samples_to_copy; i < target_samples; ++i) {
+            mixing_buffer_[i] = fill_value;
+        }
+
+        if (samples_added > 0) {
+            LOG_CPP_DEBUG("[DrainResample:%s] Added %zu duplicate samples to reach target size",
+                          config_.sink_id.c_str(), samples_added);
+        }
+    } else if (output_samples > target_samples) {
+        LOG_CPP_WARNING("[DrainResample:%s] Truncated %zu excess samples (%zu->%zu)",
+                        config_.sink_id.c_str(), output_samples - target_samples,
+                        output_samples, target_samples);
+    }
+
+    if (clip_count > 0) {
+        LOG_CPP_WARNING("[DrainResample:%s] Clipping detected: %d samples exceeded [-1,1] range",
+                        config_.sink_id.c_str(), clip_count);
+    }
+
+    double output_peak_db = 20.0 * std::log10(std::max(std::abs(out_max), std::abs(out_min)) + 1e-10);
+    LOG_CPP_DEBUG("[DrainResample:%s] Output signal: peak=%.1fdB, range=[%.4f, %.4f]",
+                  config_.sink_id.c_str(), output_peak_db, out_min, out_max);
+
+    LOG_CPP_INFO("[DrainResample:%s] Complete: ratio=%.5f, %zu input -> %zu output (exactly %zu target), took %ldus",
+                 config_.sink_id.c_str(), ratio, num_samples, output_samples, target_samples, resample_us);
+
+    return true;
+}
+
+void SinkAudioMixer::update_drain_ratio() {
+    auto now = std::chrono::steady_clock::now();
+
+    // Only update periodically
+    auto elapsed = std::chrono::duration<double, std::milli>(
+        now - last_drain_check_).count();
+
+    if (elapsed < m_settings->mixer_tuning.buffer_measurement_interval_ms) {
+        // Log periodically to avoid spam
+        static int skip_counter = 0;
+        if (++skip_counter % 100 == 0) {
+            LOG_CPP_DEBUG("[BufferDrain:%s] Skipping update - only %.1fms elapsed (interval=%.1fms) [skipped %d times]",
+                          config_.sink_id.c_str(), elapsed,
+                          m_settings->mixer_tuning.buffer_measurement_interval_ms, skip_counter);
+        }
+        return;
+    }
+
+    last_drain_check_ = now;
+
+    // Calculate current buffer level
+    double buffer_ms = calculate_buffer_level_ms();
+
+    // Get components for debugging
+    size_t payload_bytes = payload_buffer_write_pos_;
+    size_t frame_bytes = config_.output_channels * (playback_bit_depth_ / 8);
+    double payload_frames = frame_bytes > 0 ? static_cast<double>(payload_bytes) / frame_bytes : 0.0;
+    double payload_ms = playback_sample_rate_ > 0 ? (payload_frames * 1000.0) / playback_sample_rate_ : 0.0;
+    double chunk_ms = playback_sample_rate_ > 0 ? (frames_per_chunk_ * 1000.0) / playback_sample_rate_ : 0.0;
+    double estimated_scheduler_ms = chunk_ms * 4;  // Assuming 4 chunks queued
+
+    LOG_CPP_DEBUG("[BufferDrain:%s] Raw buffer levels: total=%.2fms (payload=%.2fms [%zu bytes/%zu frames], est_scheduler=%.2fms [4x%.2fms chunks])",
+                  config_.sink_id.c_str(), buffer_ms, payload_ms, payload_bytes,
+                  static_cast<size_t>(payload_frames), estimated_scheduler_ms, chunk_ms);
+
+    // Apply exponential smoothing
+    double alpha = 1.0 - m_settings->mixer_tuning.drain_smoothing_factor;
+    double prev_smoothed = smoothed_buffer_level_ms_.load();
+    double smoothed = prev_smoothed * (1.0 - alpha) + buffer_ms * alpha;
+    smoothed_buffer_level_ms_.store(smoothed);
+
+    LOG_CPP_DEBUG("[BufferDrain:%s] Smoothing: prev=%.2fms, raw=%.2fms, alpha=%.3f -> new_smoothed=%.2fms",
+                  config_.sink_id.c_str(), prev_smoothed, buffer_ms, alpha, smoothed);
+
+    // Calculate drain ratio based on buffer level
+    const auto& tuning = m_settings->mixer_tuning;
+    double target_ms = tuning.target_buffer_level_ms;
+    double tolerance_ms = tuning.buffer_tolerance_ms;
+
+    double prev_ratio = current_drain_ratio_.load();
+    double new_ratio = 1.0;
+
+    LOG_CPP_DEBUG("[BufferDrain:%s] Target range: %.1fms ± %.1fms (%.1fms to %.1fms)",
+                  config_.sink_id.c_str(), target_ms, tolerance_ms,
+                  target_ms - tolerance_ms, target_ms + tolerance_ms);
+
+    if (smoothed > target_ms + tolerance_ms) {
+        // Buffer is too high, speed up playback
+        double excess_ms = smoothed - target_ms;
+        double deviation_ms = smoothed - (target_ms + tolerance_ms);
+
+        // Proportional control: more excess = more aggressive draining
+        double urgency = std::min(excess_ms / 100.0, 1.0);  // Max urgency at 100ms excess
+
+        // Calculate speed increase
+        // To drain X ms/sec, we need to play (1 + X/1000) times faster
+        double base_drain_rate = tuning.drain_rate_ms_per_sec;
+        double effective_drain_rate = base_drain_rate * urgency;
+        double drain_factor = effective_drain_rate / 1000.0;
+
+        new_ratio = 1.0 + drain_factor;
+        double unclamped_ratio = new_ratio;
+        new_ratio = std::min(new_ratio, tuning.max_speedup_factor);
+
+        LOG_CPP_INFO("[BufferDrain:%s] DRAINING: smoothed=%.2fms > threshold=%.1fms (excess=%.1fms, deviation=%.1fms)",
+                     config_.sink_id.c_str(), smoothed, target_ms + tolerance_ms, excess_ms, deviation_ms);
+        LOG_CPP_INFO("[BufferDrain:%s] Urgency=%.2f%% (excess/100ms), base_rate=%.1fms/s -> effective_rate=%.2fms/s",
+                     config_.sink_id.c_str(), urgency * 100.0, base_drain_rate, effective_drain_rate);
+        LOG_CPP_INFO("[BufferDrain:%s] Ratio calculation: 1.0 + %.5f = %.5f (clamped to %.5f, max=%.5f)",
+                     config_.sink_id.c_str(), drain_factor, unclamped_ratio, new_ratio, tuning.max_speedup_factor);
+
+        // Estimate time to return to target
+        if (effective_drain_rate > 0) {
+            double time_to_target_sec = deviation_ms / effective_drain_rate;
+            LOG_CPP_INFO("[BufferDrain:%s] At %.2fms/s drain rate, expect to reach target in %.1f seconds",
+                         config_.sink_id.c_str(), effective_drain_rate, time_to_target_sec);
+        }
+    } else if (smoothed < target_ms - tolerance_ms) {
+        // Buffer is too low - just log for monitoring, we don't slow down
+        double deficit_ms = target_ms - smoothed;
+        LOG_CPP_DEBUG("[BufferDrain:%s] UNDERRUN RISK: smoothed=%.2fms < threshold=%.1fms (deficit=%.1fms)",
+                      config_.sink_id.c_str(), smoothed, target_ms - tolerance_ms, deficit_ms);
+    } else {
+        // Within tolerance
+        LOG_CPP_DEBUG("[BufferDrain:%s] IN TOLERANCE: smoothed=%.2fms is within [%.1fms, %.1fms]",
+                      config_.sink_id.c_str(), smoothed,
+                      target_ms - tolerance_ms, target_ms + tolerance_ms);
+    }
+
+    // Apply change if significant
+    double ratio_change = new_ratio - prev_ratio;
+    if (std::abs(ratio_change) > 0.0001) {
+        current_drain_ratio_.store(new_ratio);
+
+        if (std::abs(new_ratio - 1.0) > 0.001) {
+            double speedup_percent = (new_ratio - 1.0) * 100.0;
+            double expected_drain_ms_per_sec = speedup_percent * 10.0; // 1% speedup = 10ms/s drain
+            LOG_CPP_INFO("[BufferDrain:%s] RATIO CHANGED: %.5f -> %.5f (Δ=%.5f), speedup=%.3f%%, expect %.1fms/s drain",
+                         config_.sink_id.c_str(), prev_ratio, new_ratio, ratio_change,
+                         speedup_percent, expected_drain_ms_per_sec);
+        } else {
+            LOG_CPP_INFO("[BufferDrain:%s] RATIO RESET to 1.0 (was %.5f), buffer returned to acceptable range",
+                         config_.sink_id.c_str(), prev_ratio);
+        }
+    } else {
+        LOG_CPP_DEBUG("[BufferDrain:%s] Ratio unchanged at %.5f (proposed change %.6f too small)",
+                      config_.sink_id.c_str(), prev_ratio, ratio_change);
+    }
+}
+
+double SinkAudioMixer::calculate_buffer_level_ms() const {
+    double total_ms = 0.0;
+    double payload_ms = 0.0;
+    double scheduler_estimate_ms = 0.0;
+
+    // Log current playback format
+    LOG_CPP_DEBUG("[BufferCalc:%s] Playback format: %dHz, %d-bit, %d channels",
+                  config_.sink_id.c_str(), playback_sample_rate_, playback_bit_depth_, config_.output_channels);
+
+    // For now, just calculate based on payload buffer
+    // TODO: Add MixScheduler buffer depth when API is available
+
+    // Payload buffer (bytes waiting to send)
+    if (playback_sample_rate_ > 0 && playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0) {
+        size_t frame_bytes = config_.output_channels * (playback_bit_depth_ / 8);
+        size_t payload_bytes = payload_buffer_write_pos_;
+
+        LOG_CPP_DEBUG("[BufferCalc:%s] Payload buffer: %zu bytes, frame_size=%zu bytes",
+                      config_.sink_id.c_str(), payload_bytes, frame_bytes);
+
+        if (frame_bytes > 0 && payload_bytes > 0) {
+            double frames = static_cast<double>(payload_bytes) / frame_bytes;
+            payload_ms = (frames * 1000.0) / playback_sample_rate_;
+            total_ms += payload_ms;
+
+            LOG_CPP_DEBUG("[BufferCalc:%s] Payload: %zu bytes = %.1f frames = %.2fms",
+                          config_.sink_id.c_str(), payload_bytes, frames, payload_ms);
+        } else if (frame_bytes == 0) {
+            LOG_CPP_WARNING("[BufferCalc:%s] Frame size is 0, cannot calculate payload buffer time",
+                            config_.sink_id.c_str());
+        }
+    } else {
+        LOG_CPP_DEBUG("[BufferCalc:%s] Invalid playback format for payload calculation (rate=%d, depth=%d)",
+                      config_.sink_id.c_str(), playback_sample_rate_, playback_bit_depth_);
+    }
+
+    // Add a rough estimate for scheduler buffers based on typical queue depth
+    // This is a placeholder until we have proper API
+    if (playback_sample_rate_ > 0) {
+        double chunk_duration_ms = (frames_per_chunk_ * 1000.0) / playback_sample_rate_;
+        // Assume average of 3-5 chunks queued per source
+        const int assumed_queue_depth = 4;
+        scheduler_estimate_ms = chunk_duration_ms * assumed_queue_depth;
+        total_ms += scheduler_estimate_ms;
+
+        LOG_CPP_DEBUG("[BufferCalc:%s] Scheduler estimate: %d chunks × %.2fms/chunk = %.2fms",
+                      config_.sink_id.c_str(), assumed_queue_depth, chunk_duration_ms, scheduler_estimate_ms);
+
+        // Also log information about actual input queues if available
+        // Note: We can't lock the mutex here since this is a const function
+        // Just log the estimate for now
+        LOG_CPP_DEBUG("[BufferCalc:%s] Using scheduler estimate (can't access actual queues in const function)",
+                      config_.sink_id.c_str());
+    } else {
+        LOG_CPP_WARNING("[BufferCalc:%s] Sample rate is 0, cannot estimate scheduler buffer time",
+                        config_.sink_id.c_str());
+    }
+
+    LOG_CPP_DEBUG("[BufferCalc:%s] TOTAL buffer level: %.2fms (payload=%.2fms + scheduler_est=%.2fms)",
+                  config_.sink_id.c_str(), total_ms, payload_ms, scheduler_estimate_ms);
+
+    // Log if buffer level seems unusually high
+    if (total_ms > 100.0) {
+        LOG_CPP_WARNING("[BufferCalc:%s] High buffer level detected: %.2fms",
+                        config_.sink_id.c_str(), total_ms);
+    }
+
+    return total_ms;
 }
