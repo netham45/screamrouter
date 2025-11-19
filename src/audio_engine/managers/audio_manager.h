@@ -63,6 +63,8 @@ public:
     AudioManager(AudioManager&&) = delete;
     AudioManager& operator=(AudioManager&&) = delete;
 
+    std::vector<uint8_t> get_mp3_data(const std::string& sink_id);
+
     // --- Lifecycle Management ---
     /**
      * @brief Initializes the audio manager and all its sub-components.
