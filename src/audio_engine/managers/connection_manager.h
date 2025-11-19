@@ -11,11 +11,13 @@
 #include "sink_manager.h"
 #include "../audio_types.h"
 #include "../input_processor/source_input_processor.h"
+#include "../utils/thread_safe_queue.h"
 #include <string>
 #include <mutex>
 
 namespace screamrouter {
 namespace audio {
+using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
 
 /**
  * @class ConnectionManager
@@ -40,7 +42,8 @@ public:
         SourceManager* source_manager,
         SinkManager* sink_manager,
         std::map<std::string, std::shared_ptr<ChunkQueue>>& source_to_sink_queues,
-        std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources
+        std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources,
+        std::map<std::string, std::shared_ptr<CommandQueue>>& command_queues
     );
     /**
      * @brief Destructor.
@@ -70,6 +73,7 @@ private:
     SinkManager* m_sink_manager;
     std::map<std::string, std::shared_ptr<ChunkQueue>>& m_source_to_sink_queues;
     std::map<std::string, std::unique_ptr<SourceInputProcessor>>& m_sources;
+    std::map<std::string, std::shared_ptr<CommandQueue>>& m_command_queues;
 };
 
 } // namespace audio

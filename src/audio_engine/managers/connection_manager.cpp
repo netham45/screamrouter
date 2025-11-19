@@ -10,12 +10,14 @@ ConnectionManager::ConnectionManager(
     SourceManager* source_manager,
     SinkManager* sink_manager,
     std::map<std::string, std::shared_ptr<ChunkQueue>>& source_to_sink_queues,
-    std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources)
+    std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources,
+    std::map<std::string, std::shared_ptr<CommandQueue>>& command_queues)
     : m_manager_mutex(manager_mutex),
       m_source_manager(source_manager),
       m_sink_manager(sink_manager),
       m_source_to_sink_queues(source_to_sink_queues),
-      m_sources(sources) {
+      m_sources(sources),
+      m_command_queues(command_queues) {
     LOG_CPP_INFO("ConnectionManager created.");
 }
 
@@ -43,8 +45,14 @@ bool ConnectionManager::connect_source_sink(const std::string& source_instance_i
         return false;
     }
 
+    std::shared_ptr<CommandQueue> command_queue;
+    auto command_it = m_command_queues.find(source_instance_id);
+    if (command_it != m_command_queues.end()) {
+        command_queue = command_it->second;
+    }
+
     const auto t_add0 = std::chrono::steady_clock::now();
-    m_sink_manager->add_input_queue_to_sink(sink_id, source_instance_id, queue_it->second);
+    m_sink_manager->add_input_queue_to_sink(sink_id, source_instance_id, queue_it->second, command_queue);
     const auto t_add1 = std::chrono::steady_clock::now();
     LOG_CPP_INFO("Connection successful: Source instance %s -> Sink %s (enqueue=%lld ms total=%lld ms)",
                  source_instance_id.c_str(), sink_id.c_str(),

@@ -147,7 +147,13 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
 
         current_stage = "creating ConnectionManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
-        m_connection_manager = std::make_unique<ConnectionManager>(m_manager_mutex, m_source_manager.get(), m_sink_manager.get(), m_source_manager->get_source_to_sink_queues(), m_source_manager->get_sources());
+        m_connection_manager = std::make_unique<ConnectionManager>(
+            m_manager_mutex,
+            m_source_manager.get(),
+            m_sink_manager.get(),
+            m_source_manager->get_source_to_sink_queues(),
+            m_source_manager->get_sources(),
+            m_source_manager->get_command_queues());
 
         current_stage = "creating ControlApiManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());

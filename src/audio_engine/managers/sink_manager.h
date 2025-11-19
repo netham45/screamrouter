@@ -22,6 +22,7 @@ namespace audio {
 class TimeshiftManager;
 using ChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using Mp3Queue = utils::ThreadSafeQueue<EncodedMP3Data>;
+using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
 
 /**
  * @class SinkManager
@@ -64,7 +65,10 @@ public:
      * @param source_instance_id The ID of the source instance.
      * @param queue The chunk queue from the source.
      */
-    void add_input_queue_to_sink(const std::string& sink_id, const std::string& source_instance_id, std::shared_ptr<ChunkQueue> queue);
+    void add_input_queue_to_sink(const std::string& sink_id,
+                                 const std::string& source_instance_id,
+                                 std::shared_ptr<ChunkQueue> queue,
+                                 std::shared_ptr<CommandQueue> command_queue);
     /**
      * @brief Unsubscribes a sink from a source's output queue.
      * @param sink_id The ID of the sink.

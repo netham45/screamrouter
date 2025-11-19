@@ -26,12 +26,12 @@
 #include <mutex>
 #include <condition_variable>
 #include <lame/lame.h>
-#include <samplerate.h>
 #include <atomic>
 #include <chrono>
 #include <limits>
 #include <thread>
 #include <cstdint>
+#include <unordered_map>
 
 #if defined(_WIN32)
 
@@ -61,6 +61,7 @@ struct SinkAudioMixerStats {
 
 using InputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using Mp3OutputQueue = utils::ThreadSafeQueue<EncodedMP3Data>;
+using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
 
 /**
  * @class SinkAudioMixer
@@ -102,7 +103,9 @@ public:
      * @param instance_id The unique ID of the source processor instance.
      * @param queue A shared pointer to the source's output queue.
      */
-    void add_input_queue(const std::string& instance_id, std::shared_ptr<InputChunkQueue> queue);
+    void add_input_queue(const std::string& instance_id,
+                         std::shared_ptr<InputChunkQueue> queue,
+                         std::shared_ptr<CommandQueue> command_queue = nullptr);
 
     /**
      * @brief Removes an input queue.
@@ -181,6 +184,7 @@ private:
 
     InputQueueMap input_queues_;
     std::mutex queues_mutex_;
+    std::map<std::string, std::shared_ptr<CommandQueue>> input_command_queues_;
 
     std::map<std::string, bool> input_active_state_;
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
@@ -304,12 +308,11 @@ private:
     std::map<std::string, uint64_t> profiling_source_underruns_;
 
     // Buffer drain control members
-    SRC_STATE* drain_resampler_ = nullptr;
-    std::vector<float> drain_input_buffer_;
-    std::vector<float> drain_output_buffer_;
-    std::atomic<double> current_drain_ratio_{1.0};
     std::atomic<double> smoothed_buffer_level_ms_{0.0};
     std::chrono::steady_clock::time_point last_drain_check_;
+    std::mutex drain_control_mutex_;
+    std::unordered_map<std::string, double> per_source_smoothed_buffer_ms_;
+    std::unordered_map<std::string, double> source_last_rate_command_;
 
     struct InputBufferMetrics {
         double total_ms = 0.0;
@@ -319,6 +322,8 @@ private:
         std::size_t active_sources = 0;
         double block_duration_ms = 0.0;
         bool valid = false;
+        std::map<std::string, std::size_t> per_source_blocks;
+        std::map<std::string, double> per_source_ms;
     };
 
     void set_playback_format(int sample_rate, int channels, int bit_depth);
@@ -329,11 +334,11 @@ private:
     bool wait_for_mix_tick();
 
     // Buffer drain control methods
-    void init_drain_resampler();
-    void cleanup_drain_resampler();
-    bool apply_drain_resampling();
     void update_drain_ratio();
     InputBufferMetrics compute_input_buffer_metrics();
+    void dispatch_drain_adjustments(const InputBufferMetrics& metrics, double alpha);
+    double calculate_drain_ratio_for_level(double buffer_ms) const;
+    void send_playback_rate_command(const std::string& instance_id, double ratio);
 };
 
 } // namespace audio

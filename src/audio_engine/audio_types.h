@@ -135,7 +135,8 @@ enum class CommandType {
     SET_TIMESHIFT,              ///< Set the timeshift delay in float seconds.
     SET_EQ_NORMALIZATION,       ///< Enable or disable equalizer normalization.
     SET_VOLUME_NORMALIZATION,   ///< Enable or disable volume normalization.
-    SET_SPEAKER_MIX             ///< Set the speaker layout mapping.
+    SET_SPEAKER_MIX,            ///< Set the speaker layout mapping.
+    SET_PLAYBACK_RATE_SCALE     ///< Apply an additional playback rate multiplier.
 };
 
 /**

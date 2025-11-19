@@ -159,6 +159,7 @@ private:
 
     std::map<int, screamrouter::audio::CppSpeakerLayout> current_speaker_layouts_map_;
     double current_playback_rate_ = 1.0;
+    std::atomic<double> drain_playback_rate_scale_{1.0};
 
     std::thread input_thread_;
 

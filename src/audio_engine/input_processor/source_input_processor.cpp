@@ -229,6 +229,17 @@ void SourceInputProcessor::process_commands() {
                 LOG_CPP_DEBUG("[SourceProc:%s] SET_SPEAKER_MIX command processed for key: %d. Auto mode: %s",
                               config_.instance_id.c_str(), cmd.input_channel_key, (cmd.speaker_layout_for_key.auto_mode ? "true" : "false"));
                 break;
+            case CommandType::SET_PLAYBACK_RATE_SCALE: {
+                double new_scale = static_cast<double>(cmd.float_value);
+                if (!std::isfinite(new_scale) || new_scale <= 0.0) {
+                    new_scale = 1.0;
+                }
+                new_scale = std::clamp(new_scale, kMinPlaybackRate, kMaxPlaybackRate);
+                drain_playback_rate_scale_.store(new_scale, std::memory_order_relaxed);
+                LOG_CPP_DEBUG("[SourceProc:%s] SET_PLAYBACK_RATE_SCALE command processed. New scale=%.6f",
+                              config_.instance_id.c_str(), new_scale);
+                break;
+            }
             default:
                 LOG_CPP_ERROR("[SourceProc:%s] Unknown command type received.", config_.instance_id.c_str());
                 break;
@@ -726,6 +737,13 @@ void SourceInputProcessor::input_loop() {
         if (!std::isfinite(requested_rate) || requested_rate <= 0.0) {
             requested_rate = 1.0;
         }
+        requested_rate = std::clamp(requested_rate, kMinPlaybackRate, kMaxPlaybackRate);
+
+        double drain_scale = drain_playback_rate_scale_.load(std::memory_order_relaxed);
+        if (!std::isfinite(drain_scale) || drain_scale <= 0.0) {
+            drain_scale = 1.0;
+        }
+        requested_rate *= drain_scale;
         requested_rate = std::clamp(requested_rate, kMinPlaybackRate, kMaxPlaybackRate);
 
         if (std::abs(requested_rate - current_playback_rate_) > kPlaybackRateEpsilon) {
