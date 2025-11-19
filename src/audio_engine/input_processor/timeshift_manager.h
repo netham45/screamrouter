@@ -26,6 +26,7 @@
 #include <atomic>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 
 namespace screamrouter {
 namespace audio {
@@ -267,6 +268,15 @@ protected:
     void run() override;
 
 private:
+    struct TimingStateAccess {
+        std::unique_lock<std::mutex> lock;
+        StreamTimingState* state = nullptr;
+
+        TimingStateAccess() = default;
+        TimingStateAccess(std::unique_lock<std::mutex>&& l, StreamTimingState* s)
+            : lock(std::move(l)), state(s) {}
+    };
+
     std::deque<TaggedAudioPacket> global_timeshift_buffer_;
     // Map: source_tag -> instance_id -> ProcessorTargetInfo
     std::map<std::string, std::map<std::string, ProcessorTargetInfo>> processor_targets_;
@@ -274,7 +284,8 @@ private:
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 
     std::map<std::string, StreamTimingState> stream_timing_states_;
-    std::mutex timing_mutex_;
+    std::mutex timing_map_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<std::mutex>> timing_locks_;
 
     std::condition_variable run_loop_cv_;
     std::chrono::seconds max_buffer_duration_sec_;
@@ -307,6 +318,11 @@ private:
     double smoothed_processing_per_packet_us_{0.0};
     bool processing_budget_initialized_{false};
     std::chrono::steady_clock::time_point last_iteration_finish_time_{};
+
+    // --- Timing helpers ---
+    std::shared_ptr<std::mutex> acquire_timing_lock(const std::string& source_tag);
+    TimingStateAccess get_timing_state(const std::string& source_tag);
+    TimingStateAccess get_or_create_timing_state(const std::string& source_tag);
 };
 
 } // namespace audio
