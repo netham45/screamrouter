@@ -70,8 +70,8 @@ struct MixerTuning {
 
     // Buffer drain control
     bool enable_adaptive_buffer_drain = true;      // Enable buffer draining feature
-    double target_buffer_level_ms = ((kDefaultBaseFramesPerChunkMono16/2.0) / 48000.0 * 1000.0) * 4;          // Target buffer level in milliseconds
-    double buffer_tolerance_ms = 10.0;             // Don't adjust if within ±tolerance of target
+    double target_buffer_level_ms = ((kDefaultBaseFramesPerChunkMono16/2.0) / 48000.0 * 1000.0);          // Target buffer level in milliseconds
+    double buffer_tolerance_ms = target_buffer_level_ms * 1.5;             // Don't adjust if within ±tolerance of target
     double max_speedup_factor = 1.02;             // Maximum playback speedup (1.02 = 2% faster)
     double drain_rate_ms_per_sec = 20.0;           // How many ms to drain per second (more aggressive)
     double drain_smoothing_factor = 0.9;           // Exponential smoothing factor for buffer measurements

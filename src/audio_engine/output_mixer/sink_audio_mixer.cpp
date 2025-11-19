@@ -1873,33 +1873,36 @@ bool SinkAudioMixer::apply_drain_resampling() {
     }
 
     // We want to produce exactly mixing_buffer_samples_ output samples
-    // When ratio > 1.0, we're speeding up, so we need MORE input samples
+    // When ratio > 1.0, we're speeding up playback
+    // To get 1152 output samples from faster playback, we need MORE input samples
     size_t target_output_samples = mixing_buffer_samples_;
     size_t target_output_frames = target_output_samples / config_.output_channels;
 
-    // Calculate how many input samples we need to produce the target output
-    // src_ratio = output_frames / input_frames
-    // Since we're speeding up (ratio > 1.0), src_ratio = 1.0 / ratio < 1.0
-    // input_frames = output_frames / src_ratio = output_frames * ratio
+    // Calculate how many input samples we need to produce exactly the target output
+    // When speeding up by ratio (e.g., 1.008), we consume input faster
+    // So we need ratio * output_frames input frames to produce output_frames
+    // src_ratio for libsamplerate = output/input = 1/ratio
     size_t required_input_frames = static_cast<size_t>(std::ceil(target_output_frames * ratio));
     size_t required_input_samples = required_input_frames * config_.output_channels;
 
-    // Use the actual available samples (can't use more than we have)
-    size_t num_samples = std::min(required_input_samples, mixing_buffer_samples_);
-
-    if (num_samples == 0 || num_samples > drain_input_buffer_.size()) {
-        LOG_CPP_ERROR("[DrainResample:%s] Invalid sample count: %zu (buffer size=%zu, drain_input size=%zu)",
-                      config_.sink_id.c_str(), num_samples, mixing_buffer_samples_, drain_input_buffer_.size());
+    // Make sure we have enough samples in the buffer
+    if (required_input_samples > mixing_buffer_samples_) {
         return false;
     }
 
-    LOG_CPP_DEBUG("[DrainResample:%s] Drain resampling: ratio=%.5f, using %zu input samples to produce %zu output samples",
-                  config_.sink_id.c_str(), ratio, num_samples, target_output_samples);
+    if (required_input_samples > drain_input_buffer_.size()) {
+        LOG_CPP_ERROR("[DrainResample:%s] Input buffer too small: need %zu, capacity %zu",
+                      config_.sink_id.c_str(), required_input_samples, drain_input_buffer_.size());
+        return false;
+    }
+
+    LOG_CPP_DEBUG("[DrainResample:%s] Drain resampling: ratio=%.5f, using %zu input samples to produce exactly %zu output samples",
+                  config_.sink_id.c_str(), ratio, required_input_samples, target_output_samples);
 
     // Convert to float [-1.0, 1.0]
     int32_t max_val = 0;
     int32_t min_val = 0;
-    for (size_t i = 0; i < num_samples; ++i) {
+    for (size_t i = 0; i < required_input_samples; ++i) {
         max_val = std::max(max_val, mixing_buffer_[i]);
         min_val = std::min(min_val, mixing_buffer_[i]);
         drain_input_buffer_[i] = mixing_buffer_[i] / 2147483648.0f;
@@ -1913,8 +1916,8 @@ bool SinkAudioMixer::apply_drain_resampling() {
     SRC_DATA src_data;
     src_data.data_in = drain_input_buffer_.data();
     src_data.data_out = drain_output_buffer_.data();
-    src_data.input_frames = num_samples / config_.output_channels;
-    src_data.output_frames = drain_output_buffer_.size() / config_.output_channels;
+    src_data.input_frames = required_input_frames;
+    src_data.output_frames = target_output_frames;  // We want exactly this many output frames
     src_data.src_ratio = 1.0 / ratio;  // Inverse: ratio > 1.0 speeds up playback
     src_data.end_of_input = 0;
 
@@ -1945,7 +1948,7 @@ bool SinkAudioMixer::apply_drain_resampling() {
     size_t frames_used = src_data.input_frames_used;
 
     LOG_CPP_INFO("[DrainResample:%s] Resampling SUCCESS in %ldus: %zu->%zu samples, used %zu/%zu input frames",
-                 config_.sink_id.c_str(), resample_us, num_samples, output_samples,
+                 config_.sink_id.c_str(), resample_us, required_input_samples, output_samples,
                  frames_used, src_data.input_frames);
 
     // Calculate timing impact
@@ -2019,7 +2022,7 @@ bool SinkAudioMixer::apply_drain_resampling() {
                   config_.sink_id.c_str(), output_peak_db, out_min, out_max);
 
     LOG_CPP_INFO("[DrainResample:%s] Complete: ratio=%.5f, %zu input -> %zu output (exactly %zu target), took %ldus",
-                 config_.sink_id.c_str(), ratio, num_samples, output_samples, target_samples, resample_us);
+                 config_.sink_id.c_str(), ratio, required_input_samples, output_samples, target_samples, resample_us);
 
     return true;
 }
