@@ -602,17 +602,18 @@ void TimeshiftManager::run() {
     while (!stop_flag_) {
         std::vector<PendingDispatch> pending_dispatches;
         std::chrono::steady_clock::time_point next_wakeup_time;
-        std::vector<TaggedAudioPacket> newly_drained_packets;
-        TaggedAudioPacket packet_tmp;
-        while (inbound_queue_.try_pop(packet_tmp)) {
-            newly_drained_packets.push_back(std::move(packet_tmp));
-        }
 
         {
             std::unique_lock<std::mutex> lock(data_mutex_);
+            const auto iteration_start = std::chrono::steady_clock::now();
 
-            for (auto& pkt : newly_drained_packets) {
-                process_incoming_packet_unlocked(std::move(pkt));
+            // Drain inbound packets with a small time budget while holding data_mutex_.
+            TaggedAudioPacket packet_tmp;
+            while (inbound_queue_.try_pop(packet_tmp)) {
+                process_incoming_packet_unlocked(std::move(packet_tmp));
+                if (std::chrono::steady_clock::now() - iteration_start > kMaxProcessingHold) {
+                    break;
+                }
             }
 
             // Process any packets that are already due, but defer queue pushes.

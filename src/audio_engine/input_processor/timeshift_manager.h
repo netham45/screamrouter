@@ -289,7 +289,7 @@ private:
 
     // Inbound decoupling to avoid blocking capture threads on the main data mutex.
     utils::ThreadSafeQueue<TaggedAudioPacket> inbound_queue_;
-    static constexpr std::size_t kInboundQueueMaxSize = 256;
+    static constexpr std::size_t kInboundQueueMaxSize = 1024;
 
     /** @brief A single iteration of the processing loop. Collects ready packets while data_mutex_ is held. */
     void processing_loop_iteration_unlocked(std::vector<PendingDispatch>& pending_dispatches);

@@ -219,7 +219,7 @@ bool WasapiCaptureReceiver::configure_audio_client() {
     REFERENCE_TIME buffer_duration = 0;
     unsigned int effective_buffer_ms = capture_params_.buffer_duration_ms;
     if (effective_buffer_ms == 0) {
-        effective_buffer_ms = 80; // 80ms shared-mode buffer by default
+        effective_buffer_ms = 120; // More headroom by default to avoid glitches
     }
     buffer_duration = static_cast<REFERENCE_TIME>(effective_buffer_ms) * 10000;
 
