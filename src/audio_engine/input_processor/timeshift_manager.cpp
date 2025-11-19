@@ -299,10 +299,7 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
     }
 
     StreamTimingState& state = *state_ptr;
-    if (state.is_first_packet) {
-        state.target_buffer_level_ms = m_settings->timeshift_tuning.target_buffer_level_ms;
-        state.last_target_update_time = packet.received_time;
-    }
+    (void)packet;
     state.total_packets++;
 
     if (!state.clock) {
@@ -512,8 +509,6 @@ TimeshiftManagerStats TimeshiftManager::get_stats() {
         stats.stream_tm_buffer_underruns[source_tag] = timing_state.tm_buffer_underruns.load();
         stats.stream_tm_packets_discarded[source_tag] = timing_state.tm_packets_discarded.load();
         stats.stream_last_arrival_time_error_ms[source_tag] = timing_state.last_arrival_time_error_ms;
-        stats.stream_target_buffer_level_ms[source_tag] = timing_state.target_buffer_level_ms;
-        stats.stream_buffer_target_fill_percentage[source_tag] = timing_state.buffer_target_fill_percentage;
 
         if (timing_state.arrival_error_samples > 0) {
             stats.stream_avg_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_sum / static_cast<double>(timing_state.arrival_error_samples);
@@ -842,30 +837,17 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     ts.clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
 
                 // 2. Add the adaptive playout delay
-                const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
-                double base_latency_ms = std::max<double>(
-                    target_info.current_delay_ms,
-                    m_settings->timeshift_tuning.target_buffer_level_ms);
+                const double timeshift_backshift_ms =
+                    std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
+                double base_latency_ms = std::max<double>(target_info.current_delay_ms, 0.0);
                 const double max_adaptive_delay_ms = m_settings->timeshift_tuning.max_adaptive_delay_ms;
                 if (max_adaptive_delay_ms > 0.0) {
                     base_latency_ms = std::min(base_latency_ms, max_adaptive_delay_ms);
                 }
                 const double desired_latency_ms = base_latency_ms + timeshift_backshift_ms;
 
-                ts.target_buffer_level_ms = desired_latency_ms;
-                ts.last_target_update_time = now;
-
                 auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(desired_latency_ms);
                 auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
-
-                const double buffer_level_ms = std::max(time_until_playout_ms, 0.0);
-                ts.current_buffer_level_ms = buffer_level_ms;
-                if (desired_latency_ms > 1e-6) {
-                    ts.buffer_target_fill_percentage =
-                        std::clamp((buffer_level_ms / desired_latency_ms) * 100.0, 0.0, 100.0);
-                } else {
-                    ts.buffer_target_fill_percentage = 0.0;
-                }
 
                 double head_lag_ms = std::max(-time_until_playout_ms, 0.0);
                 ts.last_head_playout_lag_ms = head_lag_ms;
@@ -906,47 +888,12 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                     TaggedAudioPacket packet_to_send = candidate_packet;
                     const auto& tuning = m_settings->timeshift_tuning;
-                    double controller_dt_sec = 0.0;
-                    if (ts.last_controller_update_time.time_since_epoch().count() != 0) {
-                        controller_dt_sec =
-                            std::chrono::duration<double>(now - ts.last_controller_update_time).count();
-                    }
-                    if (controller_dt_sec <= 0.0) {
-                        controller_dt_sec =
-                            std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
-                    }
+                    const double max_deviation_ppm =
+                        std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
+                    double drift_ppm =
+                        std::clamp(ts.last_clock_drift_ppm, -max_deviation_ppm, max_deviation_ppm);
 
-                    const double buffer_error_ms = desired_latency_ms - buffer_level_ms;
-                    ts.last_controller_update_time = now;
-
-                    const double proportional_ppm = tuning.playback_ratio_kp * buffer_error_ms;
-                    ts.playback_ratio_integral_ppm +=
-                        tuning.playback_ratio_ki * buffer_error_ms * controller_dt_sec;
-                    const double integral_cap_ppm =
-                        std::max(tuning.playback_ratio_integral_limit_ppm,
-                                 tuning.playback_ratio_max_deviation_ppm);
-                    ts.playback_ratio_integral_ppm =
-                        std::clamp(ts.playback_ratio_integral_ppm,
-                                   -integral_cap_ppm,
-                                   integral_cap_ppm);
-
-                    double controller_ppm = proportional_ppm + ts.playback_ratio_integral_ppm;
-                    const double max_slew_ppm =
-                        std::max(tuning.playback_ratio_slew_ppm_per_sec, 0.0) * controller_dt_sec;
-                    if (max_slew_ppm > 0.0) {
-                        controller_ppm = std::clamp(controller_ppm,
-                                                    ts.playback_ratio_controller_ppm - max_slew_ppm,
-                                                    ts.playback_ratio_controller_ppm + max_slew_ppm);
-                    }
-
-                    const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
-                    controller_ppm = std::clamp(controller_ppm, -max_deviation_ppm, max_deviation_ppm);
-                    ts.playback_ratio_controller_ppm = controller_ppm;
-
-                    double combined_ppm = ts.last_clock_drift_ppm + controller_ppm;
-                    combined_ppm = std::clamp(combined_ppm, -max_deviation_ppm, max_deviation_ppm);
-
-                    double target_rate = 1.0 + combined_ppm * kPlaybackDriftGain;
+                    double target_rate = 1.0 + drift_ppm * kPlaybackDriftGain;
                     if (!std::isfinite(target_rate)) {
                         target_rate = 1.0;
                     }
@@ -961,12 +908,9 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                     if (std::abs(smoothed_rate - ts.current_playback_rate) > 5e-4) {
                         LOG_CPP_DEBUG(
-                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f error_ms=%.3f controller_ppm=%.3f combined_ppm=%.3f target=%.6f smoothed=%.6f",
+                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f target=%.6f smoothed=%.6f",
                             candidate_packet.source_tag.c_str(),
                             ts.last_clock_drift_ppm,
-                            buffer_error_ms,
-                            controller_ppm,
-                            combined_ppm,
                             target_rate,
                             smoothed_rate);
                     }
@@ -1122,7 +1066,7 @@ void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::ti
         }
 
         LOG_CPP_INFO(
-            "[Profiler][Timeshift][Stream %s] jitter=%.2fms sys_jitter=%.2fms sys_delay=%.2fms clk_offset=%.3fms drift=%.3fppm clk_innov_last=%.3fms clk_innov_avg_abs=%.3fms clk_update_age=%.2fms clk_meas_offset=%.3fms arrival(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) playout_dev(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) head_lag(last=%.3fms avg=%.3fms max=%.3fms samples=%llu) buffer(cur=%.3fms target=%.3fms fill=%.1f%% playback_rate=%.6f)",
+            "[Profiler][Timeshift][Stream %s] jitter=%.2fms sys_jitter=%.2fms sys_delay=%.2fms clk_offset=%.3fms drift=%.3fppm clk_innov_last=%.3fms clk_innov_avg_abs=%.3fms clk_update_age=%.2fms clk_meas_offset=%.3fms arrival(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) playout_dev(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) head_lag(last=%.3fms avg=%.3fms max=%.3fms samples=%llu) playback_rate=%.6f",
             source_tag.c_str(),
             timing_state.jitter_estimate,
             timing_state.system_jitter_estimate_ms,
@@ -1147,9 +1091,6 @@ void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::ti
             head_avg,
             timing_state.head_playout_lag_samples > 0 ? timing_state.head_playout_lag_ms_max : 0.0,
             static_cast<unsigned long long>(timing_state.head_playout_lag_samples),
-            timing_state.current_buffer_level_ms,
-            timing_state.target_buffer_level_ms,
-            timing_state.buffer_target_fill_percentage,
             timing_state.current_playback_rate);
     }
 
@@ -1266,21 +1207,14 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
 
             auto expected_arrival_time = timing_state.clock->get_expected_arrival_time(next_packet.rtp_timestamp.value());
             const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
-            double base_latency_ms = std::max<double>(
-                target_info.current_delay_ms,
-                m_settings->timeshift_tuning.target_buffer_level_ms);
+            double base_latency_ms = std::max<double>(target_info.current_delay_ms, 0.0);
             const double max_adaptive_delay_ms = m_settings->timeshift_tuning.max_adaptive_delay_ms;
             if (max_adaptive_delay_ms > 0.0) {
                 base_latency_ms = std::min(base_latency_ms, max_adaptive_delay_ms);
             }
             const double desired_latency_ms = base_latency_ms + timeshift_backshift_ms;
-
-            const double state_target_ms = (timing_state.target_buffer_level_ms > 0.0)
-                                               ? timing_state.target_buffer_level_ms
-                                               : desired_latency_ms;
-            double effective_latency_ms = std::max(desired_latency_ms, state_target_ms);
             auto ideal_playout_time = expected_arrival_time + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                                            std::chrono::duration<double, std::milli>(effective_latency_ms));
+                                                            std::chrono::duration<double, std::milli>(desired_latency_ms));
 
             auto candidate_time = ideal_playout_time;
             if (processing_budget_initialized_ && smoothed_processing_per_packet_us_ > 0.0) {

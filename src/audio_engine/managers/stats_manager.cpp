@@ -96,14 +96,6 @@ void StatsManager::collect_stats() {
             new_stats.stream_stats[tag].last_arrival_time_error_ms = val;
         }
 
-        for (auto const& [tag, val] : tm_stats.stream_target_buffer_level_ms) {
-            new_stats.stream_stats[tag].target_buffer_level_ms = val;
-        }
-
-        for (auto const& [tag, val] : tm_stats.stream_buffer_target_fill_percentage) {
-            new_stats.stream_stats[tag].buffer_target_fill_percentage = val;
-        }
-
         for (auto const& [tag, val] : tm_stats.stream_avg_arrival_error_ms) {
             new_stats.stream_stats[tag].avg_arrival_error_ms = val;
         }

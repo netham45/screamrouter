@@ -30,7 +30,7 @@ struct TimeshiftTuning {
     double target_buffer_level_ms = 8.0;
     long loop_max_sleep_ms = 10;
     double max_catchup_lag_ms = kDefaultBaseFramesPerChunkMono16 / 20;
-    double max_adaptive_delay_ms = 100.0;
+    double max_adaptive_delay_ms = 20.0;
     std::size_t max_clock_pending_packets = 64;
     double rtp_continuity_slack_seconds = 0.25;
     double rtp_session_reset_threshold_seconds = 0.2;

@@ -91,21 +91,14 @@ struct StreamTimingState {
     double last_arrival_time_sec = 0.0;
     double last_transit_sec = 0.0;
 
-    // Playout buffer state
-    double current_buffer_level_ms = 0.0;
+    // Playout state
     double current_playback_rate = 1.0;
     uint32_t last_played_rtp_timestamp = 0;
     double last_arrival_time_error_ms = 0.0; // For stats
-    double target_buffer_level_ms = 0.0;
-    double buffer_target_fill_percentage = 0.0;
-    std::chrono::steady_clock::time_point last_target_update_time{};
     int sample_rate = 0;
     int channels = 0;
     int bit_depth = 0;
     uint32_t samples_per_chunk = 0;
-    double playback_ratio_integral_ppm = 0.0;
-    double playback_ratio_controller_ppm = 0.0;
-    std::chrono::steady_clock::time_point last_controller_update_time{};
 
     // Stats
     std::atomic<uint64_t> total_packets{0};
@@ -155,8 +148,6 @@ struct TimeshiftManagerStats {
     std::map<std::string, uint64_t> stream_tm_buffer_underruns;
     std::map<std::string, uint64_t> stream_tm_packets_discarded;
     std::map<std::string, double> stream_last_arrival_time_error_ms;
-    std::map<std::string, double> stream_target_buffer_level_ms;
-    std::map<std::string, double> stream_buffer_target_fill_percentage;
     std::map<std::string, double> stream_avg_arrival_error_ms;
     std::map<std::string, double> stream_avg_abs_arrival_error_ms;
     std::map<std::string, double> stream_max_arrival_error_ms;
