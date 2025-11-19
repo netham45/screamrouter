@@ -187,9 +187,7 @@ private:
     void splitBufferToChannels();
     void mixSpeakers();
     void equalize();
-    void noiseShapingDither();
     void setupDCFilter();
-    void removeDCOffset();
     bool isProcessingRequired();
     bool isProcessingRequiredCheck();
     void monitorBuffers();

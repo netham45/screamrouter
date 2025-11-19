@@ -234,15 +234,6 @@ inline std::string trim_string(const std::string& value) {
     return value.substr(first, last - first + 1);
 }
 
-inline std::string pad_or_truncate(const std::string& value, std::size_t width) {
-    if (value.size() >= width) {
-        return value;
-    }
-    std::string result(width, ' ');
-    std::copy(value.begin(), value.end(), result.begin());
-    return result;
-}
-
 inline void strip_nuls(std::string& value) {
     value.erase(std::remove(value.begin(), value.end(), '\0'), value.end());
 }
@@ -371,7 +362,6 @@ struct StreamConfig {
     BufferAttr buffer_attr{};
     CVolume volume{};
     std::unordered_map<std::string, std::string> proplist;
-    uint32_t sync_id = 0;
 };
 
 std::array<uint8_t, 8> default_channel_positions() {
@@ -1709,7 +1699,6 @@ bool PulseAudioReceiver::Impl::Connection::process_message(Message& message) {
         const uint8_t* payload_ptr = header_reader.current_data();
         size_t payload_length = message.payload.size() - header_reader.bytes_consumed();
 
-        TagReader reader(payload_ptr, payload_length);
         if (owner->debug_packets) {
             std::ostringstream oss;
             oss << "RECV cmd=" << command_name(command)
@@ -2654,7 +2643,6 @@ bool PulseAudioReceiver::Impl::Connection::handle_create_playback_stream(uint32_
     config.buffer_attr.prebuf = sanitize_buffer_value(*prebuf, kDefaultPrebuf);
     const uint32_t fallback_minreq = owner ? owner->min_request_bytes : static_cast<uint32_t>(kDefaultChunkSizeBytes);
     config.buffer_attr.minreq = sanitize_buffer_value(*minreq, fallback_minreq);
-    config.sync_id = *sync_id;
     config.volume = *cvolume;
 
     bool muted = false;
@@ -3503,8 +3491,6 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
     const uint32_t bit_depth = sample_format_bit_depth(stream.sample_spec.format);
     const size_t bytes_per_sample = std::max<uint32_t>(bit_depth / 8, 1);
     const size_t frame_bytes = channels * bytes_per_sample;
-    size_t processed_frames = 0;
-    uint64_t frames_produced = 0;
     const bool from_memfd = (flags & kDescriptorFlagShmData) != 0;
     const bool converted_format = (stream.sample_spec.format == kSampleFormatFloat32LE);
 
@@ -3536,8 +3522,6 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
         if (chunk_frames > 0) {
             const uint64_t chunk_start_frame = stream.frame_cursor;
             stream.frame_cursor += chunk_frames;
-            processed_frames += static_cast<size_t>(chunk_frames);
-            frames_produced += chunk_frames;
 
             std::chrono::steady_clock::time_point chunk_start_time = stream.last_delivery_time;
             uint64_t catchup_for_chunk = 0;

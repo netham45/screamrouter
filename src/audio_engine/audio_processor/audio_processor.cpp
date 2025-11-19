@@ -150,10 +150,8 @@ int AudioProcessor::processAudio(const uint8_t* inputBuffer, int32_t* outputBuff
     resample();
     splitBufferToChannels();
     mixSpeakers();
-    //removeDCOffset();
     equalize();
     downsample(outputBuffer);
-    //noiseShapingDither();
     // --- End Pipeline ---
 
     // Determine samples to copy based on actual samples processed and available
@@ -1206,34 +1204,6 @@ void AudioProcessor::equalize() {
 }
 
 
-void AudioProcessor::noiseShapingDither() {
-    if (last_output_buffer_ == nullptr || last_output_samples_ == 0) {
-        return;
-    }
-
-    const float ditherAmplitude = (inputBitDepth > 0)
-                                      ? (1.0f / (static_cast<unsigned long long>(1) << (inputBitDepth - 1)))
-                                      : 0.0f;
-
-    const float shapingFactor = std::clamp(m_settings->processor_tuning.dither_noise_shaping_factor, 0.0f, 1.0f);
-
-    static float error_accumulator = 0.0f;
-
-    static std::default_random_engine generator(((std::chrono::system_clock::now)().time_since_epoch().count()));
-    std::uniform_real_distribution<float> distribution(-ditherAmplitude, ditherAmplitude);
-
-    for (size_t i = 0; i < last_output_samples_; ++i) {
-        float sample = static_cast<float>(last_output_buffer_[i]) / INT32_MAX;
-        sample += error_accumulator * shapingFactor;
-        sample += distribution(generator);
-        sample = std::clamp(sample, -1.0f, 1.0f);
-        const int32_t quantized_sample = static_cast<int32_t>(sample * INT32_MAX);
-        error_accumulator = sample - static_cast<float>(quantized_sample) / INT32_MAX;
-        last_output_buffer_[i] = quantized_sample;
-    }
-}
-
-
 void AudioProcessor::setupDCFilter() {
     float sampleRateForFilters = static_cast<float>(outputSampleRate * m_settings->processor_tuning.oversampling_factor);
      if (sampleRateForFilters <= 0) {
@@ -1256,41 +1226,6 @@ void AudioProcessor::setupDCFilter() {
          }
     }
 }
-
-void AudioProcessor::removeDCOffset() {
-    PROFILE_FUNCTION();
-    if (channel_buffer_pos == 0) return; // Nothing to process
-
-    for (int ch = 0; ch < outputChannels; ++ch) {
-        if (!dcFilters[ch]) continue;
-
-        // Process interleaved data - need temporary buffer for strided data
-        std::vector<float> temp_channel(channel_buffer_pos);
-
-        // Extract channel from interleaved buffer
-        float* interleaved_ptr = remixed_interleaved_buffer_.data() + ch;
-        for (size_t frame = 0; frame < channel_buffer_pos; ++frame) {
-            temp_channel[frame] = interleaved_ptr[frame * outputChannels];
-        }
-
-        // Apply DC filter
-        dcFilters[ch]->processBlock(temp_channel.data(), temp_channel.data(), channel_buffer_pos);
-
-        // Write back to interleaved buffer
-        for (size_t frame = 0; frame < channel_buffer_pos; ++frame) {
-            interleaved_ptr[frame * outputChannels] = temp_channel[frame];
-        }
-
-        // Also update planar buffer for backward compatibility (temporary)
-        if (static_cast<size_t>(ch) < remixed_float_buffers_.size()) {
-            auto& planar_channel = remixed_float_buffers_[ch];
-            if (planar_channel.size() >= channel_buffer_pos) {
-                std::copy_n(temp_channel.data(), channel_buffer_pos, planar_channel.data());
-            }
-        }
-    }
-} 
-
 
 bool AudioProcessor::isProcessingRequired() {
     return true;

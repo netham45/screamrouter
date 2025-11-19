@@ -143,50 +143,6 @@ std::map<std::string, std::size_t> MixScheduler::get_ready_depths() const {
     return depths;
 }
 
-std::size_t MixScheduler::drop_ready_chunks(const std::string& instance_id, std::size_t count) {
-    if (count == 0) {
-        return 0;
-    }
-
-    std::lock_guard<std::mutex> lock(ready_mutex_);
-    auto it = ready_chunks_.find(instance_id);
-    if (it == ready_chunks_.end()) {
-        return 0;
-    }
-
-    auto& deque_ref = it->second;
-    std::size_t dropped = 0;
-
-    if (count >= deque_ref.size()) {
-        dropped = deque_ref.size();
-        deque_ref.clear();
-        ready_chunks_.erase(it);
-        return dropped;
-    }
-
-    while (dropped < count && !deque_ref.empty()) {
-        // Drop newest ready chunks first so the next-to-dispatch item stays intact.
-        deque_ref.pop_back();
-        ++dropped;
-    }
-
-    if (deque_ref.empty()) {
-        ready_chunks_.erase(it);
-    }
-
-    return dropped;
-}
-
-std::size_t MixScheduler::drop_all_ready_chunks() {
-    std::lock_guard<std::mutex> lock(ready_mutex_);
-    std::size_t dropped = 0;
-    for (auto& entry : ready_chunks_) {
-        dropped += entry.second.size();
-    }
-    ready_chunks_.clear();
-    return dropped;
-}
-
 void MixScheduler::shutdown() {
     if (shutting_down_.exchange(true)) {
         return;

@@ -97,15 +97,6 @@ TimeshiftManager::~TimeshiftManager() {
     LOG_CPP_INFO("[TimeshiftManager] Destruction complete.");
 }
 
-std::shared_ptr<std::mutex> TimeshiftManager::acquire_timing_lock(const std::string& source_tag) {
-    std::lock_guard<std::mutex> map_lock(timing_map_mutex_);
-    auto [it, inserted] = timing_locks_.try_emplace(source_tag);
-    if (inserted || !it->second) {
-        it->second = std::make_shared<std::mutex>();
-    }
-    return it->second;
-}
-
 TimeshiftManager::TimingStateAccess TimeshiftManager::get_timing_state(const std::string& source_tag) {
     std::unique_lock<std::mutex> map_lock(timing_map_mutex_);
     auto lock_it = timing_locks_.find(source_tag);
@@ -219,15 +210,12 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
         return;
     }
 
-    bool should_reset = false;
     const uint32_t current_ts = packet.rtp_timestamp.value();
     const uint32_t last_ts = state_ptr->last_rtp_timestamp;
 
     if (!state_ptr->is_first_packet && state_ptr->clock && reset_threshold_frames > 0) {
         const uint32_t delta = rtp_timestamp_diff(current_ts, last_ts);
-        should_reset = delta > reset_threshold_frames;
-
-        if (should_reset) {
+        if (delta > reset_threshold_frames) {
             const auto last_wallclock = state_ptr->last_wallclock;
             if (last_wallclock.time_since_epoch().count() != 0) {
                 const auto wallclock_gap = packet.received_time - last_wallclock;
@@ -247,55 +235,52 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
                                                  : 0ULL;
                     const auto upper_bound = expected_frames + continuity_slack_frames;
 
-                    if (delta_frames >= lower_bound && delta_frames <= upper_bound) {
-                        should_reset = false;
+                    const bool within_bounds = delta_frames >= lower_bound && delta_frames <= upper_bound;
+                    if (within_bounds) {
                         LOG_CPP_DEBUG("[TimeshiftManager] RTP jump matches wall-clock advance for '%s' (delta=%u frames, expected=%llu, slack=%llu). Keeping timing state.",
                                       packet.source_tag.c_str(), delta,
                                       static_cast<unsigned long long>(expected_frames),
                                       static_cast<unsigned long long>(continuity_slack_frames));
+                        return;
                     }
                 }
             }
         }
 
-        if (should_reset) {
-            LOG_CPP_INFO("[TimeshiftManager] Detected RTP jump for '%s' (delta=%u frames). Resetting timing state.",
-                         packet.source_tag.c_str(), delta);
+        LOG_CPP_INFO("[TimeshiftManager] Detected RTP jump for '%s' (delta=%u frames). Resetting timing state.",
+                     packet.source_tag.c_str(), delta);
 
-            size_t reset_position = global_timeshift_buffer_.size();
-            auto targets_it = processor_targets_.find(packet.source_tag);
-            if (targets_it != processor_targets_.end()) {
-                for (auto& [instance_id, info] : targets_it->second) {
-                    (void)instance_id;
-                    info.next_packet_read_index = reset_position;
-                    if (info.target_queue) {
-                        TaggedAudioPacket discarded;
-                        while (info.target_queue->try_pop(discarded)) {
-                            // Drain stale packets so consumers restart immediately.
-                        }
+        size_t reset_position = global_timeshift_buffer_.size();
+        auto targets_it = processor_targets_.find(packet.source_tag);
+        if (targets_it != processor_targets_.end()) {
+            for (auto& [instance_id, info] : targets_it->second) {
+                (void)instance_id;
+                info.next_packet_read_index = reset_position;
+                if (info.target_queue) {
+                    TaggedAudioPacket discarded;
+                    while (info.target_queue->try_pop(discarded)) {
+                        // Drain stale packets so consumers restart immediately.
                     }
                 }
             }
-
-            timing_access.lock.unlock();
-            {
-                std::unique_lock<std::mutex> map_lock(timing_map_mutex_);
-                auto lock_it = timing_locks_.find(packet.source_tag);
-                if (lock_it == timing_locks_.end() || !lock_it->second) {
-                    lock_it = timing_locks_.emplace(packet.source_tag, std::make_shared<std::mutex>()).first;
-                }
-                std::unique_lock<std::mutex> per_stream_lock(*lock_it->second);
-                stream_timing_states_.erase(packet.source_tag);
-                auto [new_state_it, _] = stream_timing_states_.try_emplace(packet.source_tag);
-                (void)_;
-                state_ptr = &new_state_it->second;
-                map_lock.unlock();
-                timing_access.lock = std::move(per_stream_lock);
-                timing_access.state = state_ptr;
-            }
-            m_state_version_++;
-            run_loop_cv_.notify_one();
         }
+
+        timing_access.lock.unlock();
+        {
+            std::unique_lock<std::mutex> map_lock(timing_map_mutex_);
+            auto lock_it = timing_locks_.find(packet.source_tag);
+            if (lock_it == timing_locks_.end() || !lock_it->second) {
+                lock_it = timing_locks_.emplace(packet.source_tag, std::make_shared<std::mutex>()).first;
+            }
+            std::unique_lock<std::mutex> per_stream_lock(*lock_it->second);
+            stream_timing_states_.erase(packet.source_tag);
+            auto [new_state_it, _] = stream_timing_states_.try_emplace(packet.source_tag);
+            (void)_;
+            state_ptr = &new_state_it->second;
+            map_lock.unlock();
+        }
+        m_state_version_++;
+        run_loop_cv_.notify_one();
     }
 
     StreamTimingState& state = *state_ptr;

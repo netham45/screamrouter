@@ -138,13 +138,6 @@ private:
     uint64_t get_ntp_timestamp_with_delay();
 
     /**
-     * @brief Maps an NTP timestamp to the corresponding RTP timestamp.
-     * @param ntp_timestamp The NTP timestamp to convert.
-     * @return The corresponding RTP timestamp.
-     */
-    uint32_t calculate_rtp_timestamp_for_ntp(uint64_t ntp_timestamp);
-
-    /**
      * @brief Processes incoming RTCP packets.
      * @param data Pointer to the received RTCP data.
      * @param size Size of the received data.
@@ -173,13 +166,6 @@ private:
      * @param sender_addr Address of the sender.
      */
     void process_rtcp_bye(const void* bye, const struct sockaddr_in& sender_addr);
-
-    /**
-     * @brief Sends an RTCP packet.
-     * @param packet Pointer to the RTCP packet data.
-     * @param size Size of the packet.
-     */
-    void send_rtcp_packet(const void* packet, size_t size);
 };
 
 } // namespace audio

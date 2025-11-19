@@ -65,21 +65,6 @@ public:
      */
     ~Biquad();
     /**
-     * @brief Sets the filter type.
-     * @param type The new filter type.
-     */
-    void setType(int type);
-    /**
-     * @brief Sets the quality factor (Q).
-     * @param Q The new Q value.
-     */
-    void setQ(double Q);
-    /**
-     * @brief Sets the cutoff/center frequency.
-     * @param Fc The new frequency in Hz.
-     */
-    void setFc(double Fc);
-    /**
      * @brief Sets the peak gain for shelf and peak filters.
      * @param peakGainDB The new gain in decibels.
      */

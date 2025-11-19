@@ -144,11 +144,6 @@ public:
      * @return true if the IP was found, false otherwise.
      */
     bool get_stream_properties_by_ip(const std::string& ip, StreamProperties& properties);
-    /**
-     * @brief Gets a list of all SSRCs discovered via SAP.
-     * @return A vector of SSRC values.
-     */
-    std::vector<uint32_t> get_known_ssrcs();
 
     /**
      * @brief Returns the currently known SAP announcements keyed by stream IP.

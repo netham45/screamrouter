@@ -873,35 +873,12 @@ bool AudioManager::write_plugin_packet(
     int bit_depth,
     uint8_t chlayout1,
     uint8_t chlayout2)
-{
-    if (m_control_api_manager) {
-        return m_control_api_manager->write_plugin_packet(source_instance_tag, audio_payload, channels, sample_rate, bit_depth, chlayout1, chlayout2, m_running);
+    {
+        if (m_control_api_manager) {
+            return m_control_api_manager->write_plugin_packet(source_instance_tag, audio_payload, channels, sample_rate, bit_depth, chlayout1, chlayout2, m_running);
+        }
+        return false;
     }
-    return false;
-}
-
-void AudioManager::inject_plugin_packet_globally(
-    const std::string& source_tag,
-    const std::vector<uint8_t>& audio_payload,
-    int channels,
-    int sample_rate,
-    int bit_depth,
-    uint8_t chlayout1,
-    uint8_t chlayout2)
-{
-    if (m_running && m_timeshift_manager) {
-        TaggedAudioPacket packet;
-        packet.source_tag = source_tag;
-        packet.received_time = std::chrono::steady_clock::now();
-        packet.sample_rate = sample_rate;
-        packet.bit_depth = bit_depth;
-        packet.channels = channels;
-        packet.chlayout1 = chlayout1;
-        packet.chlayout2 = chlayout2;
-        packet.audio_data = audio_payload;
-        m_timeshift_manager->add_packet(std::move(packet));
-    }
-}
 
 bool AudioManager::add_webrtc_listener(
     const std::string& sink_id,

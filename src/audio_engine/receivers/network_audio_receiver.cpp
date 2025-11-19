@@ -300,12 +300,8 @@ void NetworkAudioReceiver::run() {
                                                                    packet,
                                                                    source_tag);
 
-                bool is_new_source = false;
-                if (!source_tag.empty()) {
-                    is_new_source = register_source_tag(source_tag);
-                    if (is_new_source) {
-                        log_message("New source detected: " + source_tag);
-                    }
+                if (!source_tag.empty() && register_source_tag(source_tag)) {
+                    log_message("New source detected: " + source_tag);
                 }
 
                 if (valid_payload) {

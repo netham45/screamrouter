@@ -507,42 +507,6 @@ unsigned int AlsaPlaybackSender::get_effective_bit_depth() const {
     return static_cast<unsigned int>(bit_depth_);
 }
 
-bool AlsaPlaybackSender::is_actively_playing() const {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-
-    if (!pcm_handle_) {
-        return false;
-    }
-
-    // Check if we've written any frames
-    const std::uint64_t written = frames_written_.load(std::memory_order_acquire);
-    if (written == 0) {
-        return false;  // Nothing written yet
-    }
-
-    // Check PCM state
-    snd_pcm_state_t state = snd_pcm_state(pcm_handle_);
-    if (state != SND_PCM_STATE_RUNNING && state != SND_PCM_STATE_PREPARED) {
-        return false;  // Not in a playing state
-    }
-
-    // Check if frames are being consumed (delay should be less than written)
-    snd_pcm_sframes_t delay_frames = 0;
-    if (snd_pcm_delay(pcm_handle_, &delay_frames) == 0) {
-        // If delay is less than written frames, ALSA is consuming frames
-        // Also ensure delay is positive and reasonable
-        if (delay_frames > 0 && static_cast<std::uint64_t>(delay_frames) < written) {
-            // Additional check: delay should be less than buffer size
-            // to ensure we're actively playing and not just buffering
-            if (buffer_frames_ > 0 && static_cast<snd_pcm_uframes_t>(delay_frames) < buffer_frames_) {
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
 #endif // __linux__
 
 } // namespace audio

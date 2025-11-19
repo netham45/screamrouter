@@ -140,7 +140,6 @@ bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
     // 3) Additions (paths then sinks)
     const auto t_add_start = clock::now();
     LOG_CPP_INFO("[ConfigApplier] Adding: paths=%zu, sinks=%zu", paths_to_add.size(), sinks_to_add.size());
-    std::map<std::string, std::string> added_path_id_to_instance_id;
     for (auto& path_param : paths_to_add) {
         const auto t_one_start = clock::now();
         const std::string filter_tag = get_filter_for_path_id(path_param.path_id, path_param.source_tag);
@@ -150,7 +149,6 @@ bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
             state.params = path_param;
             state.filter_tag = filter_tag;
             active_source_paths_[path_param.path_id] = std::move(state);
-            added_path_id_to_instance_id[path_param.path_id] = path_param.generated_instance_id;
             const auto t_one_end = clock::now();
             LOG_CPP_INFO("[ConfigApplier] +Path id='%s' -> instance='%s' in %lld ms",
                          path_param.path_id.c_str(), path_param.generated_instance_id.c_str(),

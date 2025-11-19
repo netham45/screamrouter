@@ -58,15 +58,6 @@ public:
      * @param running A flag indicating if the audio engine is running.
      */
     void update_source_parameters(const std::string& instance_id, SourceParameterUpdates params, bool running);
-    
-    /**
-     * @brief Sends a single control command to a source processor.
-     * @param instance_id The ID of the target source processor.
-     * @param command The command to send.
-     * @param running A flag indicating if the audio engine is running.
-     * @return true if the command was sent successfully, false otherwise.
-     */
-    bool send_command_to_source(const std::string& instance_id, const ControlCommand& command, bool running);
 
     /**
      * @brief Injects a plugin-generated audio packet into a source processor.

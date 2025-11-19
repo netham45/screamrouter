@@ -135,16 +135,6 @@ bool SapListener::get_stream_properties_by_ip(const std::string& ip, StreamPrope
     return false;
 }
 
-std::vector<uint32_t> SapListener::get_known_ssrcs() {
-    std::lock_guard<std::mutex> lock(ssrc_map_mutex_);
-    std::vector<uint32_t> known_ssrcs;
-    known_ssrcs.reserve(ssrc_to_properties_.size());
-    for (const auto& pair : ssrc_to_properties_) {
-        known_ssrcs.push_back(pair.first);
-    }
-    return known_ssrcs;
-}
-
 std::vector<SapAnnouncement> SapListener::get_announcements() {
     std::lock_guard<std::mutex> lock(ip_map_mutex_);
     std::vector<SapAnnouncement> announcements;

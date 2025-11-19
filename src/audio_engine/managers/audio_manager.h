@@ -244,26 +244,6 @@ public:
      */
     std::size_t get_chunk_size_bytes_for_format(int channels, int bit_depth) const;
 
-    /**
-     * @brief Injects a plugin-generated audio packet into the global timeshift buffer.
-     * @param source_tag The source tag to associate with the packet.
-     * @param audio_payload The raw audio data.
-     * @param channels Number of audio channels.
-     * @param sample_rate Sample rate in Hz.
-     * @param bit_depth Bit depth.
-     * @param chlayout1 Scream channel layout byte 1.
-     * @param chlayout2 Scream channel layout byte 2.
-     */
-    void inject_plugin_packet_globally(
-        const std::string& source_tag,
-        const std::vector<uint8_t>& audio_payload,
-        int channels,
-        int sample_rate,
-        int bit_depth,
-        uint8_t chlayout1,
-        uint8_t chlayout2
-    );
-
     // --- WebRTC Listener Management ---
     /**
      * @brief Adds a WebRTC listener to a sink.

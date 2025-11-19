@@ -311,7 +311,6 @@ private:
     std::chrono::steady_clock::time_point last_iteration_finish_time_{};
 
     // --- Timing helpers ---
-    std::shared_ptr<std::mutex> acquire_timing_lock(const std::string& source_tag);
     TimingStateAccess get_timing_state(const std::string& source_tag);
     TimingStateAccess get_or_create_timing_state(const std::string& source_tag);
 };

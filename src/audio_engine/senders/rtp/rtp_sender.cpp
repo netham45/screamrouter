@@ -678,62 +678,6 @@ uint64_t RtpSender::get_ntp_timestamp_with_delay() {
     return ntp_timestamp;
 }
 
-uint32_t RtpSender::calculate_rtp_timestamp_for_ntp(uint64_t ntp_timestamp) {
-    // Extract NTP seconds and fraction
-    uint32_t ntp_seconds = (ntp_timestamp >> 32) & 0xFFFFFFFF;
-    uint32_t ntp_fraction = ntp_timestamp & 0xFFFFFFFF;
-    
-    // Convert NTP timestamp to microseconds since NTP epoch
-    const uint64_t NTP_UNIX_EPOCH_DIFF = 2208988800ULL;
-    uint64_t total_seconds = ntp_seconds;
-    
-    // Convert fraction to microseconds: (fraction * 10^6) / 2^32
-    uint64_t fraction_microseconds = ((uint64_t)ntp_fraction * 1000000ULL) / 4294967296ULL;
-    
-    // Total time in microseconds since NTP epoch
-    uint64_t ntp_microseconds = (total_seconds * 1000000ULL) + fraction_microseconds;
-    
-    // Get the stream start time in microseconds since Unix epoch
-    auto stream_start_unix_us = std::chrono::duration_cast<std::chrono::microseconds>(
-        stream_start_time_.time_since_epoch()
-    ).count();
-    
-    // Ensure we're working with unsigned values properly
-    uint64_t stream_start_unix_us_unsigned = static_cast<uint64_t>(stream_start_unix_us);
-    
-    // Convert to NTP epoch
-    uint64_t stream_start_ntp_us = stream_start_unix_us_unsigned + (NTP_UNIX_EPOCH_DIFF * 1000000ULL);
-    
-    // Calculate elapsed time since stream start in microseconds
-    int64_t elapsed_us = static_cast<int64_t>(ntp_microseconds) - static_cast<int64_t>(stream_start_ntp_us);
-    
-    // Ensure non-negative elapsed time
-    if (elapsed_us < 0) {
-        LOG_CPP_WARNING("[RtpSender:%s] NTP timestamp is before stream start, using 0 elapsed time",
-                        config_.sink_id.c_str());
-        elapsed_us = 0;
-    }
-    
-    // Convert elapsed microseconds to samples using the RTP clock rate
-    uint32_t clock_rate = rtp_clock_rate();
-    if (clock_rate == 0) {
-        clock_rate = 48000;
-    }
-    long double elapsed_seconds = static_cast<long double>(elapsed_us) / 1000000.0L;
-    uint64_t elapsed_samples = static_cast<uint64_t>(elapsed_seconds * static_cast<long double>(clock_rate));
-    
-    // Add to the initial RTP timestamp
-    uint32_t rtp_timestamp = stream_start_rtp_timestamp_ + static_cast<uint32_t>(elapsed_samples);
-    
-    LOG_CPP_DEBUG("[RtpSender:%s] Calculated RTP timestamp: %u for NTP: 0x%016llX (elapsed: %lld us)",
-                  config_.sink_id.c_str(), 
-                  rtp_timestamp,
-                  (unsigned long long)ntp_timestamp,
-                  (long long)elapsed_us);
-    
-    return rtp_timestamp;
-}
-
 void RtpSender::rtcp_thread_loop() {
     LOG_CPP_INFO("[RtpSender:%s] RTCP thread loop started (socket_fd=%d, target=%s:%d)",
                 config_.sink_id.c_str(),
@@ -1231,14 +1175,6 @@ void RtpSender::process_rtcp_bye(const void* bye, const struct sockaddr_in& send
             LOG_CPP_INFO("[RtpSender:%s] BYE reason: %s",
                         config_.sink_id.c_str(), reason.c_str());
         }
-    }
-}
-
-void RtpSender::send_rtcp_packet(const void* packet, size_t size) {
-    // Placeholder - will be implemented when full RTCP support is added
-    if (rtcp_socket_fd_ != PLATFORM_INVALID_SOCKET) {
-        LOG_CPP_DEBUG("[RtpSender:%s] Would send RTCP packet of size %zu", 
-                      config_.sink_id.c_str(), size);
     }
 }
 

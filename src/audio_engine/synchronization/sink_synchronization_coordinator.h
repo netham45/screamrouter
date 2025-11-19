@@ -241,20 +241,6 @@ public:
     CoordinatorStats get_statistics() const;
     
     /**
-     * @brief Sets the barrier timeout duration.
-     * @param timeout_ms Maximum time to wait at barrier in milliseconds.
-     * 
-     * @details Adjusts how long this sink will wait for other sinks at the barrier
-     *          before proceeding anyway. Typical values:
-     *          - 20ms: Low latency mode
-     *          - 50ms: Default balanced mode
-     *          - 100ms: High reliability mode
-     * 
-     * Thread Safety: Safe to call from any thread.
-     */
-    void set_barrier_timeout(int timeout_ms);
-    
-    /**
      * @brief Gets the current barrier timeout setting.
      * @return Barrier timeout in milliseconds.
      * 

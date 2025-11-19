@@ -49,26 +49,6 @@ void ControlApiManager::update_source_parameters(const std::string& instance_id,
     }
 }
 
-bool ControlApiManager::send_command_to_source(const std::string& instance_id, const ControlCommand& command, bool running) {
-    std::shared_ptr<CommandQueue> target_queue;
-    {
-        std::scoped_lock lock(m_manager_mutex);
-        if (!running) return false;
-
-        auto it = m_command_queues.find(instance_id);
-        if (it == m_command_queues.end()) {
-            return false;
-        }
-        target_queue = it->second;
-    }
-
-    if (target_queue) {
-        target_queue->push(command);
-        return true;
-    }
-    return false;
-}
-
 bool ControlApiManager::send_command_to_source_nolock(const std::string& instance_id, const ControlCommand& command) {
     auto it = m_command_queues.find(instance_id);
     if (it == m_command_queues.end()) {
@@ -157,15 +137,12 @@ bool ControlApiManager::write_plugin_packet(
 
     // Find the SourceInputProcessor by its original tag (passed as source_instance_tag parameter)
     SourceInputProcessor* target_processor_ptr = nullptr;
-    std::string found_instance_id; // To store the instance_id if found
-
     // Iterate over the sources map to find a processor whose configured tag matches source_instance_tag
     for (const auto& pair : m_sources) {
         if (pair.second) { // Check if the unique_ptr is valid
             const auto& proc_config = pair.second->get_config(); // Get the processor's configuration
             if (proc_config.source_tag == source_instance_tag) { // Compare with the provided tag (parameter)
                 target_processor_ptr = pair.second.get(); // Get raw pointer to the processor
-                found_instance_id = pair.first;           // Store its unique instance_id (map key)
                 break;                                    // Found, exit loop
             }
         }

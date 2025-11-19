@@ -29,7 +29,7 @@ struct TimeshiftTuning {
     double late_packet_threshold_ms = 10.0;
     double target_buffer_level_ms = 8.0;
     long loop_max_sleep_ms = 10;
-    double max_catchup_lag_ms = kDefaultBaseFramesPerChunkMono16 / 20;
+    double max_catchup_lag_ms = 5000;
     double max_adaptive_delay_ms = 20.0;
     std::size_t max_clock_pending_packets = 64;
     double rtp_continuity_slack_seconds = 0.25;
@@ -61,9 +61,9 @@ struct MixerTuning {
     bool mp3_vbr_enabled = false;
     int mp3_output_queue_max_size = 10;
     long underrun_hold_timeout_ms = 250;
-    std::size_t max_input_queue_chunks = 32;
-    std::size_t min_input_queue_chunks = 8;
-    std::size_t max_ready_chunks_per_source = 12;
+    std::size_t max_input_queue_chunks = 6;
+    std::size_t min_input_queue_chunks = 1;
+    std::size_t max_ready_chunks_per_source = 4;
     double max_input_queue_duration_ms = 0.0;
     double min_input_queue_duration_ms = 0.0;
     double max_ready_queue_duration_ms = 0.0;

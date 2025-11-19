@@ -52,8 +52,6 @@ public:
 
     HarvestResult collect_ready_chunks();
     std::map<std::string, std::size_t> get_ready_depths() const;
-    std::size_t drop_ready_chunks(const std::string& instance_id, std::size_t count);
-    std::size_t drop_all_ready_chunks();
 
     void shutdown();
 

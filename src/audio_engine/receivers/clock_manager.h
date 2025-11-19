@@ -33,7 +33,6 @@ public:
         ClockKey key{};
         std::uint64_t id = 0;
         std::shared_ptr<ClockCondition> condition;
-        bool external = false;
 
         bool valid() const {
             return condition != nullptr && id != 0;
@@ -55,16 +54,13 @@ public:
     ClockManager& operator=(const ClockManager&) = delete;
 
     ConditionHandle register_clock_condition(int sample_rate, int channels, int bit_depth);
-    ConditionHandle register_external_clock_condition(int sample_rate, int channels, int bit_depth);
     void unregister_clock_condition(const ConditionHandle& handle);
-    void notify_external_clock_advance(const ConditionHandle& handle, std::uint64_t tick_count);
 
 private:
     struct ConditionEntry {
         std::uint64_t id = 0;
         std::weak_ptr<ClockCondition> condition;
         std::atomic<bool> active{false};
-        bool external{false};
         ClockKey key{0, 0, 0};
     };
 
@@ -79,10 +75,7 @@ private:
     void cleanup_inactive_conditions(ClockEntry& entry);
     void run();
 
-    std::shared_ptr<ClockCondition> find_external_condition_locked(std::uint64_t id) const;
-
     std::map<ClockKey, ClockEntry> clock_entries_;
-    std::unordered_map<std::uint64_t, std::shared_ptr<ConditionEntry>> external_conditions_;
     std::mutex mutex_;
     std::condition_variable cv_;
     std::thread worker_thread_;

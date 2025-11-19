@@ -31,6 +31,7 @@
 #include <limits>
 #include <thread>
 #include <cstdint>
+#include <deque>
 #include <unordered_map>
 
 #if defined(_WIN32)
@@ -157,12 +158,6 @@ public:
      * @param coord Pointer to the coordinator (not owned by mixer, must outlive mixer).
      */
     void set_coordinator(SinkSynchronizationCoordinator* coord);
-
-    /**
-     * @brief Checks if coordination mode is currently enabled.
-     * @return True if coordination is enabled, false otherwise.
-     */
-    bool is_coordination_enabled() const;
  
  protected:
      /** @brief The main processing loop for the mixer thread. */
@@ -215,6 +210,13 @@ private:
     lame_t lame_global_flags_ = nullptr;
     std::unique_ptr<AudioProcessor> stereo_preprocessor_;
     std::vector<uint8_t> mp3_encode_buffer_;
+    std::deque<std::vector<int32_t>> mp3_pcm_queue_;
+    std::mutex mp3_mutex_;
+    std::condition_variable mp3_cv_;
+    std::thread mp3_thread_;
+    std::atomic<bool> mp3_thread_running_{false};
+    std::atomic<bool> mp3_stop_flag_{false};
+    size_t mp3_pcm_queue_max_depth_{0};
 
     std::atomic<uint64_t> m_total_chunks_mixed{0};
     std::atomic<uint64_t> m_buffer_underruns{0};
@@ -236,13 +238,17 @@ private:
 
     void initialize_lame();
     void close_lame();
+    void start_mp3_thread();
+    void stop_mp3_thread();
+    void mp3_thread_loop();
 
     bool wait_for_source_data();
     void mix_buffers();
     void downscale_buffer();
     size_t preprocess_for_listeners_and_mp3();
     void dispatch_to_listeners(size_t samples_to_dispatch);
-    void encode_and_push_mp3(size_t samples_to_encode);
+    void enqueue_mp3_pcm(const int32_t* samples, size_t sample_count);
+    void encode_and_push_mp3(const int32_t* samples, size_t sample_count);
     void cleanup_closed_listeners();
     void clear_pending_audio();
     void start_async();
