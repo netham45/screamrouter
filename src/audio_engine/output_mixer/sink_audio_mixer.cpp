@@ -1993,17 +1993,6 @@ SinkAudioMixer::InputBufferMetrics SinkAudioMixer::compute_input_buffer_metrics(
 
     std::map<std::string, std::size_t> backlog_depths = mix_scheduler_->get_ready_depths();
 
-    {
-        std::lock_guard<std::mutex> lock(queues_mutex_);
-        for (const auto& [instance_id, queue_ptr] : input_queues_) {
-            (void)queue_ptr;
-            auto buf_it = source_buffers_.find(instance_id);
-            if (buf_it != source_buffers_.end() && !buf_it->second.audio_data.empty()) {
-                backlog_depths[instance_id] += 1;
-            }
-        }
-    }
-
     metrics.active_sources = backlog_depths.size();
 
     for (const auto& [instance_id, depth] : backlog_depths) {

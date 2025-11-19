@@ -259,6 +259,11 @@ protected:
     void run() override;
 
 private:
+    struct PendingDispatch {
+        std::shared_ptr<PacketQueue> target_queue;
+        TaggedAudioPacket packet;
+    };
+
     struct TimingStateAccess {
         std::unique_lock<std::mutex> lock;
         StreamTimingState* state = nullptr;
@@ -282,8 +287,8 @@ private:
     std::chrono::seconds max_buffer_duration_sec_;
     std::chrono::steady_clock::time_point last_cleanup_time_;
 
-    /** @brief A single iteration of the processing loop. Assumes data_mutex_ is held. */
-    void processing_loop_iteration_unlocked();
+    /** @brief A single iteration of the processing loop. Collects ready packets while data_mutex_ is held. */
+    void processing_loop_iteration_unlocked(std::vector<PendingDispatch>& pending_dispatches);
     /** @brief Periodically cleans up old packets from the global buffer. Assumes data_mutex_ is held. */
     void cleanup_global_buffer_unlocked();
     /**

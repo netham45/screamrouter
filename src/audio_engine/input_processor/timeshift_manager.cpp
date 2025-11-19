@@ -306,6 +306,10 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
     m_total_packets_added++;
     data_lock.unlock();
 
+    // Wake the run loop promptly so we don't wait for the max sleep interval.
+    m_state_version_++;
+    run_loop_cv_.notify_one();
+
     const double arrival_time_sec =
         std::chrono::duration<double>(packet.received_time.time_since_epoch()).count();
 
@@ -748,22 +752,35 @@ void TimeshiftManager::run() {
     uint64_t last_processed_version = m_state_version_.load();
 
     while (!stop_flag_) {
-        std::unique_lock<std::mutex> lock(data_mutex_);
+        std::vector<PendingDispatch> pending_dispatches;
+        std::chrono::steady_clock::time_point next_wakeup_time;
 
-        // Process any packets that are already due.
-        processing_loop_iteration_unlocked();
+        {
+            std::unique_lock<std::mutex> lock(data_mutex_);
 
-        // Perform cleanup if needed.
-        auto now = std::chrono::steady_clock::now();
-        if (now - last_cleanup_time_ > std::chrono::milliseconds(m_settings->timeshift_tuning.cleanup_interval_ms)) {
-            cleanup_global_buffer_unlocked();
-            last_cleanup_time_ = now;
+            // Process any packets that are already due, but defer queue pushes.
+            processing_loop_iteration_unlocked(pending_dispatches);
+
+            // Perform cleanup if needed.
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_cleanup_time_ > std::chrono::milliseconds(m_settings->timeshift_tuning.cleanup_interval_ms)) {
+                cleanup_global_buffer_unlocked();
+                last_cleanup_time_ = now;
+            }
+
+            // Calculate the next time we need to wake up.
+            next_wakeup_time = calculate_next_wakeup_time();
         }
 
-        // Calculate the next time we need to wake up.
-        auto next_wakeup_time = calculate_next_wakeup_time();
-        
+        // Dispatch packets outside the main data mutex to avoid blocking producers.
+        for (auto& dispatch : pending_dispatches) {
+            if (dispatch.target_queue) {
+                dispatch.target_queue->push(std::move(dispatch.packet));
+            }
+        }
+
         // Wait until the next event or until notified.
+        std::unique_lock<std::mutex> lock(data_mutex_);
         run_loop_cv_.wait_until(lock, next_wakeup_time, [this, &last_processed_version] {
             return stop_flag_.load() || (m_state_version_.load() != last_processed_version);
         });
@@ -777,7 +794,7 @@ void TimeshiftManager::run() {
 /**
  * @brief A single iteration of the processing loop to dispatch ready packets. Assumes data_mutex_ is held.
  */
-void TimeshiftManager::processing_loop_iteration_unlocked() {
+void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDispatch>& pending_dispatches) {
     if (global_timeshift_buffer_.empty()) {
         return;
     }
@@ -905,11 +922,13 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                     packet_to_send.playback_rate = smoothed_rate;
 
-                    target_info.target_queue->push(std::move(packet_to_send));
-                    profiling_packets_dispatched_++;
-                    packets_processed++;
-
-                    ts.last_played_rtp_timestamp = candidate_packet.rtp_timestamp.value();
+                    if (target_info.target_queue) {
+                        pending_dispatches.push_back(
+                            PendingDispatch{target_info.target_queue, std::move(packet_to_send)});
+                        profiling_packets_dispatched_++;
+                        packets_processed++;
+                        ts.last_played_rtp_timestamp = candidate_packet.rtp_timestamp.value();
+                    }
 
                     target_info.next_packet_read_index++;
 
