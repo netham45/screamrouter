@@ -203,7 +203,15 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
     const uint32_t reset_threshold_frames = static_cast<uint32_t>(
         static_cast<double>(frames_per_second) * bounded_reset_threshold_sec);
 
+    const auto lock_start = std::chrono::steady_clock::now();
     std::unique_lock<std::mutex> data_lock(data_mutex_);
+    const auto lock_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - lock_start).count();
+    if (lock_wait_ms > 20) {
+        LOG_CPP_WARNING("[TimeshiftManager] add_packet waited %lld ms for data mutex (source=%s)",
+                        static_cast<long long>(lock_wait_ms),
+                        packet.source_tag.c_str());
+    }
     auto timing_access = get_or_create_timing_state(packet.source_tag);
     StreamTimingState* state_ptr = timing_access.state;
     if (!state_ptr) {
@@ -959,6 +967,13 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
     }
 
     const auto iteration_end = std::chrono::steady_clock::now();
+    const auto iteration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(iteration_end - iteration_start).count();
+    if (iteration_ms > 20) {
+        LOG_CPP_WARNING("[TimeshiftManager] processing_loop_iteration_unlocked took %lld ms (pending_dispatches=%zu, buffer=%zu)",
+                        static_cast<long long>(iteration_ms),
+                        pending_dispatches.size(),
+                        global_timeshift_buffer_.size());
+    }
     last_iteration_finish_time_ = iteration_end;
 
     if (packets_processed > 0) {
