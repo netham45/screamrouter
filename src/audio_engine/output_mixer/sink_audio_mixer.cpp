@@ -2047,20 +2047,14 @@ void SinkAudioMixer::update_drain_ratio() {
 
     last_drain_check_ = now;
 
-    // Calculate current buffer level
-    double buffer_ms = calculate_buffer_level_ms();
+    // Measure the payload ring buffer directly
+    PayloadBufferMetrics metrics = compute_payload_buffer_metrics();
+    double buffer_ms = metrics.buffered_ms;
+    double fill_percent = metrics.capacity_bytes > 0 ? metrics.fill_ratio * 100.0 : 0.0;
 
-    // Get components for debugging
-    size_t payload_bytes = payload_buffer_write_pos_;
-    size_t frame_bytes = config_.output_channels * (playback_bit_depth_ / 8);
-    double payload_frames = frame_bytes > 0 ? static_cast<double>(payload_bytes) / frame_bytes : 0.0;
-    double payload_ms = playback_sample_rate_ > 0 ? (payload_frames * 1000.0) / playback_sample_rate_ : 0.0;
-    double chunk_ms = playback_sample_rate_ > 0 ? (frames_per_chunk_ * 1000.0) / playback_sample_rate_ : 0.0;
-    double estimated_scheduler_ms = chunk_ms * 4;  // Assuming 4 chunks queued
-
-    LOG_CPP_DEBUG("[BufferDrain:%s] Raw buffer levels: total=%.2fms (payload=%.2fms [%zu bytes/%zu frames], est_scheduler=%.2fms [4x%.2fms chunks])",
-                  config_.sink_id.c_str(), buffer_ms, payload_ms, payload_bytes,
-                  static_cast<size_t>(payload_frames), estimated_scheduler_ms, chunk_ms);
+    LOG_CPP_DEBUG("[BufferDrain:%s] Payload buffer queued=%.2fms (%.2f%% of %.2fms capacity, %zu/%zu bytes)",
+                  config_.sink_id.c_str(), buffer_ms, fill_percent, metrics.capacity_ms,
+                  metrics.buffered_bytes, metrics.capacity_bytes);
 
     // Apply exponential smoothing
     double alpha = 1.0 - m_settings->mixer_tuning.drain_smoothing_factor;
@@ -2147,72 +2141,56 @@ void SinkAudioMixer::update_drain_ratio() {
     }
 }
 
+SinkAudioMixer::PayloadBufferMetrics SinkAudioMixer::compute_payload_buffer_metrics() const {
+    PayloadBufferMetrics metrics;
+    metrics.buffered_bytes = payload_buffer_write_pos_;
+    metrics.capacity_bytes = payload_buffer_.size();
+
+    const int sample_rate = playback_sample_rate_;
+    const int bit_depth = playback_bit_depth_;
+    const int channels = std::max(playback_channels_, 1);
+
+    if (sample_rate <= 0 || bit_depth <= 0 || (bit_depth % 8) != 0) {
+        LOG_CPP_DEBUG("[BufferCalc:%s] Invalid playback format (rate=%d, depth=%d, channels=%d)",
+                      config_.sink_id.c_str(), sample_rate, bit_depth, channels);
+        return metrics;
+    }
+
+    const std::size_t bytes_per_sample = static_cast<std::size_t>(bit_depth) / 8;
+    const std::size_t frame_bytes = bytes_per_sample * static_cast<std::size_t>(channels);
+    if (frame_bytes == 0) {
+        LOG_CPP_WARNING("[BufferCalc:%s] Frame size is zero (bit_depth=%d, channels=%d)",
+                        config_.sink_id.c_str(), bit_depth, channels);
+        return metrics;
+    }
+
+    auto bytes_to_ms = [&](std::size_t bytes) -> double {
+        double frames = static_cast<double>(bytes) / static_cast<double>(frame_bytes);
+        return (frames * 1000.0) / static_cast<double>(sample_rate);
+    };
+
+    metrics.buffered_ms = bytes_to_ms(metrics.buffered_bytes);
+    metrics.capacity_ms = bytes_to_ms(metrics.capacity_bytes);
+    if (metrics.capacity_bytes > 0) {
+        metrics.fill_ratio = static_cast<double>(metrics.buffered_bytes) /
+                             static_cast<double>(metrics.capacity_bytes);
+    }
+    metrics.format_valid = true;
+    return metrics;
+}
+
 double SinkAudioMixer::calculate_buffer_level_ms() const {
-    double total_ms = 0.0;
-    double payload_ms = 0.0;
-    double scheduler_estimate_ms = 0.0;
+    PayloadBufferMetrics metrics = compute_payload_buffer_metrics();
+    double fill_percent = metrics.capacity_bytes > 0 ? metrics.fill_ratio * 100.0 : 0.0;
 
-    // Log current playback format
-    LOG_CPP_DEBUG("[BufferCalc:%s] Playback format: %dHz, %d-bit, %d channels",
-                  config_.sink_id.c_str(), playback_sample_rate_, playback_bit_depth_, config_.output_channels);
+    LOG_CPP_DEBUG("[BufferCalc:%s] Payload buffer: %.2fms queued (%.2f%% of %.2fms capacity, %zu/%zu bytes)",
+                  config_.sink_id.c_str(), metrics.buffered_ms, fill_percent,
+                  metrics.capacity_ms, metrics.buffered_bytes, metrics.capacity_bytes);
 
-    // For now, just calculate based on payload buffer
-    // TODO: Add MixScheduler buffer depth when API is available
-
-    // Payload buffer (bytes waiting to send)
-    if (playback_sample_rate_ > 0 && playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0) {
-        size_t frame_bytes = config_.output_channels * (playback_bit_depth_ / 8);
-        size_t payload_bytes = payload_buffer_write_pos_;
-
-        LOG_CPP_DEBUG("[BufferCalc:%s] Payload buffer: %zu bytes, frame_size=%zu bytes",
-                      config_.sink_id.c_str(), payload_bytes, frame_bytes);
-
-        if (frame_bytes > 0 && payload_bytes > 0) {
-            double frames = static_cast<double>(payload_bytes) / frame_bytes;
-            payload_ms = (frames * 1000.0) / playback_sample_rate_;
-            total_ms += payload_ms;
-
-            LOG_CPP_DEBUG("[BufferCalc:%s] Payload: %zu bytes = %.1f frames = %.2fms",
-                          config_.sink_id.c_str(), payload_bytes, frames, payload_ms);
-        } else if (frame_bytes == 0) {
-            LOG_CPP_WARNING("[BufferCalc:%s] Frame size is 0, cannot calculate payload buffer time",
-                            config_.sink_id.c_str());
-        }
-    } else {
-        LOG_CPP_DEBUG("[BufferCalc:%s] Invalid playback format for payload calculation (rate=%d, depth=%d)",
-                      config_.sink_id.c_str(), playback_sample_rate_, playback_bit_depth_);
+    if (metrics.buffered_ms > 100.0) {
+        LOG_CPP_WARNING("[BufferCalc:%s] High buffer level detected: %.2fms (%.2f%% full)",
+                        config_.sink_id.c_str(), metrics.buffered_ms, fill_percent);
     }
 
-    // Add a rough estimate for scheduler buffers based on typical queue depth
-    // This is a placeholder until we have proper API
-    if (playback_sample_rate_ > 0) {
-        double chunk_duration_ms = (frames_per_chunk_ * 1000.0) / playback_sample_rate_;
-        // Assume average of 3-5 chunks queued per source
-        const int assumed_queue_depth = 4;
-        scheduler_estimate_ms = chunk_duration_ms * assumed_queue_depth;
-        total_ms += scheduler_estimate_ms;
-
-        LOG_CPP_DEBUG("[BufferCalc:%s] Scheduler estimate: %d chunks × %.2fms/chunk = %.2fms",
-                      config_.sink_id.c_str(), assumed_queue_depth, chunk_duration_ms, scheduler_estimate_ms);
-
-        // Also log information about actual input queues if available
-        // Note: We can't lock the mutex here since this is a const function
-        // Just log the estimate for now
-        LOG_CPP_DEBUG("[BufferCalc:%s] Using scheduler estimate (can't access actual queues in const function)",
-                      config_.sink_id.c_str());
-    } else {
-        LOG_CPP_WARNING("[BufferCalc:%s] Sample rate is 0, cannot estimate scheduler buffer time",
-                        config_.sink_id.c_str());
-    }
-
-    LOG_CPP_DEBUG("[BufferCalc:%s] TOTAL buffer level: %.2fms (payload=%.2fms + scheduler_est=%.2fms)",
-                  config_.sink_id.c_str(), total_ms, payload_ms, scheduler_estimate_ms);
-
-    // Log if buffer level seems unusually high
-    if (total_ms > 100.0) {
-        LOG_CPP_WARNING("[BufferCalc:%s] High buffer level detected: %.2fms",
-                        config_.sink_id.c_str(), total_ms);
-    }
-
-    return total_ms;
+    return metrics.buffered_ms;
 }

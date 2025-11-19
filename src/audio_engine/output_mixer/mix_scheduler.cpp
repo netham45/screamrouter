@@ -7,7 +7,7 @@ namespace screamrouter {
 namespace audio {
 
 namespace {
-constexpr std::size_t kMaxReadyChunksPerSource = 12; // allow ~70ms backlog to accommodate slower devices
+constexpr std::size_t kMaxReadyChunksPerSource = 4;
 }
 
 MixScheduler::MixScheduler(std::string mixer_id,
