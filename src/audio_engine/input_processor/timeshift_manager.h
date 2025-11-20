@@ -131,6 +131,17 @@ struct StreamTimingState {
     double last_clock_measured_offset_ms = 0.0;
     double clock_innovation_abs_sum_ms = 0.0;
     uint64_t clock_innovation_samples = 0;
+
+    // Buffer/target tracking for playback controller
+    double target_buffer_level_ms = 0.0;
+    std::chrono::steady_clock::time_point last_target_update_time{};
+    double current_buffer_level_ms = 0.0;
+    double buffer_target_fill_percentage = 0.0;
+
+    // Playback ratio PI controller state
+    double playback_ratio_integral_ppm = 0.0;
+    double playback_ratio_controller_ppm = 0.0;
+    std::chrono::steady_clock::time_point last_controller_update_time{};
 };
 
 /**

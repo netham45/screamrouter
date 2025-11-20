@@ -47,15 +47,13 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
 #ifdef SR_FNTRACE_BUILD
     srtrace::init_if_needed();
     if (std::getenv("SCREAMROUTER_TRACE")) {
-        std::fprintf(stderr, "[fntrace] compiled-in, runtime enabled\n");
-        std::fflush(stderr);
+        LOG_CPP_INFO("[fntrace] compiled-in, runtime enabled");
     }
     // Force at least one instrumented function call so traces appear immediately
     sr_fntrace_probe();
 #else
     if (std::getenv("SCREAMROUTER_TRACE")) {
-        std::fprintf(stderr, "[fntrace] requested, but NOT compiled-in. Rebuild with SCREAMROUTER_FNTRACE=1.\n");
-        std::fflush(stderr);
+        LOG_CPP_WARNING("[fntrace] requested, but NOT compiled-in. Rebuild with SCREAMROUTER_FNTRACE=1.");
     }
 #endif
     m.doc() = "ScreamRouter C++ Audio Engine Extension"; // Optional module docstring

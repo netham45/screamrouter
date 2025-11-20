@@ -40,6 +40,9 @@ struct TimeshiftTuning {
     double playback_ratio_ki = 1.0;
     double playback_ratio_integral_limit_ppm = 300.0;
     double playback_ratio_smoothing = 0.05;
+    double playback_catchup_ppm_per_ms = 500.0;   // Extra speedup per ms of lateness (bounded)
+    double playback_catchup_max_ppm = 200000.0;   // Allow up to ~20% speedup when very late
+    double max_playout_lead_ms = 200.0;           // Clamp how far into the future we schedule playout
 
     // --- Temporal Store / DVR defaults ---
     // Target playout delay (D) relative to now_ref; mixer follows head at D behind.
@@ -61,9 +64,9 @@ struct MixerTuning {
     bool mp3_vbr_enabled = false;
     int mp3_output_queue_max_size = 10;
     long underrun_hold_timeout_ms = 250;
-    std::size_t max_input_queue_chunks = 6;
-    std::size_t min_input_queue_chunks = 1;
-    std::size_t max_ready_chunks_per_source = 4;
+    std::size_t max_input_queue_chunks = 32;
+    std::size_t min_input_queue_chunks = 4;
+    std::size_t max_ready_chunks_per_source = 8;
     double max_input_queue_duration_ms = 0.0;
     double min_input_queue_duration_ms = 0.0;
     double max_ready_queue_duration_ms = 0.0;

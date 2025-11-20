@@ -226,7 +226,6 @@ bool RtpSender::setup() {
             dest_addr.sin_port = htons(9875); // Standard SAP port
             if (inet_pton(AF_INET, ip_str.c_str(), &dest_addr.sin_addr) <= 0) {
                 LOG_CPP_ERROR("[RtpSender:%s] Invalid SAP multicast address: %s", config_.sink_id.c_str(), ip_str.c_str());
-                printf("[RtpSender:%s] Invalid SAP multicast address: %s\n", config_.sink_id.c_str(), ip_str.c_str());
                 continue; // Skip this invalid address
             }
             sap_dest_addrs_.push_back(dest_addr);

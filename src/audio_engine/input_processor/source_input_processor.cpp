@@ -6,6 +6,7 @@
 #include <algorithm> // For std::min, std::max
 #include <cmath>     // For std::chrono durations
 #include <thread>    // For sleep_for
+#include "../utils/profiler.h"
 
 #ifdef min
 
@@ -158,6 +159,7 @@ SourceInputProcessorStats SourceInputProcessor::get_stats() {
 // --- Initialization & Configuration ---
 
 void SourceInputProcessor::set_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map) {
+    PROFILE_FUNCTION();
     std::lock_guard<std::mutex> lock(processor_config_mutex_); // Protect map and processor access
     current_speaker_layouts_map_ = layouts_map;
     LOG_CPP_DEBUG("[SourceProc:%s] Received %zu speaker layouts.", config_.instance_id.c_str(), layouts_map.size());
@@ -169,6 +171,7 @@ void SourceInputProcessor::set_speaker_layouts_config(const std::map<int, scream
 }
 
 void SourceInputProcessor::start() {
+     PROFILE_FUNCTION();
      if (is_running()) {
         LOG_CPP_INFO("[SourceProc:%s] Already running.", config_.instance_id.c_str());
         return;
@@ -196,6 +199,7 @@ void SourceInputProcessor::start() {
 
 
 void SourceInputProcessor::stop() {
+    PROFILE_FUNCTION();
     if (stop_flag_) {
         LOG_CPP_INFO("[SourceProc:%s] Already stopped or stopping.", config_.instance_id.c_str());
         return;
@@ -231,6 +235,7 @@ void SourceInputProcessor::stop() {
 
 
 void SourceInputProcessor::process_commands() {
+    PROFILE_FUNCTION();
     ControlCommand cmd;
     // Use try_pop for non-blocking check. Loop while queue is valid and not stopped.
     while (command_queue_ && !command_queue_->is_stopped() && command_queue_->try_pop(cmd)) {
@@ -299,6 +304,7 @@ void SourceInputProcessor::process_commands() {
 }
 
 void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input_chunk_data) {
+    PROFILE_FUNCTION();
     if (!audio_processor_) {
         LOG_CPP_ERROR("[SourceProc:%s] AudioProcessor not initialized. Cannot process chunk.", config_.instance_id.c_str());
         return;
@@ -360,6 +366,7 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
 }
 
 void SourceInputProcessor::push_output_chunk_if_ready() {
+    PROFILE_FUNCTION();
     // Check if we have enough samples for a full output chunk
     const size_t required_samples = compute_processed_chunk_samples(base_frames_per_chunk_, std::max(1, config_.output_channels));
     size_t current_buffer_size = process_buffer_.size();
@@ -497,6 +504,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
 }
 
 void SourceInputProcessor::reset_input_accumulator() {
+    PROFILE_FUNCTION();
     input_accumulator_buffer_.clear();
     input_fragments_.clear();
     input_chunk_active_ = false;
@@ -505,6 +513,7 @@ void SourceInputProcessor::reset_input_accumulator() {
 }
 
 void SourceInputProcessor::append_to_input_accumulator(const TaggedAudioPacket& packet) {
+    PROFILE_FUNCTION();
     if (current_input_chunk_bytes_ == 0 || input_bytes_per_frame_ == 0) {
         LOG_CPP_WARNING("[SourceProc:%s] Input accumulator not configured; dropping packet.",
                         config_.instance_id.c_str());
@@ -549,6 +558,7 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
                                                    std::chrono::steady_clock::time_point& chunk_time,
                                                    std::optional<uint32_t>& chunk_timestamp,
                                                    std::vector<uint32_t>& chunk_ssrcs) {
+    PROFILE_FUNCTION();
     if (current_input_chunk_bytes_ == 0 || input_bytes_per_frame_ == 0) {
         return false;
     }
@@ -761,6 +771,7 @@ void SourceInputProcessor::maybe_log_telemetry(std::chrono::steady_clock::time_p
 // --- New/Modified Thread Loops ---
 
 void SourceInputProcessor::input_loop() {
+    PROFILE_FUNCTION();
     LOG_CPP_INFO("[SourceProc:%s] Input loop started (receives timed packets).", config_.instance_id.c_str());
     TaggedAudioPacket timed_packet;
     while (!stop_flag_ && input_queue_ && input_queue_->pop(timed_packet)) {
@@ -880,6 +891,7 @@ bool SourceInputProcessor::check_format_and_reconfigure(
     const uint8_t** out_audio_payload_ptr,
     size_t* out_audio_payload_size)
 {
+    PROFILE_FUNCTION();
     LOG_CPP_DEBUG("[SourceProc:%s] Entering check_format_and_reconfigure for packet from tag: %s",
                   config_.instance_id.c_str(), packet.source_tag.c_str());
 
@@ -994,6 +1006,7 @@ bool SourceInputProcessor::check_format_and_reconfigure(
 
 // run() is executed by component_thread_. It now starts only input_thread_ and processes commands.
 void SourceInputProcessor::run() {
+     PROFILE_FUNCTION();
      LOG_CPP_INFO("[SourceProc:%s] Component run() started.", config_.instance_id.c_str());
 
      // Launch input_thread_ (which now contains the main processing logic)

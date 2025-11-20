@@ -29,6 +29,7 @@
 #include "../senders/rtp/multi_device_rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
 #include "../senders/system/alsa_playback_sender.h"
+#include "../utils/profiler.h"
 #if defined(__linux__)
 #include "../senders/system/screamrouter_fifo_sender.h"
 #endif
@@ -765,6 +766,7 @@ void SinkAudioMixer::join_startup_thread() {
  * @return `true` if any data was popped from any queue, `false` otherwise.
  */
 bool SinkAudioMixer::wait_for_source_data() {
+    PROFILE_FUNCTION();
     MixScheduler::HarvestResult harvest;
     if (mix_scheduler_) {
         harvest = mix_scheduler_->collect_ready_chunks();
@@ -937,6 +939,7 @@ bool SinkAudioMixer::wait_for_source_data() {
  * @brief Mixes audio from all active source buffers into the main mixing buffer.
  */
 void SinkAudioMixer::mix_buffers() {
+    PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     std::fill(mixing_buffer_.begin(), mixing_buffer_.end(), 0);
     
@@ -1002,6 +1005,7 @@ void SinkAudioMixer::mix_buffers() {
  * @brief Downscales the 32-bit mixed audio to the target bit depth for network output.
  */
 void SinkAudioMixer::downscale_buffer() {
+    PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     int target_bit_depth = playback_bit_depth_ > 0 ? playback_bit_depth_ : config_.output_bitdepth;
     if (target_bit_depth <= 0) {
@@ -1088,6 +1092,7 @@ void SinkAudioMixer::downscale_buffer() {
  * @return The number of stereo samples processed.
  */
 size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
+    PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     if (!stereo_preprocessor_) {
         return 0;
@@ -1128,6 +1133,7 @@ size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
  * @param samples_to_dispatch The number of stereo samples to send.
  */
 void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
+    PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::string> closed_listeners_to_remove;
 
@@ -1181,6 +1187,7 @@ void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
  * @param sample_count Number of interleaved samples.
  */
 void SinkAudioMixer::enqueue_mp3_pcm(const int32_t* samples, size_t sample_count) {
+    PROFILE_FUNCTION();
     if (!mp3_output_queue_ || !samples || sample_count == 0) {
         return;
     }
@@ -1214,6 +1221,7 @@ void SinkAudioMixer::enqueue_mp3_pcm(const int32_t* samples, size_t sample_count
  * @param sample_count Number of interleaved samples (L/R count together).
  */
 void SinkAudioMixer::encode_and_push_mp3(const int32_t* samples, size_t sample_count) {
+    PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     if (!mp3_output_queue_ || !lame_global_flags_ || sample_count == 0 || !samples) {
         return;
@@ -1259,6 +1267,7 @@ void SinkAudioMixer::encode_and_push_mp3(const int32_t* samples, size_t sample_c
 }
 
 void SinkAudioMixer::mp3_thread_loop() {
+    PROFILE_FUNCTION();
     while (true) {
         std::vector<int32_t> work;
         {
@@ -1752,6 +1761,7 @@ void SinkAudioMixer::unregister_mix_timer() {
 }
 
 bool SinkAudioMixer::wait_for_mix_tick() {
+    PROFILE_FUNCTION();
     if (stop_flag_) {
         return false;
     }
@@ -1795,6 +1805,7 @@ bool SinkAudioMixer::wait_for_mix_tick() {
 }
 
 void SinkAudioMixer::cleanup_closed_listeners() {
+    PROFILE_FUNCTION();
     std::vector<std::string> listeners_to_remove;
     {
         std::lock_guard<std::mutex> lock(listener_senders_mutex_);
@@ -1822,6 +1833,7 @@ void SinkAudioMixer::cleanup_closed_listeners() {
 }
 
 void SinkAudioMixer::clear_pending_audio() {
+    PROFILE_FUNCTION();
     if (mix_scheduler_) {
         MixScheduler::HarvestResult discard;
         do {
@@ -1846,6 +1858,7 @@ void SinkAudioMixer::clear_pending_audio() {
  * @brief The main processing loop for the mixer thread.
  */
 void SinkAudioMixer::run() {
+    PROFILE_FUNCTION();
     LOG_CPP_INFO("[SinkMixer:%s] Entering run loop.", config_.sink_id.c_str());
 
     while (!stop_flag_) {
@@ -2019,6 +2032,7 @@ void SinkAudioMixer::run() {
 }
 
 void SinkAudioMixer::update_drain_ratio() {
+    PROFILE_FUNCTION();
     auto now = std::chrono::steady_clock::now();
 
     // Only update periodically
@@ -2063,6 +2077,7 @@ void SinkAudioMixer::update_drain_ratio() {
 }
 
 SinkAudioMixer::InputBufferMetrics SinkAudioMixer::compute_input_buffer_metrics() {
+    PROFILE_FUNCTION();
     InputBufferMetrics metrics;
 
     if (!mix_scheduler_) {
@@ -2104,6 +2119,7 @@ SinkAudioMixer::InputBufferMetrics SinkAudioMixer::compute_input_buffer_metrics(
 }
 
 void SinkAudioMixer::dispatch_drain_adjustments(const InputBufferMetrics& metrics, double alpha) {
+    PROFILE_FUNCTION();
     if (!m_settings) {
         return;
     }
@@ -2169,6 +2185,7 @@ void SinkAudioMixer::dispatch_drain_adjustments(const InputBufferMetrics& metric
 }
 
 double SinkAudioMixer::calculate_drain_ratio_for_level(double buffer_ms) const {
+    PROFILE_FUNCTION();
     if (!m_settings) {
         return 1.0;
     }
@@ -2189,6 +2206,7 @@ double SinkAudioMixer::calculate_drain_ratio_for_level(double buffer_ms) const {
 }
 
 void SinkAudioMixer::send_playback_rate_command(const std::string& instance_id, double ratio) {
+    PROFILE_FUNCTION();
     std::shared_ptr<CommandQueue> command_queue;
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
