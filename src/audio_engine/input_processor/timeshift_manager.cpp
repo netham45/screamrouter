@@ -79,8 +79,8 @@ double smooth_playback_rate(double previous_rate,
  * @param max_buffer_duration The maximum duration of audio to hold in the global buffer.
  */
 TimeshiftManager::TimeshiftManager(std::chrono::seconds max_buffer_duration, std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
-    : max_buffer_duration_sec_(max_buffer_duration),
-      m_settings(settings),
+    : m_settings(settings),
+      max_buffer_duration_sec_(max_buffer_duration),
       last_cleanup_time_(std::chrono::steady_clock::now()),
       profiling_last_log_time_(std::chrono::steady_clock::now()) {
     LOG_CPP_INFO("[TimeshiftManager] Initializing with max buffer duration: %llds", (long long)max_buffer_duration_sec_.count());
@@ -95,36 +95,6 @@ TimeshiftManager::~TimeshiftManager() {
         stop();
     }
     LOG_CPP_INFO("[TimeshiftManager] Destruction complete.");
-}
-
-TimeshiftManager::TimingStateAccess TimeshiftManager::get_timing_state(const std::string& source_tag) {
-    std::unique_lock<std::mutex> map_lock(timing_map_mutex_);
-    auto lock_it = timing_locks_.find(source_tag);
-    if (lock_it == timing_locks_.end() || !lock_it->second) {
-        map_lock.unlock();
-        return {};
-    }
-
-    std::unique_lock<std::mutex> per_stream_lock(*lock_it->second);
-    auto state_it = stream_timing_states_.find(source_tag);
-    StreamTimingState* state_ptr = (state_it != stream_timing_states_.end()) ? &state_it->second : nullptr;
-    map_lock.unlock();
-    return TimingStateAccess(std::move(per_stream_lock), state_ptr);
-}
-
-TimeshiftManager::TimingStateAccess TimeshiftManager::get_or_create_timing_state(const std::string& source_tag) {
-    std::unique_lock<std::mutex> map_lock(timing_map_mutex_);
-    auto [lock_it, inserted_lock] = timing_locks_.try_emplace(source_tag);
-    if (inserted_lock || !lock_it->second) {
-        lock_it->second = std::make_shared<std::mutex>();
-    }
-
-    std::unique_lock<std::mutex> per_stream_lock(*lock_it->second);
-    auto [state_it, inserted_state] = stream_timing_states_.try_emplace(source_tag);
-    (void)inserted_state;
-    StreamTimingState* state_ptr = &state_it->second;
-    map_lock.unlock();
-    return TimingStateAccess(std::move(per_stream_lock), state_ptr);
 }
 
 /**
@@ -194,24 +164,160 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
      if (stop_flag_ || !packet.rtp_timestamp.has_value() || packet.sample_rate <= 0) {
          return;
      }
+ 
+     std::lock_guard<std::mutex> data_lock(data_mutex_);
+     std::lock_guard<std::mutex> timing_lock(timing_mutex_);
 
-    m_inbound_received++;
-    auto result = inbound_queue_.push_bounded(std::move(packet), kInboundQueueMaxSize, true);
-    size_t depth = inbound_queue_.size();
-    size_t prev_high = m_inbound_high_water.load(std::memory_order_relaxed);
-    while (depth > prev_high && !m_inbound_high_water.compare_exchange_weak(prev_high, depth, std::memory_order_relaxed)) {
-        // retry until successful
+    const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
+    const double configured_reset_threshold_sec =
+        (m_settings) ? m_settings->timeshift_tuning.rtp_session_reset_threshold_seconds : 0.2;
+    const double bounded_reset_threshold_sec = std::max(configured_reset_threshold_sec, 0.0);
+    const uint32_t reset_threshold_frames = static_cast<uint32_t>(
+        static_cast<double>(frames_per_second) * bounded_reset_threshold_sec);
+
+     auto state_it = stream_timing_states_.find(packet.source_tag);
+     if (state_it != stream_timing_states_.end()) {
+         auto& existing_state = state_it->second;
+        if (!existing_state.is_first_packet && existing_state.clock && reset_threshold_frames > 0) {
+            const uint32_t last_ts = existing_state.last_rtp_timestamp;
+            const uint32_t current_ts = packet.rtp_timestamp.value();
+            const uint32_t delta = rtp_timestamp_diff(current_ts, last_ts);
+            bool should_reset = delta > reset_threshold_frames;
+
+            if (should_reset) {
+                const auto last_wallclock = existing_state.last_wallclock;
+                if (last_wallclock.time_since_epoch().count() != 0) {
+                    const auto wallclock_gap = packet.received_time - last_wallclock;
+                    const double wallclock_gap_sec = std::chrono::duration<double>(wallclock_gap).count();
+                    if (wallclock_gap_sec > 0.0) {
+                        const auto delta_frames = static_cast<uint64_t>(delta);
+                        const double configured_slack_seconds =
+                            (m_settings) ? m_settings->timeshift_tuning.rtp_continuity_slack_seconds : 0.25;
+                        const double bounded_slack_seconds = std::max(configured_slack_seconds, 0.0);
+                        const auto expected_frames = static_cast<uint64_t>(
+                            std::llround(wallclock_gap_sec * static_cast<double>(frames_per_second)));
+                        const auto continuity_slack_frames = static_cast<uint64_t>(
+                            std::llround(static_cast<double>(frames_per_second) * bounded_slack_seconds));
+
+                        const auto lower_bound = (expected_frames > continuity_slack_frames)
+                                                     ? (expected_frames - continuity_slack_frames)
+                                                     : 0ULL;
+                        const auto upper_bound = expected_frames + continuity_slack_frames;
+
+                        if (delta_frames >= lower_bound && delta_frames <= upper_bound) {
+                            should_reset = false;
+                            LOG_CPP_DEBUG("[TimeshiftManager] RTP jump matches wall-clock advance for '%s' (delta=%u frames, expected=%llu, slack=%llu). Keeping timing state.",
+                                          packet.source_tag.c_str(), delta,
+                                          static_cast<unsigned long long>(expected_frames),
+                                          static_cast<unsigned long long>(continuity_slack_frames));
+                        }
+                    }
+                }
+            }
+
+            if (should_reset) {
+                LOG_CPP_INFO("[TimeshiftManager] Detected RTP jump for '%s' (delta=%u frames). Resetting timing state.",
+                             packet.source_tag.c_str(), delta);
+
+                size_t reset_position = global_timeshift_buffer_.size();
+                auto targets_it = processor_targets_.find(packet.source_tag);
+                 if (targets_it != processor_targets_.end()) {
+                     for (auto& [instance_id, info] : targets_it->second) {
+                         (void)instance_id;
+                         info.next_packet_read_index = reset_position;
+                         if (info.target_queue) {
+                             TaggedAudioPacket discarded;
+                             while (info.target_queue->try_pop(discarded)) {
+                                 // Drain stale packets so consumers restart immediately.
+                             }
+                         }
+                     }
+                 }
+
+                 stream_timing_states_.erase(state_it);
+                 state_it = stream_timing_states_.try_emplace(packet.source_tag).first;
+                 m_state_version_++;
+                 run_loop_cv_.notify_one();
+            }
+        }
+    } else {
+         state_it = stream_timing_states_.try_emplace(packet.source_tag).first;
+     }
+
+    auto& state = state_it->second;
+    if (state.is_first_packet) {
+        state.target_buffer_level_ms = m_settings->timeshift_tuning.target_buffer_level_ms;
+        state.last_target_update_time = packet.received_time;
     }
-    if (result == utils::ThreadSafeQueue<TaggedAudioPacket>::PushResult::DroppedOldest ||
-        result == utils::ThreadSafeQueue<TaggedAudioPacket>::PushResult::QueueFull) {
-        m_inbound_dropped++;
-        static thread_local int throttle = 0;
-        if ((throttle++ % 50) == 0) {
-            LOG_CPP_WARNING("[TimeshiftManager] Inbound queue full, dropping packet(s)");
+    state.total_packets++;
+ 
+     // 1. Initialize StreamClock if it's the first packet for this source
+     if (!state.clock) {
+         state.clock = std::make_unique<StreamClock>(packet.sample_rate);
+     }
+ 
+     // 2. Update the stable clock model
+    state.clock->update(packet.rtp_timestamp.value(), packet.received_time);
+
+    if (state.clock->is_initialized()) {
+        state.last_clock_offset_ms = state.clock->get_offset_seconds() * 1000.0;
+        state.last_clock_drift_ppm = state.clock->get_drift_ppm();
+        state.last_clock_innovation_ms = state.clock->get_last_innovation_seconds() * 1000.0;
+        state.last_clock_measured_offset_ms = state.clock->get_last_measured_offset_seconds() * 1000.0;
+        state.clock_innovation_abs_sum_ms += std::abs(state.last_clock_innovation_ms);
+        state.clock_innovation_samples++;
+    }
+
+    const double arrival_time_sec =
+        std::chrono::duration<double>(packet.received_time.time_since_epoch()).count();
+
+    if (!state.is_first_packet && packet.sample_rate > 0 &&
+        state.last_wallclock.time_since_epoch().count() > 0) {
+        const double arrival_delta_sec =
+            std::chrono::duration<double>(packet.received_time - state.last_wallclock).count();
+        const uint32_t timestamp_diff =
+            rtp_timestamp_diff(packet.rtp_timestamp.value(), state.last_rtp_timestamp);
+        const double rtp_delta_sec =
+            static_cast<double>(timestamp_diff) / static_cast<double>(packet.sample_rate);
+        const double transit_delta_sec = arrival_delta_sec - rtp_delta_sec;
+        const double abs_transit_delta_sec = std::abs(transit_delta_sec);
+
+        if (!state.jitter_initialized) {
+            state.rfc3550_jitter_sec = abs_transit_delta_sec;
+            state.jitter_initialized = true;
+        } else {
+            state.rfc3550_jitter_sec += (abs_transit_delta_sec - state.rfc3550_jitter_sec) / 16.0;
+        }
+
+        state.jitter_estimate = state.rfc3550_jitter_sec * 1000.0;
+        state.system_jitter_estimate_ms = state.jitter_estimate;
+        state.last_system_delay_ms = transit_delta_sec * 1000.0;
+        state.last_transit_sec = transit_delta_sec;
+    } else {
+        state.jitter_estimate = std::max(state.jitter_estimate, 0.0);
+        state.system_jitter_estimate_ms = state.jitter_estimate;
+        state.last_system_delay_ms = 0.0;
+    }
+
+    state.last_arrival_time_sec = arrival_time_sec;
+
+    state.is_first_packet = false;
+    state.last_rtp_timestamp = packet.rtp_timestamp.value();
+    state.last_wallclock = packet.received_time;
+    state.sample_rate = packet.sample_rate;
+    state.channels = packet.channels;
+    state.bit_depth = packet.bit_depth;
+    state.samples_per_chunk = 0;
+    if (packet.sample_rate > 0 && packet.channels > 0 && packet.bit_depth > 0 && (packet.bit_depth % 8) == 0) {
+        const std::size_t bytes_per_frame =
+            static_cast<std::size_t>(packet.channels) * static_cast<std::size_t>(packet.bit_depth / 8);
+        if (bytes_per_frame > 0) {
+            state.samples_per_chunk = static_cast<uint32_t>(packet.audio_data.size() / bytes_per_frame);
         }
     }
-    m_state_version_++;
-    run_loop_cv_.notify_one();
+
+    global_timeshift_buffer_.push_back(std::move(packet));
+    m_total_packets_added++;
 }
 
 std::optional<TimeshiftBufferExport> TimeshiftManager::export_recent_buffer(
@@ -318,166 +424,77 @@ std::optional<TimeshiftBufferExport> TimeshiftManager::export_recent_buffer(
 TimeshiftManagerStats TimeshiftManager::get_stats() {
     TimeshiftManagerStats stats;
     stats.total_packets_added = m_total_packets_added.load();
-    stats.total_inbound_received = m_inbound_received.load();
-    stats.total_inbound_dropped = m_inbound_dropped.load();
-    stats.inbound_queue_high_water = m_inbound_high_water.load();
-    stats.inbound_queue_size = inbound_queue_.size();
 
     {
         std::lock_guard<std::mutex> lock(data_mutex_);
         stats.global_buffer_size = global_timeshift_buffer_.size();
-
-        std::map<std::string, size_t> stream_packets;
-        std::map<std::string, double> stream_durations_ms;
-        for (const auto& packet : global_timeshift_buffer_) {
-            stream_packets[packet.source_tag]++;
-            double duration_ms = 0.0;
-            const double bytes_per_sample = static_cast<double>(packet.bit_depth) / 8.0;
-            const double bytes_per_frame = bytes_per_sample * static_cast<double>(packet.channels);
-            if (packet.sample_rate > 0 && packet.channels > 0 && bytes_per_frame > 0.0) {
-                const double frames = static_cast<double>(packet.audio_data.size()) / bytes_per_frame;
-                duration_ms = (frames * 1000.0) / static_cast<double>(packet.sample_rate);
-            }
-            stream_durations_ms[packet.source_tag] += duration_ms;
-        }
-        stats.stream_buffered_packets = stream_packets;
-        stats.stream_buffered_duration_ms = stream_durations_ms;
-
         for (const auto& [source_tag, source_map] : processor_targets_) {
             for (const auto& [instance_id, target_info] : source_map) {
                 stats.processor_read_indices[instance_id] = target_info.next_packet_read_index;
-
-                TimeshiftManagerStats::ProcessorStats proc_stats;
-                proc_stats.instance_id = instance_id;
-                proc_stats.source_tag = active_tag(target_info);
-                if (proc_stats.source_tag.empty()) {
-                    proc_stats.source_tag = target_info.source_tag_filter;
-                }
-
-                const auto matches_target = [&](const std::string& tag) {
-                    if (target_info.is_wildcard) {
-                        if (!target_info.bound_source_tag.empty()) {
-                            return target_info.bound_source_tag == tag;
-                        }
-                        return has_prefix(tag, target_info.wildcard_prefix);
-                    }
-                    return target_info.source_tag_filter == tag;
-                };
-
-                size_t pending_packets = 0;
-                double pending_ms = 0.0;
-                for (size_t i = target_info.next_packet_read_index; i < global_timeshift_buffer_.size(); ++i) {
-                    const auto& pkt = global_timeshift_buffer_[i];
-                    if (!matches_target(pkt.source_tag)) {
-                        continue;
-                    }
-                    pending_packets++;
-                    double duration_ms = 0.0;
-                    const double bytes_per_sample = static_cast<double>(pkt.bit_depth) / 8.0;
-                    const double bytes_per_frame = bytes_per_sample * static_cast<double>(pkt.channels);
-                    if (pkt.sample_rate > 0 && pkt.channels > 0 && bytes_per_frame > 0.0) {
-                        const double frames = static_cast<double>(pkt.audio_data.size()) / bytes_per_frame;
-                        duration_ms = (frames * 1000.0) / static_cast<double>(pkt.sample_rate);
-                    }
-                    pending_ms += duration_ms;
-                }
-
-                proc_stats.pending_packets = pending_packets;
-                proc_stats.pending_ms = pending_ms;
-                proc_stats.target_queue_depth = target_info.target_queue ? target_info.target_queue->size() : 0;
-
-                stats.processor_stats[instance_id] = proc_stats;
             }
         }
     }
 
     {
-        std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
-        for (auto& [instance_id, proc_stats] : stats.processor_stats) {
-            if (processor_queue_high_water_.count(instance_id)) {
-                proc_stats.target_queue_high_water = processor_queue_high_water_[instance_id];
+        std::lock_guard<std::mutex> lock(timing_mutex_);
+        for (const auto& [source_tag, timing_state] : stream_timing_states_) {
+            stats.jitter_estimates[source_tag] = timing_state.jitter_estimate;
+            stats.stream_system_jitter_ms[source_tag] = timing_state.system_jitter_estimate_ms;
+            stats.stream_total_packets[source_tag] = timing_state.total_packets.load();
+            stats.stream_late_packets[source_tag] = timing_state.late_packets_count.load();
+            stats.stream_lagging_events[source_tag] = timing_state.lagging_events_count.load();
+            stats.stream_tm_buffer_underruns[source_tag] = timing_state.tm_buffer_underruns.load();
+            stats.stream_tm_packets_discarded[source_tag] = timing_state.tm_packets_discarded.load();
+            stats.stream_last_arrival_time_error_ms[source_tag] = timing_state.last_arrival_time_error_ms;
+            stats.stream_target_buffer_level_ms[source_tag] = timing_state.target_buffer_level_ms;
+            stats.stream_buffer_target_fill_percentage[source_tag] = timing_state.buffer_target_fill_percentage;
+
+            if (timing_state.arrival_error_samples > 0) {
+                stats.stream_avg_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_sum / static_cast<double>(timing_state.arrival_error_samples);
+                stats.stream_avg_abs_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_abs_sum / static_cast<double>(timing_state.arrival_error_samples);
+                stats.stream_max_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_max;
+                stats.stream_min_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_min;
+            } else {
+                stats.stream_avg_arrival_error_ms[source_tag] = 0.0;
+                stats.stream_avg_abs_arrival_error_ms[source_tag] = 0.0;
+                stats.stream_max_arrival_error_ms[source_tag] = 0.0;
+                stats.stream_min_arrival_error_ms[source_tag] = 0.0;
             }
-            if (processor_dispatched_totals_.count(instance_id)) {
-                proc_stats.dispatched_packets = processor_dispatched_totals_[instance_id];
+            stats.stream_arrival_error_sample_count[source_tag] = timing_state.arrival_error_samples;
+
+            if (timing_state.playout_deviation_samples > 0) {
+                stats.stream_avg_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_sum / static_cast<double>(timing_state.playout_deviation_samples);
+                stats.stream_avg_abs_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_abs_sum / static_cast<double>(timing_state.playout_deviation_samples);
+                stats.stream_max_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_max;
+                stats.stream_min_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_min;
+            } else {
+                stats.stream_avg_playout_deviation_ms[source_tag] = 0.0;
+                stats.stream_avg_abs_playout_deviation_ms[source_tag] = 0.0;
+                stats.stream_max_playout_deviation_ms[source_tag] = 0.0;
+                stats.stream_min_playout_deviation_ms[source_tag] = 0.0;
             }
-            if (processor_dropped_totals_.count(instance_id)) {
-                proc_stats.dropped_packets = processor_dropped_totals_[instance_id];
+            stats.stream_playout_deviation_sample_count[source_tag] = timing_state.playout_deviation_samples;
+
+            if (timing_state.head_playout_lag_samples > 0) {
+                stats.stream_avg_head_playout_lag_ms[source_tag] = timing_state.head_playout_lag_ms_sum / static_cast<double>(timing_state.head_playout_lag_samples);
+                stats.stream_max_head_playout_lag_ms[source_tag] = timing_state.head_playout_lag_ms_max;
+            } else {
+                stats.stream_avg_head_playout_lag_ms[source_tag] = 0.0;
+                stats.stream_max_head_playout_lag_ms[source_tag] = 0.0;
+            }
+            stats.stream_head_playout_lag_sample_count[source_tag] = timing_state.head_playout_lag_samples;
+            stats.stream_last_head_playout_lag_ms[source_tag] = timing_state.last_head_playout_lag_ms;
+
+            stats.stream_clock_offset_ms[source_tag] = timing_state.last_clock_offset_ms;
+            stats.stream_clock_drift_ppm[source_tag] = timing_state.last_clock_drift_ppm;
+            stats.stream_clock_last_innovation_ms[source_tag] = timing_state.last_clock_innovation_ms;
+            stats.stream_clock_last_measured_offset_ms[source_tag] = timing_state.last_clock_measured_offset_ms;
+            if (timing_state.clock_innovation_samples > 0) {
+                stats.stream_clock_avg_abs_innovation_ms[source_tag] = timing_state.clock_innovation_abs_sum_ms / static_cast<double>(timing_state.clock_innovation_samples);
+            } else {
+                stats.stream_clock_avg_abs_innovation_ms[source_tag] = 0.0;
             }
         }
-    }
-
-    std::vector<std::string> timing_tags;
-    {
-        std::lock_guard<std::mutex> map_lock(timing_map_mutex_);
-        timing_tags.reserve(stream_timing_states_.size());
-        for (const auto& [source_tag, _] : stream_timing_states_) {
-            timing_tags.push_back(source_tag);
-        }
-    }
-
-    for (const auto& source_tag : timing_tags) {
-        auto access = get_timing_state(source_tag);
-        if (!access.state) {
-            continue;
-        }
-
-        const auto& timing_state = *access.state;
-        stats.jitter_estimates[source_tag] = timing_state.jitter_estimate;
-        stats.stream_total_packets[source_tag] = timing_state.total_packets.load();
-        stats.stream_late_packets[source_tag] = timing_state.late_packets_count.load();
-        stats.stream_lagging_events[source_tag] = timing_state.lagging_events_count.load();
-        stats.stream_tm_buffer_underruns[source_tag] = timing_state.tm_buffer_underruns.load();
-        stats.stream_tm_packets_discarded[source_tag] = timing_state.tm_packets_discarded.load();
-        stats.stream_last_arrival_time_error_ms[source_tag] = timing_state.last_arrival_time_error_ms;
-
-        if (timing_state.arrival_error_samples > 0) {
-            stats.stream_avg_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_sum / static_cast<double>(timing_state.arrival_error_samples);
-            stats.stream_avg_abs_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_abs_sum / static_cast<double>(timing_state.arrival_error_samples);
-            stats.stream_max_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_max;
-            stats.stream_min_arrival_error_ms[source_tag] = timing_state.arrival_error_ms_min;
-        } else {
-            stats.stream_avg_arrival_error_ms[source_tag] = 0.0;
-            stats.stream_avg_abs_arrival_error_ms[source_tag] = 0.0;
-            stats.stream_max_arrival_error_ms[source_tag] = 0.0;
-            stats.stream_min_arrival_error_ms[source_tag] = 0.0;
-        }
-        stats.stream_arrival_error_sample_count[source_tag] = timing_state.arrival_error_samples;
-
-        if (timing_state.playout_deviation_samples > 0) {
-            stats.stream_avg_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_sum / static_cast<double>(timing_state.playout_deviation_samples);
-            stats.stream_avg_abs_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_abs_sum / static_cast<double>(timing_state.playout_deviation_samples);
-            stats.stream_max_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_max;
-            stats.stream_min_playout_deviation_ms[source_tag] = timing_state.playout_deviation_ms_min;
-        } else {
-            stats.stream_avg_playout_deviation_ms[source_tag] = 0.0;
-            stats.stream_avg_abs_playout_deviation_ms[source_tag] = 0.0;
-            stats.stream_max_playout_deviation_ms[source_tag] = 0.0;
-            stats.stream_min_playout_deviation_ms[source_tag] = 0.0;
-        }
-        stats.stream_playout_deviation_sample_count[source_tag] = timing_state.playout_deviation_samples;
-
-        if (timing_state.head_playout_lag_samples > 0) {
-            stats.stream_avg_head_playout_lag_ms[source_tag] = timing_state.head_playout_lag_ms_sum / static_cast<double>(timing_state.head_playout_lag_samples);
-            stats.stream_max_head_playout_lag_ms[source_tag] = timing_state.head_playout_lag_ms_max;
-        } else {
-            stats.stream_avg_head_playout_lag_ms[source_tag] = 0.0;
-            stats.stream_max_head_playout_lag_ms[source_tag] = 0.0;
-        }
-        stats.stream_head_playout_lag_sample_count[source_tag] = timing_state.head_playout_lag_samples;
-        stats.stream_last_head_playout_lag_ms[source_tag] = timing_state.last_head_playout_lag_ms;
-
-        stats.stream_clock_offset_ms[source_tag] = timing_state.last_clock_offset_ms;
-        stats.stream_clock_drift_ppm[source_tag] = timing_state.last_clock_drift_ppm;
-        stats.stream_clock_last_innovation_ms[source_tag] = timing_state.last_clock_innovation_ms;
-        stats.stream_clock_last_measured_offset_ms[source_tag] = timing_state.last_clock_measured_offset_ms;
-        if (timing_state.clock_innovation_samples > 0) {
-        stats.stream_clock_avg_abs_innovation_ms[source_tag] = timing_state.clock_innovation_abs_sum_ms / static_cast<double>(timing_state.clock_innovation_samples);
-    } else {
-        stats.stream_clock_avg_abs_innovation_ms[source_tag] = 0.0;
-    }
-    stats.stream_system_jitter_ms[source_tag] = timing_state.system_jitter_estimate_ms;
-    stats.stream_last_system_delay_ms[source_tag] = timing_state.last_system_delay_ms;
-        stats.stream_playback_rate[source_tag] = timing_state.current_playback_rate;
     }
 
     return stats;
@@ -538,12 +555,6 @@ void TimeshiftManager::register_processor(
         LOG_CPP_DEBUG("[TimeshiftManager] Processor %s stored under filter '%s' (wildcard=%d)",
                       instance_id.c_str(), source_tag.c_str(), info.is_wildcard ? 1 : 0);
     }
-    {
-        std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
-        processor_dispatched_totals_[instance_id] = 0;
-        processor_dropped_totals_[instance_id] = 0;
-        processor_queue_high_water_[instance_id] = 0;
-    }
     LOG_CPP_INFO("[TimeshiftManager] Processor %s registered for source_tag %s with read_idx %zu",
                  instance_id.c_str(), source_tag.c_str(), info.next_packet_read_index);
     m_state_version_++;
@@ -567,13 +578,6 @@ void TimeshiftManager::unregister_processor(const std::string& instance_id, cons
     LOG_CPP_INFO("[TimeshiftManager] Processor %s unregistered.", instance_id.c_str());
     m_state_version_++;
     run_loop_cv_.notify_one();
-
-    {
-        std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
-        processor_dispatched_totals_.erase(instance_id);
-        processor_dropped_totals_.erase(instance_id);
-        processor_queue_high_water_.erase(instance_id);
-    }
 }
 
 /**
@@ -676,15 +680,8 @@ void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
     }
 
     {
-        std::unique_lock<std::mutex> map_lock(timing_map_mutex_);
-        auto lock_it = timing_locks_.find(source_tag);
-        if (lock_it == timing_locks_.end() || !lock_it->second) {
-            lock_it = timing_locks_.emplace(source_tag, std::make_shared<std::mutex>()).first;
-        }
-        std::unique_lock<std::mutex> per_stream_lock(*lock_it->second);
+        std::lock_guard<std::mutex> timing_lock(timing_mutex_);
         stream_timing_states_.erase(source_tag);
-        timing_locks_.erase(lock_it);
-        map_lock.unlock();
     }
 
     m_state_version_++;
@@ -699,59 +696,22 @@ void TimeshiftManager::run() {
     uint64_t last_processed_version = m_state_version_.load();
 
     while (!stop_flag_) {
-        std::vector<PendingDispatch> pending_dispatches;
-        std::chrono::steady_clock::time_point next_wakeup_time;
-        std::vector<TaggedAudioPacket> newly_drained_packets;
-        TaggedAudioPacket packet_tmp;
-        // Drain inbound queue outside the data mutex to avoid blocking producers.
-        while (inbound_queue_.try_pop(packet_tmp)) {
-            newly_drained_packets.push_back(std::move(packet_tmp));
-            if (newly_drained_packets.size() >= kInboundQueueMaxSize) {
-                break; // prevent unbounded batch size
-            }
-        }
-
-        {
-            std::unique_lock<std::mutex> lock(data_mutex_);
-            const auto iteration_start = std::chrono::steady_clock::now();
-
-            // Apply the drained inbound packets while holding the mutex briefly.
-            for (auto& pkt : newly_drained_packets) {
-                process_incoming_packet_unlocked(std::move(pkt));
-            }
-
-            // Process any packets that are already due, but defer queue pushes.
-            processing_loop_iteration_unlocked(pending_dispatches);
-
-            // Perform cleanup if needed.
-            auto now = std::chrono::steady_clock::now();
-            if (now - last_cleanup_time_ > std::chrono::milliseconds(m_settings->timeshift_tuning.cleanup_interval_ms)) {
-                cleanup_global_buffer_unlocked();
-                last_cleanup_time_ = now;
-            }
-
-            // Calculate the next time we need to wake up.
-            next_wakeup_time = calculate_next_wakeup_time();
-        }
-
-        // Dispatch packets outside the main data mutex to avoid blocking producers.
-        for (auto& dispatch : pending_dispatches) {
-            if (dispatch.target_queue) {
-                dispatch.target_queue->push(std::move(dispatch.packet));
-                if (!dispatch.instance_id.empty()) {
-                    size_t depth = dispatch.target_queue->size();
-                    std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
-                    processor_dispatched_totals_[dispatch.instance_id]++;
-                    auto& hw = processor_queue_high_water_[dispatch.instance_id];
-                    if (depth > hw) {
-                        hw = depth;
-                    }
-                }
-            }
-        }
-
-        // Wait until the next event or until notified.
         std::unique_lock<std::mutex> lock(data_mutex_);
+
+        // Process any packets that are already due.
+        processing_loop_iteration_unlocked();
+
+        // Perform cleanup if needed.
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_cleanup_time_ > std::chrono::milliseconds(m_settings->timeshift_tuning.cleanup_interval_ms)) {
+            cleanup_global_buffer_unlocked();
+            last_cleanup_time_ = now;
+        }
+
+        // Calculate the next time we need to wake up.
+        auto next_wakeup_time = calculate_next_wakeup_time();
+        
+        // Wait until the next event or until notified.
         run_loop_cv_.wait_until(lock, next_wakeup_time, [this, &last_processed_version] {
             return stop_flag_.load() || (m_state_version_.load() != last_processed_version);
         });
@@ -765,13 +725,12 @@ void TimeshiftManager::run() {
 /**
  * @brief A single iteration of the processing loop to dispatch ready packets. Assumes data_mutex_ is held.
  */
-void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDispatch>& pending_dispatches) {
+void TimeshiftManager::processing_loop_iteration_unlocked() {
     if (global_timeshift_buffer_.empty()) {
         return;
     }
 
     const auto iteration_start = std::chrono::steady_clock::now();
-    bool time_budget_exhausted = false;
     auto now = iteration_start;
     const double max_catchup_lag_ms = m_settings->timeshift_tuning.max_catchup_lag_ms;
     size_t packets_processed = 0;
@@ -791,28 +750,33 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
                     continue;
                 }
 
+                StreamTimingState* timing_state = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(timing_mutex_);
+                    auto timing_it = stream_timing_states_.find(candidate_packet.source_tag);
+                    if (timing_it != stream_timing_states_.end() && timing_it->second.clock) {
+                        timing_state = &timing_it->second;
+                    }
+                }
+
+                if (!timing_state) {
+                    target_info.next_packet_read_index++;
+                    continue;
+                }
+
                 if (!candidate_packet.rtp_timestamp.has_value() || candidate_packet.sample_rate == 0) {
                     target_info.next_packet_read_index++;
                     continue;
                 }
 
-                auto timing_access = get_timing_state(candidate_packet.source_tag);
-                if (!timing_access.state || !timing_access.state->clock) {
-                    target_info.next_packet_read_index++;
-                    continue;
-                }
-
-                StreamTimingState& ts = *timing_access.state;
-
                 now = std::chrono::steady_clock::now();
 
                 // --- Playout Time Calculation ---
-                auto expected_arrival_time =
-                    ts.clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
+                // 1. Get expected arrival time from the stable clock
+                auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
 
                 // 2. Add the adaptive playout delay
-                const double timeshift_backshift_ms =
-                    std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
+                const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
                 double base_latency_ms = std::max<double>(
                     target_info.current_delay_ms,
                     m_settings->timeshift_tuning.target_buffer_level_ms);
@@ -821,53 +785,49 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
                     base_latency_ms = std::min(base_latency_ms, max_adaptive_delay_ms);
                 }
                 const double desired_latency_ms = base_latency_ms + timeshift_backshift_ms;
-                ts.target_buffer_level_ms = desired_latency_ms;
-                ts.last_target_update_time = now;
+
+                timing_state->target_buffer_level_ms = desired_latency_ms;
+                timing_state->last_target_update_time = now;
 
                 auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(desired_latency_ms);
                 auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
 
-                // Prevent extreme future scheduling that can under-drive playback (observed in some clients).
-                const double max_lead_ms = std::max(0.0, m_settings->timeshift_tuning.max_playout_lead_ms);
-                if (time_until_playout_ms > max_lead_ms) {
-                    ideal_playout_time = now + std::chrono::duration<double, std::milli>(max_lead_ms);
-                    time_until_playout_ms = max_lead_ms;
-                }
-
                 const double buffer_level_ms = std::max(time_until_playout_ms, 0.0);
-                ts.current_buffer_level_ms = buffer_level_ms;
+                timing_state->current_buffer_level_ms = buffer_level_ms;
                 if (desired_latency_ms > 1e-6) {
-                    ts.buffer_target_fill_percentage =
+                    timing_state->buffer_target_fill_percentage =
                         std::clamp((buffer_level_ms / desired_latency_ms) * 100.0, 0.0, 100.0);
                 } else {
-                    ts.buffer_target_fill_percentage = 0.0;
+                    timing_state->buffer_target_fill_percentage = 0.0;
                 }
 
                 double head_lag_ms = std::max(-time_until_playout_ms, 0.0);
-                ts.last_head_playout_lag_ms = head_lag_ms;
-                ts.head_playout_lag_ms_sum += head_lag_ms;
-                ts.head_playout_lag_ms_max = std::max(ts.head_playout_lag_ms_max, head_lag_ms);
-                ts.head_playout_lag_samples++;
+                timing_state->last_head_playout_lag_ms = head_lag_ms;
+                timing_state->head_playout_lag_ms_sum += head_lag_ms;
+                timing_state->head_playout_lag_ms_max = std::max(timing_state->head_playout_lag_ms_max, head_lag_ms);
+                timing_state->head_playout_lag_samples++;
 
                 // Check if the packet is ready to be played
                 if (ideal_playout_time <= now) {
                     const double lateness_ms = -time_until_playout_ms;
                     if (lateness_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
-                        ts.late_packets_count++;
+                        timing_state->late_packets_count++;
                     }
                     if (lateness_ms > 0.0) {
                         profiling_total_lateness_ms_ += lateness_ms;
                         profiling_packets_late_count_++;
                     }
 
-                    ts.playout_deviation_ms_sum += lateness_ms;
-                    ts.playout_deviation_ms_abs_sum += std::abs(lateness_ms);
-                    ts.playout_deviation_ms_max = std::max(ts.playout_deviation_ms_max, lateness_ms);
-                    ts.playout_deviation_ms_min = std::min(ts.playout_deviation_ms_min, lateness_ms);
-                    ts.playout_deviation_samples++;
+                    if (timing_state) {
+                        timing_state->playout_deviation_ms_sum += lateness_ms;
+                        timing_state->playout_deviation_ms_abs_sum += std::abs(lateness_ms);
+                        timing_state->playout_deviation_ms_max = std::max(timing_state->playout_deviation_ms_max, lateness_ms);
+                        timing_state->playout_deviation_ms_min = std::min(timing_state->playout_deviation_ms_min, lateness_ms);
+                        timing_state->playout_deviation_samples++;
+                    }
 
                     if (max_catchup_lag_ms > 0.0 && lateness_ms > max_catchup_lag_ms) {
-                        ts.tm_packets_discarded++;
+                        timing_state->tm_packets_discarded++;
                         profiling_packets_dropped_++;
                         const std::string& log_tag = target_info.source_tag_filter.empty() ? candidate_packet.source_tag : target_info.source_tag_filter;
                         LOG_CPP_DEBUG(
@@ -876,11 +836,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
                             lateness_ms,
                             max_catchup_lag_ms);
 
-                        {
-                            std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
-                            processor_dropped_totals_[instance_id]++;
-                        }
-
                         target_info.next_packet_read_index++;
                         continue;
                     }
@@ -888,61 +843,44 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
                     TaggedAudioPacket packet_to_send = candidate_packet;
                     const auto& tuning = m_settings->timeshift_tuning;
                     double controller_dt_sec = 0.0;
-                    if (ts.last_controller_update_time.time_since_epoch().count() != 0) {
+                    if (timing_state->last_controller_update_time.time_since_epoch().count() != 0) {
                         controller_dt_sec =
-                            std::chrono::duration<double>(now - ts.last_controller_update_time).count();
+                            std::chrono::duration<double>(now - timing_state->last_controller_update_time).count();
                     }
                     if (controller_dt_sec <= 0.0) {
                         controller_dt_sec =
                             std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
                     }
-                    ts.last_controller_update_time = now;
+                    timing_state->last_controller_update_time = now;
 
                     const double buffer_error_ms = desired_latency_ms - buffer_level_ms;
                     const double proportional_ppm = tuning.playback_ratio_kp * buffer_error_ms;
-                    ts.playback_ratio_integral_ppm +=
+                    timing_state->playback_ratio_integral_ppm +=
                         tuning.playback_ratio_ki * buffer_error_ms * controller_dt_sec;
                     const double integral_cap_ppm =
                         std::max(tuning.playback_ratio_integral_limit_ppm,
                                  tuning.playback_ratio_max_deviation_ppm);
-                    ts.playback_ratio_integral_ppm =
-                        std::clamp(ts.playback_ratio_integral_ppm,
+                    timing_state->playback_ratio_integral_ppm =
+                        std::clamp(timing_state->playback_ratio_integral_ppm,
                                    -integral_cap_ppm,
                                    integral_cap_ppm);
 
-                    double controller_ppm = proportional_ppm + ts.playback_ratio_integral_ppm;
+                    double controller_ppm = proportional_ppm + timing_state->playback_ratio_integral_ppm;
                     const double max_slew_ppm =
                         std::max(tuning.playback_ratio_slew_ppm_per_sec, 0.0) * controller_dt_sec;
                     if (max_slew_ppm > 0.0) {
                         controller_ppm = std::clamp(controller_ppm,
-                                                    ts.playback_ratio_controller_ppm - max_slew_ppm,
-                                                    ts.playback_ratio_controller_ppm + max_slew_ppm);
+                                                    timing_state->playback_ratio_controller_ppm - max_slew_ppm,
+                                                    timing_state->playback_ratio_controller_ppm + max_slew_ppm);
                     }
 
-                    // Add an explicit catch-up term based on current lateness to close large gaps quickly.
-                    double catchup_ppm = 0.0;
-                    if (lateness_ms > 0.0) {
-                        catchup_ppm = std::clamp(lateness_ms * tuning.playback_catchup_ppm_per_ms,
-                                                 0.0,
-                                                 tuning.playback_catchup_max_ppm);
-                    }
+                    const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
+                    controller_ppm = std::clamp(controller_ppm, -max_deviation_ppm, max_deviation_ppm);
+                    timing_state->playback_ratio_controller_ppm = controller_ppm;
 
-                    const double effective_max_ppm =
-                        std::max({tuning.playback_ratio_max_deviation_ppm,
-                                  tuning.playback_catchup_max_ppm,
-                                  0.0});
-
-                    controller_ppm = std::clamp(controller_ppm + catchup_ppm,
-                                                -effective_max_ppm,
-                                                effective_max_ppm);
-                    ts.playback_ratio_controller_ppm = controller_ppm;
-
-                    double drift_ppm = std::clamp(ts.last_clock_drift_ppm,
-                                                  -effective_max_ppm,
-                                                  effective_max_ppm);
-                    double combined_ppm = std::clamp(drift_ppm + controller_ppm,
-                                                     -effective_max_ppm,
-                                                     effective_max_ppm);
+                    const double drift_ppm = timing_state->last_clock_drift_ppm;
+                    double combined_ppm = drift_ppm + controller_ppm;
+                    combined_ppm = std::clamp(combined_ppm, -max_deviation_ppm, max_deviation_ppm);
 
                     double target_rate = 1.0 + combined_ppm * kPlaybackDriftGain;
                     if (!std::isfinite(target_rate)) {
@@ -952,36 +890,32 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
                     const double smoothing_factor =
                         m_settings ? tuning.playback_ratio_smoothing : kFallbackSmoothing;
                     const double smoothed_rate =
-                        smooth_playback_rate(ts.current_playback_rate,
+                        smooth_playback_rate(timing_state->current_playback_rate,
                                              target_rate,
                                              smoothing_factor,
-                                             effective_max_ppm);
+                                             max_deviation_ppm);
 
-                    if (std::abs(smoothed_rate - ts.current_playback_rate) > 5e-4) {
+                    if (std::abs(smoothed_rate - timing_state->current_playback_rate) > 5e-4) {
                         LOG_CPP_DEBUG(
-                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f error_ms=%.3f controller_ppm=%.3f catchup_ppm=%.3f combined_ppm=%.3f target=%.6f smoothed=%.6f",
+                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f error_ms=%.3f controller_ppm=%.3f combined_ppm=%.3f target=%.6f smoothed=%.6f",
                             candidate_packet.source_tag.c_str(),
                             drift_ppm,
                             buffer_error_ms,
-                            controller_ppm - catchup_ppm,
-                            catchup_ppm,
+                            controller_ppm,
                             combined_ppm,
                             target_rate,
                             smoothed_rate);
                     }
 
-                    ts.current_playback_rate = smoothed_rate;
-                    ts.last_system_delay_ms = lateness_ms;
-
+                    timing_state->current_playback_rate = smoothed_rate;
+                    timing_state->last_system_delay_ms = lateness_ms;
                     packet_to_send.playback_rate = smoothed_rate;
 
-                    if (target_info.target_queue) {
-                        pending_dispatches.push_back(
-                            PendingDispatch{target_info.target_queue, std::move(packet_to_send), instance_id, candidate_packet.source_tag});
-                        profiling_packets_dispatched_++;
-                        packets_processed++;
-                        ts.last_played_rtp_timestamp = candidate_packet.rtp_timestamp.value();
-                    }
+                    target_info.target_queue->push(std::move(packet_to_send));
+                    profiling_packets_dispatched_++;
+                    packets_processed++;
+
+                    timing_state->last_played_rtp_timestamp = candidate_packet.rtp_timestamp.value();
 
                     target_info.next_packet_read_index++;
 
@@ -997,10 +931,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
                     break;
                 }
             }
-        }
-
-        if (time_budget_exhausted) {
-            break;
         }
     }
 
@@ -1026,192 +956,10 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
     }
 }
 
-void TimeshiftManager::process_incoming_packet_unlocked(TaggedAudioPacket&& packet) {
-    const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
-    const double configured_reset_threshold_sec =
-        (m_settings) ? m_settings->timeshift_tuning.rtp_session_reset_threshold_seconds : 0.2;
-    const double bounded_reset_threshold_sec = std::max(configured_reset_threshold_sec, 0.0);
-    const uint32_t reset_threshold_frames = static_cast<uint32_t>(
-        static_cast<double>(frames_per_second) * bounded_reset_threshold_sec);
-
-    auto timing_access = get_or_create_timing_state(packet.source_tag);
-    StreamTimingState* state_ptr = timing_access.state;
-    if (!state_ptr) {
-        return;
-    }
-
-    auto compute_packet_samples = [](const TaggedAudioPacket& pkt) -> uint32_t {
-        if (pkt.channels > 0 && pkt.bit_depth > 0 && (pkt.bit_depth % 8) == 0) {
-            const std::size_t bytes_per_frame =
-                static_cast<std::size_t>(pkt.channels) * static_cast<std::size_t>(pkt.bit_depth / 8);
-            if (bytes_per_frame > 0) {
-                return static_cast<uint32_t>(pkt.audio_data.size() / bytes_per_frame);
-            }
-        }
-        return 0;
-    };
-
-    const uint32_t current_ts = packet.rtp_timestamp.value();
-    const uint32_t last_ts = state_ptr->last_rtp_timestamp;
-    uint32_t delta = 0;
-    bool should_reset_state = false;
-
-    if (!state_ptr->is_first_packet && state_ptr->clock && reset_threshold_frames > 0) {
-        delta = rtp_timestamp_diff(current_ts, last_ts);
-        if (delta > reset_threshold_frames) {
-            const auto last_wallclock = state_ptr->last_wallclock;
-            if (last_wallclock.time_since_epoch().count() != 0) {
-                const auto wallclock_gap = packet.received_time - last_wallclock;
-                const double wallclock_gap_sec = std::chrono::duration<double>(wallclock_gap).count();
-                if (wallclock_gap_sec > 0.0) {
-                    const auto delta_frames = static_cast<uint64_t>(delta);
-                    const double configured_slack_seconds =
-                        (m_settings) ? m_settings->timeshift_tuning.rtp_continuity_slack_seconds : 0.25;
-                    const double bounded_slack_seconds = std::max(configured_slack_seconds, 0.0);
-                    const auto expected_frames = static_cast<uint64_t>(
-                        std::llround(wallclock_gap_sec * static_cast<double>(frames_per_second)));
-                    auto continuity_slack_frames = static_cast<uint64_t>(
-                        std::llround(static_cast<double>(frames_per_second) * bounded_slack_seconds));
-
-                    const uint32_t packet_samples = compute_packet_samples(packet);
-                    const uint32_t reference_samples =
-                        state_ptr->samples_per_chunk > 0 ? state_ptr->samples_per_chunk : packet_samples;
-                    if (reference_samples > 0) {
-                        const auto jitter_allowance = static_cast<uint64_t>(std::llround(
-                            std::max<double>(static_cast<double>(reference_samples) * 0.1, 1.0)));
-                        continuity_slack_frames = std::max(continuity_slack_frames, jitter_allowance);
-                    } else if (continuity_slack_frames == 0) {
-                        continuity_slack_frames = 1;
-                    }
-
-                    const auto lower_bound = (expected_frames > continuity_slack_frames)
-                                                 ? (expected_frames - continuity_slack_frames)
-                                                 : 0ULL;
-                    const auto upper_bound = expected_frames + continuity_slack_frames;
-
-                    const bool within_bounds = delta_frames >= lower_bound && delta_frames <= upper_bound;
-                    if (within_bounds) {
-                        LOG_CPP_DEBUG("[TimeshiftManager] RTP jump matches wall-clock advance for '%s' (delta=%u frames, expected=%llu, slack=%llu). Keeping timing state.",
-                                      packet.source_tag.c_str(), delta,
-                                      static_cast<unsigned long long>(expected_frames),
-                                      static_cast<unsigned long long>(continuity_slack_frames));
-                    } else {
-                        should_reset_state = true;
-                    }
-                } else {
-                    should_reset_state = true;
-                }
-            } else {
-                should_reset_state = true;
-            }
-        }
-    }
-
-    if (should_reset_state) {
-        LOG_CPP_INFO("[TimeshiftManager] Detected RTP jump for '%s' (delta=%u frames). Resetting timing state.",
-                     packet.source_tag.c_str(), delta);
-
-        size_t reset_position = global_timeshift_buffer_.size();
-        auto targets_it = processor_targets_.find(packet.source_tag);
-        if (targets_it != processor_targets_.end()) {
-            for (auto& [instance_id, info] : targets_it->second) {
-                (void)instance_id;
-                info.next_packet_read_index = reset_position;
-                if (info.target_queue) {
-                    TaggedAudioPacket discarded;
-                    while (info.target_queue->try_pop(discarded)) {
-                        // Drain stale packets so consumers restart immediately.
-                    }
-                }
-            }
-        }
-
-        timing_access.lock.unlock();
-        {
-            std::unique_lock<std::mutex> map_lock(timing_map_mutex_);
-            auto lock_it = timing_locks_.find(packet.source_tag);
-            if (lock_it == timing_locks_.end() || !lock_it->second) {
-                lock_it = timing_locks_.emplace(packet.source_tag, std::make_shared<std::mutex>()).first;
-            }
-            std::unique_lock<std::mutex> per_stream_lock(*lock_it->second);
-            stream_timing_states_.erase(packet.source_tag);
-            auto [new_state_it, _] = stream_timing_states_.try_emplace(packet.source_tag);
-            (void)_;
-            state_ptr = &new_state_it->second;
-            map_lock.unlock();
-        }
-        m_state_version_++;
-        run_loop_cv_.notify_one();
-    }
-
-    StreamTimingState& state = *state_ptr;
-    state.total_packets++;
-
-    if (!state.clock) {
-        state.clock = std::make_unique<StreamClock>(packet.sample_rate);
-    }
-
-    state.clock->update(packet.rtp_timestamp.value(), packet.received_time);
-
-    if (state.clock->is_initialized()) {
-        state.last_clock_offset_ms = state.clock->get_offset_seconds() * 1000.0;
-        state.last_clock_drift_ppm = state.clock->get_drift_ppm();
-        state.last_clock_innovation_ms = state.clock->get_last_innovation_seconds() * 1000.0;
-        state.last_clock_measured_offset_ms = state.clock->get_last_measured_offset_seconds() * 1000.0;
-        state.clock_innovation_abs_sum_ms += std::abs(state.last_clock_innovation_ms);
-        state.clock_innovation_samples++;
-    }
-
-    global_timeshift_buffer_.push_back(packet); // copy to keep packet available for timing updates
-    m_total_packets_added++;
-
-    const double arrival_time_sec =
-        std::chrono::duration<double>(packet.received_time.time_since_epoch()).count();
-
-    if (!state.is_first_packet && packet.sample_rate > 0 &&
-        state.last_wallclock.time_since_epoch().count() > 0) {
-        const double arrival_delta_sec =
-            std::chrono::duration<double>(packet.received_time - state.last_wallclock).count();
-        const uint32_t timestamp_diff =
-            rtp_timestamp_diff(packet.rtp_timestamp.value(), state.last_rtp_timestamp);
-        const double rtp_delta_sec =
-            static_cast<double>(timestamp_diff) / static_cast<double>(packet.sample_rate);
-        const double transit_delta_sec = arrival_delta_sec - rtp_delta_sec;
-        const double abs_transit_delta_sec = std::abs(transit_delta_sec);
-
-        if (!state.jitter_initialized) {
-            state.rfc3550_jitter_sec = abs_transit_delta_sec;
-            state.jitter_initialized = true;
-        } else {
-            state.rfc3550_jitter_sec += (abs_transit_delta_sec - state.rfc3550_jitter_sec) / 16.0;
-        }
-
-        state.jitter_estimate = state.rfc3550_jitter_sec * 1000.0;
-        state.system_jitter_estimate_ms = state.jitter_estimate;
-        state.last_system_delay_ms = transit_delta_sec * 1000.0;
-        state.last_transit_sec = transit_delta_sec;
-    } else {
-        state.jitter_estimate = std::max(state.jitter_estimate, 0.0);
-        state.system_jitter_estimate_ms = state.jitter_estimate;
-        state.last_system_delay_ms = 0.0;
-    }
-
-    state.last_arrival_time_sec = arrival_time_sec;
-
-    state.is_first_packet = false;
-    state.last_rtp_timestamp = packet.rtp_timestamp.value();
-    state.last_wallclock = packet.received_time;
-    state.sample_rate = packet.sample_rate;
-    state.channels = packet.channels;
-    state.bit_depth = packet.bit_depth;
-    state.samples_per_chunk = 0;
-    if (packet.sample_rate > 0 && packet.channels > 0 && packet.bit_depth > 0 && (packet.bit_depth % 8) == 0) {
-        const std::size_t bytes_per_frame =
-            static_cast<std::size_t>(packet.channels) * static_cast<std::size_t>(packet.bit_depth / 8);
-        if (bytes_per_frame > 0) {
-            state.samples_per_chunk = static_cast<uint32_t>(packet.audio_data.size() / bytes_per_frame);
-        }
-    }
+// Compatibility overload to satisfy newer interface; delegates to legacy implementation.
+void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDispatch>& pending_dispatches) {
+    (void)pending_dispatches;
+    processing_loop_iteration_unlocked();
 }
 
 void TimeshiftManager::reset_profiler_counters_unlocked(std::chrono::steady_clock::time_point now) {
@@ -1275,75 +1023,63 @@ void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::ti
         profiling_total_lateness_ms_,
         processing_budget_initialized_ ? smoothed_processing_per_packet_us_ : 0.0);
 
-    std::vector<std::string> timing_tags;
     {
-        std::lock_guard<std::mutex> map_lock(timing_map_mutex_);
-        timing_tags.reserve(stream_timing_states_.size());
-        for (const auto& [source_tag, _] : stream_timing_states_) {
-            timing_tags.push_back(source_tag);
-        }
-    }
-
-    for (const auto& source_tag : timing_tags) {
-        auto access = get_timing_state(source_tag);
-        if (!access.state) {
-            continue;
-        }
-
-        const auto& timing_state = *access.state;
-        const double arrival_avg = timing_state.arrival_error_samples > 0
-                                        ? (timing_state.arrival_error_ms_sum / static_cast<double>(timing_state.arrival_error_samples))
-                                        : 0.0;
-        const double arrival_abs_avg = timing_state.arrival_error_samples > 0
-                                            ? (timing_state.arrival_error_ms_abs_sum / static_cast<double>(timing_state.arrival_error_samples))
+        std::lock_guard<std::mutex> timing_lock(timing_mutex_);
+        for (const auto& [source_tag, timing_state] : stream_timing_states_) {
+            const double arrival_avg = timing_state.arrival_error_samples > 0
+                                            ? (timing_state.arrival_error_ms_sum / static_cast<double>(timing_state.arrival_error_samples))
                                             : 0.0;
-        const double playout_avg = timing_state.playout_deviation_samples > 0
-                                        ? (timing_state.playout_deviation_ms_sum / static_cast<double>(timing_state.playout_deviation_samples))
-                                        : 0.0;
-        const double playout_abs_avg = timing_state.playout_deviation_samples > 0
-                                             ? (timing_state.playout_deviation_ms_abs_sum / static_cast<double>(timing_state.playout_deviation_samples))
-                                             : 0.0;
-        const double head_avg = timing_state.head_playout_lag_samples > 0
-                                       ? (timing_state.head_playout_lag_ms_sum / static_cast<double>(timing_state.head_playout_lag_samples))
-                                       : 0.0;
-        double clock_update_age_ms = 0.0;
-        if (timing_state.clock && timing_state.clock->is_initialized()) {
-            auto last_update = timing_state.clock->get_last_update_time();
-            if (last_update != std::chrono::steady_clock::time_point{}) {
-                clock_update_age_ms = std::chrono::duration<double, std::milli>(now - last_update).count();
+            const double arrival_abs_avg = timing_state.arrival_error_samples > 0
+                                                ? (timing_state.arrival_error_ms_abs_sum / static_cast<double>(timing_state.arrival_error_samples))
+                                                : 0.0;
+            const double playout_avg = timing_state.playout_deviation_samples > 0
+                                            ? (timing_state.playout_deviation_ms_sum / static_cast<double>(timing_state.playout_deviation_samples))
+                                            : 0.0;
+            const double playout_abs_avg = timing_state.playout_deviation_samples > 0
+                                                 ? (timing_state.playout_deviation_ms_abs_sum / static_cast<double>(timing_state.playout_deviation_samples))
+                                                 : 0.0;
+            const double head_avg = timing_state.head_playout_lag_samples > 0
+                                           ? (timing_state.head_playout_lag_ms_sum / static_cast<double>(timing_state.head_playout_lag_samples))
+                                           : 0.0;
+            double clock_update_age_ms = 0.0;
+            if (timing_state.clock && timing_state.clock->is_initialized()) {
+                auto last_update = timing_state.clock->get_last_update_time();
+                if (last_update != std::chrono::steady_clock::time_point{}) {
+                    clock_update_age_ms = std::chrono::duration<double, std::milli>(now - last_update).count();
+                }
             }
-        }
 
-        LOG_CPP_INFO(
-            "[Profiler][Timeshift][Stream %s] jitter=%.2fms sys_jitter=%.2fms sys_delay=%.2fms clk_offset=%.3fms drift=%.3fppm clk_innov_last=%.3fms clk_innov_avg_abs=%.3fms clk_update_age=%.2fms clk_meas_offset=%.3fms arrival(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) playout_dev(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) head_lag(last=%.3fms avg=%.3fms max=%.3fms samples=%llu) buffer(cur=%.3fms target=%.3fms fill=%.1f%%) playback_rate=%.6f",
-            source_tag.c_str(),
-            timing_state.jitter_estimate,
-            timing_state.system_jitter_estimate_ms,
-            timing_state.last_system_delay_ms,
-            timing_state.last_clock_offset_ms,
-            timing_state.last_clock_drift_ppm,
-            timing_state.last_clock_innovation_ms,
-            timing_state.clock_innovation_samples > 0 ? (timing_state.clock_innovation_abs_sum_ms / static_cast<double>(timing_state.clock_innovation_samples)) : 0.0,
-            clock_update_age_ms,
-            timing_state.last_clock_measured_offset_ms,
-            arrival_avg,
-            arrival_abs_avg,
-            timing_state.arrival_error_samples > 0 ? timing_state.arrival_error_ms_max : 0.0,
-            timing_state.arrival_error_samples > 0 ? timing_state.arrival_error_ms_min : 0.0,
-            static_cast<unsigned long long>(timing_state.arrival_error_samples),
-            playout_avg,
-            playout_abs_avg,
-            timing_state.playout_deviation_samples > 0 ? timing_state.playout_deviation_ms_max : 0.0,
-            timing_state.playout_deviation_samples > 0 ? timing_state.playout_deviation_ms_min : 0.0,
-            static_cast<unsigned long long>(timing_state.playout_deviation_samples),
-            timing_state.last_head_playout_lag_ms,
-            head_avg,
-            timing_state.head_playout_lag_samples > 0 ? timing_state.head_playout_lag_ms_max : 0.0,
-            static_cast<unsigned long long>(timing_state.head_playout_lag_samples),
-            timing_state.current_buffer_level_ms,
-            timing_state.target_buffer_level_ms,
-            timing_state.buffer_target_fill_percentage,
-            timing_state.current_playback_rate);
+            LOG_CPP_INFO(
+                "[Profiler][Timeshift][Stream %s] jitter=%.2fms sys_jitter=%.2fms sys_delay=%.2fms clk_offset=%.3fms drift=%.3fppm clk_innov_last=%.3fms clk_innov_avg_abs=%.3fms clk_update_age=%.2fms clk_meas_offset=%.3fms arrival(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) playout_dev(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) head_lag(last=%.3fms avg=%.3fms max=%.3fms samples=%llu) buffer(cur=%.3fms target=%.3fms fill=%.1f%% playback_rate=%.6f)",
+                source_tag.c_str(),
+                timing_state.jitter_estimate,
+                timing_state.system_jitter_estimate_ms,
+                timing_state.last_system_delay_ms,
+                timing_state.last_clock_offset_ms,
+                timing_state.last_clock_drift_ppm,
+                timing_state.last_clock_innovation_ms,
+                timing_state.clock_innovation_samples > 0 ? (timing_state.clock_innovation_abs_sum_ms / static_cast<double>(timing_state.clock_innovation_samples)) : 0.0,
+                clock_update_age_ms,
+                timing_state.last_clock_measured_offset_ms,
+                arrival_avg,
+                arrival_abs_avg,
+                timing_state.arrival_error_samples > 0 ? timing_state.arrival_error_ms_max : 0.0,
+                timing_state.arrival_error_samples > 0 ? timing_state.arrival_error_ms_min : 0.0,
+                static_cast<unsigned long long>(timing_state.arrival_error_samples),
+                playout_avg,
+                playout_abs_avg,
+                timing_state.playout_deviation_samples > 0 ? timing_state.playout_deviation_ms_max : 0.0,
+                timing_state.playout_deviation_samples > 0 ? timing_state.playout_deviation_ms_min : 0.0,
+                static_cast<unsigned long long>(timing_state.playout_deviation_samples),
+                timing_state.last_head_playout_lag_ms,
+                head_avg,
+                timing_state.head_playout_lag_samples > 0 ? timing_state.head_playout_lag_ms_max : 0.0,
+                static_cast<unsigned long long>(timing_state.head_playout_lag_samples),
+                timing_state.current_buffer_level_ms,
+                timing_state.target_buffer_level_ms,
+                timing_state.buffer_target_fill_percentage,
+                timing_state.current_playback_rate);
+        }
     }
 
     reset_profiler_counters_unlocked(now);
@@ -1394,9 +1130,9 @@ void TimeshiftManager::cleanup_global_buffer_unlocked() {
                         
                         // Safely increment the lagging event counter for this stream
                         if (!bound_tag.empty()) {
-                            auto timing_access = get_timing_state(bound_tag);
-                            if (timing_access.state) {
-                                timing_access.state->lagging_events_count++;
+                            std::lock_guard<std::mutex> lock(timing_mutex_);
+                            if (stream_timing_states_.count(bound_tag)) {
+                                stream_timing_states_.at(bound_tag).lagging_events_count++;
                             }
                         }
 
@@ -1451,13 +1187,19 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
                 continue;
             }
             
-            auto timing_access = get_timing_state(source_tag);
-            if (!timing_access.state || !timing_access.state->clock) {
+            const StreamTimingState* timing_state = nullptr;
+            {
+                std::lock_guard<std::mutex> lock(timing_mutex_);
+                if (stream_timing_states_.count(source_tag) && stream_timing_states_.at(source_tag).clock) {
+                    timing_state = &stream_timing_states_.at(source_tag);
+                }
+            }
+            
+            if (!timing_state) {
                 continue;
             }
-            const StreamTimingState& timing_state = *timing_access.state;
 
-            auto expected_arrival_time = timing_state.clock->get_expected_arrival_time(next_packet.rtp_timestamp.value());
+            auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(next_packet.rtp_timestamp.value());
             const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
             double base_latency_ms = std::max<double>(
                 target_info.current_delay_ms,
@@ -1467,13 +1209,13 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
                 base_latency_ms = std::min(base_latency_ms, max_adaptive_delay_ms);
             }
             const double desired_latency_ms = base_latency_ms + timeshift_backshift_ms;
+
+            const double state_target_ms = (timing_state->target_buffer_level_ms > 0.0)
+                                               ? timing_state->target_buffer_level_ms
+                                               : desired_latency_ms;
+            double effective_latency_ms = std::max(desired_latency_ms, state_target_ms);
             auto ideal_playout_time = expected_arrival_time + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                                            std::chrono::duration<double, std::milli>(desired_latency_ms));
-            const double max_lead_ms = std::max(0.0, m_settings->timeshift_tuning.max_playout_lead_ms);
-            const auto max_lead_duration = std::chrono::duration<double, std::milli>(max_lead_ms);
-            if (ideal_playout_time - reference_now > max_lead_duration) {
-                ideal_playout_time = reference_now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(max_lead_duration);
-            }
+                                                            std::chrono::duration<double, std::milli>(effective_latency_ms));
 
             auto candidate_time = ideal_playout_time;
             if (processing_budget_initialized_ && smoothed_processing_per_packet_us_ > 0.0) {

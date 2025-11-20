@@ -93,7 +93,14 @@ struct StreamTimingState {
 
     // Playout state
     double current_playback_rate = 1.0;
+    double target_buffer_level_ms = 0.0;
+    std::chrono::steady_clock::time_point last_target_update_time{};
+    double current_buffer_level_ms = 0.0;
+    double buffer_target_fill_percentage = 0.0;
     uint32_t last_played_rtp_timestamp = 0;
+    std::chrono::steady_clock::time_point last_controller_update_time{};
+    double playback_ratio_integral_ppm = 0.0;
+    double playback_ratio_controller_ppm = 0.0;
     double last_arrival_time_error_ms = 0.0; // For stats
     int sample_rate = 0;
     int channels = 0;
@@ -131,17 +138,6 @@ struct StreamTimingState {
     double last_clock_measured_offset_ms = 0.0;
     double clock_innovation_abs_sum_ms = 0.0;
     uint64_t clock_innovation_samples = 0;
-
-    // Buffer/target tracking for playback controller
-    double target_buffer_level_ms = 0.0;
-    std::chrono::steady_clock::time_point last_target_update_time{};
-    double current_buffer_level_ms = 0.0;
-    double buffer_target_fill_percentage = 0.0;
-
-    // Playback ratio PI controller state
-    double playback_ratio_integral_ppm = 0.0;
-    double playback_ratio_controller_ppm = 0.0;
-    std::chrono::steady_clock::time_point last_controller_update_time{};
 };
 
 /**
@@ -183,6 +179,8 @@ struct TimeshiftManagerStats {
     std::map<std::string, double> stream_clock_drift_ppm;
     std::map<std::string, double> stream_clock_last_innovation_ms;
     std::map<std::string, double> stream_clock_avg_abs_innovation_ms;
+    std::map<std::string, double> stream_target_buffer_level_ms;
+    std::map<std::string, double> stream_buffer_target_fill_percentage;
     std::map<std::string, double> stream_system_jitter_ms;
     std::map<std::string, double> stream_clock_last_measured_offset_ms;
     std::map<std::string, double> stream_last_system_delay_ms;
@@ -312,6 +310,7 @@ private:
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 
     std::map<std::string, StreamTimingState> stream_timing_states_;
+    std::mutex timing_mutex_;
     std::mutex timing_map_mutex_;
     std::unordered_map<std::string, std::shared_ptr<std::mutex>> timing_locks_;
 
@@ -336,6 +335,8 @@ private:
 
     /** @brief A single iteration of the processing loop. Collects ready packets while data_mutex_ is held. */
     void processing_loop_iteration_unlocked(std::vector<PendingDispatch>& pending_dispatches);
+    // Legacy signature used by older processing loop.
+    void processing_loop_iteration_unlocked();
     /** @brief Periodically cleans up old packets from the global buffer. Assumes data_mutex_ is held. */
     void cleanup_global_buffer_unlocked();
 

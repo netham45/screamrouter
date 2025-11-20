@@ -1580,6 +1580,7 @@ void PulseAudioReceiver::Impl::Connection::handle_clock_tick(uint32_t stream_ind
 
             packet.audio_data = std::move(pending.audio_data);
             apply_volume(stream, packet.audio_data);
+            // Preserve the original playout time so the jitter/clock model sees the intended cadence.
             auto now_stamped = std::chrono::steady_clock::now();
             if (pending.play_time.time_since_epoch().count() == 0) {
                 packet.received_time = now_stamped;

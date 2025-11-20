@@ -448,21 +448,24 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          }
 
          if (effective_cap > 0) {
-            bool logged_trim = false;
-             while (output_queue_->size() >= effective_cap) {
-                 ProcessedAudioChunk discarded_chunk;
-                 if (!output_queue_->try_pop(discarded_chunk)) {
-                     break;
-                 }
+                static thread_local int trim_throttle = 0;
+                bool logged_trim = false;
+                while (output_queue_->size() >= effective_cap) {
+                    ProcessedAudioChunk discarded_chunk;
+                    if (!output_queue_->try_pop(discarded_chunk)) {
+                        break;
+                    }
                  profiling_discarded_packets_++;
                  m_total_discarded_packets++;
-                 if (!logged_trim) {
-                     LOG_CPP_WARNING("[SourceProc:%s] Trimmed mixer queue to cap (%zu chunks).",
-                                     config_.instance_id.c_str(), effective_cap);
-                     logged_trim = true;
-                 }
-             }
-         }
+                    if (!logged_trim) {
+                        if ((trim_throttle++ % 50) == 0) {
+                            LOG_CPP_WARNING("[SourceProc:%s] Trimmed mixer queue to cap (%zu chunks).",
+                                            config_.instance_id.c_str(), effective_cap);
+                        }
+                        logged_trim = true;
+                    }
+                }
+            }
 
          auto push_result = (effective_cap > 0)
              ? output_queue_->push_bounded(std::move(output_chunk), effective_cap, false)
