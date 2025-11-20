@@ -71,7 +71,6 @@ private:
     CaptureParams capture_params_;
     bool loopback_mode_ = false;
     bool exclusive_mode_ = false;
-
     Microsoft::WRL::ComPtr<IMMDeviceEnumerator> device_enumerator_;
     Microsoft::WRL::ComPtr<IMMDevice> device_;
     Microsoft::WRL::ComPtr<IAudioClient> audio_client_;
@@ -104,6 +103,9 @@ private:
     size_t discontinuity_count_ = 0;
 
     std::mutex device_mutex_;
+
+    HANDLE mmcss_handle_ = nullptr;
+    DWORD mmcss_task_index_ = 0;
 };
 
 } // namespace system_audio

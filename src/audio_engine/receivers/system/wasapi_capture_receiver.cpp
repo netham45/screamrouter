@@ -9,6 +9,7 @@
 #include "../../system_audio/windows_utils.h"
 
 #include <mmreg.h>
+#include <avrt.h>
 
 #include <algorithm>
 #include <cstring>
@@ -188,6 +189,12 @@ void WasapiCaptureReceiver::close_device() {
         CloseHandle(capture_event_);
         capture_event_ = nullptr;
     }
+
+    if (mmcss_handle_) {
+        AvRevertMmThreadCharacteristics(mmcss_handle_);
+        mmcss_handle_ = nullptr;
+    }
+
     capture_client_.Reset();
     audio_client_.Reset();
     device_.Reset();
@@ -219,7 +226,7 @@ bool WasapiCaptureReceiver::configure_audio_client() {
     REFERENCE_TIME buffer_duration = 0;
     unsigned int effective_buffer_ms = capture_params_.buffer_duration_ms;
     if (effective_buffer_ms == 0) {
-        effective_buffer_ms = 120; // More headroom by default to avoid glitches
+        effective_buffer_ms = 200; // More headroom by default to avoid glitches
     }
     buffer_duration = static_cast<REFERENCE_TIME>(effective_buffer_ms) * 10000;
 
@@ -306,6 +313,14 @@ bool WasapiCaptureReceiver::start_stream() {
     HANDLE hThread = GetCurrentThread();
     if (!SetThreadPriority(hThread, THREAD_PRIORITY_TIME_CRITICAL)) {
         LOG_CPP_WARNING("[WasapiCapture:%s] Failed to set high thread priority (last_error=%lu).", device_tag_.c_str(), GetLastError());
+    }
+
+    // Join MMCSS "Pro Audio" to further reduce dropouts.
+    if (!mmcss_handle_) {
+        mmcss_handle_ = AvSetMmThreadCharacteristicsW(L"Pro Audio", &mmcss_task_index_);
+        if (!mmcss_handle_) {
+            LOG_CPP_WARNING("[WasapiCapture:%s] Failed to enter MMCSS Pro Audio (last_error=%lu).", device_tag_.c_str(), GetLastError());
+        }
     }
     return true;
 }

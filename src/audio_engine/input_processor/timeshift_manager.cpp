@@ -602,15 +602,23 @@ void TimeshiftManager::run() {
     while (!stop_flag_) {
         std::vector<PendingDispatch> pending_dispatches;
         std::chrono::steady_clock::time_point next_wakeup_time;
+        std::vector<TaggedAudioPacket> newly_drained_packets;
+        TaggedAudioPacket packet_tmp;
+        // Drain inbound queue outside the data mutex to avoid blocking producers.
+        while (inbound_queue_.try_pop(packet_tmp)) {
+            newly_drained_packets.push_back(std::move(packet_tmp));
+            if (newly_drained_packets.size() >= kInboundQueueMaxSize) {
+                break; // prevent unbounded batch size
+            }
+        }
 
         {
             std::unique_lock<std::mutex> lock(data_mutex_);
             const auto iteration_start = std::chrono::steady_clock::now();
 
-            // Drain inbound packets with a small time budget while holding data_mutex_.
-            TaggedAudioPacket packet_tmp;
-            while (inbound_queue_.try_pop(packet_tmp)) {
-                process_incoming_packet_unlocked(std::move(packet_tmp));
+            // Apply the drained inbound packets while holding the mutex briefly.
+            for (auto& pkt : newly_drained_packets) {
+                process_incoming_packet_unlocked(std::move(pkt));
                 if (std::chrono::steady_clock::now() - iteration_start > kMaxProcessingHold) {
                     break;
                 }
