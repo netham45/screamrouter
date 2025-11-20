@@ -58,6 +58,14 @@ struct SinkAudioMixerStats {
     uint64_t buffer_underruns = 0;
     uint64_t buffer_overflows = 0;
     uint64_t mp3_buffer_overflows = 0;
+    BufferMetrics payload_buffer;
+    BufferMetrics mp3_output_buffer;
+    BufferMetrics mp3_pcm_buffer;
+    double last_chunk_dwell_ms = 0.0;
+    double avg_chunk_dwell_ms = 0.0;
+    double last_send_gap_ms = 0.0;
+    double avg_send_gap_ms = 0.0;
+    std::vector<SinkInputLaneStats> input_lanes;
 };
 
 using InputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
@@ -217,6 +225,8 @@ private:
     std::atomic<bool> mp3_thread_running_{false};
     std::atomic<bool> mp3_stop_flag_{false};
     size_t mp3_pcm_queue_max_depth_{0};
+    std::atomic<size_t> mp3_output_high_water_{0};
+    std::atomic<size_t> mp3_pcm_high_water_{0};
 
     std::atomic<uint64_t> m_total_chunks_mixed{0};
     std::atomic<uint64_t> m_buffer_underruns{0};
@@ -312,6 +322,7 @@ private:
 
     // Per-source underrun counters
     std::map<std::string, uint64_t> profiling_source_underruns_;
+    std::map<std::string, size_t> input_queue_high_water_;
 
     // Buffer drain control members
     std::atomic<double> smoothed_buffer_level_ms_{0.0};

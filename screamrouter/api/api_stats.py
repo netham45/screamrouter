@@ -2,12 +2,23 @@ from fastapi import FastAPI, HTTPException
 from screamrouter.configuration.configuration_manager import ConfigurationManager
 from screamrouter_audio_engine import AudioEngineSettings, TimeshiftTuning, MixerTuning, SourceProcessorTuning, ProcessorTuning, SynchronizationSettings, SynchronizationTuning
 
+def buffer_to_dict(buf):
+    return {
+        "size": getattr(buf, "size", 0),
+        "high_watermark": getattr(buf, "high_watermark", 0),
+        "depth_ms": getattr(buf, "depth_ms", 0.0),
+        "fill_percent": getattr(buf, "fill_percent", 0.0),
+        "push_rate_per_second": getattr(buf, "push_rate_per_second", 0.0),
+        "pop_rate_per_second": getattr(buf, "pop_rate_per_second", 0.0),
+    }
+
 def stats_to_dict(stats):
     """Converts the AudioEngineStats pybind11 object to a dictionary."""
     
     global_stats_dict = {
         "timeshift_buffer_total_size": stats.global_stats.timeshift_buffer_total_size,
-        "packets_added_to_timeshift_per_second": stats.global_stats.packets_added_to_timeshift_per_second
+        "packets_added_to_timeshift_per_second": stats.global_stats.packets_added_to_timeshift_per_second,
+        "timeshift_inbound_buffer": buffer_to_dict(getattr(stats.global_stats, "timeshift_inbound_buffer", None)),
     }
 
     stream_stats_dict = {}
@@ -25,7 +36,11 @@ def stats_to_dict(stats):
                 "total_anchor_adjustment_ms": stream_stat.total_anchor_adjustment_ms,
                 "total_packets_in_stream": stream_stat.total_packets_in_stream,
                 "target_buffer_level_ms": stream_stat.target_buffer_level_ms,
-                "buffer_target_fill_percentage": stream_stat.buffer_target_fill_percentage
+                "buffer_target_fill_percentage": stream_stat.buffer_target_fill_percentage,
+                "playback_rate": getattr(stream_stat, "playback_rate", 1.0),
+                "system_jitter_ms": getattr(stream_stat, "system_jitter_ms", 0.0),
+                "last_system_delay_ms": getattr(stream_stat, "last_system_delay_ms", 0.0),
+                "timeshift_buffer": buffer_to_dict(getattr(stream_stat, "timeshift_buffer", None)),
             }
 
     source_stats_list = []
@@ -37,8 +52,35 @@ def stats_to_dict(stats):
                 "input_queue_size": source_stat.input_queue_size,
                 "output_queue_size": source_stat.output_queue_size,
                 "packets_processed_per_second": source_stat.packets_processed_per_second,
-                "reconfigurations": source_stat.reconfigurations
+                "reconfigurations": source_stat.reconfigurations,
+                "playback_rate": getattr(source_stat, "playback_rate", 1.0),
+                "input_samplerate": getattr(source_stat, "input_samplerate", 0.0),
+                "output_samplerate": getattr(source_stat, "output_samplerate", 0.0),
+                "resample_ratio": getattr(source_stat, "resample_ratio", 0.0),
+                "input_buffer": buffer_to_dict(getattr(source_stat, "input_buffer", None)),
+                "output_buffer": buffer_to_dict(getattr(source_stat, "output_buffer", None)),
+                "process_buffer": buffer_to_dict(getattr(source_stat, "process_buffer", None)),
+                "timeshift_buffer": buffer_to_dict(getattr(source_stat, "timeshift_buffer", None)),
+                "last_packet_age_ms": getattr(source_stat, "last_packet_age_ms", 0.0),
+                "last_origin_age_ms": getattr(source_stat, "last_origin_age_ms", 0.0),
+                "chunks_pushed": getattr(source_stat, "chunks_pushed", 0),
+                "discarded_packets": getattr(source_stat, "discarded_packets", 0),
+                "avg_processing_ms": getattr(source_stat, "avg_processing_ms", 0.0),
+                "peak_process_buffer_samples": getattr(source_stat, "peak_process_buffer_samples", 0),
             })
+
+    def sink_input_to_dict(lane):
+        return {
+            "instance_id": lane.instance_id,
+            "source_output_queue": buffer_to_dict(getattr(lane, "source_output_queue", None)),
+            "ready_queue": buffer_to_dict(getattr(lane, "ready_queue", None)),
+            "last_chunk_dwell_ms": getattr(lane, "last_chunk_dwell_ms", 0.0),
+            "avg_chunk_dwell_ms": getattr(lane, "avg_chunk_dwell_ms", 0.0),
+            "underrun_events": getattr(lane, "underrun_events", 0),
+            "ready_total_received": getattr(lane, "ready_total_received", 0),
+            "ready_total_popped": getattr(lane, "ready_total_popped", 0),
+            "ready_total_dropped": getattr(lane, "ready_total_dropped", 0),
+        }
 
     sink_stats_list = []
     if hasattr(stats, 'sink_stats'):
@@ -61,6 +103,14 @@ def stats_to_dict(stats):
                 "sink_buffer_underruns": sink_stat.sink_buffer_underruns,
                 "sink_buffer_overflows": sink_stat.sink_buffer_overflows,
                 "mp3_buffer_overflows": sink_stat.mp3_buffer_overflows,
+                "payload_buffer": buffer_to_dict(getattr(sink_stat, "payload_buffer", None)),
+                "mp3_output_buffer": buffer_to_dict(getattr(sink_stat, "mp3_output_buffer", None)),
+                "mp3_pcm_buffer": buffer_to_dict(getattr(sink_stat, "mp3_pcm_buffer", None)),
+                "last_chunk_dwell_ms": getattr(sink_stat, "last_chunk_dwell_ms", 0.0),
+                "avg_chunk_dwell_ms": getattr(sink_stat, "avg_chunk_dwell_ms", 0.0),
+                "last_send_gap_ms": getattr(sink_stat, "last_send_gap_ms", 0.0),
+                "avg_send_gap_ms": getattr(sink_stat, "avg_send_gap_ms", 0.0),
+                "inputs": [sink_input_to_dict(l) for l in getattr(sink_stat, "inputs", [])],
                 "webrtc_listeners": webrtc_listeners_list
             })
 

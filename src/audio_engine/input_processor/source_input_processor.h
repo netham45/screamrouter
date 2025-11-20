@@ -39,6 +39,22 @@ struct SourceInputProcessorStats {
     size_t input_queue_size = 0;
     size_t output_queue_size = 0;
     uint64_t reconfigurations = 0;
+    double input_queue_ms = 0.0;
+    double output_queue_ms = 0.0;
+    double process_buffer_ms = 0.0;
+    size_t process_buffer_samples = 0;
+    size_t peak_process_buffer_samples = 0;
+    uint64_t total_chunks_pushed = 0;
+    uint64_t total_discarded_packets = 0;
+    size_t output_queue_high_water = 0;
+    size_t input_queue_high_water = 0;
+    double avg_loop_ms = 0.0;
+    double last_packet_age_ms = 0.0;
+    double last_origin_age_ms = 0.0;
+    double playback_rate = 1.0;
+    double input_samplerate = 0.0;
+    double output_samplerate = 0.0;
+    double resample_ratio = 0.0;
 };
 
 // Using aliases for clarity
@@ -165,6 +181,11 @@ private:
 
     std::atomic<uint64_t> m_total_packets_processed{0};
     std::atomic<uint64_t> m_reconfigurations{0};
+    std::atomic<uint64_t> m_total_chunks_pushed{0};
+    std::atomic<uint64_t> m_total_discarded_packets{0};
+    std::atomic<size_t> m_output_queue_high_water{0};
+    std::atomic<size_t> m_input_queue_high_water{0};
+    std::atomic<size_t> m_process_buffer_high_water{0};
     std::chrono::steady_clock::time_point m_last_packet_time;
     std::chrono::steady_clock::time_point m_last_packet_origin_time;
     bool m_is_first_packet_after_discontinuity = true;

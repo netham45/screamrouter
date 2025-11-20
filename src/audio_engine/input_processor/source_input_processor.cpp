@@ -102,6 +102,57 @@ SourceInputProcessorStats SourceInputProcessor::get_stats() {
     stats.input_queue_size = input_queue_ ? input_queue_->size() : 0;
     stats.output_queue_size = output_queue_ ? output_queue_->size() : 0;
     stats.reconfigurations = m_reconfigurations.load();
+    stats.input_queue_ms = (m_current_input_chunk_ms > 0.0)
+        ? m_current_input_chunk_ms * static_cast<double>(stats.input_queue_size)
+        : 0.0;
+    stats.output_queue_ms = (m_current_output_chunk_ms > 0.0)
+        ? m_current_output_chunk_ms * static_cast<double>(stats.output_queue_size)
+        : 0.0;
+    stats.process_buffer_samples = process_buffer_.size();
+    {
+        size_t tracked_peak = m_process_buffer_high_water.load();
+        if (stats.process_buffer_samples > tracked_peak) {
+            m_process_buffer_high_water.store(stats.process_buffer_samples);
+            tracked_peak = stats.process_buffer_samples;
+        }
+        stats.peak_process_buffer_samples = tracked_peak;
+    }
+    if (config_.output_samplerate > 0 && config_.output_channels > 0) {
+        const double frames = static_cast<double>(stats.process_buffer_samples) / static_cast<double>(config_.output_channels);
+        stats.process_buffer_ms = (frames * 1000.0) / static_cast<double>(config_.output_samplerate);
+    }
+    stats.total_chunks_pushed = m_total_chunks_pushed.load();
+    stats.total_discarded_packets = m_total_discarded_packets.load();
+    stats.output_queue_high_water = m_output_queue_high_water.load();
+    stats.input_queue_high_water = m_input_queue_high_water.load();
+    stats.playback_rate = current_playback_rate_;
+    stats.input_samplerate = static_cast<double>(m_current_ap_input_samplerate);
+    stats.output_samplerate = static_cast<double>(config_.output_samplerate);
+    if (m_current_ap_input_samplerate > 0) {
+        double base_ratio = static_cast<double>(config_.output_samplerate) / static_cast<double>(m_current_ap_input_samplerate);
+        stats.resample_ratio = base_ratio * current_playback_rate_;
+    } else {
+        stats.resample_ratio = 0.0;
+    }
+
+    if (profiling_processing_samples_ > 0) {
+        stats.avg_loop_ms = (static_cast<double>(profiling_processing_ns_) / 1'000'000.0) /
+            static_cast<double>(profiling_processing_samples_);
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (m_last_packet_time.time_since_epoch().count() != 0) {
+        stats.last_packet_age_ms = std::chrono::duration<double, std::milli>(now - m_last_packet_time).count();
+        if (stats.last_packet_age_ms < 0.0) {
+            stats.last_packet_age_ms = 0.0;
+        }
+    }
+    if (m_last_packet_origin_time.time_since_epoch().count() != 0) {
+        stats.last_origin_age_ms = std::chrono::duration<double, std::milli>(now - m_last_packet_origin_time).count();
+        if (stats.last_origin_age_ms < 0.0) {
+            stats.last_origin_age_ms = 0.0;
+        }
+    }
     return stats;
 }
 // --- Initialization & Configuration ---
@@ -286,6 +337,12 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
                                    processor_output_buffer.begin(),
                                    processor_output_buffer.begin() + samples_to_insert);
             profiling_peak_process_buffer_samples_ = std::max(profiling_peak_process_buffer_samples_, process_buffer_.size());
+            size_t current_samples = process_buffer_.size();
+            size_t observed_peak = m_process_buffer_high_water.load();
+            while (current_samples > observed_peak &&
+                   !m_process_buffer_high_water.compare_exchange_weak(observed_peak, current_samples)) {
+                // retry CAS
+            }
         } catch (const std::bad_alloc& e) {
              LOG_CPP_ERROR("[SourceProc:%s] Failed to insert into process_buffer_: %s", config_.instance_id.c_str(), e.what());
              // Handle allocation failure, maybe clear buffer or stop processing?
@@ -327,6 +384,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          }
          if (!output_queue_) {
              profiling_discarded_packets_++;
+             m_total_discarded_packets++;
              LOG_CPP_WARNING("[SourceProc:%s] Output queue missing; dropping chunk.",
                              config_.instance_id.c_str());
              continue;
@@ -390,6 +448,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
                      break;
                  }
                  profiling_discarded_packets_++;
+                 m_total_discarded_packets++;
                  if (!logged_trim) {
                      LOG_CPP_WARNING("[SourceProc:%s] Trimmed mixer queue to cap (%zu chunks).",
                                      config_.instance_id.c_str(), effective_cap);
@@ -404,6 +463,7 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
 
          if (push_result == OutputChunkQueue::PushResult::QueueStopped) {
              profiling_discarded_packets_++;
+             m_total_discarded_packets++;
              LOG_CPP_WARNING("[SourceProc:%s] Output queue stopped; dropping chunk.",
                              config_.instance_id.c_str());
              continue;
@@ -411,12 +471,21 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
 
          if (push_result != OutputChunkQueue::PushResult::Pushed) {
              profiling_discarded_packets_++;
+             m_total_discarded_packets++;
              LOG_CPP_WARNING("[SourceProc:%s] Failed to enqueue chunk (result=%d, cap=%zu).",
                              config_.instance_id.c_str(), static_cast<int>(push_result), effective_cap);
              continue;
          }
 
          profiling_chunks_pushed_++;
+         m_total_chunks_pushed++;
+         if (output_queue_) {
+             size_t depth = output_queue_->size();
+             size_t observed_hw = m_output_queue_high_water.load();
+             while (depth > observed_hw && !m_output_queue_high_water.compare_exchange_weak(observed_hw, depth)) {
+                 // retry
+             }
+         }
 
          // Remove the copied samples from the process buffer
         process_buffer_.erase(process_buffer_.begin(), process_buffer_.begin() + required_samples);
@@ -453,6 +522,7 @@ void SourceInputProcessor::append_to_input_accumulator(const TaggedAudioPacket& 
                       input_bytes_per_frame_);
         reset_input_accumulator();
         profiling_discarded_packets_++;
+        m_total_discarded_packets++;
         return;
     }
 
@@ -694,6 +764,15 @@ void SourceInputProcessor::input_loop() {
     LOG_CPP_INFO("[SourceProc:%s] Input loop started (receives timed packets).", config_.instance_id.c_str());
     TaggedAudioPacket timed_packet;
     while (!stop_flag_ && input_queue_ && input_queue_->pop(timed_packet)) {
+        if (input_queue_) {
+            size_t post_pop_depth = input_queue_->size();
+            size_t estimated_peak = post_pop_depth + 1; // account for the packet we just popped
+            size_t observed = m_input_queue_high_water.load();
+            while (estimated_peak > observed && !m_input_queue_high_water.compare_exchange_weak(observed, estimated_peak)) {
+                // retry CAS until updated
+            }
+        }
+
         m_total_packets_processed++;
         profiling_packets_received_++;
         auto loop_start = std::chrono::steady_clock::now();
@@ -776,6 +855,7 @@ void SourceInputProcessor::input_loop() {
             (void)chunk_rtp;
         } else {
             profiling_discarded_packets_++;
+            m_total_discarded_packets++;
             LOG_CPP_WARNING("[SourceProc:%s] Packet discarded by input_loop due to format/size issues or no audio processor.", config_.instance_id.c_str());
         }
 

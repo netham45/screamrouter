@@ -196,8 +196,16 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
          return;
      }
 
+    m_inbound_received++;
     auto result = inbound_queue_.push_bounded(std::move(packet), kInboundQueueMaxSize, true);
-    if (result == utils::ThreadSafeQueue<TaggedAudioPacket>::PushResult::QueueFull) {
+    size_t depth = inbound_queue_.size();
+    size_t prev_high = m_inbound_high_water.load(std::memory_order_relaxed);
+    while (depth > prev_high && !m_inbound_high_water.compare_exchange_weak(prev_high, depth, std::memory_order_relaxed)) {
+        // retry until successful
+    }
+    if (result == utils::ThreadSafeQueue<TaggedAudioPacket>::PushResult::DroppedOldest ||
+        result == utils::ThreadSafeQueue<TaggedAudioPacket>::PushResult::QueueFull) {
+        m_inbound_dropped++;
         static thread_local int throttle = 0;
         if ((throttle++ % 50) == 0) {
             LOG_CPP_WARNING("[TimeshiftManager] Inbound queue full, dropping packet(s)");
@@ -311,13 +319,90 @@ std::optional<TimeshiftBufferExport> TimeshiftManager::export_recent_buffer(
 TimeshiftManagerStats TimeshiftManager::get_stats() {
     TimeshiftManagerStats stats;
     stats.total_packets_added = m_total_packets_added.load();
+    stats.total_inbound_received = m_inbound_received.load();
+    stats.total_inbound_dropped = m_inbound_dropped.load();
+    stats.inbound_queue_high_water = m_inbound_high_water.load();
+    stats.inbound_queue_size = inbound_queue_.size();
 
     {
         std::lock_guard<std::mutex> lock(data_mutex_);
         stats.global_buffer_size = global_timeshift_buffer_.size();
+
+        std::map<std::string, size_t> stream_packets;
+        std::map<std::string, double> stream_durations_ms;
+        for (const auto& packet : global_timeshift_buffer_) {
+            stream_packets[packet.source_tag]++;
+            double duration_ms = 0.0;
+            const double bytes_per_sample = static_cast<double>(packet.bit_depth) / 8.0;
+            const double bytes_per_frame = bytes_per_sample * static_cast<double>(packet.channels);
+            if (packet.sample_rate > 0 && packet.channels > 0 && bytes_per_frame > 0.0) {
+                const double frames = static_cast<double>(packet.audio_data.size()) / bytes_per_frame;
+                duration_ms = (frames * 1000.0) / static_cast<double>(packet.sample_rate);
+            }
+            stream_durations_ms[packet.source_tag] += duration_ms;
+        }
+        stats.stream_buffered_packets = stream_packets;
+        stats.stream_buffered_duration_ms = stream_durations_ms;
+
         for (const auto& [source_tag, source_map] : processor_targets_) {
             for (const auto& [instance_id, target_info] : source_map) {
                 stats.processor_read_indices[instance_id] = target_info.next_packet_read_index;
+
+                TimeshiftManagerStats::ProcessorStats proc_stats;
+                proc_stats.instance_id = instance_id;
+                proc_stats.source_tag = active_tag(target_info);
+                if (proc_stats.source_tag.empty()) {
+                    proc_stats.source_tag = target_info.source_tag_filter;
+                }
+
+                const auto matches_target = [&](const std::string& tag) {
+                    if (target_info.is_wildcard) {
+                        if (!target_info.bound_source_tag.empty()) {
+                            return target_info.bound_source_tag == tag;
+                        }
+                        return has_prefix(tag, target_info.wildcard_prefix);
+                    }
+                    return target_info.source_tag_filter == tag;
+                };
+
+                size_t pending_packets = 0;
+                double pending_ms = 0.0;
+                for (size_t i = target_info.next_packet_read_index; i < global_timeshift_buffer_.size(); ++i) {
+                    const auto& pkt = global_timeshift_buffer_[i];
+                    if (!matches_target(pkt.source_tag)) {
+                        continue;
+                    }
+                    pending_packets++;
+                    double duration_ms = 0.0;
+                    const double bytes_per_sample = static_cast<double>(pkt.bit_depth) / 8.0;
+                    const double bytes_per_frame = bytes_per_sample * static_cast<double>(pkt.channels);
+                    if (pkt.sample_rate > 0 && pkt.channels > 0 && bytes_per_frame > 0.0) {
+                        const double frames = static_cast<double>(pkt.audio_data.size()) / bytes_per_frame;
+                        duration_ms = (frames * 1000.0) / static_cast<double>(pkt.sample_rate);
+                    }
+                    pending_ms += duration_ms;
+                }
+
+                proc_stats.pending_packets = pending_packets;
+                proc_stats.pending_ms = pending_ms;
+                proc_stats.target_queue_depth = target_info.target_queue ? target_info.target_queue->size() : 0;
+
+                stats.processor_stats[instance_id] = proc_stats;
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
+        for (auto& [instance_id, proc_stats] : stats.processor_stats) {
+            if (processor_queue_high_water_.count(instance_id)) {
+                proc_stats.target_queue_high_water = processor_queue_high_water_[instance_id];
+            }
+            if (processor_dispatched_totals_.count(instance_id)) {
+                proc_stats.dispatched_packets = processor_dispatched_totals_[instance_id];
+            }
+            if (processor_dropped_totals_.count(instance_id)) {
+                proc_stats.dropped_packets = processor_dropped_totals_[instance_id];
             }
         }
     }
@@ -339,7 +424,6 @@ TimeshiftManagerStats TimeshiftManager::get_stats() {
 
         const auto& timing_state = *access.state;
         stats.jitter_estimates[source_tag] = timing_state.jitter_estimate;
-        stats.stream_system_jitter_ms[source_tag] = timing_state.system_jitter_estimate_ms;
         stats.stream_total_packets[source_tag] = timing_state.total_packets.load();
         stats.stream_late_packets[source_tag] = timing_state.late_packets_count.load();
         stats.stream_lagging_events[source_tag] = timing_state.lagging_events_count.load();
@@ -388,10 +472,13 @@ TimeshiftManagerStats TimeshiftManager::get_stats() {
         stats.stream_clock_last_innovation_ms[source_tag] = timing_state.last_clock_innovation_ms;
         stats.stream_clock_last_measured_offset_ms[source_tag] = timing_state.last_clock_measured_offset_ms;
         if (timing_state.clock_innovation_samples > 0) {
-            stats.stream_clock_avg_abs_innovation_ms[source_tag] = timing_state.clock_innovation_abs_sum_ms / static_cast<double>(timing_state.clock_innovation_samples);
-        } else {
-            stats.stream_clock_avg_abs_innovation_ms[source_tag] = 0.0;
-        }
+        stats.stream_clock_avg_abs_innovation_ms[source_tag] = timing_state.clock_innovation_abs_sum_ms / static_cast<double>(timing_state.clock_innovation_samples);
+    } else {
+        stats.stream_clock_avg_abs_innovation_ms[source_tag] = 0.0;
+    }
+    stats.stream_system_jitter_ms[source_tag] = timing_state.system_jitter_estimate_ms;
+    stats.stream_last_system_delay_ms[source_tag] = timing_state.last_system_delay_ms;
+        stats.stream_playback_rate[source_tag] = timing_state.current_playback_rate;
     }
 
     return stats;
@@ -452,6 +539,12 @@ void TimeshiftManager::register_processor(
         LOG_CPP_DEBUG("[TimeshiftManager] Processor %s stored under filter '%s' (wildcard=%d)",
                       instance_id.c_str(), source_tag.c_str(), info.is_wildcard ? 1 : 0);
     }
+    {
+        std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
+        processor_dispatched_totals_[instance_id] = 0;
+        processor_dropped_totals_[instance_id] = 0;
+        processor_queue_high_water_[instance_id] = 0;
+    }
     LOG_CPP_INFO("[TimeshiftManager] Processor %s registered for source_tag %s with read_idx %zu",
                  instance_id.c_str(), source_tag.c_str(), info.next_packet_read_index);
     m_state_version_++;
@@ -475,6 +568,13 @@ void TimeshiftManager::unregister_processor(const std::string& instance_id, cons
     LOG_CPP_INFO("[TimeshiftManager] Processor %s unregistered.", instance_id.c_str());
     m_state_version_++;
     run_loop_cv_.notify_one();
+
+    {
+        std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
+        processor_dispatched_totals_.erase(instance_id);
+        processor_dropped_totals_.erase(instance_id);
+        processor_queue_high_water_.erase(instance_id);
+    }
 }
 
 /**
@@ -642,6 +742,15 @@ void TimeshiftManager::run() {
         for (auto& dispatch : pending_dispatches) {
             if (dispatch.target_queue) {
                 dispatch.target_queue->push(std::move(dispatch.packet));
+                if (!dispatch.instance_id.empty()) {
+                    size_t depth = dispatch.target_queue->size();
+                    std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
+                    processor_dispatched_totals_[dispatch.instance_id]++;
+                    auto& hw = processor_queue_high_water_[dispatch.instance_id];
+                    if (depth > hw) {
+                        hw = depth;
+                    }
+                }
             }
         }
 
@@ -751,6 +860,11 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
                             lateness_ms,
                             max_catchup_lag_ms);
 
+                        {
+                            std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
+                            processor_dropped_totals_[instance_id]++;
+                        }
+
                         target_info.next_packet_read_index++;
                         continue;
                     }
@@ -791,7 +905,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<PendingDis
 
                     if (target_info.target_queue) {
                         pending_dispatches.push_back(
-                            PendingDispatch{target_info.target_queue, std::move(packet_to_send)});
+                            PendingDispatch{target_info.target_queue, std::move(packet_to_send), instance_id, candidate_packet.source_tag});
                         profiling_packets_dispatched_++;
                         packets_processed++;
                         ts.last_played_rtp_timestamp = candidate_packet.rtp_timestamp.value();

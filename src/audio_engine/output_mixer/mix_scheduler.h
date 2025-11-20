@@ -38,6 +38,16 @@ public:
         std::vector<std::string> drained_sources;
     };
 
+    struct ReadyQueueStats {
+        size_t depth = 0;
+        size_t high_water = 0;
+        double head_age_ms = 0.0;
+        double tail_age_ms = 0.0;
+        uint64_t total_received = 0;
+        uint64_t total_popped = 0;
+        uint64_t total_dropped = 0;
+    };
+
     MixScheduler(std::string mixer_id,
                  std::shared_ptr<AudioEngineSettings> settings);
     ~MixScheduler();
@@ -52,6 +62,7 @@ public:
 
     HarvestResult collect_ready_chunks();
     std::map<std::string, std::size_t> get_ready_depths() const;
+    std::map<std::string, ReadyQueueStats> get_ready_stats() const;
 
     void shutdown();
 
@@ -80,6 +91,10 @@ private:
 
     mutable std::mutex ready_mutex_;
     std::unordered_map<std::string, std::deque<ReadyChunk>> ready_chunks_;
+    std::unordered_map<std::string, uint64_t> per_source_received_;
+    std::unordered_map<std::string, uint64_t> per_source_dropped_;
+    std::unordered_map<std::string, uint64_t> per_source_popped_;
+    std::unordered_map<std::string, std::size_t> per_source_high_water_;
 
     std::mutex drained_mutex_;
     std::vector<std::string> drained_sources_;

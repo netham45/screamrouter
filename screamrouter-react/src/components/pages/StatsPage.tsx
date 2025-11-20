@@ -32,7 +32,7 @@ import {
   useDisclosure,
   Switch,
 } from '@chakra-ui/react';
-import ApiService, { AudioEngineStats, AudioEngineSettings } from '../../api/api';
+import ApiService, { AudioEngineStats, AudioEngineSettings, BufferMetrics } from '../../api/api';
 
 const StatsPage: React.FC = () => {
   const [stats, setStats] = useState<AudioEngineStats | null>(null);
@@ -42,6 +42,13 @@ const StatsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
   const { isOpen, onToggle } = useDisclosure();
+  const formatRate = (val?: number) => (Number.isFinite(val) ? (val as number).toFixed(2) : 'N/A');
+  const formatBuffer = (buf?: BufferMetrics | null) => {
+    if (!buf) return 'N/A';
+    const depth = Number.isFinite(buf.depth_ms) ? buf.depth_ms : 0;
+    const fill = Number.isFinite(buf.fill_percent) ? buf.fill_percent : 0;
+    return `${buf.size ?? 0} / ${depth.toFixed(1)} ms (${fill.toFixed(1)}%)`;
+  };
 
   const fetchAllData = async () => {
     try {
@@ -186,6 +193,12 @@ const StatsPage: React.FC = () => {
               <Text fontWeight="bold">Packets Added to Timeshift/sec:</Text>
               <Text>{stats.global_stats.packets_added_to_timeshift_per_second?.toFixed(2) ?? 'N/A'}</Text>
             </VStack>
+            <VStack align="start">
+              <Text fontWeight="bold">Inbound Queue:</Text>
+              <Text>
+                {formatBuffer(stats.global_stats.timeshift_inbound_buffer)} | push {formatRate(stats.global_stats.timeshift_inbound_buffer?.push_rate_per_second)} pps | pop {formatRate(stats.global_stats.timeshift_inbound_buffer?.pop_rate_per_second)} pps
+              </Text>
+            </VStack>
           </SimpleGrid>
         </CardBody>
       </Card>
@@ -211,6 +224,10 @@ const StatsPage: React.FC = () => {
                   <Th isNumeric>Target Buffer (ms)</Th>
                   <Th isNumeric>Available Chunks</Th>
                   <Th isNumeric>Buffer Fill %</Th>
+                  <Th isNumeric>Playback Rate</Th>
+                  <Th isNumeric>TS Depth (ms)</Th>
+                  <Th isNumeric>System Jitter (ms)</Th>
+                  <Th isNumeric>System Delay (ms)</Th>
                   <Th isNumeric>Total Packets</Th>
                 </Tr>
               </Thead>
@@ -229,6 +246,10 @@ const StatsPage: React.FC = () => {
                     <Td isNumeric>{stream.target_buffer_level_ms?.toFixed(0) ?? 'N/A'}</Td>
                     <Td isNumeric>{stream.timeshift_buffer_size?.toLocaleString() ?? 'N/A'}</Td>
                     <Td isNumeric>{stream.buffer_target_fill_percentage?.toFixed(2) ?? 'N/A'}</Td>
+                    <Td isNumeric>{stream.playback_rate?.toFixed(4) ?? 'N/A'}</Td>
+                    <Td isNumeric>{stream.timeshift_buffer?.depth_ms ? stream.timeshift_buffer.depth_ms.toFixed(1) : 'N/A'}</Td>
+                    <Td isNumeric>{stream.system_jitter_ms?.toFixed(2) ?? 'N/A'}</Td>
+                    <Td isNumeric>{stream.last_system_delay_ms?.toFixed(2) ?? 'N/A'}</Td>
                     <Td isNumeric>{stream.total_packets_in_stream?.toLocaleString() ?? 'N/A'}</Td>
                   </Tr>
                 ))}
@@ -250,8 +271,18 @@ const StatsPage: React.FC = () => {
                   <Th>Instance ID</Th>
                   <Th>Source Tag</Th>
                   <Th isNumeric>Input Queue</Th>
+                  <Th isNumeric>Input Depth (ms)</Th>
+                  <Th isNumeric>Input Push/sec</Th>
+                  <Th isNumeric>Input Pop/sec</Th>
                   <Th isNumeric>Output Queue</Th>
+                  <Th isNumeric>Output Depth (ms)</Th>
+                  <Th isNumeric>Output Push/sec</Th>
+                  <Th isNumeric>Process Buffer (ms)</Th>
                   <Th isNumeric>Processed/sec</Th>
+                  <Th isNumeric>Playback Rate</Th>
+                  <Th isNumeric>Resample Ratio</Th>
+                  <Th isNumeric>Chunks Pushed</Th>
+                  <Th isNumeric>Discarded</Th>
                   <Th isNumeric>Reconfigurations</Th>
                 </Tr>
               </Thead>
@@ -261,8 +292,18 @@ const StatsPage: React.FC = () => {
                     <Td>{source.instance_id}</Td>
                     <Td>{source.source_tag}</Td>
                     <Td isNumeric>{source.input_queue_size?.toLocaleString() ?? 'N/A'}</Td>
+                    <Td isNumeric>{source.input_buffer?.depth_ms !== undefined ? source.input_buffer.depth_ms.toFixed(2) : 'N/A'}</Td>
+                    <Td isNumeric>{formatRate(source.input_buffer?.push_rate_per_second)}</Td>
+                    <Td isNumeric>{formatRate(source.input_buffer?.pop_rate_per_second)}</Td>
                     <Td isNumeric>{source.output_queue_size?.toLocaleString() ?? 'N/A'}</Td>
+                    <Td isNumeric>{source.output_buffer?.depth_ms !== undefined ? source.output_buffer.depth_ms.toFixed(2) : 'N/A'}</Td>
+                    <Td isNumeric>{formatRate(source.output_buffer?.push_rate_per_second)}</Td>
+                    <Td isNumeric>{source.process_buffer?.depth_ms !== undefined ? source.process_buffer.depth_ms.toFixed(2) : 'N/A'}</Td>
                     <Td isNumeric>{source.packets_processed_per_second?.toFixed(2) ?? 'N/A'}</Td>
+                    <Td isNumeric>{source.playback_rate?.toFixed(4) ?? 'N/A'}</Td>
+                    <Td isNumeric>{source.resample_ratio?.toFixed(4) ?? 'N/A'}</Td>
+                    <Td isNumeric>{source.chunks_pushed?.toLocaleString() ?? 'N/A'}</Td>
+                    <Td isNumeric>{source.discarded_packets?.toLocaleString() ?? 'N/A'}</Td>
                     <Td isNumeric>{source.reconfigurations?.toLocaleString() ?? 'N/A'}</Td>
                   </Tr>
                 ))}
@@ -305,6 +346,23 @@ const StatsPage: React.FC = () => {
                     <Text fontWeight="bold">MP3 Overflows:</Text>
                     <Text>{sink.mp3_buffer_overflows?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
+                <VStack align="start">
+                    <Text fontWeight="bold">Payload Buffer:</Text>
+                    <Text>{formatBuffer(sink.payload_buffer)}</Text>
+                </VStack>
+                <VStack align="start">
+                    <Text fontWeight="bold">MP3 Out Buffer:</Text>
+                    <Text>{formatBuffer(sink.mp3_output_buffer)}</Text>
+                </VStack>
+                <VStack align="start">
+                    <Text fontWeight="bold">MP3 PCM Buffer:</Text>
+                    <Text>{formatBuffer(sink.mp3_pcm_buffer)}</Text>
+                </VStack>
+              </HStack>
+              <HStack spacing={6} mb={4}>
+                <Text>Last mix dwell: {sink.last_chunk_dwell_ms !== undefined ? sink.last_chunk_dwell_ms.toFixed(2) : 'N/A'} ms</Text>
+                <Text>Avg mix dwell: {sink.avg_chunk_dwell_ms !== undefined ? sink.avg_chunk_dwell_ms.toFixed(2) : 'N/A'} ms</Text>
+                <Text>Send gap (avg/last): {sink.avg_send_gap_ms !== undefined ? sink.avg_send_gap_ms.toFixed(2) : 'N/A'} / {sink.last_send_gap_ms !== undefined ? sink.last_send_gap_ms.toFixed(2) : 'N/A'} ms</Text>
               </HStack>
               {sink.webrtc_listeners && sink.webrtc_listeners.length > 0 && (
                 <>
@@ -326,6 +384,39 @@ const StatsPage: React.FC = () => {
                             <Td>{listener.connection_state}</Td>
                             <Td isNumeric>{listener.pcm_buffer_size?.toLocaleString() ?? 'N/A'}</Td>
                             <Td isNumeric>{listener.packets_sent_per_second?.toFixed(2) ?? 'N/A'}</Td>
+                          </Tr>
+                        ))}
+                      </Tbody>
+                    </Table>
+                  </TableContainer>
+                </>
+              )}
+              {sink.inputs && sink.inputs.length > 0 && (
+                <>
+                  <Heading size="xs" mt={4} mb={2}>Input Lanes</Heading>
+                  <TableContainer>
+                    <Table variant="simple" size="sm">
+                      <Thead>
+                        <Tr>
+                          <Th>Instance</Th>
+                          <Th>Source Queue</Th>
+                          <Th>Ready Queue</Th>
+                          <Th isNumeric>Ready Push/sec</Th>
+                          <Th isNumeric>Ready Pop/sec</Th>
+                          <Th isNumeric>Dwell (ms)</Th>
+                          <Th isNumeric>Underruns</Th>
+                        </Tr>
+                      </Thead>
+                      <Tbody>
+                        {sink.inputs.map((lane) => (
+                          <Tr key={`${sink.sink_id}-${lane.instance_id}`}>
+                            <Td>{lane.instance_id}</Td>
+                            <Td>{formatBuffer(lane.source_output_queue)}</Td>
+                            <Td>{formatBuffer(lane.ready_queue)}</Td>
+                            <Td isNumeric>{formatRate(lane.ready_queue?.push_rate_per_second)}</Td>
+                            <Td isNumeric>{formatRate(lane.ready_queue?.pop_rate_per_second)}</Td>
+                            <Td isNumeric>{lane.last_chunk_dwell_ms !== undefined ? lane.last_chunk_dwell_ms.toFixed(2) : 'N/A'}</Td>
+                            <Td isNumeric>{lane.underrun_events?.toLocaleString() ?? 'N/A'}</Td>
                           </Tr>
                         ))}
                       </Tbody>

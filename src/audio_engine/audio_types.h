@@ -239,9 +239,19 @@ struct EncodedMP3Data {
 
 // --- Statistics Structs ---
 
+struct BufferMetrics {
+    size_t size = 0;
+    size_t high_watermark = 0;
+    double depth_ms = 0.0;
+    double fill_percent = 0.0;
+    double push_rate_per_second = 0.0;
+    double pop_rate_per_second = 0.0;
+};
+
 struct StreamStats {
     double jitter_estimate_ms = 0.0;
     double packets_per_second = 0.0;
+    double playback_rate = 1.0;
     size_t timeshift_buffer_size = 0;
     uint64_t timeshift_buffer_late_packets = 0;
     uint64_t timeshift_buffer_lagging_events = 0;
@@ -271,6 +281,9 @@ struct StreamStats {
     double clock_last_innovation_ms = 0.0;
     double clock_avg_abs_innovation_ms = 0.0;
     double clock_last_measured_offset_ms = 0.0;
+    double system_jitter_ms = 0.0;
+    double last_system_delay_ms = 0.0;
+    BufferMetrics timeshift_buffer;
 };
 
 struct SourceStats {
@@ -280,6 +293,20 @@ struct SourceStats {
     size_t output_queue_size = 0;
     double packets_processed_per_second = 0.0;
     uint64_t reconfigurations = 0;
+    double playback_rate = 1.0;
+    double input_samplerate = 0.0;
+    double output_samplerate = 0.0;
+    double resample_ratio = 0.0;
+    BufferMetrics input_buffer;
+    BufferMetrics output_buffer;
+    BufferMetrics process_buffer;
+    BufferMetrics timeshift_buffer;
+    double last_packet_age_ms = 0.0;
+    double last_origin_age_ms = 0.0;
+    uint64_t chunks_pushed = 0;
+    uint64_t discarded_packets = 0;
+    double avg_processing_ms = 0.0;
+    size_t peak_process_buffer_samples = 0;
 };
 
 struct WebRtcListenerStats {
@@ -287,6 +314,18 @@ struct WebRtcListenerStats {
     std::string connection_state; // e.g., "Connected", "Failed"
     size_t pcm_buffer_size = 0;
     double packets_sent_per_second = 0.0;
+};
+
+struct SinkInputLaneStats {
+    std::string instance_id;
+    BufferMetrics source_output_queue;
+    BufferMetrics ready_queue;
+    double last_chunk_dwell_ms = 0.0;
+    double avg_chunk_dwell_ms = 0.0;
+    uint64_t underrun_events = 0;
+    uint64_t ready_total_received = 0;
+    uint64_t ready_total_popped = 0;
+    uint64_t ready_total_dropped = 0;
 };
 
 struct SinkStats {
@@ -297,12 +336,21 @@ struct SinkStats {
     uint64_t sink_buffer_underruns = 0;
     uint64_t sink_buffer_overflows = 0;
     uint64_t mp3_buffer_overflows = 0;
+    BufferMetrics payload_buffer;
+    BufferMetrics mp3_output_buffer;
+    BufferMetrics mp3_pcm_buffer;
+    double last_chunk_dwell_ms = 0.0;
+    double avg_chunk_dwell_ms = 0.0;
+    double last_send_gap_ms = 0.0;
+    double avg_send_gap_ms = 0.0;
+    std::vector<SinkInputLaneStats> inputs;
     std::vector<WebRtcListenerStats> webrtc_listeners;
 };
 
 struct GlobalStats {
     size_t timeshift_buffer_total_size = 0;
     double packets_added_to_timeshift_per_second = 0.0;
+    BufferMetrics timeshift_inbound_buffer;
 };
 
 struct AudioEngineStats {
@@ -636,10 +684,20 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("direction", &DeviceDiscoveryNotification::direction)
             .def_readwrite("present", &DeviceDiscoveryNotification::present);
     
+        py::class_<BufferMetrics>(m, "BufferMetrics", "Generic buffer occupancy and rate information")
+            .def(py::init<>())
+            .def_readwrite("size", &BufferMetrics::size)
+            .def_readwrite("high_watermark", &BufferMetrics::high_watermark)
+            .def_readwrite("depth_ms", &BufferMetrics::depth_ms)
+            .def_readwrite("fill_percent", &BufferMetrics::fill_percent)
+            .def_readwrite("push_rate_per_second", &BufferMetrics::push_rate_per_second)
+            .def_readwrite("pop_rate_per_second", &BufferMetrics::pop_rate_per_second);
+
         py::class_<StreamStats>(m, "StreamStats", "Statistics for a single audio stream")
             .def(py::init<>())
             .def_readwrite("jitter_estimate_ms", &StreamStats::jitter_estimate_ms)
             .def_readwrite("packets_per_second", &StreamStats::packets_per_second)
+            .def_readwrite("playback_rate", &StreamStats::playback_rate)
             .def_readwrite("timeshift_buffer_size", &StreamStats::timeshift_buffer_size)
             .def_readwrite("timeshift_buffer_late_packets", &StreamStats::timeshift_buffer_late_packets)
             .def_readwrite("timeshift_buffer_lagging_events", &StreamStats::timeshift_buffer_lagging_events)
@@ -668,7 +726,10 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("clock_drift_ppm", &StreamStats::clock_drift_ppm)
             .def_readwrite("clock_last_innovation_ms", &StreamStats::clock_last_innovation_ms)
             .def_readwrite("clock_avg_abs_innovation_ms", &StreamStats::clock_avg_abs_innovation_ms)
-            .def_readwrite("clock_last_measured_offset_ms", &StreamStats::clock_last_measured_offset_ms);
+            .def_readwrite("clock_last_measured_offset_ms", &StreamStats::clock_last_measured_offset_ms)
+            .def_readwrite("system_jitter_ms", &StreamStats::system_jitter_ms)
+            .def_readwrite("last_system_delay_ms", &StreamStats::last_system_delay_ms)
+            .def_readwrite("timeshift_buffer", &StreamStats::timeshift_buffer);
 
         py::class_<SourceStats>(m, "SourceStats", "Statistics for a single source processor")
             .def(py::init<>())
@@ -677,7 +738,21 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("input_queue_size", &SourceStats::input_queue_size)
             .def_readwrite("output_queue_size", &SourceStats::output_queue_size)
             .def_readwrite("packets_processed_per_second", &SourceStats::packets_processed_per_second)
-            .def_readwrite("reconfigurations", &SourceStats::reconfigurations);
+            .def_readwrite("reconfigurations", &SourceStats::reconfigurations)
+            .def_readwrite("playback_rate", &SourceStats::playback_rate)
+            .def_readwrite("input_samplerate", &SourceStats::input_samplerate)
+            .def_readwrite("output_samplerate", &SourceStats::output_samplerate)
+            .def_readwrite("resample_ratio", &SourceStats::resample_ratio)
+            .def_readwrite("input_buffer", &SourceStats::input_buffer)
+            .def_readwrite("output_buffer", &SourceStats::output_buffer)
+            .def_readwrite("process_buffer", &SourceStats::process_buffer)
+            .def_readwrite("timeshift_buffer", &SourceStats::timeshift_buffer)
+            .def_readwrite("last_packet_age_ms", &SourceStats::last_packet_age_ms)
+            .def_readwrite("last_origin_age_ms", &SourceStats::last_origin_age_ms)
+            .def_readwrite("chunks_pushed", &SourceStats::chunks_pushed)
+            .def_readwrite("discarded_packets", &SourceStats::discarded_packets)
+            .def_readwrite("avg_processing_ms", &SourceStats::avg_processing_ms)
+            .def_readwrite("peak_process_buffer_samples", &SourceStats::peak_process_buffer_samples);
 
         py::class_<WebRtcListenerStats>(m, "WebRtcListenerStats", "Statistics for a single WebRTC listener")
             .def(py::init<>())
@@ -685,6 +760,18 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("connection_state", &WebRtcListenerStats::connection_state)
             .def_readwrite("pcm_buffer_size", &WebRtcListenerStats::pcm_buffer_size)
             .def_readwrite("packets_sent_per_second", &WebRtcListenerStats::packets_sent_per_second);
+
+        py::class_<SinkInputLaneStats>(m, "SinkInputLaneStats", "Per-source buffer stats within a sink mixer")
+            .def(py::init<>())
+            .def_readwrite("instance_id", &SinkInputLaneStats::instance_id)
+            .def_readwrite("source_output_queue", &SinkInputLaneStats::source_output_queue)
+            .def_readwrite("ready_queue", &SinkInputLaneStats::ready_queue)
+            .def_readwrite("last_chunk_dwell_ms", &SinkInputLaneStats::last_chunk_dwell_ms)
+            .def_readwrite("avg_chunk_dwell_ms", &SinkInputLaneStats::avg_chunk_dwell_ms)
+            .def_readwrite("underrun_events", &SinkInputLaneStats::underrun_events)
+            .def_readwrite("ready_total_received", &SinkInputLaneStats::ready_total_received)
+            .def_readwrite("ready_total_popped", &SinkInputLaneStats::ready_total_popped)
+            .def_readwrite("ready_total_dropped", &SinkInputLaneStats::ready_total_dropped);
 
         py::class_<SinkStats>(m, "SinkStats", "Statistics for a single sink mixer")
             .def(py::init<>())
@@ -695,12 +782,21 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("sink_buffer_underruns", &SinkStats::sink_buffer_underruns)
             .def_readwrite("sink_buffer_overflows", &SinkStats::sink_buffer_overflows)
             .def_readwrite("mp3_buffer_overflows", &SinkStats::mp3_buffer_overflows)
+            .def_readwrite("payload_buffer", &SinkStats::payload_buffer)
+            .def_readwrite("mp3_output_buffer", &SinkStats::mp3_output_buffer)
+            .def_readwrite("mp3_pcm_buffer", &SinkStats::mp3_pcm_buffer)
+            .def_readwrite("last_chunk_dwell_ms", &SinkStats::last_chunk_dwell_ms)
+            .def_readwrite("avg_chunk_dwell_ms", &SinkStats::avg_chunk_dwell_ms)
+            .def_readwrite("last_send_gap_ms", &SinkStats::last_send_gap_ms)
+            .def_readwrite("avg_send_gap_ms", &SinkStats::avg_send_gap_ms)
+            .def_readwrite("inputs", &SinkStats::inputs)
             .def_readwrite("webrtc_listeners", &SinkStats::webrtc_listeners);
 
         py::class_<GlobalStats>(m, "GlobalStats", "Global statistics for the audio engine")
             .def(py::init<>())
             .def_readwrite("timeshift_buffer_total_size", &GlobalStats::timeshift_buffer_total_size)
-            .def_readwrite("packets_added_to_timeshift_per_second", &GlobalStats::packets_added_to_timeshift_per_second);
+            .def_readwrite("packets_added_to_timeshift_per_second", &GlobalStats::packets_added_to_timeshift_per_second)
+            .def_readwrite("timeshift_inbound_buffer", &GlobalStats::timeshift_inbound_buffer);
 
         py::class_<AudioEngineStats>(m, "AudioEngineStats", "A collection of all statistics from the audio engine")
             .def(py::init<>())

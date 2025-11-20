@@ -139,9 +139,15 @@ struct StreamTimingState {
  */
 struct TimeshiftManagerStats {
     uint64_t total_packets_added = 0;
+    uint64_t total_inbound_received = 0;
+    uint64_t total_inbound_dropped = 0;
+    size_t inbound_queue_size = 0;
+    size_t inbound_queue_high_water = 0;
     size_t global_buffer_size = 0;
     std::map<std::string, double> jitter_estimates;
     std::map<std::string, uint64_t> stream_total_packets;
+    std::map<std::string, size_t> stream_buffered_packets;
+    std::map<std::string, double> stream_buffered_duration_ms;
     std::map<std::string, size_t> processor_read_indices;
     std::map<std::string, uint64_t> stream_late_packets;
     std::map<std::string, uint64_t> stream_lagging_events;
@@ -168,6 +174,19 @@ struct TimeshiftManagerStats {
     std::map<std::string, double> stream_clock_avg_abs_innovation_ms;
     std::map<std::string, double> stream_system_jitter_ms;
     std::map<std::string, double> stream_clock_last_measured_offset_ms;
+    std::map<std::string, double> stream_last_system_delay_ms;
+    std::map<std::string, double> stream_playback_rate;
+    struct ProcessorStats {
+        std::string instance_id;
+        std::string source_tag;
+        size_t pending_packets = 0;
+        double pending_ms = 0.0;
+        size_t target_queue_depth = 0;
+        size_t target_queue_high_water = 0;
+        uint64_t dispatched_packets = 0;
+        uint64_t dropped_packets = 0;
+    };
+    std::map<std::string, ProcessorStats> processor_stats;
 };
 
 /**
@@ -262,6 +281,8 @@ private:
     struct PendingDispatch {
         std::shared_ptr<PacketQueue> target_queue;
         TaggedAudioPacket packet;
+        std::string instance_id;
+        std::string source_tag;
     };
 
     struct TimingStateAccess {
@@ -287,9 +308,20 @@ private:
     std::chrono::seconds max_buffer_duration_sec_;
     std::chrono::steady_clock::time_point last_cleanup_time_;
 
+    // Inbound queue metrics
+    std::atomic<uint64_t> m_inbound_received{0};
+    std::atomic<uint64_t> m_inbound_dropped{0};
+    std::atomic<size_t> m_inbound_high_water{0};
+
     // Inbound decoupling to avoid blocking capture threads on the main data mutex.
     utils::ThreadSafeQueue<TaggedAudioPacket> inbound_queue_;
     static constexpr std::size_t kInboundQueueMaxSize = 1024;
+
+    // Per-processor dispatch/drop accounting
+    std::mutex processor_stats_mutex_;
+    std::map<std::string, uint64_t> processor_dispatched_totals_;
+    std::map<std::string, uint64_t> processor_dropped_totals_;
+    std::map<std::string, size_t> processor_queue_high_water_;
 
     /** @brief A single iteration of the processing loop. Collects ready packets while data_mutex_ is held. */
     void processing_loop_iteration_unlocked(std::vector<PendingDispatch>& pending_dispatches);

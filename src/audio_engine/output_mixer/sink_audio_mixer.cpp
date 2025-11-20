@@ -424,6 +424,49 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
     stats.buffer_underruns = m_buffer_underruns.load();
     stats.buffer_overflows = m_buffer_overflows.load();
     stats.mp3_buffer_overflows = m_mp3_buffer_overflows.load();
+    stats.last_chunk_dwell_ms = profiling_last_chunk_dwell_ms_;
+    stats.avg_chunk_dwell_ms = profiling_chunk_dwell_samples_ > 0
+        ? profiling_chunk_dwell_sum_ms_ / static_cast<double>(profiling_chunk_dwell_samples_)
+        : profiling_last_chunk_dwell_ms_;
+    stats.last_send_gap_ms = profiling_last_send_gap_ms_;
+    stats.avg_send_gap_ms = profiling_send_gap_samples_ > 0
+        ? profiling_send_gap_sum_ms_ / static_cast<double>(profiling_send_gap_samples_)
+        : profiling_last_send_gap_ms_;
+
+    const double chunk_ms = (playback_sample_rate_ > 0)
+        ? (static_cast<double>(frames_per_chunk_) * 1000.0) / static_cast<double>(playback_sample_rate_)
+        : 0.0;
+
+    stats.payload_buffer.size = payload_buffer_write_pos_;
+    stats.payload_buffer.high_watermark = std::max(payload_buffer_write_pos_, profiling_max_payload_buffer_bytes_);
+    if (!payload_buffer_.empty()) {
+        stats.payload_buffer.fill_percent = (static_cast<double>(payload_buffer_write_pos_) / static_cast<double>(payload_buffer_.size())) * 100.0;
+        if (chunk_size_bytes_ > 0 && chunk_ms > 0.0) {
+            const double chunks_buffered = static_cast<double>(payload_buffer_write_pos_) / static_cast<double>(chunk_size_bytes_);
+            stats.payload_buffer.depth_ms = chunks_buffered * chunk_ms;
+        }
+    }
+
+    if (mp3_output_queue_) {
+        stats.mp3_output_buffer.size = mp3_output_queue_->size();
+        stats.mp3_output_buffer.high_watermark = mp3_output_high_water_.load();
+        if (chunk_ms > 0.0) {
+            stats.mp3_output_buffer.depth_ms = chunk_ms * static_cast<double>(stats.mp3_output_buffer.size);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> mp3_lock(mp3_mutex_);
+        stats.mp3_pcm_buffer.size = mp3_pcm_queue_.size();
+        stats.mp3_pcm_buffer.high_watermark = mp3_pcm_high_water_.load();
+        if (chunk_ms > 0.0) {
+            stats.mp3_pcm_buffer.depth_ms = chunk_ms * static_cast<double>(stats.mp3_pcm_buffer.size);
+        }
+    }
+
+    std::map<std::string, MixScheduler::ReadyQueueStats> ready_stats;
+    if (mix_scheduler_) {
+        ready_stats = mix_scheduler_->get_ready_stats();
+    }
 
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
@@ -435,6 +478,42 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
             }
         }
         stats.active_input_streams = active_count;
+
+        for (const auto& [instance_id, queue_ptr] : input_queues_) {
+            SinkInputLaneStats lane;
+            lane.instance_id = instance_id;
+            size_t depth = queue_ptr ? queue_ptr->size() : 0;
+            auto& hw = input_queue_high_water_[instance_id];
+            if (depth > hw) {
+                hw = depth;
+            }
+            lane.source_output_queue.size = depth;
+            lane.source_output_queue.high_watermark = hw;
+            if (chunk_ms > 0.0) {
+                lane.source_output_queue.depth_ms = chunk_ms * static_cast<double>(depth);
+            }
+
+            auto ready_it = ready_stats.find(instance_id);
+            if (ready_it != ready_stats.end()) {
+                const auto& rs = ready_it->second;
+                lane.ready_queue.size = rs.depth;
+                lane.ready_queue.high_watermark = rs.high_water;
+                lane.ready_total_received = rs.total_received;
+                lane.ready_total_popped = rs.total_popped;
+                lane.ready_total_dropped = rs.total_dropped;
+                if (chunk_ms > 0.0) {
+                    lane.ready_queue.depth_ms = chunk_ms * static_cast<double>(rs.depth);
+                }
+                lane.last_chunk_dwell_ms = rs.head_age_ms;
+                lane.avg_chunk_dwell_ms = rs.tail_age_ms;
+            }
+            auto underrun_it = profiling_source_underruns_.find(instance_id);
+            if (underrun_it != profiling_source_underruns_.end()) {
+                lane.underrun_events = underrun_it->second;
+            }
+
+            stats.input_lanes.push_back(std::move(lane));
+        }
     }
 
     {
@@ -1120,6 +1199,11 @@ void SinkAudioMixer::enqueue_mp3_pcm(const int32_t* samples, size_t sample_count
     std::vector<int32_t> buffer(sample_count);
     std::memcpy(buffer.data(), samples, sample_count * sizeof(int32_t));
     mp3_pcm_queue_.push_back(std::move(buffer));
+    size_t depth = mp3_pcm_queue_.size();
+    size_t hw = mp3_pcm_high_water_.load();
+    while (depth > hw && !mp3_pcm_high_water_.compare_exchange_weak(hw, depth)) {
+        // retry
+    }
     lock.unlock();
     mp3_cv_.notify_one();
 }
@@ -1160,6 +1244,11 @@ void SinkAudioMixer::encode_and_push_mp3(const int32_t* samples, size_t sample_c
         EncodedMP3Data mp3_data;
         mp3_data.mp3_data.assign(mp3_encode_buffer_.begin(), mp3_encode_buffer_.begin() + mp3_bytes_encoded);
         mp3_output_queue_->push(std::move(mp3_data));
+        size_t depth = mp3_output_queue_->size();
+        size_t hw = mp3_output_high_water_.load();
+        while (depth > hw && !mp3_output_high_water_.compare_exchange_weak(hw, depth)) {
+            // retry
+        }
     }
     auto t1 = std::chrono::steady_clock::now();
     uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());

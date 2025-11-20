@@ -136,6 +136,15 @@ export interface Equalizer {
   normalization_enabled?: boolean;
 }
 
+export interface BufferMetrics {
+  size: number;
+  high_watermark: number;
+  depth_ms: number;
+  fill_percent: number;
+  push_rate_per_second: number;
+  pop_rate_per_second: number;
+}
+
 export interface StreamStats {
   jitter_estimate_ms: number;
   packets_per_second: number;
@@ -149,6 +158,10 @@ export interface StreamStats {
   tm_packets_discarded: number;
   target_buffer_level_ms: number;
   buffer_target_fill_percentage: number;
+  playback_rate: number;
+  system_jitter_ms: number;
+  last_system_delay_ms: number;
+  timeshift_buffer: BufferMetrics;
 }
 
 export interface SourceStats {
@@ -158,6 +171,20 @@ export interface SourceStats {
   output_queue_size: number;
   packets_processed_per_second: number;
   reconfigurations: number;
+  playback_rate: number;
+  input_samplerate: number;
+  output_samplerate: number;
+  resample_ratio: number;
+  input_buffer: BufferMetrics;
+  output_buffer: BufferMetrics;
+  process_buffer: BufferMetrics;
+  timeshift_buffer: BufferMetrics;
+  last_packet_age_ms: number;
+  last_origin_age_ms: number;
+  chunks_pushed: number;
+  discarded_packets: number;
+  avg_processing_ms: number;
+  peak_process_buffer_samples: number;
 }
 
 export interface WebRtcListenerStats {
@@ -165,6 +192,18 @@ export interface WebRtcListenerStats {
   connection_state: string;
   pcm_buffer_size: number;
   packets_sent_per_second: number;
+}
+
+export interface SinkInputLaneStats {
+  instance_id: string;
+  source_output_queue: BufferMetrics;
+  ready_queue: BufferMetrics;
+  last_chunk_dwell_ms: number;
+  avg_chunk_dwell_ms: number;
+  underrun_events: number;
+  ready_total_received: number;
+  ready_total_popped: number;
+  ready_total_dropped: number;
 }
 
 export interface SinkStats {
@@ -175,12 +214,21 @@ export interface SinkStats {
   sink_buffer_underruns: number;
   sink_buffer_overflows: number;
   mp3_buffer_overflows: number;
+  payload_buffer: BufferMetrics;
+  mp3_output_buffer: BufferMetrics;
+  mp3_pcm_buffer: BufferMetrics;
+  last_chunk_dwell_ms: number;
+  avg_chunk_dwell_ms: number;
+  last_send_gap_ms: number;
+  avg_send_gap_ms: number;
+  inputs: SinkInputLaneStats[];
   webrtc_listeners: WebRtcListenerStats[];
 }
 
 export interface GlobalStats {
   timeshift_buffer_total_size: number;
   packets_added_to_timeshift_per_second: number;
+  timeshift_inbound_buffer: BufferMetrics;
 }
 
 export interface AudioEngineStats {
