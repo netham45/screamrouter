@@ -339,7 +339,128 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
         return;
     }
 
-    timeshift_manager_->add_packet(std::move(packet));
+    if (packet.audio_data.empty()) {
+        return;
+    }
+
+    const uint32_t bytes_per_sample = packet.bit_depth > 0 ? static_cast<uint32_t>(std::max(packet.bit_depth / 8, 1)) : 0;
+    const std::size_t bytes_per_frame = (bytes_per_sample > 0 && packet.channels > 0)
+        ? static_cast<std::size_t>(packet.channels) * bytes_per_sample
+        : 0;
+
+    std::size_t chunk_bytes = default_chunk_size_bytes_;
+    if (bytes_per_frame > 0) {
+        const std::size_t remainder = chunk_bytes % bytes_per_frame;
+        if (remainder != 0) {
+            chunk_bytes += (bytes_per_frame - remainder);
+        }
+    }
+    if (chunk_bytes == 0) {
+        chunk_bytes = default_chunk_size_bytes_;
+    }
+
+    std::vector<TaggedAudioPacket> ready_chunks;
+    {
+        std::lock_guard<std::mutex> lock(accumulator_mutex_);
+        auto& acc = accumulators_[packet.source_tag];
+        const bool format_changed = acc.channels != packet.channels ||
+                                    acc.sample_rate != packet.sample_rate ||
+                                    acc.bit_depth != packet.bit_depth ||
+                                    acc.chlayout1 != packet.chlayout1 ||
+                                    acc.chlayout2 != packet.chlayout2;
+        if (format_changed || acc.chunk_bytes != chunk_bytes) {
+            acc.buffer.clear();
+            acc.first_received = {};
+            acc.last_delivery = {};
+            acc.has_last_delivery = false;
+            acc.base_rtp_timestamp.reset();
+            acc.frame_cursor = 0;
+            acc.ssrcs.clear();
+        }
+
+        acc.channels = packet.channels;
+        acc.sample_rate = packet.sample_rate;
+        acc.bit_depth = packet.bit_depth;
+        acc.chlayout1 = packet.chlayout1;
+        acc.chlayout2 = packet.chlayout2;
+        acc.chunk_bytes = chunk_bytes;
+        acc.bytes_per_frame = bytes_per_frame;
+
+        if (acc.buffer.capacity() < acc.chunk_bytes * 2 && acc.chunk_bytes > 0) {
+            acc.buffer.reserve(acc.chunk_bytes * 2);
+        }
+
+        if (acc.first_received == std::chrono::steady_clock::time_point{}) {
+            acc.first_received = packet.received_time;
+        }
+        if (!packet.ssrcs.empty()) {
+            acc.ssrcs = packet.ssrcs;
+        }
+        if (!acc.base_rtp_timestamp && packet.rtp_timestamp.has_value()) {
+            acc.base_rtp_timestamp = packet.rtp_timestamp;
+            acc.frame_cursor = 0;
+        }
+
+        acc.buffer.write(packet.audio_data.data(), packet.audio_data.size());
+
+        while (acc.chunk_bytes > 0 && acc.buffer.size() >= acc.chunk_bytes) {
+            std::vector<uint8_t> chunk(acc.chunk_bytes);
+            const std::size_t popped = acc.buffer.pop(chunk.data(), acc.chunk_bytes);
+            if (popped == 0) {
+                break;
+            }
+            chunk.resize(popped);
+
+            TaggedAudioPacket out;
+            out.source_tag = packet.source_tag;
+            out.audio_data = std::move(chunk);
+            out.channels = acc.channels;
+            out.sample_rate = acc.sample_rate;
+            out.bit_depth = acc.bit_depth;
+            out.chlayout1 = acc.chlayout1;
+            out.chlayout2 = acc.chlayout2;
+            out.ssrcs = acc.ssrcs.empty() ? packet.ssrcs : acc.ssrcs;
+
+            const std::size_t chunk_frames = (acc.bytes_per_frame > 0) ? (popped / acc.bytes_per_frame) : 0;
+
+            if (!acc.has_last_delivery) {
+                if (acc.first_received == std::chrono::steady_clock::time_point{}) {
+                    acc.first_received = std::chrono::steady_clock::now();
+                }
+                acc.last_delivery = acc.first_received;
+                acc.has_last_delivery = true;
+            }
+
+            out.received_time = acc.last_delivery;
+
+            if (acc.base_rtp_timestamp.has_value()) {
+                const uint64_t ts64 = static_cast<uint64_t>(*acc.base_rtp_timestamp) + acc.frame_cursor;
+                out.rtp_timestamp = static_cast<uint32_t>(ts64 & 0xFFFFFFFFu);
+            } else if (packet.rtp_timestamp.has_value()) {
+                out.rtp_timestamp = packet.rtp_timestamp;
+            }
+
+            if (chunk_frames > 0) {
+                acc.frame_cursor += chunk_frames;
+                if (acc.sample_rate > 0) {
+                    const uint64_t usec = (static_cast<uint64_t>(chunk_frames) * 1'000'000ULL) /
+                                          static_cast<uint64_t>(acc.sample_rate);
+                    acc.last_delivery += std::chrono::microseconds(usec);
+                    acc.first_received = acc.last_delivery;
+                }
+            }
+
+            ready_chunks.push_back(std::move(out));
+        }
+
+        if (acc.buffer.size() == 0) {
+            acc.first_received = {};
+        }
+    }
+
+    for (auto& ready_packet : ready_chunks) {
+        timeshift_manager_->add_packet(std::move(ready_packet));
+    }
 }
 
 void NetworkAudioReceiver::on_before_poll_wait() {

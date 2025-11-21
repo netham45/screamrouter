@@ -89,8 +89,20 @@ private:
     unsigned int active_sample_rate_ = 48000;
     size_t source_bytes_per_frame_ = 0;
     size_t target_bytes_per_frame_ = 0;
-    // Buffer for format conversion only (not accumulation)
-    std::vector<uint8_t> conversion_buffer_;
+    size_t max_packet_bytes_ = 0;
+    // Reusable buffers to avoid per-packet reallocations.
+    std::vector<uint8_t> packet_buffer_;
+    std::vector<uint8_t> spare_buffer_;
+    UINT32 configured_buffer_frames_ = 0;
+    double configured_buffer_ms_ = 0.0;
+
+    // Telemetry
+    uint64_t packets_seen_ = 0;
+    uint64_t bytes_seen_ = 0;
+    uint64_t frames_seen_ = 0;
+    uint32_t min_frames_seen_ = 0;
+    uint32_t max_frames_seen_ = 0;
+    std::chrono::steady_clock::time_point last_stats_log_time_{};
 
     uint32_t running_timestamp_ = 0;
     bool stream_time_initialized_ = false;

@@ -64,23 +64,18 @@ SinkAudioMixer::SinkAudioMixer(
     : config_(config),
       m_settings(settings),
       frames_per_chunk_(resolve_base_frames_per_chunk(m_settings)),
-      chunk_size_bytes_([this]() {
-          const auto computed = compute_chunk_size_bytes_for_format(
-              frames_per_chunk_, config_.output_channels, config_.output_bitdepth);
-          const auto fallback = resolve_chunk_size_bytes(m_settings);
-          return computed > 0 ? computed : fallback;
-      }()),
-      mixing_buffer_samples_(compute_processed_chunk_samples(frames_per_chunk_, std::max(1, config_.output_channels))),
-      mp3_buffer_size_(chunk_size_bytes_ * 8),
+      chunk_size_bytes_(0),
+      mixing_buffer_samples_(0),
+      mp3_buffer_size_(0),
       mp3_output_queue_(mp3_output_queue),
       network_sender_(nullptr),
       mix_scheduler_(std::make_unique<MixScheduler>(config_.sink_id, m_settings)),
-      mixing_buffer_(mixing_buffer_samples_, 0),
-      stereo_buffer_(mixing_buffer_samples_ * 2, 0),
-      payload_buffer_(mp3_buffer_size_, 0),
+      mixing_buffer_(),
+      stereo_buffer_(),
+      payload_buffer_(),
       lame_global_flags_(nullptr),
       stereo_preprocessor_(nullptr),
-      mp3_encode_buffer_(mp3_buffer_size_),
+      mp3_encode_buffer_(),
       mp3_pcm_queue_max_depth_(0),
       profiling_last_log_time_(std::chrono::steady_clock::now())
 {
@@ -191,7 +186,7 @@ SinkAudioMixer::SinkAudioMixer(
     }
 
     if (mix_scheduler_) {
-        mix_scheduler_->set_timing_parameters(frames_per_chunk_, config_.output_samplerate);
+        mix_scheduler_->set_timing_parameters(frames_per_chunk_, playback_sample_rate_);
     }
 
     last_drain_check_ = std::chrono::steady_clock::now();
@@ -1627,7 +1622,51 @@ void SinkAudioMixer::set_playback_format(int sample_rate, int channels, int bit_
     playback_channels_ = sanitized_channels;
     playback_bit_depth_ = sanitized_bit_depth;
 
-    mix_period_ = calculate_mix_period(playback_sample_rate_, playback_channels_, playback_bit_depth_);
+    refresh_format_dependent_buffers(playback_sample_rate_, playback_channels_, playback_bit_depth_);
+}
+
+void SinkAudioMixer::refresh_format_dependent_buffers(int sample_rate, int channels, int bit_depth) {
+    const int sanitized_rate = sample_rate > 0 ? sample_rate : 48000;
+    const int sanitized_channels = std::clamp(channels, 1, 8);
+    int sanitized_bit_depth = bit_depth > 0 ? bit_depth : 16;
+    if ((sanitized_bit_depth % 8) != 0) {
+        sanitized_bit_depth = 16;
+    }
+
+    std::size_t new_chunk_size = compute_chunk_size_bytes_for_format(
+        frames_per_chunk_, sanitized_channels, sanitized_bit_depth);
+    if (new_chunk_size == 0) {
+        const auto fallback = resolve_chunk_size_bytes(m_settings);
+        if (fallback > 0) {
+            new_chunk_size = fallback;
+        } else if (chunk_size_bytes_ > 0) {
+            new_chunk_size = chunk_size_bytes_;
+        }
+    }
+
+    const std::size_t new_mixing_samples =
+        compute_processed_chunk_samples(frames_per_chunk_, std::max(1, sanitized_channels));
+
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        chunk_size_bytes_ = new_chunk_size;
+        mixing_buffer_samples_ = new_mixing_samples;
+        mp3_buffer_size_ = chunk_size_bytes_ * 8;
+
+        mixing_buffer_.assign(mixing_buffer_samples_, 0);
+        stereo_buffer_.assign(mixing_buffer_samples_ * 2, 0);
+        payload_buffer_.assign(mp3_buffer_size_, 0);
+        mp3_encode_buffer_.assign(mp3_buffer_size_, 0);
+        if (payload_buffer_write_pos_ > payload_buffer_.size()) {
+            payload_buffer_write_pos_ = payload_buffer_.size();
+        }
+    }
+
+    mix_period_ = calculate_mix_period(sanitized_rate, sanitized_channels, sanitized_bit_depth);
+
+    if (mix_scheduler_) {
+        mix_scheduler_->set_timing_parameters(frames_per_chunk_, sanitized_rate);
+    }
 }
 
 void SinkAudioMixer::update_playback_format_from_sender() {

@@ -175,9 +175,9 @@ private:
     SinkMixerConfig config_;
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
     const std::size_t frames_per_chunk_;
-    const std::size_t chunk_size_bytes_;
-    const std::size_t mixing_buffer_samples_;
-    const std::size_t mp3_buffer_size_;
+    std::size_t chunk_size_bytes_;
+    std::size_t mixing_buffer_samples_;
+    std::size_t mp3_buffer_size_;
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
     std::unique_ptr<INetworkSender> network_sender_;
     std::unique_ptr<MixScheduler> mix_scheduler_;
@@ -252,6 +252,7 @@ private:
     void stop_mp3_thread();
     void mp3_thread_loop();
 
+    void refresh_format_dependent_buffers(int sample_rate, int channels, int bit_depth);
     bool wait_for_source_data();
     void mix_buffers();
     void downscale_buffer();
