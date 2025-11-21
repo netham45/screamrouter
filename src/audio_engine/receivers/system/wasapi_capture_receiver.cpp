@@ -371,6 +371,46 @@ bool WasapiCaptureReceiver::initialize_capture_format(WAVEFORMATEX* mix_format) 
     AUDCLNT_SHAREMODE share_mode = (loopback_mode_) ? AUDCLNT_SHAREMODE_SHARED
                                                     : (exclusive_mode_ ? AUDCLNT_SHAREMODE_EXCLUSIVE : AUDCLNT_SHAREMODE_SHARED);
 
+    // For loopback in shared mode, WASAPI only guarantees the mix format; avoid conversion by
+    // using it verbatim instead of requesting an alternate PCM format.
+    if (loopback_mode_) {
+        format_buffer_.resize(sizeof(WAVEFORMATEX) + mix_format->cbSize);
+        std::memcpy(format_buffer_.data(), mix_format, format_buffer_.size());
+        format_ptr_ = reinterpret_cast<WAVEFORMATEX*>(format_buffer_.data());
+
+        source_format_ = IdentifyFormat(format_ptr_);
+        source_bits_per_sample_ = BitsPerSample(format_ptr_);
+
+        active_channels_ = format_ptr_->nChannels;
+        active_sample_rate_ = format_ptr_->nSamplesPerSec;
+        seconds_per_frame_ = active_sample_rate_ > 0 ? (1.0 / static_cast<double>(active_sample_rate_)) : 0.0;
+
+        // Choose output bit depth: convert float to 32-bit PCM; for PCM keep container width
+        // so frame sizing matches the bytes WASAPI delivers (important for 24-bit in 32-bit containers).
+        source_bytes_per_frame_ = format_ptr_->nBlockAlign;
+        if (source_format_ == SampleFormat::Float32) {
+            target_bit_depth_ = 32;
+            target_bytes_per_frame_ = (target_bit_depth_ / 8) * active_channels_;
+        } else {
+            const unsigned int container_bits = (active_channels_ > 0 && source_bytes_per_frame_ > 0)
+                                                    ? static_cast<unsigned int>((source_bytes_per_frame_ / active_channels_) * 8)
+                                                    : source_bits_per_sample_;
+            target_bit_depth_ = container_bits;
+            target_bytes_per_frame_ = source_bytes_per_frame_;
+        }
+
+        LOG_CPP_INFO("[WasapiCapture:%s] Using mix format for loopback: %u Hz, %u ch, %u-bit (mask=0x%08x)",
+                     device_tag_.c_str(),
+                     format_ptr_->nSamplesPerSec,
+                     format_ptr_->nChannels,
+                     source_bits_per_sample_,
+                     (mix_format->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
+                         ? reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mix_format)->dwChannelMask
+                         : 0u);
+
+        return true;
+    }
+
     // Attempt to honor user-requested format (primarily for exclusive mode).
     WAVEFORMATEXTENSIBLE requested = {};
     requested.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
@@ -455,10 +495,19 @@ bool WasapiCaptureReceiver::initialize_capture_format(WAVEFORMATEX* mix_format) 
         seconds_per_frame_ = 0.0;
     }
 
-    // Always output 32-bit samples downstream.
-    target_bit_depth_ = 32;
-    target_bytes_per_frame_ = (target_bit_depth_ / 8) * active_channels_;
+    // Choose output bit depth: convert float to 32-bit PCM; for PCM keep container width
+    // so frame sizing matches the bytes WASAPI delivers (important for 24-bit in 32-bit containers).
     source_bytes_per_frame_ = format_ptr_->nBlockAlign;
+    if (source_format_ == SampleFormat::Float32) {
+        target_bit_depth_ = 32;
+        target_bytes_per_frame_ = (target_bit_depth_ / 8) * active_channels_;
+    } else {
+        const unsigned int container_bits = (active_channels_ > 0 && source_bytes_per_frame_ > 0)
+                                                ? static_cast<unsigned int>((source_bytes_per_frame_ / active_channels_) * 8)
+                                                : source_bits_per_sample_;
+        target_bit_depth_ = container_bits;
+        target_bytes_per_frame_ = source_bytes_per_frame_;
+    }
 
     if (target_bytes_per_frame_ == 0 || source_bytes_per_frame_ == 0) {
         LOG_CPP_ERROR("[WasapiCapture:%s] Invalid frame sizing (target=%zu, source=%zu).",
@@ -590,52 +639,46 @@ void WasapiCaptureReceiver::process_packet(BYTE* data, UINT32 frames, DWORD flag
         stream_time_initialized_ = true;
     }
 
-    const size_t total_target_bytes = static_cast<size_t>(frames) * target_bytes_per_frame_;
-    if (packet_buffer_.capacity() < total_target_bytes) {
-        // Reserve to the larger of requested size or the known max from GetBufferSize.
-        const size_t target_reserve = (max_packet_bytes_ > 0 && max_packet_bytes_ > total_target_bytes)
-                                          ? max_packet_bytes_
-                                          : total_target_bytes;
-        packet_buffer_.reserve(target_reserve);
-    }
-    packet_buffer_.resize(total_target_bytes);
-    uint8_t* dst_bytes = packet_buffer_.data();
+    if (source_format_ == SampleFormat::Float32) {
+        // Convert float to 32-bit PCM.
+        const size_t total_target_bytes = static_cast<size_t>(frames) * target_bytes_per_frame_;
+        if (packet_buffer_.capacity() < total_target_bytes) {
+            const size_t target_reserve = (max_packet_bytes_ > 0 && max_packet_bytes_ > total_target_bytes)
+                                              ? max_packet_bytes_
+                                              : total_target_bytes;
+            packet_buffer_.reserve(target_reserve);
+        }
+        packet_buffer_.resize(total_target_bytes);
+        uint8_t* dst_bytes = packet_buffer_.data();
 
-    if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-        std::memset(dst_bytes, 0, total_target_bytes);
-    } else if (source_format_ == SampleFormat::Float32) {
-        const float* src = reinterpret_cast<const float*>(data);
-        int32_t* dst = reinterpret_cast<int32_t*>(dst_bytes);
-        for (size_t i = 0; i < static_cast<size_t>(frames) * active_channels_; ++i) {
-            float sample = src[i];
-            if (sample > 1.0f) sample = 1.0f;
-            if (sample < -1.0f) sample = -1.0f;
-            dst[i] = static_cast<int32_t>(sample * 2147483647.0f);
-        }
-    } else if (source_format_ == SampleFormat::Int16) {
-        const int16_t* src = reinterpret_cast<const int16_t*>(data);
-        int32_t* dst = reinterpret_cast<int32_t*>(dst_bytes);
-        for (size_t i = 0; i < static_cast<size_t>(frames) * active_channels_; ++i) {
-            dst[i] = static_cast<int32_t>(src[i]) << 16;
-        }
-    } else if (source_format_ == SampleFormat::Int32) {
-        const int32_t* src = reinterpret_cast<const int32_t*>(data);
-        std::memcpy(dst_bytes, src, total_target_bytes);
-    } else if (source_format_ == SampleFormat::Int24) {
-        const uint8_t* src = reinterpret_cast<const uint8_t*>(data);
-        int32_t* dst = reinterpret_cast<int32_t*>(dst_bytes);
-        for (size_t i = 0; i < static_cast<size_t>(frames) * active_channels_; ++i) {
-            int32_t value = static_cast<int32_t>(src[3 * i]) |
-                            (static_cast<int32_t>(src[3 * i + 1]) << 8) |
-                            (static_cast<int32_t>(src[3 * i + 2]) << 16);
-            value = (value << 8) >> 8; // sign-extend 24-bit
-            dst[i] = value << 8; // align to 32-bit full scale
+        if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
+            std::memset(dst_bytes, 0, total_target_bytes);
+        } else {
+            const float* src = reinterpret_cast<const float*>(data);
+            int32_t* dst = reinterpret_cast<int32_t*>(dst_bytes);
+            for (size_t i = 0; i < static_cast<size_t>(frames) * active_channels_; ++i) {
+                float sample = src[i];
+                if (sample > 1.0f) sample = 1.0f;
+                if (sample < -1.0f) sample = -1.0f;
+                dst[i] = static_cast<int32_t>(sample * 2147483647.0f);
+            }
         }
     } else {
-        const size_t copy_bytes = static_cast<size_t>(frames) * (std::min)(target_bytes_per_frame_, source_bytes_per_frame_);
-        std::memcpy(dst_bytes, reinterpret_cast<uint8_t*>(data), copy_bytes);
-        if (copy_bytes < total_target_bytes) {
-            std::memset(dst_bytes + copy_bytes, 0, total_target_bytes - copy_bytes);
+        // PCM input: keep native bit depth and copy as-is.
+        const size_t copy_bytes = static_cast<size_t>(frames) * source_bytes_per_frame_;
+        if (packet_buffer_.capacity() < copy_bytes) {
+            const size_t target_reserve = (max_packet_bytes_ > 0 && max_packet_bytes_ > copy_bytes)
+                                              ? max_packet_bytes_
+                                              : copy_bytes;
+            packet_buffer_.reserve(target_reserve);
+        }
+        packet_buffer_.resize(copy_bytes);
+        uint8_t* dst_bytes = packet_buffer_.data();
+
+        if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
+            std::memset(dst_bytes, 0, copy_bytes);
+        } else {
+            std::memcpy(dst_bytes, reinterpret_cast<uint8_t*>(data), copy_bytes);
         }
     }
 
@@ -698,12 +741,44 @@ void WasapiCaptureReceiver::dispatch_chunk(std::vector<uint8_t>&& chunk_data, ui
     packet.source_tag = device_tag_;
     packet.audio_data = std::move(chunk_data); // Move to avoid per-packet copy.
     packet.received_time = std::chrono::steady_clock::now();
+    // Stamp packet format from the active WASAPI settings we actually negotiated.
+    int packet_sample_rate = 0;
+    if (format_ptr_) {
+        packet_sample_rate = static_cast<int>(format_ptr_->nSamplesPerSec);
+    }
+    if (packet_sample_rate <= 0) {
+        packet_sample_rate = static_cast<int>(active_sample_rate_);
+    }
+
+    int packet_bit_depth = 0;
+    if (active_channels_ > 0 && target_bytes_per_frame_ > 0) {
+        packet_bit_depth = static_cast<int>((target_bytes_per_frame_ / active_channels_) * 8);
+    }
+    if (packet_bit_depth <= 0 && format_ptr_) {
+        packet_bit_depth = static_cast<int>(BitsPerSample(format_ptr_));
+    }
+    if (packet_bit_depth <= 0) {
+        packet_bit_depth = 32; // fallback to our conversion target
+    }
+
     packet.channels = static_cast<int>(active_channels_);
-    packet.sample_rate = static_cast<int>(active_sample_rate_);
-    packet.bit_depth = static_cast<int>(target_bit_depth_);
+    packet.sample_rate = packet_sample_rate;
+    packet.bit_depth = packet_bit_depth;
     packet.playback_rate = 1.0;
-    packet.chlayout1 = (active_channels_ == 1) ? kMonoLayout : kStereoLayout;
-    packet.chlayout2 = 0x00;
+    // Preserve the actual channel layout from the active format instead of forcing stereo.
+    uint8_t layout1 = 0;
+    uint8_t layout2 = 0;
+    if (format_ptr_ && format_ptr_->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+        auto* ext = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(format_ptr_);
+        const uint32_t mask = ext->dwChannelMask;
+        layout1 = static_cast<uint8_t>(mask & 0xFFu);
+        layout2 = static_cast<uint8_t>((mask >> 8) & 0xFFu);
+    } else {
+        layout1 = (active_channels_ == 1) ? kMonoLayout : kStereoLayout;
+        layout2 = 0x00;
+    }
+    packet.chlayout1 = layout1;
+    packet.chlayout2 = layout2;
 
     const uint32_t frames = FramesFromBytes(packet.audio_data.size(), target_bytes_per_frame_);
     if (stream_time_initialized_ && seconds_per_frame_ > 0.0) {

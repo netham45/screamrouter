@@ -891,7 +891,7 @@ bool SinkAudioMixer::wait_for_source_data() {
 
     if (!was_holding_silence && underrun_silence_active_) {
         long hold_ms = std::max<long>(0, m_settings->mixer_tuning.underrun_hold_timeout_ms);
-        LOG_CPP_INFO("[SinkMixer:%s] Underrun detected. Injecting silence for up to %ld ms.",
+        LOG_CPP_INFO("[SinkMixer:%s] Underrun detected. Holding last sample for up to %ld ms.",
                      config_.sink_id.c_str(), hold_ms);
         profiling_underrun_events_++;
         profiling_underrun_active_since_ = now;
@@ -903,13 +903,13 @@ bool SinkAudioMixer::wait_for_source_data() {
             profiling_underrun_active_since_ = {};
         }
         if (data_actually_popped_this_cycle) {
-            LOG_CPP_INFO("[SinkMixer:%s] Underrun cleared. Audio resumed before silence window elapsed.",
+            LOG_CPP_INFO("[SinkMixer:%s] Underrun hold cleared. Audio resumed before window elapsed.",
                          config_.sink_id.c_str());
         } else if (hold_window_expired) {
-            LOG_CPP_INFO("[SinkMixer:%s] Underrun silence window expired without new audio.",
+            LOG_CPP_INFO("[SinkMixer:%s] Underrun hold window expired without new audio.",
                          config_.sink_id.c_str());
         } else {
-            LOG_CPP_INFO("[SinkMixer:%s] Underrun silence cleared.", config_.sink_id.c_str());
+            LOG_CPP_INFO("[SinkMixer:%s] Underrun hold cleared.", config_.sink_id.c_str());
         }
     }
 
@@ -941,6 +941,11 @@ void SinkAudioMixer::mix_buffers() {
     
     std::vector<uint32_t> collected_csrcs;
     size_t active_source_count = 0;
+    const size_t channel_count = static_cast<size_t>(std::max(playback_channels_, 1));
+    if (last_sample_frame_.size() != channel_count) {
+        last_sample_frame_.assign(channel_count, 0);
+        last_sample_valid_ = false;
+    }
 
     size_t total_samples_to_mix = mixing_buffer_.size();
     LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Starting mix. Target samples=%zu (Mixing buffer size).", config_.sink_id.c_str(), total_samples_to_mix);
@@ -978,6 +983,20 @@ void SinkAudioMixer::mix_buffers() {
                 }
             }
         }
+    }
+
+    if (active_source_count == 0) {
+        if (last_sample_valid_ && !last_sample_frame_.empty()) {
+            for (size_t i = 0; i < total_samples_to_mix; i += channel_count) {
+                const size_t copy_channels = std::min(channel_count, total_samples_to_mix - i);
+                std::copy_n(last_sample_frame_.data(), copy_channels, mixing_buffer_.begin() + i);
+            }
+        }
+    } else if (total_samples_to_mix >= channel_count) {
+        const size_t tail_start = total_samples_to_mix - channel_count;
+        const size_t copy_channels = std::min(channel_count, total_samples_to_mix - tail_start);
+        std::copy_n(mixing_buffer_.data() + tail_start, copy_channels, last_sample_frame_.data());
+        last_sample_valid_ = true;
     }
     
     std::sort(collected_csrcs.begin(), collected_csrcs.end());
@@ -1660,6 +1679,8 @@ void SinkAudioMixer::refresh_format_dependent_buffers(int sample_rate, int chann
         if (payload_buffer_write_pos_ > payload_buffer_.size()) {
             payload_buffer_write_pos_ = payload_buffer_.size();
         }
+        last_sample_frame_.assign(std::max(1, sanitized_channels), 0);
+        last_sample_valid_ = false;
     }
 
     mix_period_ = calculate_mix_period(sanitized_rate, sanitized_channels, sanitized_bit_depth);
@@ -1892,6 +1913,7 @@ void SinkAudioMixer::clear_pending_audio() {
     underrun_silence_active_ = false;
     payload_buffer_write_pos_ = 0;
     profiling_max_payload_buffer_bytes_ = 0;
+    last_sample_valid_ = false;
 }
 
 /**
@@ -1936,7 +1958,7 @@ void SinkAudioMixer::run() {
         bool should_mix = has_active_sources || underrun_silence_active_;
 
         if (!should_mix) {
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No active sources and no underrun hold. Emitting silence.",
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No active sources and no underrun hold. Repeating last sample if available.",
                           config_.sink_id.c_str());
         }
 

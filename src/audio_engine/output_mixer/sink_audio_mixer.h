@@ -211,6 +211,8 @@ private:
     std::vector<int32_t> stereo_buffer_;
     std::vector<uint8_t> payload_buffer_;
     size_t payload_buffer_write_pos_ = 0;
+    std::vector<int32_t> last_sample_frame_;
+    bool last_sample_valid_ = false;
     
     std::vector<uint32_t> current_csrcs_;
     std::mutex csrc_mutex_;
