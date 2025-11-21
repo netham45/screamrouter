@@ -3614,7 +3614,8 @@ class ConfigurationManager(threading.Thread):
         prefix = "SAP_REMOTE_"
         new_sources: List[SourceDescription] = []
         new_routes: List[RouteDescription] = []
-        new_signature: set[str] = set()
+        existing_source_names = {s.name for s in self.active_temporary_sources if s.name.startswith(prefix)}
+        existing_route_names = {r.name for r in self.active_temporary_routes if r.name.startswith(prefix)}
 
         for announcement in sap_announcements:
             target_sink = str(announcement.get("target_sink") or "").strip()
@@ -3637,14 +3638,30 @@ class ConfigurationManager(threading.Thread):
                 port_int = int(port_value)
             except (TypeError, ValueError):
                 continue
+            if port_int <= 0:
+                port_int = constants.RTP_RECEIVER_PORT
+            # Avoid reusing the well-known inbound receiver port; randomize a temp outbound port
+            if port_int == constants.RTP_RECEIVER_PORT or port_int == constants.SINK_PORT:
+                port_int = int(uuid.uuid4().int % 9000) + 41000
 
+            source_ip = str(announcement.get("announcer_ip") or stream_ip)
             try:
-                ip_value = IPAddressType(stream_ip)
+                ip_value = IPAddressType(source_ip)
             except Exception:  # pylint: disable=broad-except
-                ip_value = stream_ip
+                ip_value = source_ip
 
-            source_name = f"{prefix}{sink.name}_{stream_ip}:{port_int}"
-            route_name = f"{prefix}ROUTE_{sink.name}_{stream_ip}:{port_int}"
+            announcer = str(announcement.get("announcer_ip") or "").strip().replace(":", "_")
+            name_suffix = f"_{announcer}" if announcer else ""
+            base_source_name = f"{prefix}{sink.name}_{source_ip}:{port_int}{name_suffix}"
+            source_name = base_source_name
+            if source_name in existing_source_names:
+                source_name = f"{base_source_name}_{uuid.uuid4().hex[:6]}"
+            existing_source_names.add(source_name)
+            base_route_name = f"{prefix}ROUTE_{sink.name}_{stream_ip}:{port_int}{name_suffix}"
+            route_name = base_route_name
+            if route_name in existing_route_names:
+                route_name = f"{base_route_name}_{uuid.uuid4().hex[:6]}"
+            existing_route_names.add(route_name)
 
             source_desc = SourceDescription(
                 name=source_name,
@@ -3682,20 +3699,12 @@ class ConfigurationManager(threading.Thread):
 
             new_sources.append(source_desc)
             new_routes.append(route_desc)
-            signature_key = f"{source_name}:{announcement.get('sample_rate')}:{announcement.get('channels')}:{announcement.get('bit_depth')}"
-            new_signature.add(signature_key)
-            new_signature.add(f"{route_name}:{sink.name}")
-
-        existing_non_sap_sources = [s for s in self.active_temporary_sources if not s.name.startswith(prefix)]
-        existing_non_sap_routes = [r for r in self.active_temporary_routes if not r.name.startswith(prefix)]
-
-        if new_signature != self._sap_route_signature:
-            self._sap_route_signature = new_signature
-            self.active_temporary_sources = existing_non_sap_sources + new_sources
-            self.active_temporary_routes = existing_non_sap_routes + new_routes
+        self.active_temporary_sources.extend(new_sources)
+        self.active_temporary_routes.extend(new_routes)
+        if new_sources or new_routes:
             _logger.info("[Configuration Manager] Updated SAP-directed temporary routing: %d sources, %d routes",
                          len(new_sources), len(new_routes))
-            self.__reload_configuration()
+            self.__apply_temporary_configuration_sync()
 
         # mDNS pinger for sources (senders)
         for ip in self.mdns_pinger.get_source_ips():

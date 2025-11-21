@@ -168,12 +168,13 @@ const AddEditRoutePage: React.FC = () => {
     const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${remoteSink.name}`;
     const sinkName = ensureUniqueName(baseName, sinks.map(s => s.name));
     const destinationHost = selectedInstance.address || selectedInstance.hostname || remoteSink.ip || '';
+    const randomizedPort = Math.floor(Math.random() * 9000) + 41000; // 41000-49999
 
     const sinkPayload: Sink = {
       ...remoteSink,
       name: sinkName,
       ip: destinationHost,
-      port: remoteSink.port || DEFAULT_REMOTE_RTP_PORT,
+      port: randomizedPort || DEFAULT_REMOTE_RTP_PORT,
       enabled: true,
       is_group: false,
       group_members: [],
