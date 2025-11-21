@@ -32,3 +32,12 @@ export interface UnifiedDiscoverySnapshot {
   sink_settings: Array<Record<string, unknown>>;
   source_settings: Array<Record<string, unknown>>;
 }
+
+export interface DiscoveryInventoryResponse {
+  devices: DiscoveredDevice[];
+  counts: {
+    total: number;
+    sources: number;
+    sinks: number;
+  };
+}

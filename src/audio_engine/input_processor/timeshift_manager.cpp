@@ -9,6 +9,7 @@
 #include "stream_clock.h"
 #include "../utils/cpp_logger.h"
 #include "../audio_types.h"
+#include "../utils/thread_priority.h"
 
 #include <iostream>
 #include <algorithm>
@@ -71,6 +72,27 @@ double smooth_playback_rate(double previous_rate,
     const double blended =
         previous_rate * (1.0 - clamped_smoothing) + clamped_target * clamped_smoothing;
     return std::clamp(blended, 1.0 - max_deviation_ratio, 1.0 + max_deviation_ratio);
+}
+
+double compute_packet_duration_ms(const TaggedAudioPacket& packet, double fallback_samples_per_chunk) {
+    if (packet.sample_rate <= 0) {
+        return 0.0;
+    }
+
+    const double bytes_per_frame =
+        static_cast<double>(packet.channels) * static_cast<double>(packet.bit_depth) / 8.0;
+    if (bytes_per_frame > 0.0) {
+        const double frames = static_cast<double>(packet.audio_data.size()) / bytes_per_frame;
+        if (frames > 0.0) {
+            return (frames * 1000.0) / static_cast<double>(packet.sample_rate);
+        }
+    }
+
+    if (fallback_samples_per_chunk > 0.0) {
+        return (fallback_samples_per_chunk * 1000.0) / static_cast<double>(packet.sample_rate);
+    }
+
+    return 0.0;
 }
 } // namespace
 
@@ -693,6 +715,7 @@ void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
  */
 void TimeshiftManager::run() {
     LOG_CPP_INFO("[TimeshiftManager] Run loop started.");
+    utils::set_current_thread_realtime_priority("TimeshiftManager");
     uint64_t last_processed_version = m_state_version_.load();
 
     while (!stop_flag_) {
@@ -792,7 +815,10 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(desired_latency_ms);
                 auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
 
-                const double buffer_level_ms = std::max(time_until_playout_ms, 0.0);
+                const double packet_duration_ms =
+                    compute_packet_duration_ms(candidate_packet,
+                                               static_cast<double>(timing_state->samples_per_chunk));
+                const double buffer_level_ms = std::max(time_until_playout_ms, 0.0) + packet_duration_ms;
                 timing_state->current_buffer_level_ms = buffer_level_ms;
                 if (desired_latency_ms > 1e-6) {
                     timing_state->buffer_target_fill_percentage =

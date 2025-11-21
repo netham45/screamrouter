@@ -1,5 +1,6 @@
 #include "mix_scheduler.h"
 #include "../utils/cpp_logger.h"
+#include "../utils/thread_priority.h"
 
 #include <algorithm>
 
@@ -219,6 +220,8 @@ void MixScheduler::worker_loop(SourceState* state) {
     }
 
     const auto log_prefix = mixer_id_ + ":" + state->instance_id;
+    const std::string thread_name = "[MixScheduler:" + log_prefix + "]";
+    utils::set_current_thread_realtime_priority(thread_name.c_str());
     LOG_CPP_DEBUG("[MixScheduler:%s] Worker entering loop.", log_prefix.c_str());
 
     while (!state->stopping.load()) {

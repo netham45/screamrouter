@@ -10,17 +10,10 @@ import React, {
 import ApiService from '../api/api';
 import MdnsDiscoveryModal from '../components/tutorial/MdnsDiscoveryModal';
 import { DiscoveredDevice } from '../types/preferences';
+import { buildDeviceKey } from '../utils/discovery';
 
 type MdnsFilter = 'all' | 'sources' | 'sinks';
 type MdnsSelectionHandler = (device: DiscoveredDevice) => void;
-
-const buildDeviceKey = (device: DiscoveredDevice): string => {
-  const identifierValue = device.properties['identifier'];
-  const identifier = typeof identifierValue === 'string' && identifierValue
-    ? identifierValue
-    : device.tag ?? device.ip;
-  return `${device.discovery_method}:${identifier}`;
-};
 
 interface MdnsDiscoveryContextValue {
   isModalOpen: boolean;

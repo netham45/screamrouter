@@ -43,6 +43,10 @@ const AddEditSinkPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const sinkName = searchParams.get('name');
   const isEdit = !!sinkName;
+  const prefillName = searchParams.get('prefill_name');
+  const prefillIp = searchParams.get('prefill_ip');
+  const prefillPort = searchParams.get('prefill_port');
+  const prefillProtocol = searchParams.get('prefill_protocol');
 
   const { completeStep, nextStep } = useTutorial();
   const { openModal: openMdnsModal, registerSelectionHandler } = useMdnsDiscovery();
@@ -139,6 +143,25 @@ const AddEditSinkPage: React.FC = () => {
     }
     completeStep('sink-ip-input');
   }, [ip, completeStep]);
+
+  useEffect(() => {
+    if (isEdit) {
+      return;
+    }
+    if (prefillName) {
+      setName(prefillName);
+    }
+    if (prefillIp) {
+      setIp(prefillIp);
+      setOutputMode('network');
+    }
+    if (prefillPort) {
+      setPort(prefillPort);
+    }
+    if (prefillProtocol) {
+      setProtocol(prefillProtocol);
+    }
+  }, [isEdit, prefillIp, prefillName, prefillPort, prefillProtocol]);
 
   useEffect(() => {
     if (!port.trim()) {

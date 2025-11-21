@@ -49,6 +49,8 @@ const AddEditSourcePage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const sourceName = searchParams.get('name');
   const isEdit = !!sourceName;
+  const prefillName = searchParams.get('prefill_name');
+  const prefillIp = searchParams.get('prefill_ip');
 
   const { completeStep, nextStep } = useTutorial();
   const { openModal: openMdnsModal, registerSelectionHandler } = useMdnsDiscovery();
@@ -144,6 +146,18 @@ const AddEditSourcePage: React.FC = () => {
   }, [ip, completeStep]);
 
   useEffect(() => {
+    if (isEdit) {
+      return;
+    }
+    if (prefillName) {
+      setName(prefillName);
+    }
+    if (prefillIp) {
+      setIp(prefillIp);
+    }
+  }, [isEdit, prefillIp, prefillName]);
+
+  useEffect(() => {
     if (isGroup) {
       setInputMode('network');
       setSelectedCaptureTag('');
@@ -178,9 +192,9 @@ const AddEditSourcePage: React.FC = () => {
   // Fetch source data if editing
   useEffect(() => {
     const fetchSource = async () => {
-      if (sourceName) {
-        try {
-          const response = await ApiService.getSources();
+    if (sourceName) {
+      try {
+        const response = await ApiService.getSources();
           const sourceData = Object.values(response.data).find(s => s.name === sourceName);
           if (sourceData) {
             setSource(sourceData);

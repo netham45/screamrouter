@@ -5,7 +5,7 @@
  */
 
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
-import { Preferences, PreferencesUpdatePayload, UnifiedDiscoverySnapshot } from '../types/preferences';
+import { Preferences, PreferencesUpdatePayload, UnifiedDiscoverySnapshot, DiscoveryInventoryResponse } from '../types/preferences';
 
 /**
  * Interface for Source object
@@ -789,6 +789,7 @@ const ApiService = {
 
   // --- Discovery ---
   getDiscoverySnapshot: () => cachedGet<UnifiedDiscoverySnapshot>('/discovery/snapshot'),
+  getUnmatchedDiscoveredDevices: () => cachedGet<DiscoveryInventoryResponse>('/discovery/unmatched'),
   addDiscoveredSource: (deviceKey: string) => withCacheInvalidation(
     axios.post('/sources/add-discovered', { device_key: deviceKey }),
     ['/sources', '/discovery/snapshot']

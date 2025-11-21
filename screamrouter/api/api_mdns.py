@@ -29,6 +29,12 @@ class APIMdns:
             tags=["mDNS"],
         )
         self._app.add_api_route(
+            "/discovery/unmatched",
+            self.get_unmatched_discovered_devices,
+            methods=["GET"],
+            tags=["mDNS"],
+        )
+        self._app.add_api_route(
             "/mdns/router-services",
             self.get_router_services,
             methods=["GET"],
@@ -50,6 +56,14 @@ class APIMdns:
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Failed to retrieve discovery snapshot")
             raise HTTPException(status_code=500, detail="Failed to retrieve discovery snapshot") from exc
+
+    async def get_unmatched_discovered_devices(self):
+        """Return discovered devices that are not yet mapped to configured entities."""
+        try:
+            return self._configuration_manager.get_unmatched_discovered_devices()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception("Failed to retrieve unmatched discovery list")
+            raise HTTPException(status_code=500, detail="Failed to retrieve unmatched discovery list") from exc
 
     async def get_router_services(self, timeout: float = Query(2.0, ge=0.5, le=10.0)):
         """Active scan for `_screamrouter._tcp` services and return the results."""

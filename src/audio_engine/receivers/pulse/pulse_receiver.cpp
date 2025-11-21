@@ -49,6 +49,7 @@ void PulseAudioReceiver::run() {}
 #include "../../input_processor/timeshift_manager.h"
 #include "../../utils/byte_ring_buffer.h"
 #include "../../utils/cpp_logger.h"
+#include "../../utils/thread_priority.h"
 
 #include <algorithm>
 #include <array>
@@ -72,6 +73,7 @@ void PulseAudioReceiver::run() {}
 #include <cctype>
 #include <utility>
 #include <random>
+#include <thread>
 
 #include "../../audio_processor/audio_processor.h"
 #include "../../configuration/audio_engine_settings.h"
@@ -104,14 +106,14 @@ namespace {
 constexpr uint32_t kMaxConnections = 64;
 constexpr uint32_t kVirtualSinkIndex = 0;
 constexpr const char* kVirtualSinkName = "screamrouter.pulse";
-constexpr const char* kVirtualSinkDescription = "ScreamRouter Virtual Pulse Sink";
+constexpr const char* kVirtualSinkDescription = "ScreamRouter";
 constexpr const char* kVirtualSinkDriver = "screamrouter.virtual";
 constexpr const char* kVirtualChannelMapString = "front-left,front-right,front-center,lfe,side-left,side-right,rear-left,rear-right";
 constexpr uint32_t kVirtualSinkVolumeSteps = 65537;
 constexpr uint32_t kSinkStateRunning = 0; // PA_SINK_RUNNING
 constexpr uint32_t kVirtualSourceIndex = 1;
 constexpr const char* kVirtualSourceName = "screamrouter.monitor";
-constexpr const char* kVirtualSourceDescription = "Monitor of ScreamRouter Virtual Pulse Sink";
+constexpr const char* kVirtualSourceDescription = "Monitor of ScreamRouter";
 constexpr uint32_t kVirtualSourceVolumeSteps = 65537;
 constexpr uint32_t kSourceStateRunning = 0; // PA_SOURCE_RUNNING
 constexpr uint32_t kPulseCookieLength = 256;
@@ -451,6 +453,12 @@ std::vector<uint8_t> convert_float_chunk_to_s32(const std::vector<uint8_t>& chun
 
 struct PulseAudioReceiver::Impl {
     struct Connection;
+    struct ConnectionContext {
+        std::shared_ptr<Connection> connection;
+        std::thread worker;
+        std::atomic<bool> stop{false};
+        std::atomic<bool> finished{false};
+    };
 
     PulseReceiverConfig config;
     std::shared_ptr<NotificationQueue> notification_queue;
@@ -462,9 +470,11 @@ struct PulseAudioReceiver::Impl {
     int unix_listen_fd = -1;
     std::string unix_socket_path;
 
-    std::vector<std::unique_ptr<Connection>> connections;
+    std::vector<std::unique_ptr<ConnectionContext>> connections;
+    std::mutex connections_mutex;
     std::vector<std::string> seen_tags;
     std::unordered_set<std::string> known_tags;
+    mutable std::mutex tags_mutex;
     std::unordered_map<std::string, std::unordered_set<std::string>> wildcard_to_composites;
     mutable std::mutex tag_map_mutex;
     std::chrono::steady_clock::time_point telemetry_last_log_time{};
@@ -481,13 +491,14 @@ struct PulseAudioReceiver::Impl {
 
     bool initialize();
     void shutdown_all();
+    void stop_all_connections();
+    void prune_finished_connections();
 
     void event_loop(std::atomic<bool>& stop_flag);
     void maybe_log_telemetry();
 
-    void accept_connections(int listen_fd, bool is_unix);
-
-    void remove_connection(std::size_t index);
+    void accept_connections(int listen_fd, bool is_unix, std::atomic<bool>& global_stop);
+    void start_connection_thread(std::unique_ptr<Connection> conn, std::atomic<bool>& global_stop);
 
     void log(const std::string& msg) const {
         LOG_CPP_INFO("%s %s", logger_prefix.c_str(), msg.c_str());
@@ -512,6 +523,7 @@ struct PulseAudioReceiver::Impl {
     void note_tag_seen(const std::string& tag) {
         std::string clean_tag = tag;
         strip_nuls(clean_tag);
+        std::lock_guard<std::mutex> lock(tags_mutex);
         if (known_tags.insert(clean_tag).second) {
             log_debug("Discovered Pulse wildcard '" + clean_tag + "'");
             seen_tags.push_back(clean_tag);
@@ -524,6 +536,7 @@ struct PulseAudioReceiver::Impl {
     void note_tag_removed(const std::string& tag) {
         std::string clean_tag = tag;
         strip_nuls(clean_tag);
+        std::lock_guard<std::mutex> lock(tags_mutex);
         if (known_tags.erase(clean_tag) > 0) {
             log_debug("Pulse wildcard removed '" + clean_tag + "'");
             if (notification_queue) {
@@ -611,6 +624,7 @@ struct PulseAudioReceiver::Impl::Connection {
 
     std::vector<uint8_t> read_buffer;
     std::deque<std::vector<uint8_t>> write_queue;
+    mutable std::mutex write_queue_mutex;
     mutable std::mutex stream_mutex;
 
     struct ProfilingData {
@@ -747,6 +761,7 @@ struct PulseAudioReceiver::Impl::Connection {
         }
     }
 
+    void run(std::atomic<bool>& global_stop, std::atomic<bool>& local_stop);
     bool handle_io(short revents);
     bool handle_read();
     bool handle_write();
@@ -826,9 +841,8 @@ struct PulseAudioReceiver::Impl::Connection {
 
     short desired_poll_events() const {
         short events = POLLIN;
-        if (!write_queue.empty()) {
-            events |= POLLOUT;
-        }
+        std::lock_guard<std::mutex> lock(write_queue_mutex);
+        if (!write_queue.empty()) events |= POLLOUT;
         return events;
     }
 };
@@ -967,7 +981,7 @@ bool PulseAudioReceiver::Impl::initialize() {
 }
 
 void PulseAudioReceiver::Impl::shutdown_all() {
-    connections.clear();
+    stop_all_connections();
 
     if (tcp_listen_fd >= 0) {
         ::close(tcp_listen_fd);
@@ -982,7 +996,48 @@ void PulseAudioReceiver::Impl::shutdown_all() {
     }
 }
 
-void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix) {
+void PulseAudioReceiver::Impl::stop_all_connections() {
+    std::vector<std::unique_ptr<ConnectionContext>> to_join;
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex);
+        for (auto& ctx : connections) {
+            if (ctx) {
+                ctx->stop.store(true);
+            }
+        }
+        to_join.swap(connections);
+    }
+
+    for (auto& ctx : to_join) {
+        if (ctx && ctx->worker.joinable()) {
+            ctx->worker.join();
+        }
+    }
+}
+
+void PulseAudioReceiver::Impl::prune_finished_connections() {
+    std::vector<std::unique_ptr<ConnectionContext>> remaining;
+    std::vector<std::unique_ptr<ConnectionContext>> finished;
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex);
+        for (auto& ctx : connections) {
+            if (ctx && ctx->finished.load()) {
+                finished.push_back(std::move(ctx));
+            } else {
+                remaining.push_back(std::move(ctx));
+            }
+        }
+        connections.swap(remaining);
+    }
+
+    for (auto& ctx : finished) {
+        if (ctx && ctx->worker.joinable()) {
+            ctx->worker.join();
+        }
+    }
+}
+
+void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix, std::atomic<bool>& global_stop) {
     while (true) {
         sockaddr_storage ss{};
         socklen_t len = sizeof(ss);
@@ -995,10 +1050,13 @@ void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix) {
             break;
         }
 
-        if (connections.size() >= kMaxConnections) {
-            log_warning("Too many PulseAudio clients; rejecting connection");
-            ::close(client_fd);
-            continue;
+        {
+            std::lock_guard<std::mutex> lock(connections_mutex);
+            if (connections.size() >= kMaxConnections) {
+                log_warning("Too many PulseAudio clients; rejecting connection");
+                ::close(client_fd);
+                continue;
+            }
         }
 
         set_non_blocking(client_fd);
@@ -1006,13 +1064,12 @@ void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix) {
 
         if (!is_unix) {
             char host[NI_MAXHOST] = {0};
-            char serv[NI_MAXSERV] = {0};
             const int gi = getnameinfo(reinterpret_cast<const sockaddr*>(&ss), len,
                                        host, sizeof(host),
-                                       serv, sizeof(serv),
-                                       NI_NUMERICHOST | NI_NUMERICSERV);
+                                       nullptr, 0,
+                                       NI_NUMERICHOST);
             if (gi == 0 && host[0] != '\0') {
-                conn->peer_identity = std::string(host) + ":" + serv;
+                conn->peer_identity = host;
             } else {
                 if (ss.ss_family == AF_INET) {
                     auto* sin = reinterpret_cast<sockaddr_in*>(&ss);
@@ -1040,16 +1097,73 @@ void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix) {
         conn->base_identity = conn->peer_identity;
 
         log("Accepted PulseAudio client from " + conn->peer_identity);
-        connections.push_back(std::move(conn));
+        start_connection_thread(std::move(conn), global_stop);
     }
 }
 
-void PulseAudioReceiver::Impl::remove_connection(std::size_t index) {
-    if (index >= connections.size()) {
+void PulseAudioReceiver::Impl::start_connection_thread(std::unique_ptr<Connection> conn, std::atomic<bool>& global_stop) {
+    if (!conn) {
         return;
     }
-    log("Closing PulseAudio client " + connections[index]->peer_identity);
-    connections.erase(connections.begin() + static_cast<long>(index));
+
+    auto context = std::make_unique<ConnectionContext>();
+    context->connection = std::shared_ptr<Connection>(conn.release());
+    auto shared_conn = context->connection;
+    auto* ctx_ptr = context.get();
+    auto* stop_ptr = &global_stop;
+
+    context->worker = std::thread([this, ctx_ptr, shared_conn, stop_ptr]() {
+        if (shared_conn && stop_ptr) {
+            shared_conn->run(*stop_ptr, ctx_ptr->stop);
+            if (shared_conn->owner) {
+                shared_conn->owner->log("Closing PulseAudio client " + shared_conn->peer_identity);
+            }
+        }
+        ctx_ptr->finished.store(true);
+    });
+
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex);
+        connections.push_back(std::move(context));
+    }
+}
+
+void PulseAudioReceiver::Impl::Connection::run(std::atomic<bool>& global_stop, std::atomic<bool>& local_stop) {
+    while (!global_stop.load() && !local_stop.load()) {
+        dispatch_clock_ticks();
+        process_due_requests();
+
+        int timeout_ms = 5;
+        auto now = std::chrono::steady_clock::now();
+        if (auto due = next_due_request()) {
+            if (*due <= now) {
+                timeout_ms = 0;
+            } else {
+                auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(*due - now);
+                timeout_ms = static_cast<int>(std::max<long long>(diff.count(), 0));
+            }
+        }
+
+        pollfd pfd{};
+        pfd.fd = fd;
+        pfd.events = desired_poll_events();
+        int rc = ::poll(&pfd, 1, timeout_ms);
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            owner->log_warning("poll failed for connection: " + errno_string(errno));
+            break;
+        }
+        if (rc == 0) {
+            continue;
+        }
+        if (!handle_io(pfd.revents)) {
+            break;
+        }
+    }
+
+    local_stop.store(true);
 }
 
 bool PulseAudioReceiver::Impl::Connection::handle_io(short revents) {
@@ -1132,7 +1246,11 @@ bool PulseAudioReceiver::Impl::Connection::handle_read() {
 }
 
 bool PulseAudioReceiver::Impl::Connection::handle_write() {
-    while (!write_queue.empty()) {
+    while (true) {
+        std::unique_lock<std::mutex> lock(write_queue_mutex);
+        if (write_queue.empty()) {
+            return true;
+        }
         auto& frame = write_queue.front();
         ssize_t written = ::send(fd, frame.data(), frame.size(), 0);
         if (written < 0) {
@@ -1168,7 +1286,10 @@ void PulseAudioReceiver::Impl::Connection::enqueue_tagstruct(const TagWriter& wr
             << " frame_hex=" << bytes_to_hex(frame);
         owner->log_debug(oss.str());
     }
-    write_queue.push_back(std::move(frame));
+    {
+        std::lock_guard<std::mutex> lock(write_queue_mutex);
+        write_queue.push_back(std::move(frame));
+    }
 }
 
 void PulseAudioReceiver::Impl::Connection::enqueue_simple_reply(uint32_t tag) {
@@ -1650,7 +1771,10 @@ void PulseAudioReceiver::Impl::Connection::enqueue_shm_release(uint32_t block_id
             << " frame_hex=" << bytes_to_hex(frame);
         owner->log_debug(oss.str());
     }
-    write_queue.push_back(std::move(frame));
+    {
+        std::lock_guard<std::mutex> lock(write_queue_mutex);
+        write_queue.push_back(std::move(frame));
+    }
 }
 
 void PulseAudioReceiver::Impl::Connection::enqueue_started(uint32_t stream_index) {
@@ -3656,13 +3780,8 @@ PulseAudioReceiver::Impl::Connection::next_due_request() const {
 
 void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
     while (!stop_flag.load()) {
-        for (auto& connection : connections) {
-            if (connection) {
-                connection->dispatch_clock_ticks();
-            }
-        }
-
         maybe_log_telemetry();
+        prune_finished_connections();
 
         std::vector<pollfd> pollfds;
         if (tcp_listen_fd >= 0) {
@@ -3671,34 +3790,8 @@ void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
         if (unix_listen_fd >= 0) {
             pollfds.push_back(pollfd{unix_listen_fd, POLLIN, 0});
         }
-        const std::size_t connection_poll_offset = pollfds.size();
-        for (auto& connection : connections) {
-            pollfd pfd{};
-            pfd.fd = connection->fd;
-            pfd.events = connection->desired_poll_events();
-            pollfds.push_back(pfd);
-        }
-        const std::size_t polled_connection_count = connections.size();
-
-        auto now = std::chrono::steady_clock::now();
-        int timeout_ms = 5;
-        for (const auto& connection : connections) {
-            if (auto due = connection->next_due_request()) {
-                if (*due <= now) {
-                    timeout_ms = 0;
-                    break;
-                }
-                auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(*due - now);
-                if (diff.count() < timeout_ms) {
-                    timeout_ms = static_cast<int>(std::max<long long>(diff.count(), 0));
-                }
-            }
-            if (timeout_ms == 0) {
-                continue;
-            }
-        }
-
-        int rc = ::poll(pollfds.data(), pollfds.size(), timeout_ms);
+        const int timeout_ms = 50;
+        int rc = pollfds.empty() ? 0 : ::poll(pollfds.data(), pollfds.size(), timeout_ms);
         if (rc < 0) {
             if (errno == EINTR) continue;
             log_warning("poll failed: " + errno_string(errno));
@@ -3708,34 +3801,19 @@ void PulseAudioReceiver::Impl::event_loop(std::atomic<bool>& stop_flag) {
         std::size_t index = 0;
         if (tcp_listen_fd >= 0) {
             if (pollfds[index].revents & POLLIN) {
-                accept_connections(tcp_listen_fd, false);
+                accept_connections(tcp_listen_fd, false, stop_flag);
             }
             ++index;
         }
         if (unix_listen_fd >= 0) {
             if (pollfds[index].revents & POLLIN) {
-                accept_connections(unix_listen_fd, true);
+                accept_connections(unix_listen_fd, true, stop_flag);
             }
             ++index;
         }
-
-        for (std::size_t processed = 0; processed < polled_connection_count; ++processed) {
-            const std::size_t i = polled_connection_count - 1 - processed;
-            if (i >= connections.size()) {
-                continue;
-            }
-            auto& conn = connections[i];
-            short revents = pollfds[connection_poll_offset + i].revents;
-            if (revents != 0) {
-                if (!conn->handle_io(revents)) {
-                    remove_connection(i);
-                    continue;
-                }
-            }
-            conn->process_due_requests();
-            conn->dispatch_clock_ticks();
-        }
     }
+    stop_all_connections();
+    prune_finished_connections();
 }
 
 namespace {
@@ -3767,28 +3845,41 @@ void PulseAudioReceiver::Impl::maybe_log_telemetry() {
     }
     telemetry_last_log_time = now;
 
+    std::vector<std::shared_ptr<Connection>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex);
+        for (const auto& ctx : connections) {
+            if (ctx && ctx->connection) {
+                snapshot.push_back(ctx->connection);
+            }
+        }
+    }
+
     std::size_t total_write_chunks = 0;
     std::size_t total_write_bytes = 0;
     std::size_t total_streams = 0;
 
-    for (const auto& connection_ptr : connections) {
-        if (!connection_ptr) {
-            continue;
-        }
-        const auto& connection = *connection_ptr;
-        std::size_t write_chunks = connection.write_queue.size();
+    for (const auto& connection : snapshot) {
+        if (!connection) continue;
+
+        std::size_t write_chunks = 0;
         std::size_t write_bytes = 0;
-        for (const auto& frame : connection.write_queue) {
-            write_bytes += frame.size();
+        {
+            std::lock_guard<std::mutex> lock(connection->write_queue_mutex);
+            write_chunks = connection->write_queue.size();
+            for (const auto& frame : connection->write_queue) {
+                write_bytes += frame.size();
+            }
         }
         total_write_chunks += write_chunks;
         total_write_bytes += write_bytes;
 
-        const std::string& conn_id = !connection.peer_identity.empty() ? connection.peer_identity : connection.base_identity;
+        const std::string& conn_id = !connection->peer_identity.empty() ? connection->peer_identity : connection->base_identity;
         log("[Telemetry][Pulse][Conn " + conn_id + "] write_chunks=" + std::to_string(write_chunks) +
             " write_bytes=" + std::to_string(write_bytes));
 
-        for (const auto& [stream_index, stream] : connection.streams) {
+        std::lock_guard<std::mutex> stream_lock(connection->stream_mutex);
+        for (const auto& [stream_index, stream] : connection->streams) {
             ++total_streams;
             const std::size_t pending_payload_bytes = stream.pending_payload.size();
             std::size_t bytes_per_frame = bytes_per_frame_for_format(stream.sample_spec.format, stream.sample_spec.channels);
@@ -3836,7 +3927,7 @@ void PulseAudioReceiver::Impl::maybe_log_telemetry() {
         }
     }
 
-    log("[Telemetry][Pulse] connections=" + std::to_string(connections.size()) +
+    log("[Telemetry][Pulse] connections=" + std::to_string(snapshot.size()) +
         " write_total_chunks=" + std::to_string(total_write_chunks) +
         " write_total_bytes=" + std::to_string(total_write_bytes) +
         " streams=" + std::to_string(total_streams));
@@ -3889,6 +3980,7 @@ void PulseAudioReceiver::stop() {
 
 std::vector<std::string> PulseAudioReceiver::get_seen_tags() {
     std::vector<std::string> tags;
+    std::lock_guard<std::mutex> lock(impl_->tags_mutex);
     tags.swap(impl_->seen_tags);
     return tags;
 }
@@ -3909,6 +4001,8 @@ void PulseAudioReceiver::set_stream_tag_callbacks(StreamTagResolvedCallback on_r
 }
 
 void PulseAudioReceiver::run() {
+    const std::string thread_name = "[PulseReceiver:" + impl_->logger_prefix + "]";
+    utils::set_current_thread_realtime_priority(thread_name.c_str());
     impl_->event_loop(stop_flag_);
 }
 

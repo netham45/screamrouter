@@ -29,6 +29,7 @@
 #include "../senders/rtp/multi_device_rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
 #include "../senders/system/alsa_playback_sender.h"
+#include "../utils/thread_priority.h"
 #include "../utils/profiler.h"
 #if defined(__linux__)
 #include "../senders/system/screamrouter_fifo_sender.h"
@@ -1860,6 +1861,8 @@ void SinkAudioMixer::clear_pending_audio() {
 void SinkAudioMixer::run() {
     PROFILE_FUNCTION();
     LOG_CPP_INFO("[SinkMixer:%s] Entering run loop.", config_.sink_id.c_str());
+    const std::string thread_name = "[SinkMixer:" + config_.sink_id + "] component";
+    utils::set_current_thread_realtime_priority(thread_name.c_str());
 
     while (!stop_flag_) {
         if (!wait_for_mix_tick()) {

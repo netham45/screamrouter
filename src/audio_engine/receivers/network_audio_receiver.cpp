@@ -2,6 +2,7 @@
 #include "../input_processor/timeshift_manager.h" // Ensure full definition is available
 #include "../utils/thread_safe_queue.h" // For full definition of ThreadSafeQueue
 #include "../utils/cpp_logger.h"
+#include "../utils/thread_priority.h"
 #include <iostream>      // For logging (cpp_logger fallb_ack)
 #include <vector>
 #include <cstring>       // For memset
@@ -207,6 +208,8 @@ void NetworkAudioReceiver::stop() {
 
 void NetworkAudioReceiver::run() {
     log_message("Receiver thread entering run loop.");
+    const std::string thread_name = "[NetworkAudioReceiver:" + logger_prefix_ + "]";
+    utils::set_current_thread_realtime_priority(thread_name.c_str());
     std::vector<uint8_t> receive_buffer(get_receive_buffer_size());
     struct sockaddr_in client_addr;
 #ifdef _WIN32

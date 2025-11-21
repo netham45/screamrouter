@@ -13,6 +13,7 @@ import RouteContent from '../content/RouteContent';
 import LogViewerContent from '../content/LogViewerContent';
 import StatsPage from '../../pages/StatsPage';
 import SystemDevicesContent from '../content/SystemDevicesContent';
+import DiscoveredDevicesContent from '../content/DiscoveredDevicesContent';
 import { ContentProps, ContentCategory, ViewMode } from '../types';
 import { Actions } from '../../../utils/actions';
 
@@ -78,6 +79,8 @@ const ContentPanel: React.FC<ContentPanelProps> = ({
         return <RouteContent {...completeProps} />;
       case 'system-devices':
         return <SystemDevicesContent {...completeProps} />;
+      case 'discovery':
+        return <DiscoveredDevicesContent {...completeProps} />;
      case 'stats':
        return <StatsPage />;
      case 'logs':

@@ -121,13 +121,15 @@ export const getCategoryTitle = (currentCategory: ContentCategory): string => {
     case 'sinks':
       return 'Sinks';
     case 'routes':
-      return 'Routes';
-    case 'favorites':
-      return 'Favorites';
-    case 'system-devices':
-      return 'System Audio Devices';
-    default:
-      return 'ScreamRouter';
+    return 'Routes';
+  case 'favorites':
+    return 'Favorites';
+  case 'system-devices':
+    return 'System Audio Devices';
+  case 'discovery':
+    return 'Discovered Devices';
+  default:
+    return 'ScreamRouter';
   }
 };
 

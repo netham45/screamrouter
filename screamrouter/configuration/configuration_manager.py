@@ -487,6 +487,111 @@ class ConfigurationManager(threading.Thread):
         )
 
         return snapshot.model_dump(mode="json")
+
+    def _discovery_device_has_match(
+        self,
+        device: DiscoveredDevice,
+        known_source_ips: Set[str],
+        known_source_tags: Set[str],
+        known_sink_ips: Set[str],
+        known_sink_config_ids: Set[str],
+    ) -> bool:
+        """Check whether a discovered device already maps to a known source or sink."""
+        role = (device.role or "").lower()
+        ip_value = (device.ip or "").strip()
+        tag_candidate = (
+            device.tag
+            or str(device.properties.get("tag") or device.properties.get("identifier") or "").strip()
+        )
+        canonical_tag = self._canonical_process_tag(tag_candidate) if tag_candidate else ""
+
+        if role == "sink":
+            if ip_value and ip_value in known_sink_ips:
+                return True
+            receiver_id = str(
+                device.properties.get("receiver_id")
+                or device.properties.get("config_id")
+                or ""
+            ).strip()
+            return bool(receiver_id and receiver_id in known_sink_config_ids)
+
+        # Default to source matching
+        if ip_value and ip_value in known_source_ips:
+            return True
+
+        tag_candidates: Set[str] = set()
+        if tag_candidate:
+            tag_candidates.add(tag_candidate)
+        if canonical_tag:
+            tag_candidates.add(canonical_tag)
+            if canonical_tag.endswith("*"):
+                tag_candidates.add(canonical_tag[:-1])
+
+        return any(tag in known_source_tags for tag in tag_candidates if tag)
+
+    def get_unmatched_discovered_devices(self) -> Dict[str, Any]:
+        """Return discovered devices that do not yet correspond to configured sources/sinks."""
+        known_source_ips: Set[str] = {
+            str(desc.ip)
+            for desc in self.source_descriptions
+            if desc.ip is not None
+        }
+        known_source_tags: Set[str] = set()
+        for desc in self.source_descriptions:
+            if desc.tag is None:
+                continue
+            if desc.is_process:
+                canonical = self._canonical_process_tag(desc.tag)
+                if canonical:
+                    known_source_tags.add(canonical)
+                    if canonical.endswith("*"):
+                        known_source_tags.add(canonical[:-1])
+            else:
+                known_source_tags.add(str(desc.tag))
+
+        known_sink_ips: Set[str] = {
+            str(desc.ip)
+            for desc in self.sink_descriptions
+            if desc.ip is not None
+        }
+        known_sink_config_ids: Set[str] = {
+            str(desc.config_id)
+            for desc in self.sink_descriptions
+            if desc.config_id is not None
+        }
+
+        unmatched_devices: List[DiscoveredDevice] = []
+        for device in self.discovered_devices.values():
+            if self._discovery_device_has_match(
+                device,
+                known_source_ips,
+                known_source_tags,
+                known_sink_ips,
+                known_sink_config_ids,
+            ):
+                continue
+            unmatched_devices.append(device)
+
+        unmatched_devices.sort(key=lambda entry: entry.last_seen, reverse=True)
+
+        return {
+            "devices": [
+                device.model_dump(mode="json") for device in unmatched_devices
+            ],
+            "counts": {
+                "total": len(unmatched_devices),
+                "sources": sum(
+                    1
+                    for device in unmatched_devices
+                    if (device.role or "").lower() != "sink"
+                ),
+                "sinks": sum(
+                    1
+                    for device in unmatched_devices
+                    if (device.role or "").lower() == "sink"
+                ),
+            },
+        }
     
     def get_processes_by_ip(self, ip: IPAddressType) -> List[SourceDescription]:
         """Get a list of all processes for a specific IP"""
@@ -3172,12 +3277,7 @@ class ConfigurationManager(threading.Thread):
                         "receiver_port": per_process_receiver_port,
                         "source": "cpp_engine",
                     }
-                    # Per-process entries are auto-managed; exclude them from discovered list.
-                    for lookup_key in {
-                        f"per_process:{identifier}",
-                        f"per_process:{tag_str}",
-                    }:
-                        self.discovered_devices.pop(lookup_key, None)
+                    store_ip = parsed_ip or tag_body
 
                     is_new_source = identifier not in known_process_tags
                     if is_new_source:
@@ -3197,6 +3297,24 @@ class ConfigurationManager(threading.Thread):
                                 identifier,
                                 auto_exc,
                             )
+
+                    if not self._update_discovered_device_last_seen(
+                        method="per_process",
+                        identifier=identifier,
+                        ip=store_ip,
+                        tag=identifier,
+                        device_type="process_source",
+                        properties=per_process_properties,
+                    ):
+                        self._store_discovered_device(
+                            method="per_process",
+                            role="source",
+                            identifier=identifier,
+                            ip=store_ip,
+                            tag=identifier,
+                            device_type="process_source",
+                            properties=per_process_properties,
+                        )
             except Exception as e:
                 _logger.error("[Configuration Manager] Error getting seen tags from C++ Per-Process Receiver (port %d): %s", per_process_receiver_port, e)
 
@@ -3227,13 +3345,6 @@ class ConfigurationManager(threading.Thread):
                         if not store_ip:
                             store_ip = tag_body
 
-                        # Pulse process entries are also auto-managed, keep them out of discovery list.
-                        for lookup_key in {
-                            f"pulse:{identifier}",
-                            f"pulse:{tag_str}",
-                        }:
-                            self.discovered_devices.pop(lookup_key, None)
-
                         is_new_pulse_source = identifier not in known_process_tags
                         if is_new_pulse_source:
                             _logger.info(
@@ -3251,6 +3362,24 @@ class ConfigurationManager(threading.Thread):
                                     identifier,
                                     auto_exc,
                                 )
+
+                        if not self._update_discovered_device_last_seen(
+                            method="pulse",
+                            identifier=identifier,
+                            ip=store_ip,
+                            tag=identifier,
+                            device_type="process_source",
+                            properties=pulse_properties,
+                        ):
+                            self._store_discovered_device(
+                                method="pulse",
+                                role="source",
+                                identifier=identifier,
+                                ip=store_ip,
+                                tag=identifier,
+                                device_type="process_source",
+                                properties=pulse_properties,
+                            )
                 except Exception as e:  # pylint: disable=broad-except
                     _logger.error("[Configuration Manager] Error getting seen tags from PulseAudio Receiver: %s", e)
 

@@ -7,6 +7,7 @@
 #include <cmath>     // For std::chrono durations
 #include <thread>    // For sleep_for
 #include "../utils/profiler.h"
+#include "../utils/thread_priority.h"
 
 #ifdef min
 
@@ -1011,10 +1012,16 @@ bool SourceInputProcessor::check_format_and_reconfigure(
 void SourceInputProcessor::run() {
      PROFILE_FUNCTION();
      LOG_CPP_INFO("[SourceProc:%s] Component run() started.", config_.instance_id.c_str());
+     const std::string thread_name = "[SourceProc:" + config_.instance_id + "] component";
+     utils::set_current_thread_realtime_priority(thread_name.c_str());
 
      // Launch input_thread_ (which now contains the main processing logic)
      try {
-        input_thread_ = std::thread(&SourceInputProcessor::input_loop, this);
+        input_thread_ = std::thread([this]() {
+            const std::string input_thread_name = "[SourceProc:" + config_.instance_id + "] input";
+            utils::set_current_thread_realtime_priority(input_thread_name.c_str());
+            input_loop();
+        });
         LOG_CPP_INFO("[SourceProc:%s] Input thread launched by run().", config_.instance_id.c_str());
      } catch (const std::system_error& e) {
          LOG_CPP_ERROR("[SourceProc:%s] Failed to start input_thread_ from run(): %s", config_.instance_id.c_str(), e.what());

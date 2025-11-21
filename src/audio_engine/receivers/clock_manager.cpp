@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <optional>
 #include <stdexcept>
+#include "../utils/thread_priority.h"
 
 #if defined(__linux__)
 #include <poll.h>
@@ -379,6 +380,7 @@ void ClockManager::cleanup_inactive_conditions(ClockEntry& entry) {
 }
 
 void ClockManager::run() {
+    utils::set_current_thread_realtime_priority("ClockManager");
     std::unique_lock<std::mutex> lock(mutex_);
 
     while (!stop_requested_.load(std::memory_order_acquire)) {
