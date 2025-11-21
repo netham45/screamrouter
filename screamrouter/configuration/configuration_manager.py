@@ -3611,8 +3611,12 @@ class ConfigurationManager(threading.Thread):
         prefix = "SAP_REMOTE_"
         new_sources: List[SourceDescription] = []
         new_routes: List[RouteDescription] = []
-        existing_source_names = {s.name for s in self.active_temporary_sources if s.name.startswith(prefix)}
-        existing_route_names = {r.name for r in self.active_temporary_routes if r.name.startswith(prefix)}
+        # Drop prior SAP-directed temp entities, keep other temps intact
+        self.active_temporary_sources = [s for s in self.active_temporary_sources if not s.name.startswith(prefix)]
+        self.active_temporary_routes = [r for r in self.active_temporary_routes if not r.name.startswith(prefix)]
+        seen_keys: set[str] = set()
+        existing_source_names: set[str] = set()
+        existing_route_names: set[str] = set()
 
         for announcement in sap_announcements:
             target_sink = str(announcement.get("target_sink") or "").strip()
@@ -3659,6 +3663,10 @@ class ConfigurationManager(threading.Thread):
             if route_name in existing_route_names:
                 route_name = f"{base_route_name}_{uuid.uuid4().hex[:6]}"
             existing_route_names.add(route_name)
+            key = f"{sink.name}:{source_ip}:{port_int}"
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
 
             source_desc = SourceDescription(
                 name=source_name,
@@ -3696,25 +3704,11 @@ class ConfigurationManager(threading.Thread):
 
             new_sources.append(source_desc)
             new_routes.append(route_desc)
-        added_sources = []
-        added_routes = []
-        existing_source_names = {s.name for s in self.active_temporary_sources}
-        existing_route_names = {r.name for r in self.active_temporary_routes}
-
-        for src in new_sources:
-            if src.name in existing_source_names:
-                continue
-            self.active_temporary_sources.append(src)
-            added_sources.append(src)
-        for route in new_routes:
-            if route.name in existing_route_names:
-                continue
-            self.active_temporary_routes.append(route)
-            added_routes.append(route)
-
-        if added_sources or added_routes:
+        if new_sources or new_routes:
+            self.active_temporary_sources.extend(new_sources)
+            self.active_temporary_routes.extend(new_routes)
             _logger.info("[Configuration Manager] Updated SAP-directed temporary routing: %d sources, %d routes",
-                         len(added_sources), len(added_routes))
+                         len(new_sources), len(new_routes))
             self.__apply_temporary_configuration_sync()
             # Trigger a full reload so existing sinks pick up new temp paths immediately
             self.__reload_configuration()
