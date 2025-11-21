@@ -80,6 +80,13 @@ void lowercase_in_place(std::string& text) {
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 }
 
+std::string make_ip_port_key(const std::string& ip, int port) {
+    if (port <= 0) {
+        return ip;
+    }
+    return ip + ":" + std::to_string(port);
+}
+
 } // namespace
 
 SapListener::SapListener(std::string logger_prefix, const std::vector<std::string>& known_ips)
@@ -125,9 +132,14 @@ bool SapListener::get_stream_properties(uint32_t ssrc, StreamProperties& propert
     return false;
 }
 
-bool SapListener::get_stream_properties_by_ip(const std::string& ip, StreamProperties& properties) {
+bool SapListener::get_stream_properties_by_ip(const std::string& ip, int port, StreamProperties& properties) {
+    const std::string key = make_ip_port_key(ip, port);
     std::lock_guard<std::mutex> lock(ip_map_mutex_);
-    auto it = ip_to_properties_.find(ip);
+    auto it = ip_to_properties_.find(key);
+    if (it == ip_to_properties_.end() && port > 0) {
+        // Fall back to matching on IP only if no per-port entry exists.
+        it = ip_to_properties_.find(ip);
+    }
     if (it != ip_to_properties_.end()) {
         properties = it->second;
         return true;
@@ -138,8 +150,8 @@ bool SapListener::get_stream_properties_by_ip(const std::string& ip, StreamPrope
 std::vector<SapAnnouncement> SapListener::get_announcements() {
     std::lock_guard<std::mutex> lock(ip_map_mutex_);
     std::vector<SapAnnouncement> announcements;
-    announcements.reserve(announcements_by_stream_ip_.size());
-    for (const auto& entry : announcements_by_stream_ip_) {
+    announcements.reserve(announcements_by_stream_endpoint_.size());
+    for (const auto& entry : announcements_by_stream_endpoint_) {
         announcements.push_back(entry.second);
     }
     return announcements;
@@ -782,9 +794,19 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     ssrc_to_properties_[ssrc] = props;
 
     std::lock_guard<std::mutex> lock2(ip_map_mutex_);
-    ip_to_properties_[source_ip] = props;
-        if (!connection_ip.empty()) {
-        ip_to_properties_[connection_ip] = props;
+    const std::string source_key = make_ip_port_key(source_ip, port);
+    ip_to_properties_[source_key] = props;
+    if (source_key != source_ip) {
+        ip_to_properties_[source_ip] = props;
+    }
+
+    if (!connection_ip.empty()) {
+        const std::string connection_key = make_ip_port_key(connection_ip, port);
+        ip_to_properties_[connection_key] = props;
+        if (connection_key != connection_ip) {
+            ip_to_properties_[connection_ip] = props;
+        }
+
         SapAnnouncement announcement;
         announcement.stream_ip = connection_ip;
         announcement.announcer_ip = source_ip;
@@ -792,7 +814,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         announcement.properties = props;
         announcement.target_sink = target_sink;
         announcement.target_host = target_host;
-        announcements_by_stream_ip_[connection_ip] = announcement;
+        announcements_by_stream_endpoint_[connection_key] = announcement;
     }
 
     LOG_CPP_DEBUG(

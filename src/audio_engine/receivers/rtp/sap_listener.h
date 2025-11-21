@@ -142,13 +142,14 @@ public:
     /**
      * @brief Gets the properties of a stream by its IP address.
      * @param ip The IP address of the stream source.
+     * @param port The RTP media port, if known (<=0 will match IP only).
      * @param properties A reference to a `StreamProperties` struct to be filled.
      * @return true if the IP was found, false otherwise.
      */
-    bool get_stream_properties_by_ip(const std::string& ip, StreamProperties& properties);
+    bool get_stream_properties_by_ip(const std::string& ip, int port, StreamProperties& properties);
 
     /**
-     * @brief Returns the currently known SAP announcements keyed by stream IP.
+     * @brief Returns the currently known SAP announcements keyed by stream endpoint.
      * @return A vector containing the discovered SAP announcements.
      */
     std::vector<SapAnnouncement> get_announcements();
@@ -183,7 +184,7 @@ public:
     
     std::mutex ip_map_mutex_;
     std::unordered_map<std::string, StreamProperties> ip_to_properties_;
-    std::unordered_map<std::string, SapAnnouncement> announcements_by_stream_ip_;
+    std::unordered_map<std::string, SapAnnouncement> announcements_by_stream_endpoint_;
 
 private:
     SessionCallback session_callback_;

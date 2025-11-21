@@ -185,7 +185,7 @@ const AddEditSinkPage: React.FC = () => {
   }, [port, completeStep]);
 
   const resolveApiBase = useCallback((instance: RouterInstance) => {
-    const apiPath = (instance.properties?.api || '').trim();
+    const apiPath = "/";//(instance.properties?.api || '').trim();
     if (!apiPath) {
       return instance.origin;
     }

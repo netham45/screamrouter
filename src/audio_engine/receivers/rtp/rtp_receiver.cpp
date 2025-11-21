@@ -579,6 +579,8 @@ bool RtpReceiverBase::resolve_stream_properties(
     const struct sockaddr_in& client_addr,
     uint8_t payload_type,
     StreamProperties& out_properties) const {
+    const int packet_port = ntohs(client_addr.sin_port);
+
     if (sap_listener_) {
         if (sap_listener_->get_stream_properties(ssrc, out_properties)) {
             return true;
@@ -586,13 +588,12 @@ bool RtpReceiverBase::resolve_stream_properties(
 
         char client_ip_str[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
-        if (sap_listener_->get_stream_properties_by_ip(client_ip_str, out_properties)) {
+        if (sap_listener_->get_stream_properties_by_ip(client_ip_str, packet_port, out_properties)) {
             return true;
         }
     }
 
     const int listen_port = config_.listen_port <= 0 ? 40000 : config_.listen_port;
-    const int packet_port = ntohs(client_addr.sin_port);
 
     if (payload_type == kRtpPayloadTypeOpus && packet_port == listen_port && listen_port == 40000) {
         out_properties.sample_rate = kDefaultOpusSampleRate;
