@@ -4,7 +4,7 @@
  * port, bit depth, sample rate, channels, channel layout, volume, delay, time sync settings, and more.
  * It allows the user to either add a new sink or update an existing one.
  */
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Flex,
@@ -31,6 +31,7 @@ import {
   Text,
   HStack
 } from '@chakra-ui/react';
+import axios from 'axios';
 import ApiService, { Sink, SystemAudioDeviceInfo } from '../../api/api';
 import { useTutorial } from '../../context/TutorialContext';
 import { useMdnsDiscovery } from '../../context/MdnsDiscoveryContext';
@@ -38,6 +39,7 @@ import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
 import MultiRtpReceiverManager, { RtpReceiverMapping } from './controls/MultiRtpReceiverManager';
 import { useAppContext } from '../../context/AppContext';
+import { useRouterInstances, RouterInstance } from '../../hooks/useRouterInstances';
 
 const AddEditSinkPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -77,8 +79,20 @@ const AddEditSinkPage: React.FC = () => {
   const [volumeNormalization, setVolumeNormalization] = useState(false);
   const [multiDeviceMode, setMultiDeviceMode] = useState(false);
   const [rtpReceiverMappings, setRtpReceiverMappings] = useState<RtpReceiverMapping[]>([]);
+  const [sapTargetSink, setSapTargetSink] = useState('');
+  const [sapTargetHost, setSapTargetHost] = useState('');
+  const [selectedServerId, setSelectedServerId] = useState('local');
+  const [remoteSinks, setRemoteSinks] = useState<Sink[]>([]);
+  const [remoteSelection, setRemoteSelection] = useState('');
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const { instances, loading: instancesLoading, error: instancesError, refresh: refreshInstances } = useRouterInstances();
+  const selectedInstance = useMemo<RouterInstance | null>(
+    () => instances.find(inst => inst.id === selectedServerId) || null,
+    [instances, selectedServerId]
+  );
 
   // Color values for light/dark mode
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -170,6 +184,33 @@ const AddEditSinkPage: React.FC = () => {
     completeStep('sink-port-input');
   }, [port, completeStep]);
 
+  const resolveApiBase = useCallback((instance: RouterInstance) => {
+    const apiPath = (instance.properties?.api || '').trim();
+    if (!apiPath) {
+      return instance.origin;
+    }
+    const normalized = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+    return `${instance.origin}${normalized}`;
+  }, []);
+
+  const fetchRemoteSinks = useCallback(async (instance: RouterInstance) => {
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      const baseURL = resolveApiBase(instance).replace(/\/$/, '');
+      const response = await axios.get<Record<string, Sink>>(`${baseURL}/sinks`);
+      setRemoteSinks(Object.values(response.data || {}));
+    } catch (err) {
+      console.error('Failed to fetch remote sinks', err);
+      setRemoteError('Failed to load remote sinks.');
+      setRemoteSinks([]);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }, [resolveApiBase]);
+
+  const randomHighPort = useCallback(() => Math.floor(Math.random() * 9000) + 41000, []);
+
   useEffect(() => {
     if (typeof window === 'undefined') {
       return;
@@ -235,6 +276,8 @@ const AddEditSinkPage: React.FC = () => {
             setTimeSyncDelay(sinkData.time_sync_delay?.toString() || '0');
             setProtocol(resolvedProtocol);
             setVolumeNormalization(sinkData.volume_normalization || false);
+            setSapTargetSink(sinkData.sap_target_sink || '');
+            setSapTargetHost(sinkData.sap_target_host || '');
             // Set multi-device mode and mappings if they exist
             setMultiDeviceMode(sinkData.multi_device_mode || false);
             setRtpReceiverMappings(sinkData.rtp_receiver_mappings || []);
@@ -512,7 +555,9 @@ const AddEditSinkPage: React.FC = () => {
         b13: 1, b14: 1, b15: 1, b16: 1, b17: 1, b18: 1,
         normalization_enabled: false
       },
-      timeshift: timeshift
+      timeshift: timeshift,
+      sap_target_sink: sapTargetSink || undefined,
+      sap_target_host: sapTargetHost || undefined,
     };
 
     // Add multi-device mode configuration if protocol is RTP
@@ -727,6 +772,54 @@ const AddEditSinkPage: React.FC = () => {
               bg={inputBg}
             />
           </FormControl>
+
+          {outputMode === 'network' && (
+            <FormControl>
+              <FormLabel>Sink Server</FormLabel>
+              <HStack spacing={2} align="center">
+                <Select
+                  value={selectedServerId}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    setSelectedServerId(nextId);
+                    setRemoteSelection('');
+                    setRemoteError(null);
+                    setRemoteSinks([]);
+                    setSapTargetSink('');
+                    setSapTargetHost('');
+                    if (nextId !== 'local') {
+                      const inst = instances.find(inst => inst.id === nextId);
+                      if (inst) {
+                        setSapTargetHost(inst.hostname || inst.address || '');
+                        void fetchRemoteSinks(inst);
+                      }
+                    }
+                  }}
+                  bg={inputBg}
+                >
+                  <option value="local">Local</option>
+                  {instances.map(inst => (
+                    <option key={inst.id} value={inst.id}>
+                      {inst.label} {inst.isCurrent ? '(current)' : ''}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  size="sm"
+                  onClick={() => { void refreshInstances(); }}
+                  isLoading={instancesLoading}
+                  variant="outline"
+                >
+                  Refresh
+                </Button>
+              </HStack>
+              {instancesError && (
+                <Text mt={1} fontSize="sm" color="red.400">
+                  {instancesError}
+                </Text>
+              )}
+            </FormControl>
+          )}
           
           <FormControl>
             <FormLabel>Output Type</FormLabel>
@@ -751,7 +844,61 @@ const AddEditSinkPage: React.FC = () => {
               <option value="network">Network Sink (IP)</option>
               <option value="system">System Audio Device</option>
             </Select>
-          </FormControl>
+            </FormControl>
+
+          {outputMode === 'network' && selectedServerId !== 'local' && (
+            <FormControl>
+              <FormLabel>Remote Sink</FormLabel>
+              <Select
+                placeholder={remoteLoading ? 'Loading remote sinks...' : 'Select a remote sink'}
+                value={remoteSelection}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setRemoteSelection(value);
+                  const remoteSink = remoteSinks.find(rs => rs.name === value);
+                  if (!remoteSink || !selectedInstance) {
+                    return;
+                  }
+                  const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${remoteSink.name}`;
+                  setName(baseName);
+                  setSapTargetSink(remoteSink.name);
+                  setSapTargetHost(selectedInstance.hostname || selectedInstance.address || '');
+                  setProtocol('rtp');
+                  setOutputMode('network');
+                  setIp(selectedInstance.address || selectedInstance.hostname || remoteSink.ip || '');
+                  setPort(randomHighPort().toString());
+                  setBitDepth((remoteSink.bit_depth || 16).toString());
+                  setSampleRate((remoteSink.sample_rate || 48000).toString());
+                  setChannels((remoteSink.channels || 2).toString());
+                  setChannelLayout(remoteSink.channel_layout || 'stereo');
+                  setVolume(remoteSink.volume ?? 1);
+                  setDelay(remoteSink.delay ?? 0);
+                  setTimeshift(remoteSink.timeshift ?? 0);
+                  setTimeSync(remoteSink.time_sync ?? false);
+                  setTimeSyncDelay((remoteSink.time_sync_delay ?? 0).toString());
+                  setVolumeNormalization(remoteSink.volume_normalization ?? false);
+                }}
+                isDisabled={remoteLoading}
+                bg={inputBg}
+              >
+                {remoteSinks.map(rs => (
+                  <option key={rs.name} value={rs.name}>
+                    {rs.name}
+                  </option>
+                ))}
+              </Select>
+              {remoteError && (
+                <Text mt={1} fontSize="sm" color="red.400">
+                  {remoteError}
+                </Text>
+              )}
+              {!remoteLoading && remoteSinks.length === 0 && !remoteError && (
+                <Text mt={1} fontSize="sm" color="gray.500">
+                  No remote sinks found on this server.
+                </Text>
+              )}
+            </FormControl>
+          )}
 
           <FormControl isRequired={outputMode === 'network'}>
             <FormLabel>{outputMode === 'system' ? 'Playback Tag' : 'Sink IP'}</FormLabel>

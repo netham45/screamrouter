@@ -3696,11 +3696,25 @@ class ConfigurationManager(threading.Thread):
 
             new_sources.append(source_desc)
             new_routes.append(route_desc)
-        self.active_temporary_sources.extend(new_sources)
-        self.active_temporary_routes.extend(new_routes)
-        if new_sources or new_routes:
+        added_sources = []
+        added_routes = []
+        existing_source_names = {s.name for s in self.active_temporary_sources}
+        existing_route_names = {r.name for r in self.active_temporary_routes}
+
+        for src in new_sources:
+            if src.name in existing_source_names:
+                continue
+            self.active_temporary_sources.append(src)
+            added_sources.append(src)
+        for route in new_routes:
+            if route.name in existing_route_names:
+                continue
+            self.active_temporary_routes.append(route)
+            added_routes.append(route)
+
+        if added_sources or added_routes:
             _logger.info("[Configuration Manager] Updated SAP-directed temporary routing: %d sources, %d routes",
-                         len(new_sources), len(new_routes))
+                         len(added_sources), len(added_routes))
             self.__apply_temporary_configuration_sync()
             # Trigger a full reload so existing sinks pick up new temp paths immediately
             self.__reload_configuration()
