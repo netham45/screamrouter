@@ -260,9 +260,9 @@ class ConfigurationManager(threading.Thread):
     def _broadcast_full_configuration(self):
         """Return coroutine to broadcast current configuration and device metadata."""
         return self.websocket_config.broadcast_config_update(
-            self.source_descriptions + self.active_temporary_sources,
-            self.sink_descriptions + self.active_temporary_sinks,
-            self.route_descriptions + self.active_temporary_routes,
+            self.source_descriptions,
+            self.sink_descriptions,
+            self.route_descriptions,
             self.system_capture_devices,
             self.system_playback_devices,
         )
@@ -392,9 +392,6 @@ class ConfigurationManager(threading.Thread):
         for source in self.source_descriptions:
             source_copy = copy(source)
             sources.append(self._apply_hostname_to_entity(source_copy))
-        for temp_source in self.active_temporary_sources:
-            temp_copy = copy(temp_source)
-            sources.append(self._apply_hostname_to_entity(temp_copy))
         return sources
 
     def get_mdns_snapshot(self) -> Dict[str, Any]:
@@ -2679,9 +2676,9 @@ class ConfigurationManager(threading.Thread):
         
         # Update websocket clients
         self._safe_async_run(self.websocket_config.broadcast_config_update(
-            self.source_descriptions + self.active_temporary_sources,
-            self.sink_descriptions + self.active_temporary_sinks,
-            self.route_descriptions + self.active_temporary_routes,
+            self.source_descriptions,
+            self.sink_descriptions,
+            self.route_descriptions,
             self.system_capture_devices,
             self.system_playback_devices,
         ))
@@ -3644,7 +3641,7 @@ class ConfigurationManager(threading.Thread):
             if port_int == constants.RTP_RECEIVER_PORT or port_int == constants.SINK_PORT:
                 port_int = int(uuid.uuid4().int % 9000) + 41000
 
-            source_ip = str(announcement.get("announcer_ip") or stream_ip)
+            source_ip = str(announcement.get("announcer_ip") or stream_ip or announcement.get("ip") or "").strip()
             try:
                 ip_value = IPAddressType(source_ip)
             except Exception:  # pylint: disable=broad-except
@@ -3657,7 +3654,7 @@ class ConfigurationManager(threading.Thread):
             if source_name in existing_source_names:
                 source_name = f"{base_source_name}_{uuid.uuid4().hex[:6]}"
             existing_source_names.add(source_name)
-            base_route_name = f"{prefix}ROUTE_{sink.name}_{stream_ip}:{port_int}{name_suffix}"
+            base_route_name = f"{prefix}ROUTE_{sink.name}_{source_ip}:{port_int}{name_suffix}"
             route_name = base_route_name
             if route_name in existing_route_names:
                 route_name = f"{base_route_name}_{uuid.uuid4().hex[:6]}"
@@ -3705,6 +3702,8 @@ class ConfigurationManager(threading.Thread):
             _logger.info("[Configuration Manager] Updated SAP-directed temporary routing: %d sources, %d routes",
                          len(new_sources), len(new_routes))
             self.__apply_temporary_configuration_sync()
+            # Trigger a full reload so existing sinks pick up new temp paths immediately
+            self.__reload_configuration()
 
         # mDNS pinger for sources (senders)
         for ip in self.mdns_pinger.get_source_ips():
