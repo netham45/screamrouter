@@ -161,6 +161,10 @@ class ConfigurationManager(threading.Thread):
         """List of active temporary sinks"""
         self.active_temporary_routes: List[RouteDescription] = []
         """List of active temporary routes"""
+        self.active_temporary_sources: List[SourceDescription] = []
+        """List of active temporary sources"""
+        self._sap_route_signature: set[str] = set()
+        """Tracking signature for SAP-directed temporary routes/sources"""
         self.__api_webstream: APIWebStream = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
         self.active_configuration: ConfigurationSolver
@@ -256,9 +260,9 @@ class ConfigurationManager(threading.Thread):
     def _broadcast_full_configuration(self):
         """Return coroutine to broadcast current configuration and device metadata."""
         return self.websocket_config.broadcast_config_update(
-            self.source_descriptions,
-            self.sink_descriptions,
-            self.route_descriptions,
+            self.source_descriptions + self.active_temporary_sources,
+            self.sink_descriptions + self.active_temporary_sinks,
+            self.route_descriptions + self.active_temporary_routes,
             self.system_capture_devices,
             self.system_playback_devices,
         )
@@ -270,10 +274,18 @@ class ConfigurationManager(threading.Thread):
         _sinks: List[SinkDescription] = []
         for sink in self.sink_descriptions:
             sink_copy = copy(sink)
+            if not hasattr(sink_copy, "sap_target_sink"):
+                sink_copy.sap_target_sink = None
+            if not hasattr(sink_copy, "sap_target_host"):
+                sink_copy.sap_target_host = None
             _sinks.append(self._apply_hostname_to_entity(sink_copy))
         # Include temporary sinks
         for temp_sink in self.active_temporary_sinks:
             temp_sink_copy = copy(temp_sink)
+            if not hasattr(temp_sink_copy, "sap_target_sink"):
+                temp_sink_copy.sap_target_sink = None
+            if not hasattr(temp_sink_copy, "sap_target_host"):
+                temp_sink_copy.sap_target_host = None
             _sinks.append(self._apply_hostname_to_entity(temp_sink_copy))
         return _sinks
 
@@ -284,12 +296,21 @@ class ConfigurationManager(threading.Thread):
             if sink.is_temporary:
                 continue
             sink_copy = copy(sink)
+            if not hasattr(sink_copy, "sap_target_sink"):
+                sink_copy.sap_target_sink = None
+            if not hasattr(sink_copy, "sap_target_host"):
+                sink_copy.sap_target_host = None
             _sinks.append(self._apply_hostname_to_entity(sink_copy))
         return _sinks
 
     def add_sink(self, sink: SinkDescription) -> bool:
         """Adds a sink or sink group"""
         self.__verify_new_sink(sink)
+        # Ensure optional SAP hints exist for downstream serialization
+        if not hasattr(sink, "sap_target_sink"):
+            sink.sap_target_sink = None
+        if not hasattr(sink, "sap_target_host"):
+            sink.sap_target_host = None
         # Ensure config_id is set
         if not sink.config_id:
             sink.config_id = str(uuid.uuid4())
@@ -371,6 +392,9 @@ class ConfigurationManager(threading.Thread):
         for source in self.source_descriptions:
             source_copy = copy(source)
             sources.append(self._apply_hostname_to_entity(source_copy))
+        for temp_source in self.active_temporary_sources:
+            temp_copy = copy(temp_source)
+            sources.append(self._apply_hostname_to_entity(temp_copy))
         return sources
 
     def get_mdns_snapshot(self) -> Dict[str, Any]:
@@ -495,7 +519,7 @@ class ConfigurationManager(threading.Thread):
         known_source_tags: Set[str],
         known_sink_ips: Set[str],
         known_sink_config_ids: Set[str],
-    ) -> bool:
+    ) -> Tuple[bool, str]:
         """Check whether a discovered device already maps to a known source or sink."""
         role = (device.role or "").lower()
         ip_value = (device.ip or "").strip()
@@ -507,17 +531,19 @@ class ConfigurationManager(threading.Thread):
 
         if role == "sink":
             if ip_value and ip_value in known_sink_ips:
-                return True
+                return True, "sink_ip"
             receiver_id = str(
                 device.properties.get("receiver_id")
                 or device.properties.get("config_id")
                 or ""
             ).strip()
-            return bool(receiver_id and receiver_id in known_sink_config_ids)
+            if receiver_id and receiver_id in known_sink_config_ids:
+                return True, "sink_id"
+            return False, ""
 
         # Default to source matching
         if ip_value and ip_value in known_source_ips:
-            return True
+            return True, "source_ip"
 
         tag_candidates: Set[str] = set()
         if tag_candidate:
@@ -527,10 +553,14 @@ class ConfigurationManager(threading.Thread):
             if canonical_tag.endswith("*"):
                 tag_candidates.add(canonical_tag[:-1])
 
-        return any(tag in known_source_tags for tag in tag_candidates if tag)
+        for tag in tag_candidates:
+            if tag and tag in known_source_tags:
+                return True, "source_tag"
+
+        return False, ""
 
     def get_unmatched_discovered_devices(self) -> Dict[str, Any]:
-        """Return discovered devices that do not yet correspond to configured sources/sinks."""
+        """Return discovered devices alongside match metadata."""
         known_source_ips: Set[str] = {
             str(desc.ip)
             for desc in self.source_descriptions
@@ -560,36 +590,52 @@ class ConfigurationManager(threading.Thread):
             if desc.config_id is not None
         }
 
-        unmatched_devices: List[DiscoveredDevice] = []
+        devices_with_status: List[Dict[str, Any]] = []
+        unmatched_total = 0
+        unmatched_sources = 0
+        unmatched_sinks = 0
+        total_sources = 0
+        total_sinks = 0
+
         for device in self.discovered_devices.values():
-            if self._discovery_device_has_match(
+            matched, reason = self._discovery_device_has_match(
                 device,
                 known_source_ips,
                 known_source_tags,
                 known_sink_ips,
                 known_sink_config_ids,
-            ):
-                continue
-            unmatched_devices.append(device)
+            )
 
-        unmatched_devices.sort(key=lambda entry: entry.last_seen, reverse=True)
+            role = (device.role or "").lower()
+            if role == "sink":
+                total_sinks += 1
+            else:
+                total_sources += 1
+
+            if not matched:
+                unmatched_total += 1
+                if role == "sink":
+                    unmatched_sinks += 1
+                else:
+                    unmatched_sources += 1
+
+            entry = device.model_dump(mode="json")
+            entry["matched"] = matched
+            if reason:
+                entry["match_reason"] = reason
+            devices_with_status.append(entry)
+
+        devices_with_status.sort(key=lambda entry: entry.get("last_seen") or "", reverse=True)
 
         return {
-            "devices": [
-                device.model_dump(mode="json") for device in unmatched_devices
-            ],
+            "devices": devices_with_status,
             "counts": {
-                "total": len(unmatched_devices),
-                "sources": sum(
-                    1
-                    for device in unmatched_devices
-                    if (device.role or "").lower() != "sink"
-                ),
-                "sinks": sum(
-                    1
-                    for device in unmatched_devices
-                    if (device.role or "").lower() == "sink"
-                ),
+                "total": len(devices_with_status),
+                "sources": total_sources,
+                "sinks": total_sinks,
+                "unmatched_total": unmatched_total,
+                "unmatched_sources": unmatched_sources,
+                "unmatched_sinks": unmatched_sinks,
             },
         }
     
@@ -795,6 +841,18 @@ class ConfigurationManager(threading.Thread):
         _logger.info(f"Applying temporary route '{route.name}' configuration synchronously")
         self.__apply_temporary_configuration_sync()
         return True
+
+    def add_temporary_source(self, source: SourceDescription) -> bool:
+        """Adds a temporary source that won't be persisted to disk"""
+        self.__verify_new_source(source)
+        source.is_temporary = True
+        if not source.config_id:
+            source.config_id = str(uuid.uuid4())
+            _logger.info(f"Generated config_id {source.config_id} for temporary source '{source.name}'")
+        self.active_temporary_sources.append(source)
+        _logger.info(f"Applying temporary source '{source.name}' configuration synchronously")
+        self.__apply_temporary_configuration_sync()
+        return True
     
     def remove_temporary_sink(self, sink_name: SinkNameType) -> bool:
         """Removes a temporary sink"""
@@ -827,6 +885,17 @@ class ConfigurationManager(threading.Thread):
                 return True
         
         _logger.warning(f"Temporary route '{route_name}' not found")
+        return False
+
+    def remove_temporary_source(self, source_name: SourceNameType) -> bool:
+        """Removes a temporary source"""
+        for source in self.active_temporary_sources[:]:
+            if source.name == source_name:
+                self.active_temporary_sources.remove(source)
+                _logger.info(f"Removed temporary source '%s'", source_name)
+                self.__apply_temporary_configuration_sync()
+                return True
+        _logger.warning(f"Temporary source '{source_name}' not found")
         return False
 
     def update_source_equalizer(self, source_name: SourceNameType, equalizer: Equalizer) -> bool:
@@ -1110,6 +1179,7 @@ class ConfigurationManager(threading.Thread):
         self.temp_entity_manager.cleanup_all_entities()
         self.active_temporary_sinks.clear()
         self.active_temporary_routes.clear()
+        self.active_temporary_sources.clear()
         _logger.debug("[Configuration Manager] Temporary entities cleaned up")
         
         self.running = False
@@ -1132,9 +1202,13 @@ class ConfigurationManager(threading.Thread):
         print(self.source_descriptions)
         source_locator: List[SourceDescription] = [source for source in self.source_descriptions
                                                     if source.name == source_name]
-        if len(source_locator) == 0:
+        if len(source_locator) > 0:
+            return source_locator[0]
+        temp_locator: List[SourceDescription] = [source for source in self.active_temporary_sources
+                                                 if source.name == source_name]
+        if len(temp_locator) == 0:
             raise NameError(f"source {source_name} not found")
-        return source_locator[0]
+        return temp_locator[0]
 
     def get_sink_by_name(self, sink_name: SinkNameType) -> SinkDescription:
         """Returns a SinkDescription by name (checks both permanent and temporary sinks)"""
@@ -2097,6 +2171,16 @@ class ConfigurationManager(threading.Thread):
                 cpp_sink_engine_config.protocol = "system_audio"
             else:
                 cpp_sink_engine_config.protocol = py_sink_desc.protocol
+
+            # Optional SAP-directed routing hints
+            if hasattr(py_sink_desc, "sap_target_sink") and py_sink_desc.sap_target_sink:
+                cpp_sink_engine_config.sap_target_sink = str(py_sink_desc.sap_target_sink)
+            else:
+                cpp_sink_engine_config.sap_target_sink = ""
+            if hasattr(py_sink_desc, "sap_target_host") and py_sink_desc.sap_target_host:
+                cpp_sink_engine_config.sap_target_host = str(py_sink_desc.sap_target_host)
+            else:
+                cpp_sink_engine_config.sap_target_host = ""
             
             # Log protocol being set for debugging WebRTC sinks
             if py_sink_desc.protocol == "webrtc":
@@ -2433,12 +2517,13 @@ class ConfigurationManager(threading.Thread):
                     if source.tag == plugin_source.tag:
                         self.source_descriptions[index] = plugin_source
             if not found:
-                self.source_descriptions.append(plugin_source)
+                    self.source_descriptions.append(plugin_source)
 
         # Get a new resolved configuration from the current state (including temporary entities)
-        _logger.debug("[Configuration Manager] Solving Configuration (including %d temporary sinks and %d temporary routes)",
-                     len(self.active_temporary_sinks), len(self.active_temporary_routes))
-        self.active_configuration = ConfigurationSolver(self.source_descriptions,
+        _logger.debug("[Configuration Manager] Solving Configuration (including %d temporary sinks, %d temporary routes, %d temporary sources)",
+                     len(self.active_temporary_sinks), len(self.active_temporary_routes), len(self.active_temporary_sources))
+        combined_sources = self.source_descriptions + self.active_temporary_sources
+        self.active_configuration = ConfigurationSolver(combined_sources,
                                                         combined_sinks,
                                                         combined_routes)
 
@@ -2594,7 +2679,7 @@ class ConfigurationManager(threading.Thread):
         
         # Update websocket clients
         self._safe_async_run(self.websocket_config.broadcast_config_update(
-            self.source_descriptions,
+            self.source_descriptions + self.active_temporary_sources,
             self.sink_descriptions + self.active_temporary_sinks,
             self.route_descriptions + self.active_temporary_routes,
             self.system_capture_devices,
@@ -3384,6 +3469,7 @@ class ConfigurationManager(threading.Thread):
                     _logger.error("[Configuration Manager] Error getting seen tags from PulseAudio Receiver: %s", e)
 
             # SAP Announcements (metadata-driven sources)
+            sap_announcements: list = []
             try:
                 if hasattr(self.cpp_audio_manager, "get_rtp_sap_announcements"):
                     sap_announcements = self.cpp_audio_manager.get_rtp_sap_announcements() or []
@@ -3472,7 +3558,144 @@ class ConfigurationManager(threading.Thread):
                         )
             except Exception as e:
                 _logger.error("[Configuration Manager] Error processing SAP announcements from C++ RTP Receiver: %s", e)
+            self._apply_sap_target_routes(sap_announcements)
         # --- End C++ Engine Based Auto Source Detection ---
+
+    def _sap_host_matches_local(self, target_host: str) -> bool:
+        """Compare a target host string against known local hostnames/IPs."""
+        if not target_host:
+            return True
+
+        host = target_host.strip().lower()
+        if not host:
+            return True
+
+        candidates: set[str] = set()
+        try:
+            candidates.add(socket.gethostname().lower())
+            candidates.add(socket.getfqdn().lower())
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        try:
+            if hasattr(self.mdns_router_service_advertiser, "hostname"):
+                candidates.add(str(self.mdns_router_service_advertiser.hostname).lower())
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        normalized_candidates = set()
+        for item in candidates:
+            normalized_candidates.add(item)
+            normalized_candidates.add(item.split('.', 1)[0])
+            if item.endswith(".local"):
+                normalized_candidates.add(item[:-6])
+
+        ip_candidates: set[str] = set()
+        try:
+            ip_candidates.update(socket.gethostbyname_ex(socket.gethostname())[2])
+        except Exception:  # pylint: disable=broad-except
+            pass
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.connect(("8.8.8.8", 80))
+                ip_candidates.add(sock.getsockname()[0])
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        normalized_host = host.split('.', 1)[0] if "." in host else host
+        if host in normalized_candidates or normalized_host in normalized_candidates:
+            return True
+        if host in ip_candidates:
+            return True
+        return False
+
+    def _apply_sap_target_routes(self, sap_announcements: List[dict[str, Any]]) -> None:
+        """Create temporary sources/routes for SAP announcements that target a local sink."""
+        prefix = "SAP_REMOTE_"
+        new_sources: List[SourceDescription] = []
+        new_routes: List[RouteDescription] = []
+        new_signature: set[str] = set()
+
+        for announcement in sap_announcements:
+            target_sink = str(announcement.get("target_sink") or "").strip()
+            if not target_sink:
+                continue
+            target_host = str(announcement.get("target_host") or "").strip()
+            if target_host and not self._sap_host_matches_local(target_host):
+                continue
+
+            try:
+                sink = self.get_sink_by_name(target_sink)
+            except NameError:
+                continue
+
+            stream_ip = str(announcement.get("stream_ip") or announcement.get("ip") or "").strip()
+            port_value = announcement.get("port")
+            if not stream_ip or port_value is None:
+                continue
+            try:
+                port_int = int(port_value)
+            except (TypeError, ValueError):
+                continue
+
+            try:
+                ip_value = IPAddressType(stream_ip)
+            except Exception:  # pylint: disable=broad-except
+                ip_value = stream_ip
+
+            source_name = f"{prefix}{sink.name}_{stream_ip}:{port_int}"
+            route_name = f"{prefix}ROUTE_{sink.name}_{stream_ip}:{port_int}"
+
+            source_desc = SourceDescription(
+                name=source_name,
+                ip=ip_value,
+                tag=None,
+                channels=announcement.get("channels"),
+                sample_rate=announcement.get("sample_rate"),
+                bit_depth=announcement.get("bit_depth"),
+                is_group=False,
+                enabled=True,
+                group_members=[],
+                volume=1,
+                delay=0,
+                equalizer=Equalizer(),
+                timeshift=0,
+                speaker_layouts={},
+                vnc_ip="",
+                vnc_port="",
+                is_process=False,
+            )
+            source_desc.is_temporary = True
+
+            route_desc = RouteDescription(
+                name=route_name,
+                sink=sink.name,
+                source=source_desc.name,
+                enabled=True,
+                volume=1,
+                delay=0,
+                equalizer=Equalizer(),
+                timeshift=0,
+                speaker_layouts={},
+                is_temporary=True,
+            )
+
+            new_sources.append(source_desc)
+            new_routes.append(route_desc)
+            signature_key = f"{source_name}:{announcement.get('sample_rate')}:{announcement.get('channels')}:{announcement.get('bit_depth')}"
+            new_signature.add(signature_key)
+            new_signature.add(f"{route_name}:{sink.name}")
+
+        existing_non_sap_sources = [s for s in self.active_temporary_sources if not s.name.startswith(prefix)]
+        existing_non_sap_routes = [r for r in self.active_temporary_routes if not r.name.startswith(prefix)]
+
+        if new_signature != self._sap_route_signature:
+            self._sap_route_signature = new_signature
+            self.active_temporary_sources = existing_non_sap_sources + new_sources
+            self.active_temporary_routes = existing_non_sap_routes + new_routes
+            _logger.info("[Configuration Manager] Updated SAP-directed temporary routing: %d sources, %d routes",
+                         len(new_sources), len(new_routes))
+            self.__reload_configuration()
 
         # mDNS pinger for sources (senders)
         for ip in self.mdns_pinger.get_source_ips():

@@ -25,6 +25,8 @@ export interface DiscoveredDevice {
   properties: Record<string, unknown>;
   last_seen: string;
   device_type?: string | null;
+  matched?: boolean;
+  match_reason?: string;
 }
 
 export interface UnifiedDiscoverySnapshot {
@@ -39,5 +41,8 @@ export interface DiscoveryInventoryResponse {
     total: number;
     sources: number;
     sinks: number;
+    unmatched_total?: number;
+    unmatched_sources?: number;
+    unmatched_sinks?: number;
   };
 }

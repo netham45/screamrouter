@@ -439,6 +439,8 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     }
 
     int port = 0;
+    std::string target_sink;
+    std::string target_host;
     std::vector<int> audio_payload_types;
     for (const auto& line : sdp_lines) {
         if (line.rfind("m=audio ", 0) == 0) {
@@ -455,6 +457,26 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                 session_callback_(connection_ip, port, source_ip);
             }
             break;
+        } else if (line.rfind("a=x-screamrouter-target:", 0) == 0) {
+            std::string target_block = trim_copy(line.substr(std::strlen("a=x-screamrouter-target:")));
+            if (!target_block.empty()) {
+                std::stringstream ss(target_block);
+                std::string token;
+                while (std::getline(ss, token, ';')) {
+                    const auto eq_pos = token.find('=');
+                    std::string key = trim_copy(token.substr(0, eq_pos));
+                    std::string value = (eq_pos != std::string::npos) ? trim_copy(token.substr(eq_pos + 1)) : "";
+                    lowercase_in_place(key);
+                    if (key == "sink") {
+                        target_sink = value;
+                    } else if (key == "host") {
+                        target_host = value;
+                    }
+                }
+                if (target_sink.empty()) {
+                    target_sink = target_block;
+                }
+            }
         }
     }
 
@@ -548,6 +570,30 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                 }
                 lowercase_in_place(key);
                 params[key] = value;
+            }
+        }
+    }
+
+    // Extract target hints from fmtp before payload selection
+    for (const auto& kv : fmtp_entries) {
+        const auto target_it = kv.second.find("x-screamrouter-target");
+        if (target_it != kv.second.end()) {
+            std::string target_block = target_it->second;
+            std::stringstream ss(target_block);
+            std::string token;
+            while (std::getline(ss, token, ';')) {
+                const auto eq_pos = token.find('=');
+                std::string key = trim_copy(token.substr(0, eq_pos));
+                std::string value = (eq_pos != std::string::npos) ? trim_copy(token.substr(eq_pos + 1)) : "";
+                lowercase_in_place(key);
+                if (key == "sink") {
+                    target_sink = value;
+                } else if (key == "host") {
+                    target_host = value;
+                }
+            }
+            if (target_sink.empty()) {
+                target_sink = trim_copy(target_block);
             }
         }
     }
@@ -737,13 +783,15 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
 
     std::lock_guard<std::mutex> lock2(ip_map_mutex_);
     ip_to_properties_[source_ip] = props;
-    if (!connection_ip.empty()) {
+        if (!connection_ip.empty()) {
         ip_to_properties_[connection_ip] = props;
         SapAnnouncement announcement;
         announcement.stream_ip = connection_ip;
         announcement.announcer_ip = source_ip;
         announcement.port = port;
         announcement.properties = props;
+        announcement.target_sink = target_sink;
+        announcement.target_host = target_host;
         announcements_by_stream_ip_[connection_ip] = announcement;
     }
 

@@ -206,7 +206,9 @@ bool compare_sink_configs(const audio::SinkConfig& a, const audio::SinkConfig& b
            a.chlayout1 == b.chlayout1 &&
            a.chlayout2 == b.chlayout2 &&
            a.enable_mp3 == b.enable_mp3 &&
-           a.protocol == b.protocol;
+           a.protocol == b.protocol &&
+           a.sap_target_sink == b.sap_target_sink &&
+           a.sap_target_host == b.sap_target_host;
 }
 
 /**

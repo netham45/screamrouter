@@ -81,6 +81,8 @@ bool WebRtcManager::add_webrtc_listener(
         mixer_config.output_chlayout1 = sink_config.chlayout1;
         mixer_config.output_chlayout2 = sink_config.chlayout2;
         mixer_config.protocol = sink_config.protocol;
+        mixer_config.sap_target_sink = sink_config.sap_target_sink;
+        mixer_config.sap_target_host = sink_config.sap_target_host;
         mixer_config.speaker_layout = sink_config.speaker_layout;
     } // Release m_manager_mutex here to prevent deadlock
 

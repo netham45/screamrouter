@@ -34,6 +34,8 @@ bool SinkManager::add_sink(const SinkConfig& config, bool running) {
         SinkMixerConfig mixer_config;
         mixer_config.sink_id = config.id;
         mixer_config.protocol = config.protocol;
+        mixer_config.sap_target_sink = config.sap_target_sink;
+        mixer_config.sap_target_host = config.sap_target_host;
         mixer_config.output_ip = config.output_ip;
         mixer_config.output_port = config.output_port;
         mixer_config.output_bitdepth = config.bitdepth;

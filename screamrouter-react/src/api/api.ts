@@ -69,6 +69,8 @@ export interface Sink {
   timeshift: number;
   time_sync: boolean;
   time_sync_delay: number;
+  sap_target_sink?: string;
+  sap_target_host?: string;
   favorite?: boolean;
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
   protocol?: string;

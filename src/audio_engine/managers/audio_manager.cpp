@@ -594,6 +594,12 @@ pybind11::list AudioManager::get_rtp_sap_announcements() {
         entry["channels"] = announcement.properties.channels;
         entry["bit_depth"] = announcement.properties.bit_depth;
         entry["endianness"] = (announcement.properties.endianness == Endianness::LITTLE) ? "little" : "big";
+        if (!announcement.target_sink.empty()) {
+            entry["target_sink"] = announcement.target_sink;
+        }
+        if (!announcement.target_host.empty()) {
+            entry["target_host"] = announcement.target_host;
+        }
         result.append(entry);
     }
 

@@ -409,6 +409,10 @@ struct SinkConfig {
     bool enable_mp3 = false;
     /** @brief Output protocol ("scream", "rtp", "web_receiver", "system_audio"). */
     std::string protocol = "scream";
+    /** @brief Optional target sink name for SAP-directed remote routing. */
+    std::string sap_target_sink;
+    /** @brief Optional target host for SAP-directed remote routing. */
+    std::string sap_target_host;
     /** @brief Speaker layout configuration for this sink. */
     CppSpeakerLayout speaker_layout;
     /** @brief Enable time synchronization for RTP streams. */
@@ -571,6 +575,10 @@ struct SinkMixerConfig {
     uint8_t output_chlayout2;
     /** @brief Output protocol ("scream", "rtp", "web_receiver", "system_audio"). */
     std::string protocol = "scream";
+    /** @brief Optional target sink for SAP-directed routing. */
+    std::string sap_target_sink;
+    /** @brief Optional target host for SAP-directed routing. */
+    std::string sap_target_host;
     /** @brief Speaker layout for RTP channel mapping. */
     CppSpeakerLayout speaker_layout;
     /** @brief Enable time synchronization for RTP streams. */
@@ -644,6 +652,8 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("chlayout1", &SinkConfig::chlayout1, "Scream header channel layout byte 1")
             .def_readwrite("chlayout2", &SinkConfig::chlayout2, "Scream header channel layout byte 2")
             .def_readwrite("protocol", &SinkConfig::protocol, "Network protocol (e.g., 'scream', 'rtp')")
+            .def_readwrite("sap_target_sink", &SinkConfig::sap_target_sink, "Optional target sink name for SAP-directed routing")
+            .def_readwrite("sap_target_host", &SinkConfig::sap_target_host, "Optional target host for SAP-directed routing")
             .def_readwrite("time_sync_enabled", &SinkConfig::time_sync_enabled, "Enable time synchronization for RTP streams")
             .def_readwrite("time_sync_delay_ms", &SinkConfig::time_sync_delay_ms, "Time synchronization delay in milliseconds")
             .def_readwrite("rtp_receivers", &SinkConfig::rtp_receivers, "List of RTP receivers for multi-device mode")

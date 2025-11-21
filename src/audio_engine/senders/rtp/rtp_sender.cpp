@@ -541,6 +541,13 @@ void RtpSender::sap_announcement_loop() {
                 sdp << "/" << channel_count;
             }
             sdp << "\n";
+            if (!config_.sap_target_sink.empty()) {
+                sdp << "a=fmtp:" << static_cast<int>(payload_type) << " x-screamrouter-target=sink=" << config_.sap_target_sink;
+                if (!config_.sap_target_host.empty()) {
+                    sdp << ";host=" << config_.sap_target_host;
+                }
+                sdp << "\n";
+            }
             for (const auto& attribute : extra_attributes) {
                 if (attribute.empty()) {
                     continue;
@@ -549,6 +556,14 @@ void RtpSender::sap_announcement_loop() {
                 if (attribute.back() != '\n') {
                     sdp << "\n";
                 }
+            }
+
+            if (!config_.sap_target_sink.empty()) {
+                sdp << "a=x-screamrouter-target:sink=" << config_.sap_target_sink;
+                if (!config_.sap_target_host.empty()) {
+                    sdp << ";host=" << config_.sap_target_host;
+                }
+                sdp << "\n";
             }
 
             // Add channel map if channels > 2, using the scream channel layout
