@@ -480,13 +480,14 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                     std::string value = (eq_pos != std::string::npos) ? trim_copy(token.substr(eq_pos + 1)) : "";
                     lowercase_in_place(key);
                     if (key == "sink") {
-                        target_sink = value;
+                        target_sink = trim_copy(value);
                     } else if (key == "host") {
-                        target_host = value;
+                        target_host = trim_copy(value);
+                        lowercase_in_place(target_host);
                     }
                 }
                 if (target_sink.empty()) {
-                    target_sink = target_block;
+                    target_sink = trim_copy(target_block);
                 }
             }
         }
@@ -599,9 +600,10 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                 std::string value = (eq_pos != std::string::npos) ? trim_copy(token.substr(eq_pos + 1)) : "";
                 lowercase_in_place(key);
                 if (key == "sink") {
-                    target_sink = value;
+                    target_sink = trim_copy(value);
                 } else if (key == "host") {
-                    target_host = value;
+                    target_host = trim_copy(value);
+                    lowercase_in_place(target_host);
                 }
             }
             if (target_sink.empty()) {

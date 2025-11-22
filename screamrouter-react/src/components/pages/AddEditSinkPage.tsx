@@ -861,8 +861,8 @@ const AddEditSinkPage: React.FC = () => {
                   }
                   const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${remoteSink.name}`;
                   setName(baseName);
-                  setSapTargetSink(remoteSink.name);
-                  setSapTargetHost(selectedInstance.hostname || selectedInstance.address || '');
+                  setSapTargetSink(remoteSink.config_id || remoteSink.name);
+                  setSapTargetHost(selectedInstance.uuid || selectedInstance.hostname || selectedInstance.address || '');
                   setProtocol('rtp');
                   setOutputMode('network');
                   setIp(selectedInstance.address || selectedInstance.hostname || remoteSink.ip || '');

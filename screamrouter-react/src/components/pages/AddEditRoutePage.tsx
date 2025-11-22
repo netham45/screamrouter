@@ -136,9 +136,9 @@ const AddEditRoutePage: React.FC = () => {
     if (!instance) {
       return null;
     }
-    const candidates = [instance.hostname, instance.address].filter(Boolean);
+    const candidates = [instance.hostname, instance.address, instance.uuid].filter(Boolean);
     const match = sinks.find((localSink) => {
-      const sinkMatch = localSink.sap_target_sink === remoteSink.name;
+      const sinkMatch = localSink.sap_target_sink === remoteSink.config_id || localSink.sap_target_sink === remoteSink.name;
       if (!sinkMatch) {
         return false;
       }
@@ -155,7 +155,7 @@ const AddEditRoutePage: React.FC = () => {
       setError('Select a server first.');
       return null;
     }
-    const targetHost = selectedInstance.hostname || selectedInstance.address || '';
+    const targetHost = selectedInstance.uuid || selectedInstance.hostname || selectedInstance.address || '';
     const matching = findExistingLocalSink(remoteSink, selectedInstance);
     if (matching) {
       setSelectedServerId('local');
@@ -193,8 +193,8 @@ const AddEditRoutePage: React.FC = () => {
       volume_normalization: remoteSink.volume_normalization ?? false,
       multi_device_mode: false,
       rtp_receiver_mappings: [],
-      sap_target_sink: remoteSink.name,
-      sap_target_host: selectedInstance.hostname || selectedInstance.address || '',
+      sap_target_sink: remoteSink.config_id || remoteSink.name,
+      sap_target_host: targetHost,
     };
 
     try {
