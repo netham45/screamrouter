@@ -300,7 +300,7 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         return false;
     }
 
-    if (detected_xrun && is_raspberry_pi_) {
+    if (detected_xrun && is_raspberry_pi_ && 0) { // Disabled for now
         LOG_CPP_WARNING("[AlsaPlayback:%s] ALSA x-run detected on Raspberry Pi; recreating playback device.", device_tag_.c_str());
         close_locked();
         if (!configure_device()) {
