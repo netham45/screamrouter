@@ -237,6 +237,7 @@ private:
 
     bool underrun_silence_active_ = false;
     std::chrono::steady_clock::time_point underrun_silence_deadline_{};
+    std::chrono::steady_clock::time_point last_silence_log_time_{};
 
     // --- Synchronization Coordination ---
     /** @brief Whether coordination mode is enabled for synchronized dispatch. */

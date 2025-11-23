@@ -816,6 +816,17 @@ void SourceInputProcessor::input_loop() {
 
         const uint8_t* audio_payload_ptr = nullptr;
         size_t audio_payload_size = 0;
+
+        if (timed_packet.audio_data.empty()) {
+            const auto now_empty = std::chrono::steady_clock::now();
+            if (last_empty_packet_log_.time_since_epoch().count() == 0 ||
+                now_empty - last_empty_packet_log_ >= std::chrono::milliseconds(500)) {
+                LOG_CPP_WARNING("[SourceProc:%s] Received empty audio payload; ignoring.",
+                                config_.instance_id.c_str());
+                last_empty_packet_log_ = now_empty;
+            }
+            continue;
+        }
         
         bool packet_ok_for_processing = check_format_and_reconfigure(
             timed_packet,

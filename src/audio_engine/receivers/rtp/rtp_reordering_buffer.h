@@ -73,6 +73,9 @@ private:
     const std::chrono::milliseconds m_max_delay;
     const size_t m_max_size;
 
+    // Prevents flooding logs when a burst of out-of-order packets arrives.
+    std::chrono::steady_clock::time_point last_out_of_order_log_{};
+
     // Helper to correctly compare 16-bit sequence numbers with wraparound.
     static bool is_sequence_greater(uint16_t seq1, uint16_t seq2);
 };

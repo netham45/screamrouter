@@ -537,8 +537,10 @@ void ClockManager::run() {
 
         auto conditions = entry.conditions;
         const auto period = entry.period;
+        const auto half_period = period / 2;
         entry.next_fire += period;
-        while (entry.next_fire <= now) {
+        // Treat a tick as "missed" only if we are more than half a period late.
+        while (entry.next_fire + half_period <= now) {
             entry.next_fire += period;
         }
 

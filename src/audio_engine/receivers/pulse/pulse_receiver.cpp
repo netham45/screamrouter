@@ -682,6 +682,8 @@ struct PulseAudioReceiver::Impl::Connection {
         std::chrono::steady_clock::time_point playback_start_time{};
         uint64_t underrun_usec = 0;
         bool muted = false;
+        std::chrono::steady_clock::time_point last_underrun_log{};
+        std::chrono::steady_clock::time_point last_catchup_log{};
         ProfilingData profile;
         std::deque<PendingChunk> pending_chunks;
         ClockManager::ConditionHandle clock_handle;
@@ -3618,6 +3620,9 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
     }
 
     auto now = std::chrono::steady_clock::now();
+    const std::string log_tag = !stream.composite_tag.empty()
+                                    ? stream.composite_tag
+                                    : ("stream#" + std::to_string(stream.local_index));
     const size_t channels = stream.sample_spec.channels;
     const uint32_t bit_depth = sample_format_bit_depth(stream.sample_spec.format);
     const size_t bytes_per_sample = std::max<uint32_t>(bit_depth / 8, 1);
@@ -3671,6 +3676,15 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
                         stream.underrun_usec += static_cast<uint64_t>(underrun.count());
 
                         if (underrun.count() > kMaxUnderrunResetUsec) {
+                            const auto since_last_log = (stream.last_underrun_log.time_since_epoch().count() == 0)
+                                                             ? std::chrono::steady_clock::duration::max()
+                                                             : (now - stream.last_underrun_log);
+                            if (since_last_log >= std::chrono::milliseconds(200)) {
+                                const double underrun_ms = static_cast<double>(underrun.count()) / 1000.0;
+                                owner->log_warning("[PulseReceiver] Stream " + log_tag + " underrun of " +
+                                                   std::to_string(underrun_ms) + " ms; resetting playback timeline.");
+                                stream.last_underrun_log = now;
+                            }
                             // For large gaps, snap to realtime so new streams don't start seconds behind.
                             stream.last_delivery_time = now;
                         } else {
@@ -3678,6 +3692,17 @@ bool PulseAudioReceiver::Impl::Connection::handle_playback_data(const Message& m
                             stream.last_delivery_time += std::chrono::microseconds(catch_up);
                             if (catch_up > 0) {
                                 catchup_for_chunk += static_cast<uint64_t>(catch_up);
+                                const auto since_last_catchup = (stream.last_catchup_log.time_since_epoch().count() == 0)
+                                                                    ? std::chrono::steady_clock::duration::max()
+                                                                    : (now - stream.last_catchup_log);
+                                if (since_last_catchup >= std::chrono::milliseconds(200)) {
+                                    const double underrun_ms = static_cast<double>(underrun.count()) / 1000.0;
+                                    const double catchup_ms = static_cast<double>(catch_up) / 1000.0;
+                                    owner->log_warning("[PulseReceiver] Stream " + log_tag + " fell behind by " +
+                                                       std::to_string(underrun_ms) + " ms; applying catch-up of " +
+                                                       std::to_string(catchup_ms) + " ms.");
+                                    stream.last_catchup_log = now;
+                                }
                             }
                             if (stream.last_delivery_time > now) {
                                 stream.last_delivery_time = now;

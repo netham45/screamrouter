@@ -240,6 +240,7 @@ private:
     uint64_t profiling_input_queue_sum_{0};
     uint64_t profiling_output_queue_sum_{0};
     uint64_t profiling_queue_samples_{0};
+    std::chrono::steady_clock::time_point last_empty_packet_log_{};
 
     struct InputFragmentMetadata {
         std::size_t bytes = 0;

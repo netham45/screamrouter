@@ -227,11 +227,16 @@ bool AlsaPlaybackSender::configure_device() {
                         device_tag_.c_str(), bit_depth_, snd_strerror(err));
     }
     snd_pcm_hw_params_set_channels(pcm_handle_, hw_params, channels_);
-    unsigned int rate = sample_rate_;
-    snd_pcm_hw_params_set_rate_near(pcm_handle_, hw_params, &rate, nullptr);
-    sample_rate_ = rate;
+    err = snd_pcm_hw_params_set_rate(pcm_handle_, hw_params, sample_rate_, 0);
+    if (err < 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to set exact sample rate %u Hz: %s",
+                      device_tag_.c_str(), sample_rate_, snd_strerror(err));
+        snd_pcm_hw_params_free(hw_params);
+        close_locked();
+        return false;
+    }
 
-    constexpr unsigned int kTargetLatencyUs = 12000;      // 12 ms overall buffer target
+    constexpr unsigned int kTargetLatencyUs = 24000;      // 24 ms overall buffer target
     constexpr unsigned int kPeriodsPerBuffer = 3;        // keep a few smaller periods for smoothness
     unsigned int buffer_time = kTargetLatencyUs;
     unsigned int period_time = std::max(1000u, buffer_time / kPeriodsPerBuffer);
@@ -259,8 +264,11 @@ bool AlsaPlaybackSender::configure_device() {
     snd_pcm_sw_params_t* sw_params = nullptr;
     snd_pcm_sw_params_malloc(&sw_params);
     snd_pcm_sw_params_current(pcm_handle_, sw_params);
-    snd_pcm_uframes_t start_threshold = std::max<snd_pcm_uframes_t>(1, period_frames_);
+    snd_pcm_uframes_t start_threshold = period_frames_ > 0 && buffer_frames_ > period_frames_
+                                            ? buffer_frames_ - period_frames_
+                                            : std::max<snd_pcm_uframes_t>(1, period_frames_);
     snd_pcm_sw_params_set_start_threshold(pcm_handle_, sw_params, start_threshold);
+    // Require at least one full period available before we wake the writer; keeps a bit more headroom.
     snd_pcm_sw_params_set_avail_min(pcm_handle_, sw_params, period_frames_);
     snd_pcm_sw_params_set_stop_threshold(pcm_handle_, sw_params, buffer_frames_);
     snd_pcm_sw_params(pcm_handle_, sw_params);
@@ -286,12 +294,21 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         return false;
     }
 
+    const int original_err = err;
     const bool xrun_via_error_code = (err == -EPIPE);
     const bool xrun_via_status = detect_xrun_locked();
     if (xrun_via_error_code && !xrun_via_status) {
         LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA reported write underrun (EPIPE).", device_tag_.c_str());
     }
     const bool detected_xrun = xrun_via_status || xrun_via_error_code;
+
+    if (detected_xrun) {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] x-run detected while writing audio (err=%s). Attempting recovery.",
+                        device_tag_.c_str(), snd_strerror(original_err));
+    } else {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] Write error while feeding ALSA (err=%s). Attempting recovery.",
+                        device_tag_.c_str(), snd_strerror(original_err));
+    }
 
     err = snd_pcm_recover(pcm_handle_, err, 1);
     if (err < 0) {
@@ -300,7 +317,7 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         return false;
     }
 
-    if (detected_xrun && is_raspberry_pi_ && 0) { // Disabled for now
+    if (detected_xrun && is_raspberry_pi_) {
         LOG_CPP_WARNING("[AlsaPlayback:%s] ALSA x-run detected on Raspberry Pi; recreating playback device.", device_tag_.c_str());
         close_locked();
         if (!configure_device()) {

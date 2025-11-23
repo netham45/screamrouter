@@ -1960,6 +1960,13 @@ void SinkAudioMixer::run() {
         if (!should_mix) {
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No active sources and no underrun hold. Repeating last sample if available.",
                           config_.sink_id.c_str());
+            const auto now_silence = std::chrono::steady_clock::now();
+            if (last_silence_log_time_.time_since_epoch().count() == 0 ||
+                now_silence - last_silence_log_time_ >= std::chrono::seconds(1)) {
+                LOG_CPP_WARNING("[SinkMixer:%s] No active inputs; output will repeat last buffer or silence until data arrives.",
+                                config_.sink_id.c_str());
+                last_silence_log_time_ = now_silence;
+            }
         }
 
         const bool coordination_active = coordination_mode_ && coordinator_;

@@ -833,11 +833,27 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 timing_state->head_playout_lag_ms_max = std::max(timing_state->head_playout_lag_ms_max, head_lag_ms);
                 timing_state->head_playout_lag_samples++;
 
+                const std::string log_tag = target_info.source_tag_filter.empty()
+                                                ? candidate_packet.source_tag
+                                                : target_info.source_tag_filter;
+
                 // Check if the packet is ready to be played
                 if (ideal_playout_time <= now) {
                     const double lateness_ms = -time_until_playout_ms;
                     if (lateness_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
                         timing_state->late_packets_count++;
+                        const auto since_last_log = (timing_state->last_late_log_time.time_since_epoch().count() == 0)
+                                                        ? std::chrono::steady_clock::duration::max()
+                                                        : (now - timing_state->last_late_log_time);
+                        if (since_last_log >= std::chrono::milliseconds(200)) {
+                            LOG_CPP_WARNING(
+                                "[TimeshiftManager] Late packet for source '%s': lateness=%.2f ms (threshold=%.2f ms, buffer=%.2f ms).",
+                                log_tag.c_str(),
+                                lateness_ms,
+                                m_settings->timeshift_tuning.late_packet_threshold_ms,
+                                buffer_level_ms);
+                            timing_state->last_late_log_time = now;
+                        }
                     }
                     if (lateness_ms > 0.0) {
                         profiling_total_lateness_ms_ += lateness_ms;
@@ -855,12 +871,18 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     if (max_catchup_lag_ms > 0.0 && lateness_ms > max_catchup_lag_ms) {
                         timing_state->tm_packets_discarded++;
                         profiling_packets_dropped_++;
-                        const std::string& log_tag = target_info.source_tag_filter.empty() ? candidate_packet.source_tag : target_info.source_tag_filter;
-                        LOG_CPP_DEBUG(
-                            "[TimeshiftManager] Dropping late packet for source '%s'. Lateness=%.2f ms exceeds catchup limit=%.2f ms.",
-                            log_tag.c_str(),
-                            lateness_ms,
-                            max_catchup_lag_ms);
+                        const auto since_last_drop_log = (timing_state->last_discard_log_time.time_since_epoch().count() == 0)
+                                                             ? std::chrono::steady_clock::duration::max()
+                                                             : (now - timing_state->last_discard_log_time);
+                        if (since_last_drop_log >= std::chrono::milliseconds(200)) {
+                            LOG_CPP_WARNING(
+                                "[TimeshiftManager] Dropping late packet for source '%s'. Lateness=%.2f ms exceeds catchup limit=%.2f ms (buffer=%.2f ms).",
+                                log_tag.c_str(),
+                                lateness_ms,
+                                max_catchup_lag_ms,
+                                buffer_level_ms);
+                            timing_state->last_discard_log_time = now;
+                        }
 
                         target_info.next_packet_read_index++;
                         continue;

@@ -337,6 +337,11 @@ bool AlsaCaptureReceiver::recover_from_error(int err) {
     if (!pcm_handle_) {
         return false;
     }
+    const bool is_xrun = (err == -EPIPE);
+    LOG_CPP_WARNING("[AlsaCapture:%s] Read error detected (err=%s)%s. Attempting recovery.",
+                    device_tag_.c_str(),
+                    snd_strerror(err),
+                    is_xrun ? " [x-run]" : "");
     err = snd_pcm_recover(pcm_handle_, err, 1);
     if (err < 0) {
         LOG_CPP_ERROR("[AlsaCapture:%s] snd_pcm_recover failed: %s", device_tag_.c_str(), snd_strerror(err));

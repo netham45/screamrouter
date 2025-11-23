@@ -693,6 +693,12 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
         }
 
         if (!handler) {
+            char ssrc_hex[12];
+            snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", packet_data.ssrc);
+            LOG_CPP_WARNING("[RtpReceiver] No handler for payload_type=%u (SSRC=%s). Dropping packet (size=%zu).",
+                            packet_data.payload_type,
+                            ssrc_hex,
+                            packet_data.payload.size());
             continue;
         }
 
@@ -705,6 +711,12 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
         packet.ssrcs.insert(packet.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
 
         if (!handler->populate_packet(packet_data, props, packet)) {
+            char ssrc_hex[12];
+            snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", packet_data.ssrc);
+            LOG_CPP_WARNING("[RtpReceiver] Failed to parse payload_type=%u for SSRC=%s (size=%zu). Packet dropped.",
+                            packet_data.payload_type,
+                            ssrc_hex,
+                            packet_data.payload.size());
             continue;
         }
 

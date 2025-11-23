@@ -19,6 +19,23 @@ void RtpReorderingBuffer::add_packet(RtpPacketData&& packet) {
         LOG_CPP_DEBUG(("[RtpReorderingBuffer] Initialized. First packet sequence: " + std::to_string(packet.sequence_number)).c_str());
     }
 
+    // Detect out-of-order arrivals (ahead of the next expected sequence).
+    if (m_is_initialized &&
+        packet.sequence_number != m_next_expected_seq &&
+        is_sequence_greater(packet.sequence_number, m_next_expected_seq)) {
+        const auto now = std::chrono::steady_clock::now();
+        const uint16_t seq_gap = static_cast<uint16_t>(packet.sequence_number - m_next_expected_seq);
+        if (last_out_of_order_log_.time_since_epoch().count() == 0 ||
+            now - last_out_of_order_log_ >= std::chrono::milliseconds(200)) {
+            LOG_CPP_WARNING(("[RtpReorderingBuffer] Out-of-order packet arrived. Expected seq " +
+                             std::to_string(m_next_expected_seq) + " but received " +
+                             std::to_string(packet.sequence_number) + " (gap=" +
+                             std::to_string(seq_gap) + ", buffered=" +
+                             std::to_string(m_buffer.size()) + ").").c_str());
+            last_out_of_order_log_ = now;
+        }
+    }
+
     // Discard packets that are too old (already processed)
     if (!is_sequence_greater(packet.sequence_number, m_next_expected_seq) &&
         packet.sequence_number != m_next_expected_seq) {

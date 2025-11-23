@@ -17,9 +17,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#ifndef DEVICE_DIR_PATH
-#define DEVICE_DIR_PATH "/var/run/screamrouter"
-#endif
+const char* DEVICE_DIR_PATH = (std::string(getenv("XDG_RUNTIME_DIR")) + std::string("screamrouter")).c_str();
 
 #ifndef SOUND_GROUP_NAME
 #define SOUND_GROUP_NAME "audio"
