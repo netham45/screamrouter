@@ -919,6 +919,8 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
             if (source_path_it == active_source_paths_.end() || source_path_it->second.params.generated_instance_id.empty()) {
                 LOG_CPP_ERROR("      + Cannot connect path %s to sink %s: Source path or its instance_id not found/generated.",
                               desired_path_id.c_str(), sink_id.c_str());
+                // Drop this path from the shadow state so we do not retry until it appears.
+                updated_path_ids_set.erase(desired_path_id);
                 continue; // Skip this connection.
             }
             const AppliedSourcePathParams& source_params = source_path_it->second.params;
@@ -967,6 +969,8 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
             } else {
                  LOG_CPP_ERROR("      - Cannot find source path details for path %s during disconnection (might have been removed already). Attempting disconnect anyway.",
                                current_path_id.c_str());
+                 // Remove from the shadow state so we don't repeatedly attempt to disconnect.
+                 updated_path_ids_set.erase(current_path_id);
             }
              
             LOG_CPP_DEBUG("      - Disconnecting Source:");

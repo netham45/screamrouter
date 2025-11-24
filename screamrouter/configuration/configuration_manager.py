@@ -2448,13 +2448,24 @@ class ConfigurationManager(threading.Thread):
                 _logger.debug("[Config Translator]   Processing Source Path: %s -> %s", 
                               py_source_desc.tag or py_source_desc.name, py_sink_desc.name)
                 
-                # Use source config_id if available, otherwise tag, otherwise name
-                source_identifier = py_source_desc.config_id or py_source_desc.tag or py_source_desc.name
+                # Use stable identifier for path_id. For temporary sources (e.g., SAP),
+                # prefer the generated name, which already encodes sink/ip/port.
+                if py_source_desc.is_temporary and py_source_desc.name:
+                    source_identifier = py_source_desc.name
+                else:
+                    source_identifier = py_source_desc.config_id or py_source_desc.tag or py_source_desc.name
                 # Use sink config_id if available, otherwise name
                 sink_identifier = py_sink_desc.config_id or py_sink_desc.name
                 
                 # Create a unique path ID
                 path_id = f"{source_identifier}_to_{sink_identifier}" 
+                _logger.debug(
+                    "[Config Translator] Path ID=%s source_id=%s tag=%s sink_id=%s",
+                    path_id,
+                    source_identifier,
+                    source_tag_for_cpp,
+                    sink_identifier,
+                )
                 _logger.debug("[Config Translator]     Generated Path ID: %s", path_id)
 
                 connected_path_ids_for_this_sink.append(path_id)
@@ -3911,6 +3922,19 @@ class ConfigurationManager(threading.Thread):
                 speaker_layouts={},
                 is_temporary=True,
                 config_id=deterministic_route_id,
+            )
+
+            # Guard against any auto-regeneration by explicitly reapplying deterministic IDs.
+            source_desc.config_id = deterministic_source_id
+            route_desc.config_id = deterministic_route_id
+
+            _logger.debug(
+                "[Configuration Manager] SAP temp route: sink_id=%s source_ip=%s port=%d -> source_id=%s route_id=%s",
+                sink_key_for_id,
+                source_ip,
+                port_int,
+                source_desc.config_id,
+                route_desc.config_id,
             )
 
             new_sources.append(source_desc)
