@@ -2456,6 +2456,16 @@ class ConfigurationManager(threading.Thread):
                     source_identifier = py_source_desc.config_id or py_source_desc.tag or py_source_desc.name
                 # Use sink config_id if available, otherwise name
                 sink_identifier = py_sink_desc.config_id or py_sink_desc.name
+
+                # Prioritize IP for source_tag, fallback to tag, then empty string.
+                # This tag is crucial for RtpReceiver packet routing
+                source_tag_for_cpp: str = ""
+                if py_source_desc.is_process and py_source_desc.tag:
+                    source_tag_for_cpp = py_source_desc.tag
+                elif py_source_desc.ip:
+                    source_tag_for_cpp = str(py_source_desc.ip)
+                else:
+                    source_tag_for_cpp = py_source_desc.tag if py_source_desc.tag is not None else ""
                 
                 # Create a unique path ID
                 path_id = f"{source_identifier}_to_{sink_identifier}" 
@@ -2474,15 +2484,7 @@ class ConfigurationManager(threading.Thread):
                 if path_id not in processed_source_paths:
                     cpp_source_path = CppAppliedSourcePathParams()
                     cpp_source_path.path_id = path_id
-                    
-                    # Prioritize IP for source_tag, fallback to tag, then empty string.
-                    # This tag is crucial for RtpReceiver packet routing.
-                    if py_source_desc.is_process and py_source_desc.tag:
-                        source_tag_for_cpp = py_source_desc.tag
-                    elif py_source_desc.ip:
-                        source_tag_for_cpp = str(py_source_desc.ip)
-                    else:
-                        source_tag_for_cpp = py_source_desc.tag if py_source_desc.tag is not None else ""
+
                     cpp_source_path.source_tag = source_tag_for_cpp
                     
                     cpp_source_path.target_sink_id = cpp_applied_sink.sink_id # Link to the sink
