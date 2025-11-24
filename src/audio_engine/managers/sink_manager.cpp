@@ -104,12 +104,12 @@ bool SinkManager::remove_sink(const std::string& sink_id) {
 
 void SinkManager::add_input_queue_to_sink(const std::string& sink_id,
                                           const std::string& source_instance_id,
-                                          std::shared_ptr<ChunkQueue> queue,
-                                          std::shared_ptr<CommandQueue> command_queue) {
+                                          std::shared_ptr<ReadyPacketRing> ready_ring,
+                                          SourceInputProcessor* sip) {
     std::scoped_lock lock(m_manager_mutex);
     auto sink_it = m_sinks.find(sink_id);
     if (sink_it != m_sinks.end() && sink_it->second) {
-        sink_it->second->add_input_queue(source_instance_id, queue, command_queue);
+        sink_it->second->add_input_queue(source_instance_id, ready_ring, sip);
     } else {
         LOG_CPP_ERROR("Sink not found or invalid: %s", sink_id.c_str());
     }

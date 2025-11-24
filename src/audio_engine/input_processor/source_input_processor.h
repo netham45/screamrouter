@@ -11,7 +11,6 @@
 #define SOURCE_INPUT_PROCESSOR_H
 
 #include "../utils/audio_component.h"
-#include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
 #include "../audio_processor/audio_processor.h"
 #include "../configuration/audio_engine_settings.h"
@@ -58,11 +57,6 @@ struct SourceInputProcessorStats {
     double resample_ratio = 0.0;
 };
 
-// Using aliases for clarity
-using InputPacketQueue = utils::ThreadSafeQueue<TaggedAudioPacket>;
-using OutputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
-using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
-
 /** @brief The size of the raw Scream protocol header in bytes. */
 const size_t SCREAM_HEADER_SIZE = 5;
 /** @brief The default bit depth assumed for input audio if not specified. */
@@ -75,24 +69,17 @@ const int DEFAULT_INPUT_SAMPLERATE = 48000;
 /**
  * @class SourceInputProcessor
  * @brief An audio component that processes a single audio source stream.
- * @details This class runs its own thread to pull packets from an input queue,
- *          process them, and push them to an output queue. It is a stateful
- *          component that can be configured via a command queue.
+ * @details This class provides synchronous ingest via ingest_packet(); callers
+ *          provide one packet and receive zero or more processed chunks.
  */
 class SourceInputProcessor : public AudioComponent {
 public:
     /**
      * @brief Constructs a SourceInputProcessor.
      * @param config The initial configuration for this processor instance.
-     * @param input_queue The queue from which to receive raw audio packets.
-     * @param output_queue The queue to which processed audio chunks will be sent.
-     * @param command_queue The queue for receiving control commands.
      */
     SourceInputProcessor(
         SourceProcessorConfig config,
-        std::shared_ptr<InputPacketQueue> input_queue,
-        std::shared_ptr<OutputChunkQueue> output_queue,
-        std::shared_ptr<CommandQueue> command_queue,
         std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings
     );
 
@@ -102,13 +89,7 @@ public:
     ~SourceInputProcessor() override;
 
     // --- AudioComponent Interface ---
-    /**
-     * @brief Starts the processor's internal thread.
-     */
     void start() override;
-    /**
-     * @brief Stops the processor's internal thread.
-     */
     void stop() override;
 
     /**
@@ -124,29 +105,31 @@ public:
     const std::string& get_source_tag() const;
     /** @brief Gets the full configuration struct of this processor. */
     const SourceProcessorConfig& get_config() const { return config_; }
-    /** @brief Gets the input queue used by this processor. */
-    std::shared_ptr<InputPacketQueue> get_input_queue() const { return input_queue_; }
-
     /**
      * @brief Retrieves the current statistics from the processor.
      * @return A struct containing the current stats.
      */
     SourceInputProcessorStats get_stats();
 
-protected:
     /**
-     * @brief The main processing loop, executed in a separate thread.
+     * @brief Synchronously ingest a packet and emit zero or more processed chunks.
+     * @param packet Packet to process.
+     * @param out_chunks Vector to append produced chunks into.
      */
-    void run() override;
+    void ingest_packet(const TaggedAudioPacket& packet, std::vector<ProcessedAudioChunk>& out_chunks);
 
-    /**
-     * @brief The loop for handling input packets and processing.
-     */
-    void input_loop();
-    /**
-     * @brief The loop for handling output chunks. (Currently unused, logic merged into input_loop).
-     */
-    void output_loop();
+    // --- setters (formerly command queue driven) ---
+    void set_volume(float vol);
+    void set_eq(const std::vector<float>& eq_values);
+    void set_delay(int delay_ms);
+    void set_timeshift(float timeshift_sec);
+    void set_eq_normalization(bool enabled);
+    void set_volume_normalization(bool enabled);
+    void set_speaker_mix(int input_channel_key, const CppSpeakerLayout& layout);
+    void set_playback_rate_scale(float scale);
+
+protected:
+    void run() override;
 
 private:
     const std::size_t base_frames_per_chunk_;
@@ -156,9 +139,6 @@ private:
     int m_current_ap_input_bitdepth = 0;
 
     SourceProcessorConfig config_;
-    std::shared_ptr<InputPacketQueue> input_queue_;
-    std::shared_ptr<OutputChunkQueue> output_queue_;
-    std::shared_ptr<CommandQueue> command_queue_;
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 
     std::unique_ptr<AudioProcessor> audio_processor_;
@@ -178,23 +158,14 @@ private:
     double current_playback_rate_ = 1.0;
     std::atomic<double> drain_playback_rate_scale_{1.0};
 
-    std::thread input_thread_;
-
     std::atomic<uint64_t> m_total_packets_processed{0};
     std::atomic<uint64_t> m_reconfigurations{0};
     std::atomic<uint64_t> m_total_chunks_pushed{0};
     std::atomic<uint64_t> m_total_discarded_packets{0};
-    std::atomic<size_t> m_output_queue_high_water{0};
-    std::atomic<size_t> m_input_queue_high_water{0};
     std::atomic<size_t> m_process_buffer_high_water{0};
     std::chrono::steady_clock::time_point m_last_packet_time;
     std::chrono::steady_clock::time_point m_last_packet_origin_time;
     bool m_is_first_packet_after_discontinuity = true;
-
-    /**
-     * @brief Processes any pending commands from the command queue.
-     */
-    void process_commands();
 
     /**
      * @brief Processes a single chunk of raw audio data using the internal AudioProcessor.
@@ -202,10 +173,7 @@ private:
      */
     void process_audio_chunk(const std::vector<uint8_t>& input_chunk_data);
     
-    /**
-     * @brief Pushes a completed ProcessedAudioChunk to the output queue if the buffer is full.
-     */
-    void push_output_chunk_if_ready();
+    void push_output_chunk_if_ready(std::vector<ProcessedAudioChunk>& out_chunks);
 
     /**
      * @brief Checks packet format, reconfigures AudioProcessor if needed, and returns audio payload.

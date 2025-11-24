@@ -10,9 +10,9 @@
 #define TIMESHIFT_MANAGER_H
 
 #include "../utils/audio_component.h"
-#include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
 #include "../configuration/audio_engine_settings.h"
+#include "../utils/packet_ring.h"
 
 #include <string>
 #include <vector>
@@ -31,7 +31,7 @@
 namespace screamrouter {
 namespace audio {
 
-using PacketQueue = utils::ThreadSafeQueue<TaggedAudioPacket>;
+using PacketRing = utils::PacketRing<TaggedAudioPacket>;
 
 /**
  * @struct TimeshiftBufferExport
@@ -54,8 +54,6 @@ struct TimeshiftBufferExport {
  * @brief Holds information about a registered consumer (processor) of the timeshift buffer.
  */
 struct ProcessorTargetInfo {
-    /** @brief The queue to which packets for this processor should be sent. */
-    std::shared_ptr<PacketQueue> target_queue;
     /** @brief The current static delay in milliseconds for this processor. */
     int current_delay_ms;
     /** @brief The current timeshift delay in seconds for this processor. */
@@ -70,6 +68,9 @@ struct ProcessorTargetInfo {
     std::string wildcard_prefix;
     /** @brief Bound concrete tag once a wildcard matches a stream. */
     std::string bound_source_tag;
+    /** @brief Per-sink ready rings for dispatch. */
+    std::map<std::string, std::weak_ptr<PacketRing>> sink_rings;
+    uint64_t dropped_packets = 0;
 };
 
 /**
@@ -247,11 +248,10 @@ public:
      * @brief Registers a new processor as a consumer of the buffer.
      * @param instance_id A unique ID for the processor instance.
      * @param source_tag The source tag the processor is interested in.
-     * @param target_queue The processor's input queue.
      * @param initial_delay_ms The initial static delay for the processor.
      * @param initial_timeshift_sec The initial timeshift delay for the processor.
      */
-    void register_processor(const std::string& instance_id, const std::string& source_tag, std::shared_ptr<PacketQueue> target_queue, int initial_delay_ms, float initial_timeshift_sec);
+    void register_processor(const std::string& instance_id, const std::string& source_tag, int initial_delay_ms, float initial_timeshift_sec);
     /**
      * @brief Unregisters a processor.
      * @param instance_id The ID of the processor instance to unregister.
@@ -270,6 +270,14 @@ public:
      * @param timeshift_sec The new timeshift in seconds.
      */
     void update_processor_timeshift(const std::string& instance_id, float timeshift_sec);
+    /**
+     * @brief Registers a sink-ready ring for a processor instance.
+     */
+    void attach_sink_ring(const std::string& instance_id, const std::string& source_tag, const std::string& sink_id, std::shared_ptr<PacketRing> ring);
+    /**
+     * @brief Detaches a sink-ready ring.
+     */
+    void detach_sink_ring(const std::string& instance_id, const std::string& source_tag, const std::string& sink_id);
     /**
      * @brief Retrieves the current statistics from the manager.
      * @return A struct containing the current stats.
@@ -290,13 +298,6 @@ protected:
     void run() override;
 
 private:
-    struct PendingDispatch {
-        std::shared_ptr<PacketQueue> target_queue;
-        TaggedAudioPacket packet;
-        std::string instance_id;
-        std::string source_tag;
-    };
-
     struct TimingStateAccess {
         std::unique_lock<std::mutex> lock;
         StreamTimingState* state = nullptr;
@@ -337,8 +338,6 @@ private:
     std::map<std::string, size_t> processor_queue_high_water_;
 
     /** @brief A single iteration of the processing loop. Collects ready packets while data_mutex_ is held. */
-    void processing_loop_iteration_unlocked(std::vector<PendingDispatch>& pending_dispatches);
-    // Legacy signature used by older processing loop.
     void processing_loop_iteration_unlocked();
     /** @brief Periodically cleans up old packets from the global buffer. Assumes data_mutex_ is held. */
     void cleanup_global_buffer_unlocked();

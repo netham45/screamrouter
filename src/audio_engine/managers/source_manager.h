@@ -11,7 +11,6 @@
 #include "../configuration/audio_engine_config_types.h"
 #include "../configuration/audio_engine_settings.h"
 #include "../input_processor/source_input_processor.h"
-#include "../utils/thread_safe_queue.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -69,16 +68,14 @@ public:
 
     /** @brief Gets a reference to the map of active source processors. */
     std::map<std::string, std::unique_ptr<SourceInputProcessor>>& get_sources();
-    /** @brief Gets a reference to the map of source-to-sink chunk queues. */
-    std::map<std::string, std::shared_ptr<ChunkQueue>>& get_source_to_sink_queues();
-    /** @brief Gets a reference to the map of command queues for sources. */
-    std::map<std::string, std::shared_ptr<CommandQueue>>& get_command_queues();
 
     /**
      * @brief Gets a vector of pointers to all active source processors.
      * @return A vector of `SourceInputProcessor` pointers.
      */
     std::vector<SourceInputProcessor*> get_all_processors();
+
+    TimeshiftManager* get_timeshift_manager() const { return m_timeshift_manager; }
 
     /**
      * @brief Stops all source processors, unregisters them from TimeshiftManager,
@@ -99,9 +96,6 @@ private:
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 
     std::map<std::string, std::unique_ptr<SourceInputProcessor>> m_sources;
-    std::map<std::string, std::shared_ptr<PacketQueue>> m_rtp_to_source_queues;
-    std::map<std::string, std::shared_ptr<ChunkQueue>> m_source_to_sink_queues;
-    std::map<std::string, std::shared_ptr<CommandQueue>> m_command_queues;
     std::map<std::string, std::string> m_instance_to_capture_tag;  // Maps instance_id -> system audio capture device tag
     
     // Callbacks for system audio capture device management

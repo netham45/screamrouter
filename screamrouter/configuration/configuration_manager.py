@@ -9,6 +9,7 @@ import sys
 import threading
 import traceback
 import uuid
+import time
 from datetime import datetime, timezone
 
 import screamrouter.screamrouter_logger.screamrouter_logger as screamrouter_logger
@@ -166,6 +167,7 @@ class ConfigurationManager(threading.Thread):
         self.active_temporary_sources: List[SourceDescription] = []
         """List of active temporary sources"""
         self._sap_route_signature: set[str] = set()
+        self._sap_route_last_seen: dict[str, tuple[float, str]] = {}
         """Tracking signature for SAP-directed temporary routes/sources"""
         self.__api_webstream: APIWebStream = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
@@ -3823,16 +3825,24 @@ class ConfigurationManager(threading.Thread):
         prefix = "SAP_REMOTE_"
         new_sources: List[SourceDescription] = []
         new_routes: List[RouteDescription] = []
-        # Drop prior SAP-directed temp entities, keep other temps intact
-        self.active_temporary_sources = [s for s in self.active_temporary_sources if not s.name.startswith(prefix)]
-        self.active_temporary_routes = [r for r in self.active_temporary_routes if not r.name.startswith(prefix)]
         seen_keys: set[str] = set()
         existing_source_names: set[str] = set()
         existing_route_names: set[str] = set()
-        # Remember previously added SAP routes so repeated announcements don't retrigger saves
+        # Normalize/clean existing SAP temp entries and seed signatures/last-seen
+        dedup_routes, dedup_sources = self._dedupe_active_sap_temps()
         self._sap_route_signature.update(
             route.config_id for route in self.active_temporary_routes if getattr(route, "config_id", None)
         )
+        # Clean out stale SAP entries (not seen for 60s)
+        pruned_routes, pruned_sources = self._prune_stale_sap_routes(max_age_seconds=60.0)
+
+        active_route_ids: set[str] = {r.config_id for r in self.active_temporary_routes if getattr(r, "config_id", None)}
+        active_source_ids: set[str] = {s.config_id for s in self.active_temporary_sources if getattr(s, "config_id", None)}
+        active_route_keys: dict[str, str] = {}
+        for cid in active_route_ids:
+            key = self._sap_route_key_from_id(cid)
+            if key:
+                active_route_keys[key] = cid
 
         for announcement in sap_announcements:
             target_sink = str(announcement.get("target_sink") or "").strip()
@@ -3866,9 +3876,6 @@ class ConfigurationManager(threading.Thread):
                 continue
             if port_int <= 0:
                 port_int = constants.RTP_RECEIVER_PORT
-            # Avoid reusing the well-known inbound receiver port; randomize a temp outbound port
-            if port_int == constants.RTP_RECEIVER_PORT or port_int == constants.SINK_PORT:
-                port_int = int(uuid.uuid4().int % 9000) + 41000
 
             source_ip = str(announcement.get("announcer_ip") or stream_ip or announcement.get("ip") or "").strip()
             try:
@@ -3894,10 +3901,15 @@ class ConfigurationManager(threading.Thread):
             seen_keys.add(key)
 
             sink_key_for_id = sink.config_id or sink.name
+            sap_key = f"{sink_key_for_id}|{source_ip}|{port_int}"
             deterministic_source_id = f"sapsrc:{sink_key_for_id}:{source_ip}:{port_int}"
             deterministic_route_id = f"saproute:{sink_key_for_id}:{source_ip}:{port_int}"
-            if deterministic_route_id in self._sap_route_signature:
-                _logger.debug("[Configuration Manager] Skipping duplicate SAP route_id=%s", deterministic_route_id)
+            now = time.time()
+            existing_route_id = active_route_keys.get(sap_key)
+            if existing_route_id:
+                # Already present; refresh timestamp and ensure signature is tracked
+                self._sap_route_signature.add(existing_route_id)
+                self._sap_route_last_seen[existing_route_id] = (now, deterministic_source_id)
                 continue
 
             source_desc = SourceDescription(
@@ -3952,6 +3964,7 @@ class ConfigurationManager(threading.Thread):
             new_sources.append(source_desc)
             new_routes.append(route_desc)
             self._sap_route_signature.add(deterministic_route_id)
+            self._sap_route_last_seen[deterministic_route_id] = (now, deterministic_source_id)
         if new_sources or new_routes:
             self.active_temporary_sources.extend(new_sources)
             self.active_temporary_routes.extend(new_routes)
@@ -3960,6 +3973,90 @@ class ConfigurationManager(threading.Thread):
             self.__apply_temporary_configuration_sync()
             # Trigger a full reload so existing sinks pick up new temp paths immediately
             self.__reload_configuration()
+        elif pruned_routes or pruned_sources or dedup_routes or dedup_sources:
+            # Changes occurred due to pruning; push updates to engine/clients
+            self.__apply_temporary_configuration_sync()
+            self.__reload_configuration()
+        else:
+            _logger.debug("[Configuration Manager] No SAP temp route changes detected; skipping reload")
+
+    def _dedupe_active_sap_temps(self) -> tuple[int, int]:
+        """Remove duplicate SAP temp routes/sources by config_id (keep first)."""
+        def _dedupe(items):
+            seen_ids = set()
+            seen_keys = set()
+            deduped = []
+            removed = 0
+            for item in items:
+                cid = getattr(item, "config_id", None)
+                key = self._sap_route_key_from_id(cid) if cid else None
+                if cid in seen_ids or (key and key in seen_keys):
+                    removed += 1
+                    continue
+                seen_ids.add(cid)
+                if key:
+                    seen_keys.add(key)
+                deduped.append(item)
+            return deduped, removed
+
+        before_routes = len(self.active_temporary_routes)
+        before_sources = len(self.active_temporary_sources)
+        self.active_temporary_routes, removed_routes = _dedupe(self.active_temporary_routes)
+        self.active_temporary_sources, removed_sources = _dedupe(self.active_temporary_sources)
+
+        now = time.time()
+        for route in self.active_temporary_routes:
+            cid = getattr(route, "config_id", None)
+            if cid:
+                self._sap_route_last_seen.setdefault(cid, (now, None))
+                self._sap_route_signature.add(cid)
+        return removed_routes, removed_sources
+
+    @staticmethod
+    def _sap_route_key_from_id(route_id: Optional[str]) -> Optional[str]:
+        """Extract SAP identity tuple from deterministic route_id."""
+        if not route_id or not route_id.startswith("saproute:"):
+            return None
+        parts = route_id.split(":", 3)
+        if len(parts) != 4:
+            return None
+        _, sink_key, source_ip, port = parts
+        return f"{sink_key}|{source_ip}|{port}"
+
+    def _prune_stale_sap_routes(self, max_age_seconds: float) -> tuple[int, int]:
+        """Remove SAP temp sources/routes not seen recently."""
+        now = time.time()
+        stale: list[tuple[str, str]] = []
+        for route_id, (seen, source_id) in list(self._sap_route_last_seen.items()):
+            if now - seen > max_age_seconds:
+                stale.append((route_id, source_id))
+        if not stale:
+            return (0, 0)
+        stale_route_ids = {route_id for route_id, _ in stale}
+        stale_source_ids = {source_id for _, source_id in stale}
+        before_routes = len(self.active_temporary_routes)
+        before_sources = len(self.active_temporary_sources)
+        self.active_temporary_routes = [
+            r for r in self.active_temporary_routes
+            if getattr(r, "config_id", None) not in stale_route_ids
+        ]
+        self.active_temporary_sources = [
+            s for s in self.active_temporary_sources
+            if getattr(s, "config_id", None) not in stale_source_ids
+        ]
+        for route_id in stale_route_ids:
+            self._sap_route_signature.discard(route_id)
+            self._sap_route_last_seen.pop(route_id, None)
+        pruned_routes = before_routes - len(self.active_temporary_routes)
+        pruned_sources = before_sources - len(self.active_temporary_sources)
+        if pruned_routes or pruned_sources:
+            _logger.info(
+                "[Configuration Manager] Pruned %d stale SAP routes and %d stale SAP sources (>%ds old)",
+                pruned_routes,
+                pruned_sources,
+                max_age_seconds,
+            )
+        return pruned_routes, pruned_sources
 
         # mDNS pinger for sources (senders)
         for ip in self.mdns_pinger.get_source_ips():

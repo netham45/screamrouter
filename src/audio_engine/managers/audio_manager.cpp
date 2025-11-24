@@ -151,13 +151,11 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
             m_manager_mutex,
             m_source_manager.get(),
             m_sink_manager.get(),
-            m_source_manager->get_source_to_sink_queues(),
-            m_source_manager->get_sources(),
-            m_source_manager->get_command_queues());
+            m_source_manager->get_sources());
 
         current_stage = "creating ControlApiManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
-        m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_source_manager->get_command_queues(), m_timeshift_manager.get(), m_source_manager->get_sources());
+        m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_timeshift_manager.get(), m_source_manager->get_sources());
 
         current_stage = "creating MP3DataApiManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
@@ -347,9 +345,7 @@ void AudioManager::debug_dump_state(const char* label) {
         LOG_CPP_INFO("[DebugDump] Sources: %zu", procs.size());
         for (auto* p : procs) {
             auto st = p->get_stats();
-            auto q = p->get_input_queue();
-            size_t qsize = q ? q->size() : 0;
-            LOG_CPP_INFO("  source id='%s' tag='%s' input_q=%zu total_packets=%llu reconfigs=%llu", p->get_instance_id().c_str(), p->get_source_tag().c_str(), qsize, (unsigned long long)st.total_packets_processed, (unsigned long long)st.reconfigurations);
+            LOG_CPP_INFO("  source id='%s' tag='%s' total_packets=%llu reconfigs=%llu process_buf_samples=%zu", p->get_instance_id().c_str(), p->get_source_tag().c_str(), (unsigned long long)st.total_packets_processed, (unsigned long long)st.reconfigurations, st.process_buffer_samples);
         }
     } else {
         LOG_CPP_INFO("[DebugDump] Sources: manager=null");

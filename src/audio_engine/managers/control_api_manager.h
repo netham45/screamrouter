@@ -36,13 +36,11 @@ public:
     /**
      * @brief Constructs a ControlApiManager.
      * @param manager_mutex A reference to the main AudioManager mutex for thread safety.
-     * @param command_queues A reference to the map of command queues, keyed by source instance ID.
      * @param timeshift_manager A pointer to the TimeshiftManager for updating delay/timeshift.
      * @param sources A reference to the map of active source processors.
      */
     ControlApiManager(
         std::recursive_mutex& manager_mutex,
-        std::map<std::string, std::shared_ptr<CommandQueue>>& command_queues,
         TimeshiftManager* timeshift_manager,
         std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources
     );
@@ -83,7 +81,7 @@ public:
     );
 
 private:
-    bool send_command_to_source_nolock(const std::string& instance_id, const ControlCommand& command);
+    SourceInputProcessor* find_source_nolock(const std::string& instance_id);
     void update_source_volume_nolock(const std::string& instance_id, float volume);
     void update_source_equalizer_nolock(const std::string& instance_id, const std::vector<float>& eq_values);
     void update_source_eq_normalization_nolock(const std::string& instance_id, bool enabled);
@@ -93,7 +91,6 @@ private:
     void update_source_speaker_layouts_map_nolock(const std::string& instance_id, const std::map<int, CppSpeakerLayout>& layouts_map);
 
     std::recursive_mutex& m_manager_mutex;
-    std::map<std::string, std::shared_ptr<CommandQueue>>& m_command_queues;
     TimeshiftManager* m_timeshift_manager;
     std::map<std::string, std::unique_ptr<SourceInputProcessor>>& m_sources;
     std::unordered_map<std::string, uint32_t> m_plugin_rtp_counters;

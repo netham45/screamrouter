@@ -13,11 +13,11 @@
 #endif
 
 #include "../utils/audio_component.h"
-#include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
 #include "../senders/i_network_sender.h"
 #include "../configuration/audio_engine_settings.h"
 #include "../receivers/clock_manager.h"
+#include "../utils/packet_ring.h"
 
 #include <string>
 #include <vector>
@@ -45,7 +45,7 @@ namespace screamrouter {
 namespace audio {
 
 class SinkSynchronizationCoordinator;
-class MixScheduler;
+class SourceInputProcessor;
 /**
  * @struct SinkAudioMixerStats
  * @brief Holds raw statistics collected from the SinkAudioMixer.
@@ -68,9 +68,8 @@ struct SinkAudioMixerStats {
     std::vector<SinkInputLaneStats> input_lanes;
 };
 
-using InputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using Mp3OutputQueue = utils::ThreadSafeQueue<EncodedMP3Data>;
-using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
+using ReadyPacketRing = utils::PacketRing<TaggedAudioPacket>;
 
 /**
  * @class SinkAudioMixer
@@ -83,8 +82,8 @@ using CommandQueue = utils::ThreadSafeQueue<ControlCommand>;
  */
 class SinkAudioMixer : public AudioComponent {
 public:
-    /** @brief A map of input queues, keyed by the unique source instance ID. */
-    using InputQueueMap = std::map<std::string, std::shared_ptr<InputChunkQueue>>;
+    /** @brief A map of ready packet rings, keyed by source instance ID. */
+    using ReadyRingMap = std::map<std::string, std::shared_ptr<ReadyPacketRing>>;
 
     /**
      * @brief Constructs a SinkAudioMixer.
@@ -113,8 +112,8 @@ public:
      * @param queue A shared pointer to the source's output queue.
      */
     void add_input_queue(const std::string& instance_id,
-                         std::shared_ptr<InputChunkQueue> queue,
-                         std::shared_ptr<CommandQueue> command_queue = nullptr);
+                         std::shared_ptr<ReadyPacketRing> ready_ring,
+                         SourceInputProcessor* sip);
 
     /**
      * @brief Removes an input queue.
@@ -180,17 +179,17 @@ private:
     std::size_t mp3_buffer_size_;
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
     std::unique_ptr<INetworkSender> network_sender_;
-    std::unique_ptr<MixScheduler> mix_scheduler_;
     
     std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
     std::mutex listener_senders_mutex_;
 
-    InputQueueMap input_queues_;
+    ReadyRingMap ready_rings_;
     std::mutex queues_mutex_;
-    std::map<std::string, std::shared_ptr<CommandQueue>> input_command_queues_;
+    std::map<std::string, SourceInputProcessor*> source_processors_;
 
     std::map<std::string, bool> input_active_state_;
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
+    std::map<std::string, std::deque<ProcessedAudioChunk>> processed_ready_;
 
     std::unique_ptr<ClockManager> clock_manager_;
     std::atomic<bool> clock_manager_enabled_{false};
