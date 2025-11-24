@@ -838,6 +838,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 const std::string log_tag = target_info.source_tag_filter.empty()
                                                 ? candidate_packet.source_tag
                                                 : target_info.source_tag_filter;
+                bool reanchored_this_packet = false;
 
                 // Check if the packet is ready to be played
                 if (ideal_playout_time <= now) {
@@ -867,6 +868,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         timing_state->playback_ratio_controller_ppm = 0.0;
                         timing_state->last_clock_offset_ms = 0.0;
                         timing_state->last_clock_drift_ppm = 0.0;
+                        reanchored_this_packet = true;
                         const auto since_last_anchor =
                             (timing_state->last_reanchor_log_time.time_since_epoch().count() == 0)
                                 ? std::chrono::steady_clock::duration::max()
@@ -883,6 +885,12 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         ideal_playout_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value()) +
                                              std::chrono::duration<double, std::milli>(desired_latency_ms);
                         time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
+                        // Update buffer/lag state after reanchor to avoid using stale lateness.
+                        head_lag_ms = std::max(-time_until_playout_ms, 0.0);
+                        timing_state->last_head_playout_lag_ms = head_lag_ms;
+                        timing_state->head_playout_lag_ms_sum += head_lag_ms;
+                        timing_state->head_playout_lag_ms_max = std::max(timing_state->head_playout_lag_ms_max, head_lag_ms);
+                        timing_state->head_playout_lag_samples++;
                     }
                     if (lateness_ms > 0.0) {
                         profiling_total_lateness_ms_ += lateness_ms;
@@ -897,24 +905,38 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         timing_state->playout_deviation_samples++;
                     }
 
+                    // Never drop: if lateness exceeds the catchup limit, force a re-anchor and continue.
                     if (max_catchup_lag_ms > 0.0 && lateness_ms > max_catchup_lag_ms) {
-                        timing_state->tm_packets_discarded++;
-                        profiling_packets_dropped_++;
+                        if (timing_state->clock) {
+                            timing_state->clock->reset();
+                            timing_state->clock->update(candidate_packet.rtp_timestamp.value(), now);
+                        }
+                        timing_state->last_controller_update_time = now;
+                        timing_state->playback_ratio_integral_ppm = 0.0;
+                        timing_state->playback_ratio_controller_ppm = 0.0;
+                        timing_state->last_clock_offset_ms = 0.0;
+                        timing_state->last_clock_drift_ppm = 0.0;
+
+                        ideal_playout_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value()) +
+                                             std::chrono::duration<double, std::milli>(desired_latency_ms);
+                        time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
+                        head_lag_ms = std::max(-time_until_playout_ms, 0.0);
+                        timing_state->last_head_playout_lag_ms = head_lag_ms;
+                        timing_state->head_playout_lag_ms_sum += head_lag_ms;
+                        timing_state->head_playout_lag_ms_max = std::max(timing_state->head_playout_lag_ms_max, head_lag_ms);
+                        timing_state->head_playout_lag_samples++;
+
                         const auto since_last_drop_log = (timing_state->last_discard_log_time.time_since_epoch().count() == 0)
                                                              ? std::chrono::steady_clock::duration::max()
                                                              : (now - timing_state->last_discard_log_time);
-                        if (since_last_drop_log >= std::chrono::milliseconds(200)) {
+                        if (since_last_drop_log >= std::chrono::milliseconds(500)) {
                             LOG_CPP_WARNING(
-                                "[TimeshiftManager] Dropping late packet for source '%s'. Lateness=%.2f ms exceeds catchup limit=%.2f ms (buffer=%.2f ms).",
+                                "[TimeshiftManager] Late packet for source '%s': lateness=%.2f ms exceeds catchup limit=%.2f ms. Re-anchoring (no drop).",
                                 log_tag.c_str(),
                                 lateness_ms,
-                                max_catchup_lag_ms,
-                                buffer_level_ms);
+                                max_catchup_lag_ms);
                             timing_state->last_discard_log_time = now;
                         }
-
-                        target_info.next_packet_read_index++;
-                        continue;
                     }
 
                     TaggedAudioPacket packet_to_send = candidate_packet;
