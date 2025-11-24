@@ -804,6 +804,10 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
 
     if (!connection_ip.empty()) {
         const std::string connection_key = make_ip_port_key(connection_ip, port);
+        std::string tagged_connection_key = connection_key;
+        if (port > 0) {
+            tagged_connection_key += "#sap-" + std::to_string(port);
+        }
         ip_to_properties_[connection_key] = props;
         if (connection_key != connection_ip) {
             ip_to_properties_[connection_ip] = props;
@@ -817,6 +821,10 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         announcement.target_sink = target_sink;
         announcement.target_host = target_host;
         announcements_by_stream_endpoint_[connection_key] = announcement;
+        if (!tagged_connection_key.empty()) {
+            ip_to_properties_[tagged_connection_key] = props;
+            announcements_by_stream_endpoint_[tagged_connection_key] = announcement;
+        }
     }
 
     LOG_CPP_DEBUG(

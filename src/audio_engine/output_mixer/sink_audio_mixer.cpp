@@ -302,6 +302,9 @@ void SinkAudioMixer::add_input_queue(const std::string& instance_id,
     }
 
     if (mix_scheduler_) {
+        // Ensure any prior attachment for this source is removed before re-attaching,
+        // so we do not end up with duplicate workers on restart.
+        mix_scheduler_->detach_source(instance_id);
         mix_scheduler_->attach_source(instance_id, std::move(queue));
     }
 }

@@ -37,6 +37,9 @@ void MixScheduler::attach_source(const std::string& instance_id,
         return;
     }
 
+    // If this source is already attached, detach it first to avoid duplicate workers.
+    detach_source(instance_id);
+
     auto state = std::make_unique<SourceState>();
     state->instance_id = instance_id;
     state->queue = std::move(queue);

@@ -911,6 +911,9 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
 
     // 3. Identify and process connections to add.
     LOG_CPP_DEBUG("[ConfigApplier]     Checking connections to add...");
+    // Track source instance IDs and tags already attached to avoid duplicate routes.
+    std::set<std::string> used_instance_ids;
+    std::set<std::string> used_source_tags;
     for (const auto& desired_path_id : desired_path_ids_set) {
         if (current_path_ids_set.find(desired_path_id) == current_path_ids_set.end()) {
             // This connection is in the desired state but not the current state.
@@ -926,6 +929,18 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
             const AppliedSourcePathParams& source_params = source_path_it->second.params;
             const std::string& source_instance_id = source_params.generated_instance_id;
             const audio::SinkConfig& sink_config = desired_sink_params.sink_engine_config;
+            if (!used_instance_ids.insert(source_instance_id).second) {
+                LOG_CPP_WARNING("[ConfigApplier]       + Skipping duplicate instance %s for sink %s (path %s)",
+                                source_instance_id.c_str(), sink_id.c_str(), desired_path_id.c_str());
+                updated_path_ids_set.erase(desired_path_id);
+                continue;
+            }
+            if (!source_params.source_tag.empty() && !used_source_tags.insert(source_params.source_tag).second) {
+                LOG_CPP_WARNING("[ConfigApplier]       + Skipping duplicate source tag %s for sink %s (path %s)",
+                                source_params.source_tag.c_str(), sink_id.c_str(), desired_path_id.c_str());
+                updated_path_ids_set.erase(desired_path_id);
+                continue;
+            }
 
             LOG_CPP_DEBUG("[ConfigApplier]       + Connecting Source:");
             LOG_CPP_DEBUG("          Path ID: %s", desired_path_id.c_str());

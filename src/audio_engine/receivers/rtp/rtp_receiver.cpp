@@ -588,7 +588,12 @@ bool RtpReceiverBase::resolve_stream_properties(
 
         char client_ip_str[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
+        // Try plain IP:port, then a SAP-tagged key to hard-bind to SAP sessions.
         if (sap_listener_->get_stream_properties_by_ip(client_ip_str, packet_port, out_properties)) {
+            return true;
+        }
+        std::string sap_tagged_key = std::string(client_ip_str) + ":" + std::to_string(packet_port) + "#sap-" + std::to_string(packet_port);
+        if (sap_listener_->get_stream_properties_by_ip(sap_tagged_key, packet_port, out_properties)) {
             return true;
         }
     }
