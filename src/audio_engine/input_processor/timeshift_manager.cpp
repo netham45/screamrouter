@@ -756,6 +756,8 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
     const auto iteration_start = std::chrono::steady_clock::now();
     auto now = iteration_start;
     const double max_catchup_lag_ms = m_settings->timeshift_tuning.max_catchup_lag_ms;
+    // Re-anchor late streams instead of letting lateness grow unbounded.
+    const double reanchor_late_ms = 200.0;
     size_t packets_processed = 0;
 
     for (auto& [source_tag, source_map] : processor_targets_) {
@@ -854,6 +856,33 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                                 buffer_level_ms);
                             timing_state->last_late_log_time = now;
                         }
+                    }
+                    if (lateness_ms > reanchor_late_ms) {
+                        if (timing_state->clock) {
+                            timing_state->clock->reset();
+                            timing_state->clock->update(candidate_packet.rtp_timestamp.value(), now);
+                        }
+                        timing_state->last_controller_update_time = now;
+                        timing_state->playback_ratio_integral_ppm = 0.0;
+                        timing_state->playback_ratio_controller_ppm = 0.0;
+                        timing_state->last_clock_offset_ms = 0.0;
+                        timing_state->last_clock_drift_ppm = 0.0;
+                        const auto since_last_anchor =
+                            (timing_state->last_reanchor_log_time.time_since_epoch().count() == 0)
+                                ? std::chrono::steady_clock::duration::max()
+                                : (now - timing_state->last_reanchor_log_time);
+                        if (since_last_anchor >= std::chrono::milliseconds(500)) {
+                            LOG_CPP_WARNING(
+                                "[TimeshiftManager] Late packet for source '%s': lateness=%.2f ms exceeds reanchor threshold=%.1f ms. Resetting stream clock to now.",
+                                log_tag.c_str(),
+                                lateness_ms,
+                                reanchor_late_ms);
+                            timing_state->last_reanchor_log_time = now;
+                        }
+                        // Recompute play-out time after reanchor.
+                        ideal_playout_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value()) +
+                                             std::chrono::duration<double, std::milli>(desired_latency_ms);
+                        time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
                     }
                     if (lateness_ms > 0.0) {
                         profiling_total_lateness_ms_ += lateness_ms;

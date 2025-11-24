@@ -167,8 +167,6 @@ class ConfigurationManager(threading.Thread):
         """List of active temporary sources"""
         self._sap_route_signature: set[str] = set()
         """Tracking signature for SAP-directed temporary routes/sources"""
-        self._sap_temp_ids: Dict[str, Tuple[str, str]] = {}
-        """Caches stable (source_id, route_id) for SAP temp entities keyed by sink/ip/port"""
         self.__api_webstream: APIWebStream = websocket
         """Holds the WebStream API for streaming MP3s to browsers"""
         self.active_configuration: ConfigurationSolver
@@ -3875,9 +3873,9 @@ class ConfigurationManager(threading.Thread):
                 continue
             seen_keys.add(key)
 
-            cached_ids = self._sap_temp_ids.get(key)
-            cached_source_id = cached_ids[0] if cached_ids else None
-            cached_route_id = cached_ids[1] if cached_ids else None
+            sink_key_for_id = sink.config_id or sink.name
+            deterministic_source_id = f"sapsrc:{sink_key_for_id}:{source_ip}:{port_int}"
+            deterministic_route_id = f"saproute:{sink_key_for_id}:{source_ip}:{port_int}"
 
             source_desc = SourceDescription(
                 name=source_name,
@@ -3897,7 +3895,7 @@ class ConfigurationManager(threading.Thread):
                 vnc_ip="",
                 vnc_port="",
                 is_process=False,
-                config_id=cached_source_id,
+                config_id=deterministic_source_id,
             )
             source_desc.is_temporary = True
 
@@ -3912,14 +3910,11 @@ class ConfigurationManager(threading.Thread):
                 timeshift=0,
                 speaker_layouts={},
                 is_temporary=True,
-                config_id=cached_route_id,
+                config_id=deterministic_route_id,
             )
 
             new_sources.append(source_desc)
             new_routes.append(route_desc)
-            self._sap_temp_ids[key] = (source_desc.config_id or "", route_desc.config_id or "")
-        # Prune stale cache entries so it cannot grow unbounded.
-        self._sap_temp_ids = {k: v for k, v in self._sap_temp_ids.items() if k in seen_keys}
         if new_sources or new_routes:
             self.active_temporary_sources.extend(new_sources)
             self.active_temporary_routes.extend(new_routes)

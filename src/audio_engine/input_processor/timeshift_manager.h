@@ -115,6 +115,7 @@ struct StreamTimingState {
     std::atomic<uint64_t> lagging_events_count{0};
     std::chrono::steady_clock::time_point last_late_log_time{};
     std::chrono::steady_clock::time_point last_discard_log_time{};
+    std::chrono::steady_clock::time_point last_reanchor_log_time{};
 
     // Detailed profiling accumulators
     double arrival_error_ms_sum = 0.0;
