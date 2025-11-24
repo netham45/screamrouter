@@ -15,6 +15,7 @@
 #include "../audio_types.h"
 #include "../audio_processor/audio_processor.h"
 #include "../configuration/audio_engine_settings.h"
+#include "../utils/byte_ring_buffer.h"
 
 #include <string>
 #include <vector>
@@ -250,8 +251,9 @@ private:
         std::vector<uint32_t> ssrcs;
     };
 
-    std::vector<uint8_t> input_accumulator_buffer_;
+    utils::ByteRingBuffer input_ring_buffer_;
     std::deque<InputFragmentMetadata> input_fragments_;
+    uint64_t input_ring_base_offset_ = 0;
     bool input_chunk_active_ = false;
     std::chrono::steady_clock::time_point first_fragment_time_{};
     std::optional<uint32_t> first_fragment_rtp_timestamp_;

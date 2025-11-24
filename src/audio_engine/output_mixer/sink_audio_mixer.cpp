@@ -437,12 +437,12 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
         ? (static_cast<double>(frames_per_chunk_) * 1000.0) / static_cast<double>(playback_sample_rate_)
         : 0.0;
 
-    stats.payload_buffer.size = payload_buffer_write_pos_;
-    stats.payload_buffer.high_watermark = std::max(payload_buffer_write_pos_, profiling_max_payload_buffer_bytes_);
+    stats.payload_buffer.size = payload_buffer_fill_bytes_;
+    stats.payload_buffer.high_watermark = std::max(payload_buffer_fill_bytes_, profiling_max_payload_buffer_bytes_);
     if (!payload_buffer_.empty()) {
-        stats.payload_buffer.fill_percent = (static_cast<double>(payload_buffer_write_pos_) / static_cast<double>(payload_buffer_.size())) * 100.0;
+        stats.payload_buffer.fill_percent = (static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(payload_buffer_.size())) * 100.0;
         if (chunk_size_bytes_ > 0 && chunk_ms > 0.0) {
-            const double chunks_buffered = static_cast<double>(payload_buffer_write_pos_) / static_cast<double>(chunk_size_bytes_);
+            const double chunks_buffered = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(chunk_size_bytes_);
             stats.payload_buffer.depth_ms = chunks_buffered * chunk_ms;
         }
     }
@@ -608,7 +608,7 @@ void SinkAudioMixer::stop() {
         std::lock_guard<std::mutex> lock(listener_senders_mutex_);
         listeners = listener_senders_.size();
     }
-    LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_write_pos_, clock_manager_enabled_.load() ? 1 : 0);
+    LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_fill_bytes_, clock_manager_enabled_.load() ? 1 : 0);
     stop_flag_ = true;
 
     if (mix_scheduler_) {
@@ -684,7 +684,8 @@ bool SinkAudioMixer::start_internal() {
     const auto t0 = std::chrono::steady_clock::now();
 
     stop_flag_ = false;
-    payload_buffer_write_pos_ = 0;
+    payload_buffer_read_pos_ = 0;
+    payload_buffer_fill_bytes_ = 0;
     reset_profiler_counters();
     set_playback_format(config_.output_samplerate, config_.output_channels, config_.output_bitdepth);
 
@@ -1041,11 +1042,14 @@ void SinkAudioMixer::downscale_buffer() {
     LOG_CPP_DEBUG("[SinkMixer:%s] Downscale: Converting %zu samples (int32) to %d-bit. Expected output bytes=%zu.",
                   config_.sink_id.c_str(), samples_to_convert, target_bit_depth, expected_bytes_to_write);
 
-    size_t available_space = payload_buffer_.size() - payload_buffer_write_pos_;
+    const size_t capacity = payload_buffer_.size();
+    size_t available_space = capacity >= payload_buffer_fill_bytes_
+        ? (capacity - payload_buffer_fill_bytes_)
+        : 0;
 
     if (expected_bytes_to_write > available_space) {
         LOG_CPP_ERROR("[SinkMixer:%s] Downscale buffer overflow detected! Available space=%zu, needed=%zu. WritePos=%zu. BufferSize=%zu",
-                      config_.sink_id.c_str(), available_space, expected_bytes_to_write, payload_buffer_write_pos_, payload_buffer_.size());
+                      config_.sink_id.c_str(), available_space, expected_bytes_to_write, payload_buffer_fill_bytes_, payload_buffer_.size());
         m_buffer_overflows++;
         size_t max_samples_possible = available_space / output_byte_depth;
         samples_to_convert = max_samples_possible;
@@ -1058,27 +1062,35 @@ void SinkAudioMixer::downscale_buffer() {
         }
     }
 
-    uint8_t* write_ptr_start = payload_buffer_.data() + payload_buffer_write_pos_;
-    uint8_t* write_ptr = write_ptr_start;
+    size_t write_index = (payload_buffer_read_pos_ + payload_buffer_fill_bytes_) % capacity;
     const int32_t* read_ptr = mixing_buffer_.data();
 
     for (size_t i = 0; i < samples_to_convert; ++i) {
         int32_t sample = read_ptr[i];
         switch (target_bit_depth) {
             case 16:
-                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 16) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
                 break;
             case 24:
-                *write_ptr++ = static_cast<uint8_t>((sample >> 8) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 8) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 16) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
                 break;
             case 32:
-                *write_ptr++ = static_cast<uint8_t>((sample) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 8) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 8) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 16) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
                 break;
             default:
                 LOG_CPP_ERROR("[SinkMixer:%s] Unsupported target bit depth %d during downscale.",
@@ -1086,17 +1098,10 @@ void SinkAudioMixer::downscale_buffer() {
                 return;
         }
     }
-    size_t bytes_written = write_ptr - write_ptr_start;
-    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale: Conversion loop finished. Bytes written=%zu. Expected=%zu.",
-                  config_.sink_id.c_str(), bytes_written, expected_bytes_to_write);
-    if (bytes_written != expected_bytes_to_write) {
-         LOG_CPP_ERROR("[SinkMixer:%s] Downscale: Mismatch between bytes written (%zu) and expected bytes (%zu).",
-                       config_.sink_id.c_str(), bytes_written, expected_bytes_to_write);
-    }
-
-    payload_buffer_write_pos_ += bytes_written;
-    profiling_max_payload_buffer_bytes_ = std::max(profiling_max_payload_buffer_bytes_, payload_buffer_write_pos_);
-    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale complete. payload_buffer_write_pos_=%zu", config_.sink_id.c_str(), payload_buffer_write_pos_);
+    const size_t bytes_written = expected_bytes_to_write;
+    payload_buffer_fill_bytes_ += bytes_written;
+    profiling_max_payload_buffer_bytes_ = std::max(profiling_max_payload_buffer_bytes_, payload_buffer_fill_bytes_);
+    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale complete. bytes_written=%zu fill=%zu", config_.sink_id.c_str(), bytes_written, payload_buffer_fill_bytes_);
     auto t1 = std::chrono::steady_clock::now();
     uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
     profiling_downscale_calls_++;
@@ -1322,7 +1327,7 @@ void SinkAudioMixer::reset_profiler_counters() {
     profiling_ready_sources_sum_ = 0;
     profiling_lagging_sources_sum_ = 0;
     profiling_samples_count_ = 0;
-    profiling_max_payload_buffer_bytes_ = payload_buffer_write_pos_;
+    profiling_max_payload_buffer_bytes_ = payload_buffer_fill_bytes_;
     profiling_chunk_dwell_sum_ms_ = 0.0;
     profiling_chunk_dwell_max_ms_ = 0.0;
     profiling_chunk_dwell_min_ms_ = std::numeric_limits<double>::infinity();
@@ -1452,7 +1457,7 @@ void SinkAudioMixer::maybe_log_profiler() {
         avg_lagging_sources,
         avg_queue_depth,
         max_queue_depth,
-        payload_buffer_write_pos_,
+        payload_buffer_fill_bytes_,
         profiling_max_payload_buffer_bytes_,
         m_buffer_underruns.load(),
         m_buffer_overflows.load(),
@@ -1563,7 +1568,7 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
     if (playback_sample_rate_ > 0 && playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0) {
         const std::size_t frame_bytes = static_cast<std::size_t>(active_channels) * static_cast<std::size_t>(playback_bit_depth_ / 8);
         if (frame_bytes > 0) {
-            const double frames = static_cast<double>(payload_buffer_write_pos_) / static_cast<double>(frame_bytes);
+            const double frames = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(frame_bytes);
             payload_ms = (frames * 1000.0) / static_cast<double>(playback_sample_rate_);
         }
     }
@@ -1616,7 +1621,7 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
     LOG_CPP_INFO(
         "[Telemetry][SinkMixer:%s] payload_bytes=%zu (%.3f ms) ready_sources=%zu ready_total=%zu ready_max=%zu ready_avg_ms=%.3f ready_max_ms=%.3f pending_ticks=%llu tick_backlog_ms=%.3f source_avg_age_ms=%.3f source_max_age_ms=%.3f underrun_active=%d mp3_queue=%zu mp3_pcm_queue=%zu",
         config_.sink_id.c_str(),
-        payload_buffer_write_pos_,
+        payload_buffer_fill_bytes_,
         payload_ms,
         ready_sources,
         ready_total,
@@ -1679,9 +1684,8 @@ void SinkAudioMixer::refresh_format_dependent_buffers(int sample_rate, int chann
         stereo_buffer_.assign(mixing_buffer_samples_ * 2, 0);
         payload_buffer_.assign(mp3_buffer_size_, 0);
         mp3_encode_buffer_.assign(mp3_buffer_size_, 0);
-        if (payload_buffer_write_pos_ > payload_buffer_.size()) {
-            payload_buffer_write_pos_ = payload_buffer_.size();
-        }
+        payload_buffer_read_pos_ = 0;
+        payload_buffer_fill_bytes_ = 0;
         last_sample_frame_.assign(std::max(1, sanitized_channels), 0);
         last_sample_valid_ = false;
     }
@@ -1914,7 +1918,8 @@ void SinkAudioMixer::clear_pending_audio() {
     }
 
     underrun_silence_active_ = false;
-    payload_buffer_write_pos_ = 0;
+    payload_buffer_read_pos_ = 0;
+    payload_buffer_fill_bytes_ = 0;
     profiling_max_payload_buffer_bytes_ = 0;
     last_sample_valid_ = false;
 }
@@ -2000,10 +2005,7 @@ void SinkAudioMixer::run() {
 
         lock.unlock();
 
-        // Apply adaptive buffer draining if enabled
-        if (m_settings && m_settings->mixer_tuning.enable_adaptive_buffer_drain) {
-            update_drain_ratio();
-        }
+        // Adaptive buffer draining disabled: playback rate control is handled upstream via stream clock drift.
 
         downscale_buffer();
 
@@ -2023,7 +2025,7 @@ void SinkAudioMixer::run() {
         }
 
         size_t chunks_dispatched = 0;
-        while (payload_buffer_write_pos_ >= chunk_size_bytes_) {
+        while (payload_buffer_fill_bytes_ >= chunk_size_bytes_) {
             auto send_time = std::chrono::steady_clock::now();
             if (profiling_last_chunk_send_time_.time_since_epoch().count() != 0) {
                 double gap_ms = std::chrono::duration<double, std::milli>(send_time - profiling_last_chunk_send_time_).count();
@@ -2040,8 +2042,21 @@ void SinkAudioMixer::run() {
             }
             profiling_last_chunk_send_time_ = send_time;
             if (network_sender_) {
-                std::lock_guard<std::mutex> lock(csrc_mutex_);
-                network_sender_->send_payload(payload_buffer_.data(), chunk_size_bytes_, current_csrcs_);
+                const size_t capacity = payload_buffer_.size();
+                const size_t contiguous = std::min(chunk_size_bytes_, capacity - payload_buffer_read_pos_);
+                const uint8_t* send_ptr = payload_buffer_.data() + payload_buffer_read_pos_;
+                if (contiguous == chunk_size_bytes_) {
+                    std::lock_guard<std::mutex> lock(csrc_mutex_);
+                    network_sender_->send_payload(send_ptr, chunk_size_bytes_, current_csrcs_);
+                } else {
+                    if (payload_chunk_temp_.size() < chunk_size_bytes_) {
+                        payload_chunk_temp_.resize(chunk_size_bytes_);
+                    }
+                    std::memcpy(payload_chunk_temp_.data(), send_ptr, contiguous);
+                    std::memcpy(payload_chunk_temp_.data() + contiguous, payload_buffer_.data(), chunk_size_bytes_ - contiguous);
+                    std::lock_guard<std::mutex> lock(csrc_mutex_);
+                    network_sender_->send_payload(payload_chunk_temp_.data(), chunk_size_bytes_, current_csrcs_);
+                }
             }
             profiling_chunks_sent_++;
             profiling_payload_bytes_sent_ += chunk_size_bytes_;
@@ -2051,14 +2066,11 @@ void SinkAudioMixer::run() {
             }
             chunks_dispatched++;
 
-            size_t bytes_remaining = payload_buffer_write_pos_ - chunk_size_bytes_;
-            if (bytes_remaining > 0) {
-                memmove(payload_buffer_.data(), payload_buffer_.data() + chunk_size_bytes_, bytes_remaining);
-            }
-            payload_buffer_write_pos_ = bytes_remaining;
+            payload_buffer_read_pos_ = (payload_buffer_read_pos_ + chunk_size_bytes_) % payload_buffer_.size();
+            payload_buffer_fill_bytes_ -= chunk_size_bytes_;
 
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Sent chunk, remaining bytes in buffer: %zu",
-                          config_.sink_id.c_str(), payload_buffer_write_pos_);
+                          config_.sink_id.c_str(), payload_buffer_fill_bytes_);
         }
 
         if (coordination_active && dispatch_timing) {

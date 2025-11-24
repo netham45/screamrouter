@@ -776,6 +776,7 @@ class ConfigurationManager(threading.Thread):
             _logger.warning("[Configuration Manager] Failed to acquire volume/eq condition semaphore")
             return
         try:
+            _logger.info("[Configuration Manager] Volume/EQ notify stack trace\n%s", "".join(traceback.format_stack()))
             self.reload_condition.notify()
         except RuntimeError:
             pass
@@ -2179,7 +2180,7 @@ class ConfigurationManager(threading.Thread):
     def __save_config(self) -> None:
         """Saves the config"""
 
-        _logger.info("[Configuration Manager] Saving config")
+        _logger.info("[Configuration Manager] Saving config\n%s", "".join(traceback.format_stack()))
         if not self.configuration_semaphore.acquire(timeout=1):
             raise TimeoutError("Failed to get configuration semaphore")
         proc = threading.Thread(target=self.__multiprocess_save)
@@ -2811,6 +2812,7 @@ class ConfigurationManager(threading.Thread):
             raise TimeoutError("Failed to get configuration reload condition")
         try:
             _logger.debug("[Configuration Manager] Requesting Reload - Got lock")
+            _logger.info("[Configuration Manager] Reload notify stack trace\n%s", "".join(traceback.format_stack()))
             self.reload_condition.notify()
         except RuntimeError:
             pass
@@ -2840,6 +2842,7 @@ class ConfigurationManager(threading.Thread):
             raise TimeoutError("Failed to get configuration reload condition")
         try:
             _logger.debug("[Configuration Manager] Requesting Reload (without save) - Got lock")
+            _logger.info("[Configuration Manager] Reload (without save) notify stack trace\n%s", "".join(traceback.format_stack()))
             self.reload_condition.notify()
         except RuntimeError:
             pass
@@ -3826,6 +3829,10 @@ class ConfigurationManager(threading.Thread):
         seen_keys: set[str] = set()
         existing_source_names: set[str] = set()
         existing_route_names: set[str] = set()
+        # Remember previously added SAP routes so repeated announcements don't retrigger saves
+        self._sap_route_signature.update(
+            route.config_id for route in self.active_temporary_routes if getattr(route, "config_id", None)
+        )
 
         for announcement in sap_announcements:
             target_sink = str(announcement.get("target_sink") or "").strip()
@@ -3889,6 +3896,9 @@ class ConfigurationManager(threading.Thread):
             sink_key_for_id = sink.config_id or sink.name
             deterministic_source_id = f"sapsrc:{sink_key_for_id}:{source_ip}:{port_int}"
             deterministic_route_id = f"saproute:{sink_key_for_id}:{source_ip}:{port_int}"
+            if deterministic_route_id in self._sap_route_signature:
+                _logger.debug("[Configuration Manager] Skipping duplicate SAP route_id=%s", deterministic_route_id)
+                continue
 
             source_desc = SourceDescription(
                 name=source_name,
@@ -3941,6 +3951,7 @@ class ConfigurationManager(threading.Thread):
 
             new_sources.append(source_desc)
             new_routes.append(route_desc)
+            self._sap_route_signature.add(deterministic_route_id)
         if new_sources or new_routes:
             self.active_temporary_sources.extend(new_sources)
             self.active_temporary_routes.extend(new_routes)

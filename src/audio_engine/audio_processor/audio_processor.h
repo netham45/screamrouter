@@ -145,6 +145,7 @@ private:
     std::vector<float> resample_float_out_buffer_;
     std::vector<float> downsample_float_in_buffer_;          // DEPRECATED: No longer needed with interleaved format
     std::vector<float> downsample_float_out_buffer_;
+    std::vector<float> eq_temp_buffer_;                      // Scratch for per-channel EQ to avoid per-call allocations
 
     struct ChannelView {
         const float* data = nullptr;

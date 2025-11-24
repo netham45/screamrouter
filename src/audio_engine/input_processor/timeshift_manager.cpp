@@ -820,7 +820,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 const double packet_duration_ms =
                     compute_packet_duration_ms(candidate_packet,
                                                static_cast<double>(timing_state->samples_per_chunk));
-                const double buffer_level_ms = std::max(time_until_playout_ms, 0.0) + packet_duration_ms;
+                double buffer_level_ms = std::max(time_until_playout_ms, 0.0) + packet_duration_ms;
                 timing_state->current_buffer_level_ms = buffer_level_ms;
                 if (desired_latency_ms > 1e-6) {
                     timing_state->buffer_target_fill_percentage =
@@ -828,6 +828,21 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 } else {
                     timing_state->buffer_target_fill_percentage = 0.0;
                 }
+
+                auto update_buffer_state_after_clock_change = [&](const std::chrono::steady_clock::time_point& now_ref) {
+                    ideal_playout_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value()) +
+                                         std::chrono::duration<double, std::milli>(desired_latency_ms);
+                    time_until_playout_ms =
+                        std::chrono::duration<double, std::milli>(ideal_playout_time - now_ref).count();
+                    buffer_level_ms = std::max(time_until_playout_ms, 0.0) + packet_duration_ms;
+                    timing_state->current_buffer_level_ms = buffer_level_ms;
+                    if (desired_latency_ms > 1e-6) {
+                        timing_state->buffer_target_fill_percentage =
+                            std::clamp((buffer_level_ms / desired_latency_ms) * 100.0, 0.0, 100.0);
+                    } else {
+                        timing_state->buffer_target_fill_percentage = 0.0;
+                    }
+                };
 
                 double head_lag_ms = std::max(-time_until_playout_ms, 0.0);
                 timing_state->last_head_playout_lag_ms = head_lag_ms;
@@ -838,11 +853,9 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 const std::string log_tag = target_info.source_tag_filter.empty()
                                                 ? candidate_packet.source_tag
                                                 : target_info.source_tag_filter;
-                bool reanchored_this_packet = false;
-
                 // Check if the packet is ready to be played
                 if (ideal_playout_time <= now) {
-                    const double lateness_ms = -time_until_playout_ms;
+                    double lateness_ms = -time_until_playout_ms;
                     if (lateness_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
                         timing_state->late_packets_count++;
                         const auto since_last_log = (timing_state->last_late_log_time.time_since_epoch().count() == 0)
@@ -868,7 +881,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         timing_state->playback_ratio_controller_ppm = 0.0;
                         timing_state->last_clock_offset_ms = 0.0;
                         timing_state->last_clock_drift_ppm = 0.0;
-                        reanchored_this_packet = true;
                         const auto since_last_anchor =
                             (timing_state->last_reanchor_log_time.time_since_epoch().count() == 0)
                                 ? std::chrono::steady_clock::duration::max()
@@ -882,15 +894,17 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                             timing_state->last_reanchor_log_time = now;
                         }
                         // Recompute play-out time after reanchor.
-                        ideal_playout_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value()) +
-                                             std::chrono::duration<double, std::milli>(desired_latency_ms);
-                        time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
-                        // Update buffer/lag state after reanchor to avoid using stale lateness.
+                        update_buffer_state_after_clock_change(now);
                         head_lag_ms = std::max(-time_until_playout_ms, 0.0);
                         timing_state->last_head_playout_lag_ms = head_lag_ms;
                         timing_state->head_playout_lag_ms_sum += head_lag_ms;
                         timing_state->head_playout_lag_ms_max = std::max(timing_state->head_playout_lag_ms_max, head_lag_ms);
                         timing_state->head_playout_lag_samples++;
+                        lateness_ms = std::max(-time_until_playout_ms, 0.0);
+                        if (time_until_playout_ms > 0.0) {
+                            // After reanchoring, the packet is no longer late; wait for playout time.
+                            break;
+                        }
                     }
                     if (lateness_ms > 0.0) {
                         profiling_total_lateness_ms_ += lateness_ms;
@@ -917,14 +931,17 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         timing_state->last_clock_offset_ms = 0.0;
                         timing_state->last_clock_drift_ppm = 0.0;
 
-                        ideal_playout_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value()) +
-                                             std::chrono::duration<double, std::milli>(desired_latency_ms);
-                        time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
+                        update_buffer_state_after_clock_change(now);
                         head_lag_ms = std::max(-time_until_playout_ms, 0.0);
                         timing_state->last_head_playout_lag_ms = head_lag_ms;
                         timing_state->head_playout_lag_ms_sum += head_lag_ms;
                         timing_state->head_playout_lag_ms_max = std::max(timing_state->head_playout_lag_ms_max, head_lag_ms);
                         timing_state->head_playout_lag_samples++;
+                        lateness_ms = std::max(-time_until_playout_ms, 0.0);
+                        if (time_until_playout_ms > 0.0) {
+                            // Reanchored due to excessive lag; wait for the refreshed playout time.
+                            break;
+                        }
 
                         const auto since_last_drop_log = (timing_state->last_discard_log_time.time_since_epoch().count() == 0)
                                                              ? std::chrono::steady_clock::duration::max()
@@ -941,51 +958,14 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                     TaggedAudioPacket packet_to_send = candidate_packet;
                     const auto& tuning = m_settings->timeshift_tuning;
-                    double controller_dt_sec = 0.0;
-                    if (timing_state->last_controller_update_time.time_since_epoch().count() != 0) {
-                        controller_dt_sec =
-                            std::chrono::duration<double>(now - timing_state->last_controller_update_time).count();
-                    }
-                    if (controller_dt_sec <= 0.0) {
-                        controller_dt_sec =
-                            std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
-                    }
-                    timing_state->last_controller_update_time = now;
-
-                    const double buffer_error_ms = desired_latency_ms - buffer_level_ms;
-                    const double proportional_ppm = tuning.playback_ratio_kp * buffer_error_ms;
-                    timing_state->playback_ratio_integral_ppm +=
-                        tuning.playback_ratio_ki * buffer_error_ms * controller_dt_sec;
-                    const double integral_cap_ppm =
-                        std::max(tuning.playback_ratio_integral_limit_ppm,
-                                 tuning.playback_ratio_max_deviation_ppm);
-                    timing_state->playback_ratio_integral_ppm =
-                        std::clamp(timing_state->playback_ratio_integral_ppm,
-                                   -integral_cap_ppm,
-                                   integral_cap_ppm);
-
-                    double controller_ppm = proportional_ppm + timing_state->playback_ratio_integral_ppm;
-                    const double max_slew_ppm =
-                        std::max(tuning.playback_ratio_slew_ppm_per_sec, 0.0) * controller_dt_sec;
-                    if (max_slew_ppm > 0.0) {
-                        controller_ppm = std::clamp(controller_ppm,
-                                                    timing_state->playback_ratio_controller_ppm - max_slew_ppm,
-                                                    timing_state->playback_ratio_controller_ppm + max_slew_ppm);
-                    }
-
-                    const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
-                    controller_ppm = std::clamp(controller_ppm, -max_deviation_ppm, max_deviation_ppm);
-                    timing_state->playback_ratio_controller_ppm = controller_ppm;
-
+                    // Use measured clock drift to set playback rate; no buffer-level PI.
                     const double drift_ppm = timing_state->last_clock_drift_ppm;
-                    double combined_ppm = drift_ppm + controller_ppm;
-                    combined_ppm = std::clamp(combined_ppm, -max_deviation_ppm, max_deviation_ppm);
+                    const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
 
-                    double target_rate = 1.0 + combined_ppm * kPlaybackDriftGain;
+                    double target_rate = 1.0 + drift_ppm * kPlaybackDriftGain;
                     if (!std::isfinite(target_rate)) {
                         target_rate = 1.0;
                     }
-
                     const double smoothing_factor =
                         m_settings ? tuning.playback_ratio_smoothing : kFallbackSmoothing;
                     const double smoothed_rate =
@@ -996,18 +976,14 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                     if (std::abs(smoothed_rate - timing_state->current_playback_rate) > 5e-4) {
                         LOG_CPP_DEBUG(
-                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f error_ms=%.3f controller_ppm=%.3f combined_ppm=%.3f target=%.6f smoothed=%.6f",
+                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f target=%.6f smoothed=%.6f",
                             candidate_packet.source_tag.c_str(),
                             drift_ppm,
-                            buffer_error_ms,
-                            controller_ppm,
-                            combined_ppm,
                             target_rate,
                             smoothed_rate);
                     }
 
                     timing_state->current_playback_rate = smoothed_rate;
-                    timing_state->last_system_delay_ms = lateness_ms;
                     packet_to_send.playback_rate = smoothed_rate;
 
                     target_info.target_queue->push(std::move(packet_to_send));

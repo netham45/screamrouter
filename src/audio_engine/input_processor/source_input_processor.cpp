@@ -509,7 +509,8 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
 
 void SourceInputProcessor::reset_input_accumulator() {
     PROFILE_FUNCTION();
-    input_accumulator_buffer_.clear();
+    input_ring_buffer_.clear();
+    input_ring_base_offset_ = 0;
     input_fragments_.clear();
     input_chunk_active_ = false;
     first_fragment_time_ = {};
@@ -545,9 +546,7 @@ void SourceInputProcessor::append_to_input_accumulator(const TaggedAudioPacket& 
         input_chunk_active_ = true;
     }
 
-    input_accumulator_buffer_.insert(input_accumulator_buffer_.end(),
-                                     packet.audio_data.begin(),
-                                     packet.audio_data.end());
+    input_ring_buffer_.write(packet.audio_data.data(), packet.audio_data.size());
 
     InputFragmentMetadata meta;
     meta.bytes = packet.audio_data.size();
@@ -567,13 +566,24 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
         return false;
     }
 
-    if (input_accumulator_buffer_.size() < current_input_chunk_bytes_) {
+    if (input_ring_buffer_.size() < current_input_chunk_bytes_) {
         return false;
     }
 
     chunk_time = {};
     chunk_timestamp.reset();
     chunk_ssrcs.clear();
+
+    chunk_data.resize(current_input_chunk_bytes_);
+    const std::size_t bytes_popped = input_ring_buffer_.pop(chunk_data.data(), current_input_chunk_bytes_);
+    if (bytes_popped != current_input_chunk_bytes_) {
+        LOG_CPP_ERROR("[SourceProc:%s] Ring buffer underflow while dequeuing chunk. Expected %zu, got %zu.",
+                      config_.instance_id.c_str(), current_input_chunk_bytes_, bytes_popped);
+        chunk_data.clear();
+        reset_input_accumulator();
+        return false;
+    }
+    input_ring_base_offset_ += bytes_popped;
 
     std::size_t remaining = current_input_chunk_bytes_;
     while (remaining > 0 && !input_fragments_.empty()) {
@@ -583,11 +593,12 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
             continue;
         }
 
+        const std::size_t consumed_before = fragment.consumed_bytes;
         if (chunk_time == std::chrono::steady_clock::time_point{}) {
             chunk_time = fragment.received_time;
             chunk_ssrcs = fragment.ssrcs;
             if (fragment.rtp_timestamp.has_value()) {
-                const std::size_t frame_offset = fragment.consumed_bytes / input_bytes_per_frame_;
+                const std::size_t frame_offset = consumed_before / input_bytes_per_frame_;
                 chunk_timestamp = fragment.rtp_timestamp.value() + static_cast<uint32_t>(frame_offset);
             } else if (first_fragment_rtp_timestamp_.has_value()) {
                 chunk_timestamp = first_fragment_rtp_timestamp_;
@@ -610,13 +621,6 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
             chunk_time = std::chrono::steady_clock::now();
         }
     }
-
-    chunk_data.assign(
-        input_accumulator_buffer_.begin(),
-        input_accumulator_buffer_.begin() + static_cast<std::ptrdiff_t>(current_input_chunk_bytes_));
-    input_accumulator_buffer_.erase(
-        input_accumulator_buffer_.begin(),
-        input_accumulator_buffer_.begin() + static_cast<std::ptrdiff_t>(current_input_chunk_bytes_));
 
     if (!input_fragments_.empty()) {
         input_chunk_active_ = true;

@@ -1169,9 +1169,16 @@ void AudioProcessor::equalize() {
     for (int ch = 0; ch < outputChannels; ++ch) {
         if (!filters[ch][0]) continue; // Check if filters allocated
 
-        // For strided processing, we need a temporary buffer
-        // This is necessary because Biquad filters expect contiguous data
-        std::vector<float> temp_channel(channel_buffer_pos);
+        // For strided processing, we need a temporary buffer (reuse scratch to avoid per-call alloc)
+        if (eq_temp_buffer_.size() < channel_buffer_pos) {
+            try {
+                eq_temp_buffer_.resize(channel_buffer_pos);
+            } catch (...) {
+                LOG_CPP_ERROR("[AudioProc] Failed to resize EQ scratch buffer to %zu samples", channel_buffer_pos);
+                return;
+            }
+        }
+        float* temp_channel = eq_temp_buffer_.data();
 
         // Extract channel from interleaved buffer
         float* interleaved_ptr = remixed_interleaved_buffer_.data() + ch;
@@ -1182,7 +1189,7 @@ void AudioProcessor::equalize() {
         // Apply EQ bands
         for (int band = 0; band < EQ_BANDS; ++band) {
             if (active_bands[band] && filters[ch][band]) {
-                filters[ch][band]->processBlock(temp_channel.data(), temp_channel.data(), channel_buffer_pos);
+                filters[ch][band]->processBlock(temp_channel, temp_channel, channel_buffer_pos);
             }
         }
 

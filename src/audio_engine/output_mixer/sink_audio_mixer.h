@@ -210,7 +210,9 @@ private:
     std::vector<int32_t> mixing_buffer_;
     std::vector<int32_t> stereo_buffer_;
     std::vector<uint8_t> payload_buffer_;
-    size_t payload_buffer_write_pos_ = 0;
+    size_t payload_buffer_read_pos_ = 0;
+    size_t payload_buffer_fill_bytes_ = 0;
+    std::vector<uint8_t> payload_chunk_temp_;
     std::vector<int32_t> last_sample_frame_;
     bool last_sample_valid_ = false;
     
