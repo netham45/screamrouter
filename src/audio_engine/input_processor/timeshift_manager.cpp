@@ -63,7 +63,12 @@ uint32_t rtp_timestamp_diff(uint32_t current, uint32_t previous) {
 double smooth_playback_rate(double previous_rate,
                             double target_rate,
                             double smoothing_factor,
-                            double max_deviation_ppm) {
+                            double max_deviation_ppm,
+                            double latency_ms) {
+    double latency_rate = 1.0;
+    latency_rate *= 1 + (latency_ms / 200);
+    latency_rate = std::min(latency_rate, 1.02);
+    target_rate *= latency_rate;
     const double max_deviation_ratio =
         std::max(max_deviation_ppm, 0.0) * kPlaybackDriftGain;
     const double clamped_target =
@@ -232,6 +237,62 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
                                           packet.source_tag.c_str(), delta,
                                           static_cast<unsigned long long>(expected_frames),
                                           static_cast<unsigned long long>(continuity_slack_frames));
+
+                            // Check if this is a pause/resume scenario that needs reanchoring
+                            if (m_settings->timeshift_tuning.reanchor_enabled &&
+                                wallclock_gap_sec > (m_settings->timeshift_tuning.reanchor_pause_gap_threshold_ms / 1000.0)) {
+                                // This looks like a pause/resume: RTP is continuous but there's a significant wall-clock gap
+                                const auto cooldown = std::chrono::milliseconds(
+                                    static_cast<int64_t>(m_settings->timeshift_tuning.reanchor_cooldown_ms));
+
+                                if (existing_state.last_reanchor_time.time_since_epoch().count() == 0 ||
+                                    (packet.received_time - existing_state.last_reanchor_time) > cooldown) {
+
+                                    LOG_CPP_INFO("[TimeshiftManager] Detected pause/resume for '%s': wall-clock gap=%.2fs, reanchoring clock",
+                                                packet.source_tag.c_str(), wallclock_gap_sec);
+
+                                    // Reset the clock completely
+                                    if (existing_state.clock) {
+                                        existing_state.clock->reset();
+                                    }
+
+                                    // Reset lateness tracking
+                                    existing_state.consecutive_late_packets = 0;
+                                    existing_state.cumulative_lateness_ms = 0.0;
+                                    existing_state.last_reanchor_time = packet.received_time;
+                                    existing_state.reanchor_count++;
+                                    existing_state.is_reanchored = true;
+
+                                    // CRITICAL: Also skip all processors to current position in buffer
+                                    // This ensures they don't process old packets that accumulated during pause
+                                    // NOTE: We already hold data_mutex_ from add_packet() - don't re-acquire!
+                                    {
+                                        size_t current_buffer_size = global_timeshift_buffer_.size();
+
+                                        // Find all processors for this stream and skip them to current position
+                                        for (auto& [filter_tag, source_map] : processor_targets_) {
+                                            for (auto& [instance_id, info] : source_map) {
+                                                // Check if this processor is handling this stream
+                                                bool matches = false;
+                                                if (info.is_wildcard) {
+                                                    matches = (!info.bound_source_tag.empty() && info.bound_source_tag == packet.source_tag) ||
+                                                             packet.source_tag.find(info.wildcard_prefix) == 0;
+                                                } else {
+                                                    matches = (filter_tag == packet.source_tag);
+                                                }
+
+                                                if (matches && info.next_packet_read_index < current_buffer_size) {
+                                                    size_t old_index = info.next_packet_read_index;
+                                                    info.next_packet_read_index = current_buffer_size;
+                                                    LOG_CPP_INFO("[TimeshiftManager] Pause/resume reanchor: processor %s jumped from index %zu to %zu (skipped %zu packets)",
+                                                                instance_id.c_str(), old_index, current_buffer_size,
+                                                                current_buffer_size - old_index);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -271,9 +332,14 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
      if (!state.clock) {
          state.clock = std::make_unique<StreamClock>(packet.sample_rate);
      }
- 
-     // 2. Update the stable clock model
-    state.clock->update(packet.rtp_timestamp.value(), packet.received_time);
+
+     // 2. Update the stable clock model (skip if we just reanchored - let next packet establish new baseline)
+     if (!state.is_reanchored) {
+         state.clock->update(packet.rtp_timestamp.value(), packet.received_time);
+     } else {
+         // This is the first packet after reanchor - don't update clock yet
+         // The processing loop will handle this specially
+     }
 
     if (state.clock->is_initialized()) {
         state.last_clock_offset_ms = state.clock->get_offset_seconds() * 1000.0;
@@ -510,6 +576,17 @@ TimeshiftManagerStats TimeshiftManager::get_stats() {
             } else {
                 stats.stream_clock_avg_abs_innovation_ms[source_tag] = 0.0;
             }
+
+            // Add reanchoring statistics
+            stats.stream_reanchor_count[source_tag] = timing_state.reanchor_count.load();
+            if (timing_state.last_reanchor_time.time_since_epoch().count() != 0) {
+                auto now = std::chrono::steady_clock::now();
+                auto time_since = std::chrono::duration<double, std::milli>(now - timing_state.last_reanchor_time).count();
+                stats.stream_time_since_last_reanchor_ms[source_tag] = time_since;
+            } else {
+                stats.stream_time_since_last_reanchor_ms[source_tag] = 0.0;
+            }
+            stats.stream_packets_skipped_on_reanchor[source_tag] = timing_state.packets_skipped_on_reanchor.load();
         }
     }
 
@@ -732,6 +809,39 @@ void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
     run_loop_cv_.notify_one();
 }
 
+void TimeshiftManager::reanchor_stream_unlocked(const std::string& source_tag,
+                                                StreamTimingState& timing_state,
+                                                const std::string& reason) {
+    // Simplified reanchor - just reset the clock
+    // The clock will re-initialize with the next packet, establishing a new baseline
+
+    const auto now = std::chrono::steady_clock::now();
+
+    LOG_CPP_INFO("[TimeshiftManager] Reanchoring stream '%s': reason='%s'",
+                source_tag.c_str(), reason.c_str());
+
+    // Reset the clock - it will re-initialize with next packet
+    if (timing_state.clock) {
+        timing_state.clock->reset();
+    }
+
+    // Reset timing state counters
+    timing_state.consecutive_late_packets = 0;
+    timing_state.cumulative_lateness_ms = 0.0;
+    timing_state.last_reanchor_time = now;
+    timing_state.reanchor_count++;
+    timing_state.is_reanchored = true;
+
+    // Reset jitter estimates to let them reconverge
+    timing_state.jitter_initialized = false;
+    timing_state.rfc3550_jitter_sec = 0.0;
+    timing_state.jitter_estimate = 1.0;
+
+    // Notify waiting threads
+    m_state_version_++;
+    run_loop_cv_.notify_one();
+}
+
 /**
  * @brief The main processing loop for the manager's thread.
  */
@@ -779,7 +889,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
     auto now = iteration_start;
     const double max_catchup_lag_ms = m_settings->timeshift_tuning.max_catchup_lag_ms;
     // Re-anchor late streams instead of letting lateness grow unbounded.
-    const double reanchor_late_ms = 200.0;
     size_t packets_processed = 0;
 
     for (auto& [source_tag, source_map] : processor_targets_) {
@@ -819,8 +928,36 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 now = std::chrono::steady_clock::now();
 
                 // --- Playout Time Calculation ---
-                // 1. Get expected arrival time from the stable clock
-                auto expected_arrival_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
+                std::chrono::steady_clock::time_point expected_arrival_time;
+
+                // Handle reanchored state - clock needs to be initialized with this packet
+                if (timing_state->is_reanchored) {
+                    // First packet after reanchor - initialize clock with current packet
+                    // This establishes a new baseline where THIS packet is "on time"
+                    timing_state->clock->reset();  // Ensure clock is reset
+                    timing_state->clock->update(candidate_packet.rtp_timestamp.value(), now);
+                    timing_state->is_reanchored = false;  // Clear the flag
+
+                    // This packet is by definition "on time" since we just anchored to it
+                    expected_arrival_time = now;
+
+                    LOG_CPP_INFO("[TimeshiftManager] Post-reanchor clock init for '%s': RTP=%u, buffer_idx=%zu, clock_offset=%.3fms",
+                                candidate_packet.source_tag.c_str(),
+                                candidate_packet.rtp_timestamp.value(),
+                                target_info.next_packet_read_index,
+                                timing_state->clock->get_offset_seconds() * 1000.0);
+                } else if (!timing_state->clock->is_initialized()) {
+                    // Clock not initialized (shouldn't happen in normal flow)
+                    // Initialize it now
+                    timing_state->clock->update(candidate_packet.rtp_timestamp.value(), now);
+                    expected_arrival_time = now;
+                    LOG_CPP_INFO("[TimeshiftManager] Unexpected clock init for '%s': RTP=%u",
+                                candidate_packet.source_tag.c_str(),
+                                candidate_packet.rtp_timestamp.value());
+                } else {
+                    // Normal case - get expected arrival time from the stable clock
+                    expected_arrival_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
+                }
 
                 // 2. Add the adaptive playout delay
                 const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
@@ -864,80 +1001,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 double head_lag_ms = std::max(-time_until_playout_ms, 0.0);
                 double lateness_ms = -time_until_playout_ms;
 
-                auto update_buffer_state_after_clock_change = [&](const std::chrono::steady_clock::time_point& now_ref) {
-                    ideal_playout_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value()) +
-                                         std::chrono::duration<double, std::milli>(desired_latency_ms);
-                    time_until_playout_ms =
-                        std::chrono::duration<double, std::milli>(ideal_playout_time - now_ref).count();
-                    buffer_level_ms = std::max(time_until_playout_ms, 0.0) + packet_duration_ms;
-                    timing_state->current_buffer_level_ms = buffer_level_ms;
-                    if (desired_latency_ms > 1e-6) {
-                        timing_state->buffer_target_fill_percentage =
-                            std::clamp((buffer_level_ms / desired_latency_ms) * 100.0, 0.0, 100.0);
-                    } else {
-                        timing_state->buffer_target_fill_percentage = 0.0;
-                    }
-                };
-                auto reanchor_stream_state = [&](auto log_time_updater) {
-                    // Hard reset the clock to a fresh instance to avoid stale state.
-                    if (!timing_state->clock) {
-                        timing_state->clock = std::make_unique<StreamClock>(candidate_packet.sample_rate);
-                    } else {
-                        timing_state->clock = std::make_unique<StreamClock>(candidate_packet.sample_rate);
-                    }
-                    timing_state->clock->update(candidate_packet.rtp_timestamp.value(), now);
-
-                    // Drop backlog and re-synchronize for all processors bound to this source.
-                    const auto reset_position = global_timeshift_buffer_.size();
-                    for (auto& [filter_tag, source_map] : processor_targets_) {
-                        for (auto& [instance_id, info] : source_map) {
-                            (void)instance_id;
-                            const bool direct_match = (!info.is_wildcard && filter_tag == candidate_packet.source_tag);
-                            const bool bound_match = info.is_wildcard && !info.bound_source_tag.empty() &&
-                                                     info.bound_source_tag == candidate_packet.source_tag;
-                            if (!direct_match && !bound_match) {
-                                continue;
-                            }
-                            info.next_packet_read_index = reset_position;
-                        }
-                    }
-                    // Signal the run loop so any waiting thread sees the updated indices/state.
-                    m_state_version_++;
-                    run_loop_cv_.notify_one();
-
-                    // Reset controller / stats so the next packet starts cleanly.
-                    timing_state->last_controller_update_time = now;
-                    timing_state->playback_ratio_integral_ppm = 0.0;
-                    timing_state->playback_ratio_controller_ppm = 0.0;
-                    timing_state->last_clock_offset_ms = 0.0;
-                    timing_state->last_clock_drift_ppm = 0.0;
-                    timing_state->last_clock_innovation_ms = 0.0;
-                    timing_state->last_clock_measured_offset_ms = 0.0;
-                    timing_state->current_playback_rate = 1.0;
-                    timing_state->last_late_log_time = {};
-                    timing_state->last_discard_log_time = {};
-
-                    // Reset jitter baseline so the next arrival uses a fresh reference.
-                    timing_state->is_first_packet = true;
-                    timing_state->jitter_initialized = false;
-                    timing_state->rfc3550_jitter_sec = 0.0;
-                    timing_state->jitter_estimate = 1.0;
-                    timing_state->system_jitter_estimate_ms = 1.0;
-                    timing_state->last_wallclock = now;
-                    timing_state->last_rtp_timestamp = candidate_packet.rtp_timestamp.value();
-
-                    log_time_updater(now);
-
-                    // Recompute buffer metrics against the re-anchored clock.
-                    update_buffer_state_after_clock_change(now);
-                    head_lag_ms = std::max(-time_until_playout_ms, 0.0);
-                    timing_state->last_head_playout_lag_ms = head_lag_ms;
-                    timing_state->head_playout_lag_ms_sum += head_lag_ms;
-                    timing_state->head_playout_lag_ms_max = std::max(timing_state->head_playout_lag_ms_max, head_lag_ms);
-                    timing_state->head_playout_lag_samples++;
-                    lateness_ms = std::max(-time_until_playout_ms, 0.0);
-                };
-
                 timing_state->last_head_playout_lag_ms = head_lag_ms;
                 timing_state->head_playout_lag_ms_sum += head_lag_ms;
                 timing_state->head_playout_lag_ms_max = std::max(timing_state->head_playout_lag_ms_max, head_lag_ms);
@@ -949,8 +1012,94 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 // Check if the packet is ready to be played
                 if (ideal_playout_time <= now) {
                     lateness_ms = -time_until_playout_ms;
+
                     if (lateness_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
                         timing_state->late_packets_count++;
+                        timing_state->consecutive_late_packets++;
+                        timing_state->cumulative_lateness_ms += lateness_ms;
+
+                        // Check if we need to reanchor due to excessive latency
+                        if (m_settings->timeshift_tuning.reanchor_enabled) {
+                            bool should_reanchor = false;
+                            std::string reanchor_reason;
+
+                            // Check cooldown period
+                            const auto cooldown = std::chrono::milliseconds(
+                                static_cast<int64_t>(m_settings->timeshift_tuning.reanchor_cooldown_ms));
+                            const bool cooldown_passed = timing_state->last_reanchor_time.time_since_epoch().count() == 0 ||
+                                                        (now - timing_state->last_reanchor_time) > cooldown;
+
+                            // Debug log to understand why reanchor isn't triggering
+                            if (lateness_ms > 1000.0) {
+                                LOG_CPP_DEBUG("[TimeshiftManager] Reanchor check: enabled=%d, cooldown_passed=%d, lateness=%.2fms, threshold=%.2fms",
+                                            m_settings->timeshift_tuning.reanchor_enabled,
+                                            cooldown_passed,
+                                            lateness_ms,
+                                            m_settings->timeshift_tuning.reanchor_latency_threshold_ms);
+                            }
+
+                            if (cooldown_passed) {
+                                // Check various reanchor triggers
+                                if (lateness_ms > m_settings->timeshift_tuning.reanchor_latency_threshold_ms) {
+                                    should_reanchor = true;
+                                    reanchor_reason = "single packet latency " + std::to_string(lateness_ms) + "ms exceeds threshold";
+                                } else if (timing_state->consecutive_late_packets >=
+                                          static_cast<uint64_t>(m_settings->timeshift_tuning.reanchor_consecutive_late_packets)) {
+                                    should_reanchor = true;
+                                    reanchor_reason = "consecutive late packets (" +
+                                                     std::to_string(timing_state->consecutive_late_packets.load()) + ")";
+                                } else if (timing_state->cumulative_lateness_ms >
+                                          m_settings->timeshift_tuning.reanchor_cumulative_lateness_ms) {
+                                    should_reanchor = true;
+                                    reanchor_reason = "cumulative lateness " + std::to_string(timing_state->cumulative_lateness_ms) + "ms";
+                                }
+
+                                if (should_reanchor) {
+                                    LOG_CPP_INFO("[TimeshiftManager] Triggering reanchor for stream '%s': %s",
+                                                candidate_packet.source_tag.c_str(), reanchor_reason.c_str());
+
+                                    // Find the most recent packet for this stream - go all the way to the end
+                                    size_t last_packet_index = target_info.next_packet_read_index;
+
+                                    // Find the last packet for this stream in the buffer
+                                    for (size_t i = global_timeshift_buffer_.size(); i > target_info.next_packet_read_index; --i) {
+                                        if (global_timeshift_buffer_[i - 1].source_tag == candidate_packet.source_tag) {
+                                            last_packet_index = i - 1;
+                                            break;
+                                        }
+                                    }
+
+                                    // Jump to the most recent packet to catch up to real-time
+                                    if (last_packet_index > target_info.next_packet_read_index) {
+                                        size_t packets_skipped = last_packet_index - target_info.next_packet_read_index;
+
+                                        LOG_CPP_INFO("[TimeshiftManager] Reanchoring: skipping %zu packets, jumping from index %zu to %zu (catching up to real-time)",
+                                                    packets_skipped,
+                                                    target_info.next_packet_read_index,
+                                                    last_packet_index);
+
+                                        target_info.next_packet_read_index = last_packet_index;
+                                        timing_state->packets_skipped_on_reanchor += packets_skipped;
+                                    }
+
+                                    // Reset clock to be re-initialized with the next (recent) packet
+                                    if (timing_state->clock) {
+                                        timing_state->clock->reset();
+                                    }
+
+                                    // Reset tracking
+                                    timing_state->consecutive_late_packets = 0;
+                                    timing_state->cumulative_lateness_ms = 0.0;
+                                    timing_state->last_reanchor_time = now;
+                                    timing_state->reanchor_count++;
+                                    timing_state->is_reanchored = true;
+
+                                    // Continue to process the next (recent) packet
+                                    continue;
+                                }
+                            }
+                        }
+
                         const auto since_last_log = (timing_state->last_late_log_time.time_since_epoch().count() == 0)
                                                         ? std::chrono::steady_clock::duration::max()
                                                         : (now - timing_state->last_late_log_time);
@@ -963,24 +1112,11 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                                 buffer_level_ms);
                             timing_state->last_late_log_time = now;
                         }
-                    }
-                    if (lateness_ms > reanchor_late_ms) {
-                        const auto since_last_anchor =
-                            (timing_state->last_reanchor_log_time.time_since_epoch().count() == 0)
-                                ? std::chrono::steady_clock::duration::max()
-                                : (now - timing_state->last_reanchor_log_time);
-                        if (since_last_anchor >= std::chrono::milliseconds(500)) {
-                            LOG_CPP_WARNING(
-                                "[TimeshiftManager] Late packet for source '%s': lateness=%.2f ms exceeds reanchor threshold=%.1f ms. Resetting stream clock to now.",
-                                log_tag.c_str(),
-                                lateness_ms,
-                                reanchor_late_ms);
-                        }
-
-                        //reanchor_stream_state([&](auto ts) { timing_state->last_reanchor_log_time = ts; });
-
-                        // Skip this packet entirely after reanchor.
-                        //break;
+                    } else {
+                        // Reset consecutive late counter when packet is on time
+                        timing_state->consecutive_late_packets = 0;
+                        // Decay cumulative lateness slowly
+                        timing_state->cumulative_lateness_ms *= 0.95;
                     }
                     if (lateness_ms > 0.0) {
                         profiling_total_lateness_ms_ += lateness_ms;
@@ -993,25 +1129,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         timing_state->playout_deviation_ms_max = std::max(timing_state->playout_deviation_ms_max, lateness_ms);
                         timing_state->playout_deviation_ms_min = std::min(timing_state->playout_deviation_ms_min, lateness_ms);
                         timing_state->playout_deviation_samples++;
-                    }
-
-                    // Never drop: if lateness exceeds the catchup limit, force a re-anchor and continue.
-                    if (max_catchup_lag_ms > 0.0 && lateness_ms > max_catchup_lag_ms) {
-                        const auto since_last_drop_log = (timing_state->last_discard_log_time.time_since_epoch().count() == 0)
-                                                             ? std::chrono::steady_clock::duration::max()
-                                                             : (now - timing_state->last_discard_log_time);
-                        if (since_last_drop_log >= std::chrono::milliseconds(500)) {
-                            LOG_CPP_WARNING(
-                                "[TimeshiftManager] Late packet for source '%s': lateness=%.2f ms exceeds catchup limit=%.2f ms. Re-anchoring (no drop).",
-                                log_tag.c_str(),
-                                lateness_ms,
-                                max_catchup_lag_ms);
-                        }
-
-                        reanchor_stream_state([&](auto ts) { timing_state->last_discard_log_time = ts; });
-
-                        // Skip this packet entirely after reanchor.
-                        break;
                     }
 
                     TaggedAudioPacket packet_to_send = candidate_packet;
@@ -1030,7 +1147,8 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         smooth_playback_rate(timing_state->current_playback_rate,
                                              target_rate,
                                              smoothing_factor,
-                                             max_deviation_ppm);
+                                             max_deviation_ppm,
+                                             lateness_ms);
 
                     if (std::abs(smoothed_rate - timing_state->current_playback_rate) > 5e-4) {
                         LOG_CPP_DEBUG(
@@ -1190,7 +1308,7 @@ void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::ti
             }
 
             LOG_CPP_INFO(
-                "[Profiler][Timeshift][Stream %s] jitter=%.2fms sys_jitter=%.2fms sys_delay=%.2fms clk_offset=%.3fms drift=%.3fppm clk_innov_last=%.3fms clk_innov_avg_abs=%.3fms clk_update_age=%.2fms clk_meas_offset=%.3fms arrival(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) playout_dev(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) head_lag(last=%.3fms avg=%.3fms max=%.3fms samples=%llu) buffer(cur=%.3fms target=%.3fms fill=%.1f%% playback_rate=%.6f)",
+                "[Profiler][Timeshift][Stream %s] jitter=%.2fms sys_jitter=%.2fms sys_delay=%.2fms clk_offset=%.3fms drift=%.3fppm clk_innov_last=%.3fms clk_innov_avg_abs=%.3fms clk_update_age=%.2fms clk_meas_offset=%.3fms arrival(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) playout_dev(avg=%.3fms abs_avg=%.3fms max=%.3fms min=%.3fms samples=%llu) head_lag(last=%.3fms avg=%.3fms max=%.3fms samples=%llu) buffer(cur=%.3fms target=%.3fms fill=%.1f%% playback_rate=%.6f) reanchor(count=%llu consec_late=%llu cum_late=%.1fms)",
                 source_tag.c_str(),
                 timing_state.jitter_estimate,
                 timing_state.system_jitter_estimate_ms,
@@ -1218,7 +1336,10 @@ void TimeshiftManager::maybe_log_profiler_unlocked(std::chrono::steady_clock::ti
                 timing_state.current_buffer_level_ms,
                 timing_state.target_buffer_level_ms,
                 timing_state.buffer_target_fill_percentage,
-                timing_state.current_playback_rate);
+                timing_state.current_playback_rate,
+                static_cast<unsigned long long>(timing_state.reanchor_count.load()),
+                static_cast<unsigned long long>(timing_state.consecutive_late_packets.load()),
+                timing_state.cumulative_lateness_ms);
         }
     }
 

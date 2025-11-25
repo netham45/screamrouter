@@ -142,6 +142,14 @@ struct StreamTimingState {
     double last_clock_measured_offset_ms = 0.0;
     double clock_innovation_abs_sum_ms = 0.0;
     uint64_t clock_innovation_samples = 0;
+
+    // Reanchoring state
+    std::chrono::steady_clock::time_point last_reanchor_time{};
+    std::atomic<uint64_t> reanchor_count{0};
+    std::atomic<uint64_t> consecutive_late_packets{0};
+    double cumulative_lateness_ms = 0.0;
+    std::atomic<uint64_t> packets_skipped_on_reanchor{0};
+    bool is_reanchored = false;  // True immediately after reanchor, cleared when clock re-initializes
 };
 
 /**
@@ -189,6 +197,10 @@ struct TimeshiftManagerStats {
     std::map<std::string, double> stream_clock_last_measured_offset_ms;
     std::map<std::string, double> stream_last_system_delay_ms;
     std::map<std::string, double> stream_playback_rate;
+    // Reanchoring stats
+    std::map<std::string, uint64_t> stream_reanchor_count;
+    std::map<std::string, double> stream_time_since_last_reanchor_ms;
+    std::map<std::string, uint64_t> stream_packets_skipped_on_reanchor;
     struct ProcessorStats {
         std::string instance_id;
         std::string source_tag;
@@ -349,6 +361,16 @@ private:
      * @return The time point of the next scheduled event.
      */
     std::chrono::steady_clock::time_point calculate_next_wakeup_time();
+
+    /**
+     * @brief Reanchors a stream's timing state to recover from excessive latency.
+     * @param source_tag The source tag of the stream to reanchor.
+     * @param timing_state The timing state of the stream (must be under timing_mutex_).
+     * @param reason A string describing why the reanchor was triggered.
+     */
+    void reanchor_stream_unlocked(const std::string& source_tag,
+                                  StreamTimingState& timing_state,
+                                  const std::string& reason);
 
     std::atomic<uint64_t> m_state_version_{0};
     std::atomic<uint64_t> m_total_packets_added{0};

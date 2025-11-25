@@ -44,6 +44,14 @@ struct TimeshiftTuning {
     double playback_catchup_max_ppm = 200000.0;   // Allow up to ~20% speedup when very late
     double max_playout_lead_ms = 200.0;           // Clamp how far into the future we schedule playout
 
+    // --- Reanchoring settings ---
+    bool reanchor_enabled = true;                     // Enable automatic reanchoring
+    double reanchor_latency_threshold_ms = 500.0;     // Max latency before triggering reanchor
+    double reanchor_cooldown_ms = 5000.0;             // Min time between reanchors (prevent thrashing)
+    int reanchor_consecutive_late_packets = 10;       // Consecutive late packets to trigger reanchor
+    double reanchor_cumulative_lateness_ms = 2000.0;  // Cumulative lateness to trigger reanchor
+    double reanchor_pause_gap_threshold_ms = 500.0;   // Wall-clock gap to detect pause/resume
+
     // --- Temporal Store / DVR defaults ---
     // Target playout delay (D) relative to now_ref; mixer follows head at D behind.
     // Future DVR tuning fields are intentionally omitted until implemented.
