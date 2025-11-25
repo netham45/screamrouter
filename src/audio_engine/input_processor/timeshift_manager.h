@@ -150,6 +150,7 @@ struct StreamTimingState {
     double cumulative_lateness_ms = 0.0;
     std::atomic<uint64_t> packets_skipped_on_reanchor{0};
     bool is_reanchored = false;  // True immediately after reanchor, cleared when clock re-initializes
+    uint64_t packets_since_reanchor = 0;  // Counter reset on reanchor, incremented each packet
 };
 
 /**

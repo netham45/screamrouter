@@ -33,6 +33,7 @@
 #include "../utils/profiler.h"
 #if defined(__linux__)
 #include "../senders/system/screamrouter_fifo_sender.h"
+#include "../system_audio/runtime_paths.h"
 #endif
 #if defined(_WIN32)
 #include "../senders/system/wasapi_playback_sender.h"
@@ -134,8 +135,7 @@ SinkAudioMixer::SinkAudioMixer(
         network_sender_ = std::make_unique<ScreamSender>(config_);
     } else if (config_.protocol == "system_audio") {
 #if defined(__linux__)
-        const bool is_fifo_path = !config_.output_ip.empty() &&
-                                  config_.output_ip.rfind("/var/run/screamrouter/", 0) == 0;
+        const bool is_fifo_path = screamrouter::audio::system_audio::is_screamrouter_fifo_path(config_.output_ip);
         const bool is_fifo_tag = !config_.output_ip.empty() &&
                                  config_.output_ip.rfind("sr_in:", 0) == 0;
         if (is_fifo_path || is_fifo_tag) {

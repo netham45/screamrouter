@@ -275,8 +275,9 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
                                                 // Check if this processor is handling this stream
                                                 bool matches = false;
                                                 if (info.is_wildcard) {
+                                                    // Match if already bound OR if prefix matches (would bind to this stream)
                                                     matches = (!info.bound_source_tag.empty() && info.bound_source_tag == packet.source_tag) ||
-                                                             packet.source_tag.find(info.wildcard_prefix) == 0;
+                                                             has_prefix(packet.source_tag, info.wildcard_prefix);
                                                 } else {
                                                     matches = (filter_tag == packet.source_tag);
                                                 }
@@ -333,12 +334,20 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
          state.clock = std::make_unique<StreamClock>(packet.sample_rate);
      }
 
-     // 2. Update the stable clock model (skip if we just reanchored - let next packet establish new baseline)
-     if (!state.is_reanchored) {
+     // 2. Update the stable clock model
+     // Skip clock updates for packets that are too old (stale) - they would corrupt the timing model
+     const double packet_age_ms = std::chrono::duration<double, std::milli>(
+         std::chrono::steady_clock::now() - packet.received_time).count();
+     const bool packet_is_stale = packet_age_ms > 500.0;  // Skip packets older than 500ms
+
+     if (!state.is_reanchored && !packet_is_stale) {
          state.clock->update(packet.rtp_timestamp.value(), packet.received_time);
-     } else {
-         // This is the first packet after reanchor - don't update clock yet
-         // The processing loop will handle this specially
+     } else if (packet_is_stale && !state.is_reanchored) {
+         // Stale packet arrived - this indicates we're behind. Reset the clock to re-sync.
+         state.clock->reset();
+         state.clock->update(packet.rtp_timestamp.value(), std::chrono::steady_clock::now());
+         LOG_CPP_DEBUG("[TimeshiftManager] Stale packet for '%s' (age=%.1fms), resetting clock",
+                      packet.source_tag.c_str(), packet_age_ms);
      }
 
     if (state.clock->is_initialized()) {
@@ -927,39 +936,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
                 now = std::chrono::steady_clock::now();
 
-                // --- Playout Time Calculation ---
-                std::chrono::steady_clock::time_point expected_arrival_time;
-
-                // Handle reanchored state - clock needs to be initialized with this packet
-                if (timing_state->is_reanchored) {
-                    // First packet after reanchor - initialize clock with current packet
-                    // This establishes a new baseline where THIS packet is "on time"
-                    timing_state->clock->reset();  // Ensure clock is reset
-                    timing_state->clock->update(candidate_packet.rtp_timestamp.value(), now);
-                    timing_state->is_reanchored = false;  // Clear the flag
-
-                    // This packet is by definition "on time" since we just anchored to it
-                    expected_arrival_time = now;
-
-                    LOG_CPP_INFO("[TimeshiftManager] Post-reanchor clock init for '%s': RTP=%u, buffer_idx=%zu, clock_offset=%.3fms",
-                                candidate_packet.source_tag.c_str(),
-                                candidate_packet.rtp_timestamp.value(),
-                                target_info.next_packet_read_index,
-                                timing_state->clock->get_offset_seconds() * 1000.0);
-                } else if (!timing_state->clock->is_initialized()) {
-                    // Clock not initialized (shouldn't happen in normal flow)
-                    // Initialize it now
-                    timing_state->clock->update(candidate_packet.rtp_timestamp.value(), now);
-                    expected_arrival_time = now;
-                    LOG_CPP_INFO("[TimeshiftManager] Unexpected clock init for '%s': RTP=%u",
-                                candidate_packet.source_tag.c_str(),
-                                candidate_packet.rtp_timestamp.value());
-                } else {
-                    // Normal case - get expected arrival time from the stable clock
-                    expected_arrival_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
-                }
-
-                // 2. Add the adaptive playout delay
+                // --- Compute desired latency FIRST (needed for reanchor case) ---
                 const double timeshift_backshift_ms = std::max(0.0f, target_info.current_timeshift_backshift_sec) * 1000.0;
                 double base_latency_ms = std::max<double>(
                     target_info.current_delay_ms,
@@ -976,15 +953,67 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     clamped = true;
                 }
 
-                timing_state->target_buffer_level_ms = desired_latency_ms;
-                timing_state->last_target_update_time = now;
-                if (clamped && timing_state->clock) {
+                // --- Playout Time Calculation ---
+                std::chrono::steady_clock::time_point expected_arrival_time;
+
+                // Handle reanchored state - clock needs to be initialized with this packet
+                if (timing_state->is_reanchored) {
+                    // First packet after reanchor - initialize clock with current packet
+                    // Anchor RTP to NOW so the clock maps this RTP timestamp to the current wall-clock
                     timing_state->clock->reset();
                     timing_state->clock->update(candidate_packet.rtp_timestamp.value(), now);
+                    timing_state->is_reanchored = false;
+
+                    // KEY FIX: Set expected_arrival_time in the PAST by desired_latency_ms
+                    // so that ideal_playout_time = expected_arrival + desired_latency = now
+                    // This makes the packet dispatch immediately (lateness = 0)
+                    expected_arrival_time = now - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                        std::chrono::duration<double, std::milli>(desired_latency_ms));
+
+                    LOG_CPP_INFO("[TimeshiftManager] Post-reanchor clock init for '%s': RTP=%u, buffer_idx=%zu, clock_offset=%.3fms, pkt_age=%.1fms, desired_latency=%.1fms",
+                                candidate_packet.source_tag.c_str(),
+                                candidate_packet.rtp_timestamp.value(),
+                                target_info.next_packet_read_index,
+                                timing_state->clock->get_offset_seconds() * 1000.0,
+                                std::chrono::duration<double, std::milli>(now - candidate_packet.received_time).count(),
+                                desired_latency_ms);
+                } else if (!timing_state->clock->is_initialized()) {
+                    // Clock not initialized (shouldn't happen in normal flow)
+                    // Initialize and set expected_arrival in past so packet dispatches immediately
+                    timing_state->clock->update(candidate_packet.rtp_timestamp.value(), now);
+                    expected_arrival_time = now - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                        std::chrono::duration<double, std::milli>(desired_latency_ms));
+                    LOG_CPP_INFO("[TimeshiftManager] Unexpected clock init for '%s': RTP=%u",
+                                candidate_packet.source_tag.c_str(),
+                                candidate_packet.rtp_timestamp.value());
+                } else {
+                    // Normal case - get expected arrival time from the stable clock
+                    expected_arrival_time = timing_state->clock->get_expected_arrival_time(candidate_packet.rtp_timestamp.value());
                 }
+
+                timing_state->target_buffer_level_ms = desired_latency_ms;
+                timing_state->last_target_update_time = now;
 
                 auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(desired_latency_ms);
                 auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
+
+                // Increment packets since reanchor counter
+                timing_state->packets_since_reanchor++;
+
+                // Debug: log timing details for first few packets after reanchor or when very late
+                double expected_vs_now_ms = std::chrono::duration<double, std::milli>(expected_arrival_time - now).count();
+                if (timing_state->packets_since_reanchor <= 5 || expected_vs_now_ms < -500.0) {
+                    double pkt_age_ms = std::chrono::duration<double, std::milli>(now - candidate_packet.received_time).count();
+                    LOG_CPP_INFO("[TimeshiftManager] Post-reanchor pkt#%lu '%s': idx=%zu RTP=%u pkt_age=%.1fms expected_vs_now=%.1fms desired_latency=%.1fms lateness=%.1fms",
+                                timing_state->packets_since_reanchor,
+                                candidate_packet.source_tag.c_str(),
+                                target_info.next_packet_read_index,
+                                candidate_packet.rtp_timestamp.value(),
+                                pkt_age_ms,
+                                expected_vs_now_ms,
+                                desired_latency_ms,
+                                -time_until_playout_ms);
+                }
 
                 const double packet_duration_ms =
                     compute_packet_duration_ms(candidate_packet,
@@ -1058,33 +1087,36 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                                     LOG_CPP_INFO("[TimeshiftManager] Triggering reanchor for stream '%s': %s",
                                                 candidate_packet.source_tag.c_str(), reanchor_reason.c_str());
 
-                                    // Find the most recent packet for this stream - go all the way to the end
-                                    size_t last_packet_index = target_info.next_packet_read_index;
+                                    // Jump ALL processors for this stream to the end of the buffer
+                                    size_t buffer_end = global_timeshift_buffer_.size();
 
-                                    // Find the last packet for this stream in the buffer
-                                    for (size_t i = global_timeshift_buffer_.size(); i > target_info.next_packet_read_index; --i) {
-                                        if (global_timeshift_buffer_[i - 1].source_tag == candidate_packet.source_tag) {
-                                            last_packet_index = i - 1;
-                                            break;
+                                    for (auto& [tag, smap] : processor_targets_) {
+                                        for (auto& [pid, pinfo] : smap) {
+                                            // Check if this processor handles this stream
+                                            bool handles_stream = false;
+                                            if (pinfo.is_wildcard) {
+                                                // Match if already bound OR if prefix matches (would bind to this stream)
+                                                handles_stream = (!pinfo.bound_source_tag.empty() &&
+                                                                 pinfo.bound_source_tag == candidate_packet.source_tag) ||
+                                                                has_prefix(candidate_packet.source_tag, pinfo.wildcard_prefix);
+                                            } else {
+                                                handles_stream = (tag == candidate_packet.source_tag);
+                                            }
+
+                                            if (handles_stream && pinfo.next_packet_read_index < buffer_end) {
+                                                size_t old_idx = pinfo.next_packet_read_index;
+                                                pinfo.next_packet_read_index = buffer_end;
+                                                LOG_CPP_INFO("[TimeshiftManager] Reanchoring processor %s: %zu -> %zu (skipped %zu)",
+                                                            pid.c_str(), old_idx, buffer_end, buffer_end - old_idx);
+                                            }
                                         }
                                     }
 
-                                    // Jump to the most recent packet to catch up to real-time
-                                    if (last_packet_index > target_info.next_packet_read_index) {
-                                        size_t packets_skipped = last_packet_index - target_info.next_packet_read_index;
-
-                                        LOG_CPP_INFO("[TimeshiftManager] Reanchoring: skipping %zu packets, jumping from index %zu to %zu (catching up to real-time)",
-                                                    packets_skipped,
-                                                    target_info.next_packet_read_index,
-                                                    last_packet_index);
-
-                                        target_info.next_packet_read_index = last_packet_index;
-                                        timing_state->packets_skipped_on_reanchor += packets_skipped;
-                                    }
-
-                                    // Reset clock to be re-initialized with the next (recent) packet
+                                    // Reset clock - will be reinitialized with first new packet
                                     if (timing_state->clock) {
                                         timing_state->clock->reset();
+                                        LOG_CPP_INFO("[TimeshiftManager] Reanchor: clock reset, buffer_end=%zu, current_idx=%zu",
+                                                    buffer_end, target_info.next_packet_read_index);
                                     }
 
                                     // Reset tracking
@@ -1093,9 +1125,10 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                                     timing_state->last_reanchor_time = now;
                                     timing_state->reanchor_count++;
                                     timing_state->is_reanchored = true;
+                                    timing_state->packets_since_reanchor = 0;
 
-                                    // Continue to process the next (recent) packet
-                                    continue;
+                                    // Break out of the inner while loop - all processors have been updated
+                                    break;
                                 }
                             }
                         }

@@ -4,7 +4,7 @@ ALSA_LIBDIR ?= $(shell pkg-config --variable=libdir alsa 2>/dev/null)
 ALSA_LIBDIR ?= $(PREFIX)/lib
 PLUGIN_DIR ?= $(ALSA_LIBDIR)/alsa-lib
 CONF_DIR ?= /etc/alsa/conf.d
-DEVICE_DIR ?= /var/run/screamrouter
+DEVICE_DIR ?= $(if $(XDG_RUNTIME_DIR),$(patsubst %/,%,$(XDG_RUNTIME_DIR))/screamrouter,/var/run/screamrouter)
 SOUND_GROUP ?= audio
 
 ALSA_INCLUDE ?= $(shell pkg-config --cflags alsa)
