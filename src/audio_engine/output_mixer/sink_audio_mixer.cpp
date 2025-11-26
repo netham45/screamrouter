@@ -776,7 +776,7 @@ bool SinkAudioMixer::wait_for_source_data() {
                                                 " queued_depth=" + std::to_string(queue.size() + 1) + "]";
                     utils::log_sentinel("sink_chunk_received", chunk, context);
                     queue.push_back(std::move(chunk));
-                    constexpr std::size_t kMaxQueuedChunks = 3;
+                    constexpr std::size_t kMaxQueuedChunks = 1;
                     while (queue.size() > kMaxQueuedChunks) {
                         if (queue.front().is_sentinel) {
                             utils::log_sentinel("sink_chunk_dropped", queue.front(), " [sink=" + config_.sink_id + " instance=" + instance_id + " due_to_backlog]");
