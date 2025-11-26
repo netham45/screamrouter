@@ -3,6 +3,7 @@
 #include "../../configuration/audio_engine_settings.h"
 #include "../../input_processor/timeshift_manager.h"
 #include "../../utils/cpp_logger.h"
+#include "../../utils/sentinel_logging.h"
 
 #include <rtc/rtp.hpp>
 #include <opus/opus.h>
@@ -714,6 +715,8 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
         packet.ssrcs.reserve(1 + packet_data.csrcs.size());
         packet.ssrcs.push_back(packet_data.ssrc);
         packet.ssrcs.insert(packet.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
+        mark_sentinel_if_boundary(packet_data, packet);
+        utils::log_sentinel("rtp_ready", packet);
 
         if (!handler->populate_packet(packet_data, props, packet)) {
             char ssrc_hex[12];
@@ -794,6 +797,20 @@ void RtpReceiverBase::maybe_log_telemetry() {
         buffer_count,
         total_packets,
         max_packets);
+}
+
+bool RtpReceiverBase::mark_sentinel_if_boundary(const RtpPacketData& packet_data, TaggedAudioPacket& packet) {
+    const uint32_t bucket = packet_data.rtp_timestamp / 100000u;
+    std::lock_guard<std::mutex> lock(sentinel_bucket_mutex_);
+    auto [it, inserted] = ssrc_last_sentinel_bucket_.emplace(packet_data.ssrc, bucket);
+    if (inserted) {
+        return false;
+    }
+    if (it->second != bucket) {
+        it->second = bucket;
+        packet.is_sentinel = true;
+    }
+    return packet.is_sentinel;
 }
 
 // ---- RtpPcmReceiver -----------------------------------------------------------------

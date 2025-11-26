@@ -9,6 +9,7 @@
 #include "stream_clock.h"
 #include "../utils/cpp_logger.h"
 #include "../audio_types.h"
+#include "../utils/sentinel_logging.h"
 
 #include <iostream>
 #include <algorithm>
@@ -203,6 +204,7 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
      if (stop_flag_ || !packet.rtp_timestamp.has_value() || packet.sample_rate <= 0) {
          return;
      }
+    utils::log_sentinel("timeshift_ingress", packet);
 
     const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
     const double configured_reset_threshold_sec =
@@ -968,6 +970,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     }
 
                     TaggedAudioPacket packet_to_send = candidate_packet;
+                    utils::log_sentinel("timeshift_ready", packet_to_send);
                     const auto& tuning = m_settings->timeshift_tuning;
                     double controller_dt_sec = 0.0;
                     if (ts.last_controller_update_time.time_since_epoch().count() != 0) {
@@ -1048,6 +1051,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         }
 
                         const std::size_t before_drop = ring_ptr->drop_count();
+                        utils::log_sentinel("timeshift_to_ring", packet_to_send, " [sink=" + it->first + "]");
                         ring_ptr->push(packet_to_send);
                         const std::size_t after_drop = ring_ptr->drop_count();
                         const std::size_t ring_size = ring_ptr->size();

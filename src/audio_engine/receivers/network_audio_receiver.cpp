@@ -3,6 +3,7 @@
 #include "../utils/thread_safe_queue.h" // For full definition of ThreadSafeQueue
 #include "../utils/cpp_logger.h"
 #include "../utils/thread_priority.h"
+#include "../utils/sentinel_logging.h"
 #include <iostream>      // For logging (cpp_logger fallb_ack)
 #include <vector>
 #include <cstring>       // For memset
@@ -342,6 +343,7 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
     if (packet.audio_data.empty()) {
         return;
     }
+    utils::log_sentinel("receiver_dispatch_entry", packet);
 
     const uint32_t bytes_per_sample = packet.bit_depth > 0 ? static_cast<uint32_t>(std::max(packet.bit_depth / 8, 1)) : 0;
     const std::size_t bytes_per_frame = (bytes_per_sample > 0 && packet.channels > 0)
@@ -420,6 +422,7 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
             out.chlayout1 = acc.chlayout1;
             out.chlayout2 = acc.chlayout2;
             out.ssrcs = acc.ssrcs.empty() ? packet.ssrcs : acc.ssrcs;
+            out.is_sentinel = packet.is_sentinel;
 
             const std::size_t chunk_frames = (acc.bytes_per_frame > 0) ? (popped / acc.bytes_per_frame) : 0;
 
@@ -451,6 +454,7 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
             }
 
             ready_chunks.push_back(std::move(out));
+            utils::log_sentinel("receiver_chunk_ready", ready_chunks.back());
         }
 
         if (acc.buffer.size() == 0) {

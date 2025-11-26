@@ -7,6 +7,7 @@
 #include <cmath>     // For std::chrono durations
 #include "../utils/profiler.h"
 #include "../utils/thread_priority.h"
+#include "../utils/sentinel_logging.h"
 
 #ifdef min
 
@@ -145,6 +146,7 @@ void SourceInputProcessor::set_speaker_layouts_config(const std::map<int, scream
 void SourceInputProcessor::start() {
     PROFILE_FUNCTION();
     process_buffer_.clear();
+    pending_sentinel_samples_ = 0;
     stop_flag_ = false;
     reset_profiler_counters();
     LOG_CPP_INFO("[SourceProc:%s] start(): now synchronous, no threads launched.", config_.instance_id.c_str());
@@ -221,6 +223,7 @@ void SourceInputProcessor::ingest_packet(const TaggedAudioPacket& timed_packet, 
     m_total_packets_processed++;
     profiling_packets_received_++;
     auto loop_start = std::chrono::steady_clock::now();
+    utils::log_sentinel("sip_ingest", timed_packet, " [instance=" + config_.instance_id + "]");
 
     // --- Discontinuity Detection ---
     auto now = std::chrono::steady_clock::now();
@@ -295,16 +298,25 @@ void SourceInputProcessor::ingest_packet(const TaggedAudioPacket& timed_packet, 
         std::chrono::steady_clock::time_point chunk_origin{};
         std::optional<uint32_t> chunk_rtp;
         std::vector<uint32_t> chunk_ssrcs;
+        bool chunk_is_sentinel = false;
 
         while (try_dequeue_input_chunk(
             chunk_data_for_processing,
             chunk_origin,
             chunk_rtp,
-            chunk_ssrcs)) {
+            chunk_ssrcs,
+            chunk_is_sentinel)) {
             current_packet_ssrcs_ = chunk_ssrcs.empty() ? timed_packet.ssrcs : chunk_ssrcs;
             m_last_packet_origin_time = chunk_origin;
 
-            process_audio_chunk(chunk_data_for_processing);
+            if (chunk_is_sentinel) {
+                ProcessedAudioChunk marker{};
+                marker.is_sentinel = true;
+                marker.origin_time = chunk_origin;
+                utils::log_sentinel("sip_chunk_dequeued", marker, " [instance=" + config_.instance_id + "]");
+            }
+
+            process_audio_chunk(chunk_data_for_processing, chunk_is_sentinel);
             push_output_chunk_if_ready(out_chunks);
             chunk_data_for_processing.clear();
         }
@@ -322,7 +334,7 @@ void SourceInputProcessor::ingest_packet(const TaggedAudioPacket& timed_packet, 
     maybe_log_telemetry(loop_end);
 }
 
-void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input_chunk_data) {
+void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input_chunk_data, bool is_sentinel_chunk) {
     PROFILE_FUNCTION();
     if (!audio_processor_) {
         LOG_CPP_ERROR("[SourceProc:%s] AudioProcessor not initialized. Cannot process chunk.", config_.instance_id.c_str());
@@ -362,6 +374,9 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
                                    processor_output_buffer.begin(),
                                    processor_output_buffer.begin() + samples_to_insert);
             profiling_peak_process_buffer_samples_ = std::max(profiling_peak_process_buffer_samples_, process_buffer_.size());
+            if (is_sentinel_chunk && samples_to_insert > 0) {
+                pending_sentinel_samples_ += samples_to_insert;
+            }
             size_t current_samples = process_buffer_.size();
             size_t observed_peak = m_process_buffer_high_water.load();
             while (current_samples > observed_peak &&
@@ -400,7 +415,13 @@ void SourceInputProcessor::push_output_chunk_if_ready(std::vector<ProcessedAudio
          output_chunk.produced_time = std::chrono::steady_clock::now();
          output_chunk.origin_time = m_last_packet_origin_time;
          output_chunk.playback_rate = current_playback_rate_;
+         output_chunk.is_sentinel = pending_sentinel_samples_ > 0;
          size_t pushed_samples = output_chunk.audio_data.size();
+         if (pending_sentinel_samples_ > 0) {
+             const std::size_t consumed = std::min<std::size_t>(pending_sentinel_samples_, pushed_samples);
+             pending_sentinel_samples_ -= consumed;
+         }
+         utils::log_sentinel("sip_output_chunk", output_chunk, " [instance=" + config_.instance_id + "]");
 
          out_chunks.emplace_back(std::move(output_chunk));
          profiling_chunks_pushed_++;
@@ -462,13 +483,16 @@ void SourceInputProcessor::append_to_input_accumulator(const TaggedAudioPacket& 
     meta.received_time = packet.received_time;
     meta.rtp_timestamp = packet.rtp_timestamp;
     meta.ssrcs = packet.ssrcs;
+    meta.is_sentinel = packet.is_sentinel;
     input_fragments_.push_back(std::move(meta));
+    utils::log_sentinel("sip_append", packet, " [instance=" + config_.instance_id + "]");
 }
 
 bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_data,
                                                    std::chrono::steady_clock::time_point& chunk_time,
                                                    std::optional<uint32_t>& chunk_timestamp,
-                                                   std::vector<uint32_t>& chunk_ssrcs) {
+                                                   std::vector<uint32_t>& chunk_ssrcs,
+                                                   bool& chunk_is_sentinel) {
     PROFILE_FUNCTION();
     if (current_input_chunk_bytes_ == 0 || input_bytes_per_frame_ == 0) {
         return false;
@@ -481,6 +505,7 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
     chunk_time = {};
     chunk_timestamp.reset();
     chunk_ssrcs.clear();
+    chunk_is_sentinel = false;
 
     chunk_data.resize(current_input_chunk_bytes_);
     const std::size_t bytes_popped = input_ring_buffer_.pop(chunk_data.data(), current_input_chunk_bytes_);
@@ -499,6 +524,9 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
         if (fragment.consumed_bytes >= fragment.bytes) {
             input_fragments_.pop_front();
             continue;
+        }
+        if (fragment.is_sentinel) {
+            chunk_is_sentinel = true;
         }
 
         const std::size_t consumed_before = fragment.consumed_bytes;

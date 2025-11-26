@@ -104,6 +104,8 @@ struct TaggedAudioPacket {
     uint8_t chlayout2 = 0;
     /** @brief Playback rate adjustment factor (1.0 is normal speed). */
     double playback_rate = 1.0;
+    /** @brief Marks packets that should trigger sentinel logging. */
+    bool is_sentinel = false;
 };
 
 /**
@@ -122,6 +124,8 @@ struct ProcessedAudioChunk {
     std::chrono::steady_clock::time_point origin_time{};
     /** @brief Playback rate applied by the source processor for this chunk. */
     double playback_rate = 1.0;
+    /** @brief Sentinel flag propagated from the originating packet. */
+    bool is_sentinel = false;
 };
 
 /**

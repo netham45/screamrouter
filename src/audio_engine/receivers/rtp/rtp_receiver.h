@@ -89,6 +89,7 @@ protected:
     void process_ready_packets_internal(uint32_t ssrc, const struct sockaddr_in& client_addr, bool take_lock);
 
     void maybe_log_telemetry();
+    bool mark_sentinel_if_boundary(const RtpPacketData& packet_data, TaggedAudioPacket& packet);
 
     struct SessionInfo {
         socket_t socket_fd;
@@ -120,6 +121,8 @@ protected:
     std::map<std::string, socket_t> unicast_source_to_socket_;
 
     std::vector<std::unique_ptr<RtpPayloadReceiver>> payload_receivers_;
+    std::unordered_map<uint32_t, uint32_t> ssrc_last_sentinel_bucket_;
+    std::mutex sentinel_bucket_mutex_;
 
     std::chrono::steady_clock::time_point telemetry_last_log_time_{};
 };

@@ -166,12 +166,13 @@ private:
     std::chrono::steady_clock::time_point m_last_packet_time;
     std::chrono::steady_clock::time_point m_last_packet_origin_time;
     bool m_is_first_packet_after_discontinuity = true;
+    std::size_t pending_sentinel_samples_ = 0;
 
     /**
      * @brief Processes a single chunk of raw audio data using the internal AudioProcessor.
      * @param input_chunk_data The raw audio data to process.
      */
-    void process_audio_chunk(const std::vector<uint8_t>& input_chunk_data);
+    void process_audio_chunk(const std::vector<uint8_t>& input_chunk_data, bool is_sentinel_chunk);
     
     void push_output_chunk_if_ready(std::vector<ProcessedAudioChunk>& out_chunks);
 
@@ -192,7 +193,8 @@ private:
     bool try_dequeue_input_chunk(std::vector<uint8_t>& chunk_data,
                                  std::chrono::steady_clock::time_point& chunk_time,
                                  std::optional<uint32_t>& chunk_timestamp,
-                                 std::vector<uint32_t>& chunk_ssrcs);
+                                 std::vector<uint32_t>& chunk_ssrcs,
+                                 bool& chunk_is_sentinel);
 
     // --- Profiling ---
     void reset_profiler_counters();
@@ -217,6 +219,7 @@ private:
         std::chrono::steady_clock::time_point received_time{};
         std::optional<uint32_t> rtp_timestamp;
         std::vector<uint32_t> ssrcs;
+        bool is_sentinel = false;
     };
 
     utils::ByteRingBuffer input_ring_buffer_;

@@ -9,6 +9,7 @@
 #include "../utils/cpp_logger.h"
 #include "../configuration/audio_engine_settings.h"
 #include "../input_processor/source_input_processor.h"
+#include "../utils/sentinel_logging.h"
 #include <iostream>
 #include <stdexcept>
 #include <cstring>
@@ -764,13 +765,24 @@ bool SinkAudioMixer::wait_for_source_data() {
         }
         TaggedAudioPacket pkt;
         while (ring->pop(pkt)) {
+            utils::log_sentinel("sink_ring_pop", pkt, " [sink=" + config_.sink_id + " instance=" + instance_id + "]");
             std::vector<ProcessedAudioChunk> produced;
             sip->ingest_packet(pkt, produced);
             if (!produced.empty()) {
                 std::lock_guard<std::mutex> lock(queues_mutex_);
                 auto& queue = processed_ready_[instance_id];
                 for (auto& chunk : produced) {
+                    const std::string context = " [sink=" + config_.sink_id + " instance=" + instance_id +
+                                                " queued_depth=" + std::to_string(queue.size() + 1) + "]";
+                    utils::log_sentinel("sink_chunk_received", chunk, context);
                     queue.push_back(std::move(chunk));
+                    constexpr std::size_t kMaxQueuedChunks = 3;
+                    while (queue.size() > kMaxQueuedChunks) {
+                        if (queue.front().is_sentinel) {
+                            utils::log_sentinel("sink_chunk_dropped", queue.front(), " [sink=" + config_.sink_id + " instance=" + instance_id + " due_to_backlog]");
+                        }
+                        queue.pop_front();
+                    }
                 }
             }
             data_actually_popped_this_cycle = true;
@@ -795,6 +807,9 @@ bool SinkAudioMixer::wait_for_source_data() {
 
                 m_total_chunks_mixed++;
                 source_buffers_[instance_id] = std::move(chunk);
+                const std::string ready_context = " [sink=" + config_.sink_id + " instance=" + instance_id +
+                                                  " remaining_depth=" + std::to_string(queue.size()) + "]";
+                utils::log_sentinel("sink_chunk_ready", source_buffers_[instance_id], ready_context);
                 input_active_state_[instance_id] = true;
                 if (!previously_active) {
                     LOG_CPP_DEBUG("[SinkMixer:%s] Input instance %s became active", config_.sink_id.c_str(), instance_id.c_str());
@@ -1512,6 +1527,17 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
                     backlog_ms);
             }
         }
+        for (const auto& [instance_id, queue] : processed_ready_) {
+            if (!queue.empty() && chunk_duration_ms > 0.0) {
+                const double backlog_ms = static_cast<double>(queue.size()) * chunk_duration_ms;
+                LOG_CPP_INFO(
+                    "[Telemetry][SinkMixer:%s][Processed %s] ready_chunks=%zu backlog_ms=%.3f",
+                    config_.sink_id.c_str(),
+                    instance_id.c_str(),
+                    queue.size(),
+                    backlog_ms);
+            }
+        }
     }
 
     double payload_ms = 0.0;
@@ -1796,6 +1822,22 @@ bool SinkAudioMixer::wait_for_mix_tick() {
             LOG_CPP_ERROR("[SinkMixer:%s] Clock condition handle invalid; stopping mixer.", config_.sink_id.c_str());
             stop_flag_ = true;
             return false;
+        }
+
+        // If queues are backing up, force a tick instead of blocking on the clock.
+        std::size_t pending_chunks = 0;
+        {
+            std::lock_guard<std::mutex> lock(queues_mutex_);
+            for (const auto& [instance_id, queue] : processed_ready_) {
+                (void)instance_id;
+                pending_chunks += queue.size();
+            }
+        }
+        if (pending_chunks > 3) {
+            clock_pending_ticks_ = 1;
+            LOG_CPP_WARNING("[SinkMixer:%s] Forcing mix tick due to backlog (pending_chunks=%zu).",
+                            config_.sink_id.c_str(), pending_chunks);
+            break;
         }
 
         std::unique_lock<std::mutex> condition_lock(condition->mutex);
@@ -2223,6 +2265,37 @@ double SinkAudioMixer::calculate_drain_ratio_for_level(double buffer_ms) const {
 
 void SinkAudioMixer::send_playback_rate_command(const std::string& instance_id, double ratio) {
     PROFILE_FUNCTION();
-    (void)instance_id;
-    (void)ratio;
+    SourceInputProcessor* sip = nullptr;
+    std::size_t processed_depth = 0;
+    std::size_t ready_depth = 0;
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        auto sip_it = source_processors_.find(instance_id);
+        if (sip_it != source_processors_.end()) {
+            sip = sip_it->second;
+        }
+        auto pr_it = processed_ready_.find(instance_id);
+        if (pr_it != processed_ready_.end()) {
+            processed_depth = pr_it->second.size();
+        }
+        auto rr_it = ready_rings_.find(instance_id);
+        if (rr_it != ready_rings_.end() && rr_it->second) {
+            ready_depth = rr_it->second->size();
+        }
+    }
+
+    if (!sip) {
+        LOG_CPP_WARNING("[BufferDrain:%s] send_playback_rate_command: no SIP for instance %s (ratio=%.6f)",
+                        config_.sink_id.c_str(), instance_id.c_str(), ratio);
+        return;
+    }
+
+    const float clamped = static_cast<float>(std::max(0.1, std::min(ratio, 4.0)));
+    sip->set_playback_rate_scale(clamped);
+    LOG_CPP_INFO("[BufferDrain:%s] Applied rate scale=%.6f to %s (processed_depth=%zu ready_ring_depth=%zu)",
+                 config_.sink_id.c_str(),
+                 static_cast<double>(clamped),
+                 instance_id.c_str(),
+                 processed_depth,
+                 ready_depth);
 }
