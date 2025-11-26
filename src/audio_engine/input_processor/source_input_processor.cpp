@@ -231,7 +231,7 @@ void SourceInputProcessor::ingest_packet(const TaggedAudioPacket& timed_packet, 
         (m_settings && m_settings->source_processor_tuning.discontinuity_threshold_ms > 0)
             ? m_settings->source_processor_tuning.discontinuity_threshold_ms
             : 100;
-    if (!m_is_first_packet_after_discontinuity) {
+    /*if (!m_is_first_packet_after_discontinuity) {
         auto time_since_last_packet = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_packet_time).count();
         if (time_since_last_packet > configured_discontinuity_ms) {
             LOG_CPP_WARNING("[SourceProc:%s] Audio discontinuity detected (%lld ms > %ld ms). Flushing filters.",
@@ -243,7 +243,7 @@ void SourceInputProcessor::ingest_packet(const TaggedAudioPacket& timed_packet, 
             }
             reset_input_accumulator();
         }
-    }
+    }*/
     m_last_packet_time = now;
     m_is_first_packet_after_discontinuity = false;
 

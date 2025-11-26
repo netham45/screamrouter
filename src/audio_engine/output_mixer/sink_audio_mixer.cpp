@@ -2265,37 +2265,6 @@ double SinkAudioMixer::calculate_drain_ratio_for_level(double buffer_ms) const {
 
 void SinkAudioMixer::send_playback_rate_command(const std::string& instance_id, double ratio) {
     PROFILE_FUNCTION();
-    SourceInputProcessor* sip = nullptr;
-    std::size_t processed_depth = 0;
-    std::size_t ready_depth = 0;
-    {
-        std::lock_guard<std::mutex> lock(queues_mutex_);
-        auto sip_it = source_processors_.find(instance_id);
-        if (sip_it != source_processors_.end()) {
-            sip = sip_it->second;
-        }
-        auto pr_it = processed_ready_.find(instance_id);
-        if (pr_it != processed_ready_.end()) {
-            processed_depth = pr_it->second.size();
-        }
-        auto rr_it = ready_rings_.find(instance_id);
-        if (rr_it != ready_rings_.end() && rr_it->second) {
-            ready_depth = rr_it->second->size();
-        }
-    }
-
-    if (!sip) {
-        LOG_CPP_WARNING("[BufferDrain:%s] send_playback_rate_command: no SIP for instance %s (ratio=%.6f)",
-                        config_.sink_id.c_str(), instance_id.c_str(), ratio);
-        return;
-    }
-
-    const float clamped = static_cast<float>(std::max(0.1, std::min(ratio, 4.0)));
-    sip->set_playback_rate_scale(clamped);
-    LOG_CPP_INFO("[BufferDrain:%s] Applied rate scale=%.6f to %s (processed_depth=%zu ready_ring_depth=%zu)",
-                 config_.sink_id.c_str(),
-                 static_cast<double>(clamped),
-                 instance_id.c_str(),
-                 processed_depth,
-                 ready_depth);
+    (void)instance_id;
+    (void)ratio;
 }
