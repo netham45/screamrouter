@@ -1980,7 +1980,8 @@ void SinkAudioMixer::run() {
 
         lock.unlock();
 
-        // Adaptive buffer draining disabled: playback rate control is handled upstream via stream clock drift.
+        // Adaptive buffer draining: evaluate backlog to inform rate control.
+        update_drain_ratio();
 
         downscale_buffer();
 
@@ -2156,7 +2157,10 @@ SinkAudioMixer::InputBufferMetrics SinkAudioMixer::compute_input_buffer_metrics(
         std::lock_guard<std::mutex> lock(queues_mutex_);
         metrics.active_sources = ready_rings_.size();
         for (const auto& [instance_id, ring] : ready_rings_) {
-            const std::size_t depth = ring ? ring->size() : 0;
+            const std::size_t ring_depth = ring ? ring->size() : 0;
+            const auto pr_it = processed_ready_.find(instance_id);
+            const std::size_t processed_depth = (pr_it != processed_ready_.end()) ? pr_it->second.size() : 0;
+            const std::size_t depth = ring_depth + processed_depth;
             double backlog_ms = metrics.block_duration_ms * static_cast<double>(depth);
             metrics.total_ms += backlog_ms;
             metrics.queued_blocks += depth;
@@ -2211,7 +2215,7 @@ void SinkAudioMixer::dispatch_drain_adjustments(const InputBufferMetrics& metric
             double smoothed = prev_smoothed * (1.0 - alpha) + backlog_ms * alpha;
             per_source_smoothed_buffer_ms_[instance_id] = smoothed;
 
-            double new_ratio = calculate_drain_ratio_for_level(smoothed);
+            double new_ratio = calculate_drain_ratio_for_level(smoothed, metrics.block_duration_ms);
             double prev_ratio = 1.0;
             auto ratio_it = source_last_rate_command_.find(instance_id);
             if (ratio_it != source_last_rate_command_.end()) {
@@ -2242,29 +2246,68 @@ void SinkAudioMixer::dispatch_drain_adjustments(const InputBufferMetrics& metric
     }
 }
 
-double SinkAudioMixer::calculate_drain_ratio_for_level(double buffer_ms) const {
+double SinkAudioMixer::calculate_drain_ratio_for_level(double buffer_ms, double block_duration_ms) const {
     PROFILE_FUNCTION();
-    if (!m_settings) {
+    if (!m_settings || block_duration_ms <= 0.0) {
         return 1.0;
     }
     const auto& tuning = m_settings->mixer_tuning;
-    double target_ms = tuning.target_buffer_level_ms;
-    double tolerance_ms = tuning.buffer_tolerance_ms;
-
-    if (buffer_ms <= target_ms + tolerance_ms) {
+    if (!tuning.enable_adaptive_buffer_drain) {
         return 1.0;
     }
 
-    double excess_ms = buffer_ms - target_ms;
-    double urgency = std::min(excess_ms / 100.0, 1.0);
-    double effective_drain_rate = tuning.drain_rate_ms_per_sec * urgency;
-    double drain_factor = effective_drain_rate / 1000.0;
-    double ratio = 1.0 + drain_factor;
+    const double blocks = buffer_ms / block_duration_ms;
+    // Derive targets in blocks so we're tolerant to bursty arrivals.
+    const double target_blocks = std::max(2.0, tuning.target_buffer_level_ms / block_duration_ms);
+    const double tolerance_blocks = std::max(1.0, tuning.buffer_tolerance_ms / block_duration_ms);
+    const double upper_band = target_blocks + tolerance_blocks;
+
+    if (blocks <= upper_band) {
+        return 1.0;
+    }
+
+    // Bump ~1% per block over the upper band, capped.
+    const double excess_blocks = blocks - upper_band;
+    double ratio = 1.0 + (0.01 * excess_blocks);
     return std::min(ratio, tuning.max_speedup_factor);
 }
 
 void SinkAudioMixer::send_playback_rate_command(const std::string& instance_id, double ratio) {
     PROFILE_FUNCTION();
-    (void)instance_id;
-    (void)ratio;
+    SourceInputProcessor* sip = nullptr;
+    std::size_t processed_depth = 0;
+    std::size_t ready_depth = 0;
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        auto sip_it = source_processors_.find(instance_id);
+        if (sip_it != source_processors_.end()) {
+            sip = sip_it->second;
+        }
+        auto pr_it = processed_ready_.find(instance_id);
+        if (pr_it != processed_ready_.end()) {
+            processed_depth = pr_it->second.size();
+        }
+        auto rr_it = ready_rings_.find(instance_id);
+        if (rr_it != ready_rings_.end() && rr_it->second) {
+            ready_depth = rr_it->second->size();
+        }
+    }
+
+    if (!sip) {
+        LOG_CPP_WARNING("[BufferDrain:%s] send_playback_rate_command: no SIP for instance %s (ratio=%.6f)",
+                        config_.sink_id.c_str(), instance_id.c_str(), ratio);
+        return;
+    }
+
+    const double clamped = std::clamp(ratio, 1.0, m_settings ? m_settings->mixer_tuning.max_speedup_factor : 1.05);
+    ControlCommand cmd;
+    cmd.type = CommandType::SET_PLAYBACK_RATE_SCALE;
+    cmd.float_value = static_cast<float>(clamped);
+    sip->apply_control_command(cmd);
+    LOG_CPP_INFO("[BufferDrain:%s] Applied rate scale=%.6f to %s (processed_depth=%zu ready_ring_depth=%zu)",
+                 config_.sink_id.c_str(),
+                 clamped,
+                 instance_id.c_str(),
+                 processed_depth,
+                 ready_depth);
 }

@@ -112,6 +112,11 @@ public:
     SourceInputProcessorStats get_stats();
 
     /**
+     * @brief Applies a control command (used by managers for rate/volume updates).
+     */
+    void apply_control_command(const ControlCommand& cmd);
+
+    /**
      * @brief Synchronously ingest a packet and emit zero or more processed chunks.
      * @param packet Packet to process.
      * @param out_chunks Vector to append produced chunks into.

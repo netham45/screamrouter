@@ -218,6 +218,37 @@ void SourceInputProcessor::set_playback_rate_scale(float scale) {
     drain_playback_rate_scale_.store(new_scale, std::memory_order_relaxed);
 }
 
+void SourceInputProcessor::apply_control_command(const ControlCommand& cmd) {
+    switch (cmd.type) {
+    case CommandType::SET_PLAYBACK_RATE_SCALE:
+        set_playback_rate_scale(cmd.float_value);
+        break;
+    case CommandType::SET_VOLUME:
+        set_volume(cmd.float_value);
+        break;
+    case CommandType::SET_EQ:
+        set_eq(cmd.eq_values);
+        break;
+    case CommandType::SET_DELAY:
+        set_delay(cmd.int_value);
+        break;
+    case CommandType::SET_TIMESHIFT:
+        set_timeshift(cmd.float_value);
+        break;
+    case CommandType::SET_EQ_NORMALIZATION:
+        set_eq_normalization(cmd.float_value != 0.0f);
+        break;
+    case CommandType::SET_VOLUME_NORMALIZATION:
+        set_volume_normalization(cmd.float_value != 0.0f);
+        break;
+    case CommandType::SET_SPEAKER_MIX:
+        set_speaker_mix(cmd.input_channel_key, cmd.speaker_layout_for_key);
+        break;
+    default:
+        break;
+    }
+}
+
 void SourceInputProcessor::ingest_packet(const TaggedAudioPacket& timed_packet, std::vector<ProcessedAudioChunk>& out_chunks) {
     PROFILE_FUNCTION();
     m_total_packets_processed++;

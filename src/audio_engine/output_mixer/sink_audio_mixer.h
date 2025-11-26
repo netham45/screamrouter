@@ -359,7 +359,7 @@ private:
     void update_drain_ratio();
     InputBufferMetrics compute_input_buffer_metrics();
     void dispatch_drain_adjustments(const InputBufferMetrics& metrics, double alpha);
-    double calculate_drain_ratio_for_level(double buffer_ms) const;
+    double calculate_drain_ratio_for_level(double buffer_ms, double block_duration_ms) const;
     void send_playback_rate_command(const std::string& instance_id, double ratio);
 };
 
