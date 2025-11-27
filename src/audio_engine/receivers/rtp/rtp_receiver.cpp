@@ -54,6 +54,11 @@ void swap_endianness(uint8_t* data, size_t size, int bit_depth) {
         for (size_t i = 0; i + 2 < size; i += 3) {
             std::swap(data[i], data[i + 2]);
         }
+    } else if (bit_depth == 32) {
+        for (size_t i = 0; i + 3 < size; i += 4) {
+            std::swap(data[i], data[i + 3]);
+            std::swap(data[i + 1], data[i + 2]);
+        }
     }
 }
 
