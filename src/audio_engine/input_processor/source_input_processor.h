@@ -131,7 +131,6 @@ public:
     void set_eq_normalization(bool enabled);
     void set_volume_normalization(bool enabled);
     void set_speaker_mix(int input_channel_key, const CppSpeakerLayout& layout);
-    void set_playback_rate_scale(float scale);
 
 protected:
     void run() override;
@@ -161,7 +160,6 @@ private:
 
     std::map<int, screamrouter::audio::CppSpeakerLayout> current_speaker_layouts_map_;
     double current_playback_rate_ = 1.0;
-    std::atomic<double> drain_playback_rate_scale_{1.0};
 
     std::atomic<uint64_t> m_total_packets_processed{0};
     std::atomic<uint64_t> m_reconfigurations{0};

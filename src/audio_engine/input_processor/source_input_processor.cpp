@@ -209,19 +209,10 @@ void SourceInputProcessor::set_speaker_mix(int input_channel_key, const CppSpeak
     }
 }
 
-void SourceInputProcessor::set_playback_rate_scale(float scale) {
-    double new_scale = static_cast<double>(scale);
-    if (!std::isfinite(new_scale) || new_scale <= 0.0) {
-        new_scale = 1.0;
-    }
-    new_scale = std::clamp(new_scale, kMinPlaybackRate, kMaxPlaybackRate);
-    drain_playback_rate_scale_.store(new_scale, std::memory_order_relaxed);
-}
-
 void SourceInputProcessor::apply_control_command(const ControlCommand& cmd) {
     switch (cmd.type) {
     case CommandType::SET_PLAYBACK_RATE_SCALE:
-        set_playback_rate_scale(cmd.float_value);
+        // Ignored: playback rate now driven solely by timeshift manager.
         break;
     case CommandType::SET_VOLUME:
         set_volume(cmd.float_value);
@@ -306,13 +297,6 @@ void SourceInputProcessor::ingest_packet(const TaggedAudioPacket& timed_packet, 
     if (!std::isfinite(requested_rate) || requested_rate <= 0.0) {
         requested_rate = 1.0;
     }
-    requested_rate = std::clamp(requested_rate, kMinPlaybackRate, kMaxPlaybackRate);
-
-    double drain_scale = drain_playback_rate_scale_.load(std::memory_order_relaxed);
-    if (!std::isfinite(drain_scale) || drain_scale <= 0.0) {
-        drain_scale = 1.0;
-    }
-    requested_rate *= drain_scale;
     requested_rate = std::clamp(requested_rate, kMinPlaybackRate, kMaxPlaybackRate);
 
     if (std::abs(requested_rate - current_playback_rate_) > kPlaybackRateEpsilon) {
