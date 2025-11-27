@@ -89,6 +89,7 @@ private:
     double target_delay_frames_ = 0.0;
     double last_playback_rate_command_ = 1.0;
     std::chrono::steady_clock::time_point last_rate_update_;
+    uint64_t rate_log_counter_ = 0;
 };
 
 } // namespace system_audio

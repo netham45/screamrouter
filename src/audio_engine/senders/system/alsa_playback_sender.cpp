@@ -302,13 +302,15 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
         return;
     }
 
-    if (target_delay_frames_ <= 0.0 && period_frames_ > 0) {
-        target_delay_frames_ = static_cast<double>(period_frames_);
-    } else if (target_delay_frames_ <= 0.0 && buffer_frames_ > 0) {
-        target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+    if (target_delay_frames_ <= 0.0) {
+        if (buffer_frames_ > 0) {
+            target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+        } else if (period_frames_ > 0) {
+            target_delay_frames_ = static_cast<double>(period_frames_) * 2.0;
+        }
     }
     const auto now = std::chrono::steady_clock::now();
-    constexpr auto kUpdateInterval = std::chrono::milliseconds(40);
+    constexpr auto kUpdateInterval = std::chrono::milliseconds(20);
     if (last_rate_update_.time_since_epoch().count() != 0 &&
         now - last_rate_update_ < kUpdateInterval) {
         return;
@@ -316,23 +318,39 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
     last_rate_update_ = now;
 
     const double error = target_delay_frames_ - static_cast<double>(delay_frames);
-    constexpr double kKp = 0.0005;      // proportional gain
-    constexpr double kKi = 0.00001;     // integral gain
+    constexpr double kKp = 0.0010;      // proportional gain
+    constexpr double kKi = 0.00002;     // integral gain
     constexpr double kIntegralClamp = 24000.0; // prevents runaway
     playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
 
     double adjust = (kKp * error) + (kKi * playback_rate_integral_);
-    constexpr double kMaxPpm = 0.0005; // ±500 ppm
+    constexpr double kMaxPpm = 0.0008; // ±800 ppm
     adjust = std::clamp(adjust, -kMaxPpm, kMaxPpm);
 
     double desired_rate = 1.0 + adjust;
-    constexpr double kMaxStep = 0.00005; // ±50 ppm per update
+    constexpr double kMaxStep = 0.0001; // ±100 ppm per update
     const double delta = std::clamp(desired_rate - last_playback_rate_command_, -kMaxStep, kMaxStep);
     desired_rate = last_playback_rate_command_ + delta;
 
     constexpr double kHardClamp = 0.98;
     constexpr double kHardClampMax = 1.02;
     desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
+
+    ++rate_log_counter_;
+    if (rate_log_counter_ % 100 == 0) {
+        LOG_CPP_INFO("[AlsaPlayback:%s] PI rate update: delay=%ld target=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
+                     device_tag_.c_str(),
+                     static_cast<long>(delay_frames),
+                     target_delay_frames_,
+                     error,
+                     adjust,
+                     desired_rate,
+                     playback_rate_integral_,
+                     kKp,
+                     kKi,
+                     kMaxPpm * 1e6,
+                     kMaxStep * 1e6);
+    }
 
     if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
         last_playback_rate_command_ = desired_rate;
@@ -367,6 +385,14 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to recover from write error: %s", device_tag_.c_str(), snd_strerror(err));
         close_locked();
         return false;
+    }
+
+    playback_rate_integral_ = 0.0;
+    last_playback_rate_command_ = 1.0;
+    if (buffer_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+    } else if (period_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(period_frames_) * 2.0;
     }
 
     if (detected_xrun && is_raspberry_pi_) {
@@ -515,8 +541,8 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
             double delay_ms = 1000.0 * static_cast<double>(delay_frames) / static_cast<double>(sample_rate_);
             LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA reported delay: %.2f ms (%ld frames).",
                           device_tag_.c_str(), delay_ms, static_cast<long>(delay_frames));
+            maybe_update_playback_rate_locked(delay_frames);
         }
-        maybe_update_playback_rate_locked(delay_frames);
     }
 
     maybe_log_telemetry_locked();

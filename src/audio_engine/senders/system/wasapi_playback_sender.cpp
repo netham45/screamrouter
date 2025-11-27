@@ -536,7 +536,7 @@ void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
     }
 
     const auto now = std::chrono::steady_clock::now();
-    constexpr auto kUpdateInterval = std::chrono::milliseconds(40);
+    constexpr auto kUpdateInterval = std::chrono::milliseconds(20);
     if (last_rate_update_.time_since_epoch().count() != 0 &&
         now - last_rate_update_ < kUpdateInterval) {
         return;
@@ -545,23 +545,39 @@ void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
 
     const double queued_frames = static_cast<double>(padding_frames);
     const double error = target_delay_frames_ - queued_frames;
-    constexpr double kKp = 0.0005;
-    constexpr double kKi = 0.00001;
+    constexpr double kKp = 0.0010;
+    constexpr double kKi = 0.00002;
     constexpr double kIntegralClamp = 24000.0;
     playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
 
     double adjust = (kKp * error) + (kKi * playback_rate_integral_);
-    constexpr double kMaxPpm = 0.0005; // ±500 ppm
+    constexpr double kMaxPpm = 0.0008; // ±800 ppm
     adjust = std::clamp(adjust, -kMaxPpm, kMaxPpm);
 
     double desired_rate = 1.0 + adjust;
-    constexpr double kMaxStep = 0.00005; // ±50 ppm per update
+    constexpr double kMaxStep = 0.0001; // ±100 ppm per update
     const double delta = std::clamp(desired_rate - last_playback_rate_command_, -kMaxStep, kMaxStep);
     desired_rate = last_playback_rate_command_ + delta;
 
     constexpr double kHardClamp = 0.98;
     constexpr double kHardClampMax = 1.02;
     desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
+
+    ++rate_log_counter_;
+    if (rate_log_counter_ % 100 == 0) {
+        LOG_CPP_INFO("[WasapiPlayback:%s] PI rate update: padding=%u target=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
+                     config_.sink_id.c_str(),
+                     padding_frames,
+                     target_delay_frames_,
+                     error,
+                     adjust,
+                     desired_rate,
+                     playback_rate_integral_,
+                     kKp,
+                     kKi,
+                     kMaxPpm * 1e6,
+                     kMaxStep * 1e6);
+    }
 
     if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
         last_playback_rate_command_ = desired_rate;
