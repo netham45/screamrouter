@@ -1749,6 +1749,11 @@ void SinkAudioMixer::setup_output_post_processor() {
     }
 
     std::lock_guard<std::mutex> lock(output_processor_mutex_);
+    const std::size_t post_chunk_bytes =
+        static_cast<std::size_t>(frames_per_chunk_) *
+        static_cast<std::size_t>(std::max(1, playback_channels_)) *
+        sizeof(int32_t);
+    const std::size_t effective_chunk_bytes = post_chunk_bytes > 0 ? post_chunk_bytes : chunk_size_bytes_;
     try {
         output_post_processor_ = std::make_unique<AudioProcessor>(
             playback_channels_,
@@ -1759,7 +1764,7 @@ void SinkAudioMixer::setup_output_post_processor() {
             1.0f,
             std::map<int, CppSpeakerLayout>(),
             m_settings,
-            chunk_size_bytes_);
+            effective_chunk_bytes);
         output_post_buffer_.clear();
         output_playback_rate_.store(1.0);
         LOG_CPP_INFO("[SinkMixer:%s] Output post-processor initialized (rate=%d Hz, ch=%d).",
