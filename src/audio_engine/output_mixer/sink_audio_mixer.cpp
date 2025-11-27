@@ -22,6 +22,7 @@
 #include <optional>
 #include <tuple>
 #include <limits>
+#include <unordered_set>
 #include "../audio_processor/audio_processor.h"
 #include "../senders/scream/scream_sender.h"
 #include "../senders/rtp/rtp_sender.h"
@@ -758,6 +759,7 @@ bool SinkAudioMixer::wait_for_source_data() {
     }
 
     std::vector<std::tuple<std::string, std::shared_ptr<ReadyPacketRing>, SourceInputProcessor*>> sources;
+    std::vector<std::pair<std::string, double>> pending_speedups;
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
         for (const auto& [id, ring] : ready_rings_) {
@@ -791,6 +793,10 @@ bool SinkAudioMixer::wait_for_source_data() {
                     utils::log_sentinel("sink_chunk_received", chunk, context);
                     queue.push_back(std::move(chunk));
                     constexpr std::size_t kMaxQueuedChunks = 3;
+                    if (queue.size() >= kMaxQueuedChunks) {
+                        const double max_speed = m_settings ? m_settings->mixer_tuning.max_speedup_factor : 1.05;
+                        pending_speedups.emplace_back(instance_id, std::max(1.0, max_speed));
+                    }
                     while (queue.size() > kMaxQueuedChunks) {
                         if (queue.front().is_sentinel) {
                             utils::log_sentinel("sink_chunk_dropped", queue.front(), " [sink=" + config_.sink_id + " instance=" + instance_id + " due_to_backlog]");
@@ -803,21 +809,35 @@ bool SinkAudioMixer::wait_for_source_data() {
         }
     }
 
+    // Apply any pending local speedups outside of the queue lock to avoid deadlocks.
+    if (!pending_speedups.empty()) {
+        std::unordered_set<std::string> dedup;
+        for (const auto& cmd : pending_speedups) {
+            if (dedup.insert(cmd.first).second) {
+                send_playback_rate_command(cmd.first, cmd.second);
+                LOG_CPP_WARNING("[SinkMixer:%s] Backlog hit cap for %s; applied local speedup=%.6f",
+                                config_.sink_id.c_str(),
+                                cmd.first.c_str(),
+                                cmd.second);
+            }
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
         size_t lagging_sources = 0;
         for (auto& [instance_id, queue] : processed_ready_) {
             bool previously_active = input_active_state_[instance_id];
-            if (!queue.empty()) {
-                ProcessedAudioChunk chunk = std::move(queue.front());
-                queue.pop_front();
-                const size_t sample_count = chunk.audio_data.size();
-                if (sample_count != mixing_buffer_samples_) {
-                    LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
-                                  config_.sink_id.c_str(), instance_id.c_str(), sample_count);
-                    input_active_state_[instance_id] = false;
-                    continue;
-                }
+        if (!queue.empty()) {
+            ProcessedAudioChunk chunk = std::move(queue.front());
+            queue.pop_front();
+            const size_t sample_count = chunk.audio_data.size();
+            if (sample_count != mixing_buffer_samples_) {
+                LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
+                              config_.sink_id.c_str(), instance_id.c_str(), sample_count);
+                input_active_state_[instance_id] = false;
+                continue;
+            }
 
                 m_total_chunks_mixed++;
                 source_buffers_[instance_id] = std::move(chunk);

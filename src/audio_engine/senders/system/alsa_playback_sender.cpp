@@ -565,6 +565,21 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
             }
         }
 
+        // If the hardware queue is already far beyond our target plus one buffer, drop the rest of this chunk to avoid overruns.
+        if (delay_frames > 0 && buffer_frames_ > 0) {
+            const snd_pcm_sframes_t hard_high = static_cast<snd_pcm_sframes_t>(target_delay_frames_ + buffer_frames_);
+            if (delay_frames > hard_high) {
+                LOG_CPP_WARNING("[AlsaPlayback:%s] Dropping %zu frames to cap hardware queue (delay=%ld, target=%.1f, buffer=%lu).",
+                                device_tag_.c_str(),
+                                frames_remaining,
+                                static_cast<long>(delay_frames),
+                                target_delay_frames_,
+                                static_cast<unsigned long>(buffer_frames_));
+                frames_remaining = 0;
+                break;
+            }
+        }
+
         snd_pcm_sframes_t frames_desired = static_cast<snd_pcm_sframes_t>(std::min(frames_remaining, static_cast<size_t>(period_target)));
         if (max_buffered_frames > 0) {
             frames_desired = std::min(frames_desired, allowed_extra);
