@@ -12,6 +12,7 @@
 
 #include <cstring>
 #include <algorithm>
+#include <cmath>
 
 namespace screamrouter {
 namespace audio {
@@ -136,8 +137,15 @@ void WasapiPlaybackSender::close() {
     device_format_ = nullptr;
     running_ = false;
     frames_written_.store(0, std::memory_order_release);
+    playback_rate_integral_ = 0.0;
+    target_delay_frames_ = 0.0;
+    last_playback_rate_command_ = 1.0;
 
     uninitialize_com();
+}
+
+void WasapiPlaybackSender::set_playback_rate_callback(std::function<void(double)> cb) {
+    playback_rate_callback_ = std::move(cb);
 }
 
 bool WasapiPlaybackSender::initialize_com() {
@@ -340,6 +348,7 @@ bool WasapiPlaybackSender::configure_audio_client() {
         LOG_CPP_ERROR("[WasapiPlayback:%s] GetBufferSize failed: 0x%lx", config_.sink_id.c_str(), hr);
         return false;
     }
+    target_delay_frames_ = buffer_frames_ / 2;
 
     hr = audio_client_->GetService(IID_PPV_ARGS(&render_client_));
     if (FAILED(hr)) {
@@ -475,6 +484,7 @@ void WasapiPlaybackSender::send_payload(const uint8_t* payload_data, size_t payl
             return;
         }
         UINT32 available = buffer_frames_ > padding ? buffer_frames_ - padding : 0;
+        maybe_update_playback_rate(padding);
         if (available == 0) {
             if (render_event_) {
                 WaitForSingleObject(render_event_, 5);
@@ -514,6 +524,49 @@ void WasapiPlaybackSender::send_payload(const uint8_t* payload_data, size_t payl
 
 void WasapiPlaybackSender::reset_playback_counters() {
     frames_written_.store(0, std::memory_order_release);
+}
+
+void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
+    if (!playback_rate_callback_) {
+        return;
+    }
+
+    if (target_delay_frames_ <= 0.0 && buffer_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kUpdateInterval = std::chrono::milliseconds(40);
+    if (last_rate_update_.time_since_epoch().count() != 0 &&
+        now - last_rate_update_ < kUpdateInterval) {
+        return;
+    }
+    last_rate_update_ = now;
+
+    const double queued_frames = static_cast<double>(padding_frames);
+    const double error = target_delay_frames_ - queued_frames;
+    constexpr double kKp = 0.0005;
+    constexpr double kKi = 0.00001;
+    constexpr double kIntegralClamp = 24000.0;
+    playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
+
+    double adjust = (kKp * error) + (kKi * playback_rate_integral_);
+    constexpr double kMaxPpm = 0.0005; // ±500 ppm
+    adjust = std::clamp(adjust, -kMaxPpm, kMaxPpm);
+
+    double desired_rate = 1.0 + adjust;
+    constexpr double kMaxStep = 0.00005; // ±50 ppm per update
+    const double delta = std::clamp(desired_rate - last_playback_rate_command_, -kMaxStep, kMaxStep);
+    desired_rate = last_playback_rate_command_ + delta;
+
+    constexpr double kHardClamp = 0.98;
+    constexpr double kHardClampMax = 1.02;
+    desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
+
+    if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
+        last_playback_rate_command_ = desired_rate;
+        playback_rate_callback_(desired_rate);
+    }
 }
 
 } // namespace system_audio

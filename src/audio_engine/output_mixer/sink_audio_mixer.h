@@ -207,6 +207,10 @@ private:
     std::chrono::microseconds mix_period_{std::chrono::microseconds(12000)};
 
     std::vector<int32_t> mixing_buffer_;
+    std::unique_ptr<AudioProcessor> output_post_processor_;
+    std::vector<int32_t> output_post_buffer_;
+    std::mutex output_processor_mutex_;
+    std::atomic<double> output_playback_rate_{1.0};
     std::vector<int32_t> stereo_buffer_;
     std::vector<uint8_t> payload_buffer_;
     size_t payload_buffer_read_pos_ = 0;
@@ -350,6 +354,8 @@ private:
 
     void set_playback_format(int sample_rate, int channels, int bit_depth);
     void update_playback_format_from_sender();
+    void setup_output_post_processor();
+    void set_output_playback_rate(double rate);
     std::chrono::microseconds calculate_mix_period(int sample_rate, int channels, int bit_depth) const;
     void register_mix_timer();
     void unregister_mix_timer();

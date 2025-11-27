@@ -170,6 +170,20 @@ SinkAudioMixer::SinkAudioMixer(
         throw std::runtime_error("Failed to create network sender.");
     }
 
+    // Enable output post-processor and hand rate control callback to system_audio backends.
+    if (config_.protocol == "system_audio") {
+        setup_output_post_processor();
+#if defined(__linux__)
+        if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+            alsa_sender->set_playback_rate_callback([this](double rate) { set_output_playback_rate(rate); });
+        }
+#elif defined(_WIN32)
+        if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+            wasapi_sender->set_playback_rate_callback([this](double rate) { set_output_playback_rate(rate); });
+        }
+#endif
+    }
+
     stereo_preprocessor_ = std::make_unique<AudioProcessor>(
         config_.output_channels, 2, 32, config_.output_samplerate, config_.output_samplerate, 1.0f,
         std::map<int, CppSpeakerLayout>(), m_settings, chunk_size_bytes_);
@@ -1001,6 +1015,26 @@ void SinkAudioMixer::downscale_buffer() {
         return;
     }
     size_t samples_to_convert = mixing_buffer_.size();
+    const int32_t* read_ptr = mixing_buffer_.data();
+
+    if (config_.protocol == "system_audio") {
+        std::lock_guard<std::mutex> lock(output_processor_mutex_);
+        if (output_post_processor_) {
+            if (output_post_buffer_.size() < mixing_buffer_.size() * 2) {
+                output_post_buffer_.resize(mixing_buffer_.size() * 2);
+            }
+            int processed = output_post_processor_->processAudio(
+                reinterpret_cast<const uint8_t*>(mixing_buffer_.data()),
+                output_post_buffer_.data());
+            if (processed > 0) {
+                samples_to_convert = static_cast<size_t>(processed);
+                read_ptr = output_post_buffer_.data();
+            } else {
+                LOG_CPP_WARNING("[SinkMixer:%s] Output post-processor returned %d samples; falling back to unprocessed mix.",
+                                config_.sink_id.c_str(), processed);
+            }
+        }
+    }
 
     size_t expected_bytes_to_write = samples_to_convert * output_byte_depth;
     LOG_CPP_DEBUG("[SinkMixer:%s] Downscale: Converting %zu samples (int32) to %d-bit. Expected output bytes=%zu.",
@@ -1027,7 +1061,6 @@ void SinkAudioMixer::downscale_buffer() {
     }
 
     size_t write_index = (payload_buffer_read_pos_ + payload_buffer_fill_bytes_) % capacity;
-    const int32_t* read_ptr = mixing_buffer_.data();
 
     for (size_t i = 0; i < samples_to_convert; ++i) {
         int32_t sample = read_ptr[i];
@@ -1626,6 +1659,10 @@ void SinkAudioMixer::set_playback_format(int sample_rate, int channels, int bit_
     playback_bit_depth_ = sanitized_bit_depth;
 
     refresh_format_dependent_buffers(playback_sample_rate_, playback_channels_, playback_bit_depth_);
+
+    if (config_.protocol == "system_audio") {
+        setup_output_post_processor();
+    }
 }
 
 void SinkAudioMixer::refresh_format_dependent_buffers(int sample_rate, int channels, int bit_depth) {
@@ -1667,6 +1704,10 @@ void SinkAudioMixer::refresh_format_dependent_buffers(int sample_rate, int chann
     }
 
     mix_period_ = calculate_mix_period(sanitized_rate, sanitized_channels, sanitized_bit_depth);
+
+    if (config_.protocol == "system_audio") {
+        setup_output_post_processor();
+    }
 }
 
 void SinkAudioMixer::update_playback_format_from_sender() {
@@ -1692,6 +1733,44 @@ void SinkAudioMixer::update_playback_format_from_sender() {
         return;
     }
 #endif
+}
+
+void SinkAudioMixer::setup_output_post_processor() {
+    if (config_.protocol != "system_audio") {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(output_processor_mutex_);
+    try {
+        output_post_processor_ = std::make_unique<AudioProcessor>(
+            playback_channels_,
+            playback_channels_,
+            32,
+            playback_sample_rate_,
+            playback_sample_rate_,
+            1.0f,
+            std::map<int, CppSpeakerLayout>(),
+            m_settings,
+            chunk_size_bytes_);
+        output_post_buffer_.clear();
+        output_playback_rate_.store(1.0);
+        LOG_CPP_INFO("[SinkMixer:%s] Output post-processor initialized (rate=%d Hz, ch=%d).",
+                     config_.sink_id.c_str(), playback_sample_rate_, playback_channels_);
+    } catch (const std::exception& e) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to create output post-processor: %s",
+                      config_.sink_id.c_str(), e.what());
+        output_post_processor_.reset();
+    }
+}
+
+void SinkAudioMixer::set_output_playback_rate(double rate) {
+    std::lock_guard<std::mutex> lock(output_processor_mutex_);
+    if (!output_post_processor_) {
+        return;
+    }
+    const double clamped = std::clamp(rate, 0.98, 1.02);
+    output_playback_rate_.store(clamped);
+    output_post_processor_->set_playback_rate(clamped);
 }
 
 std::chrono::microseconds SinkAudioMixer::calculate_mix_period(int samplerate, int channels, int bit_depth) const {

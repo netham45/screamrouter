@@ -9,6 +9,7 @@
 #include <chrono>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 
 #if defined(__linux__)
 #include <alsa/asoundlib.h>
@@ -25,6 +26,7 @@ public:
     bool setup() override;
     void close() override;
     void send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) override;
+    void set_playback_rate_callback(std::function<void(double)> cb);
 
 #if defined(__linux__)
     unsigned int get_effective_sample_rate() const;
@@ -42,6 +44,7 @@ private:
     bool detect_xrun_locked();
     void close_locked();
     void maybe_log_telemetry_locked();
+    void maybe_update_playback_rate_locked(snd_pcm_sframes_t delay_frames);
 
     SinkMixerConfig config_;
     std::string device_tag_;
@@ -57,6 +60,11 @@ private:
     snd_pcm_uframes_t buffer_frames_ = 0;
     size_t bytes_per_frame_ = 0;
     bool is_raspberry_pi_ = false;
+    std::function<void(double)> playback_rate_callback_;
+    double playback_rate_integral_ = 0.0;
+    double target_delay_frames_ = 0.0;
+    double last_playback_rate_command_ = 1.0;
+    std::chrono::steady_clock::time_point last_rate_update_;
 
     mutable std::mutex state_mutex_;
     std::chrono::steady_clock::time_point telemetry_last_log_time_{};

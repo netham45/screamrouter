@@ -134,6 +134,11 @@ void AlsaPlaybackSender::send_payload(const uint8_t* payload_data, size_t payloa
 
 #if defined(__linux__)
 
+void AlsaPlaybackSender::set_playback_rate_callback(std::function<void(double)> cb) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    playback_rate_callback_ = std::move(cb);
+}
+
 bool AlsaPlaybackSender::parse_legacy_card_device(const std::string& value, int& card, int& device) const {
     const auto dot_pos = value.find('.');
     if (dot_pos == std::string::npos) {
@@ -286,7 +291,54 @@ bool AlsaPlaybackSender::configure_device() {
                  got_period_us, buffer_frames_, got_buffer_us);
 
     frames_written_.store(0, std::memory_order_release);
+    target_delay_frames_ = period_frames_ > 0 ? static_cast<double>(period_frames_) : 0.0;
+    playback_rate_integral_ = 0.0;
+    last_playback_rate_command_ = 1.0;
     return true;
+}
+
+void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t delay_frames) {
+    if (!playback_rate_callback_ || delay_frames < 0) {
+        return;
+    }
+
+    if (target_delay_frames_ <= 0.0 && period_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(period_frames_);
+    } else if (target_delay_frames_ <= 0.0 && buffer_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kUpdateInterval = std::chrono::milliseconds(40);
+    if (last_rate_update_.time_since_epoch().count() != 0 &&
+        now - last_rate_update_ < kUpdateInterval) {
+        return;
+    }
+    last_rate_update_ = now;
+
+    const double error = target_delay_frames_ - static_cast<double>(delay_frames);
+    constexpr double kKp = 0.0005;      // proportional gain
+    constexpr double kKi = 0.00001;     // integral gain
+    constexpr double kIntegralClamp = 24000.0; // prevents runaway
+    playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
+
+    double adjust = (kKp * error) + (kKi * playback_rate_integral_);
+    constexpr double kMaxPpm = 0.0005; // ±500 ppm
+    adjust = std::clamp(adjust, -kMaxPpm, kMaxPpm);
+
+    double desired_rate = 1.0 + adjust;
+    constexpr double kMaxStep = 0.00005; // ±50 ppm per update
+    const double delta = std::clamp(desired_rate - last_playback_rate_command_, -kMaxStep, kMaxStep);
+    desired_rate = last_playback_rate_command_ + delta;
+
+    constexpr double kHardClamp = 0.98;
+    constexpr double kHardClampMax = 1.02;
+    desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
+
+    if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
+        last_playback_rate_command_ = desired_rate;
+        auto cb = playback_rate_callback_;
+        cb(desired_rate);
+    }
 }
 
 bool AlsaPlaybackSender::handle_write_error(int err) {
@@ -360,6 +412,9 @@ void AlsaPlaybackSender::close_locked() {
         snd_pcm_close(pcm_handle_);
         pcm_handle_ = nullptr;
     }
+    target_delay_frames_ = 0.0;
+    playback_rate_integral_ = 0.0;
+    last_playback_rate_command_ = 1.0;
     frames_written_.store(0, std::memory_order_release);
 }
 
@@ -461,6 +516,7 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
             LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA reported delay: %.2f ms (%ld frames).",
                           device_tag_.c_str(), delay_ms, static_cast<long>(delay_frames));
         }
+        maybe_update_playback_rate_locked(delay_frames);
     }
 
     maybe_log_telemetry_locked();

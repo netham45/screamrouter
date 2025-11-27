@@ -17,6 +17,8 @@
 #include <vector>
 #include <atomic>
 #include <cstdint>
+#include <functional>
+#include <chrono>
 
 namespace screamrouter {
 namespace audio {
@@ -38,6 +40,7 @@ public:
     bool setup() override;
     void close() override;
     void send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) override;
+    void set_playback_rate_callback(std::function<void(double)> cb);
 
 private:
 
@@ -51,6 +54,7 @@ private:
     void update_conversion_state();
     void convert_frames(const uint8_t* src, UINT32 frames, BYTE* dst);
     void reset_playback_counters();
+    void maybe_update_playback_rate(UINT32 padding_frames);
 
     SinkMixerConfig config_;
 
@@ -80,6 +84,11 @@ private:
     std::vector<uint8_t> conversion_buffer_;
 
     std::atomic<std::uint64_t> frames_written_{0};
+    std::function<void(double)> playback_rate_callback_;
+    double playback_rate_integral_ = 0.0;
+    double target_delay_frames_ = 0.0;
+    double last_playback_rate_command_ = 1.0;
+    std::chrono::steady_clock::time_point last_rate_update_;
 };
 
 } // namespace system_audio
