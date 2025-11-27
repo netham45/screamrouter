@@ -318,17 +318,38 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
         }
     }
     const auto now = std::chrono::steady_clock::now();
-    constexpr auto kUpdateInterval = std::chrono::milliseconds(20);
+    constexpr auto kUpdateInterval = std::chrono::milliseconds(10);
     if (last_rate_update_.time_since_epoch().count() != 0 &&
         now - last_rate_update_ < kUpdateInterval) {
         return;
     }
     last_rate_update_ = now;
 
+    // If we are about to hit the hardware low-water mark, slow down immediately to avoid an x-run.
+    // This is asymmetric on purpose: we react faster to low queue depth without increasing latency targets.
+    const snd_pcm_sframes_t low_water_frames = static_cast<snd_pcm_sframes_t>(
+        std::max<snd_pcm_uframes_t>(period_frames_, buffer_frames_ > 0 ? buffer_frames_ / 6 : 0));
+    constexpr double kLowWaterRate = 0.97; // temporary slowdown when the queue is in danger
+    constexpr double kHardClamp = 0.96;
+    constexpr double kHardClampMax = 1.02;
+    if (low_water_frames > 0 && delay_frames >= 0 && delay_frames < low_water_frames) {
+        double desired_rate = std::max(kLowWaterRate, last_playback_rate_command_ - 0.00035);
+        desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
+        playback_rate_integral_ = std::min(0.0, playback_rate_integral_); // do not let integral push us faster here
+        if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
+            last_playback_rate_command_ = desired_rate;
+            auto cb = playback_rate_callback_;
+            cb(desired_rate);
+        }
+        return;
+    }
+
     // Positive error => queue is above target, so speed up playback to shrink it.
     const double error = static_cast<double>(delay_frames) - target_delay_frames_;
-    constexpr double kKp = 0.0005;      // proportional gain
-    constexpr double kKi = 0.000005;    // integral gain
+    // Use asymmetric gains so we react more aggressively when the queue is below target (avoids underruns).
+    const bool queue_low = (error < 0.0);
+    const double kKp = queue_low ? 0.0008 : 0.0005;      // proportional gain
+    const double kKi = queue_low ? 0.000010 : 0.000005;  // integral gain
     constexpr double kIntegralClamp = 12000.0; // prevents runaway
     playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
 
@@ -337,12 +358,10 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
     adjust = std::clamp(adjust, -kMaxPpm, kMaxPpm);
 
     double desired_rate = 1.0 + adjust;
-    constexpr double kMaxStep = 0.00015; // ±150 ppm per update
+    constexpr double kMaxStep = 0.00030; // ±300 ppm per update for faster low-queue reaction
     const double delta = std::clamp(desired_rate - last_playback_rate_command_, -kMaxStep, kMaxStep);
     desired_rate = last_playback_rate_command_ + delta;
 
-    constexpr double kHardClamp = 0.98;
-    constexpr double kHardClampMax = 1.02;
     desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
 
     ++rate_log_counter_;

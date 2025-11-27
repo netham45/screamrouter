@@ -923,7 +923,27 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(desired_latency_ms);
                 auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
 
-                const double buffer_level_ms = std::max(time_until_playout_ms, 0.0);
+                double buffer_level_ms = std::max(time_until_playout_ms, 0.0);
+
+                // Fold in downstream backlog (ready ring depth) so the controller sees what the sink still has queued.
+                double block_duration_ms = 0.0;
+                if (ts.sample_rate > 0 && ts.samples_per_chunk > 0) {
+                    block_duration_ms = (static_cast<double>(ts.samples_per_chunk) * 1000.0) /
+                                        static_cast<double>(ts.sample_rate);
+                }
+                if (block_duration_ms > 0.0 && !target_info.sink_rings.empty()) {
+                    std::size_t downstream_blocks = 0;
+                    for (const auto& [sink_id, ring_weak] : target_info.sink_rings) {
+                        (void)sink_id;
+                        if (auto ring = ring_weak.lock()) {
+                            downstream_blocks += ring->size();
+                        }
+                    }
+                    if (downstream_blocks > 0) {
+                        buffer_level_ms += block_duration_ms * static_cast<double>(downstream_blocks);
+                    }
+                }
+
                 ts.current_buffer_level_ms = buffer_level_ms;
                 if (desired_latency_ms > 1e-6) {
                     ts.buffer_target_fill_percentage =
@@ -982,8 +1002,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                             std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
                     }
 
-                    // Positive error means buffer is above target; speed up to reduce it. Negative -> slow down to rebuild.
-                    const double buffer_error_ms = buffer_level_ms - desired_latency_ms;
+                    const double buffer_error_ms = desired_latency_ms - buffer_level_ms;
                     ts.last_controller_update_time = now;
 
                     const double proportional_ppm = tuning.playback_ratio_kp * buffer_error_ms;
