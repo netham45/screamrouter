@@ -28,7 +28,8 @@ import {
   useColorModeValue,
   Switch,
   Text,
-  Spinner
+  Spinner,
+  SimpleGrid
 } from '@chakra-ui/react';
 import ApiService, { Route, Source, Sink, Equalizer } from '../../api/api';
 import { useTutorial } from '../../context/TutorialContext';
@@ -56,6 +57,8 @@ const AddEditRoutePage: React.FC = () => {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [route, setRoute] = useState<Route | null>(null);
+  const [configId, setConfigId] = useState('');
+  const [routeTag, setRouteTag] = useState('');
   const [name, setName] = useState('');
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
   const [source, setSource] = useState('');
@@ -341,6 +344,8 @@ const AddEditRoutePage: React.FC = () => {
             setVolume(routeData.volume || 1);
             setDelay(routeData.delay || 0);
             setTimeshift(routeData.timeshift || 0);
+            setConfigId((routeData as any).config_id || '');
+            setRouteTag((routeData as any).tag || '');
           } else {
             setError(`Route "${routeName}" not found.`);
           }
@@ -423,6 +428,8 @@ const AddEditRoutePage: React.FC = () => {
         setVolume(1);
         setDelay(0);
         setTimeshift(0);
+        setConfigId('');
+        setRouteTag('');
       }
 
       if (window.opener) {
@@ -445,7 +452,7 @@ const AddEditRoutePage: React.FC = () => {
   };
 
   return (
-    <Container maxW="container.md" py={8}>
+    <Container maxW="container.lg" py={8}>
       <Box
         bg={bgColor}
         borderColor={borderColor}
@@ -472,71 +479,136 @@ const AddEditRoutePage: React.FC = () => {
           </Alert>
         )}
         
-        <Stack spacing={4}>
-          <FormControl isRequired>
-            <FormLabel>Route Name</FormLabel>
-            <Input
-              data-tutorial-id="route-name-input"
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                setNameManuallyEdited(e.target.value !== "");
-              }}
-              bg={inputBg}
-            />
-          </FormControl>
-          
-          <FormControl isRequired>
-            <FormLabel>Source</FormLabel>
-            <Select
-              data-tutorial-id="route-source-select"
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              bg={inputBg}
-              placeholder="Select a source"
-            >
-              {sources.map(src => (
-                <option key={src.name} value={src.name}>
-                  {src.name}
-                </option>
-              ))}
-            </Select>
-          </FormControl>
-          
-          <FormControl isRequired>
-            <FormLabel>Sink Server</FormLabel>
-            <Select
-              value={selectedServerId}
-              onChange={(e) => {
-                const nextId = e.target.value;
-                setSelectedServerId(nextId);
-                setRemoteSinkSelection('');
-                if (nextId === 'local') {
-                  setRemoteSinks([]);
-                  setRemoteError(null);
-                  setRemoteLoading(false);
+        {(configId || routeTag) && (
+          <Box
+            mb={5}
+            p={4}
+            borderWidth="1px"
+            borderRadius="md"
+            bg={useColorModeValue('gray.50', 'gray.700')}
+            borderColor={useColorModeValue('gray.200', 'gray.600')}
+          >
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+              {configId && (
+                <Box>
+                  <Text fontSize="xs" color={useColorModeValue('gray.500', 'gray.400')} textTransform="uppercase" letterSpacing="0.05em">
+                    GUID
+                  </Text>
+                  <Text fontWeight="semibold" fontSize="sm">{configId}</Text>
+                </Box>
+              )}
+              {routeTag && (
+                <Box>
+                  <Text fontSize="xs" color={useColorModeValue('gray.500', 'gray.400')} textTransform="uppercase" letterSpacing="0.05em">
+                    Tag
+                  </Text>
+                  <Text fontWeight="semibold" fontSize="sm">{routeTag}</Text>
+                </Box>
+              )}
+            </SimpleGrid>
+          </Box>
+        )}
+
+        <Stack spacing={5}>
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <FormControl isRequired>
+              <FormLabel>Route Name</FormLabel>
+              <Input
+                data-tutorial-id="route-name-input"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameManuallyEdited(e.target.value !== "");
+                }}
+                bg={inputBg}
+              />
+            </FormControl>
+
+            <FormControl display="flex" alignItems="center">
+              <FormLabel htmlFor="enabled" mb="0">
+                Enabled
+              </FormLabel>
+              <Switch
+                id="enabled"
+                isChecked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+              />
+            </FormControl>
+          </SimpleGrid>
+
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <FormControl>
+              <FormLabel>Volume</FormLabel>
+              <VolumeSlider
+                value={volume}
+                onChange={setVolume}
+                dataTutorialId="route-volume-slider"
+              />
+            </FormControl>
+
+            <FormControl>
+              <FormLabel>Timeshift</FormLabel>
+              <TimeshiftSlider
+                value={timeshift}
+                onChange={setTimeshift}
+                dataTutorialId="route-timeshift-slider"
+              />
+            </FormControl>
+          </SimpleGrid>
+
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <FormControl isRequired>
+              <FormLabel>Source</FormLabel>
+              <Select
+                data-tutorial-id="route-source-select"
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                bg={inputBg}
+                placeholder="Select a source"
+              >
+                {sources.map(src => (
+                  <option key={src.name} value={src.name}>
+                    {src.name}
+                  </option>
+                ))}
+              </Select>
+            </FormControl>
+
+            <FormControl isRequired>
+              <FormLabel>Sink ScreamRouter Server</FormLabel>
+              <Select
+                value={selectedServerId}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setSelectedServerId(nextId);
                   setRemoteSinkSelection('');
-                } else {
-                  const instance = instances.find(inst => inst.id === nextId);
-                  if (instance) {
-                    void fetchRemoteResources(instance);
+                  if (nextId === 'local') {
+                    setRemoteSinks([]);
+                    setRemoteError(null);
+                    setRemoteLoading(false);
+                    setRemoteSinkSelection('');
+                  } else {
+                    const instance = instances.find(inst => inst.id === nextId);
+                    if (instance) {
+                      void fetchRemoteResources(instance);
+                    }
                   }
-                }
-              }}
-            >
-              <option value="local">Local</option>
-              {instances.map(instance => (
-                <option key={instance.id} value={instance.id}>
-                  {instance.label} {instance.isCurrent ? '(current)' : ''}
-                </option>
-              ))}
-            </Select>
-            {selectedServerId !== 'local' && (
-              <Text fontSize="xs" color="gray.500" mt={1}>
-                Remote sink selection will create a local RTP sender tagged for the target router.
-              </Text>
-            )}
-          </FormControl>
+                }}
+              >
+                <option value="local">Local</option>
+                {instances.filter(instance => !instance.isCurrent).map(instance => (
+                  <option key={instance.id} value={instance.id}>
+                    {instance.label} {instance.isCurrent ? '(current)' : ''}
+                  </option>
+                ))}
+              </Select>
+              {selectedServerId !== 'local' && (
+                <Text fontSize="xs" color="gray.500" mt={1}>
+                  Remote sink selection will create a local RTP sender tagged for the target router.
+                </Text>
+              )}
+            </FormControl>
+          </SimpleGrid>
 
           <FormControl isRequired>
             <FormLabel>Sink</FormLabel>
@@ -573,26 +645,6 @@ const AddEditRoutePage: React.FC = () => {
               </Flex>
             )}
           </FormControl>
-          
-          <FormControl display="flex" alignItems="center">
-            <FormLabel htmlFor="enabled" mb="0">
-              Enabled
-            </FormLabel>
-            <Switch 
-              id="enabled" 
-              isChecked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-            />
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Volume</FormLabel>
-            <VolumeSlider
-              value={volume}
-              onChange={setVolume}
-              dataTutorialId="route-volume-slider"
-            />
-          </FormControl>
 
           <FormControl>
             <FormLabel>Delay (ms)</FormLabel>
@@ -613,15 +665,6 @@ const AddEditRoutePage: React.FC = () => {
                 <NumberDecrementStepper />
               </NumberInputStepper>
             </NumberInput>
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Timeshift</FormLabel>
-            <TimeshiftSlider
-              value={timeshift}
-              onChange={setTimeshift}
-              dataTutorialId="route-timeshift-slider"
-            />
           </FormControl>
         </Stack>
         

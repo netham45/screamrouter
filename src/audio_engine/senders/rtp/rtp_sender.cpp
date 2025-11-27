@@ -523,10 +523,11 @@ void RtpSender::sap_announcement_loop() {
     while (sap_thread_running_) {
         if (sap_socket_fd_ != PLATFORM_INVALID_SOCKET) {
             // Construct SDP payload
+            const std::string session_name = config_.friendly_name.empty() ? config_.sink_id : config_.friendly_name;
             std::stringstream sdp;
             sdp << "v=0\n";
             sdp << "o=screamrouter " << ssrc_ << " 1 IN IP4 " << source_ip << "\n";
-            sdp << "s=" << config_.sink_id << "\n";
+            sdp << "s=" << session_name << "\n";
             sdp << "c=IN IP4 " << config_.output_ip << "\n";
             sdp << "t=0 0\n";
             const uint8_t payload_type = rtp_payload_type();

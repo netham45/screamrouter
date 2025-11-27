@@ -395,6 +395,8 @@ struct SourceConfig {
 struct SinkConfig {
     /** @brief Unique ID for this sink instance. */
     std::string id;
+    /** @brief Human-friendly display name for this sink. */
+    std::string friendly_name;
     /** @brief Destination IP address for UDP output. */
     std::string output_ip;
     /** @brief Destination port for UDP output. */
@@ -563,6 +565,8 @@ struct AdaptivePlaybackSettings {
 struct SinkMixerConfig {
     /** @brief Unique identifier for the sink this mixer serves. */
     std::string sink_id;
+    /** @brief Human-friendly display name for the sink. */
+    std::string friendly_name;
     /** @brief Destination IP address. */
     std::string output_ip;
     /** @brief Destination port. */
@@ -648,6 +652,7 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
         py::class_<SinkConfig>(m, "SinkConfig", "Configuration for an audio sink")
             .def(py::init<>()) // Bind the default constructor
             .def_readwrite("id", &SinkConfig::id, "Unique identifier for this sink instance")
+            .def_readwrite("friendly_name", &SinkConfig::friendly_name, "Human-friendly display name for this sink")
             .def_readwrite("output_ip", &SinkConfig::output_ip, "Destination IP address for UDP output")
             .def_readwrite("output_port", &SinkConfig::output_port, "Destination port for UDP output")
             .def_readwrite("bitdepth", &SinkConfig::bitdepth, "Output bit depth (e.g., 16)")

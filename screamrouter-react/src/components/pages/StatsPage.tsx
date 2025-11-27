@@ -464,6 +464,7 @@ const StatsPage: React.FC = () => {
                     {renderTuningControl('mixer_tuning', 'max_input_queue_chunks', 'Max Source Output Chunks')}
                     {renderTuningControl('mixer_tuning', 'min_input_queue_chunks', 'Min Source Output Chunks')}
                     {renderTuningControl('mixer_tuning', 'max_ready_chunks_per_source', 'Max Mix Ready Chunks per Source')}
+                    {renderTuningControl('mixer_tuning', 'max_queued_chunks', 'Max Queued Chunks')}
                   </SimpleGrid>
                 </Box>
 

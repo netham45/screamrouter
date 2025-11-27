@@ -3,7 +3,6 @@
 import asyncio
 import concurrent.futures
 import os
-import re
 import socket
 import sys
 import threading
@@ -1818,14 +1817,7 @@ class ConfigurationManager(threading.Thread):
                 _logger.info("[Configuration Manager] Updated system playback device cache (%d devices)", len(new_playback))
                 changed = True
 
-        auto_added = False
-        try:
-            auto_added = self._auto_create_sinks_for_playback_devices(new_playback)
-            _logger.debug("[Configuration Manager] Auto-add playback sinks attempted (changed=%s, added=%s)", changed, auto_added)
-        except Exception:  # pylint: disable=broad-except
-            _logger.exception("[Configuration Manager] Failed to auto-create sinks for playback devices during snapshot merge")
-
-        return changed or auto_added
+        return changed
 
     def _apply_device_presence_notifications(self, notifications: List[Any]) -> bool:
         """Update cached presence flags based on notification list."""
@@ -1878,190 +1870,6 @@ class ConfigurationManager(threading.Thread):
                 self.system_playback_devices = sorted(self.system_playback_devices, key=lambda d: (d.card_index, d.device_index, d.tag))
 
         return changed
-
-    def _playback_device_identifier(self, device: SystemAudioDeviceInfo) -> Optional[str]:
-        """Return the preferred output identifier for a playback device."""
-        if device.direction != "playback":
-            return None
-
-        is_windows = sys.platform.startswith("win")
-        tag_value = str(device.tag or "")
-
-        if is_windows:
-            if not tag_value.startswith("wp:") or tag_value.endswith(":default"):
-                return None
-            return tag_value
-
-        # Accept any tag containing a hw: identifier directly.
-        if "hw:" in tag_value:
-            return tag_value[tag_value.find("hw:"):]
-        hw_id_value = str(device.hw_id or "")
-        if "hw:" in hw_id_value:
-            return hw_id_value[hw_id_value.find("hw:"):]
-
-        def extract_card_dev(text: str) -> tuple[int, int]:
-            if not text:
-                return -1, -1
-            card_match = re.search(r"CARD=(\d+)", text)
-            dev_match = re.search(r"DEV=(\d+)", text)
-            if not card_match:
-                card_match = re.search(r"CARD=[^,]*?(\d+)", text)
-            card = int(card_match.group(1)) if card_match else -1
-            dev = int(dev_match.group(1)) if dev_match else -1
-            return card, dev
-
-        # Normalize ap:card,dev or CARD/DEV hints into hw:card,dev.
-        for candidate in (tag_value, str(device.hw_id or "")):
-            if re.fullmatch(r"ap:\d+,\d+", candidate):
-                try:
-                    _, body = candidate.split(":", 1)
-                    card_str, dev_str = body.split(",", 1)
-                    return f"hw:{int(card_str)},{int(dev_str)}"
-                except Exception:  # pylint: disable=broad-except
-                    pass
-
-            card_idx, dev_idx = extract_card_dev(candidate)
-            if card_idx >= 0 and dev_idx >= 0:
-                return f"hw:{card_idx},{dev_idx}"
-
-        try:
-            if device.card_index is not None and device.device_index is not None:
-                if int(device.card_index) >= 0 and int(device.device_index) >= 0:
-                    return f"hw:{int(device.card_index)},{int(device.device_index)}"
-        except Exception:  # pylint: disable=broad-except
-            pass
-
-        return None
-
-    def _device_identity_set(self, device: SystemAudioDeviceInfo, primary_id: str) -> Set[str]:
-        """Build a set of identifiers that represent a playback device."""
-        identities: Set[str] = {primary_id}
-        if device.tag:
-            identities.add(str(device.tag))
-        if device.hw_id:
-            identities.add(str(device.hw_id))
-        # Add aliased forms (hw/ap) for the same card/dev when known.
-        if primary_id.startswith("hw:"):
-            try:
-                body = primary_id[3:]
-                if "," in body:
-                    card_str, dev_str = body.split(",", 1)
-                    identities.add(f"ap:{int(card_str)},{int(dev_str)}")
-            except Exception:  # pylint: disable=broad-except
-                pass
-        return {item for item in identities if item}
-
-    def _friendly_device_basename(self, device: SystemAudioDeviceInfo) -> str:
-        """Derive a concise, friendly base name from device metadata."""
-        if device.friendly_name:
-            label = str(device.friendly_name)
-            label = label.replace("Direct hardware device without any conversions", "")
-            if "(" in label:
-                label = label.split("(", 1)[0]
-            label = label.replace(",", " ")
-            label = " ".join(label.split())
-        elif device.tag:
-            label = str(device.tag)
-        elif device.hw_id:
-            label = str(device.hw_id)
-        else:
-            label = "system_playback"
-        return label.strip()
-
-    def _allocate_system_sink_name(self, device: SystemAudioDeviceInfo, existing_names: Set[str]) -> str:
-        """Create a stable, unique sink name for a system playback device."""
-        base = self._friendly_device_basename(device)
-        sanitized = self._sanitize_screamrouter_label(base)
-        if not sanitized and device.tag:
-            sanitized = self._sanitize_screamrouter_label(str(device.tag))
-        if not sanitized:
-            sanitized = "system_playback"
-
-        candidate = f"local_{sanitized}"
-        if candidate not in existing_names:
-            return candidate
-
-        counter = 1
-        while True:
-            candidate = f"local_{sanitized}_{counter}"
-            if candidate not in existing_names:
-                return candidate
-            counter += 1
-
-    def _auto_create_sinks_for_playback_devices(self, playback_devices: Optional[List[SystemAudioDeviceInfo]] = None) -> bool:
-        """Automatically create system_audio sinks for newly discovered playback devices."""
-        devices = playback_devices if playback_devices is not None else self.system_playback_devices
-        if not devices:
-            _logger.debug("[Configuration Manager] Auto-add sinks: no playback devices available")
-            return False
-
-        existing_sinks = self.sink_descriptions + self.active_temporary_sinks
-        existing_names: Set[str] = {sink.name for sink in existing_sinks}
-        added = False
-
-        for device in devices:
-            identifier = self._playback_device_identifier(device)
-            _logger.debug("[Configuration Manager] Auto-add check device tag=%s hw_id=%s present=%s -> identifier=%s",
-                          getattr(device, "tag", None),
-                          getattr(device, "hw_id", None),
-                          getattr(device, "present", None),
-                          identifier)
-            if not identifier:
-                continue
-
-            identities = self._device_identity_set(device, identifier)
-            if any(str(getattr(sink, "ip", "") or "") in identities for sink in existing_sinks):
-                _logger.debug("[Configuration Manager] Auto-add skip; already have sink for %s (identities=%s)", identifier, identities)
-                continue
-
-            sink_name = self._allocate_system_sink_name(device, existing_names)
-            existing_names.add(sink_name)
-
-            allowed_sample_rates = {44100, 48000, 88200, 96000, 192000}
-            selected_rate = 48000
-            if device.sample_rates:
-                numeric_rates = sorted({int(r) for r in device.sample_rates if isinstance(r, (int, float)) and int(r) > 0})
-                if numeric_rates:
-                    max_rate = numeric_rates[-1]
-                    if max_rate in allowed_sample_rates:
-                        selected_rate = max_rate
-                    else:
-                        exact = [r for r in numeric_rates if r in allowed_sample_rates]
-                        if exact:
-                            selected_rate = max(exact)
-                        else:
-                            min_rate = numeric_rates[0]
-                            valid_range = [r for r in allowed_sample_rates if min_rate <= r <= max_rate]
-                            if valid_range:
-                                selected_rate = max(valid_range)
-            if selected_rate not in allowed_sample_rates:
-                selected_rate = 48000
-
-            channels = int(device.channels_supported[0]) if device.channels_supported else 2
-            bit_depth = int(device.bit_depth) if device.bit_depth else 32
-
-            sink_desc = SinkDescription(
-                name=sink_name.replace("_", " ").capitalize().replace("local ", "Local: "),
-                ip=identifier,
-                port=0,
-                protocol="system_audio",
-                sample_rate=selected_rate,
-                channels=channels,
-                bit_depth=bit_depth,
-                channel_layout="stereo",
-                enabled=True,
-            )
-
-            try:
-                self.add_sink(sink_desc)
-                existing_sinks.append(sink_desc)
-                added = True
-                _logger.info("[Configuration Manager] Auto-added system playback sink '%s' for device %s (rate=%s channels=%s)",
-                             sink_name, identifier, selected_rate, channels)
-            except Exception as exc:  # pylint: disable=broad-except
-                _logger.error("[Configuration Manager] Failed to auto-add playback sink for %s: %s", identifier, exc)
-
-        return added
 
     def _find_system_device_by_tag(self, tag: str) -> Optional[SystemAudioDeviceInfo]:
         """Lookup cached device information by tag."""
@@ -2235,6 +2043,8 @@ class ConfigurationManager(threading.Thread):
             # B. Create and populate the nested C++ SinkConfig
             cpp_sink_engine_config = CppSinkConfig()
             cpp_sink_engine_config.id = cpp_applied_sink.sink_id # Use the same ID
+            friendly_name = py_sink_desc.name if getattr(py_sink_desc, "name", None) is not None else ""
+            cpp_sink_engine_config.friendly_name = str(friendly_name)
             sink_ip_value = py_sink_desc.ip
             if isinstance(sink_ip_value, str):
                 sink_address = sink_ip_value
@@ -2587,7 +2397,11 @@ class ConfigurationManager(threading.Thread):
                     cpp_source_path.source_input_channels = int(preferred_input_channels or 0)
 
                     preferred_input_samplerate = None
-                    if py_source_desc.sample_rate in _CAPTURE_ALLOWED_SAMPLE_RATES:
+                    # For SAP-temporary sources, trust the advertised sample rate even if it's
+                    # outside the normal capture whitelist.
+                    if py_source_desc.is_temporary and isinstance(py_source_desc.sample_rate, (int, float)):
+                        preferred_input_samplerate = int(py_source_desc.sample_rate)
+                    elif py_source_desc.sample_rate in _CAPTURE_ALLOWED_SAMPLE_RATES:
                         preferred_input_samplerate = int(py_source_desc.sample_rate)
 
                     fallback_capture_rate = None
@@ -3714,10 +3528,12 @@ class ConfigurationManager(threading.Thread):
                             "source": "cpp_engine",
                             "discovery": "sap",
                         }
-                        for key in ("sample_rate", "channels", "bit_depth", "endianness", "announcer_ip"):
+                        for key in ("sample_rate", "channels", "bit_depth", "endianness", "announcer_ip", "session_name"):
                             value = announcement.get(key)
                             if value is not None:
                                 properties[key] = value
+                                if key == "session_name":
+                                    properties.setdefault("sap_session_name", value)
                         if stream_ip:
                             properties.setdefault("stream_ip", stream_ip)
 

@@ -73,6 +73,7 @@ bool WebRtcManager::add_webrtc_listener(
         // Copy the configuration while holding the lock
         const SinkConfig& sink_config = config_it->second;
         mixer_config.sink_id = sink_config.id;
+        mixer_config.friendly_name = sink_config.friendly_name;
         mixer_config.output_ip = sink_config.output_ip;
         mixer_config.output_port = sink_config.output_port;
         mixer_config.output_bitdepth = sink_config.bitdepth;

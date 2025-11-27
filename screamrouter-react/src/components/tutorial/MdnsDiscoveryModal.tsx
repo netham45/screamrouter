@@ -218,6 +218,29 @@ const MdnsDiscoveryModal: React.FC<MdnsDiscoveryModalProps> = ({
               const deviceKey = buildDeviceKey(device);
               const isProcessing = pendingKey === deviceKey;
               const methodColor = getMethodColor(device.discovery_method);
+              const getStringProperty = (...keys: string[]): string => {
+                for (const key of keys) {
+                  const raw = device.properties?.[key];
+                  if (raw === undefined || raw === null) {
+                    continue;
+                  }
+                  const value = Array.isArray(raw) ? raw.join(', ') : String(raw);
+                  const normalized = value.trim();
+                  if (normalized) {
+                    return normalized;
+                  }
+                }
+                return '';
+              };
+              const sapSessionName = getStringProperty(
+                'sap_session_name',
+                'sap_session',
+                'sap_name',
+                'session_name',
+                'sdp_session_name',
+                'sdp_name',
+                'session'
+              );
 
               return (
                 <Box
@@ -276,6 +299,12 @@ const MdnsDiscoveryModal: React.FC<MdnsDiscoveryModalProps> = ({
                             <Text>
                               Tag {device.role === 'process' ? formatProcessTag(device.tag) : device.tag}
                             </Text>
+                          </>
+                        )}
+                        {sapSessionName && (
+                          <>
+                            <Text aria-hidden="true">•</Text>
+                            <Text>SAP: {sapSessionName}</Text>
                           </>
                         )}
                       </Flex>

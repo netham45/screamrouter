@@ -198,6 +198,7 @@ bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
 bool compare_sink_configs(const audio::SinkConfig& a, const audio::SinkConfig& b) {
     // Compare all relevant fields that would require a sink re-creation if changed.
     return a.id == b.id && // The ID must match if comparing the same conceptual sink.
+           a.friendly_name == b.friendly_name &&
            a.output_ip == b.output_ip &&
            a.output_port == b.output_port &&
            a.bitdepth == b.bitdepth &&

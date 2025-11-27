@@ -596,6 +596,9 @@ pybind11::list AudioManager::get_rtp_sap_announcements() {
         if (!announcement.target_host.empty()) {
             entry["target_host"] = announcement.target_host;
         }
+        if (!announcement.session_name.empty()) {
+            entry["session_name"] = announcement.session_name;
+        }
         result.append(entry);
     }
 

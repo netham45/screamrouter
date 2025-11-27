@@ -76,6 +76,8 @@ const AddEditSourcePage: React.FC = () => {
   const [vncPort, setVncPort] = useState('5900');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [configId, setConfigId] = useState('');
+  const [sourceTag, setSourceTag] = useState('');
 
   // Color values for light/dark mode
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -86,17 +88,40 @@ const AddEditSourcePage: React.FC = () => {
     return systemCaptureDevices.find(device => device.tag === selectedCaptureTag);
   }, [systemCaptureDevices, selectedCaptureTag]);
 
+  const normalizeCaptureTag = (value?: string | null): string => {
+    if (!value) {
+      return '';
+    }
+    if (value.startsWith('ac:')) {
+      return value;
+    }
+    if (value.startsWith('hw:')) {
+      const body = value.substring(3);
+      if (body.includes(',')) {
+        const [card, device] = body.split(',', 2);
+        return `ac:${card}.${device}`;
+      }
+    }
+    return value;
+  };
+
+  const captureChannelOptions = useMemo(() => {
+    const maxSupported =
+      selectedCaptureDevice?.channels_supported?.length
+        ? Math.max(...selectedCaptureDevice.channels_supported)
+        : 8;
+
+    const limit = Math.max(1, Math.min(8, maxSupported));
+    return Array.from({ length: limit }, (_, idx) => idx + 1);
+  }, [selectedCaptureDevice]);
+
   useEffect(() => {
     if (!selectedCaptureDevice) {
       return;
     }
 
-    if (selectedCaptureDevice.channels_supported?.length) {
-      const supportedChannels = selectedCaptureDevice.channels_supported;
-      const suggestedChannels = supportedChannels[0];
-      if (suggestedChannels && !supportedChannels.includes(captureChannels)) {
-        setCaptureChannels(suggestedChannels);
-      }
+    if (captureChannelOptions.length > 0 && !captureChannelOptions.includes(captureChannels)) {
+      setCaptureChannels(captureChannelOptions[0]);
     }
 
     const allowedDeviceRates = (selectedCaptureDevice.sample_rates || []).filter(rate =>
@@ -105,7 +130,7 @@ const AddEditSourcePage: React.FC = () => {
     if (allowedDeviceRates.length > 0 && !CAPTURE_SAMPLE_RATE_OPTIONS.includes(captureSampleRate)) {
       setCaptureSampleRate(allowedDeviceRates[0]);
     }
-  }, [selectedCaptureDevice, captureChannels, captureSampleRate]);
+  }, [captureChannelOptions, captureSampleRate, selectedCaptureDevice, captureChannels]);
 
   const formatChannelList = (channels?: number[]): string => {
     if (!channels || channels.length === 0) {
@@ -213,15 +238,18 @@ const AddEditSourcePage: React.FC = () => {
             setCaptureBitDepth(typeof sourceData.bit_depth === 'number' ? sourceData.bit_depth : CAPTURE_DEFAULT_BIT_DEPTH);
             setVncIp(sourceData.vnc_ip || '');
             setVncPort(sourceData.vnc_port?.toString() || '5900');
+            setConfigId(sourceData.config_id || '');
+            setSourceTag(sourceData.tag || '');
 
             const networkIp = (typeof sourceData.ip === 'string' ? sourceData.ip : '') || '';
             const detectedCaptureTag = !sourceData.is_group && typeof sourceData.tag === 'string' && sourceData.tag.startsWith('ac:')
               ? sourceData.tag
               : (!sourceData.is_group && typeof sourceData.ip === 'string' && sourceData.ip.startsWith('ac:') ? sourceData.ip : '');
+            const normalizedTag = normalizeCaptureTag(detectedCaptureTag);
 
-            if (!sourceData.is_group && detectedCaptureTag) {
+            if (!sourceData.is_group && normalizedTag) {
               setInputMode('system');
-              setSelectedCaptureTag(detectedCaptureTag);
+              setSelectedCaptureTag(normalizedTag);
               setIp('');
             } else {
               setInputMode('network');
@@ -403,7 +431,7 @@ const AddEditSourcePage: React.FC = () => {
   };
 
   return (
-    <Container maxW="container.md" py={8}>
+    <Container maxW="container.lg" py={8}>
       <Box
         bg={bgColor}
         borderColor={borderColor}
@@ -429,77 +457,130 @@ const AddEditSourcePage: React.FC = () => {
             {success}
           </Alert>
         )}
+        {(configId || sourceTag) && (
+          <Box
+            mb={5}
+            p={4}
+            borderWidth="1px"
+            borderRadius="md"
+            bg={useColorModeValue('gray.50', 'gray.700')}
+            borderColor={useColorModeValue('gray.200', 'gray.600')}
+          >
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+              {configId && (
+                <Box>
+                  <Text fontSize="xs" color={useColorModeValue('gray.500', 'gray.400')} textTransform="uppercase" letterSpacing="0.05em">
+                    GUID
+                  </Text>
+                  <Text fontWeight="semibold" fontSize="sm">{configId}</Text>
+                </Box>
+              )}
+              {sourceTag && (
+                <Box>
+                  <Text fontSize="xs" color={useColorModeValue('gray.500', 'gray.400')} textTransform="uppercase" letterSpacing="0.05em">
+                    Tag
+                  </Text>
+                  <Text fontWeight="semibold" fontSize="sm">{sourceTag}</Text>
+                </Box>
+              )}
+            </SimpleGrid>
+          </Box>
+        )}
         
-        <Stack spacing={4}>
-          <FormControl isRequired>
-            <FormLabel>Source Name</FormLabel>
-            <Input
-              data-tutorial-id="source-name-input"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              bg={inputBg}
+        <Stack spacing={5}>
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <FormControl isRequired>
+              <FormLabel>Source Name</FormLabel>
+              <Input
+                data-tutorial-id="source-name-input"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                bg={inputBg}
+              />
+            </FormControl>
+
+            {!isGroup && (
+              <FormControl>
+                <FormLabel>Input Type</FormLabel>
+                <Select
+                  value={inputMode}
+                  onChange={(event) => {
+                    const mode = event.target.value as 'network' | 'system';
+                    setInputMode(mode);
+                    if (mode === 'network') {
+                      setSelectedCaptureTag('');
+                      setCaptureChannels(CAPTURE_DEFAULT_CHANNELS);
+                      setCaptureSampleRate(CAPTURE_DEFAULT_SAMPLE_RATE);
+                      setCaptureBitDepth(CAPTURE_DEFAULT_BIT_DEPTH);
+                    }
+                  }}
+                  bg={inputBg}
+                >
+                  <option value="network">Network Source (IP)</option>
+                  <option value="system">System Audio Device</option>
+                </Select>
+              </FormControl>
+            )}
+          </SimpleGrid>
+
+          <FormControl display="flex" alignItems="center">
+            <FormLabel htmlFor="enabled" mb="0">
+              Enabled
+            </FormLabel>
+            <Switch
+              id="enabled"
+              isChecked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
             />
           </FormControl>
 
-          {!isGroup && (
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
             <FormControl>
-              <FormLabel>Input Type</FormLabel>
-              <Select
-                value={inputMode}
-                onChange={(event) => {
-                  const mode = event.target.value as 'network' | 'system';
-                  setInputMode(mode);
-                  if (mode === 'network') {
-                    setSelectedCaptureTag('');
-                    setCaptureChannels(CAPTURE_DEFAULT_CHANNELS);
-                    setCaptureSampleRate(CAPTURE_DEFAULT_SAMPLE_RATE);
-                    setCaptureBitDepth(CAPTURE_DEFAULT_BIT_DEPTH);
-                  }
-                }}
-                bg={inputBg}
+              <FormLabel>Volume</FormLabel>
+              <VolumeSlider
+                value={volume}
+                onChange={setVolume}
+                dataTutorialId="source-volume-slider"
+              />
+            </FormControl>
+
+            <FormControl>
+              <FormLabel>Timeshift</FormLabel>
+              <TimeshiftSlider
+                value={timeshift}
+                onChange={setTimeshift}
+                dataTutorialId="source-timeshift-slider"
+              />
+            </FormControl>
+          </SimpleGrid>
+
+          {!isGroup && inputMode === 'network' && (
+            <FormControl isRequired>
+              <FormLabel>Source IP</FormLabel>
+              <Stack
+                direction={{ base: 'column', md: 'row' }}
+                spacing={2}
+                align={{ base: 'stretch', md: 'center' }}
               >
-                <option value="network">Network Source (IP)</option>
-                <option value="system">System Audio Device</option>
-              </Select>
+                <Input
+                  data-tutorial-id="source-ip-input"
+                  value={ip}
+                  onChange={(e) => setIp(e.target.value)}
+                  bg={inputBg}
+                  flex="1"
+                  placeholder="Enter the source address"
+                />
+                <Button
+                  onClick={() => openMdnsModal('sources')}
+                  variant="outline"
+                  colorScheme="blue"
+                  width={{ base: '100%', md: 'auto' }}
+                >
+                  Discover RTP Sources
+                </Button>
+              </Stack>
             </FormControl>
           )}
-
-          <FormControl isRequired={!isGroup && inputMode === 'network'}>
-            <FormLabel>{inputMode === 'system' ? 'Source Tag' : 'Source IP'}</FormLabel>
-            <Stack
-              direction={{ base: 'column', md: 'row' }}
-              spacing={2}
-              align={{ base: 'stretch', md: 'center' }}
-            >
-              <Input
-                data-tutorial-id="source-ip-input"
-                value={inputMode === 'system' ? (selectedCaptureTag || '') : ip}
-                onChange={(e) => {
-                  if (inputMode === 'network') {
-                    setIp(e.target.value);
-                  }
-                }}
-                bg={inputBg}
-                flex="1"
-                isReadOnly={inputMode === 'system'}
-                placeholder={inputMode === 'system' ? 'Select a system audio capture device' : 'Enter the source address'}
-              />
-              <Button
-                onClick={() => openMdnsModal('sources')}
-                variant="outline"
-                colorScheme="blue"
-                width={{ base: '100%', md: 'auto' }}
-                isDisabled={inputMode === 'system'}
-              >
-                Discover Devices
-              </Button>
-            </Stack>
-            {inputMode === 'system' && systemCaptureDevices.length === 0 && (
-              <Text mt={2} fontSize="sm" color="orange.500">
-                No system capture devices detected. Connect a system audio source to select it here.
-              </Text>
-            )}
-          </FormControl>
 
           {inputMode === 'system' && !isGroup && (
             <>
@@ -552,32 +633,27 @@ const AddEditSourcePage: React.FC = () => {
 
               <SimpleGrid columns={{ base: 1, md: 2, xl: 3 }} spacing={4}>
                 <FormControl>
-                  <FormLabel>Capture Channels</FormLabel>
-                  <NumberInput
-                    value={captureChannels}
-                    onChange={(_, valueNumber) => {
-                      if (Number.isNaN(valueNumber)) {
-                        setCaptureChannels(CAPTURE_DEFAULT_CHANNELS);
-                        return;
+                  <FormLabel>Channels</FormLabel>
+                  <Select
+                    value={captureChannels.toString()}
+                    onChange={(event) => {
+                      const parsed = Number.parseInt(event.target.value, 10);
+                      if (!Number.isNaN(parsed)) {
+                        setCaptureChannels(parsed);
                       }
-                      const clamped = Math.min(Math.max(Math.round(valueNumber), 1), 8);
-                      setCaptureChannels(clamped);
                     }}
-                    min={1}
-                    max={8}
-                    step={1}
                     bg={inputBg}
                   >
-                    <NumberInputField />
-                    <NumberInputStepper>
-                      <NumberIncrementStepper />
-                      <NumberDecrementStepper />
-                    </NumberInputStepper>
-                  </NumberInput>
+                    {captureChannelOptions.map(count => (
+                      <option key={count} value={count.toString()}>
+                        {count}
+                      </option>
+                    ))}
+                  </Select>
                 </FormControl>
 
                 <FormControl>
-                  <FormLabel>Capture Sample Rate</FormLabel>
+                  <FormLabel>Sample Rate</FormLabel>
                   <Select
                     value={captureSampleRate.toString()}
                     onChange={(event) => {
@@ -597,7 +673,7 @@ const AddEditSourcePage: React.FC = () => {
                 </FormControl>
 
                 <FormControl>
-                  <FormLabel>Capture Bit Depth</FormLabel>
+                  <FormLabel>Bit Depth</FormLabel>
                   <Select
                     value={captureBitDepth.toString()}
                     onChange={(event) => {
@@ -616,27 +692,6 @@ const AddEditSourcePage: React.FC = () => {
               </SimpleGrid>
             </>
           )}
-          
-          <FormControl display="flex" alignItems="center">
-            <FormLabel htmlFor="enabled" mb="0">
-              Enabled
-            </FormLabel>
-            <Switch 
-              id="enabled" 
-              isChecked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-            />
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Volume</FormLabel>
-            <VolumeSlider
-              value={volume}
-              onChange={setVolume}
-              dataTutorialId="source-volume-slider"
-            />
-          </FormControl>
-
           <FormControl>
             <FormLabel>Delay (ms)</FormLabel>
             <NumberInput
@@ -658,48 +713,41 @@ const AddEditSourcePage: React.FC = () => {
             </NumberInput>
           </FormControl>
           
-          <FormControl>
-            <FormLabel>Timeshift</FormLabel>
-            <TimeshiftSlider
-              value={timeshift}
-              onChange={setTimeshift}
-              dataTutorialId="source-timeshift-slider"
-            />
-          </FormControl>
-
           <Heading as="h3" size="md" mt={4} mb={2}>
             VNC Settings (Optional)
           </Heading>
           
-          <FormControl>
-            <FormLabel>VNC IP</FormLabel>
-            <Input
-              data-tutorial-id="source-vnc-ip-input"
-              value={vncIp}
-              onChange={(e) => setVncIp(e.target.value)}
-              bg={inputBg}
-              placeholder="Leave empty if not using VNC"
-            />
-          </FormControl>
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <FormControl>
+              <FormLabel>VNC IP</FormLabel>
+              <Input
+                data-tutorial-id="source-vnc-ip-input"
+                value={vncIp}
+                onChange={(e) => setVncIp(e.target.value)}
+                bg={inputBg}
+                placeholder="Leave empty if not using VNC"
+              />
+            </FormControl>
 
-          <FormControl>
-            <FormLabel>VNC Port</FormLabel>
-            <NumberInput
-              data-tutorial-id="source-vnc-port-input"
-              value={vncPort}
-              onChange={(valueString) => setVncPort(valueString)}
-              min={1}
-              max={65535}
-              bg={inputBg}
-              isDisabled={!vncIp}
-            >
-              <NumberInputField />
-              <NumberInputStepper>
-                <NumberIncrementStepper />
-                <NumberDecrementStepper />
-              </NumberInputStepper>
-            </NumberInput>
-          </FormControl>
+            <FormControl>
+              <FormLabel>VNC Port</FormLabel>
+              <NumberInput
+                data-tutorial-id="source-vnc-port-input"
+                value={vncPort}
+                onChange={(valueString) => setVncPort(valueString)}
+                min={1}
+                max={65535}
+                bg={inputBg}
+                isDisabled={!vncIp}
+              >
+                <NumberInputField />
+                <NumberInputStepper>
+                  <NumberIncrementStepper />
+                  <NumberDecrementStepper />
+                </NumberInputStepper>
+              </NumberInput>
+            </FormControl>
+          </SimpleGrid>
         </Stack>
         
         <Flex mt={8} gap={3} justifyContent="flex-end">

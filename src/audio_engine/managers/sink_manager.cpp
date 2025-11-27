@@ -33,6 +33,7 @@ bool SinkManager::add_sink(const SinkConfig& config, bool running) {
     try {
         SinkMixerConfig mixer_config;
         mixer_config.sink_id = config.id;
+        mixer_config.friendly_name = config.friendly_name;
         mixer_config.protocol = config.protocol;
         mixer_config.sap_target_sink = config.sap_target_sink;
         mixer_config.sap_target_host = config.sap_target_host;

@@ -96,6 +96,7 @@ struct SapAnnouncement {
     StreamProperties properties; ///< Parsed audio properties for the stream.
     std::string target_sink;   ///< Optional target sink name for SAP-directed routing.
     std::string target_host;   ///< Optional target host for SAP-directed routing.
+    std::string session_name;  ///< SAP/SDP session name, if present.
 };
 
 /**

@@ -412,6 +412,14 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         return;
     }
 
+    std::string session_name;
+    for (const auto& line : sdp_lines) {
+        if (line.rfind("s=", 0) == 0) {
+            session_name = trim_copy(line.substr(2));
+            break;
+        }
+    }
+
     uint32_t ssrc = 0;
     bool ssrc_found = false;
     for (const auto& line : sdp_lines) {
@@ -775,17 +783,37 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     if (chosen_codec == StreamCodec::OPUS) {
         props.bit_depth = 16;
         props.endianness = Endianness::LITTLE;
-    } else if (chosen_entry->encoding.find("l24") != std::string::npos) {
+    } else if (chosen_entry->encoding.find("s32le") != std::string::npos ||
+               chosen_entry->encoding.find("l32le") != std::string::npos ||
+               chosen_entry->encoding.find("pcm32le") != std::string::npos) {
+        props.bit_depth = 32;
+        props.endianness = Endianness::LITTLE;
+        props.codec = StreamCodec::PCM;
+    } else if (chosen_entry->encoding.find("l32") != std::string::npos ||
+               chosen_entry->encoding.find("s32") != std::string::npos ||
+               chosen_entry->encoding.find("pcm32") != std::string::npos) {
+        props.bit_depth = 32;
+        props.endianness = Endianness::BIG;
+        props.codec = StreamCodec::PCM;
+    } else if (chosen_entry->encoding.find("s24le") != std::string::npos ||
+               chosen_entry->encoding.find("pcm24le") != std::string::npos) {
+        props.bit_depth = 24;
+        props.endianness = Endianness::LITTLE;
+        props.codec = StreamCodec::PCM;
+    } else if (chosen_entry->encoding.find("l24") != std::string::npos ||
+               chosen_entry->encoding.find("pcm24") != std::string::npos) {
         props.bit_depth = 24;
         props.endianness = Endianness::BIG;
         props.codec = StreamCodec::PCM;
-    } else if (chosen_entry->encoding.find("l16") != std::string::npos) {
-        props.bit_depth = 16;
-        props.endianness = Endianness::BIG;
-        props.codec = StreamCodec::PCM;
-    } else if (chosen_entry->encoding.find("s16le") != std::string::npos) {
+    } else if (chosen_entry->encoding.find("s16le") != std::string::npos ||
+               chosen_entry->encoding.find("pcm16le") != std::string::npos) {
         props.bit_depth = 16;
         props.endianness = Endianness::LITTLE;
+        props.codec = StreamCodec::PCM;
+    } else if (chosen_entry->encoding.find("l16") != std::string::npos ||
+               chosen_entry->encoding.find("pcm") != std::string::npos) {
+        props.bit_depth = 16;
+        props.endianness = Endianness::BIG;
         props.codec = StreamCodec::PCM;
     } else {
         props.bit_depth = 16;
@@ -820,6 +848,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         announcement.properties = props;
         announcement.target_sink = target_sink;
         announcement.target_host = target_host;
+        announcement.session_name = session_name;
         announcements_by_stream_endpoint_[connection_key] = announcement;
         if (!tagged_connection_key.empty()) {
             ip_to_properties_[tagged_connection_key] = props;

@@ -314,6 +314,7 @@ export interface MixerTuning {
   max_input_queue_chunks: number;
   min_input_queue_chunks: number;
   max_ready_chunks_per_source: number;
+  max_queued_chunks: number;
 }
 
 export interface SourceProcessorTuning {

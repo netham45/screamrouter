@@ -142,6 +142,7 @@ def settings_to_dict(settings: AudioEngineSettings):
             "max_input_queue_chunks": settings.mixer_tuning.max_input_queue_chunks,
             "min_input_queue_chunks": settings.mixer_tuning.min_input_queue_chunks,
             "max_ready_chunks_per_source": settings.mixer_tuning.max_ready_chunks_per_source,
+            "max_queued_chunks": settings.mixer_tuning.max_queued_chunks,
         },
         "source_processor_tuning": {
             "command_loop_sleep_ms": settings.source_processor_tuning.command_loop_sleep_ms,

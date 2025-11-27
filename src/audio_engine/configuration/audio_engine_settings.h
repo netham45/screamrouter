@@ -75,6 +75,7 @@ struct MixerTuning {
     std::size_t max_input_queue_chunks = 32;
     std::size_t min_input_queue_chunks = 4;
     std::size_t max_ready_chunks_per_source = 8;
+    std::size_t max_queued_chunks = 3;
     double max_input_queue_duration_ms = 0.0;
     double min_input_queue_duration_ms = 0.0;
     double max_ready_queue_duration_ms = 0.0;

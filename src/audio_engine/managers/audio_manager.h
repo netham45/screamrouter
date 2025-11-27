@@ -417,6 +417,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("max_input_queue_chunks", &MixerTuning::max_input_queue_chunks)
         .def_readwrite("min_input_queue_chunks", &MixerTuning::min_input_queue_chunks)
         .def_readwrite("max_ready_chunks_per_source", &MixerTuning::max_ready_chunks_per_source)
+        .def_readwrite("max_queued_chunks", &MixerTuning::max_queued_chunks)
         .def_readwrite("max_input_queue_duration_ms", &MixerTuning::max_input_queue_duration_ms)
         .def_readwrite("min_input_queue_duration_ms", &MixerTuning::min_input_queue_duration_ms)
         .def_readwrite("max_ready_queue_duration_ms", &MixerTuning::max_ready_queue_duration_ms);
