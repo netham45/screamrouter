@@ -543,21 +543,31 @@ void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
     }
     last_rate_update_ = now;
 
-    const double queued_frames = static_cast<double>(padding_frames);
+    // Low-pass padding to avoid reacting to single jitter spikes.
+    constexpr double kAlpha = 0.1;
+    if (filtered_padding_frames_ <= 0.0) {
+        filtered_padding_frames_ = static_cast<double>(padding_frames);
+    } else {
+        filtered_padding_frames_ = filtered_padding_frames_ + kAlpha * (static_cast<double>(padding_frames) - filtered_padding_frames_);
+    }
+
+    const double queued_frames = filtered_padding_frames_;
     // Positive error => queue above target, speed up playback.
     const double error = queued_frames - target_delay_frames_;
-    constexpr double kKp = 0.0005;
-    constexpr double kKi = 0.000005;
-    constexpr double kIntegralClamp = 12000.0;
+    constexpr double kKp = 5e-7;
+    constexpr double kKi = 1e-9;
+    constexpr double kIntegralClamp = 150000.0;
     playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
 
     double adjust = (kKp * error) + (kKi * playback_rate_integral_);
-    constexpr double kMaxPpm = 0.0012; // ±1200 ppm
-    adjust = std::clamp(adjust, -kMaxPpm, kMaxPpm);
+    constexpr double kMaxPpm = 300.0; // ±300 ppm
+    const double max_adjust = kMaxPpm * 1e-6;
+    adjust = std::clamp(adjust, -max_adjust, max_adjust);
 
     double desired_rate = 1.0 + adjust;
-    constexpr double kMaxStep = 0.00015; // ±150 ppm per update
-    const double delta = std::clamp(desired_rate - last_playback_rate_command_, -kMaxStep, kMaxStep);
+    constexpr double kMaxStepPpm = 30.0; // ±30 ppm per update
+    const double max_step = kMaxStepPpm * 1e-6;
+    const double delta = std::clamp(desired_rate - last_playback_rate_command_, -max_step, max_step);
     desired_rate = last_playback_rate_command_ + delta;
 
     constexpr double kHardClamp = 0.98;
@@ -566,9 +576,9 @@ void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
 
     ++rate_log_counter_;
     if (rate_log_counter_ % 100 == 0) {
-        LOG_CPP_INFO("[WasapiPlayback:%s] PI rate update: padding=%u target=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
+        LOG_CPP_INFO("[WasapiPlayback:%s] PI rate update: padding=%.1f target=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
                      config_.sink_id.c_str(),
-                     padding_frames,
+                     queued_frames,
                      target_delay_frames_,
                      error,
                      adjust,
@@ -576,8 +586,8 @@ void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
                      playback_rate_integral_,
                      kKp,
                      kKi,
-                     kMaxPpm * 1e6,
-                     kMaxStep * 1e6);
+                     kMaxPpm,
+                     kMaxStepPpm);
     }
 
     if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {

@@ -367,8 +367,8 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
                      playback_rate_integral_,
                      kKp,
                      kKi,
-                     kMaxPpm * 1e6,
-                     kMaxStep * 1e6);
+                     kMaxPpm,
+                     kMaxStepPpm);
     }
 
     if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
@@ -461,6 +461,7 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
     } else {
         target_delay_frames_ = 0.0;
     }
+    filtered_delay_frames_ = 0.0;
     prefill_target_delay_locked();
 
     if (detected_xrun && is_raspberry_pi_) {
