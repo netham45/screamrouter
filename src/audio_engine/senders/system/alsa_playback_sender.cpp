@@ -335,18 +335,19 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
 
     // Positive error => queue above target, speed up playback to shrink it.
     const double error = filtered_delay_frames_ - target_delay_frames_;
-    constexpr double kKp = 5e-7;        // ~0.5 ppm per frame
-    constexpr double kKi = 1e-9;        // slow integral
-    constexpr double kIntegralClamp = 150000.0; // ~±150 ppm contribution
+    // More aggressive gains: ~3 ppm per frame, integral a bit faster.
+    constexpr double kKp = 3e-6;
+    constexpr double kKi = 5e-8;
+    constexpr double kIntegralClamp = 300000.0; // ~±300 ppm contribution
     playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
 
     double adjust = (kKp * error) + (kKi * playback_rate_integral_);
-    constexpr double kMaxPpm = 300.0; // ±300 ppm
+    constexpr double kMaxPpm = 800.0; // ±800 ppm
     const double max_adjust = kMaxPpm * 1e-6;
     adjust = std::clamp(adjust, -max_adjust, max_adjust);
 
     double desired_rate = 1.0 + adjust;
-    constexpr double kMaxStepPpm = 30.0; // per update slew
+    constexpr double kMaxStepPpm = 80.0; // per update slew
     const double max_step = kMaxStepPpm * 1e-6;
     const double delta = std::clamp(desired_rate - last_playback_rate_command_, -max_step, max_step);
     desired_rate = last_playback_rate_command_ + delta;
