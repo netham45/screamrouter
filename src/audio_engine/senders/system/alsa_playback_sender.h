@@ -67,6 +67,7 @@ private:
     double last_playback_rate_command_ = 1.0;
     std::chrono::steady_clock::time_point last_rate_update_;
     uint64_t rate_log_counter_ = 0;
+    double filtered_delay_frames_ = 0.0;
 
     mutable std::mutex state_mutex_;
     std::chrono::steady_clock::time_point telemetry_last_log_time_{};

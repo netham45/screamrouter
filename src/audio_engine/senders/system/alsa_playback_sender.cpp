@@ -325,50 +325,41 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
     }
     last_rate_update_ = now;
 
-    // If we are about to hit the hardware low-water mark, slow down immediately to avoid an x-run.
-    // This is asymmetric on purpose: we react faster to low queue depth without increasing latency targets.
-    const snd_pcm_sframes_t low_water_frames = static_cast<snd_pcm_sframes_t>(
-        std::max<snd_pcm_uframes_t>(period_frames_, buffer_frames_ > 0 ? buffer_frames_ / 6 : 0));
-    constexpr double kLowWaterRate = 0.97; // temporary slowdown when the queue is in danger
-    constexpr double kHardClamp = 0.96;
-    constexpr double kHardClampMax = 1.02;
-    if (low_water_frames > 0 && delay_frames >= 0 && delay_frames < low_water_frames) {
-        double desired_rate = std::max(kLowWaterRate, last_playback_rate_command_ - 0.00035);
-        desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
-        playback_rate_integral_ = std::min(0.0, playback_rate_integral_); // do not let integral push us faster here
-        if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
-            last_playback_rate_command_ = desired_rate;
-            auto cb = playback_rate_callback_;
-            cb(desired_rate);
-        }
-        return;
+    // Low-pass the delay to avoid reacting to single jitter spikes.
+    constexpr double kAlpha = 0.1; // ~200 ms time constant with 20 ms updates
+    if (filtered_delay_frames_ <= 0.0) {
+        filtered_delay_frames_ = static_cast<double>(delay_frames);
+    } else {
+        filtered_delay_frames_ = filtered_delay_frames_ + kAlpha * (static_cast<double>(delay_frames) - filtered_delay_frames_);
     }
 
-    // Positive error => queue is above target, so speed up playback to shrink it.
-    const double error = static_cast<double>(delay_frames) - target_delay_frames_;
-    // Use asymmetric gains so we react more aggressively when the queue is below target (avoids underruns).
-    const bool queue_low = (error < 0.0);
-    const double kKp = queue_low ? 0.0008 : 0.0005;      // proportional gain
-    const double kKi = queue_low ? 0.000010 : 0.000005;  // integral gain
-    constexpr double kIntegralClamp = 12000.0; // prevents runaway
+    // Positive error => queue above target, speed up playback to shrink it.
+    const double error = filtered_delay_frames_ - target_delay_frames_;
+    constexpr double kKp = 5e-7;        // ~0.5 ppm per frame
+    constexpr double kKi = 1e-9;        // slow integral
+    constexpr double kIntegralClamp = 150000.0; // ~±150 ppm contribution
     playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
 
     double adjust = (kKp * error) + (kKi * playback_rate_integral_);
-    constexpr double kMaxPpm = 0.0012; // ±1200 ppm
-    adjust = std::clamp(adjust, -kMaxPpm, kMaxPpm);
+    constexpr double kMaxPpm = 300.0; // ±300 ppm
+    const double max_adjust = kMaxPpm * 1e-6;
+    adjust = std::clamp(adjust, -max_adjust, max_adjust);
 
     double desired_rate = 1.0 + adjust;
-    constexpr double kMaxStep = 0.00030; // ±300 ppm per update for faster low-queue reaction
-    const double delta = std::clamp(desired_rate - last_playback_rate_command_, -kMaxStep, kMaxStep);
+    constexpr double kMaxStepPpm = 30.0; // per update slew
+    const double max_step = kMaxStepPpm * 1e-6;
+    const double delta = std::clamp(desired_rate - last_playback_rate_command_, -max_step, max_step);
     desired_rate = last_playback_rate_command_ + delta;
 
+    constexpr double kHardClamp = 0.96;
+    constexpr double kHardClampMax = 1.02;
     desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
 
     ++rate_log_counter_;
     if (rate_log_counter_ % 100 == 0) {
-        LOG_CPP_INFO("[AlsaPlayback:%s] PI rate update: delay=%ld target=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
+        LOG_CPP_INFO("[AlsaPlayback:%s] PI rate update: delay=%.1f target=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
                      device_tag_.c_str(),
-                     static_cast<long>(delay_frames),
+                     filtered_delay_frames_,
                      target_delay_frames_,
                      error,
                      adjust,
@@ -544,10 +535,13 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
                                                       : static_cast<snd_pcm_sframes_t>(0);
 
     while (frames_remaining > 0) {
-        int wait_rc = snd_pcm_wait(pcm_handle_, 50);
-        if (wait_rc <= 0) {
-            int wait_err = (wait_rc == 0) ? -EPIPE : wait_rc;
-            if (!handle_write_error(wait_err)) {
+        // Wake frequently to avoid long sleeps that drain the hardware queue and cause underruns.
+        int wait_rc = snd_pcm_wait(pcm_handle_, 10);
+        if (wait_rc == 0) {
+            continue; // timed out, re-check state without treating as an error
+        }
+        if (wait_rc < 0) {
+            if (!handle_write_error(wait_rc)) {
                 return false;
             }
             continue;
