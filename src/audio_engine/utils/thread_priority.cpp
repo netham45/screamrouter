@@ -7,11 +7,14 @@
 #include "cpp_logger.h"
 
 #include <algorithm>
+#include <optional>
+#include <sstream>
 #include <string>
 
 #if defined(__linux__)
 #include <pthread.h>
 #include <sched.h>
+#include <fstream>
 #include <cerrno>
 #include <cstring>
 #elif defined(_WIN32)
@@ -35,6 +38,73 @@ const char* safe_name(const char* name) {
 }
 
 #if defined(__linux__)
+std::optional<int> detect_thread_cpu(pthread_t handle, const char* thread_name) {
+    const pid_t tid = pthread_gettid_np(handle);
+    if (tid <= 0) {
+        LOG_CPP_WARNING("[ThreadPriority] %s: Failed to resolve TID for CPU detection (errno=%d, %s).",
+                        safe_name(thread_name), errno, strerror(errno));
+        return std::nullopt;
+    }
+
+    const std::string stat_path = "/proc/self/task/" + std::to_string(tid) + "/stat";
+    std::ifstream stat_file(stat_path);
+    if (!stat_file.is_open()) {
+        LOG_CPP_WARNING("[ThreadPriority] %s: Unable to open %s for CPU detection (errno=%d, %s).",
+                        safe_name(thread_name), stat_path.c_str(), errno, strerror(errno));
+        return std::nullopt;
+    }
+
+    std::string stat_line;
+    std::getline(stat_file, stat_line);
+    const auto comm_end = stat_line.rfind(')');
+    if (comm_end == std::string::npos || comm_end + 2 >= stat_line.size()) {
+        LOG_CPP_WARNING("[ThreadPriority] %s: Malformed stat entry while detecting CPU.", safe_name(thread_name));
+        return std::nullopt;
+    }
+
+    // Fields after the comm begin with state (field #3). CPU id is overall field #39.
+    constexpr int kProcessorFieldIndex = 39 - 3; // Zero-based offset into tokens after comm
+    std::istringstream fields(stat_line.substr(comm_end + 2));
+    std::string token;
+    int index = 0;
+    while (fields >> token) {
+        if (index == kProcessorFieldIndex) {
+            try {
+                return std::stoi(token);
+            } catch (...) {
+                LOG_CPP_WARNING("[ThreadPriority] %s: Failed to parse CPU field '%s'.",
+                                safe_name(thread_name), token.c_str());
+                return std::nullopt;
+            }
+        }
+        ++index;
+    }
+
+    LOG_CPP_WARNING("[ThreadPriority] %s: CPU field missing while detecting processor affinity.", safe_name(thread_name));
+    return std::nullopt;
+}
+
+void apply_affinity_to_cpu(pthread_t handle, int cpu, const char* thread_name) {
+    if (cpu < 0 || cpu >= CPU_SETSIZE) {
+        LOG_CPP_WARNING("[ThreadPriority] %s: CPU %d is out of affinity set range (CPU_SETSIZE=%d).",
+                        safe_name(thread_name), cpu, CPU_SETSIZE);
+        return;
+    }
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpu, &cpuset);
+
+    const int ret = pthread_setaffinity_np(handle, sizeof(cpuset), &cpuset);
+    if (ret != 0) {
+        LOG_CPP_WARNING("[ThreadPriority] %s: Failed to pin to CPU %d (err=%d, %s).",
+                        safe_name(thread_name), cpu, ret, strerror(ret));
+        return;
+    }
+
+    LOG_CPP_INFO("[ThreadPriority] %s pinned to CPU %d.", safe_name(thread_name), cpu);
+}
+
 bool set_posix_realtime_priority(pthread_t handle, const char* thread_name) {
     sched_param params{};
     const int policy = SCHED_FIFO;
@@ -62,6 +132,11 @@ bool set_posix_realtime_priority(pthread_t handle, const char* thread_name) {
 
     LOG_CPP_INFO("[ThreadPriority] %s promoted to real-time (policy=SCHED_FIFO priority=%d).",
                  safe_name(thread_name), params.sched_priority);
+
+    if (const auto cpu = detect_thread_cpu(handle, thread_name)) {
+        apply_affinity_to_cpu(handle, *cpu, thread_name);
+    }
+
     return true;
 }
 #elif defined(_WIN32)
