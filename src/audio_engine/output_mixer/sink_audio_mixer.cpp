@@ -1026,6 +1026,14 @@ void SinkAudioMixer::downscale_buffer() {
             int processed = output_post_processor_->processAudio(
                 reinterpret_cast<const uint8_t*>(mixing_buffer_.data()),
                 output_post_buffer_.data());
+            ++output_post_log_counter_;
+            if (output_post_log_counter_ % 100 == 0) {
+                LOG_CPP_INFO("[SinkMixer:%s] Output post-processor: in_samples=%zu out_samples=%d playback_rate=%.6f",
+                             config_.sink_id.c_str(),
+                             mixing_buffer_.size(),
+                             processed,
+                             output_playback_rate_.load());
+            }
             if (processed > 0) {
                 samples_to_convert = static_cast<size_t>(processed);
                 read_ptr = output_post_buffer_.data();

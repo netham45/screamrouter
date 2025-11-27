@@ -291,7 +291,13 @@ bool AlsaPlaybackSender::configure_device() {
                  got_period_us, buffer_frames_, got_buffer_us);
 
     frames_written_.store(0, std::memory_order_release);
-    target_delay_frames_ = period_frames_ > 0 ? static_cast<double>(period_frames_) : 0.0;
+    if (buffer_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+    } else if (period_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(period_frames_) * 2.0;
+    } else {
+        target_delay_frames_ = 0.0;
+    }
     playback_rate_integral_ = 0.0;
     last_playback_rate_command_ = 1.0;
     return true;
@@ -300,6 +306,16 @@ bool AlsaPlaybackSender::configure_device() {
 void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t delay_frames) {
     if (!playback_rate_callback_ || delay_frames < 0) {
         return;
+    }
+
+    playback_rate_integral_ = 0.0;
+    last_playback_rate_command_ = 1.0;
+    if (buffer_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+    } else if (period_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(period_frames_) * 2.0;
+    } else {
+        target_delay_frames_ = 0.0;
     }
 
     if (target_delay_frames_ <= 0.0) {
@@ -379,6 +395,15 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         LOG_CPP_WARNING("[AlsaPlayback:%s] Write error while feeding ALSA (err=%s). Attempting recovery.",
                         device_tag_.c_str(), snd_strerror(original_err));
     }
+
+    snd_pcm_sframes_t dbg_delay = 0;
+    snd_pcm_delay(pcm_handle_, &dbg_delay);
+    LOG_CPP_INFO("[AlsaPlayback:%s] Pre-recover state: pcm_state=%d delay_frames=%ld target_delay=%.1f rate_cmd=%.6f",
+                 device_tag_.c_str(),
+                 snd_pcm_state(pcm_handle_),
+                 static_cast<long>(dbg_delay),
+                 target_delay_frames_,
+                 last_playback_rate_command_);
 
     err = snd_pcm_recover(pcm_handle_, err, 1);
     if (err < 0) {

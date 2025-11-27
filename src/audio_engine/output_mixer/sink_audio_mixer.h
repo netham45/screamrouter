@@ -211,6 +211,7 @@ private:
     std::vector<int32_t> output_post_buffer_;
     std::mutex output_processor_mutex_;
     std::atomic<double> output_playback_rate_{1.0};
+    uint64_t output_post_log_counter_{0};
     std::vector<int32_t> stereo_buffer_;
     std::vector<uint8_t> payload_buffer_;
     size_t payload_buffer_read_pos_ = 0;
