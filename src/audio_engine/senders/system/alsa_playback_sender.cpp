@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <sstream>
+#include <vector>
 
 namespace screamrouter {
 namespace audio {
@@ -300,22 +301,13 @@ bool AlsaPlaybackSender::configure_device() {
     }
     playback_rate_integral_ = 0.0;
     last_playback_rate_command_ = 1.0;
+    prefill_target_delay_locked();
     return true;
 }
 
 void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t delay_frames) {
     if (!playback_rate_callback_ || delay_frames < 0) {
         return;
-    }
-
-    playback_rate_integral_ = 0.0;
-    last_playback_rate_command_ = 1.0;
-    if (buffer_frames_ > 0) {
-        target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
-    } else if (period_frames_ > 0) {
-        target_delay_frames_ = static_cast<double>(period_frames_) * 2.0;
-    } else {
-        target_delay_frames_ = 0.0;
     }
 
     if (target_delay_frames_ <= 0.0) {
@@ -375,6 +367,43 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
     }
 }
 
+void AlsaPlaybackSender::prefill_target_delay_locked() {
+    if (!pcm_handle_ || bytes_per_frame_ == 0 || target_delay_frames_ <= 0.0) {
+        return;
+    }
+
+    snd_pcm_sframes_t current_delay = 0;
+    if (snd_pcm_delay(pcm_handle_, &current_delay) < 0) {
+        return;
+    }
+    if (current_delay < 0) {
+        current_delay = 0;
+    }
+
+    const snd_pcm_sframes_t desired_delay = static_cast<snd_pcm_sframes_t>(target_delay_frames_);
+    snd_pcm_sframes_t deficit = desired_delay - current_delay;
+    if (deficit <= 0) {
+        return;
+    }
+
+    const snd_pcm_sframes_t max_prefill = buffer_frames_ > 0
+                                              ? static_cast<snd_pcm_sframes_t>(buffer_frames_)
+                                              : deficit;
+    deficit = std::min(deficit, max_prefill);
+    std::vector<uint8_t> zeros(static_cast<size_t>(deficit) * bytes_per_frame_, 0);
+    snd_pcm_sframes_t written = snd_pcm_writei(pcm_handle_, zeros.data(), deficit);
+    if (written < 0) {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] Prefill write failed: %s", device_tag_.c_str(), snd_strerror(static_cast<int>(written)));
+    } else {
+        LOG_CPP_INFO("[AlsaPlayback:%s] Prefilled %ld frames of silence toward target_delay=%.1f (initial_delay=%ld, written=%ld).",
+                     device_tag_.c_str(),
+                     static_cast<long>(deficit),
+                     target_delay_frames_,
+                     static_cast<long>(current_delay),
+                     static_cast<long>(written));
+    }
+}
+
 bool AlsaPlaybackSender::handle_write_error(int err) {
     if (!pcm_handle_) {
         return false;
@@ -418,7 +447,10 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
     } else if (period_frames_ > 0) {
         target_delay_frames_ = static_cast<double>(period_frames_) * 2.0;
+    } else {
+        target_delay_frames_ = 0.0;
     }
+    prefill_target_delay_locked();
 
     if (detected_xrun && is_raspberry_pi_) {
         LOG_CPP_WARNING("[AlsaPlayback:%s] ALSA x-run detected on Raspberry Pi; recreating playback device.", device_tag_.c_str());

@@ -45,6 +45,7 @@ private:
     void close_locked();
     void maybe_log_telemetry_locked();
     void maybe_update_playback_rate_locked(snd_pcm_sframes_t delay_frames);
+    void prefill_target_delay_locked();
 
     SinkMixerConfig config_;
     std::string device_tag_;
