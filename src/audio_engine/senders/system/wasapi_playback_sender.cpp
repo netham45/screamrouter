@@ -544,18 +544,19 @@ void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
     last_rate_update_ = now;
 
     const double queued_frames = static_cast<double>(padding_frames);
-    const double error = target_delay_frames_ - queued_frames;
-    constexpr double kKp = 0.0010;
-    constexpr double kKi = 0.00002;
-    constexpr double kIntegralClamp = 24000.0;
+    // Positive error => queue above target, speed up playback.
+    const double error = queued_frames - target_delay_frames_;
+    constexpr double kKp = 0.0005;
+    constexpr double kKi = 0.000005;
+    constexpr double kIntegralClamp = 12000.0;
     playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
 
     double adjust = (kKp * error) + (kKi * playback_rate_integral_);
-    constexpr double kMaxPpm = 0.0008; // ±800 ppm
+    constexpr double kMaxPpm = 0.0012; // ±1200 ppm
     adjust = std::clamp(adjust, -kMaxPpm, kMaxPpm);
 
     double desired_rate = 1.0 + adjust;
-    constexpr double kMaxStep = 0.0001; // ±100 ppm per update
+    constexpr double kMaxStep = 0.00015; // ±150 ppm per update
     const double delta = std::clamp(desired_rate - last_playback_rate_command_, -kMaxStep, kMaxStep);
     desired_rate = last_playback_rate_command_ + delta;
 
