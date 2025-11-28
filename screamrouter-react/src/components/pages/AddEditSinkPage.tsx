@@ -104,6 +104,13 @@ const AddEditSinkPage: React.FC = () => {
     return systemPlaybackDevices.find(device => device.tag === selectedPlaybackTag);
   }, [systemPlaybackDevices, selectedPlaybackTag]);
 
+  const remoteFormatLocked = useMemo(
+    () => outputMode === 'network' && selectedServerId !== 'local' && !!remoteSelection,
+    [outputMode, remoteSelection, selectedServerId]
+  );
+
+  const rtpOpusForcedFormat = useMemo(() => protocol === 'rtp_opus' && outputMode === 'network', [outputMode, protocol]);
+
   const normalizePlaybackTag = (value?: string | null): string => {
     if (!value) {
       return '';
@@ -652,6 +659,18 @@ const AddEditSinkPage: React.FC = () => {
     }
   }, [outputMode, protocol]);
 
+  useEffect(() => {
+    if (!rtpOpusForcedFormat) {
+      return;
+    }
+    if (bitDepth !== '16') {
+      setBitDepth('16');
+    }
+    if (sampleRate !== '48000') {
+      setSampleRate('48000');
+    }
+  }, [bitDepth, rtpOpusForcedFormat, sampleRate]);
+
   const handleSubmit = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
@@ -690,6 +709,13 @@ const AddEditSinkPage: React.FC = () => {
     if (isNaN(channelsNum) || channelsNum < 1 || channelsNum > 8) {
       setError('Channel layout must resolve to between 1 and 8 channels');
       return;
+    }
+
+    if (rtpOpusForcedFormat) {
+      if (bitDepthNum !== 16 || sampleRateNum !== 48000) {
+        setError('RTP (Opus) requires 16-bit depth and 48000 Hz sample rate.');
+        return;
+      }
     }
 
     const sinkData: Partial<Sink> = {
@@ -1018,7 +1044,7 @@ const AddEditSinkPage: React.FC = () => {
 
           {outputMode === 'network' && (
             <FormControl>
-              <FormLabel>Sink ScreamRouter Server</FormLabel>
+              <FormLabel>Sink Location</FormLabel>
               <HStack spacing={2} align="center">
                 <Select
                   value={selectedServerId}
@@ -1040,10 +1066,10 @@ const AddEditSinkPage: React.FC = () => {
                   }}
                   bg={inputBg}
                 >
-                  <option value="local">Local</option>
+                  <option value="local">Network IP (RTP)</option>
                   {instances.filter(inst => !inst.isCurrent).map(inst => (
                     <option key={inst.id} value={inst.id}>
-                      {inst.label} {inst.isCurrent ? '(current)' : ''}
+                      ScreamRouter - {inst.label} {inst.isCurrent ? '(current)' : ''}
                     </option>
                   ))}
                 </Select>
@@ -1077,25 +1103,25 @@ const AddEditSinkPage: React.FC = () => {
                   if (!remoteSink || !selectedInstance) {
                     return;
                   }
-          const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${remoteSink.name}`;
-          setName(baseName);
-          setSapTargetSink(remoteSink.config_id || remoteSink.name);
-          setSapTargetHost(selectedInstance.uuid || selectedInstance.hostname || selectedInstance.address || '');
-          setProtocol('rtp');
-          setOutputMode('network');
-          setIp(selectedInstance.address || selectedInstance.hostname || remoteSink.ip || '');
-          setPort(randomHighPort().toString());
-          setBitDepth((remoteSink.bit_depth || 16).toString());
-          setSampleRate((remoteSink.sample_rate || 48000).toString());
-          const remoteLayout = remoteSink.channel_layout || layoutFromChannelCount(remoteSink.channels) || 'stereo';
-          setChannelLayout(remoteLayout);
-          setVolume(remoteSink.volume ?? 1);
-          setDelay(remoteSink.delay ?? 0);
-          setTimeshift(remoteSink.timeshift ?? 0);
-          setTimeSync(remoteSink.time_sync ?? false);
-          setTimeSyncDelay((remoteSink.time_sync_delay ?? 0).toString());
-          setVolumeNormalization(remoteSink.volume_normalization ?? false);
-        }}
+                  const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${remoteSink.name}`;
+                  setName(baseName);
+                  setSapTargetSink(remoteSink.config_id || remoteSink.name);
+                  setSapTargetHost(selectedInstance.uuid || selectedInstance.hostname || selectedInstance.address || '');
+                  setProtocol('rtp');
+                  setOutputMode('network');
+                  setIp(selectedInstance.address || selectedInstance.hostname || remoteSink.ip || '');
+                  setPort(randomHighPort().toString());
+                  setBitDepth((remoteSink.bit_depth || 16).toString());
+                  setSampleRate((remoteSink.sample_rate || 48000).toString());
+                  const remoteLayout = remoteSink.channel_layout || layoutFromChannelCount(remoteSink.channels) || 'stereo';
+                  setChannelLayout(remoteLayout);
+                  setVolume(remoteSink.volume ?? 1);
+                  setDelay(remoteSink.delay ?? 0);
+                  setTimeshift(remoteSink.timeshift ?? 0);
+                  setTimeSync(remoteSink.time_sync ?? false);
+                  setTimeSyncDelay((remoteSink.time_sync_delay ?? 0).toString());
+                  setVolumeNormalization(remoteSink.volume_normalization ?? false);
+                }}
                 isDisabled={remoteLoading}
                 bg={inputBg}
               >
@@ -1113,6 +1139,11 @@ const AddEditSinkPage: React.FC = () => {
               {!remoteLoading && remoteSinks.length === 0 && !remoteError && (
                 <Text mt={1} fontSize="sm" color="gray.500">
                   No remote sinks found on this server.
+                </Text>
+              )}
+              {remoteFormatLocked && (
+                <Text mt={2} fontSize="sm" color="gray.500">
+                  Format settings are locked to the selected remote sink.
                 </Text>
               )}
             </FormControl>
@@ -1240,11 +1271,17 @@ const AddEditSinkPage: React.FC = () => {
                 value={bitDepth}
                 onChange={(e) => setBitDepth(e.target.value)}
                 bg={inputBg}
+                isDisabled={remoteFormatLocked || rtpOpusForcedFormat}
               >
                 <option value="16">16</option>
                 <option value="24">24</option>
                 <option value="32">32</option>
               </Select>
+              {rtpOpusForcedFormat && (
+                <Text mt={1} fontSize="sm" color="gray.500">
+                  Opus RTP requires 16-bit PCM input.
+                </Text>
+              )}
             </FormControl>
             
             <FormControl>
@@ -1254,6 +1291,7 @@ const AddEditSinkPage: React.FC = () => {
                 value={sampleRate}
                 onChange={(e) => setSampleRate(e.target.value)}
                 bg={inputBg}
+                isDisabled={remoteFormatLocked || rtpOpusForcedFormat}
               >
                 <option value="44100">44100</option>
                 <option value="48000">48000</option>
@@ -1261,6 +1299,11 @@ const AddEditSinkPage: React.FC = () => {
                 <option value="96000">96000</option>
                 <option value="192000">192000</option>
               </Select>
+              {rtpOpusForcedFormat && (
+                <Text mt={1} fontSize="sm" color="gray.500">
+                  Opus RTP advertises a fixed 48000 Hz clock rate.
+                </Text>
+              )}
             </FormControl>
             
             <FormControl>
@@ -1270,6 +1313,7 @@ const AddEditSinkPage: React.FC = () => {
                 value={channelLayout}
                 onChange={(e) => setChannelLayout(e.target.value)}
                 bg={inputBg}
+                isDisabled={remoteFormatLocked}
               >
                 {channelLayoutOptions.map(option => (
                   <option key={option.value} value={option.value}>

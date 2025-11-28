@@ -599,6 +599,9 @@ pybind11::list AudioManager::get_rtp_sap_announcements() {
         if (!announcement.session_name.empty()) {
             entry["session_name"] = announcement.session_name;
         }
+        if (!announcement.stream_guid.empty()) {
+            entry["stream_guid"] = announcement.stream_guid;
+        }
         result.append(entry);
     }
 

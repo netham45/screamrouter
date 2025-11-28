@@ -575,7 +575,7 @@ const AddEditRoutePage: React.FC = () => {
             </FormControl>
 
             <FormControl isRequired>
-              <FormLabel>Sink ScreamRouter Server</FormLabel>
+              <FormLabel>Sink Location</FormLabel>
               <Select
                 value={selectedServerId}
                 onChange={(e) => {
@@ -595,10 +595,10 @@ const AddEditRoutePage: React.FC = () => {
                   }
                 }}
               >
-                <option value="local">Local</option>
+                <option value="local">Network IP (RTP)</option>
                 {instances.filter(instance => !instance.isCurrent).map(instance => (
                   <option key={instance.id} value={instance.id}>
-                    {instance.label} {instance.isCurrent ? '(current)' : ''}
+                    ScreamRouter - {instance.label} {instance.isCurrent ? '(current)' : ''}
                   </option>
                 ))}
               </Select>

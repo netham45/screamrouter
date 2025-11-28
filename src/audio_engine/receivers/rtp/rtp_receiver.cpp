@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -60,6 +61,29 @@ void swap_endianness(uint8_t* data, size_t size, int bit_depth) {
             std::swap(data[i + 1], data[i + 2]);
         }
     }
+}
+
+std::string sanitize_tag(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    char last = '\0';
+    for (char c : input) {
+        char lowered = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (std::isalnum(static_cast<unsigned char>(lowered))) {
+            out.push_back(lowered);
+            last = lowered;
+        } else if (c == '-' || c == '_') {
+            out.push_back(c);
+            last = c;
+        } else if (last != '_') {
+            out.push_back('_');
+            last = '_';
+        }
+    }
+    while (!out.empty() && out.back() == '_') {
+        out.pop_back();
+    }
+    return out;
 }
 
 bool resolve_opus_multistream_layout(int channels,
@@ -674,7 +698,25 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
 
     char client_ip_str[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
+    const int announced_port = (props.port > 0) ? props.port : ntohs(client_addr.sin_port);
     std::string source_tag = client_ip_str;
+    if (sap_listener_) {
+        std::string sap_guid;
+        std::string sap_session;
+        // Prefer SSRC-bound identity when available, then IP/port.
+        if (!sap_listener_->get_stream_identity_by_ssrc(ssrc, sap_guid, sap_session)) {
+            sap_listener_->get_stream_identity(client_ip_str, announced_port, sap_guid, sap_session);
+        }
+
+        if (!sap_guid.empty()) {
+            source_tag = "rtp:" + sap_guid;
+        } else if (!sap_session.empty()) {
+            const auto sanitized = sanitize_tag(sap_session);
+            if (!sanitized.empty()) {
+                source_tag = "rtp:" + sanitized;
+            }
+        }
+    }
 
     for (auto& packet_data : ready_packets) {
         RtpPayloadReceiver* handler = nullptr;

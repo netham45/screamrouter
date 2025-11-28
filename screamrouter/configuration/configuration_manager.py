@@ -3524,6 +3524,9 @@ class ConfigurationManager(threading.Thread):
                             identifier_parts.append(stream_ip)
                         identifier = ":".join(identifier_parts)
 
+                        sap_guid = str(announcement.get("stream_guid") or "").strip()
+                        sap_session_name = str(announcement.get("session_name") or "").strip()
+
                         properties = {
                             "source": "cpp_engine",
                             "discovery": "sap",
@@ -3534,8 +3537,18 @@ class ConfigurationManager(threading.Thread):
                                 properties[key] = value
                                 if key == "session_name":
                                     properties.setdefault("sap_session_name", value)
+                        if sap_guid:
+                            properties.setdefault("sap_guid", sap_guid)
                         if stream_ip:
                             properties.setdefault("stream_ip", stream_ip)
+
+                        sap_tag = None
+                        if sap_guid:
+                            sap_tag = f"rtp:{sap_guid}"
+                        elif sap_session_name:
+                            normalized_session = self._sanitize_screamrouter_label(sap_session_name)
+                            if normalized_session:
+                                sap_tag = f"rtp:{normalized_session}"
 
                         if legacy_device:
                             legacy_props = dict(legacy_device.properties or {})
@@ -3547,6 +3560,7 @@ class ConfigurationManager(threading.Thread):
                             identifier=identifier,
                             ip=ip_value,
                             port=port_value,
+                            tag=sap_tag,
                             device_type="rtp_stream",
                             properties=properties,
                         ):
@@ -3576,9 +3590,9 @@ class ConfigurationManager(threading.Thread):
                             ip=ip_value,
                             port=port_value,
                             device_type="rtp_stream",
+                            tag=sap_tag or (legacy_device.tag if legacy_device and legacy_device.tag else None),
                             properties=properties,
                             name=legacy_device.name if legacy_device and legacy_device.name else None,
-                            tag=legacy_device.tag if legacy_device and legacy_device.tag else None,
                         )
             except Exception as e:
                 _logger.error("[Configuration Manager] Error processing SAP announcements from C++ RTP Receiver: %s", e)
@@ -3699,6 +3713,16 @@ class ConfigurationManager(threading.Thread):
             except Exception:  # pylint: disable=broad-except
                 ip_value = source_ip
 
+            sap_guid = str(announcement.get("stream_guid") or "").strip()
+            sap_session_name = str(announcement.get("session_name") or "").strip()
+            sap_tag = None
+            if sap_guid:
+                sap_tag = f"rtp:{sap_guid}"
+            elif sap_session_name:
+                normalized_session = self._sanitize_screamrouter_label(sap_session_name)
+                if normalized_session:
+                    sap_tag = f"rtp:{normalized_session}"
+
             announcer = str(announcement.get("announcer_ip") or "").strip().replace(":", "_")
             name_suffix = f"_{announcer}" if announcer else ""
             base_source_name = f"{prefix}{sink.name}_{source_ip}:{port_int}{name_suffix}"
@@ -3730,8 +3754,8 @@ class ConfigurationManager(threading.Thread):
 
             source_desc = SourceDescription(
                 name=source_name,
-                ip=ip_value,
-                tag=None,
+                ip=None if sap_tag else ip_value,
+                tag=sap_tag,
                 channels=announcement.get("channels"),
                 sample_rate=announcement.get("sample_rate"),
                 bit_depth=announcement.get("bit_depth"),

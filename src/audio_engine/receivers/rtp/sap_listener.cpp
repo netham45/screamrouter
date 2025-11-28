@@ -157,6 +157,40 @@ std::vector<SapAnnouncement> SapListener::get_announcements() {
     return announcements;
 }
 
+bool SapListener::get_stream_identity(const std::string& ip, int port, std::string& guid, std::string& session_name) {
+    const std::string key = make_ip_port_key(ip, port);
+    const std::string tagged_key = port > 0 ? key + "#sap-" + std::to_string(port) : key;
+    std::lock_guard<std::mutex> lock(ip_map_mutex_);
+
+    auto it = announcements_by_stream_endpoint_.find(tagged_key);
+    if (it == announcements_by_stream_endpoint_.end()) {
+        it = announcements_by_stream_endpoint_.find(key);
+    }
+    if (it == announcements_by_stream_endpoint_.end()) {
+        // Try bare IP (no port) for multicast or looser matches.
+        const std::string ip_only = ip;
+        it = announcements_by_stream_endpoint_.find(ip_only);
+    }
+    if (it == announcements_by_stream_endpoint_.end()) {
+        return false;
+    }
+
+    guid = it->second.stream_guid;
+    session_name = it->second.session_name;
+    return true;
+}
+
+bool SapListener::get_stream_identity_by_ssrc(uint32_t ssrc, std::string& guid, std::string& session_name) {
+    std::lock_guard<std::mutex> lock(ssrc_map_mutex_);
+    auto it = ssrc_to_identity_.find(ssrc);
+    if (it == ssrc_to_identity_.end()) {
+        return false;
+    }
+    guid = it->second.first;
+    session_name = it->second.second;
+    return true;
+}
+
 void SapListener::set_session_callback(SessionCallback callback) {
     session_callback_ = std::move(callback);
 }
@@ -461,6 +495,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     int port = 0;
     std::string target_sink;
     std::string target_host;
+    std::string stream_guid;
     std::vector<int> audio_payload_types;
     for (const auto& line : sdp_lines) {
         if (line.rfind("m=audio ", 0) == 0) {
@@ -477,6 +512,8 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                 session_callback_(connection_ip, port, source_ip);
             }
             break;
+        } else if (line.rfind("a=x-screamrouter-guid:", 0) == 0) {
+            stream_guid = trim_copy(line.substr(std::strlen("a=x-screamrouter-guid:")));
         } else if (line.rfind("a=x-screamrouter-target:", 0) == 0) {
             std::string target_block = trim_copy(line.substr(std::strlen("a=x-screamrouter-target:")));
             if (!target_block.empty()) {
@@ -617,6 +654,10 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
             if (target_sink.empty()) {
                 target_sink = trim_copy(target_block);
             }
+        }
+        const auto guid_it = kv.second.find("x-screamrouter-guid");
+        if (guid_it != kv.second.end() && stream_guid.empty()) {
+            stream_guid = trim_copy(guid_it->second);
         }
     }
 
@@ -846,6 +887,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         announcement.announcer_ip = source_ip;
         announcement.port = port;
         announcement.properties = props;
+        announcement.stream_guid = stream_guid;
         announcement.target_sink = target_sink;
         announcement.target_host = target_host;
         announcement.session_name = session_name;
@@ -854,6 +896,18 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
             ip_to_properties_[tagged_connection_key] = props;
             announcements_by_stream_endpoint_[tagged_connection_key] = announcement;
         }
+
+        const std::string source_key = make_ip_port_key(source_ip, port);
+        if (!source_key.empty()) {
+            announcements_by_stream_endpoint_[source_key] = announcement;
+        }
+        if (!source_ip.empty()) {
+            announcements_by_stream_endpoint_[source_ip] = announcement;
+        }
+    }
+
+    if (ssrc_found) {
+        ssrc_to_identity_[ssrc] = {stream_guid, session_name};
     }
 
     LOG_CPP_DEBUG(

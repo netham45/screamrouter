@@ -535,6 +535,7 @@ void RtpSender::sap_announcement_loop() {
             const uint32_t channel_count = rtp_channel_count();
             const std::string codec_name = sdp_payload_name();
             const auto extra_attributes = sdp_format_specific_attributes();
+            const std::string stream_guid = config_.sink_id;
 
             sdp << "m=audio " << config_.output_port << " RTP/AVP " << static_cast<int>(payload_type) << "\n"; 
             sdp << "a=rtpmap:" << static_cast<int>(payload_type) << " " << codec_name << "/" << effective_clock_rate;
@@ -547,7 +548,13 @@ void RtpSender::sap_announcement_loop() {
                 if (!config_.sap_target_host.empty()) {
                     sdp << ";host=" << config_.sap_target_host;
                 }
+                if (!stream_guid.empty()) {
+                    sdp << ";x-screamrouter-guid=" << stream_guid;
+                }
                 sdp << "\n";
+            } else if (!stream_guid.empty()) {
+                // Expose GUID even when no SAP target is configured.
+                sdp << "a=fmtp:" << static_cast<int>(payload_type) << " x-screamrouter-guid=" << stream_guid << "\n";
             }
             for (const auto& attribute : extra_attributes) {
                 if (attribute.empty()) {
@@ -565,6 +572,9 @@ void RtpSender::sap_announcement_loop() {
                     sdp << ";host=" << config_.sap_target_host;
                 }
                 sdp << "\n";
+            }
+            if (!stream_guid.empty()) {
+                sdp << "a=x-screamrouter-guid:" << stream_guid << "\n";
             }
 
             // Add channel map if channels > 2, using the scream channel layout

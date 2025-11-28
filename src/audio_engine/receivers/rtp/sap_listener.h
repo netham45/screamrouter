@@ -94,6 +94,7 @@ struct SapAnnouncement {
     std::string announcer_ip;  ///< IP address that sent the SAP announcement.
     int port;                  ///< RTP port announced for the stream.
     StreamProperties properties; ///< Parsed audio properties for the stream.
+    std::string stream_guid;   ///< Optional GUID/identifier for the stream (x-screamrouter-guid).
     std::string target_sink;   ///< Optional target sink name for SAP-directed routing.
     std::string target_host;   ///< Optional target host for SAP-directed routing.
     std::string session_name;  ///< SAP/SDP session name, if present.
@@ -154,6 +155,8 @@ public:
      * @return A vector containing the discovered SAP announcements.
      */
     std::vector<SapAnnouncement> get_announcements();
+    bool get_stream_identity(const std::string& ip, int port, std::string& guid, std::string& session_name);
+    bool get_stream_identity_by_ssrc(uint32_t ssrc, std::string& guid, std::string& session_name);
 
     std::string logger_prefix_;
     /** @brief The main loop for the listener thread. */
@@ -182,6 +185,7 @@ public:
 
     std::mutex ssrc_map_mutex_;
     std::unordered_map<uint32_t, StreamProperties> ssrc_to_properties_;
+    std::unordered_map<uint32_t, std::pair<std::string, std::string>> ssrc_to_identity_;
     
     std::mutex ip_map_mutex_;
     std::unordered_map<std::string, StreamProperties> ip_to_properties_;
