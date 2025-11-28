@@ -2103,6 +2103,10 @@ void SinkAudioMixer::run() {
             if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
                 alsa_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
             }
+#elif defined(_WIN32)
+            if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+                wasapi_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
+            }
 #endif
         }
 

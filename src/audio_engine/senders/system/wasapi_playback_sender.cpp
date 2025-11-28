@@ -139,6 +139,8 @@ void WasapiPlaybackSender::close() {
     frames_written_.store(0, std::memory_order_release);
     playback_rate_integral_ = 0.0;
     target_delay_frames_ = 0.0;
+    upstream_buffer_frames_ = 0.0;
+    upstream_target_frames_ = 0.0;
     last_playback_rate_command_ = 1.0;
 
     uninitialize_com();
@@ -146,6 +148,11 @@ void WasapiPlaybackSender::close() {
 
 void WasapiPlaybackSender::set_playback_rate_callback(std::function<void(double)> cb) {
     playback_rate_callback_ = std::move(cb);
+}
+
+void WasapiPlaybackSender::update_pipeline_backlog(double upstream_frames, double upstream_target_frames) {
+    upstream_buffer_frames_ = std::max(0.0, upstream_frames);
+    upstream_target_frames_ = std::max(0.0, upstream_target_frames);
 }
 
 bool WasapiPlaybackSender::initialize_com() {
@@ -551,9 +558,10 @@ void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
         filtered_padding_frames_ = filtered_padding_frames_ + kAlpha * (static_cast<double>(padding_frames) - filtered_padding_frames_);
     }
 
-    const double queued_frames = filtered_padding_frames_;
+    const double queued_frames = filtered_padding_frames_ + upstream_buffer_frames_;
+    const double target_frames = target_delay_frames_ + upstream_target_frames_;
     // Positive error => queue above target, speed up playback.
-    const double error = queued_frames - target_delay_frames_;
+    const double error = queued_frames - target_frames;
     constexpr double kKp = 3e-6;
     constexpr double kKi = 5e-8;
     constexpr double kIntegralClamp = 300000.0;
@@ -570,16 +578,18 @@ void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
     const double delta = std::clamp(desired_rate - last_playback_rate_command_, -max_step, max_step);
     desired_rate = last_playback_rate_command_ + delta;
 
-    constexpr double kHardClamp = 0.98;
+    constexpr double kHardClamp = 0.96;
     constexpr double kHardClampMax = 1.02;
     desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
 
     ++rate_log_counter_;
     if (rate_log_counter_ % 100 == 0) {
-        LOG_CPP_INFO("[WasapiPlayback:%s] PI rate update: padding=%.1f target=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
+        LOG_CPP_INFO("[WasapiPlayback:%s] PI rate update: total=%.1f (padding=%.1f upstream=%.1f) target=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
                      config_.sink_id.c_str(),
                      queued_frames,
-                     target_delay_frames_,
+                     filtered_padding_frames_,
+                     upstream_buffer_frames_,
+                     target_frames,
                      error,
                      adjust,
                      desired_rate,
