@@ -773,7 +773,7 @@ void WasapiCaptureReceiver::process_packet(const CapturedBuffer& captured) {
         if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) || !data) {
             std::memset(dst_bytes, 0, copy_bytes);
         } else {
-            std::memcpy(dst_bytes, reinterpret_cast<uint8_t*>(data), copy_bytes);
+            std::memcpy(dst_bytes, reinterpret_cast<const uint8_t*>(data), copy_bytes);
         }
     }
 
