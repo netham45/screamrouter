@@ -13,11 +13,11 @@
 #endif
 
 #include "../utils/audio_component.h"
-#include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
 #include "../senders/i_network_sender.h"
 #include "../configuration/audio_engine_settings.h"
 #include "../receivers/clock_manager.h"
+#include "../utils/packet_ring.h"
 
 #include <string>
 #include <vector>
@@ -31,6 +31,8 @@
 #include <limits>
 #include <thread>
 #include <cstdint>
+#include <deque>
+#include <unordered_map>
 
 #if defined(_WIN32)
 
@@ -43,7 +45,7 @@ namespace screamrouter {
 namespace audio {
 
 class SinkSynchronizationCoordinator;
-class MixScheduler;
+class SourceInputProcessor;
 /**
  * @struct SinkAudioMixerStats
  * @brief Holds raw statistics collected from the SinkAudioMixer.
@@ -56,10 +58,18 @@ struct SinkAudioMixerStats {
     uint64_t buffer_underruns = 0;
     uint64_t buffer_overflows = 0;
     uint64_t mp3_buffer_overflows = 0;
+    BufferMetrics payload_buffer;
+    BufferMetrics mp3_output_buffer;
+    BufferMetrics mp3_pcm_buffer;
+    double last_chunk_dwell_ms = 0.0;
+    double avg_chunk_dwell_ms = 0.0;
+    double last_send_gap_ms = 0.0;
+    double avg_send_gap_ms = 0.0;
+    std::vector<SinkInputLaneStats> input_lanes;
 };
 
-using InputChunkQueue = utils::ThreadSafeQueue<ProcessedAudioChunk>;
 using Mp3OutputQueue = utils::ThreadSafeQueue<EncodedMP3Data>;
+using ReadyPacketRing = utils::PacketRing<TaggedAudioPacket>;
 
 /**
  * @class SinkAudioMixer
@@ -72,8 +82,8 @@ using Mp3OutputQueue = utils::ThreadSafeQueue<EncodedMP3Data>;
  */
 class SinkAudioMixer : public AudioComponent {
 public:
-    /** @brief A map of input queues, keyed by the unique source instance ID. */
-    using InputQueueMap = std::map<std::string, std::shared_ptr<InputChunkQueue>>;
+    /** @brief A map of ready packet rings, keyed by source instance ID. */
+    using ReadyRingMap = std::map<std::string, std::shared_ptr<ReadyPacketRing>>;
 
     /**
      * @brief Constructs a SinkAudioMixer.
@@ -101,7 +111,9 @@ public:
      * @param instance_id The unique ID of the source processor instance.
      * @param queue A shared pointer to the source's output queue.
      */
-    void add_input_queue(const std::string& instance_id, std::shared_ptr<InputChunkQueue> queue);
+    void add_input_queue(const std::string& instance_id,
+                         std::shared_ptr<ReadyPacketRing> ready_ring,
+                         SourceInputProcessor* sip);
 
     /**
      * @brief Removes an input queue.
@@ -153,12 +165,6 @@ public:
      * @param coord Pointer to the coordinator (not owned by mixer, must outlive mixer).
      */
     void set_coordinator(SinkSynchronizationCoordinator* coord);
-
-    /**
-     * @brief Checks if coordination mode is currently enabled.
-     * @return True if coordination is enabled, false otherwise.
-     */
-    bool is_coordination_enabled() const;
  
  protected:
      /** @brief The main processing loop for the mixer thread. */
@@ -168,21 +174,22 @@ private:
     SinkMixerConfig config_;
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
     const std::size_t frames_per_chunk_;
-    const std::size_t chunk_size_bytes_;
-    const std::size_t mixing_buffer_samples_;
-    const std::size_t mp3_buffer_size_;
+    std::size_t chunk_size_bytes_;
+    std::size_t mixing_buffer_samples_;
+    std::size_t mp3_buffer_size_;
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
     std::unique_ptr<INetworkSender> network_sender_;
-    std::unique_ptr<MixScheduler> mix_scheduler_;
     
     std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
     std::mutex listener_senders_mutex_;
 
-    InputQueueMap input_queues_;
+    ReadyRingMap ready_rings_;
     std::mutex queues_mutex_;
+    std::map<std::string, SourceInputProcessor*> source_processors_;
 
     std::map<std::string, bool> input_active_state_;
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
+    std::map<std::string, std::deque<ProcessedAudioChunk>> processed_ready_;
 
     std::unique_ptr<ClockManager> clock_manager_;
     std::atomic<bool> clock_manager_enabled_{false};
@@ -200,9 +207,18 @@ private:
     std::chrono::microseconds mix_period_{std::chrono::microseconds(12000)};
 
     std::vector<int32_t> mixing_buffer_;
+    std::unique_ptr<AudioProcessor> output_post_processor_;
+    std::vector<int32_t> output_post_buffer_;
+    std::mutex output_processor_mutex_;
+    std::atomic<double> output_playback_rate_{1.0};
+    uint64_t output_post_log_counter_{0};
     std::vector<int32_t> stereo_buffer_;
     std::vector<uint8_t> payload_buffer_;
-    size_t payload_buffer_write_pos_ = 0;
+    size_t payload_buffer_read_pos_ = 0;
+    size_t payload_buffer_fill_bytes_ = 0;
+    std::vector<uint8_t> payload_chunk_temp_;
+    std::vector<int32_t> last_sample_frame_;
+    bool last_sample_valid_ = false;
     
     std::vector<uint32_t> current_csrcs_;
     std::mutex csrc_mutex_;
@@ -210,6 +226,15 @@ private:
     lame_t lame_global_flags_ = nullptr;
     std::unique_ptr<AudioProcessor> stereo_preprocessor_;
     std::vector<uint8_t> mp3_encode_buffer_;
+    std::deque<std::vector<int32_t>> mp3_pcm_queue_;
+    std::mutex mp3_mutex_;
+    std::condition_variable mp3_cv_;
+    std::thread mp3_thread_;
+    std::atomic<bool> mp3_thread_running_{false};
+    std::atomic<bool> mp3_stop_flag_{false};
+    size_t mp3_pcm_queue_max_depth_{0};
+    std::atomic<size_t> mp3_output_high_water_{0};
+    std::atomic<size_t> mp3_pcm_high_water_{0};
 
     std::atomic<uint64_t> m_total_chunks_mixed{0};
     std::atomic<uint64_t> m_buffer_underruns{0};
@@ -218,6 +243,7 @@ private:
 
     bool underrun_silence_active_ = false;
     std::chrono::steady_clock::time_point underrun_silence_deadline_{};
+    std::chrono::steady_clock::time_point last_silence_log_time_{};
 
     // --- Synchronization Coordination ---
     /** @brief Whether coordination mode is enabled for synchronized dispatch. */
@@ -231,13 +257,18 @@ private:
 
     void initialize_lame();
     void close_lame();
+    void start_mp3_thread();
+    void stop_mp3_thread();
+    void mp3_thread_loop();
 
+    void refresh_format_dependent_buffers(int sample_rate, int channels, int bit_depth);
     bool wait_for_source_data();
     void mix_buffers();
     void downscale_buffer();
     size_t preprocess_for_listeners_and_mp3();
     void dispatch_to_listeners(size_t samples_to_dispatch);
-    void encode_and_push_mp3(size_t samples_to_encode);
+    void enqueue_mp3_pcm(const int32_t* samples, size_t sample_count);
+    void encode_and_push_mp3(const int32_t* samples, size_t sample_count);
     void cleanup_closed_listeners();
     void clear_pending_audio();
     void start_async();
@@ -301,13 +332,42 @@ private:
 
     // Per-source underrun counters
     std::map<std::string, uint64_t> profiling_source_underruns_;
+    std::map<std::string, size_t> input_queue_high_water_;
+
+    // Buffer drain control members
+    std::atomic<double> smoothed_buffer_level_ms_{0.0};
+    std::chrono::steady_clock::time_point last_drain_check_;
+    std::mutex drain_control_mutex_;
+    std::unordered_map<std::string, double> per_source_smoothed_buffer_ms_;
+    std::unordered_map<std::string, double> source_last_rate_command_;
+
+    struct InputBufferMetrics {
+        double total_ms = 0.0;
+        double avg_per_source_ms = 0.0;
+        double max_per_source_ms = 0.0;
+        std::size_t queued_blocks = 0;
+        std::size_t active_sources = 0;
+        double block_duration_ms = 0.0;
+        bool valid = false;
+        std::map<std::string, std::size_t> per_source_blocks;
+        std::map<std::string, double> per_source_ms;
+    };
 
     void set_playback_format(int sample_rate, int channels, int bit_depth);
     void update_playback_format_from_sender();
+    void setup_output_post_processor();
+    void set_output_playback_rate(double rate);
     std::chrono::microseconds calculate_mix_period(int sample_rate, int channels, int bit_depth) const;
     void register_mix_timer();
     void unregister_mix_timer();
     bool wait_for_mix_tick();
+
+    // Buffer drain control methods
+    void update_drain_ratio();
+    InputBufferMetrics compute_input_buffer_metrics();
+    void dispatch_drain_adjustments(const InputBufferMetrics& metrics, double alpha);
+    double calculate_drain_ratio_for_level(double buffer_ms, double block_duration_ms) const;
+    void send_playback_rate_command(const std::string& instance_id, double ratio);
 };
 
 } // namespace audio

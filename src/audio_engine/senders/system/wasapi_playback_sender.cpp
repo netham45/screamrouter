@@ -12,6 +12,7 @@
 
 #include <cstring>
 #include <algorithm>
+#include <cmath>
 
 namespace screamrouter {
 namespace audio {
@@ -136,8 +137,22 @@ void WasapiPlaybackSender::close() {
     device_format_ = nullptr;
     running_ = false;
     frames_written_.store(0, std::memory_order_release);
+    playback_rate_integral_ = 0.0;
+    target_delay_frames_ = 0.0;
+    upstream_buffer_frames_ = 0.0;
+    upstream_target_frames_ = 0.0;
+    last_playback_rate_command_ = 1.0;
 
     uninitialize_com();
+}
+
+void WasapiPlaybackSender::set_playback_rate_callback(std::function<void(double)> cb) {
+    playback_rate_callback_ = std::move(cb);
+}
+
+void WasapiPlaybackSender::update_pipeline_backlog(double upstream_frames, double upstream_target_frames) {
+    upstream_buffer_frames_ = std::max(0.0, upstream_frames);
+    upstream_target_frames_ = std::max(0.0, upstream_target_frames);
 }
 
 bool WasapiPlaybackSender::initialize_com() {
@@ -340,6 +355,7 @@ bool WasapiPlaybackSender::configure_audio_client() {
         LOG_CPP_ERROR("[WasapiPlayback:%s] GetBufferSize failed: 0x%lx", config_.sink_id.c_str(), hr);
         return false;
     }
+    target_delay_frames_ = buffer_frames_ / 2;
 
     hr = audio_client_->GetService(IID_PPV_ARGS(&render_client_));
     if (FAILED(hr)) {
@@ -475,6 +491,7 @@ void WasapiPlaybackSender::send_payload(const uint8_t* payload_data, size_t payl
             return;
         }
         UINT32 available = buffer_frames_ > padding ? buffer_frames_ - padding : 0;
+        maybe_update_playback_rate(padding);
         if (available == 0) {
             if (render_event_) {
                 WaitForSingleObject(render_event_, 5);
@@ -514,6 +531,79 @@ void WasapiPlaybackSender::send_payload(const uint8_t* payload_data, size_t payl
 
 void WasapiPlaybackSender::reset_playback_counters() {
     frames_written_.store(0, std::memory_order_release);
+}
+
+void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
+    if (!playback_rate_callback_) {
+        return;
+    }
+
+    if (target_delay_frames_ <= 0.0 && buffer_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kUpdateInterval = std::chrono::milliseconds(20);
+    if (last_rate_update_.time_since_epoch().count() != 0 &&
+        now - last_rate_update_ < kUpdateInterval) {
+        return;
+    }
+    last_rate_update_ = now;
+
+    // Low-pass padding to avoid reacting to single jitter spikes.
+    constexpr double kAlpha = 0.1;
+    if (filtered_padding_frames_ <= 0.0) {
+        filtered_padding_frames_ = static_cast<double>(padding_frames);
+    } else {
+        filtered_padding_frames_ = filtered_padding_frames_ + kAlpha * (static_cast<double>(padding_frames) - filtered_padding_frames_);
+    }
+
+    const double queued_frames = filtered_padding_frames_ + upstream_buffer_frames_;
+    const double target_frames = target_delay_frames_ + upstream_target_frames_;
+    // Positive error => queue above target, speed up playback.
+    const double error = queued_frames - target_frames;
+    constexpr double kKp = 3e-6;
+    constexpr double kKi = 5e-8;
+    constexpr double kIntegralClamp = 300000.0;
+    playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
+
+    double adjust = (kKp * error) + (kKi * playback_rate_integral_);
+    constexpr double kMaxPpm = 800.0; // ±800 ppm
+    const double max_adjust = kMaxPpm * 1e-6;
+    adjust = std::clamp(adjust, -max_adjust, max_adjust);
+
+    double desired_rate = 1.0 + adjust;
+    constexpr double kMaxStepPpm = 80.0; // ±80 ppm per update
+    const double max_step = kMaxStepPpm * 1e-6;
+    const double delta = std::clamp(desired_rate - last_playback_rate_command_, -max_step, max_step);
+    desired_rate = last_playback_rate_command_ + delta;
+
+    constexpr double kHardClamp = 0.96;
+    constexpr double kHardClampMax = 1.02;
+    desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
+
+    ++rate_log_counter_;
+    if (rate_log_counter_ % 100 == 0) {
+        LOG_CPP_INFO("[WasapiPlayback:%s] PI rate update: total=%.1f (padding=%.1f upstream=%.1f) target=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
+                     config_.sink_id.c_str(),
+                     queued_frames,
+                     filtered_padding_frames_,
+                     upstream_buffer_frames_,
+                     target_frames,
+                     error,
+                     adjust,
+                     desired_rate,
+                     playback_rate_integral_,
+                     kKp,
+                     kKi,
+                     kMaxPpm,
+                     kMaxStepPpm);
+    }
+
+    if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
+        last_playback_rate_command_ = desired_rate;
+        playback_rate_callback_(desired_rate);
+    }
 }
 
 } // namespace system_audio

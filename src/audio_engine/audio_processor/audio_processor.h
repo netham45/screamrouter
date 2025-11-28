@@ -138,12 +138,17 @@ private:
     bool eq_normalization_enabled_ = false;
     float current_gain_ = 1.0f;
 
-    // --- Internal Buffers ---
+    // --- Internal Buffers (double-buffered A/B for interleaved float data) ---
     std::vector<float> scaled_float_buffer_;
-    std::vector<std::vector<float>> remixed_float_buffers_;
+    std::vector<std::vector<float>> remixed_float_buffers_;  // DEPRECATED: Will be removed after migration
+    std::vector<float> remixed_interleaved_buffer_;          // NEW: Interleaved format [ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]
     std::vector<float> resample_float_out_buffer_;
-    std::vector<float> downsample_float_in_buffer_;
+    std::vector<float> downsample_float_in_buffer_;          // DEPRECATED: No longer needed with interleaved format
     std::vector<float> downsample_float_out_buffer_;
+    std::vector<float> eq_temp_buffer_;                      // Scratch for per-channel EQ to avoid per-call allocations
+    std::vector<float>* active_input_buffer_ = nullptr;      // Points to current input float buffer (A/B)
+    std::vector<float>* active_output_buffer_ = nullptr;     // Points to current output float buffer (A/B)
+    size_t active_samples_ = 0;                              // Samples currently stored in active_input_buffer_
 
     struct ChannelView {
         const float* data = nullptr;
@@ -186,21 +191,16 @@ private:
     void splitBufferToChannels();
     void mixSpeakers();
     void equalize();
-    void noiseShapingDither();
     void setupDCFilter();
-    void removeDCOffset();
-    bool isProcessingRequired();
-    bool isProcessingRequiredCheck();
     void monitorBuffers();
     void rebuild_mix_taps_locked();
+    void reset_io_buffers();
+    bool ensure_output_capacity(size_t samples);
+    void swap_active_buffers();
 
     // --- Buffer Monitoring Thread ---
     std::thread monitor_thread;
     std::atomic<bool> monitor_running;
-
-    // --- Caching for Processing Requirement ---
-    bool isProcessingRequiredCache = false;
-    bool isProcessingRequiredCacheSet = false;
 
     // --- Private Helper Methods ---
     void select_active_speaker_mix();

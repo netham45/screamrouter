@@ -286,6 +286,10 @@ class SinkDescription(BaseModel):
     enable_mp3: bool = True
     protocol: str = "scream"
     """Protocol selection for the sink. Use 'system_audio' for host playback or network protocols like 'scream', 'rtp', 'rtp_opus', 'web_receiver'."""
+    sap_target_sink: Optional[str] = None
+    """Optional sink name to carry in SAP announcements for remote ScreamRouter auto-routing."""
+    sap_target_host: Optional[str] = None
+    """Optional hostname of the target ScreamRouter instance for SAP-directed routing."""
     multi_device_mode: bool = False
     """Enable multi-device RTP output mode"""
     rtp_receiver_mappings: List[RtpReceiverMapping] = Field(default_factory=list)
@@ -322,6 +326,15 @@ class SinkDescription(BaseModel):
 
         if self.port is None or self.port < 1:
             raise ValueError("port must be >= 1 for non-system_audio sinks")
+        return self
+
+    @model_validator(mode='after')
+    def ensure_sap_fields(self):
+        """Guarantee SAP hint fields exist."""
+        if not hasattr(self, "sap_target_sink"):
+            self.sap_target_sink = None
+        if not hasattr(self, "sap_target_host"):
+            self.sap_target_host = None
         return self
 
     def __eq__(self, other):
@@ -419,6 +432,8 @@ class SourceDescription(BaseModel):
     """Is a process and should be grouped with a source by IP"""
     config_id: Optional[str] = None
     """Unique GUID for this source, auto-generated on creation if not provided"""
+    is_temporary: bool = Field(default=False, exclude=True)
+    """Indicates if this source is temporary and should not be persisted"""
 
     @model_validator(mode='after')
     def ensure_config_id(self):

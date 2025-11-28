@@ -140,7 +140,6 @@ bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
     // 3) Additions (paths then sinks)
     const auto t_add_start = clock::now();
     LOG_CPP_INFO("[ConfigApplier] Adding: paths=%zu, sinks=%zu", paths_to_add.size(), sinks_to_add.size());
-    std::map<std::string, std::string> added_path_id_to_instance_id;
     for (auto& path_param : paths_to_add) {
         const auto t_one_start = clock::now();
         const std::string filter_tag = get_filter_for_path_id(path_param.path_id, path_param.source_tag);
@@ -150,7 +149,6 @@ bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
             state.params = path_param;
             state.filter_tag = filter_tag;
             active_source_paths_[path_param.path_id] = std::move(state);
-            added_path_id_to_instance_id[path_param.path_id] = path_param.generated_instance_id;
             const auto t_one_end = clock::now();
             LOG_CPP_INFO("[ConfigApplier] +Path id='%s' -> instance='%s' in %lld ms",
                          path_param.path_id.c_str(), path_param.generated_instance_id.c_str(),
@@ -200,6 +198,7 @@ bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
 bool compare_sink_configs(const audio::SinkConfig& a, const audio::SinkConfig& b) {
     // Compare all relevant fields that would require a sink re-creation if changed.
     return a.id == b.id && // The ID must match if comparing the same conceptual sink.
+           a.friendly_name == b.friendly_name &&
            a.output_ip == b.output_ip &&
            a.output_port == b.output_port &&
            a.bitdepth == b.bitdepth &&
@@ -208,7 +207,9 @@ bool compare_sink_configs(const audio::SinkConfig& a, const audio::SinkConfig& b
            a.chlayout1 == b.chlayout1 &&
            a.chlayout2 == b.chlayout2 &&
            a.enable_mp3 == b.enable_mp3 &&
-           a.protocol == b.protocol;
+           a.protocol == b.protocol &&
+           a.sap_target_sink == b.sap_target_sink &&
+           a.sap_target_host == b.sap_target_host;
 }
 
 /**
@@ -911,6 +912,9 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
 
     // 3. Identify and process connections to add.
     LOG_CPP_DEBUG("[ConfigApplier]     Checking connections to add...");
+    // Track source instance IDs and tags already attached to avoid duplicate routes.
+    std::set<std::string> used_instance_ids;
+    std::set<std::string> used_source_tags;
     for (const auto& desired_path_id : desired_path_ids_set) {
         if (current_path_ids_set.find(desired_path_id) == current_path_ids_set.end()) {
             // This connection is in the desired state but not the current state.
@@ -919,11 +923,25 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
             if (source_path_it == active_source_paths_.end() || source_path_it->second.params.generated_instance_id.empty()) {
                 LOG_CPP_ERROR("      + Cannot connect path %s to sink %s: Source path or its instance_id not found/generated.",
                               desired_path_id.c_str(), sink_id.c_str());
+                // Drop this path from the shadow state so we do not retry until it appears.
+                updated_path_ids_set.erase(desired_path_id);
                 continue; // Skip this connection.
             }
             const AppliedSourcePathParams& source_params = source_path_it->second.params;
             const std::string& source_instance_id = source_params.generated_instance_id;
             const audio::SinkConfig& sink_config = desired_sink_params.sink_engine_config;
+            if (!used_instance_ids.insert(source_instance_id).second) {
+                LOG_CPP_WARNING("[ConfigApplier]       + Skipping duplicate instance %s for sink %s (path %s)",
+                                source_instance_id.c_str(), sink_id.c_str(), desired_path_id.c_str());
+                updated_path_ids_set.erase(desired_path_id);
+                continue;
+            }
+            if (!source_params.source_tag.empty() && !used_source_tags.insert(source_params.source_tag).second) {
+                LOG_CPP_WARNING("[ConfigApplier]       + Skipping duplicate source tag %s for sink %s (path %s)",
+                                source_params.source_tag.c_str(), sink_id.c_str(), desired_path_id.c_str());
+                updated_path_ids_set.erase(desired_path_id);
+                continue;
+            }
 
             LOG_CPP_DEBUG("[ConfigApplier]       + Connecting Source:");
             LOG_CPP_DEBUG("          Path ID: %s", desired_path_id.c_str());
@@ -967,6 +985,8 @@ void AudioEngineConfigApplier::reconcile_connections_for_sink(const AppliedSinkP
             } else {
                  LOG_CPP_ERROR("      - Cannot find source path details for path %s during disconnection (might have been removed already). Attempting disconnect anyway.",
                                current_path_id.c_str());
+                 // Remove from the shadow state so we don't repeatedly attempt to disconnect.
+                 updated_path_ids_set.erase(current_path_id);
             }
              
             LOG_CPP_DEBUG("      - Disconnecting Source:");

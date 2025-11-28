@@ -21,9 +21,9 @@ import {
   WrapItem,
   useColorModeValue,
 } from '@chakra-ui/react';
-import ApiService from '../../api/api';
 import { DiscoveredDevice } from '../../types/preferences';
 import { formatProcessTag } from '../../utils/processTags';
+import { buildDeviceKey, formatLastSeen, getMethodColor, isDeviceRecentlySeen } from '../../utils/discovery';
 
 interface MdnsDiscoveryModalProps {
   isOpen: boolean;
@@ -42,23 +42,6 @@ const toLowerToken = (value: unknown): string | null => {
   }
   const trimmed = value.trim();
   return trimmed ? trimmed.toLowerCase() : null;
-};
-
-const MAX_DEVICE_AGE_SECONDS = 90;
-
-const isDeviceRecentlySeen = (
-  device: DiscoveredDevice,
-  maxAgeSeconds: number = MAX_DEVICE_AGE_SECONDS
-) => {
-  if (!device.last_seen) {
-    return true;
-  }
-  const timestamp = Date.parse(device.last_seen);
-  if (Number.isNaN(timestamp)) {
-    return false;
-  }
-  const ageSeconds = (Date.now() - timestamp) / 1000;
-  return ageSeconds <= maxAgeSeconds;
 };
 
 const roleTokens = (device: DiscoveredDevice) => {
@@ -110,28 +93,6 @@ const typeMatchesFilter = (device: DiscoveredDevice, filter: 'all' | 'sources' |
   );
 };
 
-const buildDeviceKey = (device: DiscoveredDevice): string => {
-  const identifierValue = device.properties['identifier'];
-  const identifier = typeof identifierValue === 'string' && identifierValue
-    ? identifierValue
-    : device.tag ?? device.ip;
-  return `${device.discovery_method}:${identifier}`;
-};
-
-const methodColorMap: Record<string, string> = {
-  mdns: 'purple',
-  cpp_rtp: 'green',
-  cpp_raw: 'teal',
-  per_process: 'orange',
-  pulse: 'pink',
-  cpp_sap: 'yellow',
-};
-
-const getMethodColor = (method: string): string => {
-  const normalized = method?.toLowerCase?.() ?? '';
-  return methodColorMap[normalized] ?? 'gray';
-};
-
 const formatPropertyValue = (value: unknown): string => {
   if (value === null || value === undefined) {
     return '';
@@ -144,19 +105,6 @@ const formatPropertyValue = (value: unknown): string => {
     }
   }
   return String(value);
-};
-
-const formatLastSeen = (value: string | null | undefined) => {
-  if (!value) return 'Recently discovered';
-  try {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return 'Recently discovered';
-    }
-    return `Last seen ${date.toLocaleString()}`;
-  } catch (error) {
-    return 'Recently discovered';
-  }
 };
 
 const MdnsDiscoveryModal: React.FC<MdnsDiscoveryModalProps> = ({
@@ -270,6 +218,29 @@ const MdnsDiscoveryModal: React.FC<MdnsDiscoveryModalProps> = ({
               const deviceKey = buildDeviceKey(device);
               const isProcessing = pendingKey === deviceKey;
               const methodColor = getMethodColor(device.discovery_method);
+              const getStringProperty = (...keys: string[]): string => {
+                for (const key of keys) {
+                  const raw = device.properties?.[key];
+                  if (raw === undefined || raw === null) {
+                    continue;
+                  }
+                  const value = Array.isArray(raw) ? raw.join(', ') : String(raw);
+                  const normalized = value.trim();
+                  if (normalized) {
+                    return normalized;
+                  }
+                }
+                return '';
+              };
+              const sapSessionName = getStringProperty(
+                'sap_session_name',
+                'sap_session',
+                'sap_name',
+                'session_name',
+                'sdp_session_name',
+                'sdp_name',
+                'session'
+              );
 
               return (
                 <Box
@@ -328,6 +299,12 @@ const MdnsDiscoveryModal: React.FC<MdnsDiscoveryModalProps> = ({
                             <Text>
                               Tag {device.role === 'process' ? formatProcessTag(device.tag) : device.tag}
                             </Text>
+                          </>
+                        )}
+                        {sapSessionName && (
+                          <>
+                            <Text aria-hidden="true">•</Text>
+                            <Text>SAP: {sapSessionName}</Text>
                           </>
                         )}
                       </Flex>

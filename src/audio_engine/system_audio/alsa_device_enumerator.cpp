@@ -1,5 +1,6 @@
 #include "alsa_device_enumerator.h"
 #include "../utils/cpp_logger.h"
+#include "runtime_paths.h"
 
 #include <chrono>
 #include <cerrno>
@@ -114,25 +115,25 @@ AlsaDeviceEnumerator::Registry AlsaDeviceEnumerator::get_registry_snapshot() con
 
 namespace {
 constexpr int kPollTimeoutMs = 2000;
-constexpr const char* kScreamrouterRuntimeDir = "/var/run/screamrouter";
 
 bool ensure_runtime_dir_exists() {
+    const std::string runtime_dir = screamrouter::audio::system_audio::screamrouter_runtime_dir();
     struct stat st {};
-    if (stat(kScreamrouterRuntimeDir, &st) == 0) {
+    if (stat(runtime_dir.c_str(), &st) == 0) {
         if (S_ISDIR(st.st_mode)) {
             return true;
         }
-        LOG_CPP_WARNING("[ALSA-Enumerator] %s exists but is not a directory", kScreamrouterRuntimeDir);
+        LOG_CPP_WARNING("[ALSA-Enumerator] %s exists but is not a directory", runtime_dir.c_str());
         return false;
     }
 
     if (errno != ENOENT) {
-        LOG_CPP_WARNING("[ALSA-Enumerator] Failed to stat %s (%s)", kScreamrouterRuntimeDir, std::strerror(errno));
+        LOG_CPP_WARNING("[ALSA-Enumerator] Failed to stat %s (%s)", runtime_dir.c_str(), std::strerror(errno));
         return false;
     }
 
-    if (mkdir(kScreamrouterRuntimeDir, 0775) == 0) {
-        LOG_CPP_INFO("[ALSA-Enumerator] Created runtime directory %s", kScreamrouterRuntimeDir);
+    if (mkdir(runtime_dir.c_str(), 0775) == 0) {
+        LOG_CPP_INFO("[ALSA-Enumerator] Created runtime directory %s", runtime_dir.c_str());
         return true;
     }
 
@@ -140,7 +141,7 @@ bool ensure_runtime_dir_exists() {
         return true;
     }
 
-    LOG_CPP_WARNING("[ALSA-Enumerator] Failed to create %s (%s)", kScreamrouterRuntimeDir, std::strerror(errno));
+    LOG_CPP_WARNING("[ALSA-Enumerator] Failed to create %s (%s)", runtime_dir.c_str(), std::strerror(errno));
     return false;
 }
 
@@ -723,14 +724,15 @@ void AlsaDeviceEnumerator::setup_fifo_watch() {
         int watch_flags = IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_ATTRIB |
                            IN_CLOSE_WRITE | IN_CLOSE_NOWRITE | IN_OPEN |
                            IN_DELETE_SELF | IN_MOVE_SELF;
-        int watch_fd = inotify_add_watch(inotify_fd_, kScreamrouterRuntimeDir, watch_flags);
+        const std::string runtime_dir = screamrouter::audio::system_audio::screamrouter_runtime_dir();
+        int watch_fd = inotify_add_watch(inotify_fd_, runtime_dir.c_str(), watch_flags);
         if (watch_fd < 0) {
             if (errno != ENOENT) {
-                LOG_CPP_DEBUG("[ALSA-Enumerator] inotify_add_watch failed for %s (%s)", kScreamrouterRuntimeDir, std::strerror(errno));
+                LOG_CPP_DEBUG("[ALSA-Enumerator] inotify_add_watch failed for %s (%s)", runtime_dir.c_str(), std::strerror(errno));
             }
         } else {
             inotify_watch_fd_ = watch_fd;
-            LOG_CPP_DEBUG("[ALSA-Enumerator] Watching %s for FIFO changes", kScreamrouterRuntimeDir);
+            LOG_CPP_DEBUG("[ALSA-Enumerator] Watching %s for FIFO changes", runtime_dir.c_str());
         }
     }
 }
@@ -875,7 +877,8 @@ void AlsaDeviceEnumerator::append_screamrouter_runtime_devices(Registry& registr
     if (!ensure_runtime_dir_exists()) {
         return;
     }
-    DIR* dir = opendir(kScreamrouterRuntimeDir);
+    const std::string runtime_dir = screamrouter::audio::system_audio::screamrouter_runtime_dir();
+    DIR* dir = opendir(runtime_dir.c_str());
     if (!dir) {
         return;
     }
@@ -890,7 +893,7 @@ void AlsaDeviceEnumerator::append_screamrouter_runtime_devices(Registry& registr
             continue;
         }
 
-        std::string fifo_path = std::string(kScreamrouterRuntimeDir) + "/" + filename;
+        std::string fifo_path = runtime_dir + "/" + filename;
         SystemDeviceInfo info = std::move(info_opt.value());
         info.hw_id = fifo_path;
         info.endpoint_id = fifo_path;

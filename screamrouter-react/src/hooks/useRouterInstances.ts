@@ -12,6 +12,7 @@ export interface RouterInstance {
   origin: string;
   url: string;
   properties: Record<string, string>;
+  uuid?: string;
   raw: RouterMdnsService;
   isCurrent: boolean;
 }
@@ -70,6 +71,7 @@ const buildInstances = (services: RouterMdnsService[]): RouterInstance[] => {
     const parsedPort = Number.isFinite(service.port) ? service.port : Number(properties.port);
     const inferredPort = parsedPort && parsedPort > 0 ? parsedPort : (scheme === 'https' ? 443 : 80);
     const sitePath = normalizePath(properties.path || properties.site);
+    const uuid = (properties.uuid || properties.UUID || '').trim();
 
     const origin = `${scheme}://${hostname}${((scheme === 'https' && inferredPort === 443) || (scheme === 'http' && inferredPort === 80)) ? '' : `:${inferredPort}`}`;
     const url = `${origin}${sitePath}`;
@@ -101,6 +103,7 @@ const buildInstances = (services: RouterMdnsService[]): RouterInstance[] => {
       origin,
       url,
       properties,
+      uuid: uuid || undefined,
       raw: service,
       isCurrent,
     });

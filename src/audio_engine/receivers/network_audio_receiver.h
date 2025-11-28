@@ -19,9 +19,11 @@
 #include <chrono>
 #include <map>
 #include <optional>
+#include <unordered_map>
 
 #include "../utils/audio_component.h"
 #include "../utils/thread_safe_queue.h"
+#include "../utils/byte_ring_buffer.h"
 #include "../audio_types.h"
 #include "../configuration/audio_engine_settings.h"
 
@@ -181,6 +183,26 @@ protected:
     std::mutex seen_tags_mutex_;
 
     std::string logger_prefix_;
+
+    struct SourceAccumulator {
+        ::screamrouter::audio::utils::ByteRingBuffer buffer;
+        std::chrono::steady_clock::time_point first_received{};
+        std::chrono::steady_clock::time_point last_delivery{};
+        bool has_last_delivery = false;
+        std::optional<uint32_t> base_rtp_timestamp;
+        uint64_t frame_cursor = 0;
+        int channels = 0;
+        int sample_rate = 0;
+        int bit_depth = 0;
+        uint8_t chlayout1 = 0;
+        uint8_t chlayout2 = 0;
+        std::size_t chunk_bytes = 0;
+        std::size_t bytes_per_frame = 0;
+        std::vector<uint32_t> ssrcs;
+    };
+
+    std::unordered_map<std::string, SourceAccumulator> accumulators_;
+    std::mutex accumulator_mutex_;
 
 private:
     // --- Winsock Initialization Management (Windows specific) ---

@@ -80,6 +80,13 @@ void lowercase_in_place(std::string& text) {
         [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 }
 
+std::string make_ip_port_key(const std::string& ip, int port) {
+    if (port <= 0) {
+        return ip;
+    }
+    return ip + ":" + std::to_string(port);
+}
+
 } // namespace
 
 SapListener::SapListener(std::string logger_prefix, const std::vector<std::string>& known_ips)
@@ -125,9 +132,14 @@ bool SapListener::get_stream_properties(uint32_t ssrc, StreamProperties& propert
     return false;
 }
 
-bool SapListener::get_stream_properties_by_ip(const std::string& ip, StreamProperties& properties) {
+bool SapListener::get_stream_properties_by_ip(const std::string& ip, int port, StreamProperties& properties) {
+    const std::string key = make_ip_port_key(ip, port);
     std::lock_guard<std::mutex> lock(ip_map_mutex_);
-    auto it = ip_to_properties_.find(ip);
+    auto it = ip_to_properties_.find(key);
+    if (it == ip_to_properties_.end() && port > 0) {
+        // Fall back to matching on IP only if no per-port entry exists.
+        it = ip_to_properties_.find(ip);
+    }
     if (it != ip_to_properties_.end()) {
         properties = it->second;
         return true;
@@ -135,21 +147,11 @@ bool SapListener::get_stream_properties_by_ip(const std::string& ip, StreamPrope
     return false;
 }
 
-std::vector<uint32_t> SapListener::get_known_ssrcs() {
-    std::lock_guard<std::mutex> lock(ssrc_map_mutex_);
-    std::vector<uint32_t> known_ssrcs;
-    known_ssrcs.reserve(ssrc_to_properties_.size());
-    for (const auto& pair : ssrc_to_properties_) {
-        known_ssrcs.push_back(pair.first);
-    }
-    return known_ssrcs;
-}
-
 std::vector<SapAnnouncement> SapListener::get_announcements() {
     std::lock_guard<std::mutex> lock(ip_map_mutex_);
     std::vector<SapAnnouncement> announcements;
-    announcements.reserve(announcements_by_stream_ip_.size());
-    for (const auto& entry : announcements_by_stream_ip_) {
+    announcements.reserve(announcements_by_stream_endpoint_.size());
+    for (const auto& entry : announcements_by_stream_endpoint_) {
         announcements.push_back(entry.second);
     }
     return announcements;
@@ -410,6 +412,14 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         return;
     }
 
+    std::string session_name;
+    for (const auto& line : sdp_lines) {
+        if (line.rfind("s=", 0) == 0) {
+            session_name = trim_copy(line.substr(2));
+            break;
+        }
+    }
+
     uint32_t ssrc = 0;
     bool ssrc_found = false;
     for (const auto& line : sdp_lines) {
@@ -449,6 +459,8 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     }
 
     int port = 0;
+    std::string target_sink;
+    std::string target_host;
     std::vector<int> audio_payload_types;
     for (const auto& line : sdp_lines) {
         if (line.rfind("m=audio ", 0) == 0) {
@@ -465,6 +477,27 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                 session_callback_(connection_ip, port, source_ip);
             }
             break;
+        } else if (line.rfind("a=x-screamrouter-target:", 0) == 0) {
+            std::string target_block = trim_copy(line.substr(std::strlen("a=x-screamrouter-target:")));
+            if (!target_block.empty()) {
+                std::stringstream ss(target_block);
+                std::string token;
+                while (std::getline(ss, token, ';')) {
+                    const auto eq_pos = token.find('=');
+                    std::string key = trim_copy(token.substr(0, eq_pos));
+                    std::string value = (eq_pos != std::string::npos) ? trim_copy(token.substr(eq_pos + 1)) : "";
+                    lowercase_in_place(key);
+                    if (key == "sink") {
+                        target_sink = trim_copy(value);
+                    } else if (key == "host") {
+                        target_host = trim_copy(value);
+                        lowercase_in_place(target_host);
+                    }
+                }
+                if (target_sink.empty()) {
+                    target_sink = trim_copy(target_block);
+                }
+            }
         }
     }
 
@@ -558,6 +591,31 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                 }
                 lowercase_in_place(key);
                 params[key] = value;
+            }
+        }
+    }
+
+    // Extract target hints from fmtp before payload selection
+    for (const auto& kv : fmtp_entries) {
+        const auto target_it = kv.second.find("x-screamrouter-target");
+        if (target_it != kv.second.end()) {
+            std::string target_block = target_it->second;
+            std::stringstream ss(target_block);
+            std::string token;
+            while (std::getline(ss, token, ';')) {
+                const auto eq_pos = token.find('=');
+                std::string key = trim_copy(token.substr(0, eq_pos));
+                std::string value = (eq_pos != std::string::npos) ? trim_copy(token.substr(eq_pos + 1)) : "";
+                lowercase_in_place(key);
+                if (key == "sink") {
+                    target_sink = trim_copy(value);
+                } else if (key == "host") {
+                    target_host = trim_copy(value);
+                    lowercase_in_place(target_host);
+                }
+            }
+            if (target_sink.empty()) {
+                target_sink = trim_copy(target_block);
             }
         }
     }
@@ -725,17 +783,37 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     if (chosen_codec == StreamCodec::OPUS) {
         props.bit_depth = 16;
         props.endianness = Endianness::LITTLE;
-    } else if (chosen_entry->encoding.find("l24") != std::string::npos) {
+    } else if (chosen_entry->encoding.find("s32le") != std::string::npos ||
+               chosen_entry->encoding.find("l32le") != std::string::npos ||
+               chosen_entry->encoding.find("pcm32le") != std::string::npos) {
+        props.bit_depth = 32;
+        props.endianness = Endianness::LITTLE;
+        props.codec = StreamCodec::PCM;
+    } else if (chosen_entry->encoding.find("l32") != std::string::npos ||
+               chosen_entry->encoding.find("s32") != std::string::npos ||
+               chosen_entry->encoding.find("pcm32") != std::string::npos) {
+        props.bit_depth = 32;
+        props.endianness = Endianness::BIG;
+        props.codec = StreamCodec::PCM;
+    } else if (chosen_entry->encoding.find("s24le") != std::string::npos ||
+               chosen_entry->encoding.find("pcm24le") != std::string::npos) {
+        props.bit_depth = 24;
+        props.endianness = Endianness::LITTLE;
+        props.codec = StreamCodec::PCM;
+    } else if (chosen_entry->encoding.find("l24") != std::string::npos ||
+               chosen_entry->encoding.find("pcm24") != std::string::npos) {
         props.bit_depth = 24;
         props.endianness = Endianness::BIG;
         props.codec = StreamCodec::PCM;
-    } else if (chosen_entry->encoding.find("l16") != std::string::npos) {
-        props.bit_depth = 16;
-        props.endianness = Endianness::BIG;
-        props.codec = StreamCodec::PCM;
-    } else if (chosen_entry->encoding.find("s16le") != std::string::npos) {
+    } else if (chosen_entry->encoding.find("s16le") != std::string::npos ||
+               chosen_entry->encoding.find("pcm16le") != std::string::npos) {
         props.bit_depth = 16;
         props.endianness = Endianness::LITTLE;
+        props.codec = StreamCodec::PCM;
+    } else if (chosen_entry->encoding.find("l16") != std::string::npos ||
+               chosen_entry->encoding.find("pcm") != std::string::npos) {
+        props.bit_depth = 16;
+        props.endianness = Endianness::BIG;
         props.codec = StreamCodec::PCM;
     } else {
         props.bit_depth = 16;
@@ -746,15 +824,36 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     ssrc_to_properties_[ssrc] = props;
 
     std::lock_guard<std::mutex> lock2(ip_map_mutex_);
-    ip_to_properties_[source_ip] = props;
+    const std::string source_key = make_ip_port_key(source_ip, port);
+    ip_to_properties_[source_key] = props;
+    if (source_key != source_ip) {
+        ip_to_properties_[source_ip] = props;
+    }
+
     if (!connection_ip.empty()) {
-        ip_to_properties_[connection_ip] = props;
+        const std::string connection_key = make_ip_port_key(connection_ip, port);
+        std::string tagged_connection_key = connection_key;
+        if (port > 0) {
+            tagged_connection_key += "#sap-" + std::to_string(port);
+        }
+        ip_to_properties_[connection_key] = props;
+        if (connection_key != connection_ip) {
+            ip_to_properties_[connection_ip] = props;
+        }
+
         SapAnnouncement announcement;
         announcement.stream_ip = connection_ip;
         announcement.announcer_ip = source_ip;
         announcement.port = port;
         announcement.properties = props;
-        announcements_by_stream_ip_[connection_ip] = announcement;
+        announcement.target_sink = target_sink;
+        announcement.target_host = target_host;
+        announcement.session_name = session_name;
+        announcements_by_stream_endpoint_[connection_key] = announcement;
+        if (!tagged_connection_key.empty()) {
+            ip_to_properties_[tagged_connection_key] = props;
+            announcements_by_stream_endpoint_[tagged_connection_key] = announcement;
+        }
     }
 
     LOG_CPP_DEBUG(

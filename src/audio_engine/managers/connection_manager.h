@@ -11,12 +11,12 @@
 #include "sink_manager.h"
 #include "../audio_types.h"
 #include "../input_processor/source_input_processor.h"
+#include "../utils/packet_ring.h"
 #include <string>
 #include <mutex>
 
 namespace screamrouter {
 namespace audio {
-
 /**
  * @class ConnectionManager
  * @brief Manages the connections between audio sources and sinks.
@@ -39,7 +39,6 @@ public:
         std::recursive_mutex& manager_mutex,
         SourceManager* source_manager,
         SinkManager* sink_manager,
-        std::map<std::string, std::shared_ptr<ChunkQueue>>& source_to_sink_queues,
         std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources
     );
     /**
@@ -68,8 +67,8 @@ private:
     std::recursive_mutex& m_manager_mutex;
     SourceManager* m_source_manager;
     SinkManager* m_sink_manager;
-    std::map<std::string, std::shared_ptr<ChunkQueue>>& m_source_to_sink_queues;
     std::map<std::string, std::unique_ptr<SourceInputProcessor>>& m_sources;
+    std::map<std::string, std::shared_ptr<utils::PacketRing<TaggedAudioPacket>>> m_ready_rings;
 };
 
 } // namespace audio

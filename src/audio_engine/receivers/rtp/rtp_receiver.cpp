@@ -3,6 +3,7 @@
 #include "../../configuration/audio_engine_settings.h"
 #include "../../input_processor/timeshift_manager.h"
 #include "../../utils/cpp_logger.h"
+#include "../../utils/sentinel_logging.h"
 
 #include <rtc/rtp.hpp>
 #include <opus/opus.h>
@@ -52,6 +53,11 @@ void swap_endianness(uint8_t* data, size_t size, int bit_depth) {
     } else if (bit_depth == 24) {
         for (size_t i = 0; i + 2 < size; i += 3) {
             std::swap(data[i], data[i + 2]);
+        }
+    } else if (bit_depth == 32) {
+        for (size_t i = 0; i + 3 < size; i += 4) {
+            std::swap(data[i], data[i + 3]);
+            std::swap(data[i + 1], data[i + 2]);
         }
     }
 }
@@ -579,6 +585,8 @@ bool RtpReceiverBase::resolve_stream_properties(
     const struct sockaddr_in& client_addr,
     uint8_t payload_type,
     StreamProperties& out_properties) const {
+    const int packet_port = ntohs(client_addr.sin_port);
+
     if (sap_listener_) {
         if (sap_listener_->get_stream_properties(ssrc, out_properties)) {
             return true;
@@ -586,13 +594,17 @@ bool RtpReceiverBase::resolve_stream_properties(
 
         char client_ip_str[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);
-        if (sap_listener_->get_stream_properties_by_ip(client_ip_str, out_properties)) {
+        // Try plain IP:port, then a SAP-tagged key to hard-bind to SAP sessions.
+        if (sap_listener_->get_stream_properties_by_ip(client_ip_str, packet_port, out_properties)) {
+            return true;
+        }
+        std::string sap_tagged_key = std::string(client_ip_str) + ":" + std::to_string(packet_port) + "#sap-" + std::to_string(packet_port);
+        if (sap_listener_->get_stream_properties_by_ip(sap_tagged_key, packet_port, out_properties)) {
             return true;
         }
     }
 
     const int listen_port = config_.listen_port <= 0 ? 40000 : config_.listen_port;
-    const int packet_port = ntohs(client_addr.sin_port);
 
     if (payload_type == kRtpPayloadTypeOpus && packet_port == listen_port && listen_port == 40000) {
         out_properties.sample_rate = kDefaultOpusSampleRate;
@@ -692,6 +704,12 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
         }
 
         if (!handler) {
+            char ssrc_hex[12];
+            snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", packet_data.ssrc);
+            LOG_CPP_WARNING("[RtpReceiver] No handler for payload_type=%u (SSRC=%s). Dropping packet (size=%zu).",
+                            packet_data.payload_type,
+                            ssrc_hex,
+                            packet_data.payload.size());
             continue;
         }
 
@@ -702,8 +720,16 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
         packet.ssrcs.reserve(1 + packet_data.csrcs.size());
         packet.ssrcs.push_back(packet_data.ssrc);
         packet.ssrcs.insert(packet.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
+        mark_sentinel_if_boundary(packet_data, packet);
+        utils::log_sentinel("rtp_ready", packet);
 
         if (!handler->populate_packet(packet_data, props, packet)) {
+            char ssrc_hex[12];
+            snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", packet_data.ssrc);
+            LOG_CPP_WARNING("[RtpReceiver] Failed to parse payload_type=%u for SSRC=%s (size=%zu). Packet dropped.",
+                            packet_data.payload_type,
+                            ssrc_hex,
+                            packet_data.payload.size());
             continue;
         }
 
@@ -776,6 +802,20 @@ void RtpReceiverBase::maybe_log_telemetry() {
         buffer_count,
         total_packets,
         max_packets);
+}
+
+bool RtpReceiverBase::mark_sentinel_if_boundary(const RtpPacketData& packet_data, TaggedAudioPacket& packet) {
+    const uint32_t bucket = packet_data.rtp_timestamp / 100000u;
+    std::lock_guard<std::mutex> lock(sentinel_bucket_mutex_);
+    auto [it, inserted] = ssrc_last_sentinel_bucket_.emplace(packet_data.ssrc, bucket);
+    if (inserted) {
+        return false;
+    }
+    if (it->second != bucket) {
+        it->second = bucket;
+        packet.is_sentinel = true;
+    }
+    return packet.is_sentinel;
 }
 
 // ---- RtpPcmReceiver -----------------------------------------------------------------

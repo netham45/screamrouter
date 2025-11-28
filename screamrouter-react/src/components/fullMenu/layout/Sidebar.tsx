@@ -262,6 +262,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                 }}
               />
               <NavItem
+                icon="satellite-dish"
+                label="Discovered"
+                isActive={currentCategory === 'discovery'}
+                onClick={() => {
+                  setCurrentCategory('discovery');
+                  if (window.innerWidth < 768) toggleSidebar();
+                }}
+              />
+              <NavItem
                 icon="plug"
                 label="System Audio"
                 isActive={currentCategory === 'system-devices'}

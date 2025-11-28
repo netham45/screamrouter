@@ -4,7 +4,7 @@
  * port, bit depth, sample rate, channels, channel layout, volume, delay, time sync settings, and more.
  * It allows the user to either add a new sink or update an existing one.
  */
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Flex,
@@ -29,8 +29,10 @@ import {
   useColorModeValue,
   Switch,
   Text,
-  HStack
+  HStack,
+  SimpleGrid
 } from '@chakra-ui/react';
+import axios from 'axios';
 import ApiService, { Sink, SystemAudioDeviceInfo } from '../../api/api';
 import { useTutorial } from '../../context/TutorialContext';
 import { useMdnsDiscovery } from '../../context/MdnsDiscoveryContext';
@@ -38,11 +40,16 @@ import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
 import MultiRtpReceiverManager, { RtpReceiverMapping } from './controls/MultiRtpReceiverManager';
 import { useAppContext } from '../../context/AppContext';
+import { useRouterInstances, RouterInstance } from '../../hooks/useRouterInstances';
 
 const AddEditSinkPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const sinkName = searchParams.get('name');
   const isEdit = !!sinkName;
+  const prefillName = searchParams.get('prefill_name');
+  const prefillIp = searchParams.get('prefill_ip');
+  const prefillPort = searchParams.get('prefill_port');
+  const prefillProtocol = searchParams.get('prefill_protocol');
 
   const { completeStep, nextStep } = useTutorial();
   const { openModal: openMdnsModal, registerSelectionHandler } = useMdnsDiscovery();
@@ -52,29 +59,41 @@ const AddEditSinkPage: React.FC = () => {
   const [sink, setSink] = useState<Sink | null>(null);
   const [name, setName] = useState('');
   const [ip, setIp] = useState('');
-  const [port, setPort] = useState('4010');
-  const [bitDepth, setBitDepth] = useState('32');
+  const [port, setPort] = useState('40000');
+  const [bitDepth, setBitDepth] = useState('16');
   const [sampleRate, setSampleRate] = useState('48000');
-  const [channels, setChannels] = useState('2');
   const [channelLayout, setChannelLayout] = useState('stereo');
   const [volume, setVolume] = useState(1);
   const [delay, setDelay] = useState(0);
   const [timeshift, setTimeshift] = useState(0);
   const [timeSync, setTimeSync] = useState(false);
   const [timeSyncDelay, setTimeSyncDelay] = useState('0');
-  const [protocol, setProtocol] = useState('scream');
+  const [protocol, setProtocol] = useState('rtp');
   const [selectedPlaybackTag, setSelectedPlaybackTag] = useState('');
   const [outputMode, setOutputMode] = useState<'network' | 'system'>('network');
   const [previousNetworkConfig, setPreviousNetworkConfig] = useState<{ ip: string; port: string; protocol: string }>({
     ip: '',
     port: '4010',
-    protocol: 'scream',
+    protocol: 'rtp',
   });
   const [volumeNormalization, setVolumeNormalization] = useState(false);
   const [multiDeviceMode, setMultiDeviceMode] = useState(false);
   const [rtpReceiverMappings, setRtpReceiverMappings] = useState<RtpReceiverMapping[]>([]);
+  const [sapTargetSink, setSapTargetSink] = useState('');
+  const [sapTargetHost, setSapTargetHost] = useState('');
+  const [selectedServerId, setSelectedServerId] = useState('local');
+  const [remoteSinks, setRemoteSinks] = useState<Sink[]>([]);
+  const [remoteSelection, setRemoteSelection] = useState('');
+  const [remotePrefillApplied, setRemotePrefillApplied] = useState(false);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const { instances, loading: instancesLoading, error: instancesError, refresh: refreshInstances } = useRouterInstances();
+  const selectedInstance = useMemo<RouterInstance | null>(
+    () => instances.find(inst => inst.id === selectedServerId) || null,
+    [instances, selectedServerId]
+  );
 
   // Color values for light/dark mode
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -126,6 +145,80 @@ const AddEditSinkPage: React.FC = () => {
       .join(', ');
   };
 
+  const normalizeHostValue = useCallback((value?: string | null) => {
+    if (!value) {
+      return '';
+    }
+    return value.trim().toLowerCase().replace(/\.$/, '').replace(/\.local$/, '');
+  }, []);
+
+  const channelCountFromLayout = useCallback((layout?: string | null, fallback = 2): number => {
+    const normalized = (layout || '').toLowerCase();
+    const map: Record<string, number> = {
+      mono: 1,
+      stereo: 2,
+      quad: 4,
+      surround: 5,
+      '5.1': 6,
+      '7.1': 8,
+    };
+    return map[normalized] || fallback;
+  }, []);
+
+  const layoutFromChannelCount = useCallback((count?: number | string | null): string => {
+    const parsed = typeof count === 'string' ? Number.parseInt(count, 10) : count;
+    if (!parsed || parsed <= 0) {
+      return '';
+    }
+    if (parsed >= 8) return '7.1';
+    if (parsed === 6) return '5.1';
+    if (parsed === 5) return 'surround';
+    if (parsed === 4) return 'quad';
+    if (parsed === 1) return 'mono';
+    return 'stereo';
+  }, []);
+
+  const channelLayoutOptions = useMemo(() => {
+    const options = [
+      { value: 'mono', label: 'Mono' },
+      { value: 'stereo', label: 'Stereo' },
+      { value: 'quad', label: 'Quad' },
+      { value: 'surround', label: 'Surround' },
+      { value: '5.1', label: '5.1' },
+      { value: '7.1', label: '7.1' },
+    ];
+
+    const maxChannels =
+      outputMode === 'system' &&
+      selectedPlaybackDevice &&
+      Array.isArray(selectedPlaybackDevice.channels_supported) &&
+      selectedPlaybackDevice.channels_supported.length > 0
+        ? Math.max(...selectedPlaybackDevice.channels_supported)
+        : 8;
+
+    return options.filter(opt => {
+      const count = channelCountFromLayout(opt.value, 0);
+      return count === 0 || count <= maxChannels;
+    });
+  }, [channelCountFromLayout, outputMode, selectedPlaybackDevice]);
+
+  useEffect(() => {
+    if (channelLayoutOptions.some(opt => opt.value === channelLayout)) {
+      return;
+    }
+
+    const maxChannels =
+      outputMode === 'system' &&
+      selectedPlaybackDevice &&
+      Array.isArray(selectedPlaybackDevice.channels_supported) &&
+      selectedPlaybackDevice.channels_supported.length > 0
+        ? Math.max(...selectedPlaybackDevice.channels_supported)
+        : 8;
+
+    const fallbackLayout = layoutFromChannelCount(maxChannels) || 'stereo';
+    setChannelLayout(fallbackLayout);
+  }, [channelLayout, channelLayoutOptions, layoutFromChannelCount, outputMode, selectedPlaybackDevice]);
+
   useEffect(() => {
     if (!name.trim()) {
       return;
@@ -141,11 +234,57 @@ const AddEditSinkPage: React.FC = () => {
   }, [ip, completeStep]);
 
   useEffect(() => {
+    if (isEdit) {
+      return;
+    }
+    if (prefillName) {
+      setName(prefillName);
+    }
+    if (prefillIp) {
+      setIp(prefillIp);
+      setOutputMode('network');
+    }
+    if (prefillPort) {
+      setPort(prefillPort);
+    }
+    if (prefillProtocol) {
+      setProtocol(prefillProtocol);
+    }
+  }, [isEdit, prefillIp, prefillName, prefillPort, prefillProtocol]);
+
+  useEffect(() => {
     if (!port.trim()) {
       return;
     }
     completeStep('sink-port-input');
   }, [port, completeStep]);
+
+  const resolveApiBase = useCallback((instance: RouterInstance) => {
+    const apiPath = "/";//(instance.properties?.api || '').trim();
+    if (!apiPath) {
+      return instance.origin;
+    }
+    const normalized = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+    return `${instance.origin}${normalized}`;
+  }, []);
+
+  const fetchRemoteSinks = useCallback(async (instance: RouterInstance) => {
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      const baseURL = resolveApiBase(instance).replace(/\/$/, '');
+      const response = await axios.get<Record<string, Sink>>(`${baseURL}/sinks`);
+      setRemoteSinks(Object.values(response.data || {}));
+    } catch (err) {
+      console.error('Failed to fetch remote sinks', err);
+      setRemoteError('Failed to load remote sinks.');
+      setRemoteSinks([]);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }, [resolveApiBase]);
+
+  const randomHighPort = useCallback(() => Math.floor(Math.random() * 9000) + 41000, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -187,7 +326,7 @@ const AddEditSinkPage: React.FC = () => {
             const incomingProtocol = sinkData.protocol ? sinkData.protocol.toLowerCase() : '';
             const resolvedProtocol = incomingProtocol === 'system_audio'
               ? 'system_audio'
-              : incomingProtocol || (normalizedTag ? 'system_audio' : 'scream');
+              : incomingProtocol || (normalizedTag ? 'system_audio' : 'rtp');
 
             if (resolvedProtocol === 'system_audio') {
               const tagToUse = normalizedTag || rawIp;
@@ -203,8 +342,8 @@ const AddEditSinkPage: React.FC = () => {
             }
             setBitDepth(sinkData.bit_depth?.toString() || '32');
             setSampleRate(sinkData.sample_rate?.toString() || '48000');
-            setChannels(sinkData.channels?.toString() || '2');
-            setChannelLayout(sinkData.channel_layout || 'stereo');
+            const resolvedLayout = sinkData.channel_layout || layoutFromChannelCount(sinkData.channels) || 'stereo';
+            setChannelLayout(resolvedLayout);
             setVolume(sinkData.volume || 1);
             setDelay(sinkData.delay || 0);
             setTimeshift(sinkData.timeshift || 0);
@@ -212,6 +351,8 @@ const AddEditSinkPage: React.FC = () => {
             setTimeSyncDelay(sinkData.time_sync_delay?.toString() || '0');
             setProtocol(resolvedProtocol);
             setVolumeNormalization(sinkData.volume_normalization || false);
+            setSapTargetSink(sinkData.sap_target_sink || '');
+            setSapTargetHost(sinkData.sap_target_host || '');
             // Set multi-device mode and mappings if they exist
             setMultiDeviceMode(sinkData.multi_device_mode || false);
             setRtpReceiverMappings(sinkData.rtp_receiver_mappings || []);
@@ -219,7 +360,7 @@ const AddEditSinkPage: React.FC = () => {
             setPreviousNetworkConfig({
               ip: resolvedProtocol === 'system_audio' ? '' : rawIp,
               port: resolvedProtocol === 'system_audio' ? '4010' : (sinkData.port?.toString() || '4010'),
-              protocol: resolvedProtocol === 'system_audio' ? 'scream' : (resolvedProtocol || 'scream'),
+              protocol: resolvedProtocol === 'system_audio' ? 'rtp' : (resolvedProtocol || 'rtp'),
             });
           } else {
             setError(`Sink "${sinkName}" not found.`);
@@ -320,7 +461,10 @@ const AddEditSinkPage: React.FC = () => {
         const channelCandidates = parseNumberList(channelsRaw);
         const channelValue = channelCandidates.sort((a, b) => b - a)[0];
         if (channelValue) {
-          setChannels(channelValue.toString());
+          const inferredLayout = layoutFromChannelCount(channelValue);
+          if (inferredLayout) {
+            setChannelLayout(inferredLayout);
+          }
         }
       }
 
@@ -408,7 +552,83 @@ const AddEditSinkPage: React.FC = () => {
     });
 
     return unregister;
-  }, [registerSelectionHandler]);
+  }, [layoutFromChannelCount, registerSelectionHandler]);
+
+  useEffect(() => {
+    if (remotePrefillApplied || !sapTargetHost || instances.length === 0) {
+      return;
+    }
+
+    const targetHost = normalizeHostValue(sapTargetHost);
+    if (!targetHost) {
+      return;
+    }
+
+    const matchingInstance = instances.find(inst => {
+      return (
+        targetHost === normalizeHostValue(inst.uuid) ||
+        targetHost === normalizeHostValue(inst.hostname) ||
+        targetHost === normalizeHostValue(inst.address)
+      );
+    });
+
+    if (matchingInstance) {
+      setSelectedServerId(matchingInstance.id);
+      setRemoteSelection('');
+      setRemoteError(null);
+      setRemoteSinks([]);
+      void fetchRemoteSinks(matchingInstance);
+    }
+  }, [fetchRemoteSinks, instances, normalizeHostValue, remotePrefillApplied, sapTargetHost]);
+
+  useEffect(() => {
+    if (remotePrefillApplied || !sapTargetSink || !selectedInstance) {
+      return;
+    }
+
+    const matchingRemoteSink = remoteSinks.find(
+      rs => rs.config_id === sapTargetSink || rs.name === sapTargetSink
+    );
+
+    if (!matchingRemoteSink) {
+      return;
+    }
+
+    setRemoteSelection(matchingRemoteSink.name);
+    setRemotePrefillApplied(true);
+    setOutputMode('network');
+    setProtocol(prev => (prev === 'system_audio' ? 'rtp' : (prev || 'rtp')));
+    setSapTargetSink(matchingRemoteSink.config_id || matchingRemoteSink.name);
+    setSapTargetHost(
+      selectedInstance.uuid || selectedInstance.hostname || selectedInstance.address || sapTargetHost
+    );
+
+    if (!name.trim()) {
+      const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${matchingRemoteSink.name}`;
+      setName(baseName);
+    }
+
+    setIp(prev => prev && prev !== '0' ? prev : (selectedInstance.address || selectedInstance.hostname || matchingRemoteSink.ip || ''));
+    setPort(prev => (prev && prev !== '0' && prev !== '4010') ? prev : randomHighPort().toString());
+    setBitDepth((matchingRemoteSink.bit_depth || 16).toString());
+    setSampleRate((matchingRemoteSink.sample_rate || 48000).toString());
+    const remoteLayout = matchingRemoteSink.channel_layout || layoutFromChannelCount(matchingRemoteSink.channels) || 'stereo';
+    setChannelLayout(remoteLayout);
+    setVolume(typeof matchingRemoteSink.volume === 'number' ? matchingRemoteSink.volume : 1);
+    setDelay(matchingRemoteSink.delay ?? 0);
+    setTimeshift(matchingRemoteSink.timeshift ?? 0);
+    setTimeSync(matchingRemoteSink.time_sync ?? false);
+    setTimeSyncDelay((matchingRemoteSink.time_sync_delay ?? 0).toString());
+    setVolumeNormalization(matchingRemoteSink.volume_normalization ?? false);
+  }, [
+    remotePrefillApplied,
+    remoteSinks,
+    sapTargetHost,
+    sapTargetSink,
+    selectedInstance,
+    randomHighPort,
+    layoutFromChannelCount
+  ]);
 
   /**
    * Handles form submission to add or update a sink.
@@ -420,11 +640,17 @@ const AddEditSinkPage: React.FC = () => {
       setPort('0');
       setIp(selectedPlaybackTag || '');
     } else {
-      setProtocol(prev => (prev === 'system_audio' ? previousNetworkConfig.protocol || 'scream' : prev));
+      setProtocol(prev => (prev === 'system_audio' ? previousNetworkConfig.protocol || 'rtp' : prev));
       setIp(previousNetworkConfig.ip || '');
       setPort(previousNetworkConfig.port || '4010');
     }
   }, [outputMode, previousNetworkConfig, selectedPlaybackTag]);
+
+  useEffect(() => {
+    if (protocol === 'system_audio' && outputMode !== 'system') {
+      setOutputMode('system');
+    }
+  }, [outputMode, protocol]);
 
   const handleSubmit = async () => {
     const trimmedName = name.trim();
@@ -449,9 +675,9 @@ const AddEditSinkPage: React.FC = () => {
 
     // Ensure numeric values are valid
     const portNum = outputMode === 'system' ? 0 : parseInt(port);
-    const bitDepthNum = parseInt(bitDepth) || 32;
+    const bitDepthNum = parseInt(bitDepth) || 16;
     const sampleRateNum = parseInt(sampleRate) || 48000;
-    const channelsNum = parseInt(channels) || 2;
+    const channelsNum = channelCountFromLayout(channelLayout, sink?.channels || 2);
     const timeSyncDelayNum = parseInt(timeSyncDelay) || 0;
 
     if (outputMode === 'network') {
@@ -462,7 +688,7 @@ const AddEditSinkPage: React.FC = () => {
     }
 
     if (isNaN(channelsNum) || channelsNum < 1 || channelsNum > 8) {
-      setError('Channels must be a number between 1 and 8');
+      setError('Channel layout must resolve to between 1 and 8 channels');
       return;
     }
 
@@ -478,7 +704,7 @@ const AddEditSinkPage: React.FC = () => {
       delay: delay || 0,
       time_sync: timeSync || false,
       time_sync_delay: timeSyncDelayNum,
-      protocol: outputMode === 'system' ? 'system_audio' : (protocol || 'scream'),
+      protocol: outputMode === 'system' ? 'system_audio' : (protocol || 'rtp'),
       volume_normalization: volumeNormalization || false,
       enabled: false,  // New sinks start disabled by default
       is_group: false,
@@ -489,7 +715,9 @@ const AddEditSinkPage: React.FC = () => {
         b13: 1, b14: 1, b15: 1, b16: 1, b17: 1, b18: 1,
         normalization_enabled: false
       },
-      timeshift: timeshift
+      timeshift: timeshift,
+      sap_target_sink: sapTargetSink || undefined,
+      sap_target_host: sapTargetHost || undefined,
     };
 
     // Add multi-device mode configuration if protocol is RTP
@@ -549,10 +777,10 @@ const AddEditSinkPage: React.FC = () => {
         setPreviousNetworkConfig({
           ip: (sinkData.ip as string) || '',
           port: sinkData.port?.toString() || '4010',
-          protocol: sinkData.protocol || 'scream',
+          protocol: sinkData.protocol || 'rtp',
         });
       } else {
-        setPreviousNetworkConfig({ ip: '', port: '4010', protocol: 'scream' });
+        setPreviousNetworkConfig({ ip: '', port: '4010', protocol: 'rtp' });
       }
 
       try {
@@ -576,19 +804,18 @@ const AddEditSinkPage: React.FC = () => {
         setName('');
         setIp('');
         setPort('4010');
-        setBitDepth('32');
+        setBitDepth('16');
         setSampleRate('48000');
-        setChannels('2');
         setChannelLayout('stereo');
         setVolume(1);
         setDelay(0);
         setTimeshift(0);
         setTimeSync(false);
         setTimeSyncDelay('0');
-        setProtocol('scream');
+        setProtocol('rtp');
         setOutputMode('network');
         setSelectedPlaybackTag('');
-        setPreviousNetworkConfig({ ip: '', port: '4010', protocol: 'scream' });
+        setPreviousNetworkConfig({ ip: '', port: '4010', protocol: 'rtp' });
         setVolumeNormalization(false);
         setMultiDeviceMode(false);
         setRtpReceiverMappings([]);
@@ -667,7 +894,7 @@ const AddEditSinkPage: React.FC = () => {
   };
 
   return (
-    <Container maxW="container.md" py={8}>
+    <Container maxW="container.lg" py={8}>
       <Box
         bg={bgColor}
         borderColor={borderColor}
@@ -693,79 +920,268 @@ const AddEditSinkPage: React.FC = () => {
             {success}
           </Alert>
         )}
-        
-        <Stack spacing={4}>
-          <FormControl isRequired>
-            <FormLabel>Sink Name</FormLabel>
-            <Input
-              data-tutorial-id="sink-name-input"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              bg={inputBg}
-            />
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Output Type</FormLabel>
-            <Select
-              value={outputMode}
-              onChange={(event) => {
-                const nextMode = event.target.value as 'network' | 'system';
-                if (nextMode === 'system') {
-                  setPreviousNetworkConfig({
-                    ip,
-                    port,
-                    protocol,
-                  });
-                }
-                setOutputMode(nextMode);
-                if (nextMode === 'network' && protocol === 'system_audio') {
-                  setProtocol(previousNetworkConfig.protocol || 'scream');
-                }
-              }}
-              bg={inputBg}
-            >
-              <option value="network">Network Sink (IP)</option>
-              <option value="system">System Audio Device</option>
-            </Select>
-          </FormControl>
+        {(sink?.config_id || sapTargetHost || sapTargetSink) && (
+          <Box
+            mb={5}
+            p={4}
+            borderWidth="1px"
+            borderRadius="md"
+            bg={useColorModeValue('gray.50', 'gray.700')}
+            borderColor={useColorModeValue('gray.200', 'gray.600')}
+          >
+            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
+              {sink?.config_id && (
+                <Box>
+                  <Text fontSize="xs" color={useColorModeValue('gray.500', 'gray.400')} textTransform="uppercase" letterSpacing="0.05em">
+                    GUID
+                  </Text>
+                  <Text fontWeight="semibold" fontSize="sm">{sink.config_id}</Text>
+                </Box>
+              )}
+              {sapTargetHost && (
+                <Box>
+                  <Text fontSize="xs" color={useColorModeValue('gray.500', 'gray.400')} textTransform="uppercase" letterSpacing="0.05em">
+                    Target Host
+                  </Text>
+                  <Text fontWeight="semibold" fontSize="sm">{sapTargetHost}</Text>
+                </Box>
+              )}
+              {sapTargetSink && (
+                <Box>
+                  <Text fontSize="xs" color={useColorModeValue('gray.500', 'gray.400')} textTransform="uppercase" letterSpacing="0.05em">
+                    Target Device
+                  </Text>
+                  <Text fontWeight="semibold" fontSize="sm">{sapTargetSink}</Text>
+                </Box>
+              )}
+            </SimpleGrid>
+          </Box>
+        )}
 
-          <FormControl isRequired={outputMode === 'network'}>
-            <FormLabel>{outputMode === 'system' ? 'Playback Tag' : 'Sink IP'}</FormLabel>
-            <Stack
-              direction={{ base: 'column', md: 'row' }}
-              spacing={2}
-              align={{ base: 'stretch', md: 'center' }}
-            >
+        <Stack spacing={5}>
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <FormControl isRequired>
+              <FormLabel>Sink Name</FormLabel>
               <Input
-                data-tutorial-id="sink-ip-input"
-                value={outputMode === 'system' ? (selectedPlaybackTag || '') : ip}
-                onChange={(e) => {
-                  if (outputMode === 'network') {
-                    setIp(e.target.value);
+                data-tutorial-id="sink-name-input"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                bg={inputBg}
+              />
+            </FormControl>
+
+            <FormControl>
+              <FormLabel>Output Type</FormLabel>
+              <Select
+                value={outputMode}
+                onChange={(event) => {
+                  const nextMode = event.target.value as 'network' | 'system';
+                  if (nextMode === 'system') {
+                    setPreviousNetworkConfig({
+                      ip,
+                      port,
+                      protocol,
+                    });
+                  }
+                  setOutputMode(nextMode);
+                  if (nextMode === 'network' && protocol === 'system_audio') {
+                    setProtocol(previousNetworkConfig.protocol || 'rtp');
                   }
                 }}
                 bg={inputBg}
-                flex="1"
-                isReadOnly={outputMode === 'system'}
-                placeholder={outputMode === 'system' ? 'Select a system audio playback device' : 'Enter the sink address'}
-              />
-              <Button
-                onClick={() => openMdnsModal('sinks')}
-                variant="outline"
-                colorScheme="blue"
-                width={{ base: '100%', md: 'auto' }}
-                isDisabled={outputMode === 'system'}
               >
-                Discover Devices
-              </Button>
-            </Stack>
-            {outputMode === 'system' && systemPlaybackDevices.length === 0 && (
-              <Text mt={2} fontSize="sm" color="orange.500">
-                No system playback devices detected. Connect a system audio output to select it here.
-              </Text>
-            )}
-          </FormControl>
+                <option value="network">Network Sink (IP)</option>
+                <option value="system">Local System Audio Device</option>
+              </Select>
+            </FormControl>
+          </SimpleGrid>
+
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <FormControl>
+              <FormLabel>Volume</FormLabel>
+              <VolumeSlider
+                value={volume}
+                onChange={setVolume}
+                dataTutorialId="sink-volume-slider"
+              />
+            </FormControl>
+
+            <FormControl>
+              <FormLabel>Timeshift</FormLabel>
+              <TimeshiftSlider
+                value={timeshift}
+                onChange={setTimeshift}
+                dataTutorialId="sink-timeshift-slider"
+              />
+            </FormControl>
+          </SimpleGrid>
+
+          {outputMode === 'network' && (
+            <FormControl>
+              <FormLabel>Sink ScreamRouter Server</FormLabel>
+              <HStack spacing={2} align="center">
+                <Select
+                  value={selectedServerId}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    setSelectedServerId(nextId);
+                    setRemoteSelection('');
+                    setRemoteError(null);
+                    setRemoteSinks([]);
+                    setSapTargetSink('');
+                    setSapTargetHost('');
+                    if (nextId !== 'local') {
+                      const inst = instances.find(inst => inst.id === nextId);
+                      if (inst) {
+                        setSapTargetHost(inst.hostname || inst.address || '');
+                        void fetchRemoteSinks(inst);
+                      }
+                    }
+                  }}
+                  bg={inputBg}
+                >
+                  <option value="local">Local</option>
+                  {instances.filter(inst => !inst.isCurrent).map(inst => (
+                    <option key={inst.id} value={inst.id}>
+                      {inst.label} {inst.isCurrent ? '(current)' : ''}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  size="sm"
+                  onClick={() => { void refreshInstances(); }}
+                  isLoading={instancesLoading}
+                  variant="outline"
+                >
+                  Refresh
+                </Button>
+              </HStack>
+              {instancesError && (
+                <Text mt={1} fontSize="sm" color="red.400">
+                  {instancesError}
+                </Text>
+              )}
+            </FormControl>
+          )}
+          
+          {outputMode === 'network' && selectedServerId !== 'local' && (
+            <FormControl>
+              <FormLabel>Remote Sink</FormLabel>
+              <Select
+                placeholder={remoteLoading ? 'Loading remote sinks...' : 'Select a remote sink'}
+                value={remoteSelection}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setRemoteSelection(value);
+                  const remoteSink = remoteSinks.find(rs => rs.name === value);
+                  if (!remoteSink || !selectedInstance) {
+                    return;
+                  }
+          const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${remoteSink.name}`;
+          setName(baseName);
+          setSapTargetSink(remoteSink.config_id || remoteSink.name);
+          setSapTargetHost(selectedInstance.uuid || selectedInstance.hostname || selectedInstance.address || '');
+          setProtocol('rtp');
+          setOutputMode('network');
+          setIp(selectedInstance.address || selectedInstance.hostname || remoteSink.ip || '');
+          setPort(randomHighPort().toString());
+          setBitDepth((remoteSink.bit_depth || 16).toString());
+          setSampleRate((remoteSink.sample_rate || 48000).toString());
+          const remoteLayout = remoteSink.channel_layout || layoutFromChannelCount(remoteSink.channels) || 'stereo';
+          setChannelLayout(remoteLayout);
+          setVolume(remoteSink.volume ?? 1);
+          setDelay(remoteSink.delay ?? 0);
+          setTimeshift(remoteSink.timeshift ?? 0);
+          setTimeSync(remoteSink.time_sync ?? false);
+          setTimeSyncDelay((remoteSink.time_sync_delay ?? 0).toString());
+          setVolumeNormalization(remoteSink.volume_normalization ?? false);
+        }}
+                isDisabled={remoteLoading}
+                bg={inputBg}
+              >
+                {remoteSinks.map(rs => (
+                  <option key={rs.name} value={rs.name}>
+                    {rs.name}
+                  </option>
+                ))}
+              </Select>
+              {remoteError && (
+                <Text mt={1} fontSize="sm" color="red.400">
+                  {remoteError}
+                </Text>
+              )}
+              {!remoteLoading && remoteSinks.length === 0 && !remoteError && (
+                <Text mt={1} fontSize="sm" color="gray.500">
+                  No remote sinks found on this server.
+                </Text>
+              )}
+            </FormControl>
+          )}
+
+          {outputMode === 'network' && selectedServerId === 'local' && (
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+              <FormControl isRequired={outputMode === 'network'}>
+                <FormLabel>{outputMode === 'system' ? 'Playback Tag' : 'RTP/Scream Sink IP'}</FormLabel>
+                <Stack
+                  direction={{ base: 'column', md: 'row' }}
+                  spacing={2}
+                  align={{ base: 'stretch', md: 'center' }}
+                >
+                  <Input
+                    data-tutorial-id="sink-ip-input"
+                    value={outputMode === 'system' ? (selectedPlaybackTag || '') : ip}
+                    onChange={(e) => {
+                      if (outputMode === 'network') {
+                        setIp(e.target.value);
+                      }
+                    }}
+                    bg={inputBg}
+                    flex="1"
+                    isReadOnly={outputMode === 'system'}
+                    placeholder={outputMode === 'system' ? 'Select a system audio playback device' : 'Enter the sink address'}
+                  />
+                  <Button
+                    onClick={() => openMdnsModal('sinks')}
+                    variant="outline"
+                    colorScheme="blue"
+                    width={{ base: '100%', md: 'auto' }}
+                    isDisabled={outputMode === 'system'}
+                  >
+                    Discover RTP Devices
+                  </Button>
+                </Stack>
+                {outputMode === 'system' && systemPlaybackDevices.length === 0 && (
+                  <Text mt={2} fontSize="sm" color="orange.500">
+                    No system playback devices detected. Connect a system audio output to select it here.
+                  </Text>
+                )}
+              </FormControl>
+
+              <FormControl isRequired={outputMode === 'network'}>
+                <FormLabel>Sink Port</FormLabel>
+                <NumberInput
+                  data-tutorial-id="sink-port-input"
+                  value={port}
+                  onChange={(valueString) => setPort(valueString)}
+                  min={outputMode === 'system' ? 0 : 1}
+                  max={65535}
+                  bg={inputBg}
+                  isDisabled={outputMode === 'system'}
+                >
+                  <NumberInputField />
+                  <NumberInputStepper>
+                    <NumberIncrementStepper />
+                    <NumberDecrementStepper />
+                  </NumberInputStepper>
+                </NumberInput>
+                {outputMode === 'system' && (
+                  <Text mt={2} fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                    System audio sinks do not require a network port. The engine will manage the device directly.
+                  </Text>
+                )}
+              </FormControl>
+            </SimpleGrid>
+          )}
 
           {outputMode === 'system' && (
             <FormControl isRequired>
@@ -815,97 +1231,77 @@ const AddEditSinkPage: React.FC = () => {
               )}
             </FormControl>
           )}
-          
-          <FormControl isRequired={outputMode === 'network'}>
-            <FormLabel>Sink Port</FormLabel>
-            <NumberInput
-              data-tutorial-id="sink-port-input"
-              value={port}
-              onChange={(valueString) => setPort(valueString)}
-              min={outputMode === 'system' ? 0 : 1}
-              max={65535}
-              bg={inputBg}
-              isDisabled={outputMode === 'system'}
-            >
-              <NumberInputField />
-              <NumberInputStepper>
-                <NumberIncrementStepper />
-                <NumberDecrementStepper />
-              </NumberInputStepper>
-            </NumberInput>
-            {outputMode === 'system' && (
-              <Text mt={2} fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
-                System audio sinks do not require a network port. The engine will manage the device directly.
-              </Text>
-            )}
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Bit Depth</FormLabel>
-            <Select
-              data-tutorial-id="sink-bit-depth-select"
-              value={bitDepth}
-              onChange={(e) => setBitDepth(e.target.value)}
-              bg={inputBg}
-            >
-              <option value="16">16</option>
-              <option value="24">24</option>
-              <option value="32">32</option>
-            </Select>
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Sample Rate</FormLabel>
-            <Select
-              data-tutorial-id="sink-sample-rate-select"
-              value={sampleRate}
-              onChange={(e) => setSampleRate(e.target.value)}
-              bg={inputBg}
-            >
-              <option value="44100">44100</option>
-              <option value="48000">48000</option>
-              <option value="88200">88200</option>
-              <option value="96000">96000</option>
-              <option value="192000">192000</option>
-            </Select>
-          </FormControl>
-          
-          <FormControl isRequired>
-            <FormLabel>Channels</FormLabel>
-            <NumberInput
-              data-tutorial-id="sink-channels-input"
-              value={channels}
-              onChange={(valueString) => setChannels(valueString)}
-              min={1}
-              max={8}
-              bg={inputBg}
-            >
-              <NumberInputField />
-              <NumberInputStepper>
-                <NumberIncrementStepper />
-                <NumberDecrementStepper />
-              </NumberInputStepper>
-            </NumberInput>
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Channel Layout</FormLabel>
-            <Select
-              data-tutorial-id="sink-channel-layout-select"
-              value={channelLayout}
-              onChange={(e) => setChannelLayout(e.target.value)}
-              bg={inputBg}
-            >
-              <option value="mono">Mono</option>
-              <option value="stereo">Stereo</option>
-              <option value="quad">Quad</option>
-              <option value="surround">Surround</option>
-              <option value="5.1">5.1</option>
-              <option value="7.1">7.1</option>
-            </Select>
-          </FormControl>
 
-          {outputMode === 'network' ? (
+          <SimpleGrid columns={{ base: 1, md: 2, lg: 4 }} spacing={4}>
+            <FormControl>
+              <FormLabel>Bit Depth</FormLabel>
+              <Select
+                data-tutorial-id="sink-bit-depth-select"
+                value={bitDepth}
+                onChange={(e) => setBitDepth(e.target.value)}
+                bg={inputBg}
+              >
+                <option value="16">16</option>
+                <option value="24">24</option>
+                <option value="32">32</option>
+              </Select>
+            </FormControl>
+            
+            <FormControl>
+              <FormLabel>Sample Rate</FormLabel>
+              <Select
+                data-tutorial-id="sink-sample-rate-select"
+                value={sampleRate}
+                onChange={(e) => setSampleRate(e.target.value)}
+                bg={inputBg}
+              >
+                <option value="44100">44100</option>
+                <option value="48000">48000</option>
+                <option value="88200">88200</option>
+                <option value="96000">96000</option>
+                <option value="192000">192000</option>
+              </Select>
+            </FormControl>
+            
+            <FormControl>
+              <FormLabel>Channel Layout</FormLabel>
+              <Select
+                data-tutorial-id="sink-channel-layout-select"
+                value={channelLayout}
+                onChange={(e) => setChannelLayout(e.target.value)}
+                bg={inputBg}
+              >
+                {channelLayoutOptions.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </FormControl>
+
+            <FormControl>
+              <FormLabel>Delay (ms)</FormLabel>
+              <NumberInput
+                data-tutorial-id="sink-delay-input"
+                value={delay}
+                onChange={(valueString) => {
+                  const parsed = Number.parseInt(valueString, 10);
+                  setDelay(Number.isNaN(parsed) ? 0 : parsed);
+                }}
+                min={0}
+                max={5000}
+                bg={inputBg}
+              >
+                <NumberInputField />
+                <NumberInputStepper>
+                  <NumberIncrementStepper />
+                  <NumberDecrementStepper />
+                </NumberInputStepper>
+              </NumberInput>
+            </FormControl>
+          </SimpleGrid>
+
+          {outputMode === 'network' && (
             <FormControl>
               <FormLabel>Protocol</FormLabel>
               <Select
@@ -918,12 +1314,7 @@ const AddEditSinkPage: React.FC = () => {
                 <option value="rtp">RTP (PCM)</option>
                 <option value="rtp_opus">RTP (Opus)</option>
                 <option value="web_receiver">Web Receiver</option>
-          </Select>
-            </FormControl>
-          ) : (
-            <FormControl>
-              <FormLabel>Protocol</FormLabel>
-              <Input value="system_audio" isReadOnly bg={inputBg} />
+              </Select>
             </FormControl>
           )}
 
@@ -972,45 +1363,6 @@ const AddEditSinkPage: React.FC = () => {
               )}
             </>
           )}
-          
-          <FormControl>
-            <FormLabel>Volume</FormLabel>
-            <VolumeSlider
-              value={volume}
-              onChange={setVolume}
-              dataTutorialId="sink-volume-slider"
-            />
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Delay (ms)</FormLabel>
-            <NumberInput
-              data-tutorial-id="sink-delay-input"
-              value={delay}
-              onChange={(valueString) => {
-                const parsed = Number.parseInt(valueString, 10);
-                setDelay(Number.isNaN(parsed) ? 0 : parsed);
-              }}
-              min={0}
-              max={5000}
-              bg={inputBg}
-            >
-              <NumberInputField />
-              <NumberInputStepper>
-                <NumberIncrementStepper />
-                <NumberDecrementStepper />
-              </NumberInputStepper>
-            </NumberInput>
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Timeshift</FormLabel>
-            <TimeshiftSlider
-              value={timeshift}
-              onChange={setTimeshift}
-              dataTutorialId="sink-timeshift-slider"
-            />
-          </FormControl>
           
         </Stack>
         

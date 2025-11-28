@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <sstream>
+#include <vector>
 
 namespace screamrouter {
 namespace audio {
@@ -134,6 +135,17 @@ void AlsaPlaybackSender::send_payload(const uint8_t* payload_data, size_t payloa
 
 #if defined(__linux__)
 
+void AlsaPlaybackSender::set_playback_rate_callback(std::function<void(double)> cb) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    playback_rate_callback_ = std::move(cb);
+}
+
+void AlsaPlaybackSender::update_pipeline_backlog(double upstream_frames, double upstream_target_frames) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    upstream_buffer_frames_ = std::max(0.0, upstream_frames);
+    upstream_target_frames_ = std::max(0.0, upstream_target_frames);
+}
+
 bool AlsaPlaybackSender::parse_legacy_card_device(const std::string& value, int& card, int& device) const {
     const auto dot_pos = value.find('.');
     if (dot_pos == std::string::npos) {
@@ -227,11 +239,16 @@ bool AlsaPlaybackSender::configure_device() {
                         device_tag_.c_str(), bit_depth_, snd_strerror(err));
     }
     snd_pcm_hw_params_set_channels(pcm_handle_, hw_params, channels_);
-    unsigned int rate = sample_rate_;
-    snd_pcm_hw_params_set_rate_near(pcm_handle_, hw_params, &rate, nullptr);
-    sample_rate_ = rate;
+    err = snd_pcm_hw_params_set_rate(pcm_handle_, hw_params, sample_rate_, 0);
+    if (err < 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to set exact sample rate %u Hz: %s",
+                      device_tag_.c_str(), sample_rate_, snd_strerror(err));
+        snd_pcm_hw_params_free(hw_params);
+        close_locked();
+        return false;
+    }
 
-    constexpr unsigned int kTargetLatencyUs = 12000;      // 12 ms overall buffer target
+    constexpr unsigned int kTargetLatencyUs = 24000;      // 24 ms overall buffer target
     constexpr unsigned int kPeriodsPerBuffer = 3;        // keep a few smaller periods for smoothness
     unsigned int buffer_time = kTargetLatencyUs;
     unsigned int period_time = std::max(1000u, buffer_time / kPeriodsPerBuffer);
@@ -259,8 +276,11 @@ bool AlsaPlaybackSender::configure_device() {
     snd_pcm_sw_params_t* sw_params = nullptr;
     snd_pcm_sw_params_malloc(&sw_params);
     snd_pcm_sw_params_current(pcm_handle_, sw_params);
-    snd_pcm_uframes_t start_threshold = std::max<snd_pcm_uframes_t>(1, period_frames_);
+    snd_pcm_uframes_t start_threshold = period_frames_ > 0 && buffer_frames_ > period_frames_
+                                            ? buffer_frames_ - period_frames_
+                                            : std::max<snd_pcm_uframes_t>(1, period_frames_);
     snd_pcm_sw_params_set_start_threshold(pcm_handle_, sw_params, start_threshold);
+    // Require at least one full period available before we wake the writer; keeps a bit more headroom.
     snd_pcm_sw_params_set_avail_min(pcm_handle_, sw_params, period_frames_);
     snd_pcm_sw_params_set_stop_threshold(pcm_handle_, sw_params, buffer_frames_);
     snd_pcm_sw_params(pcm_handle_, sw_params);
@@ -278,7 +298,134 @@ bool AlsaPlaybackSender::configure_device() {
                  got_period_us, buffer_frames_, got_buffer_us);
 
     frames_written_.store(0, std::memory_order_release);
+    if (buffer_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+    } else if (period_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(period_frames_) * 2.0;
+    } else {
+        target_delay_frames_ = 0.0;
+    }
+    playback_rate_integral_ = 0.0;
+    last_playback_rate_command_ = 1.0;
+    prefill_target_delay_locked();
     return true;
+}
+
+void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t delay_frames) {
+    if (!playback_rate_callback_ || delay_frames < 0) {
+        return;
+    }
+
+    if (target_delay_frames_ <= 0.0) {
+        if (buffer_frames_ > 0) {
+            target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+        } else if (period_frames_ > 0) {
+            target_delay_frames_ = static_cast<double>(period_frames_) * 2.0;
+        }
+    }
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kUpdateInterval = std::chrono::milliseconds(10);
+    if (last_rate_update_.time_since_epoch().count() != 0 &&
+        now - last_rate_update_ < kUpdateInterval) {
+        return;
+    }
+    last_rate_update_ = now;
+
+    // Low-pass the delay to avoid reacting to single jitter spikes.
+    constexpr double kAlpha = 0.1; // ~200 ms time constant with 20 ms updates
+    if (filtered_delay_frames_ <= 0.0) {
+        filtered_delay_frames_ = static_cast<double>(delay_frames);
+    } else {
+        filtered_delay_frames_ = filtered_delay_frames_ + kAlpha * (static_cast<double>(delay_frames) - filtered_delay_frames_);
+    }
+
+    // Use a combined target: ALSA queue plus upstream (mixer) queue.
+    const double total_delay_frames = filtered_delay_frames_ + upstream_buffer_frames_;
+    const double target_total_frames = target_delay_frames_ + upstream_target_frames_;
+
+    // Positive error => pipeline above target, speed up playback to shrink it.
+    const double error = total_delay_frames - target_total_frames;
+    // More aggressive gains: ~3 ppm per frame, integral a bit faster.
+    constexpr double kKp = 3e-6;
+    constexpr double kKi = 5e-8;
+    constexpr double kIntegralClamp = 300000.0; // ~±300 ppm contribution
+    playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
+
+    double adjust = (kKp * error) + (kKi * playback_rate_integral_);
+    constexpr double kMaxPpm = 800.0; // ±800 ppm
+    const double max_adjust = kMaxPpm * 1e-6;
+    adjust = std::clamp(adjust, -max_adjust, max_adjust);
+
+    double desired_rate = 1.0 + adjust;
+    constexpr double kMaxStepPpm = 80.0; // per update slew
+    const double max_step = kMaxStepPpm * 1e-6;
+    const double delta = std::clamp(desired_rate - last_playback_rate_command_, -max_step, max_step);
+    desired_rate = last_playback_rate_command_ + delta;
+
+    constexpr double kHardClamp = 0.96;
+    constexpr double kHardClampMax = 1.02;
+    desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
+
+    ++rate_log_counter_;
+    if (rate_log_counter_ % 100 == 0) {
+        LOG_CPP_INFO("[AlsaPlayback:%s] PI rate update: total_delay=%.1f (alsa=%.1f upstream=%.1f) target_total=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
+                     device_tag_.c_str(),
+                     total_delay_frames,
+                     filtered_delay_frames_,
+                     upstream_buffer_frames_,
+                     target_total_frames,
+                     error,
+                     adjust,
+                     desired_rate,
+                     playback_rate_integral_,
+                     kKp,
+                     kKi,
+                     kMaxPpm,
+                     kMaxStepPpm);
+    }
+
+    if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
+        last_playback_rate_command_ = desired_rate;
+        auto cb = playback_rate_callback_;
+        cb(desired_rate);
+    }
+}
+
+void AlsaPlaybackSender::prefill_target_delay_locked() {
+    if (!pcm_handle_ || bytes_per_frame_ == 0 || target_delay_frames_ <= 0.0) {
+        return;
+    }
+
+    snd_pcm_sframes_t current_delay = 0;
+    if (snd_pcm_delay(pcm_handle_, &current_delay) < 0) {
+        return;
+    }
+    if (current_delay < 0) {
+        current_delay = 0;
+    }
+
+    const snd_pcm_sframes_t desired_delay = static_cast<snd_pcm_sframes_t>(target_delay_frames_);
+    snd_pcm_sframes_t deficit = desired_delay - current_delay;
+    if (deficit <= 0) {
+        return;
+    }
+
+    const snd_pcm_sframes_t max_prefill = buffer_frames_ > 0
+                                              ? static_cast<snd_pcm_sframes_t>(buffer_frames_)
+                                              : deficit;
+    deficit = std::min(deficit, max_prefill);
+    std::vector<uint8_t> zeros(static_cast<size_t>(deficit) * bytes_per_frame_, 0);
+    snd_pcm_sframes_t written = snd_pcm_writei(pcm_handle_, zeros.data(), deficit);
+    if (written < 0) {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] Prefill write failed: %s", device_tag_.c_str(), snd_strerror(static_cast<int>(written)));
+    } else {
+        LOG_CPP_INFO("[AlsaPlayback:%s] Prefilled %ld frames of silence toward target_delay=%.1f (initial_delay=%ld, written=%ld).",
+                     device_tag_.c_str(),
+                     static_cast<long>(deficit),
+                     target_delay_frames_,
+                     static_cast<long>(current_delay),
+                     static_cast<long>(written));
+    }
 }
 
 bool AlsaPlaybackSender::handle_write_error(int err) {
@@ -286,6 +433,7 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         return false;
     }
 
+    const int original_err = err;
     const bool xrun_via_error_code = (err == -EPIPE);
     const bool xrun_via_status = detect_xrun_locked();
     if (xrun_via_error_code && !xrun_via_status) {
@@ -293,12 +441,41 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
     }
     const bool detected_xrun = xrun_via_status || xrun_via_error_code;
 
+    if (detected_xrun) {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] x-run detected while writing audio (err=%s). Attempting recovery.",
+                        device_tag_.c_str(), snd_strerror(original_err));
+    } else {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] Write error while feeding ALSA (err=%s). Attempting recovery.",
+                        device_tag_.c_str(), snd_strerror(original_err));
+    }
+
+    snd_pcm_sframes_t dbg_delay = 0;
+    snd_pcm_delay(pcm_handle_, &dbg_delay);
+    LOG_CPP_INFO("[AlsaPlayback:%s] Pre-recover state: pcm_state=%d delay_frames=%ld target_delay=%.1f rate_cmd=%.6f",
+                 device_tag_.c_str(),
+                 snd_pcm_state(pcm_handle_),
+                 static_cast<long>(dbg_delay),
+                 target_delay_frames_,
+                 last_playback_rate_command_);
+
     err = snd_pcm_recover(pcm_handle_, err, 1);
     if (err < 0) {
         LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to recover from write error: %s", device_tag_.c_str(), snd_strerror(err));
         close_locked();
         return false;
     }
+
+    playback_rate_integral_ = 0.0;
+    last_playback_rate_command_ = 1.0;
+    if (buffer_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(buffer_frames_) / 2.0;
+    } else if (period_frames_ > 0) {
+        target_delay_frames_ = static_cast<double>(period_frames_) * 2.0;
+    } else {
+        target_delay_frames_ = 0.0;
+    }
+    filtered_delay_frames_ = 0.0;
+    prefill_target_delay_locked();
 
     if (detected_xrun && is_raspberry_pi_) {
         LOG_CPP_WARNING("[AlsaPlayback:%s] ALSA x-run detected on Raspberry Pi; recreating playback device.", device_tag_.c_str());
@@ -343,6 +520,11 @@ void AlsaPlaybackSender::close_locked() {
         snd_pcm_close(pcm_handle_);
         pcm_handle_ = nullptr;
     }
+    target_delay_frames_ = 0.0;
+    upstream_buffer_frames_ = 0.0;
+    upstream_target_frames_ = 0.0;
+    playback_rate_integral_ = 0.0;
+    last_playback_rate_command_ = 1.0;
     frames_written_.store(0, std::memory_order_release);
 }
 
@@ -369,10 +551,13 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
                                                       : static_cast<snd_pcm_sframes_t>(0);
 
     while (frames_remaining > 0) {
-        int wait_rc = snd_pcm_wait(pcm_handle_, 50);
-        if (wait_rc <= 0) {
-            int wait_err = (wait_rc == 0) ? -EPIPE : wait_rc;
-            if (!handle_write_error(wait_err)) {
+        // Wake frequently to avoid long sleeps that drain the hardware queue and cause underruns.
+        int wait_rc = snd_pcm_wait(pcm_handle_, 10);
+        if (wait_rc == 0) {
+            continue; // timed out, re-check state without treating as an error
+        }
+        if (wait_rc < 0) {
+            if (!handle_write_error(wait_rc)) {
                 return false;
             }
             continue;
@@ -406,6 +591,21 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
                                 device_tag_.c_str(), frames_remaining, static_cast<long>(delay_frames),
                                 static_cast<long>(max_buffered_frames));
                 return true;
+            }
+        }
+
+        // If the hardware queue is already far beyond our target plus one buffer, drop the rest of this chunk to avoid overruns.
+        if (delay_frames > 0 && buffer_frames_ > 0) {
+            const snd_pcm_sframes_t hard_high = static_cast<snd_pcm_sframes_t>(target_delay_frames_ + buffer_frames_);
+            if (delay_frames > hard_high) {
+                LOG_CPP_WARNING("[AlsaPlayback:%s] Dropping %zu frames to cap hardware queue (delay=%ld, target=%.1f, buffer=%lu).",
+                                device_tag_.c_str(),
+                                frames_remaining,
+                                static_cast<long>(delay_frames),
+                                target_delay_frames_,
+                                static_cast<unsigned long>(buffer_frames_));
+                frames_remaining = 0;
+                break;
             }
         }
 
@@ -443,6 +643,7 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
             double delay_ms = 1000.0 * static_cast<double>(delay_frames) / static_cast<double>(sample_rate_);
             LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA reported delay: %.2f ms (%ld frames).",
                           device_tag_.c_str(), delay_ms, static_cast<long>(delay_frames));
+            maybe_update_playback_rate_locked(delay_frames);
         }
     }
 
@@ -505,42 +706,6 @@ unsigned int AlsaPlaybackSender::get_effective_channels() const {
 unsigned int AlsaPlaybackSender::get_effective_bit_depth() const {
     std::lock_guard<std::mutex> lock(state_mutex_);
     return static_cast<unsigned int>(bit_depth_);
-}
-
-bool AlsaPlaybackSender::is_actively_playing() const {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-
-    if (!pcm_handle_) {
-        return false;
-    }
-
-    // Check if we've written any frames
-    const std::uint64_t written = frames_written_.load(std::memory_order_acquire);
-    if (written == 0) {
-        return false;  // Nothing written yet
-    }
-
-    // Check PCM state
-    snd_pcm_state_t state = snd_pcm_state(pcm_handle_);
-    if (state != SND_PCM_STATE_RUNNING && state != SND_PCM_STATE_PREPARED) {
-        return false;  // Not in a playing state
-    }
-
-    // Check if frames are being consumed (delay should be less than written)
-    snd_pcm_sframes_t delay_frames = 0;
-    if (snd_pcm_delay(pcm_handle_, &delay_frames) == 0) {
-        // If delay is less than written frames, ALSA is consuming frames
-        // Also ensure delay is positive and reasonable
-        if (delay_frames > 0 && static_cast<std::uint64_t>(delay_frames) < written) {
-            // Additional check: delay should be less than buffer size
-            // to ensure we're actively playing and not just buffering
-            if (buffer_frames_ > 0 && static_cast<snd_pcm_uframes_t>(delay_frames) < buffer_frames_) {
-                return true;
-            }
-        }
-    }
-
-    return false;
 }
 
 #endif // __linux__

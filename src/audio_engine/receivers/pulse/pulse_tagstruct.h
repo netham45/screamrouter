@@ -70,9 +70,6 @@ public:
 
     std::optional<uint32_t> read_u32();
     std::optional<uint8_t> read_u8();
-    std::optional<uint64_t> read_u64();
-    std::optional<int64_t> read_s64();
-    std::optional<uint64_t> read_usec();
     std::optional<timeval> read_timeval();
     std::optional<std::string> read_string();
     std::optional<std::vector<uint8_t>> read_arbitrary();
@@ -89,7 +86,6 @@ public:
 
 private:
     bool read_tag(Tag expected);
-    bool read_bytes(void* out, size_t n);
 
     const uint8_t* data_ = nullptr;
     size_t length_ = 0;

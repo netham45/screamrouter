@@ -58,12 +58,6 @@ public:
     void add_stream(const StreamInfo& info);
     
     /**
-     * @brief Removes a stream from management.
-     * @param stream_id The ID of the stream to remove.
-     */
-    void remove_stream(const std::string& stream_id);
-    
-    /**
      * @brief Starts the RTCP thread for sending periodic reports.
      * @return true if started successfully, false otherwise.
      */

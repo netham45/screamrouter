@@ -52,9 +52,6 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
     LOG_CPP_INFO("Generated unique instance ID: %s", instance_id.c_str());
 
     std::unique_ptr<SourceInputProcessor> new_source;
-    std::shared_ptr<PacketQueue> rtp_queue;
-    std::shared_ptr<ChunkQueue> sink_queue;
-    std::shared_ptr<CommandQueue> cmd_queue;
 
     const auto t_construct0 = std::chrono::steady_clock::now();
     try {
@@ -62,10 +59,6 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
         if (validated_config.initial_eq.empty() || validated_config.initial_eq.size() != EQ_BANDS) {
             validated_config.initial_eq.assign(EQ_BANDS, 1.0f);
         }
-
-        rtp_queue = std::make_shared<PacketQueue>();
-        sink_queue = std::make_shared<ChunkQueue>();
-        cmd_queue = std::make_shared<CommandQueue>();
 
         SourceProcessorConfig proc_config;
         proc_config.instance_id = instance_id;
@@ -78,7 +71,7 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
         proc_config.initial_delay_ms = validated_config.initial_delay_ms;
         proc_config.initial_timeshift_sec = validated_config.initial_timeshift_sec;
 
-        new_source = std::make_unique<SourceInputProcessor>(proc_config, rtp_queue, sink_queue, cmd_queue, m_settings);
+        new_source = std::make_unique<SourceInputProcessor>(proc_config, m_settings);
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("Failed to create SourceInputProcessor for instance %s (tag: %s): %s", instance_id.c_str(), config.tag.c_str(), e.what());
         return "";
@@ -87,15 +80,12 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
 
     {
         std::scoped_lock lock(m_manager_mutex);
-        m_rtp_to_source_queues[instance_id] = rtp_queue;
-        m_source_to_sink_queues[instance_id] = sink_queue;
-        m_command_queues[instance_id] = cmd_queue;
         m_sources[instance_id] = std::move(new_source);
     }
 
     if (m_timeshift_manager) {
         const auto t_ts0 = std::chrono::steady_clock::now();
-        m_timeshift_manager->register_processor(instance_id, config.tag, rtp_queue, config.initial_delay_ms, config.initial_timeshift_sec);
+        m_timeshift_manager->register_processor(instance_id, config.tag, config.initial_delay_ms, config.initial_timeshift_sec);
         const auto t_ts1 = std::chrono::steady_clock::now();
         LOG_CPP_INFO("Registered instance %s with TimeshiftManager in %lld ms.", instance_id.c_str(),
                      (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_ts1 - t_ts0).count());
@@ -103,9 +93,6 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
         LOG_CPP_ERROR("TimeshiftManager is null. Cannot register source instance %s", instance_id.c_str());
         std::scoped_lock lock(m_manager_mutex);
         m_sources.erase(instance_id);
-        m_rtp_to_source_queues.erase(instance_id);
-        m_source_to_sink_queues.erase(instance_id);
-        m_command_queues.erase(instance_id);
         return "";
     }
 
@@ -177,10 +164,6 @@ bool SourceManager::remove_source(const std::string& instance_id) {
         source_to_remove = std::move(it->second);
         m_sources.erase(it);
 
-        m_rtp_to_source_queues.erase(instance_id);
-        m_source_to_sink_queues.erase(instance_id);
-        m_command_queues.erase(instance_id);
-
         // Release system audio capture device if this source was using one
         auto capture_it = m_instance_to_capture_tag.find(instance_id);
         if (capture_it != m_instance_to_capture_tag.end()) {
@@ -219,14 +202,6 @@ std::map<std::string, std::unique_ptr<SourceInputProcessor>>& SourceManager::get
     return m_sources;
 }
 
-std::map<std::string, std::shared_ptr<ChunkQueue>>& SourceManager::get_source_to_sink_queues() {
-    return m_source_to_sink_queues;
-}
-
-std::map<std::string, std::shared_ptr<CommandQueue>>& SourceManager::get_command_queues() {
-    return m_command_queues;
-}
-
 std::vector<SourceInputProcessor*> SourceManager::get_all_processors() {
     std::vector<SourceInputProcessor*> processors;
     std::scoped_lock lock(m_manager_mutex);
@@ -251,11 +226,6 @@ void SourceManager::stop_all() {
             to_stop.push_back(std::move(entry.second));
         }
         m_sources.clear();
-
-        // Clear queues for each source
-        m_rtp_to_source_queues.clear();
-        m_source_to_sink_queues.clear();
-        m_command_queues.clear();
 
         // Gather capture tags to release
         for (auto const &kv : m_instance_to_capture_tag) {

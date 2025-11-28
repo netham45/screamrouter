@@ -33,19 +33,6 @@ bool read_u32_internal(const uint8_t* data, size_t length, size_t& index, uint32
     return true;
 }
 
-bool read_u64_internal(const uint8_t* data, size_t length, size_t& index, uint64_t& value) {
-    uint32_t hi = 0;
-    uint32_t lo = 0;
-    if (!read_u32_internal(data, length, index, hi)) {
-        return false;
-    }
-    if (!read_u32_internal(data, length, index, lo)) {
-        return false;
-    }
-    value = (static_cast<uint64_t>(hi) << 32) | static_cast<uint64_t>(lo);
-    return true;
-}
-
 } // namespace
 
 TagReader::TagReader(const uint8_t* data, size_t length)
@@ -61,15 +48,6 @@ bool TagReader::read_tag(Tag expected) {
                tag_value == static_cast<uint8_t>(Tag::BooleanFalse);
     }
     return tag_value == static_cast<uint8_t>(expected);
-}
-
-bool TagReader::read_bytes(void* out, size_t n) {
-    if (index_ + n > length_) {
-        return false;
-    }
-    std::memcpy(out, data_ + index_, n);
-    index_ += n;
-    return true;
 }
 
 std::optional<uint32_t> TagReader::read_u32() {
@@ -89,39 +67,6 @@ std::optional<uint8_t> TagReader::read_u8() {
     }
     uint8_t value = 0;
     if (!read_u8_internal(data_, length_, index_, value)) {
-        return std::nullopt;
-    }
-    return value;
-}
-
-std::optional<uint64_t> TagReader::read_u64() {
-    if (!read_tag(Tag::U64)) {
-        return std::nullopt;
-    }
-    uint64_t value = 0;
-    if (!read_u64_internal(data_, length_, index_, value)) {
-        return std::nullopt;
-    }
-    return value;
-}
-
-std::optional<int64_t> TagReader::read_s64() {
-    if (!read_tag(Tag::S64)) {
-        return std::nullopt;
-    }
-    uint64_t raw = 0;
-    if (!read_u64_internal(data_, length_, index_, raw)) {
-        return std::nullopt;
-    }
-    return static_cast<int64_t>(raw);
-}
-
-std::optional<uint64_t> TagReader::read_usec() {
-    if (!read_tag(Tag::Usec)) {
-        return std::nullopt;
-    }
-    uint64_t value = 0;
-    if (!read_u64_internal(data_, length_, index_, value)) {
         return std::nullopt;
     }
     return value;

@@ -223,13 +223,6 @@ void SinkSynchronizationCoordinator::disable() {
 // Configuration
 // ============================================================================
 
-void SinkSynchronizationCoordinator::set_barrier_timeout(int timeout_ms) {
-    int old_timeout = barrier_timeout_ms_.exchange(timeout_ms);
-    
-    LOG_CPP_INFO("SinkSynchronizationCoordinator[%s]: Barrier timeout changed: %dms -> %dms",
-             sink_id_.c_str(), old_timeout, timeout_ms);
-}
-
 // ============================================================================
 // Statistics
 // ============================================================================

@@ -17,8 +17,6 @@
 #include "configuration/audio_engine_config_types.h"
 #include "utils/cpp_logger.h"
 #include "audio_types.h"
-#include "synchronization/global_synchronization_clock.h"
-#include "synchronization/sink_synchronization_coordinator.h"
 // Initialize tracing early so the JSON file is created as soon as the module
 // is imported when SCREAMROUTER_TRACE is set.
 #include "utils/fntrace.h"
@@ -49,15 +47,13 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
 #ifdef SR_FNTRACE_BUILD
     srtrace::init_if_needed();
     if (std::getenv("SCREAMROUTER_TRACE")) {
-        std::fprintf(stderr, "[fntrace] compiled-in, runtime enabled\n");
-        std::fflush(stderr);
+        LOG_CPP_INFO("[fntrace] compiled-in, runtime enabled");
     }
     // Force at least one instrumented function call so traces appear immediately
     sr_fntrace_probe();
 #else
     if (std::getenv("SCREAMROUTER_TRACE")) {
-        std::fprintf(stderr, "[fntrace] requested, but NOT compiled-in. Rebuild with SCREAMROUTER_FNTRACE=1.\n");
-        std::fflush(stderr);
+        LOG_CPP_WARNING("[fntrace] requested, but NOT compiled-in. Rebuild with SCREAMROUTER_FNTRACE=1.");
     }
 #endif
     m.doc() = "ScreamRouter C++ Audio Engine Extension"; // Optional module docstring
@@ -69,24 +65,6 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
 
     // 2. Audio types are fundamental and used by other bindings
     audio::bind_audio_types(m);
-
-    // 2.5. Bind synchronization statistics structures
-    py::class_<audio::SyncStats>(m, "SyncStats")
-        .def(py::init<>())
-        .def_readonly("active_sinks", &audio::SyncStats::active_sinks)
-        .def_readonly("current_playback_timestamp", &audio::SyncStats::current_playback_timestamp)
-        .def_readonly("max_drift_ppm", &audio::SyncStats::max_drift_ppm)
-        .def_readonly("avg_barrier_wait_ms", &audio::SyncStats::avg_barrier_wait_ms)
-        .def_readonly("total_barrier_timeouts", &audio::SyncStats::total_barrier_timeouts);
-
-    py::class_<audio::CoordinatorStats>(m, "CoordinatorStats")
-        .def(py::init<>())
-        .def_readonly("total_dispatches", &audio::CoordinatorStats::total_dispatches)
-        .def_readonly("barrier_timeouts", &audio::CoordinatorStats::barrier_timeouts)
-        .def_readonly("underruns", &audio::CoordinatorStats::underruns)
-        .def_readonly("current_rate_adjustment", &audio::CoordinatorStats::current_rate_adjustment)
-        .def_readonly("total_samples_output", &audio::CoordinatorStats::total_samples_output)
-        .def_readonly("coordination_enabled", &audio::CoordinatorStats::coordination_enabled);
 
     // 3. Config types depend on audio types (e.g., SinkConfig, CppSpeakerLayout)
     config::bind_config_types(m);

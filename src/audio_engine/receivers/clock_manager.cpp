@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <optional>
 #include <stdexcept>
+#include "../utils/thread_priority.h"
 
 #if defined(__linux__)
 #include <poll.h>
@@ -379,6 +380,7 @@ void ClockManager::cleanup_inactive_conditions(ClockEntry& entry) {
 }
 
 void ClockManager::run() {
+    utils::set_current_thread_realtime_priority("ClockManager");
     std::unique_lock<std::mutex> lock(mutex_);
 
     while (!stop_requested_.load(std::memory_order_acquire)) {
@@ -535,8 +537,10 @@ void ClockManager::run() {
 
         auto conditions = entry.conditions;
         const auto period = entry.period;
+        const auto half_period = period / 2;
         entry.next_fire += period;
-        while (entry.next_fire <= now) {
+        // Treat a tick as "missed" only if we are more than half a period late.
+        while (entry.next_fire + half_period <= now) {
             entry.next_fire += period;
         }
 
@@ -582,7 +586,6 @@ ClockManager::ConditionHandle ClockManager::register_clock_condition(
     condition_entry->id = condition_id;
     condition_entry->condition = condition;
     condition_entry->active.store(true, std::memory_order_release);
-    condition_entry->external = false;
     condition_entry->key = ClockKey{sample_rate, channels, bit_depth};
 
     ClockKey key{sample_rate, channels, bit_depth};
@@ -606,34 +609,11 @@ ClockManager::ConditionHandle ClockManager::register_clock_condition(
     handle.key = key;
     handle.id = condition_id;
     handle.condition = std::move(condition);
-    handle.external = false;
     return handle;
 }
 
 void ClockManager::unregister_clock_condition(const ConditionHandle& handle) {
     if (!handle.valid()) {
-        return;
-    }
-
-    if (handle.external) {
-        std::shared_ptr<ConditionEntry> entry;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto it = external_conditions_.find(handle.id);
-            if (it != external_conditions_.end()) {
-                entry = it->second;
-                external_conditions_.erase(it);
-            }
-        }
-        if (entry) {
-            entry->active.store(false, std::memory_order_release);
-            if (auto condition = entry->condition.lock()) {
-                std::unique_lock<std::mutex> condition_lock(condition->mutex);
-                condition->sequence++;
-                condition_lock.unlock();
-                condition->cv.notify_all();
-            }
-        }
         return;
     }
 
@@ -663,68 +643,6 @@ void ClockManager::unregister_clock_condition(const ConditionHandle& handle) {
         platform_timer_->notify();
     }
     cv_.notify_all();
-}
-
-ClockManager::ConditionHandle ClockManager::register_external_clock_condition(
-    int sample_rate,
-    int channels,
-    int bit_depth) {
-    auto condition = std::make_shared<ClockCondition>();
-    auto condition_entry = std::make_shared<ConditionEntry>();
-    auto condition_id = next_condition_id_.fetch_add(1, std::memory_order_relaxed);
-    condition_entry->id = condition_id;
-    condition_entry->condition = condition;
-    condition_entry->active.store(true, std::memory_order_release);
-    condition_entry->external = true;
-    condition_entry->key = ClockKey{sample_rate, channels, bit_depth};
-
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        external_conditions_.emplace(condition_id, condition_entry);
-    }
-
-    ConditionHandle handle;
-    handle.key = condition_entry->key;
-    handle.id = condition_id;
-    handle.condition = std::move(condition);
-    handle.external = true;
-    return handle;
-}
-
-std::shared_ptr<ClockManager::ClockCondition> ClockManager::find_external_condition_locked(
-    std::uint64_t id) const {
-    auto it = external_conditions_.find(id);
-    if (it == external_conditions_.end()) {
-        return nullptr;
-    }
-    const auto& entry = it->second;
-    if (!entry || !entry->active.load(std::memory_order_acquire)) {
-        return nullptr;
-    }
-    return entry->condition.lock();
-}
-
-void ClockManager::notify_external_clock_advance(const ConditionHandle& handle,
-                                                 std::uint64_t tick_count) {
-    if (!handle.valid() || !handle.external || tick_count == 0) {
-        return;
-    }
-
-    std::shared_ptr<ClockCondition> condition;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        condition = find_external_condition_locked(handle.id);
-    }
-
-    if (!condition) {
-        return;
-    }
-
-    {
-        std::unique_lock<std::mutex> condition_lock(condition->mutex);
-        condition->sequence += tick_count;
-    }
-    condition->cv.notify_all();
 }
 
 } // namespace audio

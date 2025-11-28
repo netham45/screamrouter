@@ -5,7 +5,6 @@
 #include "fntrace.h"
 
 #include <atomic>
-#include <chrono>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -14,22 +13,17 @@
 #include <thread>
 
 #if !defined(_MSC_VER)
-#  include <dlfcn.h>
 #  include <sys/types.h>
 #  include <unistd.h>
-#  include <cxxabi.h>
 #endif
 
 namespace {
-
-using SteadyClock = std::chrono::steady_clock;
 
 struct TraceState {
     std::atomic<bool> inited{false};
     bool enabled{false};
     FILE* fp{nullptr};
     bool first_event{true};
-    SteadyClock::time_point start;
     int pid{0};
     std::mutex mtx; // serialize writes
 };
@@ -42,70 +36,9 @@ TraceState g_state;
 #  define SR_NO_INSTRUMENT
 #endif
 
-SR_NO_INSTRUMENT static uint64_t now_us() {
-    auto d = std::chrono::duration_cast<std::chrono::microseconds>(SteadyClock::now() - g_state.start);
-    return static_cast<uint64_t>(d.count());
-}
-
 SR_NO_INSTRUMENT static uint64_t thread_id_u64() {
     auto tid = std::this_thread::get_id();
     return static_cast<uint64_t>(std::hash<std::thread::id>{}(tid));
-}
-
-SR_NO_INSTRUMENT static std::string json_escape(const char* s) {
-    std::string out;
-    if (!s) return out;
-    for (const unsigned char c : std::string(s)) {
-        switch (c) {
-            case '"': out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\b': out += "\\b"; break;
-            case '\f': out += "\\f"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (c < 0x20) {
-                    char buf[7];
-                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
-                    out += buf;
-                } else {
-                    out += static_cast<char>(c);
-                }
-        }
-    }
-    return out;
-}
-
-SR_NO_INSTRUMENT static std::string demangle(const char* name) {
-#if defined(_MSC_VER)
-    return name ? name : "";
-#else
-    if (!name) return {};
-    int status = 0;
-    size_t len = 0;
-    char* dem = abi::__cxa_demangle(name, nullptr, &len, &status);
-    if (status == 0 && dem) {
-        std::string out(dem);
-        std::free(dem);
-        return out;
-    }
-    if (dem) std::free(dem);
-    return name;
-#endif
-}
-
-SR_NO_INSTRUMENT static std::string symbol_name_from_addr(const void* addr) {
-#if defined(_MSC_VER)
-    (void)addr;
-    return {};
-#else
-    Dl_info info{};
-    if (dladdr(addr, &info) && info.dli_sname) {
-        return demangle(info.dli_sname);
-    }
-    return {};
-#endif
 }
 
 SR_NO_INSTRUMENT static void write_header_unlocked() {
@@ -154,7 +87,6 @@ SR_NO_INSTRUMENT void init_if_needed() {
         return;
     }
 
-    g_state.start = SteadyClock::now();
 #if defined(_MSC_VER)
     g_state.pid = 0;
 #else
@@ -185,40 +117,6 @@ SR_NO_INSTRUMENT void init_if_needed() {
                      g_state.pid, tid);
         std::fflush(g_state.fp);
     }
-}
-
-SR_NO_INSTRUMENT bool is_enabled() { return g_state.enabled && g_state.fp != nullptr; }
-
-SR_NO_INSTRUMENT void log_event_begin(const void* fn, const void* /*call_site*/) {
-    if (!is_enabled()) return;
-    const uint64_t ts = now_us();
-    const uint64_t tid = thread_id_u64();
-    std::string name = symbol_name_from_addr(fn);
-    if (name.empty()) name = "unknown";
-    std::string esc = json_escape(name.c_str());
-
-    std::lock_guard<std::mutex> lock(g_state.mtx);
-    if (!g_state.fp) return;
-    if (!g_state.first_event) std::fputs(",\n", g_state.fp);
-    g_state.first_event = false;
-    std::fprintf(g_state.fp,
-                 "{\"name\":\"%s\",\"cat\":\"audio_engine\",\"ph\":\"B\",\"ts\":%" PRIu64 ",\"pid\":%d,\"tid\":%" PRIu64 "}",
-                 esc.c_str(), ts, g_state.pid, tid);
-    std::fflush(g_state.fp);
-}
-
-SR_NO_INSTRUMENT void log_event_end(const void* /*fn*/, const void* /*call_site*/) {
-    if (!is_enabled()) return;
-    const uint64_t ts = now_us();
-    const uint64_t tid = thread_id_u64();
-    std::lock_guard<std::mutex> lock(g_state.mtx);
-    if (!g_state.fp) return;
-    if (!g_state.first_event) std::fputs(",\n", g_state.fp);
-    g_state.first_event = false;
-    std::fprintf(g_state.fp,
-                 "{\"name\":\"\",\"cat\":\"audio_engine\",\"ph\":\"E\",\"ts\":%" PRIu64 ",\"pid\":%d,\"tid\":%" PRIu64 "}",
-                 ts, g_state.pid, tid);
-    std::fflush(g_state.fp);
 }
 
 SR_NO_INSTRUMENT void shutdown() {

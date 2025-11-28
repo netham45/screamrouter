@@ -206,7 +206,7 @@ Feature Highlights
 - Logs: per‑module rolling logs, C++ log forwarding into Python loggers, live logs viewer via WebSocket.
 - Preferences: persisted JSON preferences with schema validation and partial updates.
 - Frontend: drag‑drop full menu, add/edit dialogs for sources/sinks/routes/groups, equalizer UI, visualizer, VNC, stats, discovery, and a listen page.
-- ALSA: custom ALSA PCM plugin to bridge apps to FIFOs under `/var/run/screamrouter`.
+- ALSA: custom ALSA PCM plugin to bridge apps to FIFOs under `$XDG_RUNTIME_DIR/screamrouter` (falls back to `/var/run/screamrouter` if the runtime dir is missing).
 - Windows desktop menu: Windows hosts automatically spawn a WebView2 overlay + tray icon that renders `/site/DesktopMenu` with transparent mouse-through regions and a quick Exit action (the build auto-fetches the Microsoft Edge WebView2 SDK via `nuget.exe`; override with `WEBVIEW2_SDK_DIR` if you already have the package). Swap the tray icon by replacing `src/audio_engine/windows/resources/screamrouter.ico` before building on Windows.
 
 Screenshots
@@ -553,10 +553,10 @@ ALSA PCM Plugin
 
 Location: alsa_plugin/
 
-- Provides `pcm.screamrouter` via ALSA IO‑plug. When an application opens `screamrouter:<name>`, the plugin creates FIFOs under `/var/run/screamrouter` and mirrors the stream:
-  - Playback FIFO: `/var/run/screamrouter/out.<label>.<rate>Hz.<channels>ch.<bits>bit.<format>`
-  - Capture FIFO: `/var/run/screamrouter/in.<label>.<rate>Hz.<channels>ch.<bits>bit.<format>`
-- Build and install (requires ALSA dev headers): `make && sudo make install` (honors `PREFIX`, `DESTDIR`, `DEVICE_DIR`, `SOUND_GROUP`). Ensure `/var/run/screamrouter` exists and is writable by your audio group.
+- Provides `pcm.screamrouter` via ALSA IO‑plug. When an application opens `screamrouter:<name>`, the plugin creates FIFOs under `$XDG_RUNTIME_DIR/screamrouter` (fallback `/var/run/screamrouter`) and mirrors the stream:
+  - Playback FIFO: `$XDG_RUNTIME_DIR/screamrouter/out.<label>.<rate>Hz.<channels>ch.<bits>bit.<format>`
+  - Capture FIFO: `$XDG_RUNTIME_DIR/screamrouter/in.<label>.<rate>Hz.<channels>ch.<bits>bit.<format>`
+- Build and install (requires ALSA dev headers): `make && sudo make install` (honors `PREFIX`, `DESTDIR`, `DEVICE_DIR`, `SOUND_GROUP`). Ensure the runtime dir exists and is writable by your audio group.
 - Usage examples:
   - `aplay -D screamrouter:monitor sample.wav`
   - `arecord -D screamrouter:music -f cd out.wav`

@@ -4,7 +4,8 @@
  * volume, delay, and timeshift settings.
  * It allows the user to either add a new route or update an existing one.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import axios from 'axios';
 import { useSearchParams } from 'react-router-dom';
 import {
   Flex,
@@ -25,12 +26,25 @@ import {
   Heading,
   Container,
   useColorModeValue,
-  Switch
+  Switch,
+  Text,
+  Spinner,
+  SimpleGrid
 } from '@chakra-ui/react';
-import ApiService, { Route, Source, Sink } from '../../api/api';
+import ApiService, { Route, Source, Sink, Equalizer } from '../../api/api';
 import { useTutorial } from '../../context/TutorialContext';
 import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
+import { useRouterInstances, RouterInstance } from '../../hooks/useRouterInstances';
+
+const flatEqualizer: Equalizer = {
+  b1: 1, b2: 1, b3: 1, b4: 1, b5: 1, b6: 1,
+  b7: 1, b8: 1, b9: 1, b10: 1, b11: 1, b12: 1,
+  b13: 1, b14: 1, b15: 1, b16: 1, b17: 1, b18: 1,
+  normalization_enabled: false,
+};
+
+const DEFAULT_REMOTE_RTP_PORT = 40000;
 
 const AddEditRoutePage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -43,6 +57,8 @@ const AddEditRoutePage: React.FC = () => {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [route, setRoute] = useState<Route | null>(null);
+  const [configId, setConfigId] = useState('');
+  const [routeTag, setRouteTag] = useState('');
   const [name, setName] = useState('');
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
   const [source, setSource] = useState('');
@@ -54,13 +70,178 @@ const AddEditRoutePage: React.FC = () => {
   
   const [sources, setSources] = useState<Source[]>([]);
   const [sinks, setSinks] = useState<Sink[]>([]);
+  const [remoteSinks, setRemoteSinks] = useState<Sink[]>([]);
+  const [selectedServerId, setSelectedServerId] = useState('local');
+  const [remoteSinkSelection, setRemoteSinkSelection] = useState('');
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const { instances, loading: instancesLoading, error: instancesError, refresh: refreshInstances } = useRouterInstances();
+  const selectedInstance = useMemo<RouterInstance | null>(
+    () => instances.find(instance => instance.id === selectedServerId) || null,
+    [instances, selectedServerId]
+  );
 
   // Color values for light/dark mode
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
   const inputBg = useColorModeValue('white', 'gray.700');
+
+  const resolveApiBase = useCallback((instance: RouterInstance) => {
+    const apiPath = "/";//(instance.properties?.api || '').trim();
+    if (!apiPath) {
+      return instance.origin;
+    }
+    const normalized = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+    return `${instance.origin}${normalized}`;
+  }, []);
+
+  const refreshLocalSinks = useCallback(async () => {
+    try {
+      const response = await ApiService.getSinks();
+      setSinks(Object.values(response.data));
+    } catch (err) {
+      console.error('Failed to refresh sinks', err);
+    }
+  }, []);
+
+  const fetchRemoteResources = useCallback(async (instance: RouterInstance) => {
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      const baseURL = resolveApiBase(instance).replace(/\/$/, '');
+      const [, sinksResponse] = await Promise.all([
+        Promise.resolve(),
+        axios.get<Record<string, Sink>>(`${baseURL}/sinks`)
+      ]);
+      setRemoteSinks(Object.values(sinksResponse.data || {}));
+    } catch (err) {
+      console.error('Failed to fetch remote sinks', err);
+      setRemoteError('Failed to load remote sinks.');
+      setRemoteSinks([]);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }, [resolveApiBase]);
+
+  const ensureUniqueName = useCallback((base: string, existingNames: string[]) => {
+    let candidate = base;
+    let counter = 1;
+    while (existingNames.includes(candidate)) {
+      candidate = `${base} (${counter})`;
+      counter += 1;
+    }
+    return candidate;
+  }, []);
+
+  const findExistingLocalSink = useCallback((remoteSink: Sink, instance: RouterInstance | null) => {
+    if (!instance) {
+      return null;
+    }
+    const candidates = [instance.hostname, instance.address, instance.uuid].filter(Boolean);
+    const match = sinks.find((localSink) => {
+      const sinkMatch = localSink.sap_target_sink === remoteSink.config_id || localSink.sap_target_sink === remoteSink.name;
+      if (!sinkMatch) {
+        return false;
+      }
+      if (!localSink.sap_target_host) {
+        return true;
+      }
+      return candidates.includes(localSink.sap_target_host);
+    });
+    return match ? match.name : null;
+  }, [sinks]);
+
+  const ensureRemoteSinkMapping = useCallback(async (remoteSink: Sink): Promise<string | null> => {
+    if (!selectedInstance) {
+      setError('Select a server first.');
+      return null;
+    }
+    const targetHost = selectedInstance.uuid || selectedInstance.hostname || selectedInstance.address || '';
+    const matching = findExistingLocalSink(remoteSink, selectedInstance);
+    if (matching) {
+      setSelectedServerId('local');
+      setRemoteSinkSelection('');
+      setSink(matching);
+      setSuccess(`Using existing mapped sink "${matching}" for remote sink "${remoteSink.name}".`);
+      return matching;
+    }
+
+    const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${remoteSink.name}`;
+    const sinkName = ensureUniqueName(baseName, sinks.map(s => s.name));
+    const destinationHost = selectedInstance.address || selectedInstance.hostname || remoteSink.ip || '';
+    const randomizedPort = Math.floor(Math.random() * 9000) + 41000; // 41000-49999
+
+    const sinkPayload: Sink = {
+      ...remoteSink,
+      name: sinkName,
+      ip: destinationHost,
+      port: randomizedPort || DEFAULT_REMOTE_RTP_PORT,
+      enabled: true,
+      is_group: false,
+      group_members: [],
+      volume: remoteSink.volume ?? 1,
+      equalizer: remoteSink.equalizer || flatEqualizer,
+      bit_depth: remoteSink.bit_depth || 16,
+      sample_rate: remoteSink.sample_rate || 48000,
+      channels: remoteSink.channels || 2,
+      channel_layout: remoteSink.channel_layout || 'stereo',
+      delay: remoteSink.delay ?? 0,
+      timeshift: remoteSink.timeshift ?? 0,
+      time_sync: remoteSink.time_sync ?? false,
+      time_sync_delay: remoteSink.time_sync_delay ?? 0,
+      speaker_layouts: remoteSink.speaker_layouts || {},
+      protocol: 'rtp',
+      volume_normalization: remoteSink.volume_normalization ?? false,
+      multi_device_mode: false,
+      rtp_receiver_mappings: [],
+      sap_target_sink: remoteSink.config_id || remoteSink.name,
+      sap_target_host: targetHost,
+    };
+
+    try {
+      setError(null);
+      await ApiService.addSink(sinkPayload);
+      await refreshLocalSinks();
+      setSelectedServerId('local');
+      setRemoteSinkSelection('');
+      setSuccess(`Created sink "${sinkName}" targeting ${remoteSink.name} on ${selectedInstance.label || selectedInstance.hostname}.`);
+      return sinkName;
+    } catch (err) {
+      console.error('Failed to create remote sink mapping', err);
+      setError('Failed to create a local sink for the remote target.');
+      return null;
+    }
+  }, [ensureUniqueName, refreshLocalSinks, selectedInstance, sinks]);
+
+  const handleSinkChange = useCallback(async (value: string) => {
+    if (selectedServerId === 'local') {
+      setSink(value);
+      setRemoteSinkSelection('');
+      return;
+    }
+    setRemoteSinkSelection(value);
+    const remoteSink = remoteSinks.find(s => s.name === value);
+    if (!remoteSink || !selectedInstance) {
+      setError('Select a remote server and sink first.');
+      return;
+    }
+    const existing = findExistingLocalSink(remoteSink, selectedInstance);
+    if (existing) {
+      setSink(existing);
+      setSelectedServerId('local');
+      setRemoteSinkSelection('');
+      setSuccess(`Using existing mapped sink "${existing}" for remote sink "${remoteSink.name}".`);
+      return;
+    }
+    const mappedName = await ensureRemoteSinkMapping(remoteSink);
+    if (mappedName) {
+      setSink(mappedName);
+      setSelectedServerId('local');
+      setRemoteSinkSelection('');
+    }
+  }, [ensureRemoteSinkMapping, findExistingLocalSink, remoteSinks, selectedInstance, selectedServerId]);
 
   useEffect(() => {
     if (!name.trim()) {
@@ -112,13 +293,13 @@ const AddEditRoutePage: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [sourcesResponse, sinksResponse] = await Promise.all([
-          ApiService.getSources(),
-          ApiService.getSinks()
-        ]);
+          const [sourcesResponse, sinksResponse] = await Promise.all([
+            ApiService.getSources(),
+            ApiService.getSinks()
+          ]);
         
         setSources(Object.values(sourcesResponse.data));
-        setSinks(Object.values(sinksResponse.data));
+          setSinks(Object.values(sinksResponse.data));
         
         // Set preselected source and sink if provided in URL
         if (preselectedSource && !isEdit) {
@@ -163,6 +344,8 @@ const AddEditRoutePage: React.FC = () => {
             setVolume(routeData.volume || 1);
             setDelay(routeData.delay || 0);
             setTimeshift(routeData.timeshift || 0);
+            setConfigId((routeData as any).config_id || '');
+            setRouteTag((routeData as any).tag || '');
           } else {
             setError(`Route "${routeName}" not found.`);
           }
@@ -245,6 +428,8 @@ const AddEditRoutePage: React.FC = () => {
         setVolume(1);
         setDelay(0);
         setTimeshift(0);
+        setConfigId('');
+        setRouteTag('');
       }
 
       if (window.opener) {
@@ -267,7 +452,7 @@ const AddEditRoutePage: React.FC = () => {
   };
 
   return (
-    <Container maxW="container.md" py={8}>
+    <Container maxW="container.lg" py={8}>
       <Box
         bg={bgColor}
         borderColor={borderColor}
@@ -294,72 +479,171 @@ const AddEditRoutePage: React.FC = () => {
           </Alert>
         )}
         
-        <Stack spacing={4}>
-          <FormControl isRequired>
-            <FormLabel>Route Name</FormLabel>
-            <Input
-              data-tutorial-id="route-name-input"
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                setNameManuallyEdited(e.target.value !== "");
-              }}
-              bg={inputBg}
-            />
-          </FormControl>
-          
-          <FormControl isRequired>
-            <FormLabel>Source</FormLabel>
-            <Select
-              data-tutorial-id="route-source-select"
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              bg={inputBg}
-              placeholder="Select a source"
-            >
-              {sources.map(src => (
-                <option key={src.name} value={src.name}>
-                  {src.name}
-                </option>
-              ))}
-            </Select>
-          </FormControl>
-          
+        {(configId || routeTag) && (
+          <Box
+            mb={5}
+            p={4}
+            borderWidth="1px"
+            borderRadius="md"
+            bg={useColorModeValue('gray.50', 'gray.700')}
+            borderColor={useColorModeValue('gray.200', 'gray.600')}
+          >
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+              {configId && (
+                <Box>
+                  <Text fontSize="xs" color={useColorModeValue('gray.500', 'gray.400')} textTransform="uppercase" letterSpacing="0.05em">
+                    GUID
+                  </Text>
+                  <Text fontWeight="semibold" fontSize="sm">{configId}</Text>
+                </Box>
+              )}
+              {routeTag && (
+                <Box>
+                  <Text fontSize="xs" color={useColorModeValue('gray.500', 'gray.400')} textTransform="uppercase" letterSpacing="0.05em">
+                    Tag
+                  </Text>
+                  <Text fontWeight="semibold" fontSize="sm">{routeTag}</Text>
+                </Box>
+              )}
+            </SimpleGrid>
+          </Box>
+        )}
+
+        <Stack spacing={5}>
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <FormControl isRequired>
+              <FormLabel>Route Name</FormLabel>
+              <Input
+                data-tutorial-id="route-name-input"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameManuallyEdited(e.target.value !== "");
+                }}
+                bg={inputBg}
+              />
+            </FormControl>
+
+            <FormControl display="flex" alignItems="center">
+              <FormLabel htmlFor="enabled" mb="0">
+                Enabled
+              </FormLabel>
+              <Switch
+                id="enabled"
+                isChecked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+              />
+            </FormControl>
+          </SimpleGrid>
+
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <FormControl>
+              <FormLabel>Volume</FormLabel>
+              <VolumeSlider
+                value={volume}
+                onChange={setVolume}
+                dataTutorialId="route-volume-slider"
+              />
+            </FormControl>
+
+            <FormControl>
+              <FormLabel>Timeshift</FormLabel>
+              <TimeshiftSlider
+                value={timeshift}
+                onChange={setTimeshift}
+                dataTutorialId="route-timeshift-slider"
+              />
+            </FormControl>
+          </SimpleGrid>
+
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+            <FormControl isRequired>
+              <FormLabel>Source</FormLabel>
+              <Select
+                data-tutorial-id="route-source-select"
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                bg={inputBg}
+                placeholder="Select a source"
+              >
+                {sources.map(src => (
+                  <option key={src.name} value={src.name}>
+                    {src.name}
+                  </option>
+                ))}
+              </Select>
+            </FormControl>
+
+            <FormControl isRequired>
+              <FormLabel>Sink ScreamRouter Server</FormLabel>
+              <Select
+                value={selectedServerId}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setSelectedServerId(nextId);
+                  setRemoteSinkSelection('');
+                  if (nextId === 'local') {
+                    setRemoteSinks([]);
+                    setRemoteError(null);
+                    setRemoteLoading(false);
+                    setRemoteSinkSelection('');
+                  } else {
+                    const instance = instances.find(inst => inst.id === nextId);
+                    if (instance) {
+                      void fetchRemoteResources(instance);
+                    }
+                  }
+                }}
+              >
+                <option value="local">Local</option>
+                {instances.filter(instance => !instance.isCurrent).map(instance => (
+                  <option key={instance.id} value={instance.id}>
+                    {instance.label} {instance.isCurrent ? '(current)' : ''}
+                  </option>
+                ))}
+              </Select>
+              {selectedServerId !== 'local' && (
+                <Text fontSize="xs" color="gray.500" mt={1}>
+                  Remote sink selection will create a local RTP sender tagged for the target router.
+                </Text>
+              )}
+            </FormControl>
+          </SimpleGrid>
+
           <FormControl isRequired>
             <FormLabel>Sink</FormLabel>
             <Select
               data-tutorial-id="route-sink-select"
-              value={sink}
-              onChange={(e) => setSink(e.target.value)}
+              value={selectedServerId === 'local' ? sink : remoteSinkSelection}
+              onChange={(e) => { void handleSinkChange(e.target.value); }}
               bg={inputBg}
-              placeholder="Select a sink"
+              placeholder={selectedServerId === 'local' ? 'Select a sink' : (remoteLoading ? 'Loading remote sinks...' : 'Select a remote sink')}
+              isDisabled={selectedServerId !== 'local' && (remoteLoading || Boolean(remoteError))}
             >
-              {sinks.map(s => (
+              {(selectedServerId === 'local' ? sinks : remoteSinks).map(s => (
                 <option key={s.name} value={s.name}>
                   {s.name}
                 </option>
               ))}
             </Select>
-          </FormControl>
-          
-          <FormControl display="flex" alignItems="center">
-            <FormLabel htmlFor="enabled" mb="0">
-              Enabled
-            </FormLabel>
-            <Switch 
-              id="enabled" 
-              isChecked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-            />
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Volume</FormLabel>
-            <VolumeSlider
-              value={volume}
-              onChange={setVolume}
-              dataTutorialId="route-volume-slider"
-            />
+            {remoteError && (
+              <Alert status="error" mt={2} borderRadius="md">
+                <AlertIcon />
+                {remoteError}
+              </Alert>
+            )}
+            {instancesError && selectedServerId !== 'local' && (
+              <Alert status="error" mt={2} borderRadius="md">
+                <AlertIcon />
+                {instancesError}
+              </Alert>
+            )}
+            {remoteLoading && selectedServerId !== 'local' && (
+              <Flex align="center" gap={2} mt={2}>
+                <Spinner size="sm" />
+                <Text fontSize="sm">Loading remote sinks...</Text>
+              </Flex>
+            )}
           </FormControl>
 
           <FormControl>
@@ -381,15 +665,6 @@ const AddEditRoutePage: React.FC = () => {
                 <NumberDecrementStepper />
               </NumberInputStepper>
             </NumberInput>
-          </FormControl>
-          
-          <FormControl>
-            <FormLabel>Timeshift</FormLabel>
-            <TimeshiftSlider
-              value={timeshift}
-              onChange={setTimeshift}
-              dataTutorialId="route-timeshift-slider"
-            />
           </FormControl>
         </Stack>
         

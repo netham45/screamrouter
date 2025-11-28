@@ -17,6 +17,9 @@
 #include <mutex>
 #include <cstdint>
 #include <chrono>
+#include <thread>
+
+#include "../../utils/thread_safe_queue.h"
 
 namespace screamrouter {
 namespace audio {
@@ -62,8 +65,18 @@ private:
     bool start_stream();
     void stop_stream();
     void capture_loop();
+    void processing_loop();
+    void request_capture_stop();
+    void join_capture_thread();
     bool resolve_endpoint_id(std::wstring& endpoint_id_w);
-    void process_packet(BYTE* data, UINT32 frames, DWORD flags, UINT64 device_position, UINT64 qpc_position);
+    struct CapturedBuffer {
+        std::vector<uint8_t> data;
+        UINT32 frames = 0;
+        DWORD flags = 0;
+        uint64_t device_position = 0;
+        uint64_t qpc_position = 0;
+    };
+    void process_packet(const CapturedBuffer& captured);
     void dispatch_chunk(std::vector<uint8_t>&& chunk_data, uint64_t frame_position);
     void reset_chunk_state();
 
@@ -71,7 +84,6 @@ private:
     CaptureParams capture_params_;
     bool loopback_mode_ = false;
     bool exclusive_mode_ = false;
-
     Microsoft::WRL::ComPtr<IMMDeviceEnumerator> device_enumerator_;
     Microsoft::WRL::ComPtr<IMMDevice> device_;
     Microsoft::WRL::ComPtr<IAudioClient> audio_client_;
@@ -90,22 +102,42 @@ private:
     unsigned int active_sample_rate_ = 48000;
     size_t source_bytes_per_frame_ = 0;
     size_t target_bytes_per_frame_ = 0;
-    const std::size_t base_frames_per_chunk_;
-    std::size_t chunk_size_bytes_;
-    size_t chunk_bytes_ = 0;
+    size_t max_packet_bytes_ = 0;
+    // Reusable buffers to avoid per-packet reallocations.
+    std::vector<uint8_t> packet_buffer_;
+    std::vector<uint8_t> spare_buffer_;
+    UINT32 configured_buffer_frames_ = 0;
+    double configured_buffer_ms_ = 0.0;
 
-    std::vector<uint8_t> chunk_accumulator_;
-    std::vector<uint8_t> conversion_buffer_;
+    // Telemetry
+    uint64_t packets_seen_ = 0;
+    uint64_t bytes_seen_ = 0;
+    uint64_t frames_seen_ = 0;
+    uint32_t min_frames_seen_ = 0;
+    uint32_t max_frames_seen_ = 0;
+    std::chrono::steady_clock::time_point last_stats_log_time_{};
 
     uint32_t running_timestamp_ = 0;
-    bool accumulator_position_initialized_ = false;
-    uint64_t accumulator_frame_position_ = 0;
     bool stream_time_initialized_ = false;
     std::chrono::steady_clock::time_point stream_start_time_{};
     uint64_t stream_start_frame_position_ = 0;
     double seconds_per_frame_ = 0.0;
 
+    // Discontinuity tracking for throttled logging
+    std::chrono::steady_clock::time_point last_discontinuity_log_time_{};
+    size_t discontinuity_count_ = 0;
+
+    ::screamrouter::audio::utils::ThreadSafeQueue<CapturedBuffer> capture_queue_;
+    std::thread capture_thread_;
+    std::mutex capture_thread_mutex_;
+    bool capture_thread_started_ = false;
+    bool capture_thread_joined_ = false;
+    bool cleanup_started_ = false;
+
     std::mutex device_mutex_;
+
+    HANDLE mmcss_handle_ = nullptr;
+    DWORD mmcss_task_index_ = 0;
 };
 
 } // namespace system_audio

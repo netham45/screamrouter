@@ -91,8 +91,11 @@ class APIWebsocketConfig():
         current_sources = {s.name: s for s in sources}
         current_sinks = {s.name: s for s in sinks if not s.is_temporary}
         current_routes = {r.name: r for r in routes if not r.is_temporary}
-        current_capture = {d.tag: d for d in system_capture_devices}
-        current_playback = {d.tag: d for d in system_playback_devices}
+        def _device_key(dev):
+            return getattr(dev, "tag", None) or getattr(dev, "hw_id", None) or getattr(dev, "friendly_name", None)
+
+        current_capture = {k: d for d in system_capture_devices if (k := _device_key(d))}
+        current_playback = {k: d for d in system_playback_devices if (k := _device_key(d))}
 
         # Check for additions and modifications
         for idx, source in current_sources.items():

@@ -4,9 +4,9 @@
 #include <vector>
 #include <thread>
 #include <sstream>
-#include <iostream>
 #include <cstdlib>
 #include <algorithm>
+#include "cpp_logger.h"
 
 namespace audio_engine {
 namespace utils {
@@ -94,9 +94,7 @@ public:
         }
         
         // If we get here, we're releasing a lock we didn't acquire - this is also bad
-        std::cerr << "ERROR: Attempting to release lock at level " 
-                  << static_cast<int>(level) 
-                  << " that was not acquired by this thread!" << std::endl;
+        LOG_CPP_ERROR("LockOrderEnforcer: release of level %d that was never acquired", static_cast<int>(level));
     }
     
     /**
@@ -154,7 +152,7 @@ private:
         ss << "  - Component locks before queue/buffer locks (400-499)\n";
         ss << "========================================\n";
         
-        std::cerr << ss.str() << std::endl;
+        LOG_CPP_ERROR("%s", ss.str().c_str());
         std::abort();
     }
 };

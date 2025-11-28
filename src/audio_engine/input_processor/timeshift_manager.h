@@ -10,9 +10,9 @@
 #define TIMESHIFT_MANAGER_H
 
 #include "../utils/audio_component.h"
-#include "../utils/thread_safe_queue.h"
 #include "../audio_types.h"
 #include "../configuration/audio_engine_settings.h"
+#include "../utils/packet_ring.h"
 
 #include <string>
 #include <vector>
@@ -26,11 +26,12 @@
 #include <atomic>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 
 namespace screamrouter {
 namespace audio {
 
-using PacketQueue = utils::ThreadSafeQueue<TaggedAudioPacket>;
+using PacketRing = utils::PacketRing<TaggedAudioPacket>;
 
 /**
  * @struct TimeshiftBufferExport
@@ -53,8 +54,6 @@ struct TimeshiftBufferExport {
  * @brief Holds information about a registered consumer (processor) of the timeshift buffer.
  */
 struct ProcessorTargetInfo {
-    /** @brief The queue to which packets for this processor should be sent. */
-    std::shared_ptr<PacketQueue> target_queue;
     /** @brief The current static delay in milliseconds for this processor. */
     int current_delay_ms;
     /** @brief The current timeshift delay in seconds for this processor. */
@@ -69,6 +68,9 @@ struct ProcessorTargetInfo {
     std::string wildcard_prefix;
     /** @brief Bound concrete tag once a wildcard matches a stream. */
     std::string bound_source_tag;
+    /** @brief Per-sink ready rings for dispatch. */
+    std::map<std::string, std::weak_ptr<PacketRing>> sink_rings;
+    uint64_t dropped_packets = 0;
 };
 
 /**
@@ -90,21 +92,21 @@ struct StreamTimingState {
     double last_arrival_time_sec = 0.0;
     double last_transit_sec = 0.0;
 
-    // Playout buffer state
-    double current_buffer_level_ms = 0.0;
+    // Playout state
     double current_playback_rate = 1.0;
-    uint32_t last_played_rtp_timestamp = 0;
-    double last_arrival_time_error_ms = 0.0; // For stats
     double target_buffer_level_ms = 0.0;
-    double buffer_target_fill_percentage = 0.0;
     std::chrono::steady_clock::time_point last_target_update_time{};
+    double current_buffer_level_ms = 0.0;
+    double buffer_target_fill_percentage = 0.0;
+    uint32_t last_played_rtp_timestamp = 0;
+    std::chrono::steady_clock::time_point last_controller_update_time{};
+    double playback_ratio_integral_ppm = 0.0;
+    double playback_ratio_controller_ppm = 0.0;
+    double last_arrival_time_error_ms = 0.0; // For stats
     int sample_rate = 0;
     int channels = 0;
     int bit_depth = 0;
     uint32_t samples_per_chunk = 0;
-    double playback_ratio_integral_ppm = 0.0;
-    double playback_ratio_controller_ppm = 0.0;
-    std::chrono::steady_clock::time_point last_controller_update_time{};
 
     // Stats
     std::atomic<uint64_t> total_packets{0};
@@ -112,6 +114,9 @@ struct StreamTimingState {
     std::atomic<uint64_t> tm_buffer_underruns{0};
     std::atomic<uint64_t> tm_packets_discarded{0};
     std::atomic<uint64_t> lagging_events_count{0};
+    std::chrono::steady_clock::time_point last_late_log_time{};
+    std::chrono::steady_clock::time_point last_discard_log_time{};
+    std::chrono::steady_clock::time_point last_reanchor_log_time{};
 
     // Detailed profiling accumulators
     double arrival_error_ms_sum = 0.0;
@@ -137,6 +142,15 @@ struct StreamTimingState {
     double last_clock_measured_offset_ms = 0.0;
     double clock_innovation_abs_sum_ms = 0.0;
     uint64_t clock_innovation_samples = 0;
+
+    // Reanchoring state
+    std::chrono::steady_clock::time_point last_reanchor_time{};
+    std::atomic<uint64_t> reanchor_count{0};
+    std::atomic<uint64_t> consecutive_late_packets{0};
+    double cumulative_lateness_ms = 0.0;
+    std::atomic<uint64_t> packets_skipped_on_reanchor{0};
+    bool is_reanchored = false;  // True immediately after reanchor, cleared when clock re-initializes
+    uint64_t packets_since_reanchor = 0;  // Counter reset on reanchor, incremented each packet
 };
 
 /**
@@ -145,17 +159,21 @@ struct StreamTimingState {
  */
 struct TimeshiftManagerStats {
     uint64_t total_packets_added = 0;
+    uint64_t total_inbound_received = 0;
+    uint64_t total_inbound_dropped = 0;
+    size_t inbound_queue_size = 0;
+    size_t inbound_queue_high_water = 0;
     size_t global_buffer_size = 0;
     std::map<std::string, double> jitter_estimates;
     std::map<std::string, uint64_t> stream_total_packets;
+    std::map<std::string, size_t> stream_buffered_packets;
+    std::map<std::string, double> stream_buffered_duration_ms;
     std::map<std::string, size_t> processor_read_indices;
     std::map<std::string, uint64_t> stream_late_packets;
     std::map<std::string, uint64_t> stream_lagging_events;
     std::map<std::string, uint64_t> stream_tm_buffer_underruns;
     std::map<std::string, uint64_t> stream_tm_packets_discarded;
     std::map<std::string, double> stream_last_arrival_time_error_ms;
-    std::map<std::string, double> stream_target_buffer_level_ms;
-    std::map<std::string, double> stream_buffer_target_fill_percentage;
     std::map<std::string, double> stream_avg_arrival_error_ms;
     std::map<std::string, double> stream_avg_abs_arrival_error_ms;
     std::map<std::string, double> stream_max_arrival_error_ms;
@@ -174,8 +192,27 @@ struct TimeshiftManagerStats {
     std::map<std::string, double> stream_clock_drift_ppm;
     std::map<std::string, double> stream_clock_last_innovation_ms;
     std::map<std::string, double> stream_clock_avg_abs_innovation_ms;
+    std::map<std::string, double> stream_target_buffer_level_ms;
+    std::map<std::string, double> stream_buffer_target_fill_percentage;
     std::map<std::string, double> stream_system_jitter_ms;
     std::map<std::string, double> stream_clock_last_measured_offset_ms;
+    std::map<std::string, double> stream_last_system_delay_ms;
+    std::map<std::string, double> stream_playback_rate;
+    // Reanchoring stats
+    std::map<std::string, uint64_t> stream_reanchor_count;
+    std::map<std::string, double> stream_time_since_last_reanchor_ms;
+    std::map<std::string, uint64_t> stream_packets_skipped_on_reanchor;
+    struct ProcessorStats {
+        std::string instance_id;
+        std::string source_tag;
+        size_t pending_packets = 0;
+        double pending_ms = 0.0;
+        size_t target_queue_depth = 0;
+        size_t target_queue_high_water = 0;
+        uint64_t dispatched_packets = 0;
+        uint64_t dropped_packets = 0;
+    };
+    std::map<std::string, ProcessorStats> processor_stats;
 };
 
 /**
@@ -224,11 +261,10 @@ public:
      * @brief Registers a new processor as a consumer of the buffer.
      * @param instance_id A unique ID for the processor instance.
      * @param source_tag The source tag the processor is interested in.
-     * @param target_queue The processor's input queue.
      * @param initial_delay_ms The initial static delay for the processor.
      * @param initial_timeshift_sec The initial timeshift delay for the processor.
      */
-    void register_processor(const std::string& instance_id, const std::string& source_tag, std::shared_ptr<PacketQueue> target_queue, int initial_delay_ms, float initial_timeshift_sec);
+    void register_processor(const std::string& instance_id, const std::string& source_tag, int initial_delay_ms, float initial_timeshift_sec);
     /**
      * @brief Unregisters a processor.
      * @param instance_id The ID of the processor instance to unregister.
@@ -247,6 +283,14 @@ public:
      * @param timeshift_sec The new timeshift in seconds.
      */
     void update_processor_timeshift(const std::string& instance_id, float timeshift_sec);
+    /**
+     * @brief Registers a sink-ready ring for a processor instance.
+     */
+    void attach_sink_ring(const std::string& instance_id, const std::string& source_tag, const std::string& sink_id, std::shared_ptr<PacketRing> ring);
+    /**
+     * @brief Detaches a sink-ready ring.
+     */
+    void detach_sink_ring(const std::string& instance_id, const std::string& source_tag, const std::string& sink_id);
     /**
      * @brief Retrieves the current statistics from the manager.
      * @return A struct containing the current stats.
@@ -267,6 +311,15 @@ protected:
     void run() override;
 
 private:
+    struct TimingStateAccess {
+        std::unique_lock<std::mutex> lock;
+        StreamTimingState* state = nullptr;
+
+        TimingStateAccess() = default;
+        TimingStateAccess(std::unique_lock<std::mutex>&& l, StreamTimingState* s)
+            : lock(std::move(l)), state(s) {}
+    };
+
     std::deque<TaggedAudioPacket> global_timeshift_buffer_;
     // Map: source_tag -> instance_id -> ProcessorTargetInfo
     std::map<std::string, std::map<std::string, ProcessorTargetInfo>> processor_targets_;
@@ -275,20 +328,50 @@ private:
 
     std::map<std::string, StreamTimingState> stream_timing_states_;
     std::mutex timing_mutex_;
+    std::mutex timing_map_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<std::mutex>> timing_locks_;
 
     std::condition_variable run_loop_cv_;
     std::chrono::seconds max_buffer_duration_sec_;
     std::chrono::steady_clock::time_point last_cleanup_time_;
 
-    /** @brief A single iteration of the processing loop. Assumes data_mutex_ is held. */
+    // Inbound queue metrics
+    std::atomic<uint64_t> m_inbound_received{0};
+    std::atomic<uint64_t> m_inbound_dropped{0};
+    std::atomic<size_t> m_inbound_high_water{0};
+
+    // Inbound decoupling to avoid blocking capture threads on the main data mutex.
+    utils::ThreadSafeQueue<TaggedAudioPacket> inbound_queue_;
+    static constexpr std::size_t kInboundQueueMaxSize = 1024;
+
+    // Per-processor dispatch/drop accounting
+    std::mutex processor_stats_mutex_;
+    std::map<std::string, uint64_t> processor_dispatched_totals_;
+    std::map<std::string, uint64_t> processor_dropped_totals_;
+    std::map<std::string, size_t> processor_queue_high_water_;
+
+    /** @brief A single iteration of the processing loop. Collects ready packets while data_mutex_ is held. */
     void processing_loop_iteration_unlocked();
     /** @brief Periodically cleans up old packets from the global buffer. Assumes data_mutex_ is held. */
     void cleanup_global_buffer_unlocked();
+
+    /** @brief Process one inbound packet while holding data_mutex_. */
+    void process_incoming_packet_unlocked(TaggedAudioPacket&& packet);
     /**
      * @brief Calculates the time point for the next event to occur.
      * @return The time point of the next scheduled event.
      */
     std::chrono::steady_clock::time_point calculate_next_wakeup_time();
+
+    /**
+     * @brief Reanchors a stream's timing state to recover from excessive latency.
+     * @param source_tag The source tag of the stream to reanchor.
+     * @param timing_state The timing state of the stream (must be under timing_mutex_).
+     * @param reason A string describing why the reanchor was triggered.
+     */
+    void reanchor_stream_unlocked(const std::string& source_tag,
+                                  StreamTimingState& timing_state,
+                                  const std::string& reason);
 
     std::atomic<uint64_t> m_state_version_{0};
     std::atomic<uint64_t> m_total_packets_added{0};
@@ -307,6 +390,11 @@ private:
     double smoothed_processing_per_packet_us_{0.0};
     bool processing_budget_initialized_{false};
     std::chrono::steady_clock::time_point last_iteration_finish_time_{};
+
+    // --- Timing helpers ---
+    std::shared_ptr<std::mutex> acquire_timing_lock(const std::string& source_tag);
+    TimingStateAccess get_timing_state(const std::string& source_tag);
+    TimingStateAccess get_or_create_timing_state(const std::string& source_tag);
 };
 
 } // namespace audio

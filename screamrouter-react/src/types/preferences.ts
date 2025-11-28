@@ -25,10 +25,24 @@ export interface DiscoveredDevice {
   properties: Record<string, unknown>;
   last_seen: string;
   device_type?: string | null;
+  matched?: boolean;
+  match_reason?: string;
 }
 
 export interface UnifiedDiscoverySnapshot {
   discovered_devices: DiscoveredDevice[];
   sink_settings: Array<Record<string, unknown>>;
   source_settings: Array<Record<string, unknown>>;
+}
+
+export interface DiscoveryInventoryResponse {
+  devices: DiscoveredDevice[];
+  counts: {
+    total: number;
+    sources: number;
+    sinks: number;
+    unmatched_total?: number;
+    unmatched_sources?: number;
+    unmatched_sinks?: number;
+  };
 }

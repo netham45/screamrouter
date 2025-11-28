@@ -1,5 +1,6 @@
 #include "mix_scheduler.h"
 #include "../utils/cpp_logger.h"
+#include "../utils/thread_priority.h"
 
 #include <algorithm>
 
@@ -7,7 +8,7 @@ namespace screamrouter {
 namespace audio {
 
 namespace {
-constexpr std::size_t kMaxReadyChunksPerSource = 12; // allow ~70ms backlog to accommodate slower devices
+constexpr std::size_t kMaxReadyChunksPerSource = 4;
 }
 
 MixScheduler::MixScheduler(std::string mixer_id,
@@ -35,6 +36,9 @@ void MixScheduler::attach_source(const std::string& instance_id,
         LOG_CPP_WARNING("[MixScheduler:%s] attach_source called during shutdown.", mixer_id_.c_str());
         return;
     }
+
+    // If this source is already attached, detach it first to avoid duplicate workers.
+    detach_source(instance_id);
 
     auto state = std::make_unique<SourceState>();
     state->instance_id = instance_id;
@@ -95,6 +99,10 @@ void MixScheduler::detach_source(const std::string& instance_id) {
     {
         std::lock_guard<std::mutex> lock(ready_mutex_);
         ready_chunks_.erase(instance_id);
+        per_source_received_.erase(instance_id);
+        per_source_dropped_.erase(instance_id);
+        per_source_popped_.erase(instance_id);
+        per_source_high_water_.erase(instance_id);
     }
     LOG_CPP_INFO("[MixScheduler:%s] Source %s detached.", mixer_id_.c_str(), instance_id.c_str());
 }
@@ -111,6 +119,7 @@ MixScheduler::HarvestResult MixScheduler::collect_ready_chunks() {
             auto& deque_ref = entry.second;
             if (!deque_ref.empty()) {
                 result.ready_chunks.emplace(entry.first, std::move(deque_ref.front()));
+                per_source_popped_[entry.first]++;
                 deque_ref.pop_front();
             }
             if (deque_ref.empty()) {
@@ -143,48 +152,50 @@ std::map<std::string, std::size_t> MixScheduler::get_ready_depths() const {
     return depths;
 }
 
-std::size_t MixScheduler::drop_ready_chunks(const std::string& instance_id, std::size_t count) {
-    if (count == 0) {
-        return 0;
-    }
-
+std::map<std::string, MixScheduler::ReadyQueueStats> MixScheduler::get_ready_stats() const {
     std::lock_guard<std::mutex> lock(ready_mutex_);
-    auto it = ready_chunks_.find(instance_id);
-    if (it == ready_chunks_.end()) {
-        return 0;
+    std::map<std::string, ReadyQueueStats> stats;
+    const auto now = std::chrono::steady_clock::now();
+
+    auto populate = [&](const std::string& id, const std::deque<ReadyChunk>* queue_ptr) {
+        ReadyQueueStats q;
+        if (queue_ptr) {
+            q.depth = queue_ptr->size();
+            if (!queue_ptr->empty()) {
+                q.head_age_ms = std::chrono::duration<double, std::milli>(now - queue_ptr->front().arrival_time).count();
+                q.tail_age_ms = std::chrono::duration<double, std::milli>(now - queue_ptr->back().arrival_time).count();
+                if (q.head_age_ms < 0.0) q.head_age_ms = 0.0;
+                if (q.tail_age_ms < 0.0) q.tail_age_ms = 0.0;
+            }
+        }
+        auto hw_it = per_source_high_water_.find(id);
+        if (hw_it != per_source_high_water_.end()) {
+            q.high_water = hw_it->second;
+        }
+        auto recv_it = per_source_received_.find(id);
+        if (recv_it != per_source_received_.end()) {
+            q.total_received = recv_it->second;
+        }
+        auto pop_it = per_source_popped_.find(id);
+        if (pop_it != per_source_popped_.end()) {
+            q.total_popped = pop_it->second;
+        }
+        auto drop_it = per_source_dropped_.find(id);
+        if (drop_it != per_source_dropped_.end()) {
+            q.total_dropped = drop_it->second;
+        }
+        stats[id] = q;
+    };
+
+    for (const auto& entry : ready_chunks_) {
+        populate(entry.first, &entry.second);
     }
-
-    auto& deque_ref = it->second;
-    std::size_t dropped = 0;
-
-    if (count >= deque_ref.size()) {
-        dropped = deque_ref.size();
-        deque_ref.clear();
-        ready_chunks_.erase(it);
-        return dropped;
+    for (const auto& kv : per_source_received_) {
+        if (!stats.count(kv.first)) {
+            populate(kv.first, nullptr);
+        }
     }
-
-    while (dropped < count && !deque_ref.empty()) {
-        // Drop newest ready chunks first so the next-to-dispatch item stays intact.
-        deque_ref.pop_back();
-        ++dropped;
-    }
-
-    if (deque_ref.empty()) {
-        ready_chunks_.erase(it);
-    }
-
-    return dropped;
-}
-
-std::size_t MixScheduler::drop_all_ready_chunks() {
-    std::lock_guard<std::mutex> lock(ready_mutex_);
-    std::size_t dropped = 0;
-    for (auto& entry : ready_chunks_) {
-        dropped += entry.second.size();
-    }
-    ready_chunks_.clear();
-    return dropped;
+    return stats;
 }
 
 void MixScheduler::shutdown() {
@@ -212,6 +223,8 @@ void MixScheduler::worker_loop(SourceState* state) {
     }
 
     const auto log_prefix = mixer_id_ + ":" + state->instance_id;
+    const std::string thread_name = "[MixScheduler:" + log_prefix + "]";
+    utils::set_current_thread_realtime_priority(thread_name.c_str());
     LOG_CPP_DEBUG("[MixScheduler:%s] Worker entering loop.", log_prefix.c_str());
 
     while (!state->stopping.load()) {
@@ -250,13 +263,20 @@ void MixScheduler::append_ready_chunk(const std::string& instance_id,
     {
         std::lock_guard<std::mutex> lock(ready_mutex_);
         auto& queue = ready_chunks_[instance_id];
+        per_source_received_[instance_id]++;
         const std::size_t cap = compute_ready_capacity();
         if (cap > 0 && queue.size() >= cap) {
             queue.pop_front();
+            per_source_dropped_[instance_id]++;
             LOG_CPP_DEBUG("[MixScheduler:%s] Dropping oldest ready chunk for %s to enforce cap=%zu.",
                           mixer_id_.c_str(), instance_id.c_str(), cap);
         }
         queue.push_back(ReadyChunk{std::move(chunk), arrival_time});
+        auto depth = queue.size();
+        auto& hw = per_source_high_water_[instance_id];
+        if (depth > hw) {
+            hw = depth;
+        }
     }
 
     maybe_log_telemetry();

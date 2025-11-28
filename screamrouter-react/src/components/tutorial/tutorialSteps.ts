@@ -183,15 +183,6 @@ export const tutorialSteps: TutorialStep[] = [
     isInformational: true,
   },
   {
-    id: 'sink-channels-input',
-    title: 'Channel Count',
-    description: 'Specify how many channels the sink should receive.',
-    targetId: 'sink-channels-input',
-    placement: 'bottom',
-    routeHint: '/site/add-sink',
-    isInformational: true,
-  },
-  {
     id: 'sink-channel-layout-select',
     title: 'Channel Layout',
     description: 'Pick the channel layout that matches the sink’s speaker configuration.',

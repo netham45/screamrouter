@@ -5,7 +5,9 @@
 #include <cstring> // For memcpy
 #include <algorithm> // For std::min, std::max
 #include <cmath>     // For std::chrono durations
-#include <thread>    // For sleep_for
+#include "../utils/profiler.h"
+#include "../utils/thread_priority.h"
+#include "../utils/sentinel_logging.h"
 
 #ifdef min
 
@@ -28,14 +30,8 @@ const std::chrono::milliseconds TIMESIFT_CLEANUP_INTERVAL(1000);
 
 SourceInputProcessor::SourceInputProcessor(
     SourceProcessorConfig config, // config now includes instance_id
-    std::shared_ptr<InputPacketQueue> input_queue,
-    std::shared_ptr<OutputChunkQueue> output_queue,
-    std::shared_ptr<CommandQueue> command_queue,
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> settings)
     : config_(std::move(config)), // Use std::move for config
-      input_queue_(input_queue),
-      output_queue_(output_queue),
-      command_queue_(command_queue),
       m_settings(settings),
       base_frames_per_chunk_(resolve_base_frames_per_chunk(settings)),
       current_input_chunk_bytes_(resolve_chunk_size_bytes(settings)),
@@ -54,11 +50,6 @@ SourceInputProcessor::SourceInputProcessor(
     // For now, it starts empty.
 
     LOG_CPP_INFO("[SourceProc:%s] Initializing...", config_.instance_id.c_str());
-    if (!input_queue_ || !output_queue_ || !command_queue_) {
-        // Log before throwing
-        LOG_CPP_ERROR("[SourceProc:%s] Initialization failed: Requires valid input, output, and command queues.", config_.instance_id.c_str());
-        throw std::runtime_error("SourceInputProcessor requires valid input, output, and command queues.");
-    }
     // Ensure EQ vector has the correct size if provided, otherwise initialize default
     if (current_eq_.size() != EQ_BANDS) {
         LOG_CPP_WARNING("[SourceProc:%s] Initial EQ size mismatch (%zu vs %d). Resetting to default (flat).", config_.instance_id.c_str(), current_eq_.size(), EQ_BANDS);
@@ -72,19 +63,6 @@ SourceInputProcessor::SourceInputProcessor(
 
 SourceInputProcessor::~SourceInputProcessor() {
     LOG_CPP_INFO("[SourceProc:%s] Destroying...", config_.instance_id.c_str());
-    if (!stop_flag_) {
-        LOG_CPP_INFO("[SourceProc:%s] Destructor called while still running. Stopping...", config_.instance_id.c_str());
-        stop(); // Ensure stop logic is triggered if not already stopped
-    }
-    if (input_thread_.joinable()) {
-        LOG_CPP_INFO("[SourceProc:%s] Joining input thread in destructor...", config_.instance_id.c_str());
-        try {
-            input_thread_.join();
-            LOG_CPP_INFO("[SourceProc:%s] Input thread joined.", config_.instance_id.c_str());
-        } catch (const std::system_error& e) {
-            LOG_CPP_ERROR("[SourceProc:%s] Error joining input thread in destructor: %s", config_.instance_id.c_str(), e.what());
-        }
-    }
     LOG_CPP_INFO("[SourceProc:%s] Destructor finished.", config_.instance_id.c_str());
 }
 
@@ -99,14 +77,62 @@ const std::string& SourceInputProcessor::get_source_tag() const {
 SourceInputProcessorStats SourceInputProcessor::get_stats() {
     SourceInputProcessorStats stats;
     stats.total_packets_processed = m_total_packets_processed.load();
-    stats.input_queue_size = input_queue_ ? input_queue_->size() : 0;
-    stats.output_queue_size = output_queue_ ? output_queue_->size() : 0;
+    stats.input_queue_size = 0;
+    stats.output_queue_size = 0;
     stats.reconfigurations = m_reconfigurations.load();
+    stats.input_queue_ms = 0.0;
+    stats.output_queue_ms = 0.0;
+    stats.process_buffer_samples = process_buffer_.size();
+    {
+        size_t tracked_peak = m_process_buffer_high_water.load();
+        if (stats.process_buffer_samples > tracked_peak) {
+            m_process_buffer_high_water.store(stats.process_buffer_samples);
+            tracked_peak = stats.process_buffer_samples;
+        }
+        stats.peak_process_buffer_samples = tracked_peak;
+    }
+    if (config_.output_samplerate > 0 && config_.output_channels > 0) {
+        const double frames = static_cast<double>(stats.process_buffer_samples) / static_cast<double>(config_.output_channels);
+        stats.process_buffer_ms = (frames * 1000.0) / static_cast<double>(config_.output_samplerate);
+    }
+    stats.total_chunks_pushed = m_total_chunks_pushed.load();
+    stats.total_discarded_packets = m_total_discarded_packets.load();
+    stats.output_queue_high_water = 0;
+    stats.input_queue_high_water = 0;
+    stats.playback_rate = current_playback_rate_;
+    stats.input_samplerate = static_cast<double>(m_current_ap_input_samplerate);
+    stats.output_samplerate = static_cast<double>(config_.output_samplerate);
+    if (m_current_ap_input_samplerate > 0) {
+        double base_ratio = static_cast<double>(config_.output_samplerate) / static_cast<double>(m_current_ap_input_samplerate);
+        stats.resample_ratio = base_ratio * current_playback_rate_;
+    } else {
+        stats.resample_ratio = 0.0;
+    }
+
+    if (profiling_processing_samples_ > 0) {
+        stats.avg_loop_ms = (static_cast<double>(profiling_processing_ns_) / 1'000'000.0) /
+            static_cast<double>(profiling_processing_samples_);
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (m_last_packet_time.time_since_epoch().count() != 0) {
+        stats.last_packet_age_ms = std::chrono::duration<double, std::milli>(now - m_last_packet_time).count();
+        if (stats.last_packet_age_ms < 0.0) {
+            stats.last_packet_age_ms = 0.0;
+        }
+    }
+    if (m_last_packet_origin_time.time_since_epoch().count() != 0) {
+        stats.last_origin_age_ms = std::chrono::duration<double, std::milli>(now - m_last_packet_origin_time).count();
+        if (stats.last_origin_age_ms < 0.0) {
+            stats.last_origin_age_ms = 0.0;
+        }
+    }
     return stats;
 }
 // --- Initialization & Configuration ---
 
 void SourceInputProcessor::set_speaker_layouts_config(const std::map<int, screamrouter::audio::CppSpeakerLayout>& layouts_map) {
+    PROFILE_FUNCTION();
     std::lock_guard<std::mutex> lock(processor_config_mutex_); // Protect map and processor access
     current_speaker_layouts_map_ = layouts_map;
     LOG_CPP_DEBUG("[SourceProc:%s] Received %zu speaker layouts.", config_.instance_id.c_str(), layouts_map.size());
@@ -118,125 +144,213 @@ void SourceInputProcessor::set_speaker_layouts_config(const std::map<int, scream
 }
 
 void SourceInputProcessor::start() {
-     if (is_running()) {
-        LOG_CPP_INFO("[SourceProc:%s] Already running.", config_.instance_id.c_str());
-        return;
-    }
-    LOG_CPP_INFO("[SourceProc:%s] Starting...", config_.instance_id.c_str());
-    // Reset state specific to this component
+    PROFILE_FUNCTION();
     process_buffer_.clear();
-    // Implementation for start: set flag, launch thread
-    stop_flag_ = false; // Reset stop flag before launching threads
+    pending_sentinel_samples_ = 0;
+    stop_flag_ = false;
     reset_profiler_counters();
-    try {
-        // Only launch the main component thread here.
-        // run() will launch the worker threads.
-        component_thread_ = std::thread(&SourceInputProcessor::run, this);
-        LOG_CPP_INFO("[SourceProc:%s] Component thread launched (will start workers).", config_.instance_id.c_str());
-    } catch (const std::system_error& e) {
-        LOG_CPP_ERROR("[SourceProc:%s] Failed to start component thread: %s", config_.instance_id.c_str(), e.what());
-        stop_flag_ = true; // Ensure stopped state if launch fails
-        if(input_queue_) input_queue_->stop(); // Ensure queues are stopped
-        if(command_queue_) command_queue_->stop();
-        // Rethrow or handle error appropriately
-        throw; // Rethrow to signal failure
-    }
+    LOG_CPP_INFO("[SourceProc:%s] start(): now synchronous, no threads launched.", config_.instance_id.c_str());
 }
 
 
 void SourceInputProcessor::stop() {
-    if (stop_flag_) {
-        LOG_CPP_INFO("[SourceProc:%s] Already stopped or stopping.", config_.instance_id.c_str());
+    PROFILE_FUNCTION();
+    stop_flag_ = true;
+    LOG_CPP_INFO("[SourceProc:%s] stop(): synchronous processor stopped.", config_.instance_id.c_str());
+}
+
+void SourceInputProcessor::set_volume(float vol) {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    current_volume_ = vol;
+    if (audio_processor_) {
+        audio_processor_->setVolume(current_volume_);
+    }
+}
+
+void SourceInputProcessor::set_eq(const std::vector<float>& eq_values) {
+    if (eq_values.size() != EQ_BANDS) {
+        LOG_CPP_ERROR("[SourceProc:%s] set_eq called with invalid band count: %zu", config_.instance_id.c_str(), eq_values.size());
         return;
     }
-    bool comp_joinable = component_thread_.joinable();
-    bool input_joinable = input_thread_.joinable();
-    size_t in_q = input_queue_ ? input_queue_->size() : 0;
-    size_t cmd_q = command_queue_ ? command_queue_->size() : 0;
-    bool in_stopped = input_queue_ ? input_queue_->is_stopped() : true;
-    bool cmd_stopped = command_queue_ ? command_queue_->is_stopped() : true;
-    LOG_CPP_INFO("[SourceProc:%s] Stopping... comp_joinable=%d input_joinable=%d in_q=%zu cmd_q=%zu in_stopped=%d cmd_stopped=%d", config_.instance_id.c_str(), comp_joinable ? 1 : 0, input_joinable ? 1 : 0, in_q, cmd_q, in_stopped ? 1 : 0, cmd_stopped ? 1 : 0);
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    current_eq_ = eq_values;
+    if (audio_processor_) {
+        audio_processor_->setEqualizer(current_eq_.data());
+    }
+}
 
-    // Set the stop flag FIRST (used by loops)
-    stop_flag_ = true; // Set the atomic flag
+void SourceInputProcessor::set_delay(int delay_ms) {
+    current_delay_ms_ = delay_ms;
+}
 
-    // Notify condition variables/queues AFTER setting stop_flag_
-    if(input_queue_) input_queue_->stop(); // Signal the input queue to stop blocking pop calls
-    if(command_queue_) command_queue_->stop(); // Stop command queue as well
+void SourceInputProcessor::set_timeshift(float timeshift_sec) {
+    current_timeshift_backshift_sec_config_ = timeshift_sec;
+}
 
-    // Joining of component_thread_ (which runs run()) happens here.
-    if (component_thread_.joinable()) {
-        try {
-            component_thread_.join();
-            LOG_CPP_INFO("[SourceProc:%s] Component thread joined.", config_.instance_id.c_str());
-        } catch (const std::system_error& e) {
-            LOG_CPP_ERROR("[SourceProc:%s] Error joining component thread: %s", config_.instance_id.c_str(), e.what());
+void SourceInputProcessor::set_eq_normalization(bool enabled) {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    if (audio_processor_) {
+        audio_processor_->setEqNormalization(enabled);
+    }
+}
+
+void SourceInputProcessor::set_volume_normalization(bool enabled) {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    if (audio_processor_) {
+        audio_processor_->setVolumeNormalization(enabled);
+    }
+}
+
+void SourceInputProcessor::set_speaker_mix(int input_channel_key, const CppSpeakerLayout& layout) {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    current_speaker_layouts_map_[input_channel_key] = layout;
+    if (audio_processor_) {
+        audio_processor_->update_speaker_layouts_config(current_speaker_layouts_map_);
+    }
+}
+
+void SourceInputProcessor::apply_control_command(const ControlCommand& cmd) {
+    switch (cmd.type) {
+    case CommandType::SET_PLAYBACK_RATE_SCALE:
+        // Ignored: playback rate now driven solely by timeshift manager.
+        break;
+    case CommandType::SET_VOLUME:
+        set_volume(cmd.float_value);
+        break;
+    case CommandType::SET_EQ:
+        set_eq(cmd.eq_values);
+        break;
+    case CommandType::SET_DELAY:
+        set_delay(cmd.int_value);
+        break;
+    case CommandType::SET_TIMESHIFT:
+        set_timeshift(cmd.float_value);
+        break;
+    case CommandType::SET_EQ_NORMALIZATION:
+        set_eq_normalization(cmd.float_value != 0.0f);
+        break;
+    case CommandType::SET_VOLUME_NORMALIZATION:
+        set_volume_normalization(cmd.float_value != 0.0f);
+        break;
+    case CommandType::SET_SPEAKER_MIX:
+        set_speaker_mix(cmd.input_channel_key, cmd.speaker_layout_for_key);
+        break;
+    default:
+        break;
+    }
+}
+
+void SourceInputProcessor::ingest_packet(const TaggedAudioPacket& timed_packet, std::vector<ProcessedAudioChunk>& out_chunks) {
+    PROFILE_FUNCTION();
+    m_total_packets_processed++;
+    profiling_packets_received_++;
+    auto loop_start = std::chrono::steady_clock::now();
+    utils::log_sentinel("sip_ingest", timed_packet, " [instance=" + config_.instance_id + "]");
+
+    // --- Discontinuity Detection ---
+    auto now = std::chrono::steady_clock::now();
+    const long configured_discontinuity_ms =
+        (m_settings && m_settings->source_processor_tuning.discontinuity_threshold_ms > 0)
+            ? m_settings->source_processor_tuning.discontinuity_threshold_ms
+            : 100;
+    /*if (!m_is_first_packet_after_discontinuity) {
+        auto time_since_last_packet = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_packet_time).count();
+        if (time_since_last_packet > configured_discontinuity_ms) {
+            LOG_CPP_WARNING("[SourceProc:%s] Audio discontinuity detected (%lld ms > %ld ms). Flushing filters.",
+                            config_.instance_id.c_str(),
+                            time_since_last_packet,
+                            configured_discontinuity_ms);
+            if (audio_processor_) {
+                audio_processor_->flushFilters();
+            }
+            reset_input_accumulator();
         }
+    }*/
+    m_last_packet_time = now;
+    m_is_first_packet_after_discontinuity = false;
+
+    const uint8_t* audio_payload_ptr = nullptr;
+    size_t audio_payload_size = 0;
+
+    if (timed_packet.audio_data.empty()) {
+        const auto now_empty = std::chrono::steady_clock::now();
+        if (last_empty_packet_log_.time_since_epoch().count() == 0 ||
+            now_empty - last_empty_packet_log_ >= std::chrono::milliseconds(500)) {
+            LOG_CPP_WARNING("[SourceProc:%s] Received empty audio payload; ignoring.",
+                            config_.instance_id.c_str());
+            last_empty_packet_log_ = now_empty;
+        }
+        return;
+    }
+
+    bool packet_ok_for_processing = check_format_and_reconfigure(
+        timed_packet,
+        &audio_payload_ptr,
+        &audio_payload_size
+    );
+    (void)audio_payload_ptr;
+    (void)audio_payload_size;
+
+    m_last_packet_origin_time = timed_packet.received_time;
+
+    double requested_rate = timed_packet.playback_rate;
+    if (!std::isfinite(requested_rate) || requested_rate <= 0.0) {
+        requested_rate = 1.0;
+    }
+    requested_rate = std::clamp(requested_rate, kMinPlaybackRate, kMaxPlaybackRate);
+
+    if (std::abs(requested_rate - current_playback_rate_) > kPlaybackRateEpsilon) {
+        current_playback_rate_ = requested_rate;
+        if (audio_processor_) {
+            audio_processor_->set_playback_rate(current_playback_rate_);
+        }
+    }
+
+    if (packet_ok_for_processing && audio_processor_) {
+        append_to_input_accumulator(timed_packet);
+
+        std::vector<uint8_t> chunk_data_for_processing;
+        std::chrono::steady_clock::time_point chunk_origin{};
+        std::optional<uint32_t> chunk_rtp;
+        std::vector<uint32_t> chunk_ssrcs;
+        bool chunk_is_sentinel = false;
+
+        while (try_dequeue_input_chunk(
+            chunk_data_for_processing,
+            chunk_origin,
+            chunk_rtp,
+            chunk_ssrcs,
+            chunk_is_sentinel)) {
+            current_packet_ssrcs_ = chunk_ssrcs.empty() ? timed_packet.ssrcs : chunk_ssrcs;
+            m_last_packet_origin_time = chunk_origin;
+
+            if (chunk_is_sentinel) {
+                ProcessedAudioChunk marker{};
+                marker.is_sentinel = true;
+                marker.origin_time = chunk_origin;
+                utils::log_sentinel("sip_chunk_dequeued", marker, " [instance=" + config_.instance_id + "]");
+            }
+
+            process_audio_chunk(chunk_data_for_processing, chunk_is_sentinel);
+            push_output_chunk_if_ready(out_chunks);
+            chunk_data_for_processing.clear();
+        }
+        (void)chunk_rtp;
     } else {
-         LOG_CPP_INFO("[SourceProc:%s] Component thread was not joinable in stop().", config_.instance_id.c_str());
+        profiling_discarded_packets_++;
+        m_total_discarded_packets++;
+        LOG_CPP_WARNING("[SourceProc:%s] Packet discarded by ingest_packet due to format/size issues or no audio processor.", config_.instance_id.c_str());
     }
-    // Joining of input/output threads happens in run() or destructor.
+
+    auto loop_end = std::chrono::steady_clock::now();
+    profiling_processing_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(loop_end - loop_start).count();
+    profiling_processing_samples_++;
+    maybe_log_profiler();
+    maybe_log_telemetry(loop_end);
 }
 
-
-void SourceInputProcessor::process_commands() {
-    ControlCommand cmd;
-    // Use try_pop for non-blocking check. Loop while queue is valid and not stopped.
-    while (command_queue_ && !command_queue_->is_stopped() && command_queue_->try_pop(cmd)) {
-        LOG_CPP_DEBUG("[SourceProc:%s] Processing command: %d", config_.instance_id.c_str(), static_cast<int>(cmd.type));
-
-        std::lock_guard<std::mutex> lock(processor_config_mutex_);
-        switch (cmd.type) {
-            case CommandType::SET_VOLUME:
-                current_volume_ = cmd.float_value;
-                if (audio_processor_) {
-                    audio_processor_->setVolume(current_volume_);
-                }
-                break;
-            case CommandType::SET_EQ:
-                if (cmd.eq_values.size() == EQ_BANDS) {
-                    current_eq_ = cmd.eq_values;
-                    if (audio_processor_) {
-                        audio_processor_->setEqualizer(current_eq_.data());
-                    }
-                } else {
-                    LOG_CPP_ERROR("[SourceProc:%s] Invalid EQ size in command: %zu", config_.instance_id.c_str(), cmd.eq_values.size());
-                }
-                break;
-            case CommandType::SET_DELAY:
-                current_delay_ms_ = cmd.int_value;
-                LOG_CPP_DEBUG("[SourceProc:%s] SET_DELAY command processed. New delay: %dms. AudioManager should be notified.", config_.instance_id.c_str(), current_delay_ms_);
-                break;
-            case CommandType::SET_TIMESHIFT:
-                current_timeshift_backshift_sec_config_ = cmd.float_value;
-                LOG_CPP_DEBUG("[SourceProc:%s] SET_TIMESHIFT command processed. New timeshift: %.2fs. AudioManager should be notified.", config_.instance_id.c_str(), current_timeshift_backshift_sec_config_);
-                break;
-            case CommandType::SET_EQ_NORMALIZATION:
-                if (audio_processor_) {
-                    audio_processor_->setEqNormalization(cmd.int_value != 0);
-                }
-                break;
-            case CommandType::SET_VOLUME_NORMALIZATION:
-                if (audio_processor_) {
-                    audio_processor_->setVolumeNormalization(cmd.int_value != 0);
-                }
-                break;
-            case CommandType::SET_SPEAKER_MIX:
-                current_speaker_layouts_map_[cmd.input_channel_key] = cmd.speaker_layout_for_key;
-                if (audio_processor_) {
-                    audio_processor_->update_speaker_layouts_config(current_speaker_layouts_map_);
-                }
-                LOG_CPP_DEBUG("[SourceProc:%s] SET_SPEAKER_MIX command processed for key: %d. Auto mode: %s",
-                              config_.instance_id.c_str(), cmd.input_channel_key, (cmd.speaker_layout_for_key.auto_mode ? "true" : "false"));
-                break;
-            default:
-                LOG_CPP_ERROR("[SourceProc:%s] Unknown command type received.", config_.instance_id.c_str());
-                break;
-        }
-    }
-}
-
-void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input_chunk_data) {
+void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input_chunk_data, bool is_sentinel_chunk) {
+    PROFILE_FUNCTION();
     if (!audio_processor_) {
         LOG_CPP_ERROR("[SourceProc:%s] AudioProcessor not initialized. Cannot process chunk.", config_.instance_id.c_str());
         return;
@@ -275,6 +389,15 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
                                    processor_output_buffer.begin(),
                                    processor_output_buffer.begin() + samples_to_insert);
             profiling_peak_process_buffer_samples_ = std::max(profiling_peak_process_buffer_samples_, process_buffer_.size());
+            if (is_sentinel_chunk && samples_to_insert > 0) {
+                pending_sentinel_samples_ += samples_to_insert;
+            }
+            size_t current_samples = process_buffer_.size();
+            size_t observed_peak = m_process_buffer_high_water.load();
+            while (current_samples > observed_peak &&
+                   !m_process_buffer_high_water.compare_exchange_weak(observed_peak, current_samples)) {
+                // retry CAS
+            }
         } catch (const std::bad_alloc& e) {
              LOG_CPP_ERROR("[SourceProc:%s] Failed to insert into process_buffer_: %s", config_.instance_id.c_str(), e.what());
              // Handle allocation failure, maybe clear buffer or stop processing?
@@ -291,14 +414,15 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
     }
 }
 
-void SourceInputProcessor::push_output_chunk_if_ready() {
+void SourceInputProcessor::push_output_chunk_if_ready(std::vector<ProcessedAudioChunk>& out_chunks) {
+    PROFILE_FUNCTION();
     // Check if we have enough samples for a full output chunk
     const size_t required_samples = compute_processed_chunk_samples(base_frames_per_chunk_, std::max(1, config_.output_channels));
     size_t current_buffer_size = process_buffer_.size();
 
     LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Checking buffer. Current=%zu samples. Required=%zu samples.", config_.instance_id.c_str(), current_buffer_size, required_samples);
 
-    while (output_queue_ && current_buffer_size >= required_samples) { // Check queue pointer
+    while (current_buffer_size >= required_samples) {
         ProcessedAudioChunk output_chunk;
         // Copy the required number of samples
          output_chunk.audio_data.assign(process_buffer_.begin(), process_buffer_.begin() + required_samples);
@@ -306,106 +430,17 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
          output_chunk.produced_time = std::chrono::steady_clock::now();
          output_chunk.origin_time = m_last_packet_origin_time;
          output_chunk.playback_rate = current_playback_rate_;
+         output_chunk.is_sentinel = pending_sentinel_samples_ > 0;
          size_t pushed_samples = output_chunk.audio_data.size();
-
-         // Push to the output queue
-         LOG_CPP_DEBUG("[SourceProc:%s] PushOutput: Pushing chunk with %zu samples (Expected=%zu) to Sink queue.",
-                       config_.instance_id.c_str(), pushed_samples, required_samples);
-         if (pushed_samples != required_samples) {
-             LOG_CPP_ERROR("[SourceProc:%s] PushOutput: Mismatch between pushed samples (%zu) and required samples (%zu).", config_.instance_id.c_str(), pushed_samples, required_samples);
+         if (pending_sentinel_samples_ > 0) {
+             const std::size_t consumed = std::min<std::size_t>(pending_sentinel_samples_, pushed_samples);
+             pending_sentinel_samples_ -= consumed;
          }
-         if (!output_queue_) {
-             profiling_discarded_packets_++;
-             LOG_CPP_WARNING("[SourceProc:%s] Output queue missing; dropping chunk.",
-                             config_.instance_id.c_str());
-             continue;
-         }
+         utils::log_sentinel("sip_output_chunk", output_chunk, " [instance=" + config_.instance_id + "]");
 
-         auto compute_chunk_cap = [this](double duration_ms, int sample_rate) -> std::size_t {
-             if (duration_ms <= 0.0 || sample_rate <= 0) {
-                 return 0;
-             }
-             const double chunk_duration_ms = (static_cast<double>(base_frames_per_chunk_) * 1000.0) /
-                 static_cast<double>(sample_rate);
-             if (chunk_duration_ms <= 0.0) {
-                 return 0;
-             }
-             return static_cast<std::size_t>(std::ceil(duration_ms / chunk_duration_ms));
-         };
-
-         std::size_t configured_cap = 0;
-         std::size_t min_chunks = 0;
-         if (m_settings) {
-             if (m_settings->mixer_tuning.max_input_queue_duration_ms > 0.0) {
-                 configured_cap = compute_chunk_cap(
-                     m_settings->mixer_tuning.max_input_queue_duration_ms,
-                     config_.output_samplerate);
-             } else {
-                 configured_cap = m_settings->mixer_tuning.max_input_queue_chunks;
-             }
-             if (m_settings->mixer_tuning.min_input_queue_duration_ms > 0.0) {
-                 min_chunks = compute_chunk_cap(
-                     m_settings->mixer_tuning.min_input_queue_duration_ms,
-                     config_.output_samplerate);
-             } else {
-                 min_chunks = m_settings->mixer_tuning.min_input_queue_chunks;
-             }
-             if (min_chunks == 0) {
-                 min_chunks = 1;
-             }
-         }
-         std::size_t dynamic_cap = compute_chunk_cap(
-             m_settings ? m_settings->timeshift_tuning.target_buffer_level_ms : 0.0,
-             config_.output_samplerate);
-         if (dynamic_cap == 0) {
-             dynamic_cap = 1;
-         }
-         if (dynamic_cap < min_chunks) {
-             dynamic_cap = min_chunks;
-         }
-
-         std::size_t effective_cap = configured_cap > 0
-             ? std::min(configured_cap, dynamic_cap)
-             : dynamic_cap;
-         if (effective_cap < min_chunks) {
-             effective_cap = min_chunks;
-         }
-
-         if (effective_cap > 0) {
-            bool logged_trim = false;
-             while (output_queue_->size() >= effective_cap) {
-                 ProcessedAudioChunk discarded_chunk;
-                 if (!output_queue_->try_pop(discarded_chunk)) {
-                     break;
-                 }
-                 profiling_discarded_packets_++;
-                 if (!logged_trim) {
-                     LOG_CPP_WARNING("[SourceProc:%s] Trimmed mixer queue to cap (%zu chunks).",
-                                     config_.instance_id.c_str(), effective_cap);
-                     logged_trim = true;
-                 }
-             }
-         }
-
-         auto push_result = (effective_cap > 0)
-             ? output_queue_->push_bounded(std::move(output_chunk), effective_cap, false)
-             : output_queue_->push_bounded(std::move(output_chunk), 0, false);
-
-         if (push_result == OutputChunkQueue::PushResult::QueueStopped) {
-             profiling_discarded_packets_++;
-             LOG_CPP_WARNING("[SourceProc:%s] Output queue stopped; dropping chunk.",
-                             config_.instance_id.c_str());
-             continue;
-         }
-
-         if (push_result != OutputChunkQueue::PushResult::Pushed) {
-             profiling_discarded_packets_++;
-             LOG_CPP_WARNING("[SourceProc:%s] Failed to enqueue chunk (result=%d, cap=%zu).",
-                             config_.instance_id.c_str(), static_cast<int>(push_result), effective_cap);
-             continue;
-         }
-
+         out_chunks.emplace_back(std::move(output_chunk));
          profiling_chunks_pushed_++;
+         m_total_chunks_pushed++;
 
          // Remove the copied samples from the process buffer
         process_buffer_.erase(process_buffer_.begin(), process_buffer_.begin() + required_samples);
@@ -417,7 +452,9 @@ void SourceInputProcessor::push_output_chunk_if_ready() {
 }
 
 void SourceInputProcessor::reset_input_accumulator() {
-    input_accumulator_buffer_.clear();
+    PROFILE_FUNCTION();
+    input_ring_buffer_.clear();
+    input_ring_base_offset_ = 0;
     input_fragments_.clear();
     input_chunk_active_ = false;
     first_fragment_time_ = {};
@@ -425,6 +462,7 @@ void SourceInputProcessor::reset_input_accumulator() {
 }
 
 void SourceInputProcessor::append_to_input_accumulator(const TaggedAudioPacket& packet) {
+    PROFILE_FUNCTION();
     if (current_input_chunk_bytes_ == 0 || input_bytes_per_frame_ == 0) {
         LOG_CPP_WARNING("[SourceProc:%s] Input accumulator not configured; dropping packet.",
                         config_.instance_id.c_str());
@@ -442,6 +480,7 @@ void SourceInputProcessor::append_to_input_accumulator(const TaggedAudioPacket& 
                       input_bytes_per_frame_);
         reset_input_accumulator();
         profiling_discarded_packets_++;
+        m_total_discarded_packets++;
         return;
     }
 
@@ -451,9 +490,7 @@ void SourceInputProcessor::append_to_input_accumulator(const TaggedAudioPacket& 
         input_chunk_active_ = true;
     }
 
-    input_accumulator_buffer_.insert(input_accumulator_buffer_.end(),
-                                     packet.audio_data.begin(),
-                                     packet.audio_data.end());
+    input_ring_buffer_.write(packet.audio_data.data(), packet.audio_data.size());
 
     InputFragmentMetadata meta;
     meta.bytes = packet.audio_data.size();
@@ -461,24 +498,40 @@ void SourceInputProcessor::append_to_input_accumulator(const TaggedAudioPacket& 
     meta.received_time = packet.received_time;
     meta.rtp_timestamp = packet.rtp_timestamp;
     meta.ssrcs = packet.ssrcs;
+    meta.is_sentinel = packet.is_sentinel;
     input_fragments_.push_back(std::move(meta));
+    utils::log_sentinel("sip_append", packet, " [instance=" + config_.instance_id + "]");
 }
 
 bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_data,
                                                    std::chrono::steady_clock::time_point& chunk_time,
                                                    std::optional<uint32_t>& chunk_timestamp,
-                                                   std::vector<uint32_t>& chunk_ssrcs) {
+                                                   std::vector<uint32_t>& chunk_ssrcs,
+                                                   bool& chunk_is_sentinel) {
+    PROFILE_FUNCTION();
     if (current_input_chunk_bytes_ == 0 || input_bytes_per_frame_ == 0) {
         return false;
     }
 
-    if (input_accumulator_buffer_.size() < current_input_chunk_bytes_) {
+    if (input_ring_buffer_.size() < current_input_chunk_bytes_) {
         return false;
     }
 
     chunk_time = {};
     chunk_timestamp.reset();
     chunk_ssrcs.clear();
+    chunk_is_sentinel = false;
+
+    chunk_data.resize(current_input_chunk_bytes_);
+    const std::size_t bytes_popped = input_ring_buffer_.pop(chunk_data.data(), current_input_chunk_bytes_);
+    if (bytes_popped != current_input_chunk_bytes_) {
+        LOG_CPP_ERROR("[SourceProc:%s] Ring buffer underflow while dequeuing chunk. Expected %zu, got %zu.",
+                      config_.instance_id.c_str(), current_input_chunk_bytes_, bytes_popped);
+        chunk_data.clear();
+        reset_input_accumulator();
+        return false;
+    }
+    input_ring_base_offset_ += bytes_popped;
 
     std::size_t remaining = current_input_chunk_bytes_;
     while (remaining > 0 && !input_fragments_.empty()) {
@@ -487,12 +540,16 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
             input_fragments_.pop_front();
             continue;
         }
+        if (fragment.is_sentinel) {
+            chunk_is_sentinel = true;
+        }
 
+        const std::size_t consumed_before = fragment.consumed_bytes;
         if (chunk_time == std::chrono::steady_clock::time_point{}) {
             chunk_time = fragment.received_time;
             chunk_ssrcs = fragment.ssrcs;
             if (fragment.rtp_timestamp.has_value()) {
-                const std::size_t frame_offset = fragment.consumed_bytes / input_bytes_per_frame_;
+                const std::size_t frame_offset = consumed_before / input_bytes_per_frame_;
                 chunk_timestamp = fragment.rtp_timestamp.value() + static_cast<uint32_t>(frame_offset);
             } else if (first_fragment_rtp_timestamp_.has_value()) {
                 chunk_timestamp = first_fragment_rtp_timestamp_;
@@ -515,13 +572,6 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
             chunk_time = std::chrono::steady_clock::now();
         }
     }
-
-    chunk_data.assign(
-        input_accumulator_buffer_.begin(),
-        input_accumulator_buffer_.begin() + static_cast<std::ptrdiff_t>(current_input_chunk_bytes_));
-    input_accumulator_buffer_.erase(
-        input_accumulator_buffer_.begin(),
-        input_accumulator_buffer_.begin() + static_cast<std::ptrdiff_t>(current_input_chunk_bytes_));
 
     if (!input_fragments_.empty()) {
         input_chunk_active_ = true;
@@ -572,30 +622,22 @@ void SourceInputProcessor::maybe_log_profiler() {
     }
 
     size_t current_process_buffer = process_buffer_.size();
-    size_t input_queue_size = input_queue_ ? input_queue_->size() : 0;
-    size_t output_queue_size = output_queue_ ? output_queue_->size() : 0;
+    size_t input_queue_size = 0;
+    size_t output_queue_size = 0;
 
     double avg_loop_ms = profiling_processing_samples_ > 0
                               ? (static_cast<double>(profiling_processing_ns_) / (1'000'000.0 * static_cast<double>(profiling_processing_samples_)))
                               : 0.0;
-    double avg_input_queue = profiling_queue_samples_ > 0
-                                 ? static_cast<double>(profiling_input_queue_sum_) / static_cast<double>(profiling_queue_samples_)
-                                 : static_cast<double>(input_queue_size);
-    double avg_output_queue = profiling_queue_samples_ > 0
-                                  ? static_cast<double>(profiling_output_queue_sum_) / static_cast<double>(profiling_queue_samples_)
-                                  : static_cast<double>(output_queue_size);
+    double avg_input_queue = 0.0;
+    double avg_output_queue = 0.0;
 
     LOG_CPP_INFO(
-        "[Profiler][SourceProc:%s] packets=%llu chunks=%llu discarded=%llu avg_loop_ms=%.3f input_q(avg/current)=(%.2f/%zu) output_q(avg/current)=(%.2f/%zu) buffer_samples(current/peak)=(%zu/%zu)",
+        "[Profiler][SourceProc:%s] packets=%llu chunks=%llu discarded=%llu avg_loop_ms=%.3f buffer_samples(current/peak)=(%zu/%zu)",
         config_.instance_id.c_str(),
         static_cast<unsigned long long>(profiling_packets_received_),
         static_cast<unsigned long long>(profiling_chunks_pushed_),
         static_cast<unsigned long long>(profiling_discarded_packets_),
         avg_loop_ms,
-        avg_input_queue,
-        input_queue_size,
-        avg_output_queue,
-        output_queue_size,
         current_process_buffer,
         profiling_peak_process_buffer_samples_);
 
@@ -627,17 +669,7 @@ void SourceInputProcessor::maybe_log_telemetry(std::chrono::steady_clock::time_p
 
     telemetry_last_log_time_ = now;
 
-    const size_t input_q_size = input_queue_ ? input_queue_->size() : 0;
-    const size_t output_q_size = output_queue_ ? output_queue_->size() : 0;
     const size_t process_buf_size = process_buffer_.size();
-
-    const double input_q_ms = m_current_input_chunk_ms > 0.0
-        ? static_cast<double>(input_q_size) * m_current_input_chunk_ms
-        : 0.0;
-
-    const double output_q_ms = m_current_output_chunk_ms > 0.0
-        ? static_cast<double>(output_q_size) * m_current_output_chunk_ms
-        : 0.0;
 
     double process_buf_ms = 0.0;
     if (config_.output_samplerate > 0) {
@@ -665,115 +697,12 @@ void SourceInputProcessor::maybe_log_telemetry(std::chrono::steady_clock::time_p
     }
 
     LOG_CPP_INFO(
-        "[Telemetry][SourceProc:%s] input_q=%zu (%.3f ms) output_q=%zu (%.3f ms) process_buf_samples=%zu (%.3f ms) last_packet_age_ms=%.3f last_origin_age_ms=%.3f",
+        "[Telemetry][SourceProc:%s] process_buf_samples=%zu (%.3f ms) last_packet_age_ms=%.3f last_origin_age_ms=%.3f",
         config_.instance_id.c_str(),
-        input_q_size,
-        input_q_ms,
-        output_q_size,
-        output_q_ms,
         process_buf_size,
         process_buf_ms,
         last_packet_age_ms,
         last_origin_age_ms);
-}
-
-// --- New/Modified Thread Loops ---
-
-void SourceInputProcessor::input_loop() {
-    LOG_CPP_INFO("[SourceProc:%s] Input loop started (receives timed packets).", config_.instance_id.c_str());
-    TaggedAudioPacket timed_packet;
-    while (!stop_flag_ && input_queue_ && input_queue_->pop(timed_packet)) {
-        m_total_packets_processed++;
-        profiling_packets_received_++;
-        auto loop_start = std::chrono::steady_clock::now();
-
-        // --- Discontinuity Detection ---
-        auto now = std::chrono::steady_clock::now();
-        const long configured_discontinuity_ms =
-            (m_settings && m_settings->source_processor_tuning.discontinuity_threshold_ms > 0)
-                ? m_settings->source_processor_tuning.discontinuity_threshold_ms
-                : 100;
-        if (!m_is_first_packet_after_discontinuity) {
-            auto time_since_last_packet = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_last_packet_time).count();
-            if (time_since_last_packet > configured_discontinuity_ms) {
-                LOG_CPP_WARNING("[SourceProc:%s] Audio discontinuity detected (%lld ms > %ld ms). Flushing filters.",
-                                config_.instance_id.c_str(),
-                                time_since_last_packet,
-                                configured_discontinuity_ms);
-                if (audio_processor_) {
-                    audio_processor_->flushFilters();
-                }
-                reset_input_accumulator();
-            }
-        }
-        m_last_packet_time = now;
-        m_is_first_packet_after_discontinuity = false;
-
-        const uint8_t* audio_payload_ptr = nullptr;
-        size_t audio_payload_size = 0;
-        
-        bool packet_ok_for_processing = check_format_and_reconfigure(
-            timed_packet,
-            &audio_payload_ptr,
-            &audio_payload_size
-        );
-        (void)audio_payload_ptr;
-        (void)audio_payload_size;
-
-        m_last_packet_origin_time = timed_packet.received_time;
-
-        double requested_rate = timed_packet.playback_rate;
-        if (!std::isfinite(requested_rate) || requested_rate <= 0.0) {
-            requested_rate = 1.0;
-        }
-        requested_rate = std::clamp(requested_rate, kMinPlaybackRate, kMaxPlaybackRate);
-
-        if (std::abs(requested_rate - current_playback_rate_) > kPlaybackRateEpsilon) {
-            current_playback_rate_ = requested_rate;
-            if (audio_processor_) {
-                audio_processor_->set_playback_rate(current_playback_rate_);
-            }
-        }
-
-        if (packet_ok_for_processing && audio_processor_) {
-            append_to_input_accumulator(timed_packet);
-
-            std::vector<uint8_t> chunk_data_for_processing;
-            std::chrono::steady_clock::time_point chunk_origin{};
-            std::optional<uint32_t> chunk_rtp;
-            std::vector<uint32_t> chunk_ssrcs;
-
-            while (try_dequeue_input_chunk(
-                chunk_data_for_processing,
-                chunk_origin,
-                chunk_rtp,
-                chunk_ssrcs)) {
-                current_packet_ssrcs_ = chunk_ssrcs.empty() ? timed_packet.ssrcs : chunk_ssrcs;
-                m_last_packet_origin_time = chunk_origin;
-
-                process_audio_chunk(chunk_data_for_processing);
-                push_output_chunk_if_ready();
-                chunk_data_for_processing.clear();
-            }
-            (void)chunk_rtp;
-        } else {
-            profiling_discarded_packets_++;
-            LOG_CPP_WARNING("[SourceProc:%s] Packet discarded by input_loop due to format/size issues or no audio processor.", config_.instance_id.c_str());
-        }
-
-        size_t input_queue_size_snapshot = input_queue_ ? input_queue_->size() : 0;
-        size_t output_queue_size_snapshot = output_queue_ ? output_queue_->size() : 0;
-        profiling_input_queue_sum_ += input_queue_size_snapshot;
-        profiling_output_queue_sum_ += output_queue_size_snapshot;
-        profiling_queue_samples_++;
-
-        auto loop_end = std::chrono::steady_clock::now();
-        profiling_processing_ns_ += std::chrono::duration_cast<std::chrono::nanoseconds>(loop_end - loop_start).count();
-        profiling_processing_samples_++;
-        maybe_log_profiler();
-        maybe_log_telemetry(loop_end);
-    }
-    LOG_CPP_INFO("[SourceProc:%s] Input loop exiting. StopFlag=%d", config_.instance_id.c_str(), stop_flag_.load());
 }
 
 
@@ -782,6 +711,7 @@ bool SourceInputProcessor::check_format_and_reconfigure(
     const uint8_t** out_audio_payload_ptr,
     size_t* out_audio_payload_size)
 {
+    PROFILE_FUNCTION();
     LOG_CPP_DEBUG("[SourceProc:%s] Entering check_format_and_reconfigure for packet from tag: %s",
                   config_.instance_id.c_str(), packet.source_tag.c_str());
 
@@ -894,43 +824,6 @@ bool SourceInputProcessor::check_format_and_reconfigure(
     return true;
 }
 
-// run() is executed by component_thread_. It now starts only input_thread_ and processes commands.
 void SourceInputProcessor::run() {
-     LOG_CPP_INFO("[SourceProc:%s] Component run() started.", config_.instance_id.c_str());
-
-     // Launch input_thread_ (which now contains the main processing logic)
-     try {
-        input_thread_ = std::thread(&SourceInputProcessor::input_loop, this);
-        LOG_CPP_INFO("[SourceProc:%s] Input thread launched by run().", config_.instance_id.c_str());
-     } catch (const std::system_error& e) {
-         LOG_CPP_ERROR("[SourceProc:%s] Failed to start input_thread_ from run(): %s", config_.instance_id.c_str(), e.what());
-         stop_flag_ = true; // Signal stop if thread failed to launch
-         if(input_queue_) input_queue_->stop();
-         if(command_queue_) command_queue_->stop();
-         return; // Exit run() if input_thread_ failed
-     }
-
-     // Command processing loop
-     LOG_CPP_INFO("[SourceProc:%s] Starting command processing loop.", config_.instance_id.c_str());
-     while (!stop_flag_) {
-         process_commands(); // Check for commands
-
-         // Sleep briefly to prevent busy-waiting when no commands are pending
-         std::this_thread::sleep_for(std::chrono::milliseconds(m_settings->source_processor_tuning.command_loop_sleep_ms)); // Or use command_queue_->wait_for_data() if available
-      }
-     LOG_CPP_INFO("[SourceProc:%s] Command processing loop finished (stop signaled).", config_.instance_id.c_str());
-
-     // --- Cleanup after stop_flag_ is set ---
-     // Ensure input_thread_ is signaled (already done in stop()) and join it here.
-     LOG_CPP_INFO("[SourceProc:%s] Joining input_thread_ in run()...", config_.instance_id.c_str());
-     if (input_thread_.joinable()) {
-         try {
-             input_thread_.join();
-             LOG_CPP_INFO("[SourceProc:%s] Input thread joined in run().", config_.instance_id.c_str());
-         } catch (const std::system_error& e) {
-             LOG_CPP_ERROR("[SourceProc:%s] Error joining input thread in run(): %s", config_.instance_id.c_str(), e.what());
-         }
-     }
-
-     LOG_CPP_INFO("[SourceProc:%s] Component run() exiting.", config_.instance_id.c_str());
+     LOG_CPP_INFO("[SourceProc:%s] run() called (no-op; synchronous processor).", config_.instance_id.c_str());
 }

@@ -8,11 +8,9 @@ namespace audio {
 
 ControlApiManager::ControlApiManager(
     std::recursive_mutex& manager_mutex,
-    std::map<std::string, std::shared_ptr<CommandQueue>>& command_queues,
     TimeshiftManager* timeshift_manager,
     std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources)
     : m_manager_mutex(manager_mutex),
-      m_command_queues(command_queues),
       m_timeshift_manager(timeshift_manager),
       m_sources(sources) {
     LOG_CPP_INFO("ControlApiManager created.");
@@ -49,70 +47,44 @@ void ControlApiManager::update_source_parameters(const std::string& instance_id,
     }
 }
 
-bool ControlApiManager::send_command_to_source(const std::string& instance_id, const ControlCommand& command, bool running) {
-    std::shared_ptr<CommandQueue> target_queue;
-    {
-        std::scoped_lock lock(m_manager_mutex);
-        if (!running) return false;
-
-        auto it = m_command_queues.find(instance_id);
-        if (it == m_command_queues.end()) {
-            return false;
-        }
-        target_queue = it->second;
+SourceInputProcessor* ControlApiManager::find_source_nolock(const std::string& instance_id) {
+    auto it = m_sources.find(instance_id);
+    if (it == m_sources.end() || !it->second) {
+        return nullptr;
     }
-
-    if (target_queue) {
-        target_queue->push(command);
-        return true;
-    }
-    return false;
-}
-
-bool ControlApiManager::send_command_to_source_nolock(const std::string& instance_id, const ControlCommand& command) {
-    auto it = m_command_queues.find(instance_id);
-    if (it == m_command_queues.end()) {
-        return false;
-    }
-    it->second->push(command);
-    return true;
+    return it->second.get();
 }
 
 void ControlApiManager::update_source_volume_nolock(const std::string& instance_id, float volume) {
-    ControlCommand cmd;
-    cmd.type = CommandType::SET_VOLUME;
-    cmd.float_value = volume;
-    send_command_to_source_nolock(instance_id, cmd);
+    if (auto* sip = find_source_nolock(instance_id)) {
+        sip->set_volume(volume);
+    }
 }
 
 void ControlApiManager::update_source_equalizer_nolock(const std::string& instance_id, const std::vector<float>& eq_values) {
     if (eq_values.size() == EQ_BANDS) {
-        ControlCommand cmd;
-        cmd.type = CommandType::SET_EQ;
-        cmd.eq_values = eq_values;
-        send_command_to_source_nolock(instance_id, cmd);
+        if (auto* sip = find_source_nolock(instance_id)) {
+            sip->set_eq(eq_values);
+        }
     }
 }
 
 void ControlApiManager::update_source_eq_normalization_nolock(const std::string& instance_id, bool enabled) {
-    ControlCommand cmd;
-    cmd.type = CommandType::SET_EQ_NORMALIZATION;
-    cmd.int_value = enabled ? 1 : 0;
-    send_command_to_source_nolock(instance_id, cmd);
+    if (auto* sip = find_source_nolock(instance_id)) {
+        sip->set_eq_normalization(enabled);
+    }
 }
 
 void ControlApiManager::update_source_volume_normalization_nolock(const std::string& instance_id, bool enabled) {
-    ControlCommand cmd;
-    cmd.type = CommandType::SET_VOLUME_NORMALIZATION;
-    cmd.int_value = enabled ? 1 : 0;
-    send_command_to_source_nolock(instance_id, cmd);
+    if (auto* sip = find_source_nolock(instance_id)) {
+        sip->set_volume_normalization(enabled);
+    }
 }
 
 void ControlApiManager::update_source_delay_nolock(const std::string& instance_id, int delay_ms) {
-    ControlCommand cmd;
-    cmd.type = CommandType::SET_DELAY;
-    cmd.int_value = delay_ms;
-    send_command_to_source_nolock(instance_id, cmd);
+    if (auto* sip = find_source_nolock(instance_id)) {
+        sip->set_delay(delay_ms);
+    }
 
     if (m_timeshift_manager) {
         m_timeshift_manager->update_processor_delay(instance_id, delay_ms);
@@ -120,10 +92,9 @@ void ControlApiManager::update_source_delay_nolock(const std::string& instance_i
 }
 
 void ControlApiManager::update_source_timeshift_nolock(const std::string& instance_id, float timeshift_sec) {
-    ControlCommand cmd;
-    cmd.type = CommandType::SET_TIMESHIFT;
-    cmd.float_value = timeshift_sec;
-    send_command_to_source_nolock(instance_id, cmd);
+    if (auto* sip = find_source_nolock(instance_id)) {
+        sip->set_timeshift(timeshift_sec);
+    }
 
     if (m_timeshift_manager) {
         m_timeshift_manager->update_processor_timeshift(instance_id, timeshift_sec);
@@ -157,15 +128,12 @@ bool ControlApiManager::write_plugin_packet(
 
     // Find the SourceInputProcessor by its original tag (passed as source_instance_tag parameter)
     SourceInputProcessor* target_processor_ptr = nullptr;
-    std::string found_instance_id; // To store the instance_id if found
-
     // Iterate over the sources map to find a processor whose configured tag matches source_instance_tag
     for (const auto& pair : m_sources) {
         if (pair.second) { // Check if the unique_ptr is valid
             const auto& proc_config = pair.second->get_config(); // Get the processor's configuration
             if (proc_config.source_tag == source_instance_tag) { // Compare with the provided tag (parameter)
                 target_processor_ptr = pair.second.get(); // Get raw pointer to the processor
-                found_instance_id = pair.first;           // Store its unique instance_id (map key)
                 break;                                    // Found, exit loop
             }
         }

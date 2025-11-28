@@ -43,8 +43,15 @@ private:
     // For calculating rates
     std::map<std::string, uint64_t> m_last_stream_packets;
     uint64_t m_last_total_packets_added = 0;
+    uint64_t m_last_inbound_received = 0;
+    uint64_t m_last_inbound_dropped = 0;
     std::map<std::string, uint64_t> m_last_source_packets_processed;
+    std::map<std::string, uint64_t> m_last_source_chunks_pushed;
+    std::map<std::string, uint64_t> m_last_processor_dispatched;
+    std::map<std::string, uint64_t> m_last_processor_dropped;
     std::map<std::string, uint64_t> m_last_sink_chunks_mixed;
+    std::map<std::string, uint64_t> m_last_ready_chunks_popped;
+    std::map<std::string, uint64_t> m_last_ready_chunks_received;
     std::map<std::string, uint64_t> m_last_webrtc_packets_sent;
     
     std::chrono::steady_clock::time_point m_last_poll_time;

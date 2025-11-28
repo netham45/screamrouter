@@ -17,10 +17,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#ifndef DEVICE_DIR_PATH
-#define DEVICE_DIR_PATH "/var/run/screamrouter"
-#endif
-
 #ifndef SOUND_GROUP_NAME
 #define SOUND_GROUP_NAME "audio"
 #endif
@@ -45,33 +41,66 @@ struct sr_runtime {
 
 struct snd_dlsym_link *snd_dlsym_start __attribute__((visibility("default"))) = NULL;
 
+static const char *device_dir_path(void)
+{
+    static char path[PATH_MAX];
+    static bool initialized = false;
+    if (!initialized) {
+        const char *xdg = getenv("XDG_RUNTIME_DIR");
+        if (xdg && *xdg) {
+            size_t len = strlen(xdg);
+            if (len >= PATH_MAX)
+                len = PATH_MAX - 1;
+            while (len > 0 && xdg[len - 1] == '/')
+                --len;
+            if (len > 0) {
+                snprintf(path, sizeof(path), "%.*s/screamrouter", (int)len, xdg);
+            }
+        }
+
+        if (!path[0]) {
+            unsigned int uid = (unsigned int)getuid();
+            if (snprintf(path, sizeof(path), "/run/user/%u/screamrouter", uid) >= (int)sizeof(path))
+                path[0] = '\0';
+        }
+
+        if (!path[0]) {
+            snprintf(path, sizeof(path), "/var/run/screamrouter");
+        }
+
+        initialized = true;
+    }
+    return path;
+}
+
 static void ensure_device_dir(void)
 {
+    const char *device_dir = device_dir_path();
     struct stat st;
-    if (stat(DEVICE_DIR_PATH, &st) == 0) {
+    if (stat(device_dir, &st) == 0) {
         if (S_ISDIR(st.st_mode))
             goto cleanup;
         return;
     }
 
-    if (mkdir(DEVICE_DIR_PATH, 02770) < 0 && errno != EEXIST)
+    if (mkdir(device_dir, 02770) < 0 && errno != EEXIST)
         return;
 
     struct group *grp = getgrnam(SOUND_GROUP_NAME);
     if (grp)
-        chown(DEVICE_DIR_PATH, -1, grp->gr_gid);
+        chown(device_dir, -1, grp->gr_gid);
 
 cleanup:
     static bool cleaned_once = false;
     if (!cleaned_once) {
-        DIR *dir = opendir(DEVICE_DIR_PATH);
+        DIR *dir = opendir(device_dir);
         if (dir) {
             struct dirent *de;
             while ((de = readdir(dir))) {
                 if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
                     continue;
                 char path[PATH_MAX];
-                if (snprintf(path, sizeof(path), "%s/%s", DEVICE_DIR_PATH, de->d_name) >= (int)sizeof(path))
+                if (snprintf(path, sizeof(path), "%s/%s", device_dir, de->d_name) >= (int)sizeof(path))
                     continue;
                 unlink(path);
             }
@@ -356,7 +385,7 @@ static int screamrouter_pcm_open(snd_pcm_t **pcmp, const char *name,
         if (!width_bits)
             width_bits = 0;
         snprintf(rt->fifo_path, sizeof(rt->fifo_path), "%s/%s.%s.%uHz.%uch.%ubit.%s",
-                 DEVICE_DIR_PATH,
+                 device_dir_path(),
                  stream == SND_PCM_STREAM_PLAYBACK ? "out" : "in",
                  label,
                  rt->rate,

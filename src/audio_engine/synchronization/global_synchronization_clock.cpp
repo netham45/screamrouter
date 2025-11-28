@@ -345,9 +345,6 @@ SyncStats GlobalSynchronizationClock::get_stats() const {
     
     // Calculate maximum drift in PPM
     double max_drift = 0.0;
-    double total_barrier_wait = 0.0;
-    int wait_count = 0;
-    
     for (const auto& [sink_id, info] : sinks_) {
         if (!info.is_active) continue;
         

@@ -4,7 +4,11 @@ set -euo pipefail
 PREFIX=${PREFIX:-/usr}
 LIBDIR=${LIBDIR:-$PREFIX/lib}
 SHAREDIR=${SHAREDIR:-$PREFIX/share/alsa/alsa.conf.d}
-RUNDIR=${RUNDIR:-/var/run/screamrouter}
+RUNTIME_BASE=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+RUNTIME_BASE=${RUNTIME_BASE%/}
+DEFAULT_RUNDIR=${RUNTIME_BASE:+$RUNTIME_BASE/screamrouter}
+DEFAULT_RUNDIR=${DEFAULT_RUNDIR:-/var/run/screamrouter}
+RUNDIR=${RUNDIR:-$DEFAULT_RUNDIR}
 SOUND_GROUP=${SOUND_GROUP:-audio}
 PULSE_DEFAULT_PAD_DIR=${PULSE_DEFAULT_PAD_DIR:-/etc/pulse/default.pa.d}
 

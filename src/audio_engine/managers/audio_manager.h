@@ -63,6 +63,8 @@ public:
     AudioManager(AudioManager&&) = delete;
     AudioManager& operator=(AudioManager&&) = delete;
 
+    std::vector<uint8_t> get_mp3_data(const std::string& sink_id);
+
     // --- Lifecycle Management ---
     /**
      * @brief Initializes the audio manager and all its sub-components.
@@ -136,7 +138,6 @@ public:
      * @param sink_id Identifier of the sink.
      * @return A vector of bytes containing MP3 data, or an empty vector if none is available.
      */
-    std::vector<uint8_t> get_mp3_data(const std::string& sink_id);
 
     /**
      * @brief Retrieves a chunk of encoded MP3 data from a sink by its IP address.
@@ -243,26 +244,6 @@ public:
      */
     std::size_t get_chunk_size_bytes_for_format(int channels, int bit_depth) const;
 
-    /**
-     * @brief Injects a plugin-generated audio packet into the global timeshift buffer.
-     * @param source_tag The source tag to associate with the packet.
-     * @param audio_payload The raw audio data.
-     * @param channels Number of audio channels.
-     * @param sample_rate Sample rate in Hz.
-     * @param bit_depth Bit depth.
-     * @param chlayout1 Scream channel layout byte 1.
-     * @param chlayout2 Scream channel layout byte 2.
-     */
-    void inject_plugin_packet_globally(
-        const std::string& source_tag,
-        const std::vector<uint8_t>& audio_payload,
-        int channels,
-        int sample_rate,
-        int bit_depth,
-        uint8_t chlayout1,
-        uint8_t chlayout2
-    );
-
     // --- WebRTC Listener Management ---
     /**
      * @brief Adds a WebRTC listener to a sink.
@@ -327,8 +308,6 @@ public:
      * @brief Retrieves synchronization statistics for all active sync clocks.
      * @return A Python dictionary mapping sample rates to their sync statistics.
      */
-    pybind11::dict get_sync_statistics();
-
     /**
      * @brief Lists cached system audio devices discovered by platform watchers.
      */
@@ -419,7 +398,10 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("playback_ratio_kp", &TimeshiftTuning::playback_ratio_kp)
         .def_readwrite("playback_ratio_ki", &TimeshiftTuning::playback_ratio_ki)
         .def_readwrite("playback_ratio_integral_limit_ppm", &TimeshiftTuning::playback_ratio_integral_limit_ppm)
-        .def_readwrite("playback_ratio_smoothing", &TimeshiftTuning::playback_ratio_smoothing);
+        .def_readwrite("playback_ratio_smoothing", &TimeshiftTuning::playback_ratio_smoothing)
+        .def_readwrite("playback_catchup_ppm_per_ms", &TimeshiftTuning::playback_catchup_ppm_per_ms)
+        .def_readwrite("playback_catchup_max_ppm", &TimeshiftTuning::playback_catchup_max_ppm)
+        .def_readwrite("max_playout_lead_ms", &TimeshiftTuning::max_playout_lead_ms);
 
     py::class_<ProfilerSettings>(m, "ProfilerSettings")
         .def(py::init<>())
@@ -435,6 +417,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("max_input_queue_chunks", &MixerTuning::max_input_queue_chunks)
         .def_readwrite("min_input_queue_chunks", &MixerTuning::min_input_queue_chunks)
         .def_readwrite("max_ready_chunks_per_source", &MixerTuning::max_ready_chunks_per_source)
+        .def_readwrite("max_queued_chunks", &MixerTuning::max_queued_chunks)
         .def_readwrite("max_input_queue_duration_ms", &MixerTuning::max_input_queue_duration_ms)
         .def_readwrite("min_input_queue_duration_ms", &MixerTuning::min_input_queue_duration_ms)
         .def_readwrite("max_ready_queue_duration_ms", &MixerTuning::max_ready_queue_duration_ms);
@@ -485,10 +468,6 @@ inline void bind_audio_manager(pybind11::module_ &m) {
                 return py::bytes(reinterpret_cast<const char*>(self.pcm_data.data()), self.pcm_data.size());
             },
             "Raw PCM payload as bytes.")
-        .def_property_readonly(
-            "pcm_byte_length",
-            [](const TimeshiftBufferExport& self) { return self.pcm_data.size(); },
-            "Total number of bytes in the PCM payload.")
         .def_readonly("sample_rate", &TimeshiftBufferExport::sample_rate)
         .def_readonly("channels", &TimeshiftBufferExport::channels)
         .def_readonly("bit_depth", &TimeshiftBufferExport::bit_depth)
@@ -506,30 +485,9 @@ inline void bind_audio_manager(pybind11::module_ &m) {
              "Initializes the audio manager, including TimeshiftManager. Returns true on success.")
         .def("shutdown", &AudioManager::shutdown,
              "Stops all audio components and cleans up resources.")
-        .def("add_sink", &AudioManager::add_sink, py::arg("config"), "Adds a new audio sink.")
-        .def("remove_sink", &AudioManager::remove_sink,
-             py::arg("sink_id"),
-             "Stops and removes the audio sink with the given ID. Returns true on success.")
-        .def("configure_source", &AudioManager::configure_source, py::arg("config"), "Configures a new source.")
-        .def("remove_source", &AudioManager::remove_source,
-             py::arg("instance_id"),
-             "Removes the source processor instance with the given ID. Returns true on success.")
-        .def("connect_source_sink", &AudioManager::connect_source_sink,
-             py::arg("source_instance_id"), py::arg("sink_id"),
-             "Explicitly connects a source instance to a sink. Returns true on success.")
-        .def("disconnect_source_sink", &AudioManager::disconnect_source_sink,
-             py::arg("source_instance_id"), py::arg("sink_id"),
-             "Explicitly disconnects a source instance from a sink. Returns true on success.")
-        .def("update_source_parameters", &AudioManager::update_source_parameters, py::arg("instance_id"), py::arg("params"), "Updates source parameters.")
         .def("get_chunk_size_bytes_for_format", &AudioManager::get_chunk_size_bytes_for_format,
              py::arg("channels"), py::arg("bit_depth"),
              "Returns the chunk size in bytes for the provided channel count and bit depth.")
-        .def("get_mp3_data", [](AudioManager &self, const std::string& sink_id) -> py::bytes {
-                std::vector<uint8_t> data_vec = self.get_mp3_data(sink_id);
-                return py::bytes(reinterpret_cast<const char*>(data_vec.data()), data_vec.size());
-            },
-            py::arg("sink_id"),
-            "Retrieves a chunk of MP3 data (as bytes) from the specified sink's queue if available, otherwise returns empty bytes.")
         .def("get_mp3_data_by_ip", [](AudioManager &self, const std::string& ip_address) -> py::bytes {
                 std::vector<uint8_t> data_vec = self.get_mp3_data_by_ip(ip_address);
                 return py::bytes(reinterpret_cast<const char*>(data_vec.data()), data_vec.size());
@@ -599,12 +557,6 @@ inline void bind_audio_manager(pybind11::module_ &m) {
             py::arg("sink_id"),
             py::arg("listener_id"),
             "Removes a WebRTC listener from a sink.")
-       .def("set_webrtc_remote_description", &AudioManager::set_webrtc_remote_description,
-            py::arg("sink_id"),
-            py::arg("listener_id"),
-            py::arg("sdp"),
-            py::arg("type"),
-            "Forwards a remote SDP to a specific WebRTC listener.")
        .def("add_webrtc_remote_ice_candidate", &AudioManager::add_webrtc_remote_ice_candidate,
             py::arg("sink_id"),
             py::arg("listener_id"),
@@ -615,7 +567,6 @@ inline void bind_audio_manager(pybind11::module_ &m) {
             "Retrieves a snapshot of all current audio engine statistics.")
        .def("get_audio_settings", &AudioManager::get_audio_settings, "Retrieves the current audio engine tuning settings.")
        .def("set_audio_settings", &AudioManager::set_audio_settings, py::arg("settings"), "Updates the audio engine tuning settings.")
-        .def("get_sync_statistics", &AudioManager::get_sync_statistics, "Retrieves synchronization statistics for all active sync clocks.")
         .def("list_system_devices", &AudioManager::list_system_devices, "Returns the cached registry of system audio devices.")
         .def("drain_device_notifications", &AudioManager::drain_device_notifications, "Retrieves and clears pending device discovery notifications.");
 }

@@ -104,6 +104,8 @@ struct TaggedAudioPacket {
     uint8_t chlayout2 = 0;
     /** @brief Playback rate adjustment factor (1.0 is normal speed). */
     double playback_rate = 1.0;
+    /** @brief Marks packets that should trigger sentinel logging. */
+    bool is_sentinel = false;
 };
 
 /**
@@ -122,6 +124,8 @@ struct ProcessedAudioChunk {
     std::chrono::steady_clock::time_point origin_time{};
     /** @brief Playback rate applied by the source processor for this chunk. */
     double playback_rate = 1.0;
+    /** @brief Sentinel flag propagated from the originating packet. */
+    bool is_sentinel = false;
 };
 
 /**
@@ -135,7 +139,8 @@ enum class CommandType {
     SET_TIMESHIFT,              ///< Set the timeshift delay in float seconds.
     SET_EQ_NORMALIZATION,       ///< Enable or disable equalizer normalization.
     SET_VOLUME_NORMALIZATION,   ///< Enable or disable volume normalization.
-    SET_SPEAKER_MIX             ///< Set the speaker layout mapping.
+    SET_SPEAKER_MIX,            ///< Set the speaker layout mapping.
+    SET_PLAYBACK_RATE_SCALE     ///< Apply an additional playback rate multiplier.
 };
 
 /**
@@ -238,9 +243,19 @@ struct EncodedMP3Data {
 
 // --- Statistics Structs ---
 
+struct BufferMetrics {
+    size_t size = 0;
+    size_t high_watermark = 0;
+    double depth_ms = 0.0;
+    double fill_percent = 0.0;
+    double push_rate_per_second = 0.0;
+    double pop_rate_per_second = 0.0;
+};
+
 struct StreamStats {
     double jitter_estimate_ms = 0.0;
     double packets_per_second = 0.0;
+    double playback_rate = 1.0;
     size_t timeshift_buffer_size = 0;
     uint64_t timeshift_buffer_late_packets = 0;
     uint64_t timeshift_buffer_lagging_events = 0;
@@ -270,6 +285,9 @@ struct StreamStats {
     double clock_last_innovation_ms = 0.0;
     double clock_avg_abs_innovation_ms = 0.0;
     double clock_last_measured_offset_ms = 0.0;
+    double system_jitter_ms = 0.0;
+    double last_system_delay_ms = 0.0;
+    BufferMetrics timeshift_buffer;
 };
 
 struct SourceStats {
@@ -279,6 +297,20 @@ struct SourceStats {
     size_t output_queue_size = 0;
     double packets_processed_per_second = 0.0;
     uint64_t reconfigurations = 0;
+    double playback_rate = 1.0;
+    double input_samplerate = 0.0;
+    double output_samplerate = 0.0;
+    double resample_ratio = 0.0;
+    BufferMetrics input_buffer;
+    BufferMetrics output_buffer;
+    BufferMetrics process_buffer;
+    BufferMetrics timeshift_buffer;
+    double last_packet_age_ms = 0.0;
+    double last_origin_age_ms = 0.0;
+    uint64_t chunks_pushed = 0;
+    uint64_t discarded_packets = 0;
+    double avg_processing_ms = 0.0;
+    size_t peak_process_buffer_samples = 0;
 };
 
 struct WebRtcListenerStats {
@@ -286,6 +318,18 @@ struct WebRtcListenerStats {
     std::string connection_state; // e.g., "Connected", "Failed"
     size_t pcm_buffer_size = 0;
     double packets_sent_per_second = 0.0;
+};
+
+struct SinkInputLaneStats {
+    std::string instance_id;
+    BufferMetrics source_output_queue;
+    BufferMetrics ready_queue;
+    double last_chunk_dwell_ms = 0.0;
+    double avg_chunk_dwell_ms = 0.0;
+    uint64_t underrun_events = 0;
+    uint64_t ready_total_received = 0;
+    uint64_t ready_total_popped = 0;
+    uint64_t ready_total_dropped = 0;
 };
 
 struct SinkStats {
@@ -296,12 +340,21 @@ struct SinkStats {
     uint64_t sink_buffer_underruns = 0;
     uint64_t sink_buffer_overflows = 0;
     uint64_t mp3_buffer_overflows = 0;
+    BufferMetrics payload_buffer;
+    BufferMetrics mp3_output_buffer;
+    BufferMetrics mp3_pcm_buffer;
+    double last_chunk_dwell_ms = 0.0;
+    double avg_chunk_dwell_ms = 0.0;
+    double last_send_gap_ms = 0.0;
+    double avg_send_gap_ms = 0.0;
+    std::vector<SinkInputLaneStats> inputs;
     std::vector<WebRtcListenerStats> webrtc_listeners;
 };
 
 struct GlobalStats {
     size_t timeshift_buffer_total_size = 0;
     double packets_added_to_timeshift_per_second = 0.0;
+    BufferMetrics timeshift_inbound_buffer;
 };
 
 struct AudioEngineStats {
@@ -342,6 +395,8 @@ struct SourceConfig {
 struct SinkConfig {
     /** @brief Unique ID for this sink instance. */
     std::string id;
+    /** @brief Human-friendly display name for this sink. */
+    std::string friendly_name;
     /** @brief Destination IP address for UDP output. */
     std::string output_ip;
     /** @brief Destination port for UDP output. */
@@ -360,6 +415,10 @@ struct SinkConfig {
     bool enable_mp3 = false;
     /** @brief Output protocol ("scream", "rtp", "web_receiver", "system_audio"). */
     std::string protocol = "scream";
+    /** @brief Optional target sink name for SAP-directed remote routing. */
+    std::string sap_target_sink;
+    /** @brief Optional target host for SAP-directed remote routing. */
+    std::string sap_target_host;
     /** @brief Speaker layout configuration for this sink. */
     CppSpeakerLayout speaker_layout;
     /** @brief Enable time synchronization for RTP streams. */
@@ -426,16 +485,6 @@ struct RawScreamReceiverConfig {
 struct PerProcessScreamReceiverConfig {
     /** @brief UDP port to listen on for per-process Scream packets. */
     int listen_port = 16402;
-};
-
-/**
- * @enum InputProtocolType
- * @brief Enum to specify the expected input data format for a SourceInputProcessor.
- */
-enum class InputProtocolType {
-    RTP_SCREAM_PAYLOAD,       ///< Expects raw PCM audio data (from an RTP payload).
-    RAW_SCREAM_PACKET,        ///< Expects a full Scream packet (5-byte header + PCM).
-    PER_PROCESS_SCREAM_PACKET ///< Expects a per-process packet (Program Tag + 5-byte header + PCM).
 };
 
 /**
@@ -516,6 +565,8 @@ struct AdaptivePlaybackSettings {
 struct SinkMixerConfig {
     /** @brief Unique identifier for the sink this mixer serves. */
     std::string sink_id;
+    /** @brief Human-friendly display name for the sink. */
+    std::string friendly_name;
     /** @brief Destination IP address. */
     std::string output_ip;
     /** @brief Destination port. */
@@ -532,6 +583,10 @@ struct SinkMixerConfig {
     uint8_t output_chlayout2;
     /** @brief Output protocol ("scream", "rtp", "web_receiver", "system_audio"). */
     std::string protocol = "scream";
+    /** @brief Optional target sink for SAP-directed routing. */
+    std::string sap_target_sink;
+    /** @brief Optional target host for SAP-directed routing. */
+    std::string sap_target_host;
     /** @brief Speaker layout for RTP channel mapping. */
     CppSpeakerLayout speaker_layout;
     /** @brief Enable time synchronization for RTP streams. */
@@ -594,16 +649,10 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
     inline void bind_audio_types(pybind11::module_ &m) {
         namespace py = pybind11;
     
-        py::class_<SourceConfig>(m, "SourceConfig", "Configuration for an audio source")
-            .def(py::init<>())
-            .def_readwrite("tag", &SourceConfig::tag, "Unique identifier (e.g., IP address or user tag)")
-            .def_readwrite("initial_volume", &SourceConfig::initial_volume, "Initial volume level (default: 1.0)")
-            .def_readwrite("initial_eq", &SourceConfig::initial_eq, "Initial equalizer settings (list of floats, size EQ_BANDS)")
-            .def_readwrite("initial_delay_ms", &SourceConfig::initial_delay_ms, "Initial delay in milliseconds (default: 0)");
-    
         py::class_<SinkConfig>(m, "SinkConfig", "Configuration for an audio sink")
             .def(py::init<>()) // Bind the default constructor
             .def_readwrite("id", &SinkConfig::id, "Unique identifier for this sink instance")
+            .def_readwrite("friendly_name", &SinkConfig::friendly_name, "Human-friendly display name for this sink")
             .def_readwrite("output_ip", &SinkConfig::output_ip, "Destination IP address for UDP output")
             .def_readwrite("output_port", &SinkConfig::output_port, "Destination port for UDP output")
             .def_readwrite("bitdepth", &SinkConfig::bitdepth, "Output bit depth (e.g., 16)")
@@ -612,39 +661,17 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("chlayout1", &SinkConfig::chlayout1, "Scream header channel layout byte 1")
             .def_readwrite("chlayout2", &SinkConfig::chlayout2, "Scream header channel layout byte 2")
             .def_readwrite("protocol", &SinkConfig::protocol, "Network protocol (e.g., 'scream', 'rtp')")
+            .def_readwrite("sap_target_sink", &SinkConfig::sap_target_sink, "Optional target sink name for SAP-directed routing")
+            .def_readwrite("sap_target_host", &SinkConfig::sap_target_host, "Optional target host for SAP-directed routing")
             .def_readwrite("time_sync_enabled", &SinkConfig::time_sync_enabled, "Enable time synchronization for RTP streams")
             .def_readwrite("time_sync_delay_ms", &SinkConfig::time_sync_delay_ms, "Time synchronization delay in milliseconds")
             .def_readwrite("rtp_receivers", &SinkConfig::rtp_receivers, "List of RTP receivers for multi-device mode")
             .def_readwrite("multi_device_mode", &SinkConfig::multi_device_mode, "Enable multi-device RTP mode");
-    
-        py::class_<RawScreamReceiverConfig>(m, "RawScreamReceiverConfig", "Configuration for a raw Scream receiver")
-            .def(py::init<>()) // Default constructor
-            .def_readwrite("listen_port", &RawScreamReceiverConfig::listen_port, "UDP port to listen on");
-    
-        py::class_<PerProcessScreamReceiverConfig>(m, "PerProcessScreamReceiverConfig", "Configuration for a per-process Scream receiver")
-            .def(py::init<>())
-            .def_readwrite("listen_port", &PerProcessScreamReceiverConfig::listen_port, "UDP port to listen on for per-process receiver");
-    
-        py::enum_<InputProtocolType>(m, "InputProtocolType", "Specifies the expected input packet type")
-            .value("RTP_SCREAM_PAYLOAD", InputProtocolType::RTP_SCREAM_PAYLOAD)
-            .value("RAW_SCREAM_PACKET", InputProtocolType::RAW_SCREAM_PACKET)
-            .value("PER_PROCESS_SCREAM_PACKET", InputProtocolType::PER_PROCESS_SCREAM_PACKET)
-            .export_values();
-    
+
         py::class_<CppSpeakerLayout>(m, "CppSpeakerLayout", "C++ structure for speaker layout configuration")
             .def(py::init<>()) // Default constructor
             .def_readwrite("auto_mode", &CppSpeakerLayout::auto_mode, "True for auto mix, false for custom matrix")
             .def_readwrite("matrix", &CppSpeakerLayout::matrix, "8x8 speaker mix matrix");
-    
-        py::enum_<CommandType>(m, "CommandType", "Type of control command for a source")
-            .value("SET_VOLUME", CommandType::SET_VOLUME)
-            .value("SET_EQ", CommandType::SET_EQ)
-            .value("SET_DELAY", CommandType::SET_DELAY)
-            .value("SET_TIMESHIFT", CommandType::SET_TIMESHIFT)
-            .value("SET_EQ_NORMALIZATION", CommandType::SET_EQ_NORMALIZATION)
-            .value("SET_VOLUME_NORMALIZATION", CommandType::SET_VOLUME_NORMALIZATION)
-            .value("SET_SPEAKER_MIX", CommandType::SET_SPEAKER_MIX)
-            .export_values();
 
         py::enum_<DeviceDirection>(m, "DeviceDirection", "Direction for system audio devices")
             .value("CAPTURE", DeviceDirection::CAPTURE)
@@ -676,29 +703,20 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("direction", &DeviceDiscoveryNotification::direction)
             .def_readwrite("present", &DeviceDiscoveryNotification::present);
     
-        py::class_<SourceParameterUpdates>(m, "SourceParameterUpdates", "Holds optional parameter updates for a source")
+        py::class_<BufferMetrics>(m, "BufferMetrics", "Generic buffer occupancy and rate information")
             .def(py::init<>())
-            .def_readwrite("volume", &SourceParameterUpdates::volume, "Optional volume level")
-            .def_readwrite("eq_values", &SourceParameterUpdates::eq_values, "Optional list of EQ values")
-            .def_readwrite("eq_normalization", &SourceParameterUpdates::eq_normalization, "Optional EQ normalization flag")
-            .def_readwrite("volume_normalization", &SourceParameterUpdates::volume_normalization, "Optional volume normalization flag")
-            .def_readwrite("delay_ms", &SourceParameterUpdates::delay_ms, "Optional delay in milliseconds")
-            .def_readwrite("timeshift_sec", &SourceParameterUpdates::timeshift_sec, "Optional timeshift in seconds")
-            .def_readwrite("speaker_layouts_map", &SourceParameterUpdates::speaker_layouts_map, "Optional map of input channel counts to speaker layouts");
-    
-        py::class_<ControlCommand>(m, "ControlCommand", "Command structure for SourceInputProcessor")
-            .def(py::init<>())
-            .def_readwrite("type", &ControlCommand::type, "The type of the command")
-            .def_readwrite("float_value", &ControlCommand::float_value, "Floating point value for the command")
-            .def_readwrite("int_value", &ControlCommand::int_value, "Integer value for the command")
-            .def_readwrite("eq_values", &ControlCommand::eq_values, "List of float values for EQ")
-            .def_readwrite("input_channel_key", &ControlCommand::input_channel_key, "Input channel key for speaker mix")
-            .def_readwrite("speaker_layout_for_key", &ControlCommand::speaker_layout_for_key, "Speaker layout for the given key");
+            .def_readwrite("size", &BufferMetrics::size)
+            .def_readwrite("high_watermark", &BufferMetrics::high_watermark)
+            .def_readwrite("depth_ms", &BufferMetrics::depth_ms)
+            .def_readwrite("fill_percent", &BufferMetrics::fill_percent)
+            .def_readwrite("push_rate_per_second", &BufferMetrics::push_rate_per_second)
+            .def_readwrite("pop_rate_per_second", &BufferMetrics::pop_rate_per_second);
 
         py::class_<StreamStats>(m, "StreamStats", "Statistics for a single audio stream")
             .def(py::init<>())
             .def_readwrite("jitter_estimate_ms", &StreamStats::jitter_estimate_ms)
             .def_readwrite("packets_per_second", &StreamStats::packets_per_second)
+            .def_readwrite("playback_rate", &StreamStats::playback_rate)
             .def_readwrite("timeshift_buffer_size", &StreamStats::timeshift_buffer_size)
             .def_readwrite("timeshift_buffer_late_packets", &StreamStats::timeshift_buffer_late_packets)
             .def_readwrite("timeshift_buffer_lagging_events", &StreamStats::timeshift_buffer_lagging_events)
@@ -727,7 +745,10 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("clock_drift_ppm", &StreamStats::clock_drift_ppm)
             .def_readwrite("clock_last_innovation_ms", &StreamStats::clock_last_innovation_ms)
             .def_readwrite("clock_avg_abs_innovation_ms", &StreamStats::clock_avg_abs_innovation_ms)
-            .def_readwrite("clock_last_measured_offset_ms", &StreamStats::clock_last_measured_offset_ms);
+            .def_readwrite("clock_last_measured_offset_ms", &StreamStats::clock_last_measured_offset_ms)
+            .def_readwrite("system_jitter_ms", &StreamStats::system_jitter_ms)
+            .def_readwrite("last_system_delay_ms", &StreamStats::last_system_delay_ms)
+            .def_readwrite("timeshift_buffer", &StreamStats::timeshift_buffer);
 
         py::class_<SourceStats>(m, "SourceStats", "Statistics for a single source processor")
             .def(py::init<>())
@@ -736,7 +757,21 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("input_queue_size", &SourceStats::input_queue_size)
             .def_readwrite("output_queue_size", &SourceStats::output_queue_size)
             .def_readwrite("packets_processed_per_second", &SourceStats::packets_processed_per_second)
-            .def_readwrite("reconfigurations", &SourceStats::reconfigurations);
+            .def_readwrite("reconfigurations", &SourceStats::reconfigurations)
+            .def_readwrite("playback_rate", &SourceStats::playback_rate)
+            .def_readwrite("input_samplerate", &SourceStats::input_samplerate)
+            .def_readwrite("output_samplerate", &SourceStats::output_samplerate)
+            .def_readwrite("resample_ratio", &SourceStats::resample_ratio)
+            .def_readwrite("input_buffer", &SourceStats::input_buffer)
+            .def_readwrite("output_buffer", &SourceStats::output_buffer)
+            .def_readwrite("process_buffer", &SourceStats::process_buffer)
+            .def_readwrite("timeshift_buffer", &SourceStats::timeshift_buffer)
+            .def_readwrite("last_packet_age_ms", &SourceStats::last_packet_age_ms)
+            .def_readwrite("last_origin_age_ms", &SourceStats::last_origin_age_ms)
+            .def_readwrite("chunks_pushed", &SourceStats::chunks_pushed)
+            .def_readwrite("discarded_packets", &SourceStats::discarded_packets)
+            .def_readwrite("avg_processing_ms", &SourceStats::avg_processing_ms)
+            .def_readwrite("peak_process_buffer_samples", &SourceStats::peak_process_buffer_samples);
 
         py::class_<WebRtcListenerStats>(m, "WebRtcListenerStats", "Statistics for a single WebRTC listener")
             .def(py::init<>())
@@ -744,6 +779,18 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("connection_state", &WebRtcListenerStats::connection_state)
             .def_readwrite("pcm_buffer_size", &WebRtcListenerStats::pcm_buffer_size)
             .def_readwrite("packets_sent_per_second", &WebRtcListenerStats::packets_sent_per_second);
+
+        py::class_<SinkInputLaneStats>(m, "SinkInputLaneStats", "Per-source buffer stats within a sink mixer")
+            .def(py::init<>())
+            .def_readwrite("instance_id", &SinkInputLaneStats::instance_id)
+            .def_readwrite("source_output_queue", &SinkInputLaneStats::source_output_queue)
+            .def_readwrite("ready_queue", &SinkInputLaneStats::ready_queue)
+            .def_readwrite("last_chunk_dwell_ms", &SinkInputLaneStats::last_chunk_dwell_ms)
+            .def_readwrite("avg_chunk_dwell_ms", &SinkInputLaneStats::avg_chunk_dwell_ms)
+            .def_readwrite("underrun_events", &SinkInputLaneStats::underrun_events)
+            .def_readwrite("ready_total_received", &SinkInputLaneStats::ready_total_received)
+            .def_readwrite("ready_total_popped", &SinkInputLaneStats::ready_total_popped)
+            .def_readwrite("ready_total_dropped", &SinkInputLaneStats::ready_total_dropped);
 
         py::class_<SinkStats>(m, "SinkStats", "Statistics for a single sink mixer")
             .def(py::init<>())
@@ -754,12 +801,21 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("sink_buffer_underruns", &SinkStats::sink_buffer_underruns)
             .def_readwrite("sink_buffer_overflows", &SinkStats::sink_buffer_overflows)
             .def_readwrite("mp3_buffer_overflows", &SinkStats::mp3_buffer_overflows)
+            .def_readwrite("payload_buffer", &SinkStats::payload_buffer)
+            .def_readwrite("mp3_output_buffer", &SinkStats::mp3_output_buffer)
+            .def_readwrite("mp3_pcm_buffer", &SinkStats::mp3_pcm_buffer)
+            .def_readwrite("last_chunk_dwell_ms", &SinkStats::last_chunk_dwell_ms)
+            .def_readwrite("avg_chunk_dwell_ms", &SinkStats::avg_chunk_dwell_ms)
+            .def_readwrite("last_send_gap_ms", &SinkStats::last_send_gap_ms)
+            .def_readwrite("avg_send_gap_ms", &SinkStats::avg_send_gap_ms)
+            .def_readwrite("inputs", &SinkStats::inputs)
             .def_readwrite("webrtc_listeners", &SinkStats::webrtc_listeners);
 
         py::class_<GlobalStats>(m, "GlobalStats", "Global statistics for the audio engine")
             .def(py::init<>())
             .def_readwrite("timeshift_buffer_total_size", &GlobalStats::timeshift_buffer_total_size)
-            .def_readwrite("packets_added_to_timeshift_per_second", &GlobalStats::packets_added_to_timeshift_per_second);
+            .def_readwrite("packets_added_to_timeshift_per_second", &GlobalStats::packets_added_to_timeshift_per_second)
+            .def_readwrite("timeshift_inbound_buffer", &GlobalStats::timeshift_inbound_buffer);
 
         py::class_<AudioEngineStats>(m, "AudioEngineStats", "A collection of all statistics from the audio engine")
             .def(py::init<>())

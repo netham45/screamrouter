@@ -90,7 +90,6 @@ public:
      * @param type The type of the SDP ("offer" or "answer").
      * @param running A flag indicating if the audio engine is running.
      */
-    void set_webrtc_remote_description(const std::string& sink_id, const std::string& listener_id, const std::string& sdp, const std::string& type, bool running);
     /**
      * @brief Adds a remote ICE candidate for a WebRTC peer connection.
      * @param sink_id The ID of the sink.
@@ -99,6 +98,7 @@ public:
      * @param sdpMid The SDP media line identifier.
      * @param running A flag indicating if the audio engine is running.
      */
+    void set_webrtc_remote_description(const std::string& sink_id, const std::string& listener_id, const std::string& sdp, const std::string& type, bool running);
     void add_webrtc_remote_ice_candidate(const std::string& sink_id, const std::string& listener_id, const std::string& candidate, const std::string& sdpMid, bool running);
 
 private:

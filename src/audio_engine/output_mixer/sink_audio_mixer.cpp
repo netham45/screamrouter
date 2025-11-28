@@ -6,9 +6,10 @@
  *          mixing it, and dispatching it to various network senders.
  */
 #include "sink_audio_mixer.h"
-#include "mix_scheduler.h"
 #include "../utils/cpp_logger.h"
 #include "../configuration/audio_engine_settings.h"
+#include "../input_processor/source_input_processor.h"
+#include "../utils/sentinel_logging.h"
 #include <iostream>
 #include <stdexcept>
 #include <cstring>
@@ -18,6 +19,8 @@
 #include <algorithm>
 #include <cmath>
 #include <thread>
+#include <optional>
+#include <tuple>
 #include <limits>
 #include <unordered_set>
 #include "../audio_processor/audio_processor.h"
@@ -28,8 +31,11 @@
 #include "../senders/rtp/multi_device_rtp_sender.h"
 #include "../senders/webrtc/webrtc_sender.h"
 #include "../senders/system/alsa_playback_sender.h"
+#include "../utils/thread_priority.h"
+#include "../utils/profiler.h"
 #if defined(__linux__)
 #include "../senders/system/screamrouter_fifo_sender.h"
+#include "../system_audio/runtime_paths.h"
 #endif
 #if defined(_WIN32)
 #include "../senders/system/wasapi_playback_sender.h"
@@ -61,23 +67,18 @@ SinkAudioMixer::SinkAudioMixer(
     : config_(config),
       m_settings(settings),
       frames_per_chunk_(resolve_base_frames_per_chunk(m_settings)),
-      chunk_size_bytes_([this]() {
-          const auto computed = compute_chunk_size_bytes_for_format(
-              frames_per_chunk_, config_.output_channels, config_.output_bitdepth);
-          const auto fallback = resolve_chunk_size_bytes(m_settings);
-          return computed > 0 ? computed : fallback;
-      }()),
-      mixing_buffer_samples_(compute_processed_chunk_samples(frames_per_chunk_, std::max(1, config_.output_channels))),
-      mp3_buffer_size_(chunk_size_bytes_ * 8),
+      chunk_size_bytes_(0),
+      mixing_buffer_samples_(0),
+      mp3_buffer_size_(0),
       mp3_output_queue_(mp3_output_queue),
       network_sender_(nullptr),
-      mix_scheduler_(std::make_unique<MixScheduler>(config_.sink_id, m_settings)),
-      mixing_buffer_(mixing_buffer_samples_, 0),
-      stereo_buffer_(mixing_buffer_samples_ * 2, 0),
-      payload_buffer_(mp3_buffer_size_, 0),
+      mixing_buffer_(),
+      stereo_buffer_(),
+      payload_buffer_(),
       lame_global_flags_(nullptr),
       stereo_preprocessor_(nullptr),
-      mp3_encode_buffer_(mp3_buffer_size_),
+      mp3_encode_buffer_(),
+      mp3_pcm_queue_max_depth_(0),
       profiling_last_log_time_(std::chrono::steady_clock::now())
 {
     LOG_CPP_INFO("[SinkMixer:%s] Initializing...", config_.sink_id.c_str());
@@ -106,6 +107,13 @@ SinkAudioMixer::SinkAudioMixer(
 
     set_playback_format(config_.output_samplerate, config_.output_channels, config_.output_bitdepth);
 
+    if (m_settings) {
+        int configured_depth = std::max(1, m_settings->mixer_tuning.mp3_output_queue_max_size);
+        mp3_pcm_queue_max_depth_ = static_cast<size_t>(configured_depth);
+    } else {
+        mp3_pcm_queue_max_depth_ = 3;
+    }
+
     if (config_.protocol == "rtp") {
         if (config_.multi_device_mode && !config_.rtp_receivers.empty()) {
             LOG_CPP_INFO("[SinkMixer:%s] Creating MultiDeviceRtpSender with %zu receivers.",
@@ -129,8 +137,7 @@ SinkAudioMixer::SinkAudioMixer(
         network_sender_ = std::make_unique<ScreamSender>(config_);
     } else if (config_.protocol == "system_audio") {
 #if defined(__linux__)
-        const bool is_fifo_path = !config_.output_ip.empty() &&
-                                  config_.output_ip.rfind("/var/run/screamrouter/", 0) == 0;
+        const bool is_fifo_path = screamrouter::audio::system_audio::is_screamrouter_fifo_path(config_.output_ip);
         const bool is_fifo_tag = !config_.output_ip.empty() &&
                                  config_.output_ip.rfind("sr_in:", 0) == 0;
         if (is_fifo_path || is_fifo_tag) {
@@ -164,6 +171,20 @@ SinkAudioMixer::SinkAudioMixer(
         throw std::runtime_error("Failed to create network sender.");
     }
 
+    // Enable output post-processor and hand rate control callback to system_audio backends.
+    if (config_.protocol == "system_audio") {
+        setup_output_post_processor();
+#if defined(__linux__)
+        if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+            alsa_sender->set_playback_rate_callback([this](double rate) { set_output_playback_rate(rate); });
+        }
+#elif defined(_WIN32)
+        if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+            wasapi_sender->set_playback_rate_callback([this](double rate) { set_output_playback_rate(rate); });
+        }
+#endif
+    }
+
     stereo_preprocessor_ = std::make_unique<AudioProcessor>(
         config_.output_channels, 2, 32, config_.output_samplerate, config_.output_samplerate, 1.0f,
         std::map<int, CppSpeakerLayout>(), m_settings, chunk_size_bytes_);
@@ -179,9 +200,8 @@ SinkAudioMixer::SinkAudioMixer(
         initialize_lame();
     }
 
-    if (mix_scheduler_) {
-        mix_scheduler_->set_timing_parameters(frames_per_chunk_, config_.output_samplerate);
-    }
+
+    last_drain_check_ = std::chrono::steady_clock::now();
 
     LOG_CPP_INFO("[SinkMixer:%s] Initialization complete.", config_.sink_id.c_str());
 }
@@ -192,9 +212,6 @@ SinkAudioMixer::SinkAudioMixer(
 SinkAudioMixer::~SinkAudioMixer() {
     if (!stop_flag_) {
         stop();
-    }
-    if (mix_scheduler_) {
-        mix_scheduler_->shutdown();
     }
     join_startup_thread();
     if (component_thread_.joinable()) {
@@ -230,26 +247,69 @@ void SinkAudioMixer::initialize_lame() {
     LOG_CPP_INFO("[SinkMixer:%s] LAME initialized successfully.", config_.sink_id.c_str());
 }
 
+void SinkAudioMixer::start_mp3_thread() {
+    if (!mp3_output_queue_ || !lame_global_flags_) {
+        return;
+    }
+    if (mp3_thread_running_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    mp3_stop_flag_.store(false, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(mp3_mutex_);
+        mp3_pcm_queue_.clear();
+    }
+
+    try {
+        mp3_thread_ = std::thread(&SinkAudioMixer::mp3_thread_loop, this);
+        mp3_thread_running_.store(true, std::memory_order_release);
+        LOG_CPP_INFO("[SinkMixer:%s] MP3 worker thread started.", config_.sink_id.c_str());
+    } catch (const std::system_error& e) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to start MP3 thread: %s", config_.sink_id.c_str(), e.what());
+        mp3_thread_running_.store(false, std::memory_order_release);
+    }
+}
+
+void SinkAudioMixer::stop_mp3_thread() {
+    mp3_stop_flag_.store(true, std::memory_order_release);
+    mp3_cv_.notify_all();
+    if (mp3_thread_.joinable()) {
+        try {
+            mp3_thread_.join();
+            LOG_CPP_INFO("[SinkMixer:%s] MP3 worker thread stopped.", config_.sink_id.c_str());
+        } catch (const std::system_error& e) {
+            LOG_CPP_ERROR("[SinkMixer:%s] Error joining MP3 thread: %s", config_.sink_id.c_str(), e.what());
+        }
+    }
+    mp3_thread_running_.store(false, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(mp3_mutex_);
+        mp3_pcm_queue_.clear();
+    }
+}
+
 /**
  * @brief Adds an input queue from a source processor.
  * @param instance_id The unique ID of the source processor instance.
- * @param queue A shared pointer to the source's output queue.
+ * @param ready_ring Ring buffer of due packets for this sink/source.
+ * @param sip Pointer to the synchronous SourceInputProcessor.
  */
-void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared_ptr<InputChunkQueue> queue) {
-    if (!queue) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Attempted to add null input queue for instance: %s", config_.sink_id.c_str(), instance_id.c_str());
+void SinkAudioMixer::add_input_queue(const std::string& instance_id,
+                                     std::shared_ptr<ReadyPacketRing> ready_ring,
+                                     SourceInputProcessor* sip) {
+    if (!ready_ring || !sip) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Attempted to add null input for instance: %s", config_.sink_id.c_str(), instance_id.c_str());
         return;
     }
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
-        input_queues_[instance_id] = queue;
+        ready_rings_[instance_id] = ready_ring;
+        source_processors_[instance_id] = sip;
         input_active_state_[instance_id] = false;
         source_buffers_[instance_id].audio_data.assign(mixing_buffer_samples_, 0);
-        LOG_CPP_INFO("[SinkMixer:%s] Added input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
-    }
-
-    if (mix_scheduler_) {
-        mix_scheduler_->attach_source(instance_id, std::move(queue));
+        processed_ready_[instance_id].clear();
+        LOG_CPP_INFO("[SinkMixer:%s] Added ready ring for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
 }
 
@@ -260,14 +320,18 @@ void SinkAudioMixer::add_input_queue(const std::string& instance_id, std::shared
 void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
-        input_queues_.erase(instance_id);
+        ready_rings_.erase(instance_id);
+        source_processors_.erase(instance_id);
         input_active_state_.erase(instance_id);
         source_buffers_.erase(instance_id);
-        LOG_CPP_INFO("[SinkMixer:%s] Removed input queue for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
+        processed_ready_.erase(instance_id);
+        LOG_CPP_INFO("[SinkMixer:%s] Removed ready ring for source instance: %s", config_.sink_id.c_str(), instance_id.c_str());
     }
 
-    if (mix_scheduler_) {
-        mix_scheduler_->detach_source(instance_id);
+    {
+        std::lock_guard<std::mutex> lock(drain_control_mutex_);
+        per_source_smoothed_buffer_ms_.erase(instance_id);
+        source_last_rate_command_.erase(instance_id);
     }
 }
 
@@ -334,7 +398,7 @@ void SinkAudioMixer::remove_listener(const std::string& listener_id) {
     // Close the sender WITHOUT holding the mutex to prevent deadlock
     // close() can trigger libdatachannel callbacks that need the GIL
     if (sender_to_remove) {
-        if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender_to_remove.get())) {
+        if (dynamic_cast<WebRtcSender*>(sender_to_remove.get())) {
             LOG_CPP_INFO("[SinkMixer:%s] Force closing WebRTC connection for listener: %s", config_.sink_id.c_str(), listener_id.c_str());
         }
         sender_to_remove->close();
@@ -361,10 +425,48 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
     stats.buffer_underruns = m_buffer_underruns.load();
     stats.buffer_overflows = m_buffer_overflows.load();
     stats.mp3_buffer_overflows = m_mp3_buffer_overflows.load();
+    stats.last_chunk_dwell_ms = profiling_last_chunk_dwell_ms_;
+    stats.avg_chunk_dwell_ms = profiling_chunk_dwell_samples_ > 0
+        ? profiling_chunk_dwell_sum_ms_ / static_cast<double>(profiling_chunk_dwell_samples_)
+        : profiling_last_chunk_dwell_ms_;
+    stats.last_send_gap_ms = profiling_last_send_gap_ms_;
+    stats.avg_send_gap_ms = profiling_send_gap_samples_ > 0
+        ? profiling_send_gap_sum_ms_ / static_cast<double>(profiling_send_gap_samples_)
+        : profiling_last_send_gap_ms_;
+
+    const double chunk_ms = (playback_sample_rate_ > 0)
+        ? (static_cast<double>(frames_per_chunk_) * 1000.0) / static_cast<double>(playback_sample_rate_)
+        : 0.0;
+
+    stats.payload_buffer.size = payload_buffer_fill_bytes_;
+    stats.payload_buffer.high_watermark = std::max(payload_buffer_fill_bytes_, profiling_max_payload_buffer_bytes_);
+    if (!payload_buffer_.empty()) {
+        stats.payload_buffer.fill_percent = (static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(payload_buffer_.size())) * 100.0;
+        if (chunk_size_bytes_ > 0 && chunk_ms > 0.0) {
+            const double chunks_buffered = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(chunk_size_bytes_);
+            stats.payload_buffer.depth_ms = chunks_buffered * chunk_ms;
+        }
+    }
+
+    if (mp3_output_queue_) {
+        stats.mp3_output_buffer.size = mp3_output_queue_->size();
+        stats.mp3_output_buffer.high_watermark = mp3_output_high_water_.load();
+        if (chunk_ms > 0.0) {
+            stats.mp3_output_buffer.depth_ms = chunk_ms * static_cast<double>(stats.mp3_output_buffer.size);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> mp3_lock(mp3_mutex_);
+        stats.mp3_pcm_buffer.size = mp3_pcm_queue_.size();
+        stats.mp3_pcm_buffer.high_watermark = mp3_pcm_high_water_.load();
+        if (chunk_ms > 0.0) {
+            stats.mp3_pcm_buffer.depth_ms = chunk_ms * static_cast<double>(stats.mp3_pcm_buffer.size);
+        }
+    }
 
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
-        stats.total_input_streams = input_queues_.size();
+        stats.total_input_streams = ready_rings_.size();
         size_t active_count = 0;
         for (const auto& [id, is_active] : input_active_state_) {
             if (is_active) {
@@ -372,6 +474,27 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
             }
         }
         stats.active_input_streams = active_count;
+
+        for (const auto& [instance_id, ring_ptr] : ready_rings_) {
+            SinkInputLaneStats lane;
+            lane.instance_id = instance_id;
+            size_t depth = ring_ptr ? ring_ptr->size() : 0;
+            auto& hw = input_queue_high_water_[instance_id];
+            if (depth > hw) {
+                hw = depth;
+            }
+            lane.source_output_queue.size = depth;
+            lane.source_output_queue.high_watermark = hw;
+            if (chunk_ms > 0.0) {
+                lane.source_output_queue.depth_ms = chunk_ms * static_cast<double>(depth);
+            }
+            auto underrun_it = profiling_source_underruns_.find(instance_id);
+            if (underrun_it != profiling_source_underruns_.end()) {
+                lane.underrun_events = underrun_it->second;
+            }
+
+            stats.input_lanes.push_back(std::move(lane));
+        }
     }
 
     {
@@ -411,14 +534,6 @@ void SinkAudioMixer::set_coordinator(SinkSynchronizationCoordinator* coord) {
     }
     coordinator_ = coord;
     LOG_CPP_INFO("[SinkMixer:%s] Coordinator set", config_.sink_id.c_str());
-}
-
-/**
- * @brief Checks if coordination mode is currently enabled.
- * @return True if coordination is enabled, false otherwise.
- */
-bool SinkAudioMixer::is_coordination_enabled() const {
-    return coordination_mode_;
 }
 
 /**
@@ -468,18 +583,14 @@ void SinkAudioMixer::stop() {
     size_t listeners = 0;
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
-        inputs = input_queues_.size();
+        inputs = ready_rings_.size();
     }
     {
         std::lock_guard<std::mutex> lock(listener_senders_mutex_);
         listeners = listener_senders_.size();
     }
-    LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_write_pos_, clock_manager_enabled_.load() ? 1 : 0);
+    LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_fill_bytes_, clock_manager_enabled_.load() ? 1 : 0);
     stop_flag_ = true;
-
-    if (mix_scheduler_) {
-        mix_scheduler_->shutdown();
-    }
 
     if (clock_condition_handle_.condition) {
         clock_condition_handle_.condition->cv.notify_all();
@@ -487,6 +598,8 @@ void SinkAudioMixer::stop() {
 
     unregister_mix_timer();
     LOG_CPP_INFO("[SinkMixer:%s] Mix timer unregistered", config_.sink_id.c_str());
+
+    stop_mp3_thread();
 
     if (mp3_output_queue_ && lame_global_flags_) {
         LOG_CPP_INFO("[SinkMixer:%s] Flushing LAME buffer...", config_.sink_id.c_str());
@@ -548,7 +661,8 @@ bool SinkAudioMixer::start_internal() {
     const auto t0 = std::chrono::steady_clock::now();
 
     stop_flag_ = false;
-    payload_buffer_write_pos_ = 0;
+    payload_buffer_read_pos_ = 0;
+    payload_buffer_fill_bytes_ = 0;
     reset_profiler_counters();
     set_playback_format(config_.output_samplerate, config_.output_channels, config_.output_bitdepth);
 
@@ -586,6 +700,8 @@ bool SinkAudioMixer::start_internal() {
         return false;
     }
 
+    start_mp3_thread();
+
     try {
         const auto t_thr0 = std::chrono::steady_clock::now();
         component_thread_ = std::thread(&SinkAudioMixer::run, this);
@@ -597,6 +713,7 @@ bool SinkAudioMixer::start_internal() {
     } catch (const std::system_error& e) {
         LOG_CPP_ERROR("[SinkMixer:%s] Failed to start thread: %s", config_.sink_id.c_str(), e.what());
         unregister_mix_timer();
+        stop_mp3_thread();
         if (network_sender_) {
             network_sender_->close();
         }
@@ -626,169 +743,176 @@ void SinkAudioMixer::join_startup_thread() {
  * @return `true` if any data was popped from any queue, `false` otherwise.
  */
 bool SinkAudioMixer::wait_for_source_data() {
-    MixScheduler::HarvestResult harvest;
-    if (mix_scheduler_) {
-        harvest = mix_scheduler_->collect_ready_chunks();
-    }
-
-    std::lock_guard<std::mutex> lock(queues_mutex_);
-
+    PROFILE_FUNCTION();
     bool data_actually_popped_this_cycle = false;
-    std::map<std::string, bool> ready_this_cycle;
-    size_t lagging_sources = 0;
+    const std::size_t max_queued_chunks =
+        m_settings ? std::max<std::size_t>(1, m_settings->mixer_tuning.max_queued_chunks) : 3;
 
     bool had_any_active_sources = false;
-    for (const auto& [instance_id, is_active] : input_active_state_) {
-        (void)instance_id;
-        if (is_active) {
-            had_any_active_sources = true;
-            break;
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        for (const auto& [instance_id, is_active] : input_active_state_) {
+            (void)instance_id;
+            if (is_active) {
+                had_any_active_sources = true;
+                break;
+            }
         }
     }
 
-    bool was_holding_silence = underrun_silence_active_;
-    std::unordered_set<std::string> drained_ids(harvest.drained_sources.begin(), harvest.drained_sources.end());
-
-    for (const auto& drained_id : drained_ids) {
-        auto active_it = input_active_state_.find(drained_id);
-        if (active_it != input_active_state_.end()) {
-            active_it->second = false;
-        }
-        auto buffer_it = source_buffers_.find(drained_id);
-        if (buffer_it != source_buffers_.end()) {
-            buffer_it->second = ProcessedAudioChunk{};
+    std::vector<std::tuple<std::string, std::shared_ptr<ReadyPacketRing>, SourceInputProcessor*>> sources;
+    std::vector<std::pair<std::string, double>> pending_speedups;
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        for (const auto& [id, ring] : ready_rings_) {
+            SourceInputProcessor* sip = nullptr;
+            auto sip_it = source_processors_.find(id);
+            if (sip_it != source_processors_.end()) {
+                sip = sip_it->second;
+            }
+            sources.emplace_back(id, ring, sip);
         }
     }
 
-    for (auto& pair : harvest.ready_chunks) {
-        const std::string& instance_id = pair.first;
-        auto& ready_entry = pair.second;
-
-        bool previously_active = input_active_state_.count(instance_id) ? input_active_state_[instance_id] : false;
-        ProcessedAudioChunk chunk = std::move(ready_entry.chunk);
-        const size_t sample_count = chunk.audio_data.size();
-
-        if (sample_count != mixing_buffer_samples_) {
-            LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
-                          config_.sink_id.c_str(), instance_id.c_str(), sample_count);
-            ready_this_cycle[instance_id] = false;
-            input_active_state_[instance_id] = false;
+    for (auto& entry : sources) {
+        const std::string& instance_id = std::get<0>(entry);
+        auto ring = std::get<1>(entry);
+        SourceInputProcessor* sip = std::get<2>(entry);
+        if (!ring || !sip) {
             continue;
         }
+        TaggedAudioPacket pkt;
+        while (ring->pop(pkt)) {
+            utils::log_sentinel("sink_ring_pop", pkt, " [sink=" + config_.sink_id + " instance=" + instance_id + "]");
+            std::vector<ProcessedAudioChunk> produced;
+            sip->ingest_packet(pkt, produced);
+            if (!produced.empty()) {
+                std::lock_guard<std::mutex> lock(queues_mutex_);
+                auto& queue = processed_ready_[instance_id];
+                for (auto& chunk : produced) {
+                    const std::string context = " [sink=" + config_.sink_id + " instance=" + instance_id +
+                                                " queued_depth=" + std::to_string(queue.size() + 1) + "]";
+                    utils::log_sentinel("sink_chunk_received", chunk, context);
+                    queue.push_back(std::move(chunk));
+                    while (queue.size() > max_queued_chunks) {
+                        if (queue.front().is_sentinel) {
+                            utils::log_sentinel("sink_chunk_dropped", queue.front(), " [sink=" + config_.sink_id + " instance=" + instance_id + " due_to_backlog]");
+                        }
+                        queue.pop_front();
+                    }
+                }
+            }
+            data_actually_popped_this_cycle = true;
+        }
+    }
 
-        if (chunk.produced_time.time_since_epoch().count() != 0) {
-            double dwell_ms = std::chrono::duration<double, std::milli>(ready_entry.arrival_time - chunk.produced_time).count();
-            profiling_last_chunk_dwell_ms_ = dwell_ms;
-            profiling_chunk_dwell_sum_ms_ += dwell_ms;
-            profiling_chunk_dwell_samples_++;
-            if (profiling_chunk_dwell_samples_ == 1) {
-                profiling_chunk_dwell_min_ms_ = dwell_ms;
-                profiling_chunk_dwell_max_ms_ = dwell_ms;
+    // Local speedups removed; timeshift manager drives rate.
+
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        size_t lagging_sources = 0;
+        for (auto& [instance_id, queue] : processed_ready_) {
+            bool previously_active = input_active_state_[instance_id];
+        if (!queue.empty()) {
+            ProcessedAudioChunk chunk = std::move(queue.front());
+            queue.pop_front();
+            const size_t sample_count = chunk.audio_data.size();
+            if (sample_count != mixing_buffer_samples_) {
+                LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
+                              config_.sink_id.c_str(), instance_id.c_str(), sample_count);
+                input_active_state_[instance_id] = false;
+                continue;
+            }
+
+                m_total_chunks_mixed++;
+                source_buffers_[instance_id] = std::move(chunk);
+                const std::string ready_context = " [sink=" + config_.sink_id + " instance=" + instance_id +
+                                                  " remaining_depth=" + std::to_string(queue.size()) + "]";
+                utils::log_sentinel("sink_chunk_ready", source_buffers_[instance_id], ready_context);
+                input_active_state_[instance_id] = true;
+                if (!previously_active) {
+                    LOG_CPP_DEBUG("[SinkMixer:%s] Input instance %s became active", config_.sink_id.c_str(), instance_id.c_str());
+                }
             } else {
-                profiling_chunk_dwell_min_ms_ = std::min(profiling_chunk_dwell_min_ms_, dwell_ms);
-                profiling_chunk_dwell_max_ms_ = std::max(profiling_chunk_dwell_max_ms_, dwell_ms);
+                if (previously_active) {
+                    input_active_state_[instance_id] = false;
+                    m_buffer_underruns++;
+                    lagging_sources++;
+                    profiling_source_underruns_[instance_id]++;
+                }
             }
         }
 
-        m_total_chunks_mixed++;
-        source_buffers_[instance_id] = std::move(chunk);
-        ready_this_cycle[instance_id] = true;
-        data_actually_popped_this_cycle = true;
-        if (!previously_active) {
-            LOG_CPP_DEBUG("[SinkMixer:%s] Input instance %s became active", config_.sink_id.c_str(), instance_id.c_str());
-        }
-        input_active_state_[instance_id] = true;
-        drained_ids.erase(instance_id);
-    }
-
-    for (const auto& [instance_id, queue_ptr] : input_queues_) {
-        (void)queue_ptr;
-        if (!ready_this_cycle.count(instance_id)) {
-            ready_this_cycle[instance_id] = false;
-        }
-
-        bool drained = drained_ids.count(instance_id) > 0;
-        bool currently_ready = ready_this_cycle[instance_id];
-        bool previously_active = input_active_state_.count(instance_id) ? input_active_state_[instance_id] : false;
-
-        if (!currently_ready && previously_active && !drained) {
-            LOG_CPP_DEBUG("[SinkMixer:%s] WaitForData: Instance %s did not provide a chunk this cycle, marking inactive.",
-                          config_.sink_id.c_str(), instance_id.c_str());
-            input_active_state_[instance_id] = false;
-            m_buffer_underruns++;
-            lagging_sources++;
-            profiling_source_underruns_[instance_id]++;
-        }
-    }
-
-    bool has_active_sources_now = false;
-    for (const auto& [instance_id, is_active] : input_active_state_) {
-        (void)instance_id;
-        if (is_active) {
-            has_active_sources_now = true;
-            break;
-        }
-    }
-
-    auto now = std::chrono::steady_clock::now();
-    bool hold_window_expired = false;
-
-    if (data_actually_popped_this_cycle) {
-        underrun_silence_active_ = false;
-    } else {
-        long hold_ms = std::max<long>(0, m_settings->mixer_tuning.underrun_hold_timeout_ms);
-
-        if (underrun_silence_active_) {
-            if (hold_ms <= 0 || now >= underrun_silence_deadline_) {
-                hold_window_expired = true;
-                underrun_silence_active_ = false;
+        bool has_active_sources_now = false;
+        for (const auto& [instance_id, is_active] : input_active_state_) {
+            (void)instance_id;
+            if (is_active) {
+                has_active_sources_now = true;
+                break;
             }
         }
 
-        if (!underrun_silence_active_ && hold_ms > 0 && !input_queues_.empty() && had_any_active_sources &&
-            !has_active_sources_now) {
-            underrun_silence_active_ = true;
-            underrun_silence_deadline_ = now + std::chrono::milliseconds(hold_ms);
-        }
-    }
+        auto now = std::chrono::steady_clock::now();
+        bool was_holding_silence = underrun_silence_active_;
+        bool hold_window_expired = false;
 
-    if (!was_holding_silence && underrun_silence_active_) {
-        long hold_ms = std::max<long>(0, m_settings->mixer_tuning.underrun_hold_timeout_ms);
-        LOG_CPP_INFO("[SinkMixer:%s] Underrun detected. Injecting silence for up to %ld ms.",
-                     config_.sink_id.c_str(), hold_ms);
-        profiling_underrun_events_++;
-        profiling_underrun_active_since_ = now;
-    } else if (was_holding_silence && !underrun_silence_active_) {
-        if (profiling_underrun_active_since_.time_since_epoch().count() != 0) {
-            double hold_duration_ms = std::chrono::duration<double, std::milli>(now - profiling_underrun_active_since_).count();
-            profiling_underrun_hold_time_ms_ += hold_duration_ms;
-            profiling_last_underrun_hold_ms_ = hold_duration_ms;
-            profiling_underrun_active_since_ = {};
-        }
-        if (data_actually_popped_this_cycle) {
-            LOG_CPP_INFO("[SinkMixer:%s] Underrun cleared. Audio resumed before silence window elapsed.",
-                         config_.sink_id.c_str());
-        } else if (hold_window_expired) {
-            LOG_CPP_INFO("[SinkMixer:%s] Underrun silence window expired without new audio.",
-                         config_.sink_id.c_str());
+        if (!data_actually_popped_this_cycle) {
+            long hold_ms = std::max<long>(0, m_settings->mixer_tuning.underrun_hold_timeout_ms);
+
+            if (underrun_silence_active_) {
+                if (hold_ms <= 0 || now >= underrun_silence_deadline_) {
+                    hold_window_expired = true;
+                    underrun_silence_active_ = false;
+                }
+            }
+
+            if (!underrun_silence_active_ && hold_ms > 0 && !ready_rings_.empty() && had_any_active_sources &&
+                !has_active_sources_now) {
+                underrun_silence_active_ = true;
+                underrun_silence_deadline_ = now + std::chrono::milliseconds(hold_ms);
+            }
         } else {
-            LOG_CPP_INFO("[SinkMixer:%s] Underrun silence cleared.", config_.sink_id.c_str());
+            underrun_silence_active_ = false;
         }
-    }
 
-    size_t ready_count = 0;
-    for (const auto& [instance_id, is_ready] : ready_this_cycle) {
-        (void)instance_id;
-        if (is_ready) {
-            ready_count++;
+        if (!was_holding_silence && underrun_silence_active_) {
+            long hold_ms = std::max<long>(0, m_settings->mixer_tuning.underrun_hold_timeout_ms);
+            LOG_CPP_INFO("[SinkMixer:%s] Underrun detected. Holding last sample for up to %ld ms.",
+                         config_.sink_id.c_str(), hold_ms);
+            profiling_underrun_events_++;
+            profiling_underrun_active_since_ = now;
+        } else if (was_holding_silence && !underrun_silence_active_) {
+            if (profiling_underrun_active_since_.time_since_epoch().count() != 0) {
+                double hold_duration_ms = std::chrono::duration<double, std::milli>(now - profiling_underrun_active_since_).count();
+                profiling_underrun_hold_time_ms_ += hold_duration_ms;
+                profiling_last_underrun_hold_ms_ = hold_duration_ms;
+                profiling_underrun_active_since_ = {};
+            }
+            if (data_actually_popped_this_cycle) {
+                LOG_CPP_INFO("[SinkMixer:%s] Underrun hold cleared. Audio resumed before window elapsed.",
+                             config_.sink_id.c_str());
+            } else if (hold_window_expired) {
+                LOG_CPP_INFO("[SinkMixer:%s] Underrun hold window expired without new audio.",
+                             config_.sink_id.c_str());
+            } else {
+                LOG_CPP_INFO("[SinkMixer:%s] Underrun hold cleared.", config_.sink_id.c_str());
+            }
         }
-    }
 
-    profiling_ready_sources_sum_ += ready_count;
-    profiling_lagging_sources_sum_ += lagging_sources;
-    profiling_samples_count_++;
-    if (data_actually_popped_this_cycle) {
-        profiling_data_ready_cycles_++;
+        size_t ready_count = 0;
+        for (const auto& [instance_id, queue] : processed_ready_) {
+            (void)instance_id;
+            if (!queue.empty()) {
+                ready_count++;
+            }
+        }
+
+        profiling_ready_sources_sum_ += ready_count;
+        profiling_lagging_sources_sum_ += lagging_sources;
+        profiling_samples_count_++;
+        if (data_actually_popped_this_cycle) {
+            profiling_data_ready_cycles_++;
+        }
     }
 
     return data_actually_popped_this_cycle;
@@ -798,11 +922,17 @@ bool SinkAudioMixer::wait_for_source_data() {
  * @brief Mixes audio from all active source buffers into the main mixing buffer.
  */
 void SinkAudioMixer::mix_buffers() {
+    PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     std::fill(mixing_buffer_.begin(), mixing_buffer_.end(), 0);
     
     std::vector<uint32_t> collected_csrcs;
     size_t active_source_count = 0;
+    const size_t channel_count = static_cast<size_t>(std::max(playback_channels_, 1));
+    if (last_sample_frame_.size() != channel_count) {
+        last_sample_frame_.assign(channel_count, 0);
+        last_sample_valid_ = false;
+    }
 
     size_t total_samples_to_mix = mixing_buffer_.size();
     LOG_CPP_DEBUG("[SinkMixer:%s] MixBuffers: Starting mix. Target samples=%zu (Mixing buffer size).", config_.sink_id.c_str(), total_samples_to_mix);
@@ -841,6 +971,20 @@ void SinkAudioMixer::mix_buffers() {
             }
         }
     }
+
+    if (active_source_count == 0) {
+        if (last_sample_valid_ && !last_sample_frame_.empty()) {
+            for (size_t i = 0; i < total_samples_to_mix; i += channel_count) {
+                const size_t copy_channels = std::min(channel_count, total_samples_to_mix - i);
+                std::copy_n(last_sample_frame_.data(), copy_channels, mixing_buffer_.begin() + i);
+            }
+        }
+    } else if (total_samples_to_mix >= channel_count) {
+        const size_t tail_start = total_samples_to_mix - channel_count;
+        const size_t copy_channels = std::min(channel_count, total_samples_to_mix - tail_start);
+        std::copy_n(mixing_buffer_.data() + tail_start, copy_channels, last_sample_frame_.data());
+        last_sample_valid_ = true;
+    }
     
     std::sort(collected_csrcs.begin(), collected_csrcs.end());
     collected_csrcs.erase(std::unique(collected_csrcs.begin(), collected_csrcs.end()), collected_csrcs.end());
@@ -863,6 +1007,7 @@ void SinkAudioMixer::mix_buffers() {
  * @brief Downscales the 32-bit mixed audio to the target bit depth for network output.
  */
 void SinkAudioMixer::downscale_buffer() {
+    PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     int target_bit_depth = playback_bit_depth_ > 0 ? playback_bit_depth_ : config_.output_bitdepth;
     if (target_bit_depth <= 0) {
@@ -875,16 +1020,47 @@ void SinkAudioMixer::downscale_buffer() {
         return;
     }
     size_t samples_to_convert = mixing_buffer_.size();
+    const int32_t* read_ptr = mixing_buffer_.data();
+
+    if (config_.protocol == "system_audio") {
+        std::lock_guard<std::mutex> lock(output_processor_mutex_);
+        if (output_post_processor_) {
+            if (output_post_buffer_.size() < mixing_buffer_.size() * 2) {
+                output_post_buffer_.resize(mixing_buffer_.size() * 2);
+            }
+            int processed = output_post_processor_->processAudio(
+                reinterpret_cast<const uint8_t*>(mixing_buffer_.data()),
+                output_post_buffer_.data());
+            ++output_post_log_counter_;
+            if (output_post_log_counter_ % 100 == 0) {
+                LOG_CPP_INFO("[SinkMixer:%s] Output post-processor: in_samples=%zu out_samples=%d playback_rate=%.6f",
+                             config_.sink_id.c_str(),
+                             mixing_buffer_.size(),
+                             processed,
+                             output_playback_rate_.load());
+            }
+            if (processed > 0) {
+                samples_to_convert = static_cast<size_t>(processed);
+                read_ptr = output_post_buffer_.data();
+            } else {
+                LOG_CPP_WARNING("[SinkMixer:%s] Output post-processor returned %d samples; falling back to unprocessed mix.",
+                                config_.sink_id.c_str(), processed);
+            }
+        }
+    }
 
     size_t expected_bytes_to_write = samples_to_convert * output_byte_depth;
     LOG_CPP_DEBUG("[SinkMixer:%s] Downscale: Converting %zu samples (int32) to %d-bit. Expected output bytes=%zu.",
                   config_.sink_id.c_str(), samples_to_convert, target_bit_depth, expected_bytes_to_write);
 
-    size_t available_space = payload_buffer_.size() - payload_buffer_write_pos_;
+    const size_t capacity = payload_buffer_.size();
+    size_t available_space = capacity >= payload_buffer_fill_bytes_
+        ? (capacity - payload_buffer_fill_bytes_)
+        : 0;
 
     if (expected_bytes_to_write > available_space) {
         LOG_CPP_ERROR("[SinkMixer:%s] Downscale buffer overflow detected! Available space=%zu, needed=%zu. WritePos=%zu. BufferSize=%zu",
-                      config_.sink_id.c_str(), available_space, expected_bytes_to_write, payload_buffer_write_pos_, payload_buffer_.size());
+                      config_.sink_id.c_str(), available_space, expected_bytes_to_write, payload_buffer_fill_bytes_, payload_buffer_.size());
         m_buffer_overflows++;
         size_t max_samples_possible = available_space / output_byte_depth;
         samples_to_convert = max_samples_possible;
@@ -897,27 +1073,34 @@ void SinkAudioMixer::downscale_buffer() {
         }
     }
 
-    uint8_t* write_ptr_start = payload_buffer_.data() + payload_buffer_write_pos_;
-    uint8_t* write_ptr = write_ptr_start;
-    const int32_t* read_ptr = mixing_buffer_.data();
+    size_t write_index = (payload_buffer_read_pos_ + payload_buffer_fill_bytes_) % capacity;
 
     for (size_t i = 0; i < samples_to_convert; ++i) {
         int32_t sample = read_ptr[i];
         switch (target_bit_depth) {
             case 16:
-                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 16) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
                 break;
             case 24:
-                *write_ptr++ = static_cast<uint8_t>((sample >> 8) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 8) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 16) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
                 break;
             case 32:
-                *write_ptr++ = static_cast<uint8_t>((sample) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 8) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 16) & 0xFF);
-                *write_ptr++ = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 8) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 16) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
+                payload_buffer_[write_index] = static_cast<uint8_t>((sample >> 24) & 0xFF);
+                if (++write_index == capacity) write_index = 0;
                 break;
             default:
                 LOG_CPP_ERROR("[SinkMixer:%s] Unsupported target bit depth %d during downscale.",
@@ -925,17 +1108,10 @@ void SinkAudioMixer::downscale_buffer() {
                 return;
         }
     }
-    size_t bytes_written = write_ptr - write_ptr_start;
-    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale: Conversion loop finished. Bytes written=%zu. Expected=%zu.",
-                  config_.sink_id.c_str(), bytes_written, expected_bytes_to_write);
-    if (bytes_written != expected_bytes_to_write) {
-         LOG_CPP_ERROR("[SinkMixer:%s] Downscale: Mismatch between bytes written (%zu) and expected bytes (%zu).",
-                       config_.sink_id.c_str(), bytes_written, expected_bytes_to_write);
-    }
-
-    payload_buffer_write_pos_ += bytes_written;
-    profiling_max_payload_buffer_bytes_ = std::max(profiling_max_payload_buffer_bytes_, payload_buffer_write_pos_);
-    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale complete. payload_buffer_write_pos_=%zu", config_.sink_id.c_str(), payload_buffer_write_pos_);
+    const size_t bytes_written = expected_bytes_to_write;
+    payload_buffer_fill_bytes_ += bytes_written;
+    profiling_max_payload_buffer_bytes_ = std::max(profiling_max_payload_buffer_bytes_, payload_buffer_fill_bytes_);
+    LOG_CPP_DEBUG("[SinkMixer:%s] Downscale complete. bytes_written=%zu fill=%zu", config_.sink_id.c_str(), bytes_written, payload_buffer_fill_bytes_);
     auto t1 = std::chrono::steady_clock::now();
     uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
     profiling_downscale_calls_++;
@@ -949,6 +1125,7 @@ void SinkAudioMixer::downscale_buffer() {
  * @return The number of stereo samples processed.
  */
 size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
+    PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     if (!stereo_preprocessor_) {
         return 0;
@@ -989,6 +1166,7 @@ size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
  * @param samples_to_dispatch The number of stereo samples to send.
  */
 void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
+    PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     std::vector<std::string> closed_listeners_to_remove;
 
@@ -1037,12 +1215,48 @@ void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
 }
 
 /**
- * @brief Encodes the pre-processed stereo audio to MP3 and pushes it to the output queue.
- * @param samples_to_encode The number of stereo samples to encode.
+ * @brief Copies stereo samples into the MP3 PCM queue for the worker thread.
+ * @param samples Pointer to interleaved stereo samples.
+ * @param sample_count Number of interleaved samples.
  */
-void SinkAudioMixer::encode_and_push_mp3(size_t samples_to_encode) {
+void SinkAudioMixer::enqueue_mp3_pcm(const int32_t* samples, size_t sample_count) {
+    PROFILE_FUNCTION();
+    if (!mp3_output_queue_ || !samples || sample_count == 0) {
+        return;
+    }
+    if (!mp3_thread_running_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock(mp3_mutex_);
+    const size_t max_depth = mp3_pcm_queue_max_depth_ > 0 ? mp3_pcm_queue_max_depth_ : 3;
+    if (mp3_pcm_queue_.size() >= max_depth) {
+        mp3_pcm_queue_.pop_front(); // Drop oldest to keep freshest audio
+        m_mp3_buffer_overflows++;
+        LOG_CPP_DEBUG("[SinkMixer:%s] MP3 PCM queue full (depth=%zu), dropping oldest chunk.", config_.sink_id.c_str(), mp3_pcm_queue_.size());
+    }
+
+    std::vector<int32_t> buffer(sample_count);
+    std::memcpy(buffer.data(), samples, sample_count * sizeof(int32_t));
+    mp3_pcm_queue_.push_back(std::move(buffer));
+    size_t depth = mp3_pcm_queue_.size();
+    size_t hw = mp3_pcm_high_water_.load();
+    while (depth > hw && !mp3_pcm_high_water_.compare_exchange_weak(hw, depth)) {
+        // retry
+    }
+    lock.unlock();
+    mp3_cv_.notify_one();
+}
+
+/**
+ * @brief Encodes provided stereo samples to MP3 and pushes them to the output queue.
+ * @param samples Pointer to interleaved stereo samples.
+ * @param sample_count Number of interleaved samples (L/R count together).
+ */
+void SinkAudioMixer::encode_and_push_mp3(const int32_t* samples, size_t sample_count) {
+    PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
-    if (!mp3_output_queue_ || !lame_global_flags_ || samples_to_encode == 0) {
+    if (!mp3_output_queue_ || !lame_global_flags_ || sample_count == 0 || !samples) {
         return;
     }
 
@@ -1052,14 +1266,14 @@ void SinkAudioMixer::encode_and_push_mp3(size_t samples_to_encode) {
         return;
     }
 
-    int frames_per_channel = samples_to_encode / 2;
+    int frames_per_channel = sample_count / 2;
     if (frames_per_channel <= 0) {
         return;
     }
 
     int mp3_bytes_encoded = lame_encode_buffer_interleaved_int(
         lame_global_flags_,
-        stereo_buffer_.data(),
+        samples,
         frames_per_channel,
         mp3_encode_buffer_.data(),
         static_cast<int>(mp3_encode_buffer_.size())
@@ -1071,6 +1285,11 @@ void SinkAudioMixer::encode_and_push_mp3(size_t samples_to_encode) {
         EncodedMP3Data mp3_data;
         mp3_data.mp3_data.assign(mp3_encode_buffer_.begin(), mp3_encode_buffer_.begin() + mp3_bytes_encoded);
         mp3_output_queue_->push(std::move(mp3_data));
+        size_t depth = mp3_output_queue_->size();
+        size_t hw = mp3_output_high_water_.load();
+        while (depth > hw && !mp3_output_high_water_.compare_exchange_weak(hw, depth)) {
+            // retry
+        }
     }
     auto t1 = std::chrono::steady_clock::now();
     uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
@@ -1078,6 +1297,32 @@ void SinkAudioMixer::encode_and_push_mp3(size_t samples_to_encode) {
     profiling_mp3_ns_sum_ += static_cast<long double>(dt);
     if (dt > profiling_mp3_ns_max_) profiling_mp3_ns_max_ = dt;
     if (dt < profiling_mp3_ns_min_) profiling_mp3_ns_min_ = dt;
+}
+
+void SinkAudioMixer::mp3_thread_loop() {
+    PROFILE_FUNCTION();
+    while (true) {
+        std::vector<int32_t> work;
+        {
+            std::unique_lock<std::mutex> lock(mp3_mutex_);
+            mp3_cv_.wait(lock, [this]() {
+                return mp3_stop_flag_.load(std::memory_order_acquire) || !mp3_pcm_queue_.empty();
+            });
+
+            if (mp3_stop_flag_.load(std::memory_order_acquire) && mp3_pcm_queue_.empty()) {
+                break;
+            }
+
+            if (!mp3_pcm_queue_.empty()) {
+                work = std::move(mp3_pcm_queue_.front());
+                mp3_pcm_queue_.pop_front();
+            }
+        }
+
+        if (!work.empty()) {
+            encode_and_push_mp3(work.data(), work.size());
+        }
+    }
 }
 
 /**
@@ -1092,7 +1337,7 @@ void SinkAudioMixer::reset_profiler_counters() {
     profiling_ready_sources_sum_ = 0;
     profiling_lagging_sources_sum_ = 0;
     profiling_samples_count_ = 0;
-    profiling_max_payload_buffer_bytes_ = payload_buffer_write_pos_;
+    profiling_max_payload_buffer_bytes_ = payload_buffer_fill_bytes_;
     profiling_chunk_dwell_sum_ms_ = 0.0;
     profiling_chunk_dwell_max_ms_ = 0.0;
     profiling_chunk_dwell_min_ms_ = std::numeric_limits<double>::infinity();
@@ -1157,16 +1402,16 @@ void SinkAudioMixer::maybe_log_profiler() {
     size_t max_queue_depth = 0;
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
-        total_inputs = input_queues_.size();
+        total_inputs = ready_rings_.size();
         for (const auto& [instance_id, is_active] : input_active_state_) {
             (void)instance_id;
             if (is_active) {
                 active_inputs++;
             }
         }
-        for (const auto& [instance_id, queue_ptr] : input_queues_) {
+        for (const auto& [instance_id, ring_ptr] : ready_rings_) {
             (void)instance_id;
-            size_t queue_size = queue_ptr ? queue_ptr->size() : 0;
+            size_t queue_size = ring_ptr ? ring_ptr->size() : 0;
             total_queue_depth += queue_size;
             if (queue_size > max_queue_depth) {
                 max_queue_depth = queue_size;
@@ -1222,7 +1467,7 @@ void SinkAudioMixer::maybe_log_profiler() {
         avg_lagging_sources,
         avg_queue_depth,
         max_queue_depth,
-        payload_buffer_write_pos_,
+        payload_buffer_fill_bytes_,
         profiling_max_payload_buffer_bytes_,
         m_buffer_underruns.load(),
         m_buffer_overflows.load(),
@@ -1304,11 +1549,12 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
                                 (1000.0 / static_cast<double>(playback_sample_rate_));
         }
     }
-    if (mix_scheduler_) {
-        auto ready_depths = mix_scheduler_->get_ready_depths();
-        ready_sources = ready_depths.size();
-        for (const auto& [instance_id, depth] : ready_depths) {
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        ready_sources = ready_rings_.size();
+        for (const auto& [instance_id, ring] : ready_rings_) {
             (void)instance_id;
+            const std::size_t depth = ring ? ring->size() : 0;
             ready_total += depth;
             if (depth > ready_max) {
                 ready_max = depth;
@@ -1327,13 +1573,24 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
                     backlog_ms);
             }
         }
+        for (const auto& [instance_id, queue] : processed_ready_) {
+            if (!queue.empty() && chunk_duration_ms > 0.0) {
+                const double backlog_ms = static_cast<double>(queue.size()) * chunk_duration_ms;
+                LOG_CPP_INFO(
+                    "[Telemetry][SinkMixer:%s][Processed %s] ready_chunks=%zu backlog_ms=%.3f",
+                    config_.sink_id.c_str(),
+                    instance_id.c_str(),
+                    queue.size(),
+                    backlog_ms);
+            }
+        }
     }
 
     double payload_ms = 0.0;
     if (playback_sample_rate_ > 0 && playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0) {
         const std::size_t frame_bytes = static_cast<std::size_t>(active_channels) * static_cast<std::size_t>(playback_bit_depth_ / 8);
         if (frame_bytes > 0) {
-            const double frames = static_cast<double>(payload_buffer_write_pos_) / static_cast<double>(frame_bytes);
+            const double frames = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(frame_bytes);
             payload_ms = (frames * 1000.0) / static_cast<double>(playback_sample_rate_);
         }
     }
@@ -1343,8 +1600,13 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
         : 0.0;
 
     size_t mp3_queue_size = 0;
+    size_t mp3_pcm_queue_size = 0;
     if (mp3_output_queue_) {
         mp3_queue_size = mp3_output_queue_->size();
+    }
+    {
+        std::lock_guard<std::mutex> lock(mp3_mutex_);
+        mp3_pcm_queue_size = mp3_pcm_queue_.size();
     }
 
     const uint64_t pending_ticks = clock_pending_ticks_;
@@ -1379,9 +1641,9 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
     }
 
     LOG_CPP_INFO(
-        "[Telemetry][SinkMixer:%s] payload_bytes=%zu (%.3f ms) ready_sources=%zu ready_total=%zu ready_max=%zu ready_avg_ms=%.3f ready_max_ms=%.3f pending_ticks=%llu tick_backlog_ms=%.3f source_avg_age_ms=%.3f source_max_age_ms=%.3f underrun_active=%d mp3_queue=%zu",
+        "[Telemetry][SinkMixer:%s] payload_bytes=%zu (%.3f ms) ready_sources=%zu ready_total=%zu ready_max=%zu ready_avg_ms=%.3f ready_max_ms=%.3f pending_ticks=%llu tick_backlog_ms=%.3f source_avg_age_ms=%.3f source_max_age_ms=%.3f underrun_active=%d mp3_queue=%zu mp3_pcm_queue=%zu",
         config_.sink_id.c_str(),
-        payload_buffer_write_pos_,
+        payload_buffer_fill_bytes_,
         payload_ms,
         ready_sources,
         ready_total,
@@ -1393,7 +1655,8 @@ void SinkAudioMixer::maybe_log_telemetry(std::chrono::steady_clock::time_point n
         source_avg_age_ms,
         source_max_age_ms,
         underrun_silence_active_ ? 1 : 0,
-        mp3_queue_size);
+        mp3_queue_size,
+        mp3_pcm_queue_size);
 }
 
 void SinkAudioMixer::set_playback_format(int sample_rate, int channels, int bit_depth) {
@@ -1408,7 +1671,56 @@ void SinkAudioMixer::set_playback_format(int sample_rate, int channels, int bit_
     playback_channels_ = sanitized_channels;
     playback_bit_depth_ = sanitized_bit_depth;
 
-    mix_period_ = calculate_mix_period(playback_sample_rate_, playback_channels_, playback_bit_depth_);
+    refresh_format_dependent_buffers(playback_sample_rate_, playback_channels_, playback_bit_depth_);
+
+    if (config_.protocol == "system_audio") {
+        setup_output_post_processor();
+    }
+}
+
+void SinkAudioMixer::refresh_format_dependent_buffers(int sample_rate, int channels, int bit_depth) {
+    const int sanitized_rate = sample_rate > 0 ? sample_rate : 48000;
+    const int sanitized_channels = std::clamp(channels, 1, 8);
+    int sanitized_bit_depth = bit_depth > 0 ? bit_depth : 16;
+    if ((sanitized_bit_depth % 8) != 0) {
+        sanitized_bit_depth = 16;
+    }
+
+    std::size_t new_chunk_size = compute_chunk_size_bytes_for_format(
+        frames_per_chunk_, sanitized_channels, sanitized_bit_depth);
+    if (new_chunk_size == 0) {
+        const auto fallback = resolve_chunk_size_bytes(m_settings);
+        if (fallback > 0) {
+            new_chunk_size = fallback;
+        } else if (chunk_size_bytes_ > 0) {
+            new_chunk_size = chunk_size_bytes_;
+        }
+    }
+
+    const std::size_t new_mixing_samples =
+        compute_processed_chunk_samples(frames_per_chunk_, std::max(1, sanitized_channels));
+
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        chunk_size_bytes_ = new_chunk_size;
+        mixing_buffer_samples_ = new_mixing_samples;
+        mp3_buffer_size_ = chunk_size_bytes_ * 8;
+
+        mixing_buffer_.assign(mixing_buffer_samples_, 0);
+        stereo_buffer_.assign(mixing_buffer_samples_ * 2, 0);
+        payload_buffer_.assign(mp3_buffer_size_, 0);
+        mp3_encode_buffer_.assign(mp3_buffer_size_, 0);
+        payload_buffer_read_pos_ = 0;
+        payload_buffer_fill_bytes_ = 0;
+        last_sample_frame_.assign(std::max(1, sanitized_channels), 0);
+        last_sample_valid_ = false;
+    }
+
+    mix_period_ = calculate_mix_period(sanitized_rate, sanitized_channels, sanitized_bit_depth);
+
+    if (config_.protocol == "system_audio") {
+        setup_output_post_processor();
+    }
 }
 
 void SinkAudioMixer::update_playback_format_from_sender() {
@@ -1434,6 +1746,49 @@ void SinkAudioMixer::update_playback_format_from_sender() {
         return;
     }
 #endif
+}
+
+void SinkAudioMixer::setup_output_post_processor() {
+    if (config_.protocol != "system_audio") {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(output_processor_mutex_);
+    const std::size_t post_chunk_bytes =
+        static_cast<std::size_t>(frames_per_chunk_) *
+        static_cast<std::size_t>(std::max(1, playback_channels_)) *
+        sizeof(int32_t);
+    const std::size_t effective_chunk_bytes = post_chunk_bytes > 0 ? post_chunk_bytes : chunk_size_bytes_;
+    try {
+        output_post_processor_ = std::make_unique<AudioProcessor>(
+            playback_channels_,
+            playback_channels_,
+            32,
+            playback_sample_rate_,
+            playback_sample_rate_,
+            1.0f,
+            std::map<int, CppSpeakerLayout>(),
+            m_settings,
+            effective_chunk_bytes);
+        output_post_buffer_.clear();
+        output_playback_rate_.store(1.0);
+        LOG_CPP_INFO("[SinkMixer:%s] Output post-processor initialized (rate=%d Hz, ch=%d).",
+                     config_.sink_id.c_str(), playback_sample_rate_, playback_channels_);
+    } catch (const std::exception& e) {
+        LOG_CPP_ERROR("[SinkMixer:%s] Failed to create output post-processor: %s",
+                      config_.sink_id.c_str(), e.what());
+        output_post_processor_.reset();
+    }
+}
+
+void SinkAudioMixer::set_output_playback_rate(double rate) {
+    std::lock_guard<std::mutex> lock(output_processor_mutex_);
+    if (!output_post_processor_) {
+        return;
+    }
+    const double clamped = std::clamp(rate, 0.96, 1.02);
+    output_playback_rate_.store(clamped);
+    output_post_processor_->set_playback_rate(clamped);
 }
 
 std::chrono::microseconds SinkAudioMixer::calculate_mix_period(int samplerate, int channels, int bit_depth) const {
@@ -1543,6 +1898,7 @@ void SinkAudioMixer::unregister_mix_timer() {
 }
 
 bool SinkAudioMixer::wait_for_mix_tick() {
+    PROFILE_FUNCTION();
     if (stop_flag_) {
         return false;
     }
@@ -1563,6 +1919,22 @@ bool SinkAudioMixer::wait_for_mix_tick() {
             LOG_CPP_ERROR("[SinkMixer:%s] Clock condition handle invalid; stopping mixer.", config_.sink_id.c_str());
             stop_flag_ = true;
             return false;
+        }
+
+        // If queues are backing up, force a tick instead of blocking on the clock.
+        std::size_t pending_chunks = 0;
+        {
+            std::lock_guard<std::mutex> lock(queues_mutex_);
+            for (const auto& [instance_id, queue] : processed_ready_) {
+                (void)instance_id;
+                pending_chunks += queue.size();
+            }
+        }
+        if (pending_chunks > 3) {
+            clock_pending_ticks_ = 1;
+            LOG_CPP_WARNING("[SinkMixer:%s] Forcing mix tick due to backlog (pending_chunks=%zu).",
+                            config_.sink_id.c_str(), pending_chunks);
+            break;
         }
 
         std::unique_lock<std::mutex> condition_lock(condition->mutex);
@@ -1586,6 +1958,7 @@ bool SinkAudioMixer::wait_for_mix_tick() {
 }
 
 void SinkAudioMixer::cleanup_closed_listeners() {
+    PROFILE_FUNCTION();
     std::vector<std::string> listeners_to_remove;
     {
         std::lock_guard<std::mutex> lock(listener_senders_mutex_);
@@ -1613,31 +1986,31 @@ void SinkAudioMixer::cleanup_closed_listeners() {
 }
 
 void SinkAudioMixer::clear_pending_audio() {
-    if (mix_scheduler_) {
-        MixScheduler::HarvestResult discard;
-        do {
-            discard = mix_scheduler_->collect_ready_chunks();
-        } while (!discard.ready_chunks.empty());
-    }
-
+    PROFILE_FUNCTION();
     std::lock_guard<std::mutex> lock(queues_mutex_);
 
-    for (auto& [instance_id, queue_ptr] : input_queues_) {
-        (void)queue_ptr;
+    for (auto& [instance_id, ring] : ready_rings_) {
+        (void)ring;
         input_active_state_[instance_id] = false;
         source_buffers_[instance_id] = ProcessedAudioChunk{};
+        processed_ready_[instance_id].clear();
     }
 
     underrun_silence_active_ = false;
-    payload_buffer_write_pos_ = 0;
+    payload_buffer_read_pos_ = 0;
+    payload_buffer_fill_bytes_ = 0;
     profiling_max_payload_buffer_bytes_ = 0;
+    last_sample_valid_ = false;
 }
 
 /**
  * @brief The main processing loop for the mixer thread.
  */
 void SinkAudioMixer::run() {
+    PROFILE_FUNCTION();
     LOG_CPP_INFO("[SinkMixer:%s] Entering run loop.", config_.sink_id.c_str());
+    const std::string thread_name = "[SinkMixer:" + config_.sink_id + "] component";
+    utils::set_current_thread_realtime_priority(thread_name.c_str());
 
     while (!stop_flag_) {
         if (!wait_for_mix_tick()) {
@@ -1672,12 +2045,12 @@ void SinkAudioMixer::run() {
         bool should_mix = has_active_sources || underrun_silence_active_;
 
         if (!should_mix) {
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No active sources and no underrun hold. Emitting silence.",
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No active sources and no underrun hold. Repeating last sample if available.",
                           config_.sink_id.c_str());
         }
 
         const bool coordination_active = coordination_mode_ && coordinator_;
-        SinkSynchronizationCoordinator::DispatchTimingInfo dispatch_timing{};
+        std::optional<SinkSynchronizationCoordinator::DispatchTimingInfo> dispatch_timing;
 
         if (coordination_active) {
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination enabled, waiting on barrier...", config_.sink_id.c_str());
@@ -1691,8 +2064,9 @@ void SinkAudioMixer::run() {
                 continue;
             }
 
-            dispatch_timing.dispatch_start = std::chrono::steady_clock::now();
-            dispatch_timing.dispatch_end = dispatch_timing.dispatch_start;
+            dispatch_timing.emplace();
+            dispatch_timing->dispatch_start = std::chrono::steady_clock::now();
+            dispatch_timing->dispatch_end = dispatch_timing->dispatch_start;
 
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Barrier cleared, proceeding with mix.", config_.sink_id.c_str());
         }
@@ -1702,6 +2076,9 @@ void SinkAudioMixer::run() {
         LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing complete.", config_.sink_id.c_str());
 
         lock.unlock();
+
+        // Adaptive buffer draining: evaluate backlog to inform rate control.
+        update_drain_ratio();
 
         downscale_buffer();
 
@@ -1715,13 +2092,31 @@ void SinkAudioMixer::run() {
         const std::size_t frames_per_chunk = frame_metrics_valid ? (chunk_size_bytes_ / frame_bytes) : 0;
         uint64_t frames_dispatched = 0;
 
+        if (config_.protocol == "system_audio") {
+            double upstream_frames = 0.0;
+            double upstream_target_frames = 0.0;
+            if (frame_metrics_valid) {
+                upstream_frames = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(frame_bytes);
+                upstream_target_frames = static_cast<double>(frames_per_chunk);
+            }
+#if defined(__linux__)
+            if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+                alsa_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
+            }
+#elif defined(_WIN32)
+            if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+                wasapi_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
+            }
+#endif
+        }
+
         if (!frame_metrics_valid && coordination_active) {
             LOG_CPP_WARNING("[SinkMixer:%s] RunLoop: Unable to derive frames_per_chunk (bit_depth=%d, channels=%d).",
                             config_.sink_id.c_str(), playback_bit_depth_, playback_channels_);
         }
 
         size_t chunks_dispatched = 0;
-        while (payload_buffer_write_pos_ >= chunk_size_bytes_) {
+        while (payload_buffer_fill_bytes_ >= chunk_size_bytes_) {
             auto send_time = std::chrono::steady_clock::now();
             if (profiling_last_chunk_send_time_.time_since_epoch().count() != 0) {
                 double gap_ms = std::chrono::duration<double, std::milli>(send_time - profiling_last_chunk_send_time_).count();
@@ -1738,8 +2133,21 @@ void SinkAudioMixer::run() {
             }
             profiling_last_chunk_send_time_ = send_time;
             if (network_sender_) {
-                std::lock_guard<std::mutex> lock(csrc_mutex_);
-                network_sender_->send_payload(payload_buffer_.data(), chunk_size_bytes_, current_csrcs_);
+                const size_t capacity = payload_buffer_.size();
+                const size_t contiguous = std::min(chunk_size_bytes_, capacity - payload_buffer_read_pos_);
+                const uint8_t* send_ptr = payload_buffer_.data() + payload_buffer_read_pos_;
+                if (contiguous == chunk_size_bytes_) {
+                    std::lock_guard<std::mutex> lock(csrc_mutex_);
+                    network_sender_->send_payload(send_ptr, chunk_size_bytes_, current_csrcs_);
+                } else {
+                    if (payload_chunk_temp_.size() < chunk_size_bytes_) {
+                        payload_chunk_temp_.resize(chunk_size_bytes_);
+                    }
+                    std::memcpy(payload_chunk_temp_.data(), send_ptr, contiguous);
+                    std::memcpy(payload_chunk_temp_.data() + contiguous, payload_buffer_.data(), chunk_size_bytes_ - contiguous);
+                    std::lock_guard<std::mutex> lock(csrc_mutex_);
+                    network_sender_->send_payload(payload_chunk_temp_.data(), chunk_size_bytes_, current_csrcs_);
+                }
             }
             profiling_chunks_sent_++;
             profiling_payload_bytes_sent_ += chunk_size_bytes_;
@@ -1749,18 +2157,15 @@ void SinkAudioMixer::run() {
             }
             chunks_dispatched++;
 
-            size_t bytes_remaining = payload_buffer_write_pos_ - chunk_size_bytes_;
-            if (bytes_remaining > 0) {
-                memmove(payload_buffer_.data(), payload_buffer_.data() + chunk_size_bytes_, bytes_remaining);
-            }
-            payload_buffer_write_pos_ = bytes_remaining;
+            payload_buffer_read_pos_ = (payload_buffer_read_pos_ + chunk_size_bytes_) % payload_buffer_.size();
+            payload_buffer_fill_bytes_ -= chunk_size_bytes_;
 
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Sent chunk, remaining bytes in buffer: %zu",
-                          config_.sink_id.c_str(), payload_buffer_write_pos_);
+                          config_.sink_id.c_str(), payload_buffer_fill_bytes_);
         }
 
-        if (coordination_active) {
-            dispatch_timing.dispatch_end = std::chrono::steady_clock::now();
+        if (coordination_active && dispatch_timing) {
+            dispatch_timing->dispatch_end = std::chrono::steady_clock::now();
             if (!frame_metrics_valid) {
                 if (chunks_dispatched > 0 && playback_sample_rate_ > 0) {
                     const double period_seconds = std::chrono::duration<double>(mix_period_).count();
@@ -1773,7 +2178,7 @@ void SinkAudioMixer::run() {
                     frames_dispatched = 0;
                 }
             }
-            coordinator_->complete_dispatch(frames_dispatched, dispatch_timing);
+            coordinator_->complete_dispatch(frames_dispatched, *dispatch_timing);
         }
 
         bool has_listeners;
@@ -1781,7 +2186,7 @@ void SinkAudioMixer::run() {
             std::lock_guard<std::mutex> lock(listener_senders_mutex_);
             has_listeners = !listener_senders_.empty();
         }
-        bool mp3_enabled = (mp3_output_queue_ != nullptr);
+        bool mp3_enabled = mp3_output_queue_ && mp3_thread_running_.load(std::memory_order_acquire);
 
         if (has_listeners || mp3_enabled) {
             size_t processed_samples = preprocess_for_listeners_and_mp3();
@@ -1790,7 +2195,7 @@ void SinkAudioMixer::run() {
                     dispatch_to_listeners(processed_samples);
                 }
                 if (mp3_enabled) {
-                    encode_and_push_mp3(processed_samples);
+                    enqueue_mp3_pcm(stereo_buffer_.data(), processed_samples);
                 }
             }
         }
@@ -1801,4 +2206,223 @@ void SinkAudioMixer::run() {
     }
 
     LOG_CPP_INFO("[SinkMixer:%s] Exiting run loop.", config_.sink_id.c_str());
+}
+
+void SinkAudioMixer::update_drain_ratio() {
+    PROFILE_FUNCTION();
+    auto now = std::chrono::steady_clock::now();
+
+    // Only update periodically
+    auto elapsed = std::chrono::duration<double, std::milli>(
+        now - last_drain_check_).count();
+
+    if (elapsed < m_settings->mixer_tuning.buffer_measurement_interval_ms) {
+        // Log periodically to avoid spam
+        static int skip_counter = 0;
+        if (++skip_counter % 100 == 0) {
+            LOG_CPP_DEBUG("[BufferDrain:%s] Skipping update - only %.1fms elapsed (interval=%.1fms) [skipped %d times]",
+                          config_.sink_id.c_str(), elapsed,
+                          m_settings->mixer_tuning.buffer_measurement_interval_ms, skip_counter);
+        }
+        return;
+    }
+
+    last_drain_check_ = now;
+
+    InputBufferMetrics metrics = compute_input_buffer_metrics();
+    if (!metrics.valid) {
+        LOG_CPP_WARNING("[BufferDrain:%s] Unable to evaluate input buffer backlog (invalid timing parameters).",
+                        config_.sink_id.c_str());
+        return;
+    }
+
+    double buffer_ms = metrics.total_ms;
+
+    LOG_CPP_DEBUG("[BufferDrain:%s] Input backlog: total=%.2fms avg=%.2fms max=%.2fms blocks=%zu sources=%zu block_dur=%.2fms",
+                  config_.sink_id.c_str(), buffer_ms, metrics.avg_per_source_ms, metrics.max_per_source_ms,
+                  metrics.queued_blocks, metrics.active_sources, metrics.block_duration_ms);
+
+    double alpha = 1.0 - m_settings->mixer_tuning.drain_smoothing_factor;
+    double prev_smoothed = smoothed_buffer_level_ms_.load();
+    double smoothed = prev_smoothed * (1.0 - alpha) + buffer_ms * alpha;
+    smoothed_buffer_level_ms_.store(smoothed);
+
+    LOG_CPP_DEBUG("[BufferDrain:%s] Smoothing: prev=%.2fms, raw=%.2fms, alpha=%.3f -> new_smoothed=%.2fms",
+                  config_.sink_id.c_str(), prev_smoothed, buffer_ms, alpha, smoothed);
+
+    dispatch_drain_adjustments(metrics, alpha);
+}
+
+SinkAudioMixer::InputBufferMetrics SinkAudioMixer::compute_input_buffer_metrics() {
+    PROFILE_FUNCTION();
+    InputBufferMetrics metrics;
+
+    const int sample_rate = playback_sample_rate_;
+    if (sample_rate <= 0 || frames_per_chunk_ == 0) {
+        return metrics;
+    }
+
+    metrics.block_duration_ms = (static_cast<double>(frames_per_chunk_) * 1000.0) /
+                                static_cast<double>(sample_rate);
+    if (metrics.block_duration_ms <= 0.0) {
+        return metrics;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        metrics.active_sources = ready_rings_.size();
+        for (const auto& [instance_id, ring] : ready_rings_) {
+            const std::size_t ring_depth = ring ? ring->size() : 0;
+            const auto pr_it = processed_ready_.find(instance_id);
+            const std::size_t processed_depth = (pr_it != processed_ready_.end()) ? pr_it->second.size() : 0;
+            const std::size_t depth = ring_depth + processed_depth;
+            double backlog_ms = metrics.block_duration_ms * static_cast<double>(depth);
+            metrics.total_ms += backlog_ms;
+            metrics.queued_blocks += depth;
+            metrics.per_source_blocks[instance_id] = depth;
+            metrics.per_source_ms[instance_id] = backlog_ms;
+            if (backlog_ms > metrics.max_per_source_ms) {
+                metrics.max_per_source_ms = backlog_ms;
+            }
+        }
+    }
+
+    if (metrics.active_sources > 0) {
+        metrics.avg_per_source_ms = metrics.total_ms / static_cast<double>(metrics.active_sources);
+    }
+
+    metrics.valid = true;
+    return metrics;
+}
+
+void SinkAudioMixer::dispatch_drain_adjustments(const InputBufferMetrics& metrics, double alpha) {
+    PROFILE_FUNCTION();
+    if (!m_settings) {
+        return;
+    }
+
+    const auto& tuning = m_settings->mixer_tuning;
+
+    struct PendingDrainCommand {
+        std::string instance_id;
+        double ratio;
+        double smoothed_ms;
+    };
+    std::vector<PendingDrainCommand> pending;
+
+    {
+        std::lock_guard<std::mutex> lock(drain_control_mutex_);
+
+        for (auto it = per_source_smoothed_buffer_ms_.begin(); it != per_source_smoothed_buffer_ms_.end();) {
+            if (!metrics.per_source_ms.count(it->first)) {
+                it = per_source_smoothed_buffer_ms_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        for (const auto& [instance_id, backlog_ms] : metrics.per_source_ms) {
+            double prev_smoothed = backlog_ms;
+            auto it = per_source_smoothed_buffer_ms_.find(instance_id);
+            if (it != per_source_smoothed_buffer_ms_.end()) {
+                prev_smoothed = it->second;
+            }
+            double smoothed = prev_smoothed * (1.0 - alpha) + backlog_ms * alpha;
+            per_source_smoothed_buffer_ms_[instance_id] = smoothed;
+
+            double new_ratio = calculate_drain_ratio_for_level(smoothed, metrics.block_duration_ms);
+            double prev_ratio = 1.0;
+            auto ratio_it = source_last_rate_command_.find(instance_id);
+            if (ratio_it != source_last_rate_command_.end()) {
+                prev_ratio = ratio_it->second;
+            }
+
+        LOG_CPP_DEBUG("[BufferDrain:%s] Source %s backlog_raw=%.2fms smoothed=%.2fms prev_ratio=%.6f new_ratio=%.6f",
+                      config_.sink_id.c_str(), instance_id.c_str(), backlog_ms, smoothed, prev_ratio, new_ratio);
+
+        if (std::abs(new_ratio - prev_ratio) <= 0.0001) {
+            continue;
+        }
+
+            source_last_rate_command_[instance_id] = new_ratio;
+            pending.push_back(PendingDrainCommand{instance_id, new_ratio, smoothed});
+        }
+    }
+
+    for (const auto& cmd : pending) {
+        send_playback_rate_command(cmd.instance_id, cmd.ratio);
+        if (cmd.ratio > 1.0) {
+            LOG_CPP_INFO("[BufferDrain:%s] Source %s backlog=%.2fms -> rate scale=%.6f",
+                         config_.sink_id.c_str(), cmd.instance_id.c_str(), cmd.smoothed_ms, cmd.ratio);
+        } else {
+            LOG_CPP_INFO("[BufferDrain:%s] Source %s backlog settled (smoothed=%.2fms), resetting rate scale to 1.0",
+                         config_.sink_id.c_str(), cmd.instance_id.c_str(), cmd.smoothed_ms);
+        }
+    }
+}
+
+double SinkAudioMixer::calculate_drain_ratio_for_level(double buffer_ms, double block_duration_ms) const {
+    PROFILE_FUNCTION();
+    if (!m_settings || block_duration_ms <= 0.0) {
+        return 1.0;
+    }
+    const auto& tuning = m_settings->mixer_tuning;
+    if (!tuning.enable_adaptive_buffer_drain) {
+        return 1.0;
+    }
+
+    const double blocks = buffer_ms / block_duration_ms;
+    // Derive targets in blocks so we're tolerant to bursty arrivals.
+    const double target_blocks = std::max(2.0, tuning.target_buffer_level_ms / block_duration_ms);
+    const double tolerance_blocks = std::max(1.0, tuning.buffer_tolerance_ms / block_duration_ms);
+    const double upper_band = target_blocks + tolerance_blocks;
+
+    if (blocks <= upper_band) {
+        return 1.0;
+    }
+
+    // Bump ~1% per block over the upper band, capped.
+    const double excess_blocks = blocks - upper_band;
+    double ratio = 1.0 + (0.01 * excess_blocks);
+    return std::min(ratio, tuning.max_speedup_factor);
+}
+
+void SinkAudioMixer::send_playback_rate_command(const std::string& instance_id, double ratio) {
+    PROFILE_FUNCTION();
+    SourceInputProcessor* sip = nullptr;
+    std::size_t processed_depth = 0;
+    std::size_t ready_depth = 0;
+    {
+        std::lock_guard<std::mutex> lock(queues_mutex_);
+        auto sip_it = source_processors_.find(instance_id);
+        if (sip_it != source_processors_.end()) {
+            sip = sip_it->second;
+        }
+        auto pr_it = processed_ready_.find(instance_id);
+        if (pr_it != processed_ready_.end()) {
+            processed_depth = pr_it->second.size();
+        }
+        auto rr_it = ready_rings_.find(instance_id);
+        if (rr_it != ready_rings_.end() && rr_it->second) {
+            ready_depth = rr_it->second->size();
+        }
+    }
+
+    if (!sip) {
+        LOG_CPP_WARNING("[BufferDrain:%s] send_playback_rate_command: no SIP for instance %s (ratio=%.6f)",
+                        config_.sink_id.c_str(), instance_id.c_str(), ratio);
+        return;
+    }
+
+    const double clamped = std::clamp(ratio, 1.0, m_settings ? m_settings->mixer_tuning.max_speedup_factor : 1.05);
+    ControlCommand cmd;
+    cmd.type = CommandType::SET_PLAYBACK_RATE_SCALE;
+    cmd.float_value = static_cast<float>(clamped);
+    sip->apply_control_command(cmd);
+    LOG_CPP_INFO("[BufferDrain:%s] Applied rate scale=%.6f to %s (processed_depth=%zu ready_ring_depth=%zu)",
+                 config_.sink_id.c_str(),
+                 clamped,
+                 instance_id.c_str(),
+                 processed_depth,
+                 ready_depth);
 }

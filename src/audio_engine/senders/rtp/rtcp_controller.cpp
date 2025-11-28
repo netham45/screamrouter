@@ -46,22 +46,6 @@ void RtcpController::add_stream(const StreamInfo& info) {
     }
 }
 
-void RtcpController::remove_stream(const std::string& stream_id) {
-    std::lock_guard<std::mutex> lock(streams_mutex_);
-    
-    auto it = std::remove_if(streams_.begin(), streams_.end(),
-                            [&stream_id](const ManagedStream& s) {
-                                return s.info.stream_id == stream_id;
-                            });
-    
-    for (auto i = it; i != streams_.end(); ++i) {
-        close_rtcp_socket(*i);
-        LOG_CPP_INFO("[RtcpController] Removed stream %s", i->info.stream_id.c_str());
-    }
-    
-    streams_.erase(it, streams_.end());
-}
-
 bool RtcpController::start() {
     if (rtcp_thread_running_) {
         LOG_CPP_WARNING("[RtcpController] Already running");

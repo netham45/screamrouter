@@ -147,11 +147,15 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
 
         current_stage = "creating ConnectionManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
-        m_connection_manager = std::make_unique<ConnectionManager>(m_manager_mutex, m_source_manager.get(), m_sink_manager.get(), m_source_manager->get_source_to_sink_queues(), m_source_manager->get_sources());
+        m_connection_manager = std::make_unique<ConnectionManager>(
+            m_manager_mutex,
+            m_source_manager.get(),
+            m_sink_manager.get(),
+            m_source_manager->get_sources());
 
         current_stage = "creating ControlApiManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
-        m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_source_manager->get_command_queues(), m_timeshift_manager.get(), m_source_manager->get_sources());
+        m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_timeshift_manager.get(), m_source_manager->get_sources());
 
         current_stage = "creating MP3DataApiManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
@@ -341,9 +345,7 @@ void AudioManager::debug_dump_state(const char* label) {
         LOG_CPP_INFO("[DebugDump] Sources: %zu", procs.size());
         for (auto* p : procs) {
             auto st = p->get_stats();
-            auto q = p->get_input_queue();
-            size_t qsize = q ? q->size() : 0;
-            LOG_CPP_INFO("  source id='%s' tag='%s' input_q=%zu total_packets=%llu reconfigs=%llu", p->get_instance_id().c_str(), p->get_source_tag().c_str(), qsize, (unsigned long long)st.total_packets_processed, (unsigned long long)st.reconfigurations);
+            LOG_CPP_INFO("  source id='%s' tag='%s' total_packets=%llu reconfigs=%llu process_buf_samples=%zu", p->get_instance_id().c_str(), p->get_source_tag().c_str(), (unsigned long long)st.total_packets_processed, (unsigned long long)st.reconfigurations, st.process_buffer_samples);
         }
     } else {
         LOG_CPP_INFO("[DebugDump] Sources: manager=null");
@@ -588,6 +590,15 @@ pybind11::list AudioManager::get_rtp_sap_announcements() {
         entry["channels"] = announcement.properties.channels;
         entry["bit_depth"] = announcement.properties.bit_depth;
         entry["endianness"] = (announcement.properties.endianness == Endianness::LITTLE) ? "little" : "big";
+        if (!announcement.target_sink.empty()) {
+            entry["target_sink"] = announcement.target_sink;
+        }
+        if (!announcement.target_host.empty()) {
+            entry["target_host"] = announcement.target_host;
+        }
+        if (!announcement.session_name.empty()) {
+            entry["session_name"] = announcement.session_name;
+        }
         result.append(entry);
     }
 
@@ -867,35 +878,12 @@ bool AudioManager::write_plugin_packet(
     int bit_depth,
     uint8_t chlayout1,
     uint8_t chlayout2)
-{
-    if (m_control_api_manager) {
-        return m_control_api_manager->write_plugin_packet(source_instance_tag, audio_payload, channels, sample_rate, bit_depth, chlayout1, chlayout2, m_running);
+    {
+        if (m_control_api_manager) {
+            return m_control_api_manager->write_plugin_packet(source_instance_tag, audio_payload, channels, sample_rate, bit_depth, chlayout1, chlayout2, m_running);
+        }
+        return false;
     }
-    return false;
-}
-
-void AudioManager::inject_plugin_packet_globally(
-    const std::string& source_tag,
-    const std::vector<uint8_t>& audio_payload,
-    int channels,
-    int sample_rate,
-    int bit_depth,
-    uint8_t chlayout1,
-    uint8_t chlayout2)
-{
-    if (m_running && m_timeshift_manager) {
-        TaggedAudioPacket packet;
-        packet.source_tag = source_tag;
-        packet.received_time = std::chrono::steady_clock::now();
-        packet.sample_rate = sample_rate;
-        packet.bit_depth = bit_depth;
-        packet.channels = channels;
-        packet.chlayout1 = chlayout1;
-        packet.chlayout2 = chlayout2;
-        packet.audio_data = audio_payload;
-        m_timeshift_manager->add_packet(std::move(packet));
-    }
-}
 
 bool AudioManager::add_webrtc_listener(
     const std::string& sink_id,
@@ -944,27 +932,6 @@ void AudioManager::set_audio_settings(const AudioEngineSettings& new_settings) {
     if (m_settings) {
         *m_settings = new_settings;
     }
-}
-
-pybind11::dict AudioManager::get_sync_statistics() {
-    namespace py = pybind11;
-    std::scoped_lock lock(m_manager_mutex);
-    
-    py::dict stats;
-    
-    for (const auto& [rate, clock] : sync_clocks_) {
-        auto clock_stats = clock->get_stats();
-        py::dict rate_stats;
-        rate_stats["active_sinks"] = clock_stats.active_sinks;
-        rate_stats["current_playback_timestamp"] = clock_stats.current_playback_timestamp;
-        rate_stats["max_drift_ppm"] = clock_stats.max_drift_ppm;
-        rate_stats["avg_barrier_wait_ms"] = clock_stats.avg_barrier_wait_ms;
-        rate_stats["total_barrier_timeouts"] = clock_stats.total_barrier_timeouts;
-        
-        stats[py::cast(rate)] = rate_stats;
-    }
-    
-    return stats;
 }
 
 SystemDeviceRegistry AudioManager::list_system_devices() {

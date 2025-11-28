@@ -8,7 +8,7 @@ namespace screamrouter {
 namespace audio {
 
 inline constexpr std::size_t kDefaultChunkSizeBytes = 1152;
-inline constexpr std::size_t kDefaultBaseFramesPerChunkMono16 = 576; // 576/(16/8) = 288 = (<sample rate>/288)ms 
+inline constexpr std::size_t kDefaultBaseFramesPerChunkMono16 = 576; // 576/(16/8) = 288 = (288/<sample rate>)ms 
 
 class AudioEngineSettings;
 
@@ -29,7 +29,7 @@ struct TimeshiftTuning {
     double late_packet_threshold_ms = 10.0;
     double target_buffer_level_ms = 8.0;
     long loop_max_sleep_ms = 10;
-    double max_catchup_lag_ms = kDefaultBaseFramesPerChunkMono16 / 20;
+    double max_catchup_lag_ms = 5000;
     double max_adaptive_delay_ms = 200.0;
     std::size_t max_clock_pending_packets = 64;
     double rtp_continuity_slack_seconds = 0.25;
@@ -40,6 +40,17 @@ struct TimeshiftTuning {
     double playback_ratio_ki = 1.0;
     double playback_ratio_integral_limit_ppm = 300.0;
     double playback_ratio_smoothing = 0.05;
+    double playback_catchup_ppm_per_ms = 500.0;   // Extra speedup per ms of lateness (bounded)
+    double playback_catchup_max_ppm = 200000.0;   // Allow up to ~20% speedup when very late
+    double max_playout_lead_ms = 200.0;           // Clamp how far into the future we schedule playout
+
+    // --- Reanchoring settings ---
+    bool reanchor_enabled = true;                     // Enable automatic reanchoring
+    double reanchor_latency_threshold_ms = 500.0;     // Max latency before triggering reanchor
+    double reanchor_cooldown_ms = 5000.0;             // Min time between reanchors (prevent thrashing)
+    int reanchor_consecutive_late_packets = 10;       // Consecutive late packets to trigger reanchor
+    double reanchor_cumulative_lateness_ms = 2000.0;  // Cumulative lateness to trigger reanchor
+    double reanchor_pause_gap_threshold_ms = 500.0;   // Wall-clock gap to detect pause/resume
 
     // --- Temporal Store / DVR defaults ---
     // Target playout delay (D) relative to now_ref; mixer follows head at D behind.
@@ -62,11 +73,21 @@ struct MixerTuning {
     int mp3_output_queue_max_size = 10;
     long underrun_hold_timeout_ms = 250;
     std::size_t max_input_queue_chunks = 32;
-    std::size_t min_input_queue_chunks = 8;
-    std::size_t max_ready_chunks_per_source = 12;
+    std::size_t min_input_queue_chunks = 4;
+    std::size_t max_ready_chunks_per_source = 8;
+    std::size_t max_queued_chunks = 3;
     double max_input_queue_duration_ms = 0.0;
     double min_input_queue_duration_ms = 0.0;
     double max_ready_queue_duration_ms = 0.0;
+
+    // Buffer drain control
+    bool enable_adaptive_buffer_drain = true;      // Enable buffer draining feature
+    double target_buffer_level_ms = ((kDefaultBaseFramesPerChunkMono16/2.0) / 48000.0 * 1000.0);          // Target buffer level in milliseconds
+    double buffer_tolerance_ms = target_buffer_level_ms * 1.5;             // Don't adjust if within ±tolerance of target
+    double max_speedup_factor = 1.02;             // Maximum playback speedup (1.02 = 2% faster)
+    double drain_rate_ms_per_sec = 20.0;           // How many ms to drain per second (more aggressive)
+    double drain_smoothing_factor = 0.9;           // Exponential smoothing factor for buffer measurements
+    double buffer_measurement_interval_ms = 100.0;  // How often to check buffer levels (ms)
 };
 
 struct SourceProcessorTuning {

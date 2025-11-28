@@ -54,7 +54,7 @@ AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputB
       monitor_running(true),
       scaled_float_buffer_(chunk_size_bytes_ * 8),
       remixed_float_buffers_(MAX_CHANNELS, std::vector<float>(chunk_size_bytes_ * 8 * m_settings->processor_tuning.oversampling_factor)),
-      isProcessingRequiredCache(false), isProcessingRequiredCacheSet(false), // Initialize cache flags
+      remixed_interleaved_buffer_(chunk_size_bytes_ * 8 * m_settings->processor_tuning.oversampling_factor),  // NEW: Pre-allocate interleaved buffer
       volume_normalization_enabled_(false), eq_normalization_enabled_(false),
       playback_rate_(1.0),
       m_upsampler(nullptr), m_downsampler(nullptr)
@@ -102,6 +102,8 @@ AudioProcessor::AudioProcessor(int inputChannels, int outputChannels, int inputB
     resample_buffer_pos = 0;
     channel_buffer_pos = 0;
 
+    reset_io_buffers();
+
     // Start the monitoring thread
     monitor_thread = std::thread(&AudioProcessor::monitorBuffers, this);
 }
@@ -131,11 +133,33 @@ AudioProcessor::~AudioProcessor() {
 }
 
 void AudioProcessor::monitorBuffers() {
-     // Simplified monitoring - can be re-enabled for debugging
-     // while (monitor_running) {
-     //     // ... (logging code from previous versions) ...
-     //     std::this_thread::sleep_for(std::chrono::seconds(1));
-     // }
+    
+}
+
+void AudioProcessor::reset_io_buffers() {
+    active_input_buffer_ = &scaled_float_buffer_;
+    active_output_buffer_ = &resample_float_out_buffer_;
+    active_samples_ = 0;
+}
+
+bool AudioProcessor::ensure_output_capacity(size_t samples) {
+    if (!active_output_buffer_) {
+        LOG_CPP_ERROR("[AudioProc] Output buffer pointer not initialized.");
+        return false;
+    }
+    if (active_output_buffer_->size() < samples) {
+        try {
+            active_output_buffer_->resize(samples);
+        } catch (const std::bad_alloc& e) {
+            LOG_CPP_ERROR("[AudioProc] Error resizing output buffer to %zu samples: %s", samples, e.what());
+            return false;
+        }
+    }
+    return true;
+}
+
+void AudioProcessor::swap_active_buffers() {
+    std::swap(active_input_buffer_, active_output_buffer_);
 }
 
 int AudioProcessor::processAudio(const uint8_t* inputBuffer, int32_t* outputBuffer) {
@@ -143,16 +167,20 @@ int AudioProcessor::processAudio(const uint8_t* inputBuffer, int32_t* outputBuff
     // Playback rate is applied dynamically within resample() and downsample() via src_ratio.
     // No re-initialization is needed for minor clock drift adjustments.
 
+    reset_io_buffers();
+    scale_buffer_pos = 0;
+    resample_buffer_pos = 0;
+    channel_buffer_pos = 0;
+    process_buffer_pos = 0;
+
     // --- Processing Pipeline ---
     scaleBuffer(inputBuffer, chunk_size_bytes_);
     volumeAdjust();
     resample();
     splitBufferToChannels();
     mixSpeakers();
-    //removeDCOffset();
     equalize();
     downsample(outputBuffer);
-    //noiseShapingDither();
     // --- End Pipeline ---
 
     // Determine samples to copy based on actual samples processed and available
@@ -302,6 +330,7 @@ void AudioProcessor::initializeSampler() {
 
 void AudioProcessor::scaleBuffer(const uint8_t* inputBuffer, size_t inputBytes) {
     PROFILE_FUNCTION();
+    active_samples_ = 0;
     scale_buffer_pos = 0;
 
     if (!inputBuffer) {
@@ -324,14 +353,10 @@ void AudioProcessor::scaleBuffer(const uint8_t* inputBuffer, size_t inputBytes) 
         return;
     }
 
-    try {
-        if (scaled_float_buffer_.size() < available_samples) {
-            scaled_float_buffer_.resize(available_samples);
-        }
-    } catch (const std::bad_alloc& e) {
-        LOG_CPP_ERROR("[AudioProc] Error resizing scaled_float_buffer_: %s", e.what());
+    if (!ensure_output_capacity(available_samples)) {
         return;
     }
+    float* dst = active_output_buffer_->data();
 
     const float inv_int32 = 1.0f / static_cast<float>(INT32_MAX);
 
@@ -360,11 +385,14 @@ void AudioProcessor::scaleBuffer(const uint8_t* inputBuffer, size_t inputBytes) 
         }
         }
 
-        scaled_float_buffer_[idx] = static_cast<float>(sample32) * inv_int32;
+        dst[idx] = static_cast<float>(sample32) * inv_int32;
         src += bytes_per_sample;
     }
 
+    active_samples_ = available_samples;
+    active_output_buffer_->resize(available_samples);
     scale_buffer_pos = available_samples;
+    swap_active_buffers();
 }
 
 float AudioProcessor::softClip(float sample) {
@@ -388,19 +416,45 @@ void AudioProcessor::volumeAdjust() {
     PROFILE_FUNCTION();
     float current_vol = current_volume_.load();
     float target_vol = target_volume_.load();
+    const size_t samples = active_samples_;
 
-    if (scaled_float_buffer_.size() < scale_buffer_pos) {
-        LOG_CPP_ERROR("[AudioProc] Error: scaled_float_buffer_ too small in volumeAdjust (size=%zu, needed=%zu)", scaled_float_buffer_.size(), scale_buffer_pos);
+    if (!active_input_buffer_ || !active_output_buffer_) {
+        LOG_CPP_ERROR("[AudioProc] Error: Active buffers not initialized in volumeAdjust.");
+        active_samples_ = 0;
         return;
     }
 
+    if (samples == 0) {
+        scale_buffer_pos = 0;
+        return;
+    }
+
+    // Fast path: if normalization is off and both volumes are effectively unity, skip work.
+    constexpr float kVolumeUnityEpsilon = 1e-5f;
+    if (!volume_normalization_enabled_ &&
+        std::fabs(target_vol - 1.0f) <= kVolumeUnityEpsilon &&
+        std::fabs(current_vol - 1.0f) <= kVolumeUnityEpsilon) {
+        current_volume_.store(1.0f);
+        scale_buffer_pos = samples;
+        return;
+    }
+
+    if (!ensure_output_capacity(samples)) {
+        active_samples_ = 0;
+        scale_buffer_pos = 0;
+        return;
+    }
+
+    const float* src = active_input_buffer_->data();
+    float* dst = active_output_buffer_->data();
+
     if (volume_normalization_enabled_) {
         double sum_of_squares = 0.0;
-        for (size_t i = 0; i < scale_buffer_pos; ++i) {
-            float sample = scaled_float_buffer_[i];
+        for (size_t i = 0; i < samples; ++i) {
+            float sample = src[i];
             sum_of_squares += static_cast<double>(sample) * static_cast<double>(sample);
         }
-        double rms = (scale_buffer_pos > 0) ? sqrt(sum_of_squares / scale_buffer_pos) : 0.0;
+        double rms = (samples > 0) ? sqrt(sum_of_squares / samples) : 0.0;
 
         float target_rms = m_settings->processor_tuning.normalization_target_rms;
         float gain = (rms > 0.0) ? target_rms / static_cast<float>(rms) : 1.0f;
@@ -408,60 +462,65 @@ void AudioProcessor::volumeAdjust() {
         float attack_smoothing_factor = m_settings->processor_tuning.normalization_attack_smoothing;
         float decay_smoothing_factor = m_settings->processor_tuning.normalization_decay_smoothing;
 
-        for (size_t i = 0; i < scale_buffer_pos; ++i) {
+        for (size_t i = 0; i < samples; ++i) {
             float smoothing_factor = (gain > current_gain_) ? attack_smoothing_factor : decay_smoothing_factor;
             current_gain_ = current_gain_ * (1.0f - smoothing_factor) + gain * smoothing_factor;
             current_vol += (target_vol - current_vol) * smoothing_factor_;
-            float sample = scaled_float_buffer_[i];
+            float sample = src[i];
             sample *= current_vol * current_gain_;
             sample = softClip(sample);
             sample = std::clamp(sample, -1.0f, 1.0f);
-            scaled_float_buffer_[i] = sample;
+            dst[i] = sample;
         }
     } else {
-        for (size_t i = 0; i < scale_buffer_pos; ++i) {
+        for (size_t i = 0; i < samples; ++i) {
             current_vol += (target_vol - current_vol) * smoothing_factor_;
-            float sample = scaled_float_buffer_[i];
+            float sample = src[i];
             sample *= current_vol;
             sample = softClip(sample);
             sample = std::clamp(sample, -1.0f, 1.0f);
-            scaled_float_buffer_[i] = sample;
+            dst[i] = sample;
         }
     }
     current_volume_.store(current_vol);
-
-    for (size_t i = 0; i < scale_buffer_pos; ++i) {
-        scaled_float_buffer_[i] = std::clamp(scaled_float_buffer_[i], -1.0f, 1.0f);
-    }
+    // Clamping already done in the loops above - removed redundant clamping pass
+    active_samples_ = samples;
+    active_output_buffer_->resize(samples);
+    scale_buffer_pos = samples;
+    swap_active_buffers();
 }
 
 void AudioProcessor::resample() {
     PROFILE_FUNCTION();
-    if (!isProcessingRequired() || m_upsampler == nullptr) {
-        size_t samples_to_copy = scale_buffer_pos;
-        if (samples_to_copy > scaled_float_buffer_.size()) {
-            LOG_CPP_ERROR("[AudioProc] Error: scale_buffer_pos (%zu) exceeds scaled_float_buffer_ size (%zu) in resample bypass.", samples_to_copy, scaled_float_buffer_.size());
-            samples_to_copy = scaled_float_buffer_.size();
-        }
-        if (resample_float_out_buffer_.size() < samples_to_copy) {
-            try { resample_float_out_buffer_.resize(samples_to_copy); }
-            catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resample_float_out_buffer_ (bypass): %s", e.what()); resample_buffer_pos = 0; return; }
-        }
-        std::copy_n(scaled_float_buffer_.data(), samples_to_copy, resample_float_out_buffer_.data());
-        resample_float_out_buffer_.resize(samples_to_copy);
-        resample_buffer_pos = samples_to_copy;
-        return;
-    }
 
-    if (scale_buffer_pos == 0) {
+    if (!active_input_buffer_ || !active_output_buffer_) {
+        LOG_CPP_ERROR("[AudioProc] Error: Active buffers not initialized in resample.");
+        active_samples_ = 0;
         resample_buffer_pos = 0;
         return;
     }
 
+    const size_t input_samples = active_samples_;
+    resample_buffer_pos = 0;
+
+    // Unity bypass optimization: If ratio is 1.0 and no processing required, skip work
     const double current_playback_rate = std::max(1e-6, playback_rate_.load());
     const int oversample_factor = std::max(1, m_settings ? m_settings->processor_tuning.oversampling_factor : 1);
     const double effective_output_rate = static_cast<double>(outputSampleRate) / (setRatio) * static_cast<double>(oversample_factor);
     const double ratio = ((effective_output_rate) / static_cast<double>(inputSampleRate));
+
+    const double epsilon = 1e-6;
+    const bool is_unity_ratio = std::abs(ratio - 1.0) <= epsilon;
+
+    if (is_unity_ratio || m_upsampler == nullptr) {
+        resample_buffer_pos = input_samples;
+        return;
+    }
+
+    if (input_samples == 0) {
+        resample_buffer_pos = 0;
+        return;
+    }
 
     LOG_CPP_DEBUG("[AudioProc] resample begin rate=%.6f ratio=%.6f over=%d in_sr=%d out_sr=%d scale_pos=%zu",
                   current_playback_rate,
@@ -469,58 +528,46 @@ void AudioProcessor::resample() {
                   oversample_factor,
                   inputSampleRate,
                   outputSampleRate,
-                  scale_buffer_pos);
-    if (std::abs(ratio - 1.0) <= std::numeric_limits<double>::epsilon()) {
-        size_t samples_to_copy = scale_buffer_pos;
-        if (samples_to_copy > scaled_float_buffer_.size()) {
-            LOG_CPP_ERROR("[AudioProc] Error: scale_buffer_pos (%zu) exceeds scaled_float_buffer_ size (%zu) in unity resample path.", samples_to_copy, scaled_float_buffer_.size());
-            samples_to_copy = scaled_float_buffer_.size();
-        }
-        if (resample_float_out_buffer_.size() < samples_to_copy) {
-            try { resample_float_out_buffer_.resize(samples_to_copy); }
-            catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resample_float_out_buffer_ (unity path): %s", e.what()); resample_buffer_pos = 0; return; }
-        }
-        std::copy_n(scaled_float_buffer_.data(), samples_to_copy, resample_float_out_buffer_.data());
-        resample_float_out_buffer_.resize(samples_to_copy);
-        resample_buffer_pos = samples_to_copy;
-        return;
-    }
+                  input_samples);
 
-    const size_t total_input_frames = scale_buffer_pos / inputChannels;
+    const size_t total_input_frames = input_samples / inputChannels;
     const size_t valid_input_samples = total_input_frames * static_cast<size_t>(inputChannels);
     if (total_input_frames == 0) {
         resample_buffer_pos = 0;
         return;
     }
 
-    if (valid_input_samples != scale_buffer_pos) {
+    if (valid_input_samples != input_samples) {
         LOG_CPP_WARNING("[AudioProc] Dropping %zu trailing samples that do not form a complete frame for upsampling.",
-                        scale_buffer_pos - valid_input_samples);
+                        input_samples - valid_input_samples);
     }
 
     size_t estimated_output_frames = static_cast<size_t>(std::ceil(static_cast<double>(total_input_frames) * ratio)) + 16;
     size_t estimated_output_samples = estimated_output_frames * static_cast<size_t>(inputChannels);
-    if (resample_float_out_buffer_.size() < estimated_output_samples) {
-        try { resample_float_out_buffer_.resize(estimated_output_samples * 1.5); }
-        catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error resizing resample_float_out_buffer_: %s", e.what()); resample_buffer_pos = 0; return; }
+    if (!ensure_output_capacity(static_cast<size_t>(estimated_output_samples * 1.5))) {
+        active_samples_ = 0;
+        resample_buffer_pos = 0;
+        return;
     }
 
     size_t input_frames_consumed = 0;
     size_t output_frames_generated = 0;
+    float* out_base = active_output_buffer_->data();
+    const float* in_base = active_input_buffer_->data();
     while (input_frames_consumed < total_input_frames) {
-        size_t available_output_frames = resample_float_out_buffer_.size() / static_cast<size_t>(inputChannels) - output_frames_generated;
+        size_t available_output_frames = active_output_buffer_->size() / static_cast<size_t>(inputChannels) - output_frames_generated;
         if (available_output_frames == 0) {
             size_t frames_remaining = total_input_frames - input_frames_consumed;
             size_t grow_samples = (frames_remaining + 16) * static_cast<size_t>(inputChannels);
-            try { resample_float_out_buffer_.resize(resample_float_out_buffer_.size() + grow_samples); }
-            catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error growing resample_float_out_buffer_: %s", e.what()); resample_buffer_pos = 0; return; }
+            try { active_output_buffer_->resize(active_output_buffer_->size() + grow_samples); }
+            catch (const std::bad_alloc& e) { LOG_CPP_ERROR("[AudioProc] Error growing resample_float_out_buffer_: %s", e.what()); active_samples_ = 0; resample_buffer_pos = 0; return; }
             continue;
         }
 
         SRC_DATA src_data = {0};
-        src_data.data_in = scaled_float_buffer_.data() + input_frames_consumed * inputChannels;
+        src_data.data_in = in_base + input_frames_consumed * inputChannels;
         src_data.input_frames = total_input_frames - input_frames_consumed;
-        src_data.data_out = resample_float_out_buffer_.data() + output_frames_generated * inputChannels;
+        src_data.data_out = out_base + output_frames_generated * inputChannels;
         src_data.output_frames = available_output_frames;
         src_data.src_ratio = ratio;
 
@@ -531,6 +578,7 @@ void AudioProcessor::resample() {
                       src_data.src_ratio);
         if (error) {
             LOG_CPP_ERROR("[AudioProc] libsamplerate upsampling error: %s", src_strerror(error));
+            active_samples_ = 0;
             resample_buffer_pos = 0;
             return;
         }
@@ -540,14 +588,17 @@ void AudioProcessor::resample() {
 
         if (src_data.input_frames_used == 0 && src_data.output_frames_gen == 0) {
             LOG_CPP_ERROR("[AudioProc] libsamplerate produced no progress during upsampling loop. Aborting chunk.");
+            active_samples_ = 0;
             resample_buffer_pos = 0;
             return;
         }
     }
 
     size_t output_samples = output_frames_generated * static_cast<size_t>(inputChannels);
-    resample_float_out_buffer_.resize(output_samples);
+    active_output_buffer_->resize(output_samples);
+    active_samples_ = output_samples;
     resample_buffer_pos = output_samples;
+    swap_active_buffers();
 }
 
 
@@ -556,6 +607,12 @@ void AudioProcessor::downsample(int32_t* outputBuffer) {
 
     last_output_buffer_ = nullptr;
     last_output_samples_ = 0;
+
+    if (!active_input_buffer_) {
+        LOG_CPP_ERROR("[AudioProc] Error: Active input buffer not initialized in downsample.");
+        process_buffer_pos = 0;
+        return;
+    }
 
     if (!outputBuffer) {
         LOG_CPP_ERROR("[AudioProc] Error: Null output buffer passed to downsample.");
@@ -572,33 +629,30 @@ void AudioProcessor::downsample(int32_t* outputBuffer) {
     const size_t samples_expected = frame_count * static_cast<size_t>(outputChannels);
 
     auto write_direct_from_channels = [&](int32_t* destination) {
-        size_t write_index = 0;
-        for (size_t frame = 0; frame < frame_count; ++frame) {
-            for (int ch = 0; ch < outputChannels; ++ch) {
-                float sample = 0.0f;
-                if (static_cast<size_t>(ch) < remixed_float_buffers_.size() &&
-                    frame < remixed_float_buffers_[ch].size()) {
-                    sample = remixed_float_buffers_[ch][frame];
-                }
-                sample = std::clamp(sample, -1.0f, 1.0f);
-                destination[write_index++] = static_cast<int32_t>(sample * static_cast<float>(INT32_MAX));
-            }
+        // Direct conversion from interleaved float buffer to int32 output with fused clamping
+        const float scale = static_cast<float>(INT32_MAX);
+        const float* src = active_input_buffer_->data();
+        for (size_t i = 0; i < samples_expected; ++i) {
+            float sample = src[i];
+            // Inline clamp for better performance
+            sample = (sample < -1.0f) ? -1.0f : ((sample > 1.0f) ? 1.0f : sample);
+            destination[i] = static_cast<int32_t>(sample * scale);
         }
-        process_buffer_pos = write_index;
+        process_buffer_pos = samples_expected;
         last_output_buffer_ = destination;
-        last_output_samples_ = write_index;
+        last_output_samples_ = samples_expected;
     };
-
-    const bool use_downsampler = isProcessingRequired() && m_downsampler != nullptr;
-    if (!use_downsampler) {
-        write_direct_from_channels(outputBuffer);
-        return;
-    }
 
     const double current_playback_rate = std::max(1e-6, playback_rate_.load());
     const int oversample_factor = std::max(1, m_settings ? m_settings->processor_tuning.oversampling_factor : 1);
     const double effective_output_rate = static_cast<double>(outputSampleRate) * static_cast<double>(oversample_factor);
     const double ratio = static_cast<double>(outputSampleRate) / effective_output_rate;
+
+    const bool use_downsampler = (std::abs(ratio - 1.0) > std::numeric_limits<double>::epsilon()) && m_downsampler != nullptr;
+    if (!use_downsampler) {
+        write_direct_from_channels(outputBuffer);
+        return;
+    }
     LOG_CPP_DEBUG("[AudioProc] downsample begin rate=%.6f ratio=%.6f over=%d frames=%zu",
                   current_playback_rate,
                   ratio,
@@ -610,29 +664,8 @@ void AudioProcessor::downsample(int32_t* outputBuffer) {
         return;
     }
 
-    const size_t valid_input_samples = samples_expected;
-    if (downsample_float_in_buffer_.size() < valid_input_samples) {
-        try {
-            downsample_float_in_buffer_.resize(valid_input_samples);
-        } catch (const std::bad_alloc& e) {
-            LOG_CPP_ERROR("[AudioProc] Error resizing downsample_float_in_buffer_: %s", e.what());
-            process_buffer_pos = 0;
-            return;
-        }
-    }
-
-    float* interleaved_in = downsample_float_in_buffer_.data();
-    size_t interleave_index = 0;
-    for (size_t frame = 0; frame < frame_count; ++frame) {
-        for (int ch = 0; ch < outputChannels; ++ch) {
-            float sample = 0.0f;
-            if (static_cast<size_t>(ch) < remixed_float_buffers_.size() &&
-                frame < remixed_float_buffers_[ch].size()) {
-                sample = remixed_float_buffers_[ch][frame];
-            }
-            interleaved_in[interleave_index++] = sample;
-        }
-    }
+    // No need to interleave! The data is already interleaved in the active input buffer.
+    const float* interleaved_in = active_input_buffer_->data();
 
     size_t estimated_output_frames = static_cast<size_t>(std::ceil(static_cast<double>(frame_count) * ratio)) + 16;
     size_t estimated_output_samples = estimated_output_frames * static_cast<size_t>(outputChannels);
@@ -664,7 +697,7 @@ void AudioProcessor::downsample(int32_t* outputBuffer) {
         }
 
         SRC_DATA src_data = {0};
-        src_data.data_in = downsample_float_in_buffer_.data() + input_frames_consumed * outputChannels;
+        src_data.data_in = interleaved_in + input_frames_consumed * outputChannels;  // Use interleaved buffer directly
         src_data.input_frames = frame_count - input_frames_consumed;
         src_data.data_out = downsample_float_out_buffer_.data() + output_frames_generated * outputChannels;
         src_data.output_frames = available_output_frames;
@@ -694,9 +727,13 @@ void AudioProcessor::downsample(int32_t* outputBuffer) {
         return;
     }
 
+    // Fused clamping and conversion to int32
+    const float scale = static_cast<float>(INT32_MAX);
     for (size_t i = 0; i < output_samples; ++i) {
-        float sample = std::clamp(downsample_float_out_buffer_[i], -1.0f, 1.0f);
-        outputBuffer[i] = static_cast<int32_t>(sample * static_cast<float>(INT32_MAX));
+        float sample = downsample_float_out_buffer_[i];
+        // Clamp and convert in one step
+        sample = (sample < -1.0f) ? -1.0f : ((sample > 1.0f) ? 1.0f : sample);
+        outputBuffer[i] = static_cast<int32_t>(sample * scale);
     }
     process_buffer_pos = output_samples;
     last_output_buffer_ = outputBuffer;
@@ -706,6 +743,14 @@ void AudioProcessor::downsample(int32_t* outputBuffer) {
 
 void AudioProcessor::splitBufferToChannels() {
     PROFILE_FUNCTION();
+    resample_buffer_pos = active_samples_;
+
+    if (!active_input_buffer_) {
+        LOG_CPP_ERROR("[AudioProc] Error: Active input buffer not initialized in splitBufferToChannels.");
+        channel_buffer_pos = 0;
+        return;
+    }
+
     if (inputChannels <= 0 || resample_buffer_pos == 0) {
         channel_buffer_pos = 0;
         for (auto& view : input_channel_views_) {
@@ -722,7 +767,7 @@ void AudioProcessor::splitBufferToChannels() {
     }
     channel_buffer_pos = num_frames;
 
-    const float* base_ptr = resample_float_out_buffer_.data();
+    const float* base_ptr = active_input_buffer_->data();
     const size_t stride = static_cast<size_t>(inputChannels);
 
     for (int ch = 0; ch < screamrouter::audio::MAX_CHANNELS; ++ch) {
@@ -765,9 +810,6 @@ void AudioProcessor::applyCustomSpeakerMix(const std::vector<std::vector<float>>
         }
         LOG_CPP_INFO("%s", row_str_log.c_str());
     }
-    // After applying, we might need to re-evaluate if processing is required,
-    // so clear the cache.
-    isProcessingRequiredCacheSet = false;
     rebuild_mix_taps_locked();
 }
 
@@ -995,7 +1037,6 @@ void AudioProcessor::calculateAndApplyAutoSpeakerMix() {
          LOG_CPP_WARNING("[AudioProc] Warning: Unsupported input channel count (%d) in calculateAndApplyAutoSpeakerMix. Using basic identity mapping.", inputChannels);
          break;
     }
-    // isProcessingRequiredCacheSet = false; // select_active_speaker_mix will handle this
 }
 
 // --- New/Updated Methods for Speaker Layouts ---
@@ -1022,7 +1063,6 @@ void AudioProcessor::update_speaker_layouts_config(const std::map<int, screamrou
     speaker_layouts_config_ = new_layouts_config;
     // After updating the config, re-select the active mix by calling the _locked version
     select_active_speaker_mix_locked();
-    // select_active_speaker_mix_locked will call isProcessingRequiredCacheSet = false;
 }
 
 // Public method that acquires the lock
@@ -1079,7 +1119,6 @@ void AudioProcessor::select_active_speaker_mix_locked() {
         calculateAndApplyAutoSpeakerMix(); // Default if no entry for current inputChannels
     }
     
-    isProcessingRequiredCacheSet = false; // The effective mix might have changed, so invalidate cache
     rebuild_mix_taps_locked();
 }
 
@@ -1106,158 +1145,198 @@ void AudioProcessor::rebuild_mix_taps_locked() {
 // --- End New/Updated Methods ---
 void AudioProcessor::mixSpeakers() {
     PROFILE_FUNCTION();
+    if (!active_input_buffer_ || !active_output_buffer_) {
+        LOG_CPP_ERROR("[AudioProc] Error: Active buffers not initialized in mixSpeakers.");
+        active_samples_ = 0;
+        channel_buffer_pos = 0;
+        return;
+    }
+
     if (outputChannels <= 0 || channel_buffer_pos == 0) {
         return;
     }
 
-    std::array<int, MAX_CHANNELS> oc_indices{};
+    // Identity fast path: if mix is exactly 1:1, just copy interleaved data.
+    if (outputChannels == inputChannels && outputChannels > 0) {
+        bool is_identity = true;
+        const float kMixUnityEpsilon = 1e-6f;
+        for (int oc = 0; oc < outputChannels; ++oc) {
+            const auto& taps = mix_taps_[oc];
+            if (taps.size() != 1 ||
+                taps[0].input_index != static_cast<uint8_t>(oc) ||
+                std::fabs(taps[0].gain_scaled - 1.0f) > kMixUnityEpsilon) {
+                is_identity = false;
+                break;
+            }
+        }
+
+        if (is_identity) {
+            // Keep planar buffers updated for compatibility, but avoid interleaved copy.
+            for (int oc = 0; oc < outputChannels && static_cast<size_t>(oc) < remixed_float_buffers_.size(); ++oc) {
+                auto& out_channel = remixed_float_buffers_[oc];
+                if (out_channel.size() < channel_buffer_pos) {
+                    try {
+                        out_channel.resize(channel_buffer_pos);
+                    } catch (const std::bad_alloc&) {
+                        continue;
+                    }
+                }
+                const float* src = active_input_buffer_->data() + oc;
+                const size_t stride = static_cast<size_t>(outputChannels);
+                for (size_t frame = 0; frame < channel_buffer_pos; ++frame) {
+                    out_channel[frame] = src[frame * stride];
+                }
+            }
+            return;
+        }
+    }
+
+    // Ensure interleaved buffer is sized correctly
+    const size_t required_samples = channel_buffer_pos * outputChannels;
+    if (!ensure_output_capacity(static_cast<size_t>(required_samples * 1.5))) {
+        active_samples_ = 0;
+        return;
+    }
+
+    // Clear the interleaved buffer (only the portion we'll use)
+    float* mixed_out = active_output_buffer_->data();
+    std::fill_n(mixed_out, required_samples, 0.0f);
+
+    // Process each output channel
     for (int oc = 0; oc < outputChannels; ++oc) {
-        oc_indices[oc] = oc;
+        const auto& taps = mix_taps_[oc];
+        if (taps.empty()) {
+            continue;
+        }
+
+        // For each tap (input channel -> output channel mapping)
+        for (const auto& tap : taps) {
+            const auto& view = input_channel_views_[tap.input_index];
+            if (view.data == nullptr || view.stride == 0) {
+                continue;
+            }
+
+            const float* in_ptr = view.data;
+            const size_t in_stride = view.stride;
+            const float gain = tap.gain_scaled;
+
+            // Write to interleaved buffer with output channel offset
+            float* out_ptr = mixed_out + oc;
+            const size_t out_stride = outputChannels;
+
+            // Process samples with appropriate stride
+            if (in_stride == 1) {
+                // Input is contiguous, can potentially use SIMD
+                for (size_t frame = 0; frame < channel_buffer_pos; ++frame) {
+                    out_ptr[frame * out_stride] += in_ptr[frame] * gain;
+                }
+            } else {
+                // Input is strided
+                const float* sample_ptr = in_ptr;
+                for (size_t frame = 0; frame < channel_buffer_pos; ++frame, sample_ptr += in_stride) {
+                    out_ptr[frame * out_stride] += (*sample_ptr) * gain;
+                }
+            }
+        }
+
+        // Also update the old planar buffer for now (temporary during migration)
+        if (static_cast<size_t>(oc) < remixed_float_buffers_.size()) {
+            auto& out_channel = remixed_float_buffers_[oc];
+            if (out_channel.size() < channel_buffer_pos) {
+                try { out_channel.resize(channel_buffer_pos); }
+                catch (...) {}
+            }
+            // Copy from interleaved to planar for backward compatibility
+            for (size_t frame = 0; frame < channel_buffer_pos; ++frame) {
+                out_channel[frame] = mixed_out[frame * outputChannels + oc];
+            }
+        }
     }
 
-    auto mix_channel = [this](int oc) {
-                      if (static_cast<size_t>(oc) >= remixed_float_buffers_.size()) {
-                          return;
-                      }
-
-                      auto& out_channel = remixed_float_buffers_[oc];
-                      if (out_channel.size() < channel_buffer_pos) {
-                          try { out_channel.assign(channel_buffer_pos, 0.0f); }
-                          catch (const std::bad_alloc& e) {
-                              LOG_CPP_ERROR("[AudioProc] Error resizing remixed_float_buffers_[%d]: %s", oc, e.what());
-                              return;
-                          }
-                      } else {
-                          std::fill(out_channel.begin(), out_channel.begin() + channel_buffer_pos, 0.0f);
-                      }
-
-                      const auto& taps = mix_taps_[oc];
-                      if (taps.empty()) {
-                          return;
-                      }
-
-                      for (const auto& tap : taps) {
-                          const auto& view = input_channel_views_[tap.input_index];
-                          if (view.data == nullptr || view.stride == 0) {
-                              continue;
-                          }
-
-                          float* out_ptr = out_channel.data();
-                          const float* in_ptr = view.data;
-                          const size_t stride = view.stride;
-                          const float gain = tap.gain_scaled;
-
-#if defined(__aarch64__)
-                          if (stride == 1) {
-                              size_t frame = 0;
-                              const float32x4_t gain_vec = vdupq_n_f32(gain);
-                              for (; frame + 4 <= channel_buffer_pos; frame += 4) {
-                                  float32x4_t out_vec = vld1q_f32(out_ptr + frame);
-                                  const float32x4_t in_vec = vld1q_f32(in_ptr + frame);
-                                  out_vec = vfmaq_f32(out_vec, in_vec, gain_vec);
-                                  vst1q_f32(out_ptr + frame, out_vec);
-                              }
-                              for (; frame < channel_buffer_pos; ++frame) {
-                                  out_ptr[frame] += in_ptr[frame] * gain;
-                              }
-                              continue;
-                          }
-#elif defined(__SSE2__)
-                          if (stride == 1) {
-                              size_t frame = 0;
-                              const __m128 gain_vec = _mm_set1_ps(gain);
-                              for (; frame + 4 <= channel_buffer_pos; frame += 4) {
-                                  __m128 out_vec = _mm_loadu_ps(out_ptr + frame);
-                                  const __m128 in_vec = _mm_loadu_ps(in_ptr + frame);
-                                  out_vec = _mm_add_ps(out_vec, _mm_mul_ps(in_vec, gain_vec));
-                                  _mm_storeu_ps(out_ptr + frame, out_vec);
-                              }
-                              for (; frame < channel_buffer_pos; ++frame) {
-                                  out_ptr[frame] += in_ptr[frame] * gain;
-                              }
-                              continue;
-                          }
-#endif
-
-                          const float* sample_ptr = in_ptr;
-                          for (size_t frame = 0; frame < channel_buffer_pos; ++frame, sample_ptr += stride) {
-                              out_ptr[frame] += (*sample_ptr) * gain;
-                          }
-                      }
-                  };
-
-#if SCREAMROUTER_HAS_EXECUTION && defined(__cpp_lib_execution)
-    std::for_each(std::execution::par_unseq,
-                  oc_indices.begin(), oc_indices.begin() + outputChannels,
-                  mix_channel);
-#else
-    for (int idx = 0; idx < outputChannels; ++idx) {
-        mix_channel(oc_indices[idx]);
-    }
-#endif
+    active_samples_ = required_samples;
+    active_output_buffer_->resize(required_samples);
+    swap_active_buffers();
 }
 
 
 void AudioProcessor::equalize() {
     PROFILE_FUNCTION();
+    if (!active_input_buffer_ || !active_output_buffer_) {
+        LOG_CPP_ERROR("[AudioProc] Error: Active buffers not initialized in equalize.");
+        active_samples_ = 0;
+        return;
+    }
+    if (channel_buffer_pos == 0) {
+        return;
+    }
     bool active_bands[EQ_BANDS] = {false};
     bool has_active_bands = false;
+    constexpr float kEqUnityEpsilon = 1e-5f;
     for (int i = 0; i < EQ_BANDS; ++i) {
-        if (eq[i] != 1.0f) {
+        if (std::fabs(eq[i] - 1.0f) > kEqUnityEpsilon) {
             active_bands[i] = true;
             has_active_bands = true;
         }
     }
     if (!has_active_bands) return;
 
-    for (int ch = 0; ch < outputChannels; ++ch) {
-        if (static_cast<size_t>(ch) >= remixed_float_buffers_.size() || !filters[ch][0]) continue; // Check if channel exists and filters allocated
-
-        size_t current_channel_size = remixed_float_buffers_[ch].size();
-        size_t safe_process_len = std::min(channel_buffer_pos, current_channel_size); // Process only available samples
-
-        if (safe_process_len == 0) continue;
-
-        float* channel_samples = remixed_float_buffers_[ch].data();
-
-        for (int band = 0; band < EQ_BANDS; ++band) {
-            if (active_bands[band] && filters[ch][band]) {
-                filters[ch][band]->processBlock(channel_samples, channel_samples, safe_process_len);
-            }
-        }
-
-        for (size_t pos = 0; pos < safe_process_len; ++pos) {
-            channel_samples[pos] = softClip(channel_samples[pos]);
-        }
-    }
-}
-
-
-void AudioProcessor::noiseShapingDither() {
-    if (last_output_buffer_ == nullptr || last_output_samples_ == 0) {
+    const size_t interleaved_samples = channel_buffer_pos * static_cast<size_t>(outputChannels);
+    if (!ensure_output_capacity(interleaved_samples)) {
+        active_samples_ = 0;
         return;
     }
 
-    const float ditherAmplitude = (inputBitDepth > 0)
-                                      ? (1.0f / (static_cast<unsigned long long>(1) << (inputBitDepth - 1)))
-                                      : 0.0f;
+    float* out_base = active_output_buffer_->data();
+    const float* in_base = active_input_buffer_->data();
 
-    const float shapingFactor = std::clamp(m_settings->processor_tuning.dither_noise_shaping_factor, 0.0f, 1.0f);
+    // Process each channel from the interleaved buffer
+    for (int ch = 0; ch < outputChannels; ++ch) {
+        if (!filters[ch][0]) continue; // Check if filters allocated
 
-    static float error_accumulator = 0.0f;
+        // For strided processing, we need a temporary buffer (reuse scratch to avoid per-call alloc)
+        if (eq_temp_buffer_.size() < channel_buffer_pos) {
+            try {
+                eq_temp_buffer_.resize(channel_buffer_pos);
+            } catch (...) {
+                LOG_CPP_ERROR("[AudioProc] Failed to resize EQ scratch buffer to %zu samples", channel_buffer_pos);
+                return;
+            }
+        }
+        float* temp_channel = eq_temp_buffer_.data();
 
-    static std::default_random_engine generator(((std::chrono::system_clock::now)().time_since_epoch().count()));
-    std::uniform_real_distribution<float> distribution(-ditherAmplitude, ditherAmplitude);
+        // Extract channel from interleaved buffer
+        float* interleaved_out_ptr = out_base + ch;
+        const float* interleaved_in_ptr = in_base + ch;
+        for (size_t frame = 0; frame < channel_buffer_pos; ++frame) {
+            temp_channel[frame] = interleaved_in_ptr[frame * outputChannels];
+        }
 
-    for (size_t i = 0; i < last_output_samples_; ++i) {
-        float sample = static_cast<float>(last_output_buffer_[i]) / INT32_MAX;
-        sample += error_accumulator * shapingFactor;
-        sample += distribution(generator);
-        sample = std::clamp(sample, -1.0f, 1.0f);
-        const int32_t quantized_sample = static_cast<int32_t>(sample * INT32_MAX);
-        error_accumulator = sample - static_cast<float>(quantized_sample) / INT32_MAX;
-        last_output_buffer_[i] = quantized_sample;
+        // Apply EQ bands
+        for (int band = 0; band < EQ_BANDS; ++band) {
+            if (active_bands[band] && filters[ch][band]) {
+                filters[ch][band]->processBlock(temp_channel, temp_channel, channel_buffer_pos);
+            }
+        }
+
+        // Apply soft clipping and write back to interleaved buffer
+        for (size_t frame = 0; frame < channel_buffer_pos; ++frame) {
+            interleaved_out_ptr[frame * outputChannels] = softClip(temp_channel[frame]);
+        }
+
+        // Also update planar buffer for backward compatibility (temporary)
+        if (static_cast<size_t>(ch) < remixed_float_buffers_.size()) {
+            auto& planar_channel = remixed_float_buffers_[ch];
+            if (planar_channel.size() >= channel_buffer_pos) {
+                for (size_t frame = 0; frame < channel_buffer_pos; ++frame) {
+                    planar_channel[frame] = interleaved_out_ptr[frame * outputChannels];
+                }
+            }
+        }
     }
+
+    active_samples_ = interleaved_samples;
+    active_output_buffer_->resize(interleaved_samples);
+    swap_active_buffers();
 }
 
 
@@ -1282,60 +1361,4 @@ void AudioProcessor::setupDCFilter() {
              dcFilters[channel] = nullptr;
          }
     }
-}
-
-void AudioProcessor::removeDCOffset() {
-    PROFILE_FUNCTION();
-    if (channel_buffer_pos == 0) return; // Nothing to process
-
-    for (int ch = 0; ch < outputChannels; ++ch) {
-        if (static_cast<size_t>(ch) >= remixed_float_buffers_.size() || !dcFilters[ch]) continue;
-
-        size_t current_channel_size = remixed_float_buffers_[ch].size();
-        size_t safe_process_len = std::min(channel_buffer_pos, current_channel_size); 
-
-        if (safe_process_len == 0) continue;
-
-        dcFilters[ch]->processBlock(remixed_float_buffers_[ch].data(), remixed_float_buffers_[ch].data(), safe_process_len);
-    }
-} 
-
-
-bool AudioProcessor::isProcessingRequired() {
-    return true;
-    if (!isProcessingRequiredCacheSet) {
-        isProcessingRequiredCache = isProcessingRequiredCheck();
-        isProcessingRequiredCacheSet = true;
-    }
-    return isProcessingRequiredCache;
-}
-
-bool AudioProcessor::isProcessingRequiredCheck() {
-    if (inputSampleRate != outputSampleRate) return true;
-    if (target_volume_.load() != 1.0f) return true;
-    if (inputChannels != outputChannels) return true;
-    
-    for (int i = 0; i < inputChannels; ++i) {
-        for (int j = 0; j < outputChannels; ++j) {
-            // Check bounds for speaker_mix access
-            if (i < MAX_CHANNELS && j < MAX_CHANNELS) {
-                if ((i == j && speaker_mix[i][j] != 1.0f) || 
-                    (i != j && speaker_mix[i][j] != 0.0f)) {
-                    return true;
-               }
-           } else {
-                LOG_CPP_WARNING("[AudioProc] Warning: Out-of-bounds access attempt in speaker_mix check.");
-                // Decide how to handle this - maybe return true to be safe?
-                return true;
-           }
-        }
-    }
-
-    for (int i = 0; i < EQ_BANDS; ++i) {
-        if (eq[i] != 1.0f) return true;
-    }
-
-    if (std::abs(playback_rate_.load() - 1.0) > 1e-6) return true;
-    
-    return false;
 }
