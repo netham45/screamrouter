@@ -27,6 +27,7 @@ public:
     void close() override;
     void send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) override;
     void set_playback_rate_callback(std::function<void(double)> cb);
+    void update_pipeline_backlog(double upstream_frames, double upstream_target_frames);
 
 #if defined(__linux__)
     unsigned int get_effective_sample_rate() const;
@@ -64,6 +65,8 @@ private:
     std::function<void(double)> playback_rate_callback_;
     double playback_rate_integral_ = 0.0;
     double target_delay_frames_ = 0.0;
+    double upstream_buffer_frames_ = 0.0;
+    double upstream_target_frames_ = 0.0;
     double last_playback_rate_command_ = 1.0;
     std::chrono::steady_clock::time_point last_rate_update_;
     uint64_t rate_log_counter_ = 0;

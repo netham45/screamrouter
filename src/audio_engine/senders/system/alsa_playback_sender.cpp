@@ -140,6 +140,12 @@ void AlsaPlaybackSender::set_playback_rate_callback(std::function<void(double)> 
     playback_rate_callback_ = std::move(cb);
 }
 
+void AlsaPlaybackSender::update_pipeline_backlog(double upstream_frames, double upstream_target_frames) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    upstream_buffer_frames_ = std::max(0.0, upstream_frames);
+    upstream_target_frames_ = std::max(0.0, upstream_target_frames);
+}
+
 bool AlsaPlaybackSender::parse_legacy_card_device(const std::string& value, int& card, int& device) const {
     const auto dot_pos = value.find('.');
     if (dot_pos == std::string::npos) {
@@ -333,8 +339,12 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
         filtered_delay_frames_ = filtered_delay_frames_ + kAlpha * (static_cast<double>(delay_frames) - filtered_delay_frames_);
     }
 
-    // Positive error => queue above target, speed up playback to shrink it.
-    const double error = filtered_delay_frames_ - target_delay_frames_;
+    // Use a combined target: ALSA queue plus upstream (mixer) queue.
+    const double total_delay_frames = filtered_delay_frames_ + upstream_buffer_frames_;
+    const double target_total_frames = target_delay_frames_ + upstream_target_frames_;
+
+    // Positive error => pipeline above target, speed up playback to shrink it.
+    const double error = total_delay_frames - target_total_frames;
     // More aggressive gains: ~3 ppm per frame, integral a bit faster.
     constexpr double kKp = 3e-6;
     constexpr double kKi = 5e-8;
@@ -358,10 +368,12 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
 
     ++rate_log_counter_;
     if (rate_log_counter_ % 100 == 0) {
-        LOG_CPP_INFO("[AlsaPlayback:%s] PI rate update: delay=%.1f target=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
+        LOG_CPP_INFO("[AlsaPlayback:%s] PI rate update: total_delay=%.1f (alsa=%.1f upstream=%.1f) target_total=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
                      device_tag_.c_str(),
+                     total_delay_frames,
                      filtered_delay_frames_,
-                     target_delay_frames_,
+                     upstream_buffer_frames_,
+                     target_total_frames,
                      error,
                      adjust,
                      desired_rate,
@@ -509,6 +521,8 @@ void AlsaPlaybackSender::close_locked() {
         pcm_handle_ = nullptr;
     }
     target_delay_frames_ = 0.0;
+    upstream_buffer_frames_ = 0.0;
+    upstream_target_frames_ = 0.0;
     playback_rate_integral_ = 0.0;
     last_playback_rate_command_ = 1.0;
     frames_written_.store(0, std::memory_order_release);

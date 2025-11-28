@@ -1786,7 +1786,7 @@ void SinkAudioMixer::set_output_playback_rate(double rate) {
     if (!output_post_processor_) {
         return;
     }
-    const double clamped = std::clamp(rate, 0.98, 1.02);
+    const double clamped = std::clamp(rate, 0.96, 1.02);
     output_playback_rate_.store(clamped);
     output_post_processor_->set_playback_rate(clamped);
 }
@@ -2091,6 +2091,20 @@ void SinkAudioMixer::run() {
         const bool frame_metrics_valid = frame_bytes > 0 && (chunk_size_bytes_ % frame_bytes) == 0;
         const std::size_t frames_per_chunk = frame_metrics_valid ? (chunk_size_bytes_ / frame_bytes) : 0;
         uint64_t frames_dispatched = 0;
+
+        if (config_.protocol == "system_audio") {
+            double upstream_frames = 0.0;
+            double upstream_target_frames = 0.0;
+            if (frame_metrics_valid) {
+                upstream_frames = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(frame_bytes);
+                upstream_target_frames = static_cast<double>(frames_per_chunk);
+            }
+#if defined(__linux__)
+            if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+                alsa_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
+            }
+#endif
+        }
 
         if (!frame_metrics_valid && coordination_active) {
             LOG_CPP_WARNING("[SinkMixer:%s] RunLoop: Unable to derive frames_per_chunk (bit_depth=%d, channels=%d).",
