@@ -448,6 +448,11 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("max_rate_adjustment", &SynchronizationTuning::max_rate_adjustment)
         .def_readwrite("sync_smoothing_factor", &SynchronizationTuning::sync_smoothing_factor);
 
+    py::class_<SystemAudioTuning>(m, "SystemAudioTuning")
+        .def(py::init<>())
+        .def_readwrite("alsa_target_latency_ms", &SystemAudioTuning::alsa_target_latency_ms)
+        .def_readwrite("alsa_periods_per_buffer", &SystemAudioTuning::alsa_periods_per_buffer);
+
     py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
         .def(py::init<>())
         .def_readwrite("chunk_size_bytes", &AudioEngineSettings::chunk_size_bytes)
@@ -458,7 +463,8 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("source_processor_tuning", &AudioEngineSettings::source_processor_tuning)
         .def_readwrite("processor_tuning", &AudioEngineSettings::processor_tuning)
         .def_readwrite("synchronization", &AudioEngineSettings::synchronization)
-        .def_readwrite("synchronization_tuning", &AudioEngineSettings::synchronization_tuning);
+        .def_readwrite("synchronization_tuning", &AudioEngineSettings::synchronization_tuning)
+        .def_readwrite("system_audio_tuning", &AudioEngineSettings::system_audio_tuning);
 
     py::class_<TimeshiftBufferExport>(m, "TimeshiftBufferExport")
         .def(py::init<>())

@@ -118,6 +118,11 @@ struct SynchronizationTuning {
     double sync_smoothing_factor = 0.9;
 };
 
+struct SystemAudioTuning {
+    double alsa_target_latency_ms = 24.0;
+    unsigned int alsa_periods_per_buffer = 3;
+};
+
 class AudioEngineSettings {
 public:
     std::size_t chunk_size_bytes = kDefaultChunkSizeBytes;
@@ -130,6 +135,7 @@ public:
     ProcessorTuning processor_tuning;
     SynchronizationSettings synchronization;
     SynchronizationTuning synchronization_tuning;
+    SystemAudioTuning system_audio_tuning;
 };
 
 inline std::size_t resolve_chunk_size_bytes(const std::shared_ptr<AudioEngineSettings>& settings) {

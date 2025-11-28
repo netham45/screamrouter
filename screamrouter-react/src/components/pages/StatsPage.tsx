@@ -489,6 +489,14 @@ const StatsPage: React.FC = () => {
                   </SimpleGrid>
                 </Box>
 
+                <Box>
+                  <Heading size="sm" mb={4}>System Audio Tuning</Heading>
+                  <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                    {renderTuningControl('system_audio_tuning', 'alsa_target_latency_ms', 'ALSA Target Latency (ms)')}
+                    {renderTuningControl('system_audio_tuning', 'alsa_periods_per_buffer', 'ALSA Periods per Buffer')}
+                  </SimpleGrid>
+                </Box>
+
                 <HStack justify="flex-end" spacing={4}>
                   <Button onClick={handleResetSettings}>Reset</Button>
                   <Button colorScheme="blue" onClick={handleSaveSettings}>Save</Button>

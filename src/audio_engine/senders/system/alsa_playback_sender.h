@@ -2,6 +2,7 @@
 
 #include "../i_network_sender.h"
 #include "../../audio_types.h"
+#include "../../configuration/audio_engine_settings.h"
 
 #include <string>
 #include <vector>
@@ -10,6 +11,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 
 #if defined(__linux__)
 #include <alsa/asoundlib.h>
@@ -20,7 +22,8 @@ namespace audio {
 
 class AlsaPlaybackSender : public INetworkSender {
 public:
-    explicit AlsaPlaybackSender(const SinkMixerConfig& config);
+    AlsaPlaybackSender(const SinkMixerConfig& config,
+                       std::shared_ptr<AudioEngineSettings> settings);
     ~AlsaPlaybackSender() override;
 
     bool setup() override;
@@ -36,6 +39,9 @@ public:
 #endif
 
 private:
+    SinkMixerConfig config_;
+    std::shared_ptr<AudioEngineSettings> settings_;
+
 #if defined(__linux__)
     bool parse_legacy_card_device(const std::string& value, int& card, int& device) const;
     std::string resolve_alsa_device_name() const;
@@ -48,7 +54,6 @@ private:
     void maybe_update_playback_rate_locked(snd_pcm_sframes_t delay_frames);
     void prefill_target_delay_locked();
 
-    SinkMixerConfig config_;
     std::string device_tag_;
     std::string hw_device_name_;
 
@@ -75,8 +80,6 @@ private:
     mutable std::mutex state_mutex_;
     std::chrono::steady_clock::time_point telemetry_last_log_time_{};
     std::atomic<uint64_t> frames_written_{0};
-#else
-    SinkMixerConfig config_;
 #endif
 };
 

@@ -165,6 +165,10 @@ def settings_to_dict(settings: AudioEngineSettings):
             "sync_proportional_gain": settings.synchronization_tuning.sync_proportional_gain,
             "max_rate_adjustment": settings.synchronization_tuning.max_rate_adjustment,
             "sync_smoothing_factor": settings.synchronization_tuning.sync_smoothing_factor,
+        },
+        "system_audio_tuning": {
+            "alsa_target_latency_ms": settings.system_audio_tuning.alsa_target_latency_ms,
+            "alsa_periods_per_buffer": settings.system_audio_tuning.alsa_periods_per_buffer,
         }
     }
 
@@ -182,6 +186,7 @@ def dict_to_settings(settings_dict: dict, existing_settings: AudioEngineSettings
     apply_updates(existing_settings.processor_tuning, settings_dict.get("processor_tuning", {}))
     apply_updates(existing_settings.synchronization, settings_dict.get("synchronization", {}))
     apply_updates(existing_settings.synchronization_tuning, settings_dict.get("synchronization_tuning", {}))
+    apply_updates(existing_settings.system_audio_tuning, settings_dict.get("system_audio_tuning", {}))
     return existing_settings
 
 class APIStats:

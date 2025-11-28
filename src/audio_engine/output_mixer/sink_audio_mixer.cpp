@@ -147,7 +147,7 @@ SinkAudioMixer::SinkAudioMixer(
         } else {
             LOG_CPP_INFO("[SinkMixer:%s] Creating AlsaPlaybackSender for device %s.",
                          config_.sink_id.c_str(), config_.output_ip.c_str());
-            network_sender_ = std::make_unique<AlsaPlaybackSender>(config_);
+            network_sender_ = std::make_unique<AlsaPlaybackSender>(config_, m_settings);
         }
 #elif defined(_WIN32)
         LOG_CPP_INFO("[SinkMixer:%s] Creating WasapiPlaybackSender for endpoint %s.",

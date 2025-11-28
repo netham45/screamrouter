@@ -1,6 +1,7 @@
 #include "alsa_playback_sender.h"
 
 #include "../../utils/cpp_logger.h"
+#include "../../configuration/audio_engine_settings.h"
 
 #include <algorithm>
 #include <fstream>
@@ -41,13 +42,13 @@ bool DetectRaspberryPi() {
 
 } // namespace
 
-AlsaPlaybackSender::AlsaPlaybackSender(const SinkMixerConfig& config)
-#if defined(__linux__)
+AlsaPlaybackSender::AlsaPlaybackSender(const SinkMixerConfig& config,
+                                       std::shared_ptr<AudioEngineSettings> settings)
     : config_(config),
-      device_tag_(config.output_ip),
-      is_raspberry_pi_(DetectRaspberryPi())
-#else
-    : config_(config)
+      settings_(std::move(settings))
+#if defined(__linux__)
+      , device_tag_(config.output_ip),
+        is_raspberry_pi_(DetectRaspberryPi())
 #endif
 {
 #if defined(__linux__)
@@ -248,10 +249,33 @@ bool AlsaPlaybackSender::configure_device() {
         return false;
     }
 
-    constexpr unsigned int kTargetLatencyUs = 24000;      // 24 ms overall buffer target
-    constexpr unsigned int kPeriodsPerBuffer = 3;        // keep a few smaller periods for smoothness
-    unsigned int buffer_time = kTargetLatencyUs;
-    unsigned int period_time = std::max(1000u, buffer_time / kPeriodsPerBuffer);
+    constexpr unsigned int kDefaultTargetLatencyUs = 24000;      // 24 ms overall buffer target
+    constexpr unsigned int kDefaultPeriodsPerBuffer = 3;         // keep a few smaller periods for smoothness
+    constexpr unsigned int kMinPeriodTimeUs = 1000;              // avoid extremely small periods
+
+    unsigned int buffer_time = kDefaultTargetLatencyUs;
+    unsigned int periods_per_buffer = kDefaultPeriodsPerBuffer;
+    if (settings_) {
+        const double configured_latency_ms = settings_->system_audio_tuning.alsa_target_latency_ms;
+        if (configured_latency_ms > 0.0) {
+            const double latency_us = configured_latency_ms * 1000.0;
+            const double clamped = std::clamp(
+                latency_us,
+                static_cast<double>(kMinPeriodTimeUs),
+                static_cast<double>(std::numeric_limits<unsigned int>::max()));
+            buffer_time = static_cast<unsigned int>(clamped);
+        }
+
+        const unsigned int configured_periods = settings_->system_audio_tuning.alsa_periods_per_buffer;
+        if (configured_periods > 0) {
+            periods_per_buffer = configured_periods;
+        }
+    }
+
+    unsigned int period_time = std::max(kMinPeriodTimeUs, buffer_time / periods_per_buffer);
+    const unsigned int requested_buffer_time = buffer_time;
+    const unsigned int requested_period_time = period_time;
+
     snd_pcm_hw_params_set_period_time_near(pcm_handle_, hw_params, &period_time, nullptr);
     snd_pcm_hw_params_set_buffer_time_near(pcm_handle_, hw_params, &buffer_time, nullptr);
 
@@ -293,9 +317,9 @@ bool AlsaPlaybackSender::configure_device() {
         return false;
     }
 
-    LOG_CPP_INFO("[AlsaPlayback:%s] Opened %s rate=%u Hz channels=%u bit_depth=%d period=%lu frames (%u us) buffer=%lu frames (%u us).",
+    LOG_CPP_INFO("[AlsaPlayback:%s] Opened %s rate=%u Hz channels=%u bit_depth=%d period=%lu frames (%u us, requested=%u us) buffer=%lu frames (%u us, requested=%u us).",
                  device_tag_.c_str(), hw_device_name_.c_str(), sample_rate_, channels_, bit_depth_, period_frames_,
-                 got_period_us, buffer_frames_, got_buffer_us);
+                 got_period_us, requested_period_time, buffer_frames_, got_buffer_us, requested_buffer_time);
 
     frames_written_.store(0, std::memory_order_release);
     if (buffer_frames_ > 0) {

@@ -332,11 +332,17 @@ export interface ProcessorTuning {
   dither_noise_shaping_factor: number;
 }
 
+export interface SystemAudioTuning {
+  alsa_target_latency_ms: number;
+  alsa_periods_per_buffer: number;
+}
+
 export interface AudioEngineSettings {
   timeshift_tuning: TimeshiftTuning;
   mixer_tuning: MixerTuning;
   source_processor_tuning: SourceProcessorTuning;
   processor_tuning: ProcessorTuning;
+  system_audio_tuning: SystemAudioTuning;
 }
 // --- End Audio Engine Settings Interfaces ---
 
