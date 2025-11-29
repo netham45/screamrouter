@@ -704,16 +704,22 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
         std::string sap_guid;
         std::string sap_session;
         // Prefer SSRC-bound identity when available, then IP/port.
-        if (!sap_listener_->get_stream_identity_by_ssrc(ssrc, sap_guid, sap_session)) {
-            sap_listener_->get_stream_identity(client_ip_str, announced_port, sap_guid, sap_session);
+        std::string sap_stream_ip;
+        int sap_stream_port = 0;
+        if (!sap_listener_->get_stream_identity_by_ssrc(ssrc, sap_guid, sap_session, sap_stream_ip, sap_stream_port)) {
+            sap_listener_->get_stream_identity(client_ip_str, announced_port, sap_guid, sap_session, sap_stream_ip, sap_stream_port);
         }
 
         if (!sap_guid.empty()) {
-            source_tag = "rtp:" + sap_guid;
+            const std::string port_part = std::to_string(sap_stream_port > 0 ? sap_stream_port : announced_port);
+            const std::string ip_part = !sap_stream_ip.empty() ? sap_stream_ip : client_ip_str;
+            source_tag = "rtp:" + sap_guid + "." + ip_part + "." + port_part;
         } else if (!sap_session.empty()) {
             const auto sanitized = sanitize_tag(sap_session);
             if (!sanitized.empty()) {
-                source_tag = "rtp:" + sanitized;
+                const std::string port_part = std::to_string(sap_stream_port > 0 ? sap_stream_port : announced_port);
+                const std::string ip_part = !sap_stream_ip.empty() ? sap_stream_ip : client_ip_str;
+                source_tag = "rtp:" + sanitized + "." + ip_part + "." + port_part;
             }
         }
     }

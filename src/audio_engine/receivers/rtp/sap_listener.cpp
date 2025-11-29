@@ -157,7 +157,7 @@ std::vector<SapAnnouncement> SapListener::get_announcements() {
     return announcements;
 }
 
-bool SapListener::get_stream_identity(const std::string& ip, int port, std::string& guid, std::string& session_name) {
+bool SapListener::get_stream_identity(const std::string& ip, int port, std::string& guid, std::string& session_name, std::string& stream_ip_out, int& stream_port_out) {
     const std::string key = make_ip_port_key(ip, port);
     const std::string tagged_key = port > 0 ? key + "#sap-" + std::to_string(port) : key;
     std::lock_guard<std::mutex> lock(ip_map_mutex_);
@@ -177,17 +177,21 @@ bool SapListener::get_stream_identity(const std::string& ip, int port, std::stri
 
     guid = it->second.stream_guid;
     session_name = it->second.session_name;
+    stream_ip_out = it->second.stream_ip;
+    stream_port_out = it->second.port;
     return true;
 }
 
-bool SapListener::get_stream_identity_by_ssrc(uint32_t ssrc, std::string& guid, std::string& session_name) {
+bool SapListener::get_stream_identity_by_ssrc(uint32_t ssrc, std::string& guid, std::string& session_name, std::string& stream_ip_out, int& stream_port_out) {
     std::lock_guard<std::mutex> lock(ssrc_map_mutex_);
     auto it = ssrc_to_identity_.find(ssrc);
     if (it == ssrc_to_identity_.end()) {
         return false;
     }
-    guid = it->second.first;
-    session_name = it->second.second;
+    guid = it->second.guid;
+    session_name = it->second.session_name;
+    stream_ip_out = it->second.stream_ip;
+    stream_port_out = it->second.port;
     return true;
 }
 
@@ -907,7 +911,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     }
 
     if (ssrc_found) {
-        ssrc_to_identity_[ssrc] = {stream_guid, session_name};
+        ssrc_to_identity_[ssrc] = {stream_guid, session_name, connection_ip, port};
     }
 
     LOG_CPP_DEBUG(

@@ -155,8 +155,8 @@ public:
      * @return A vector containing the discovered SAP announcements.
      */
     std::vector<SapAnnouncement> get_announcements();
-    bool get_stream_identity(const std::string& ip, int port, std::string& guid, std::string& session_name);
-    bool get_stream_identity_by_ssrc(uint32_t ssrc, std::string& guid, std::string& session_name);
+    bool get_stream_identity(const std::string& ip, int port, std::string& guid, std::string& session_name, std::string& stream_ip_out, int& stream_port_out);
+    bool get_stream_identity_by_ssrc(uint32_t ssrc, std::string& guid, std::string& session_name, std::string& stream_ip_out, int& stream_port_out);
 
     std::string logger_prefix_;
     /** @brief The main loop for the listener thread. */
@@ -185,7 +185,13 @@ public:
 
     std::mutex ssrc_map_mutex_;
     std::unordered_map<uint32_t, StreamProperties> ssrc_to_properties_;
-    std::unordered_map<uint32_t, std::pair<std::string, std::string>> ssrc_to_identity_;
+    struct SsrcIdentity {
+        std::string guid;
+        std::string session_name;
+        std::string stream_ip;
+        int port = 0;
+    };
+    std::unordered_map<uint32_t, SsrcIdentity> ssrc_to_identity_;
     
     std::mutex ip_map_mutex_;
     std::unordered_map<std::string, StreamProperties> ip_to_properties_;

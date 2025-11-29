@@ -927,13 +927,27 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 constexpr double kMaxSchedSlipMs = 200.0; // .2s slip guard
                 time_until_playout_ms = std::clamp(time_until_playout_ms, -kMaxSchedSlipMs, kMaxSchedSlipMs);
 
-                // Model buffer as: (lead until head starts) + duration of head chunk + queued chunks + downstream backlog.
-                double buffer_level_ms = std::max(desired_latency_ms + time_until_playout_ms, 0.0);
+                // Model buffer as: lead until head starts (negative when late) + duration of head chunk + queued chunks + downstream backlog.
+                double buffer_level_ms = time_until_playout_ms;
 
                 double block_duration_ms = 0.0;
-                if (ts.sample_rate > 0 && ts.samples_per_chunk > 0) {
-                    block_duration_ms = (static_cast<double>(ts.samples_per_chunk) * 1000.0) /
-                                        static_cast<double>(ts.sample_rate);
+                if (candidate_packet.sample_rate > 0 &&
+                    candidate_packet.channels > 0 &&
+                    candidate_packet.bit_depth > 0 &&
+                    (candidate_packet.bit_depth % 8) == 0) {
+                    const std::size_t bytes_per_frame =
+                        static_cast<std::size_t>(candidate_packet.channels) *
+                        static_cast<std::size_t>(candidate_packet.bit_depth / 8);
+                    if (bytes_per_frame > 0) {
+                        const std::size_t samples_this_packet =
+                            candidate_packet.audio_data.size() / bytes_per_frame;
+                        if (samples_this_packet > 0) {
+                            block_duration_ms =
+                                (static_cast<double>(samples_this_packet) * 1000.0) /
+                                static_cast<double>(candidate_packet.sample_rate);
+                            buffer_level_ms += block_duration_ms; // include the head chunk itself
+                        }
+                    }
                 }
 
                 if (block_duration_ms > 0.0 && !target_info.sink_rings.empty()) {
