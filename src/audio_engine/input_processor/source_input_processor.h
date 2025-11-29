@@ -103,6 +103,8 @@ public:
     const std::string& get_instance_id() const { return config_.instance_id; }
     /** @brief Gets the tag of the source this processor is handling. */
     const std::string& get_source_tag() const;
+    /** @brief Checks if an incoming tag matches this processor (ignoring optional '#ip.port' suffix). */
+    bool matches_source_tag(const std::string& actual_tag) const;
     /** @brief Gets the full configuration struct of this processor. */
     const SourceProcessorConfig& get_config() const { return config_; }
     /**

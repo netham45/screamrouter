@@ -3731,11 +3731,11 @@ class ConfigurationManager(threading.Thread):
             sap_session_name = str(announcement.get("session_name") or "").strip()
             sap_tag = None
             if sap_guid:
-                sap_tag = f"rtp:{sap_guid}.{stream_ip}.{port_int}"
+                sap_tag = f"rtp:{sap_guid}#{stream_ip}.{port_int}"
             elif sap_session_name:
                 normalized_session = self._sanitize_screamrouter_label(sap_session_name)
                 if normalized_session:
-                    sap_tag = f"rtp:{normalized_session}.{stream_ip}.{port_int}"
+                    sap_tag = f"rtp:{normalized_session}#{stream_ip}.{port_int}"
 
             announcer = str(announcement.get("announcer_ip") or "").strip().replace(":", "_")
             name_suffix = f"_{announcer}" if announcer else ""

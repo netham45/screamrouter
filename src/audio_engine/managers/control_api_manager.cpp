@@ -128,13 +128,12 @@ bool ControlApiManager::write_plugin_packet(
 
     // Find the SourceInputProcessor by its original tag (passed as source_instance_tag parameter)
     SourceInputProcessor* target_processor_ptr = nullptr;
-    // Iterate over the sources map to find a processor whose configured tag matches source_instance_tag
+    // Iterate over the sources map to find a processor whose configured tag matches source_instance_tag (with wildcard tolerance)
     for (const auto& pair : m_sources) {
         if (pair.second) { // Check if the unique_ptr is valid
-            const auto& proc_config = pair.second->get_config(); // Get the processor's configuration
-            if (proc_config.source_tag == source_instance_tag) { // Compare with the provided tag (parameter)
-                target_processor_ptr = pair.second.get(); // Get raw pointer to the processor
-                break;                                    // Found, exit loop
+            if (pair.second->matches_source_tag(source_instance_tag)) {
+                target_processor_ptr = pair.second.get();
+                break;
             }
         }
     }

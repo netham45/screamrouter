@@ -26,6 +26,11 @@ constexpr double kProcessingBudgetAlpha = 0.2;
 constexpr double kPlaybackDriftGain = 1.0 / 1'000'000.0; // Convert ppm to ratio
 constexpr double kFallbackSmoothing = 0.1;
 
+std::string base_tag(const std::string& tag) {
+    const auto hash_pos = tag.find('#');
+    return hash_pos == std::string::npos ? tag : tag.substr(0, hash_pos);
+}
+
 bool has_prefix(const std::string& value, const std::string& prefix) {
     if (prefix.empty()) {
         return true;
@@ -38,12 +43,12 @@ bool has_prefix(const std::string& value, const std::string& prefix) {
 
 bool match_and_bind_source(ProcessorTargetInfo& info, const std::string& actual_tag) {
     if (!info.is_wildcard) {
-        return actual_tag == info.source_tag_filter;
+        return base_tag(actual_tag) == base_tag(info.source_tag_filter);
     }
     if (!info.bound_source_tag.empty()) {
         return info.bound_source_tag == actual_tag;
     }
-    if (has_prefix(actual_tag, info.wildcard_prefix)) {
+    if (has_prefix(base_tag(actual_tag), info.wildcard_prefix)) {
         info.bound_source_tag = actual_tag;
         LOG_CPP_INFO("[TimeshiftManager] Bound wildcard '%s*' -> '%s'",
                      info.wildcard_prefix.c_str(), actual_tag.c_str());
@@ -629,6 +634,7 @@ void TimeshiftManager::register_processor(
     info.is_wildcard = !source_tag.empty() && source_tag.back() == '*';
     if (info.is_wildcard) {
         info.wildcard_prefix = source_tag.substr(0, source_tag.size() - 1);
+        info.wildcard_prefix = base_tag(info.wildcard_prefix);
         LOG_CPP_INFO("[TimeshiftManager] Processor %s registered with wildcard prefix '%s'",
                      instance_id.c_str(), info.wildcard_prefix.c_str());
     } else {

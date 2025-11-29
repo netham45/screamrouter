@@ -74,6 +74,30 @@ const std::string& SourceInputProcessor::get_source_tag() const {
     return config_.source_tag;
 }
 
+bool SourceInputProcessor::matches_source_tag(const std::string& actual_tag) const {
+    if (config_.source_tag.empty()) {
+        return false;
+    }
+    auto base = [](const std::string& tag) {
+        const auto hash_pos = tag.find('#');
+        return hash_pos == std::string::npos ? tag : tag.substr(0, hash_pos);
+    };
+
+    const bool config_is_wildcard = !config_.source_tag.empty() && config_.source_tag.back() == '*';
+    const std::string config_base = base(config_is_wildcard ? config_.source_tag.substr(0, config_.source_tag.size() - 1)
+                                                            : config_.source_tag);
+    const std::string actual_base = base(actual_tag);
+
+    if (!config_is_wildcard) {
+        // Exact tag match or match when ignoring a '#...' suffix on the actual tag.
+        return actual_tag == config_.source_tag || actual_base == config_base;
+    }
+
+    // Wildcard: prefix match on the base (ignoring '#...' suffix).
+    return actual_base.size() >= config_base.size() &&
+           actual_base.compare(0, config_base.size(), config_base) == 0;
+}
+
 SourceInputProcessorStats SourceInputProcessor::get_stats() {
     SourceInputProcessorStats stats;
     stats.total_packets_processed = m_total_packets_processed.load();

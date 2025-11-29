@@ -1037,11 +1037,25 @@ std::optional<std::string> AudioEngineConfigApplier::resolve_source_tag(const st
     }
 
     const std::string prefix = requested_tag.substr(0, requested_tag.size() - 1);
+    auto normalize = [](const std::string& value) {
+        const auto hash_pos = value.find('#');
+        return hash_pos == std::string::npos ? value : value.substr(0, hash_pos);
+    };
     auto resolved = audio_manager_.resolve_stream_tag(requested_tag);
-    if (resolved && resolved->rfind(prefix, 0) == 0) {
+    if (resolved && normalize(*resolved).rfind(prefix, 0) == 0) {
         LOG_CPP_INFO("[ConfigApplier] resolve_source_tag('%s') => '%s'", requested_tag.c_str(), resolved->c_str());
         return resolved;
     }
+
+    // Fallback: search seen tags for the wildcard prefix, ignoring '#suffix'.
+    auto candidates = audio_manager_.list_stream_tags_for_wildcard(requested_tag);
+    for (const auto& candidate : candidates) {
+        if (normalize(candidate).rfind(prefix, 0) == 0) {
+            LOG_CPP_INFO("[ConfigApplier] resolve_source_tag('%s') => '%s' (fallback list)", requested_tag.c_str(), candidate.c_str());
+            return candidate;
+        }
+    }
+
     LOG_CPP_DEBUG("[ConfigApplier] resolve_source_tag('%s') => <none>", requested_tag.c_str());
     return std::nullopt;
 }
