@@ -53,6 +53,10 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
         current_stage = "constructing TimeshiftManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s (buffer=%ds)", current_stage.c_str(), global_timeshift_buffer_duration_sec);
         m_timeshift_manager = std::make_unique<TimeshiftManager>(std::chrono::seconds(global_timeshift_buffer_duration_sec), m_settings);
+        m_timeshift_manager->set_wildcard_match_callback(
+            [this](const WildcardMatchEvent& evt) {
+                this->handle_wildcard_match(evt);
+            });
 
         current_stage = "creating NotificationQueue";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
@@ -155,7 +159,7 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
 
         current_stage = "creating ControlApiManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
-        m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_timeshift_manager.get(), m_source_manager->get_sources());
+        m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_timeshift_manager.get(), m_source_manager->get_sources(), m_source_manager.get());
 
         current_stage = "creating MP3DataApiManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
@@ -671,6 +675,35 @@ void AudioManager::handle_stream_tag_removed(const std::string& wildcard_tag) {
         listener(wildcard_tag);
     } else {
         LOG_CPP_DEBUG("[AudioManager] No stream tag listener registered for removal events.");
+    }
+}
+
+void AudioManager::handle_wildcard_match(const WildcardMatchEvent& event) {
+    if (!m_source_manager || !m_connection_manager) {
+        return;
+    }
+    if (event.processor_instance_id.empty() || event.concrete_tag.empty()) {
+        return;
+    }
+    if (event.is_primary_binding) {
+        return;
+    }
+
+    if (m_source_manager->has_child_for_tag(event.processor_instance_id, event.concrete_tag)) {
+        return;
+    }
+
+    const std::string child_instance_id =
+        m_source_manager->spawn_child_source(event.processor_instance_id, event.concrete_tag, m_running);
+    if (child_instance_id.empty()) {
+        return;
+    }
+
+    auto sink_ids = m_connection_manager->list_sinks_for_source(event.processor_instance_id);
+    for (const auto& sink_id : sink_ids) {
+        if (!sink_id.empty()) {
+            m_connection_manager->connect_source_sink(child_instance_id, sink_id, m_running);
+        }
     }
 }
 

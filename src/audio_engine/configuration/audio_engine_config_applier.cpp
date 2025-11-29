@@ -517,12 +517,6 @@ void AudioEngineConfigApplier::reconcile_source_paths(
             const std::string desired_filter = get_filter_for_path_id(desired_path.path_id, desired_path.source_tag);
             const bool filter_changed = current_state.filter_tag != desired_filter;
             AppliedSourcePathParams effective_desired = desired_path;
-            const bool desired_is_wildcard = !effective_desired.source_tag.empty() && effective_desired.source_tag.back() == '*';
-            if (desired_is_wildcard) {
-                if (auto resolved = resolve_source_tag(desired_filter)) {
-                    effective_desired.source_tag = *resolved;
-                }
-            }
             const bool params_changed = !compare_applied_source_path_params(current_state.params, effective_desired);
             if (filter_changed || params_changed) {
                 // Parameters differ, so mark for update.
@@ -586,17 +580,24 @@ AudioEngineConfigApplier::SourcePathAddResult AudioEngineConfigApplier::process_
     LOG_CPP_INFO("[ConfigApplier] +Path resolving filter='%s' path_id='%s'",
                  filter_tag.c_str(), path_param_to_add.path_id.c_str());
     bool has_concrete_tag = !path_param_to_add.source_tag.empty() && path_param_to_add.source_tag.back() != '*';
+    const bool filter_is_wildcard = !filter_tag.empty() && filter_tag.back() == '*';
     if (!has_concrete_tag) {
-        auto resolved_tag = resolve_source_tag(filter_tag);
-        if (!resolved_tag) {
-            LOG_CPP_INFO("[ConfigApplier] +Path id='%s': no concrete stream for filter '%s'; deferring",
+        if (filter_is_wildcard) {
+            LOG_CPP_INFO("[ConfigApplier] +Path id='%s': wildcard filter '%s' will bind dynamically",
                          path_param_to_add.path_id.c_str(), filter_tag.c_str());
-            return SourcePathAddResult::PendingStream;
-        }
+            path_param_to_add.source_tag = filter_tag;
+        } else {
+            auto resolved_tag = resolve_source_tag(filter_tag);
+            if (!resolved_tag) {
+                LOG_CPP_INFO("[ConfigApplier] +Path id='%s': no concrete stream for filter '%s'; deferring",
+                             path_param_to_add.path_id.c_str(), filter_tag.c_str());
+                return SourcePathAddResult::PendingStream;
+            }
 
-        LOG_CPP_INFO("[ConfigApplier] +Path id='%s': filter '%s' resolved to '%s'",
-                     path_param_to_add.path_id.c_str(), filter_tag.c_str(), resolved_tag->c_str());
-        path_param_to_add.source_tag = *resolved_tag;
+            LOG_CPP_INFO("[ConfigApplier] +Path id='%s': filter '%s' resolved to '%s'",
+                         path_param_to_add.path_id.c_str(), filter_tag.c_str(), resolved_tag->c_str());
+            path_param_to_add.source_tag = *resolved_tag;
+        }
     } else {
         LOG_CPP_INFO("[ConfigApplier] +Path id='%s': using concrete stream '%s' from filter '%s'",
                      path_param_to_add.path_id.c_str(), path_param_to_add.source_tag.c_str(), filter_tag.c_str());
@@ -778,16 +779,8 @@ void AudioEngineConfigApplier::process_source_path_updates(const std::vector<App
         AppliedSourcePathParams desired_params = desired_path_param;
         const bool desired_is_wildcard = !desired_params.source_tag.empty() && desired_params.source_tag.back() == '*';
         if (desired_is_wildcard) {
-            auto resolved_tag = resolve_source_tag(filter_tag);
-            if (!resolved_tag) {
-                LOG_CPP_WARNING("    Path %s: filter '%s' unresolved; remaining wildcard-bound.",
-                                path_id.c_str(), filter_tag.c_str());
-                desired_params.source_tag = filter_tag;
-            } else {
-                LOG_CPP_INFO("    Path %s: filter '%s' resolved to '%s'",
-                             path_id.c_str(), filter_tag.c_str(), resolved_tag->c_str());
-                desired_params.source_tag = *resolved_tag;
-            }
+            desired_params.source_tag = filter_tag;
+            LOG_CPP_INFO("    Path %s remains wildcard-bound to filter '%s'", path_id.c_str(), filter_tag.c_str());
         }
 
         // Check for fundamental changes requiring re-creation of the source processor.
@@ -1071,6 +1064,7 @@ DesiredEngineState AudioEngineConfigApplier::build_effective_state(const Desired
     for (const auto& path : base_state.source_paths) {
         effective_state.source_paths.push_back(path);
         clone_filter_lookup_[path.path_id] = path.source_tag;
+
         if (path.source_tag.empty() || path.source_tag.back() != '*') {
             continue;
         }

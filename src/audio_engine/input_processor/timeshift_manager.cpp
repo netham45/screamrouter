@@ -26,11 +26,6 @@ constexpr double kProcessingBudgetAlpha = 0.2;
 constexpr double kPlaybackDriftGain = 1.0 / 1'000'000.0; // Convert ppm to ratio
 constexpr double kFallbackSmoothing = 0.1;
 
-std::string base_tag(const std::string& tag) {
-    const auto hash_pos = tag.find('#');
-    return hash_pos == std::string::npos ? tag : tag.substr(0, hash_pos);
-}
-
 bool has_prefix(const std::string& value, const std::string& prefix) {
     if (prefix.empty()) {
         return true;
@@ -41,18 +36,48 @@ bool has_prefix(const std::string& value, const std::string& prefix) {
     return value.compare(0, prefix.size(), prefix) == 0;
 }
 
-bool match_and_bind_source(ProcessorTargetInfo& info, const std::string& actual_tag) {
+bool match_and_bind_source(ProcessorTargetInfo& info,
+                           const std::string& actual_tag,
+                           std::vector<WildcardMatchEvent>* wildcard_matches) {
     if (!info.is_wildcard) {
-        return base_tag(actual_tag) == base_tag(info.source_tag_filter);
+        return actual_tag == info.source_tag_filter;
     }
     if (!info.bound_source_tag.empty()) {
-        return info.bound_source_tag == actual_tag;
+        if (info.bound_source_tag == actual_tag) {
+            return true;
+        }
+        if (has_prefix(actual_tag, info.wildcard_prefix)) {
+            if (info.matched_concrete_tags.insert(actual_tag).second && wildcard_matches) {
+                wildcard_matches->push_back(
+                    {info.instance_id, info.source_tag_filter, actual_tag, false});
+            }
+        }
+        else if (info.last_logged_mismatch_tag != actual_tag) {
+            info.last_logged_mismatch_tag = actual_tag;
+            LOG_CPP_DEBUG("[TimeshiftManager] Wildcard '%s' (prefix '%s') skipping tag '%s'",
+                          info.source_tag_filter.c_str(),
+                          info.wildcard_prefix.c_str(),
+                          actual_tag.c_str());
+        }
+        return false;
     }
-    if (has_prefix(base_tag(actual_tag), info.wildcard_prefix)) {
+    if (has_prefix(actual_tag, info.wildcard_prefix)) {
         info.bound_source_tag = actual_tag;
+        info.matched_concrete_tags.insert(actual_tag);
+        if (wildcard_matches) {
+            wildcard_matches->push_back(
+                {info.instance_id, info.source_tag_filter, actual_tag, true});
+        }
         LOG_CPP_INFO("[TimeshiftManager] Bound wildcard '%s*' -> '%s'",
                      info.wildcard_prefix.c_str(), actual_tag.c_str());
         return true;
+    }
+    if (info.last_logged_mismatch_tag != actual_tag) {
+        info.last_logged_mismatch_tag = actual_tag;
+        LOG_CPP_DEBUG("[TimeshiftManager] Wildcard '%s' (prefix '%s') ignoring non-matching tag '%s'",
+                      info.source_tag_filter.c_str(),
+                      info.wildcard_prefix.c_str(),
+                      actual_tag.c_str());
     }
     return false;
 }
@@ -632,13 +657,14 @@ void TimeshiftManager::register_processor(
     info.current_timeshift_backshift_sec = initial_timeshift_sec;
     info.source_tag_filter = source_tag;
     info.is_wildcard = !source_tag.empty() && source_tag.back() == '*';
+    info.instance_id = instance_id;
     if (info.is_wildcard) {
         info.wildcard_prefix = source_tag.substr(0, source_tag.size() - 1);
-        info.wildcard_prefix = base_tag(info.wildcard_prefix);
         LOG_CPP_INFO("[TimeshiftManager] Processor %s registered with wildcard prefix '%s'",
                      instance_id.c_str(), info.wildcard_prefix.c_str());
     } else {
         info.bound_source_tag = source_tag;
+        info.matched_concrete_tags.insert(source_tag);
     }
 
     {
@@ -790,6 +816,11 @@ void TimeshiftManager::detach_sink_ring(const std::string& instance_id,
     run_loop_cv_.notify_one();
 }
 
+void TimeshiftManager::set_wildcard_match_callback(std::function<void(const WildcardMatchEvent&)> cb) {
+    std::lock_guard<std::mutex> lock(wildcard_callback_mutex_);
+    wildcard_match_callback_ = std::move(cb);
+}
+
 void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
     LOG_CPP_INFO("[TimeshiftManager] Resetting stream state for tag %s", source_tag.c_str());
 
@@ -837,12 +868,14 @@ void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
 void TimeshiftManager::run() {
     LOG_CPP_INFO("[TimeshiftManager] Run loop started.");
     uint64_t last_processed_version = m_state_version_.load();
+    std::vector<WildcardMatchEvent> wildcard_matches;
 
     while (!stop_flag_) {
+        wildcard_matches.clear();
         std::unique_lock<std::mutex> lock(data_mutex_);
 
         // Process any packets that are already due.
-        processing_loop_iteration_unlocked();
+        processing_loop_iteration_unlocked(wildcard_matches);
 
         // Perform cleanup if needed.
         auto now = std::chrono::steady_clock::now();
@@ -853,7 +886,22 @@ void TimeshiftManager::run() {
 
         // Calculate the next time we need to wake up.
         auto next_wakeup_time = calculate_next_wakeup_time();
-        
+
+        lock.unlock();
+        std::function<void(const WildcardMatchEvent&)> callback;
+        {
+            std::lock_guard<std::mutex> cb_lock(wildcard_callback_mutex_);
+            callback = wildcard_match_callback_;
+        }
+        if (!wildcard_matches.empty() && callback) {
+            for (const auto& evt : wildcard_matches) {
+                if (!evt.processor_instance_id.empty() && !evt.concrete_tag.empty()) {
+                    callback(evt);
+                }
+            }
+        }
+
+        lock.lock();
         // Wait until the next event or until notified.
         run_loop_cv_.wait_until(lock, next_wakeup_time, [this, &last_processed_version] {
             return stop_flag_.load() || (m_state_version_.load() != last_processed_version);
@@ -868,7 +916,7 @@ void TimeshiftManager::run() {
 /**
  * @brief A single iteration of the processing loop to dispatch ready packets. Assumes data_mutex_ is held.
  */
-void TimeshiftManager::processing_loop_iteration_unlocked() {
+void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMatchEvent>& wildcard_matches) {
     if (global_timeshift_buffer_.empty()) {
         return;
     }
@@ -884,7 +932,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
             while (target_info.next_packet_read_index < global_timeshift_buffer_.size()) {
                 const auto& candidate_packet = global_timeshift_buffer_[target_info.next_packet_read_index];
 
-                if (!match_and_bind_source(target_info, candidate_packet.source_tag)) {
+                if (!match_and_bind_source(target_info, candidate_packet.source_tag, &wildcard_matches)) {
                     if (target_info.is_wildcard && (target_info.next_packet_read_index % 256 == 0)) {
                         LOG_CPP_DEBUG("[TimeshiftManager] Instance %s skipping packet tag '%s' (filter '%s')",
                                       instance_id.c_str(), candidate_packet.source_tag.c_str(), target_info.source_tag_filter.c_str());

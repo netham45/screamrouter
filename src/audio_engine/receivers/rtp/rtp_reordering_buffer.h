@@ -36,7 +36,7 @@ public:
      * @param max_size The maximum number of packets to store to prevent buffer bloat.
      */
     explicit RtpReorderingBuffer(
-        std::chrono::milliseconds max_delay = std::chrono::milliseconds(50),
+        std::chrono::milliseconds max_delay = std::chrono::milliseconds(6),
         size_t max_size = 128
     );
 

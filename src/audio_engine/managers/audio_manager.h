@@ -321,6 +321,7 @@ public:
     void handle_stream_tag_resolved(const std::string& wildcard_tag,
                                     const std::string& concrete_tag);
     void handle_stream_tag_removed(const std::string& wildcard_tag);
+    void handle_wildcard_match(const WildcardMatchEvent& event);
 
     void set_stream_tag_listener(std::function<void(const std::string&, const std::string&)> on_resolved,
                                  std::function<void(const std::string&)> on_removed);

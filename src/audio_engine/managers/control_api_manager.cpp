@@ -2,6 +2,7 @@
 #include "../utils/cpp_logger.h"
 #include "../utils/lock_guard_profiler.h"
 #include "../input_processor/timeshift_manager.h"
+#include "source_manager.h"
 
 namespace screamrouter {
 namespace audio {
@@ -9,10 +10,12 @@ namespace audio {
 ControlApiManager::ControlApiManager(
     std::recursive_mutex& manager_mutex,
     TimeshiftManager* timeshift_manager,
-    std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources)
+    std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources,
+    SourceManager* source_manager)
     : m_manager_mutex(manager_mutex),
       m_timeshift_manager(timeshift_manager),
-      m_sources(sources) {
+      m_sources(sources),
+      m_source_manager(source_manager) {
     LOG_CPP_INFO("ControlApiManager created.");
 }
 
@@ -24,26 +27,52 @@ void ControlApiManager::update_source_parameters(const std::string& instance_id,
     std::scoped_lock lock(m_manager_mutex);
     if (!running) return;
 
+    std::vector<std::string> child_ids;
+    if (m_source_manager) {
+        child_ids = m_source_manager->get_child_instances(instance_id);
+    }
+
     if (params.volume.has_value()) {
         update_source_volume_nolock(instance_id, params.volume.value());
+        for (const auto& child_id : child_ids) {
+            update_source_volume_nolock(child_id, params.volume.value());
+        }
     }
     if (params.eq_values.has_value()) {
         update_source_equalizer_nolock(instance_id, params.eq_values.value());
+        for (const auto& child_id : child_ids) {
+            update_source_equalizer_nolock(child_id, params.eq_values.value());
+        }
     }
     if (params.eq_normalization.has_value()) {
         update_source_eq_normalization_nolock(instance_id, params.eq_normalization.value());
+        for (const auto& child_id : child_ids) {
+            update_source_eq_normalization_nolock(child_id, params.eq_normalization.value());
+        }
     }
     if (params.volume_normalization.has_value()) {
         update_source_volume_normalization_nolock(instance_id, params.volume_normalization.value());
+        for (const auto& child_id : child_ids) {
+            update_source_volume_normalization_nolock(child_id, params.volume_normalization.value());
+        }
     }
     if (params.delay_ms.has_value()) {
         update_source_delay_nolock(instance_id, params.delay_ms.value());
+        for (const auto& child_id : child_ids) {
+            update_source_delay_nolock(child_id, params.delay_ms.value());
+        }
     }
     if (params.timeshift_sec.has_value()) {
         update_source_timeshift_nolock(instance_id, params.timeshift_sec.value());
+        for (const auto& child_id : child_ids) {
+            update_source_timeshift_nolock(child_id, params.timeshift_sec.value());
+        }
     }
     if (params.speaker_layouts_map.has_value()) {
         update_source_speaker_layouts_map_nolock(instance_id, params.speaker_layouts_map.value());
+        for (const auto& child_id : child_ids) {
+            update_source_speaker_layouts_map_nolock(child_id, params.speaker_layouts_map.value());
+        }
     }
 }
 

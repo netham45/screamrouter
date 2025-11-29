@@ -27,6 +27,8 @@
 #include <limits>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
+#include <functional>
 
 namespace screamrouter {
 namespace audio {
@@ -71,6 +73,12 @@ struct ProcessorTargetInfo {
     /** @brief Per-sink ready rings for dispatch. */
     std::map<std::string, std::weak_ptr<PacketRing>> sink_rings;
     uint64_t dropped_packets = 0;
+    /** @brief Owning processor instance identifier. */
+    std::string instance_id;
+    /** @brief Tracks concrete tags already observed for this wildcard. */
+    std::unordered_set<std::string> matched_concrete_tags;
+    /** @brief Last actual tag logged for mismatch diagnostics. */
+    std::string last_logged_mismatch_tag;
 };
 
 /**
@@ -215,6 +223,13 @@ struct TimeshiftManagerStats {
     std::map<std::string, ProcessorStats> processor_stats;
 };
 
+struct WildcardMatchEvent {
+    std::string processor_instance_id;
+    std::string filter_tag;
+    std::string concrete_tag;
+    bool is_primary_binding = false;
+};
+
 /**
  * @class TimeshiftManager
  * @brief Manages a global timeshift buffer for multiple audio streams and processors.
@@ -291,6 +306,11 @@ public:
      * @brief Detaches a sink-ready ring.
      */
     void detach_sink_ring(const std::string& instance_id, const std::string& source_tag, const std::string& sink_id);
+
+    /**
+     * @brief Registers a listener for wildcard source matches.
+     */
+    void set_wildcard_match_callback(std::function<void(const WildcardMatchEvent&)> cb);
     /**
      * @brief Retrieves the current statistics from the manager.
      * @return A struct containing the current stats.
@@ -349,9 +369,11 @@ private:
     std::map<std::string, uint64_t> processor_dispatched_totals_;
     std::map<std::string, uint64_t> processor_dropped_totals_;
     std::map<std::string, size_t> processor_queue_high_water_;
+    std::function<void(const WildcardMatchEvent&)> wildcard_match_callback_;
+    mutable std::mutex wildcard_callback_mutex_;
 
     /** @brief A single iteration of the processing loop. Collects ready packets while data_mutex_ is held. */
-    void processing_loop_iteration_unlocked();
+    void processing_loop_iteration_unlocked(std::vector<WildcardMatchEvent>& wildcard_matches);
     /** @brief Periodically cleans up old packets from the global buffer. Assumes data_mutex_ is held. */
     void cleanup_global_buffer_unlocked();
 

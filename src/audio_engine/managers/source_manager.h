@@ -16,6 +16,8 @@
 #include <memory>
 #include <map>
 #include <mutex>
+#include <unordered_map>
+#include <optional>
 
 namespace screamrouter {
 namespace audio {
@@ -83,6 +85,14 @@ public:
      */
     void stop_all();
 
+    std::string spawn_child_source(const std::string& parent_instance_id,
+                                   const std::string& concrete_tag,
+                                   bool running);
+    bool has_child_for_tag(const std::string& parent_instance_id,
+                           const std::string& concrete_tag) const;
+    std::vector<std::string> get_child_instances(const std::string& parent_instance_id) const;
+    std::optional<std::string> get_parent_instance(const std::string& child_instance_id) const;
+
 private:
     /**
      * @brief Generates a unique identifier for a new source processor instance.
@@ -97,6 +107,8 @@ private:
 
     std::map<std::string, std::unique_ptr<SourceInputProcessor>> m_sources;
     std::map<std::string, std::string> m_instance_to_capture_tag;  // Maps instance_id -> system audio capture device tag
+    std::unordered_map<std::string, std::map<std::string, std::string>> wildcard_children_;
+    std::unordered_map<std::string, std::string> child_to_parent_;
     
     // Callbacks for system audio capture device management
     std::function<bool(const std::string&)> m_ensure_capture_callback;

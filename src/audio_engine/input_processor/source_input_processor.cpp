@@ -78,24 +78,13 @@ bool SourceInputProcessor::matches_source_tag(const std::string& actual_tag) con
     if (config_.source_tag.empty()) {
         return false;
     }
-    auto base = [](const std::string& tag) {
-        const auto hash_pos = tag.find('#');
-        return hash_pos == std::string::npos ? tag : tag.substr(0, hash_pos);
-    };
-
     const bool config_is_wildcard = !config_.source_tag.empty() && config_.source_tag.back() == '*';
-    const std::string config_base = base(config_is_wildcard ? config_.source_tag.substr(0, config_.source_tag.size() - 1)
-                                                            : config_.source_tag);
-    const std::string actual_base = base(actual_tag);
-
     if (!config_is_wildcard) {
-        // Exact tag match or match when ignoring a '#...' suffix on the actual tag.
-        return actual_tag == config_.source_tag || actual_base == config_base;
+        return actual_tag == config_.source_tag;
     }
-
-    // Wildcard: prefix match on the base (ignoring '#...' suffix).
-    return actual_base.size() >= config_base.size() &&
-           actual_base.compare(0, config_base.size(), config_base) == 0;
+    const std::string config_prefix = config_.source_tag.substr(0, config_.source_tag.size() - 1);
+    return actual_tag.size() >= config_prefix.size() &&
+        actual_tag.compare(0, config_prefix.size(), config_prefix) == 0;
 }
 
 SourceInputProcessorStats SourceInputProcessor::get_stats() {
@@ -213,6 +202,7 @@ void SourceInputProcessor::set_timeshift(float timeshift_sec) {
 
 void SourceInputProcessor::set_eq_normalization(bool enabled) {
     std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    eq_normalization_enabled_ = enabled;
     if (audio_processor_) {
         audio_processor_->setEqNormalization(enabled);
     }
@@ -220,6 +210,7 @@ void SourceInputProcessor::set_eq_normalization(bool enabled) {
 
 void SourceInputProcessor::set_volume_normalization(bool enabled) {
     std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    volume_normalization_enabled_ = enabled;
     if (audio_processor_) {
         audio_processor_->setVolumeNormalization(enabled);
     }
@@ -231,6 +222,41 @@ void SourceInputProcessor::set_speaker_mix(int input_channel_key, const CppSpeak
     if (audio_processor_) {
         audio_processor_->update_speaker_layouts_config(current_speaker_layouts_map_);
     }
+}
+
+float SourceInputProcessor::get_current_volume() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return current_volume_;
+}
+
+std::vector<float> SourceInputProcessor::get_current_eq() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return current_eq_;
+}
+
+int SourceInputProcessor::get_current_delay_ms() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return current_delay_ms_;
+}
+
+float SourceInputProcessor::get_current_timeshift_sec() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return current_timeshift_backshift_sec_config_;
+}
+
+bool SourceInputProcessor::is_eq_normalization_enabled() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return eq_normalization_enabled_;
+}
+
+bool SourceInputProcessor::is_volume_normalization_enabled() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return volume_normalization_enabled_;
+}
+
+std::map<int, screamrouter::audio::CppSpeakerLayout> SourceInputProcessor::get_current_speaker_layouts() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return current_speaker_layouts_map_;
 }
 
 void SourceInputProcessor::apply_control_command(const ControlCommand& cmd) {

@@ -91,5 +91,22 @@ bool ConnectionManager::disconnect_source_sink(const std::string& source_instanc
     return true;
 }
 
+std::vector<std::string> ConnectionManager::list_sinks_for_source(const std::string& source_instance_id) const {
+    std::vector<std::string> sinks;
+    std::scoped_lock lock(m_manager_mutex);
+    for (const auto& [key, _] : m_ready_rings) {
+        auto delimiter = key.find('|');
+        if (delimiter == std::string::npos) {
+            continue;
+        }
+        const std::string sink_id = key.substr(0, delimiter);
+        const std::string source_id = key.substr(delimiter + 1);
+        if (source_id == source_instance_id) {
+            sinks.push_back(sink_id);
+        }
+    }
+    return sinks;
+}
+
 } // namespace audio
 } // namespace screamrouter
