@@ -22,6 +22,10 @@ void StreamClock::reset() {
     m_is_initialized = false;
     m_offset = 0.0;
     m_drift = 0.0;
+    m_has_reference = false;
+    m_last_rtp_timestamp = 0;
+    m_unwrapped_rtp = 0;
+    m_reference_arrival_time = {};
     m_p[0][0] = INITIAL_UNCERTAINTY;
     m_p[0][1] = 0.0;
     m_p[1][0] = 0.0;
@@ -32,18 +36,27 @@ void StreamClock::reset() {
 }
 
 void StreamClock::update(uint32_t rtp_timestamp, std::chrono::steady_clock::time_point arrival_time) {
-    double rtp_time_sec = static_cast<double>(rtp_timestamp) / m_sample_rate;
-    double arrival_time_sec = std::chrono::duration<double>(arrival_time.time_since_epoch()).count();
-
-    if (!m_is_initialized) {
-        m_offset = arrival_time_sec - rtp_time_sec;
+    if (!m_has_reference) {
+        m_reference_arrival_time = arrival_time;
+        m_last_rtp_timestamp = rtp_timestamp;
+        m_unwrapped_rtp = 0;
+        m_offset = 0.0;
         m_drift = 0.0;
         m_last_update_time = arrival_time;
         m_is_initialized = true;
-        m_last_measured_offset = m_offset;
+        m_has_reference = true;
+        m_last_measured_offset = 0.0;
         m_last_innovation = 0.0;
         return;
     }
+
+    const uint32_t rtp_delta = static_cast<uint32_t>(rtp_timestamp - m_last_rtp_timestamp);
+    m_unwrapped_rtp += static_cast<uint64_t>(rtp_delta);
+    m_last_rtp_timestamp = rtp_timestamp;
+
+    const double rtp_time_sec = static_cast<double>(m_unwrapped_rtp) / m_sample_rate;
+    const double arrival_time_sec =
+        std::chrono::duration<double>(arrival_time - m_reference_arrival_time).count();
 
     double delta_t = std::chrono::duration<double>(arrival_time - m_last_update_time).count();
     m_last_update_time = arrival_time;
@@ -96,9 +109,14 @@ std::chrono::steady_clock::time_point StreamClock::get_expected_arrival_time(uin
     if (!m_is_initialized) {
         return std::chrono::steady_clock::time_point::min();
     }
-    double rtp_time_sec = static_cast<double>(rtp_timestamp) / m_sample_rate;
-    double expected_arrival_sec = rtp_time_sec + m_offset;
-    return std::chrono::steady_clock::time_point(std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(expected_arrival_sec)));
+    uint64_t target_unwrapped = m_unwrapped_rtp;
+    const uint32_t delta = static_cast<uint32_t>(rtp_timestamp - m_last_rtp_timestamp);
+    target_unwrapped += static_cast<uint64_t>(delta);
+
+    const double rtp_time_sec = static_cast<double>(target_unwrapped) / m_sample_rate;
+    const double expected_arrival_sec = rtp_time_sec + m_offset;
+    const auto expected_since_ref = std::chrono::duration<double>(expected_arrival_sec);
+    return m_reference_arrival_time + std::chrono::duration_cast<std::chrono::steady_clock::duration>(expected_since_ref);
 }
 
 bool StreamClock::is_initialized() const {

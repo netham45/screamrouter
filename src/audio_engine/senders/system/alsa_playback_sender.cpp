@@ -349,10 +349,13 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
     }
     const auto now = std::chrono::steady_clock::now();
     constexpr auto kUpdateInterval = std::chrono::milliseconds(10);
-    if (last_rate_update_.time_since_epoch().count() != 0 &&
-        now - last_rate_update_ < kUpdateInterval) {
+    const bool has_prev_update = last_rate_update_.time_since_epoch().count() != 0;
+    if (has_prev_update && now - last_rate_update_ < kUpdateInterval) {
         return;
     }
+    double dt_sec = has_prev_update
+                        ? std::chrono::duration<double>(now - last_rate_update_).count()
+                        : (kUpdateInterval.count() / 1000.0);
     last_rate_update_ = now;
 
     // Low-pass the delay to avoid reacting to single jitter spikes.
@@ -368,12 +371,27 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
     const double target_total_frames = target_delay_frames_ + upstream_target_frames_;
 
     // Positive error => pipeline above target, speed up playback to shrink it.
-    const double error = total_delay_frames - target_total_frames;
+    double error = total_delay_frames - target_total_frames;
+    // Clamp extreme error to avoid integrator/windup from transient spikes.
+    const double max_error_frames = target_total_frames * 2.0;
+    error = std::clamp(error, -max_error_frames, max_error_frames);
     // More aggressive gains: ~3 ppm per frame, integral a bit faster.
     constexpr double kKp = 3e-6;
     constexpr double kKi = 5e-8;
     constexpr double kIntegralClamp = 300000.0; // ~±300 ppm contribution
-    playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
+
+    // Scale integration by elapsed time and stop integrating when already pinned at the clamp in the same direction.
+    dt_sec = std::clamp(dt_sec, 0.001, 0.1); // guard against scheduler stalls
+
+    const bool at_upper_clamp = playback_rate_integral_ >= kIntegralClamp && error > 0.0;
+    const bool at_lower_clamp = playback_rate_integral_ <= -kIntegralClamp && error < 0.0;
+    if (!at_upper_clamp && !at_lower_clamp) {
+        // Dampen integral when the sign of error flips to bleed off windup.
+        if ((playback_rate_integral_ > 0 && error < 0) || (playback_rate_integral_ < 0 && error > 0)) {
+            playback_rate_integral_ *= 0.5;
+        }
+        playback_rate_integral_ = std::clamp(playback_rate_integral_ + error * dt_sec, -kIntegralClamp, kIntegralClamp);
+    }
 
     // Downstream resampler speeds up when rate < 1.0, so apply the PI term with inverted polarity.
     double adjust = -((kKp * error) + (kKi * playback_rate_integral_));

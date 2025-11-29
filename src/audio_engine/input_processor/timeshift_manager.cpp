@@ -921,15 +921,38 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 ts.last_target_update_time = now;
 
                 auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(desired_latency_ms);
-                auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
+                double time_until_playout_ms =
+                    std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
+                // Clamp to a reasonable window to avoid runaway buffer math when the scheduler runs late.
+                constexpr double kMaxSchedSlipMs = 200.0; // .2s slip guard
+                time_until_playout_ms = std::clamp(time_until_playout_ms, -kMaxSchedSlipMs, kMaxSchedSlipMs);
 
-                double buffer_level_ms = std::max(time_until_playout_ms, 0.0);
+                // Model buffer as: (lead until head starts) + duration of head chunk + queued chunks + downstream backlog.
+                double buffer_level_ms = std::max(desired_latency_ms + time_until_playout_ms, 0.0);
 
-                // Fold in downstream backlog (ready ring depth) so the controller sees what the sink still has queued.
                 double block_duration_ms = 0.0;
                 if (ts.sample_rate > 0 && ts.samples_per_chunk > 0) {
                     block_duration_ms = (static_cast<double>(ts.samples_per_chunk) * 1000.0) /
                                         static_cast<double>(ts.sample_rate);
+                }
+
+                // Also account for the queued packets for this stream that follow the current head.
+                if (block_duration_ms > 0.0) {
+                    std::size_t queued_blocks = 0;
+                    constexpr std::size_t kBacklogScanLimit = 512;
+                    for (std::size_t scan = target_info.next_packet_read_index + 1;
+                         scan < global_timeshift_buffer_.size() && queued_blocks < kBacklogScanLimit;
+                         ++scan) {
+                        const auto& queued_packet = global_timeshift_buffer_[scan];
+                        if (!queued_packet.rtp_timestamp.has_value() ||
+                            queued_packet.source_tag != candidate_packet.source_tag) {
+                            continue;
+                        }
+                        ++queued_blocks;
+                    }
+                    if (queued_blocks > 0) {
+                        buffer_level_ms += block_duration_ms * static_cast<double>(queued_blocks);
+                    }
                 }
                 if (block_duration_ms > 0.0 && !target_info.sink_rings.empty()) {
                     std::size_t downstream_blocks = 0;
@@ -1002,7 +1025,8 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                             std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
                     }
 
-                    const double buffer_error_ms = buffer_level_ms - desired_latency_ms;
+                    // Buffer under target -> positive error -> speed up (playback_rate < 1); buffer over target -> negative -> slow down.
+                    const double buffer_error_ms = desired_latency_ms - buffer_level_ms;
                     ts.last_controller_update_time = now;
 
                     const double proportional_ppm = tuning.playback_ratio_kp * buffer_error_ms;
@@ -1032,7 +1056,9 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     double combined_ppm = ts.last_clock_drift_ppm + controller_ppm;
                     combined_ppm = std::clamp(combined_ppm, -max_deviation_ppm, max_deviation_ppm);
 
-                    double target_rate = 1.0 + combined_ppm * kPlaybackDriftGain;
+                    // playback_rate < 1.0 means "play faster" because the resampler expands when rate > 1.
+                    const double denom = 1.0 + combined_ppm * kPlaybackDriftGain;
+                    double target_rate = (denom > 1e-9) ? (1.0 / denom) : 1.0;
                     if (!std::isfinite(target_rate)) {
                         target_rate = 1.0;
                     }
