@@ -2755,7 +2755,21 @@ class ConfigurationManager(threading.Thread):
 
     def get_hostname_by_ip(self, ip: IPAddressType) -> str:
         """Gets a hostname by IP"""
-        ip_str = str(ip)
+        if not ip:
+            return ""
+
+        ip_str = str(ip).strip()
+        if not ip_str:
+            return ""
+
+        # If the provided value is not an IP address, avoid DNS/mDNS lookups.
+        try:
+            ipaddress.ip_address(ip_str)
+        except ValueError:
+            with self._hostname_cache_lock:
+                self._hostname_cache[ip_str] = ip_str
+            return ip_str
+
         with self._hostname_cache_lock:
             cached = self._hostname_cache.get(ip_str)
         if cached:

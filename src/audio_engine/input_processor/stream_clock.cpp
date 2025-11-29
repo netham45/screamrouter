@@ -109,9 +109,16 @@ std::chrono::steady_clock::time_point StreamClock::get_expected_arrival_time(uin
     if (!m_is_initialized) {
         return std::chrono::steady_clock::time_point::min();
     }
-    uint64_t target_unwrapped = m_unwrapped_rtp;
-    const uint32_t delta = static_cast<uint32_t>(rtp_timestamp - m_last_rtp_timestamp);
-    target_unwrapped += static_cast<uint64_t>(delta);
+    // Use a signed delta so we can reason about older timestamps that are still buffered.
+    // The previous unsigned math would wrap when the candidate timestamp was behind
+    // the most recently observed one, projecting the expected arrival far into the
+    // future and preventing dispatch.
+    int64_t target_unwrapped = static_cast<int64_t>(m_unwrapped_rtp);
+    const int64_t delta = static_cast<int32_t>(rtp_timestamp - m_last_rtp_timestamp);
+    target_unwrapped += delta;
+    if (target_unwrapped < 0) {
+        target_unwrapped = 0;
+    }
 
     const double rtp_time_sec = static_cast<double>(target_unwrapped) / m_sample_rate;
     const double expected_arrival_sec = rtp_time_sec + m_offset;

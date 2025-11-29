@@ -630,25 +630,26 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
 
             allowed_extra = max_buffered_frames - delay_frames;
             if (allowed_extra <= 0) {
-                LOG_CPP_WARNING("[AlsaPlayback:%s] Dropping %zu frames to cap ALSA queue (queued=%ld frames, limit=%ld frames).",
-                                device_tag_.c_str(), frames_remaining, static_cast<long>(delay_frames),
-                                static_cast<long>(max_buffered_frames));
-                return true;
+                LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA queue at limit (queued=%ld frames, limit=%ld frames). Waiting to avoid drop.",
+                              device_tag_.c_str(),
+                              static_cast<long>(delay_frames),
+                              static_cast<long>(max_buffered_frames));
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                continue;
             }
         }
 
-        // If the hardware queue is already far beyond our target plus one buffer, drop the rest of this chunk to avoid overruns.
+        // If the hardware queue is already far beyond our target plus one buffer, wait until it drains instead of dropping.
         if (delay_frames > 0 && buffer_frames_ > 0) {
             const snd_pcm_sframes_t hard_high = static_cast<snd_pcm_sframes_t>(target_delay_frames_ + buffer_frames_);
             if (delay_frames > hard_high) {
-                LOG_CPP_WARNING("[AlsaPlayback:%s] Dropping %zu frames to cap hardware queue (delay=%ld, target=%.1f, buffer=%lu).",
-                                device_tag_.c_str(),
-                                frames_remaining,
-                                static_cast<long>(delay_frames),
-                                target_delay_frames_,
-                                static_cast<unsigned long>(buffer_frames_));
-                frames_remaining = 0;
-                break;
+                LOG_CPP_DEBUG("[AlsaPlayback:%s] ALSA queue high (delay=%ld, target=%.1f, buffer=%lu). Waiting to avoid overrun.",
+                              device_tag_.c_str(),
+                              static_cast<long>(delay_frames),
+                              target_delay_frames_,
+                              static_cast<unsigned long>(buffer_frames_));
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                continue;
             }
         }
 
@@ -657,7 +658,8 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
             frames_desired = std::min(frames_desired, allowed_extra);
         }
         if (frames_desired <= 0) {
-            break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
         }
 
         if (avail < frames_desired) {

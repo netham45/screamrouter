@@ -936,24 +936,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                                         static_cast<double>(ts.sample_rate);
                 }
 
-                // Also account for the queued packets for this stream that follow the current head.
-                if (block_duration_ms > 0.0) {
-                    std::size_t queued_blocks = 0;
-                    constexpr std::size_t kBacklogScanLimit = 512;
-                    for (std::size_t scan = target_info.next_packet_read_index + 1;
-                         scan < global_timeshift_buffer_.size() && queued_blocks < kBacklogScanLimit;
-                         ++scan) {
-                        const auto& queued_packet = global_timeshift_buffer_[scan];
-                        if (!queued_packet.rtp_timestamp.has_value() ||
-                            queued_packet.source_tag != candidate_packet.source_tag) {
-                            continue;
-                        }
-                        ++queued_blocks;
-                    }
-                    if (queued_blocks > 0) {
-                        buffer_level_ms += block_duration_ms * static_cast<double>(queued_blocks);
-                    }
-                }
                 if (block_duration_ms > 0.0 && !target_info.sink_rings.empty()) {
                     std::size_t downstream_blocks = 0;
                     for (const auto& [sink_id, ring_weak] : target_info.sink_rings) {
