@@ -567,7 +567,8 @@ void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
     constexpr double kIntegralClamp = 300000.0;
     playback_rate_integral_ = std::clamp(playback_rate_integral_ + error, -kIntegralClamp, kIntegralClamp);
 
-    double adjust = (kKp * error) + (kKi * playback_rate_integral_);
+    // Downstream resampler speeds up when rate < 1.0, so invert the PI output polarity.
+    double adjust = -((kKp * error) + (kKi * playback_rate_integral_));
     constexpr double kMaxPpm = 800.0; // ±800 ppm
     const double max_adjust = kMaxPpm * 1e-6;
     adjust = std::clamp(adjust, -max_adjust, max_adjust);

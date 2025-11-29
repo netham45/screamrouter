@@ -119,8 +119,8 @@ struct SynchronizationTuning {
 };
 
 struct SystemAudioTuning {
-    double alsa_target_latency_ms = 24.0;
-    unsigned int alsa_periods_per_buffer = 3;
+    double alsa_target_latency_ms = 40.0;
+    unsigned int alsa_periods_per_buffer = 2;
 };
 
 class AudioEngineSettings {

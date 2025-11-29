@@ -343,10 +343,6 @@ const AddEditSourcePage: React.FC = () => {
     }
 
     if (!isGroup) {
-      if (inputMode === 'network' && !ip.trim()) {
-        setError('Please provide an IP address for the source.');
-        return;
-      }
 
       if (inputMode === 'system' && !selectedCaptureTag) {
         setError('Select a system audio capture device for this source.');
@@ -595,7 +591,7 @@ const AddEditSourcePage: React.FC = () => {
           </SimpleGrid>
 
           {!isGroup && inputMode === 'network' && (
-            <FormControl isRequired>
+            <FormControl>
               <FormLabel>Source IP</FormLabel>
               <Stack
                 direction={{ base: 'column', md: 'row' }}
