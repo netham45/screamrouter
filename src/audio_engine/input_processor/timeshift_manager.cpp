@@ -1002,7 +1002,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                             std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
                     }
 
-                    const double buffer_error_ms = desired_latency_ms - buffer_level_ms;
+                    const double buffer_error_ms = buffer_level_ms - desired_latency_ms;
                     ts.last_controller_update_time = now;
 
                     const double proportional_ppm = tuning.playback_ratio_kp * buffer_error_ms;

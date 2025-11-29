@@ -3735,15 +3735,24 @@ class ConfigurationManager(threading.Thread):
             if route_name in existing_route_names:
                 route_name = f"{base_route_name}_{uuid.uuid4().hex[:6]}"
             existing_route_names.add(route_name)
-            key = f"{sink.name}:{source_ip}:{port_int}"
+            sink_key_for_id = sink.config_id or sink.name
+            if sap_tag:
+                tag_for_id = self._sanitize_screamrouter_label(sap_tag)
+                identity_key = f"tag|{tag_for_id}"
+                deterministic_source_id = f"sapsrc:{sink_key_for_id}:tag:{tag_for_id}"
+                deterministic_route_id = f"saproute:{sink_key_for_id}:tag:{tag_for_id}"
+                sap_key = f"{sink_key_for_id}|tag|{tag_for_id}"
+            else:
+                identity_key = f"ip|{source_ip}|{port_int}"
+                deterministic_source_id = f"sapsrc:{sink_key_for_id}:ip:{source_ip}:{port_int}"
+                deterministic_route_id = f"saproute:{sink_key_for_id}:ip:{source_ip}:{port_int}"
+                sap_key = f"{sink_key_for_id}|ip|{source_ip}|{port_int}"
+
+            key = f"{sink_key_for_id}:{identity_key}"
             if key in seen_keys:
                 continue
             seen_keys.add(key)
 
-            sink_key_for_id = sink.config_id or sink.name
-            sap_key = f"{sink_key_for_id}|{source_ip}|{port_int}"
-            deterministic_source_id = f"sapsrc:{sink_key_for_id}:{source_ip}:{port_int}"
-            deterministic_route_id = f"saproute:{sink_key_for_id}:{source_ip}:{port_int}"
             now = time.time()
             existing_route_id = active_route_keys.get(sap_key)
             if existing_route_id:
@@ -3857,11 +3866,22 @@ class ConfigurationManager(threading.Thread):
         """Extract SAP identity tuple from deterministic route_id."""
         if not route_id or not route_id.startswith("saproute:"):
             return None
-        parts = route_id.split(":", 3)
-        if len(parts) != 4:
+        parts = route_id.split(":")
+        if len(parts) < 4:
             return None
-        _, sink_key, source_ip, port = parts
-        return f"{sink_key}|{source_ip}|{port}"
+        # route_id formats:
+        # saproute:{sink_key}:ip:{source_ip}:{port}
+        # saproute:{sink_key}:tag:{sanitized_tag}
+        if parts[2] == "ip" and len(parts) >= 5:
+            sink_key = parts[1]
+            source_ip = parts[3]
+            port = parts[4]
+            return f"{sink_key}|ip|{source_ip}|{port}"
+        if parts[2] == "tag" and len(parts) >= 4:
+            sink_key = parts[1]
+            tag = ":".join(parts[3:])  # tag may include extra separators from sanitization
+            return f"{sink_key}|tag|{tag}"
+        return None
 
     def _prune_stale_sap_routes(self, max_age_seconds: float) -> tuple[int, int]:
         """Remove SAP temp sources/routes not seen recently."""

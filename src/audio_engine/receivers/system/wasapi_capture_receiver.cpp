@@ -22,7 +22,6 @@ namespace system_audio {
 namespace {
 constexpr uint8_t kStereoLayout = 0x03;
 constexpr uint8_t kMonoLayout = 0x01;
-constexpr size_t kMaxCaptureQueueDepth = 8; // Prevent unbounded growth if processing stalls.
 
 uint32_t FramesFromBytes(size_t bytes, size_t bytes_per_frame) {
     if (bytes_per_frame == 0) {
@@ -101,14 +100,7 @@ bool WasapiCaptureReceiver::setup_socket() {
 }
 
 void WasapiCaptureReceiver::close_socket() {
-    request_capture_stop();
-    join_capture_thread();
-
     std::lock_guard<std::mutex> lock(device_mutex_);
-    if (cleanup_started_) {
-        return;
-    }
-    cleanup_started_ = true;
     stop_stream();
     close_device();
     if (com_initialized_) {
@@ -128,12 +120,6 @@ int WasapiCaptureReceiver::get_poll_timeout_ms() const {
 
 void WasapiCaptureReceiver::run() {
     LOG_CPP_INFO("[WasapiCapture:%s] Thread starting.", device_tag_.c_str());
-    {
-        std::lock_guard<std::mutex> lock(capture_thread_mutex_);
-        capture_thread_started_ = false;
-        capture_thread_joined_ = false;
-    }
-    cleanup_started_ = false;
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (hr == RPC_E_CHANGED_MODE) {
@@ -163,19 +149,7 @@ void WasapiCaptureReceiver::run() {
         return;
     }
 
-    try {
-        capture_thread_ = std::thread([this]() { capture_loop(); });
-        std::lock_guard<std::mutex> lock(capture_thread_mutex_);
-        capture_thread_started_ = true;
-        capture_thread_joined_ = false;
-    } catch (const std::system_error& e) {
-        LOG_CPP_ERROR("[WasapiCapture:%s] Failed to start capture thread: %s", device_tag_.c_str(), e.what());
-        close_socket();
-        return;
-    }
-
-    processing_loop();
-    join_capture_thread();
+    capture_loop();
 
     close_socket();
 
@@ -567,6 +541,20 @@ bool WasapiCaptureReceiver::start_stream() {
         LOG_CPP_ERROR("[WasapiCapture:%s] Failed to start IAudioClient: 0x%lx", device_tag_.c_str(), hr);
         return false;
     }
+
+    // Boost thread priority for capture to reduce glitches.
+    HANDLE hThread = GetCurrentThread();
+    if (!SetThreadPriority(hThread, THREAD_PRIORITY_TIME_CRITICAL)) {
+        LOG_CPP_WARNING("[WasapiCapture:%s] Failed to set high thread priority (last_error=%lu).", device_tag_.c_str(), GetLastError());
+    }
+
+    // Join MMCSS "Pro Audio" to further reduce dropouts.
+    if (!mmcss_handle_) {
+        mmcss_handle_ = AvSetMmThreadCharacteristicsW(L"Pro Audio", &mmcss_task_index_);
+        if (!mmcss_handle_) {
+            LOG_CPP_WARNING("[WasapiCapture:%s] Failed to enter MMCSS Pro Audio (last_error=%lu).", device_tag_.c_str(), GetLastError());
+        }
+    }
     return true;
 }
 
@@ -577,33 +565,7 @@ void WasapiCaptureReceiver::stop_stream() {
 }
 
 void WasapiCaptureReceiver::capture_loop() {
-    HANDLE hThread = GetCurrentThread();
-    if (!SetThreadPriority(hThread, THREAD_PRIORITY_TIME_CRITICAL)) {
-        LOG_CPP_WARNING("[WasapiCapture:%s] Failed to set capture thread priority (last_error=%lu).", device_tag_.c_str(), GetLastError());
-    }
-    if (!mmcss_handle_) {
-        mmcss_handle_ = AvSetMmThreadCharacteristicsW(L"Pro Audio", &mmcss_task_index_);
-        if (!mmcss_handle_) {
-            LOG_CPP_WARNING("[WasapiCapture:%s] Failed to enter MMCSS Pro Audio on capture thread (last_error=%lu).", device_tag_.c_str(), GetLastError());
-        }
-    }
-
     HANDLE wait_handles[1] = {capture_event_};
-    auto cleanup = [this]() {
-        capture_queue_.stop();
-        if (mmcss_handle_) {
-            AvRevertMmThreadCharacteristics(mmcss_handle_);
-            mmcss_handle_ = nullptr;
-        }
-    };
-
-    if (!capture_event_) {
-        LOG_CPP_ERROR("[WasapiCapture:%s] Capture event handle is null.", device_tag_.c_str());
-        cleanup();
-        return;
-    }
-
-    using PushResult = ::screamrouter::audio::utils::ThreadSafeQueue<CapturedBuffer>::PushResult;
 
     while (!stop_flag_) {
         DWORD wait_result = WaitForMultipleObjects(1, wait_handles, FALSE, 2000);
@@ -620,7 +582,6 @@ void WasapiCaptureReceiver::capture_loop() {
             HRESULT hr = capture_client_->GetNextPacketSize(&packet_length);
             if (FAILED(hr)) {
                 LOG_CPP_ERROR("[WasapiCapture:%s] GetNextPacketSize failed: 0x%lx", device_tag_.c_str(), hr);
-                cleanup();
                 return;
             }
             if (packet_length == 0) {
@@ -635,77 +596,21 @@ void WasapiCaptureReceiver::capture_loop() {
             hr = capture_client_->GetBuffer(&data, &frames, &flags, &device_position, &qpc_position);
             if (FAILED(hr)) {
                 LOG_CPP_ERROR("[WasapiCapture:%s] GetBuffer failed: 0x%lx", device_tag_.c_str(), hr);
-                cleanup();
                 return;
             }
 
-            CapturedBuffer captured;
-            captured.frames = frames;
-            captured.flags = flags;
-            captured.device_position = device_position;
-            captured.qpc_position = qpc_position;
-
-            const size_t copy_bytes = static_cast<size_t>(frames) * source_bytes_per_frame_;
-            if (copy_bytes > 0) {
-                captured.data.resize(copy_bytes);
-                if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-                    std::memset(captured.data.data(), 0, copy_bytes);
-                } else {
-                    std::memcpy(captured.data.data(), reinterpret_cast<uint8_t*>(data), copy_bytes);
-                }
-            }
+            process_packet(data, frames, flags, device_position, qpc_position);
 
             hr = capture_client_->ReleaseBuffer(frames);
             if (FAILED(hr)) {
                 LOG_CPP_ERROR("[WasapiCapture:%s] ReleaseBuffer failed: 0x%lx", device_tag_.c_str(), hr);
-                cleanup();
                 return;
-            }
-
-            auto push_result = capture_queue_.push_bounded(std::move(captured), kMaxCaptureQueueDepth, true);
-            if (push_result == PushResult::QueueStopped) {
-                cleanup();
-                return;
-            }
-            if (push_result == PushResult::DroppedOldest) {
-                LOG_CPP_WARNING("[WasapiCapture:%s] Capture queue full; dropping oldest packet to keep capture thread responsive.", device_tag_.c_str());
             }
         }
     }
-
-    cleanup();
 }
 
-void WasapiCaptureReceiver::processing_loop() {
-    CapturedBuffer captured;
-    while (capture_queue_.pop(captured)) {
-        process_packet(captured);
-    }
-}
-
-void WasapiCaptureReceiver::request_capture_stop() {
-    stop_flag_ = true;
-    capture_queue_.stop();
-    if (capture_event_) {
-        SetEvent(capture_event_);
-    }
-}
-
-void WasapiCaptureReceiver::join_capture_thread() {
-    std::lock_guard<std::mutex> lock(capture_thread_mutex_);
-    if (capture_thread_joined_ || !capture_thread_started_) {
-        return;
-    }
-    if (capture_thread_.joinable()) {
-        capture_thread_.join();
-    }
-    capture_thread_joined_ = true;
-}
-
-void WasapiCaptureReceiver::process_packet(const CapturedBuffer& captured) {
-    const UINT32 frames = captured.frames;
-    const DWORD flags = captured.flags;
-    const BYTE* data = captured.data.empty() ? nullptr : captured.data.data();
+void WasapiCaptureReceiver::process_packet(BYTE* data, UINT32 frames, DWORD flags, UINT64 device_position, UINT64 /*qpc_position*/) {
     if (frames == 0) {
         return;
     }
@@ -730,7 +635,7 @@ void WasapiCaptureReceiver::process_packet(const CapturedBuffer& captured) {
 
     if (!stream_time_initialized_) {
         stream_start_time_ = std::chrono::steady_clock::now();
-        stream_start_frame_position_ = static_cast<uint64_t>(captured.device_position);
+        stream_start_frame_position_ = static_cast<uint64_t>(device_position);
         stream_time_initialized_ = true;
     }
 
@@ -746,7 +651,7 @@ void WasapiCaptureReceiver::process_packet(const CapturedBuffer& captured) {
         packet_buffer_.resize(total_target_bytes);
         uint8_t* dst_bytes = packet_buffer_.data();
 
-        if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) || !data) {
+        if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
             std::memset(dst_bytes, 0, total_target_bytes);
         } else {
             const float* src = reinterpret_cast<const float*>(data);
@@ -770,14 +675,14 @@ void WasapiCaptureReceiver::process_packet(const CapturedBuffer& captured) {
         packet_buffer_.resize(copy_bytes);
         uint8_t* dst_bytes = packet_buffer_.data();
 
-        if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) || !data) {
+        if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
             std::memset(dst_bytes, 0, copy_bytes);
         } else {
-            std::memcpy(dst_bytes, reinterpret_cast<const uint8_t*>(data), copy_bytes);
+            std::memcpy(dst_bytes, reinterpret_cast<uint8_t*>(data), copy_bytes);
         }
     }
 
-    const uint64_t device_frame_position = static_cast<uint64_t>(captured.device_position);
+    const uint64_t device_frame_position = static_cast<uint64_t>(device_position);
 
     // Telemetry accumulation
     packets_seen_++;
