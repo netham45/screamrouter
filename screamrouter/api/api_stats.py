@@ -169,6 +169,16 @@ def settings_to_dict(settings: AudioEngineSettings):
         "system_audio_tuning": {
             "alsa_target_latency_ms": settings.system_audio_tuning.alsa_target_latency_ms,
             "alsa_periods_per_buffer": settings.system_audio_tuning.alsa_periods_per_buffer,
+            "alsa_dynamic_latency_enabled": settings.system_audio_tuning.alsa_dynamic_latency_enabled,
+            "alsa_latency_min_ms": settings.system_audio_tuning.alsa_latency_min_ms,
+            "alsa_latency_max_ms": settings.system_audio_tuning.alsa_latency_max_ms,
+            "alsa_latency_low_water_ms": settings.system_audio_tuning.alsa_latency_low_water_ms,
+            "alsa_latency_high_water_ms": settings.system_audio_tuning.alsa_latency_high_water_ms,
+            "alsa_latency_integral_gain": settings.system_audio_tuning.alsa_latency_integral_gain,
+            "alsa_latency_rate_limit_ms_per_sec": settings.system_audio_tuning.alsa_latency_rate_limit_ms_per_sec,
+            "alsa_latency_idle_decay_ms_per_sec": settings.system_audio_tuning.alsa_latency_idle_decay_ms_per_sec,
+            "alsa_latency_apply_hysteresis_ms": settings.system_audio_tuning.alsa_latency_apply_hysteresis_ms,
+            "alsa_latency_reconfig_cooldown_ms": settings.system_audio_tuning.alsa_latency_reconfig_cooldown_ms,
         }
     }
 

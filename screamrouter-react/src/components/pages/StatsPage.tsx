@@ -494,6 +494,16 @@ const StatsPage: React.FC = () => {
                   <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
                     {renderTuningControl('system_audio_tuning', 'alsa_target_latency_ms', 'ALSA Target Latency (ms)')}
                     {renderTuningControl('system_audio_tuning', 'alsa_periods_per_buffer', 'ALSA Periods per Buffer')}
+                    {renderTuningControl('system_audio_tuning', 'alsa_dynamic_latency_enabled', 'Enable Dynamic Latency', 1, true)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_min_ms', 'Latency Minimum (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_max_ms', 'Latency Maximum (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_low_water_ms', 'Low Buffer Threshold (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_high_water_ms', 'High Buffer Threshold (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_integral_gain', 'Latency Integral Gain', 0.01)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_rate_limit_ms_per_sec', 'Latency Rate Limit (ms/sec)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_idle_decay_ms_per_sec', 'Idle Decay (ms/sec)', 0.1)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_apply_hysteresis_ms', 'Latency Hysteresis (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_reconfig_cooldown_ms', 'Reconfigure Cooldown (ms)', 10)}
                   </SimpleGrid>
                 </Box>
 

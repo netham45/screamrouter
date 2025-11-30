@@ -335,6 +335,16 @@ export interface ProcessorTuning {
 export interface SystemAudioTuning {
   alsa_target_latency_ms: number;
   alsa_periods_per_buffer: number;
+  alsa_dynamic_latency_enabled: boolean;
+  alsa_latency_min_ms: number;
+  alsa_latency_max_ms: number;
+  alsa_latency_low_water_ms: number;
+  alsa_latency_high_water_ms: number;
+  alsa_latency_integral_gain: number;
+  alsa_latency_rate_limit_ms_per_sec: number;
+  alsa_latency_idle_decay_ms_per_sec: number;
+  alsa_latency_apply_hysteresis_ms: number;
+  alsa_latency_reconfig_cooldown_ms: number;
 }
 
 export interface AudioEngineSettings {

@@ -332,13 +332,25 @@ bool AlsaPlaybackSender::configure_device() {
     playback_rate_integral_ = 0.0;
     last_playback_rate_command_ = 1.0;
     prefill_target_delay_locked();
+    if (settings_) {
+        const double configured_latency_ms = settings_->system_audio_tuning.alsa_target_latency_ms;
+        dynamic_latency_target_ms_ = configured_latency_ms;
+        dynamic_latency_applied_ms_ = configured_latency_ms;
+    } else {
+        dynamic_latency_target_ms_ = 0.0;
+        dynamic_latency_applied_ms_ = 0.0;
+    }
+    dynamic_latency_reconfigure_pending_ = false;
+    dynamic_latency_last_reconfig_ = std::chrono::steady_clock::now();
     return true;
 }
 
 void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t delay_frames) {
-    if (!playback_rate_callback_ || delay_frames < 0) {
+    if (delay_frames < 0) {
         return;
     }
+
+    const bool has_rate_callback = static_cast<bool>(playback_rate_callback_);
 
     if (target_delay_frames_ <= 0.0) {
         if (buffer_frames_ > 0) {
@@ -375,63 +387,68 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
     // Clamp extreme error to avoid integrator/windup from transient spikes.
     const double max_error_frames = target_total_frames * 2.0;
     error = std::clamp(error, -max_error_frames, max_error_frames);
-    // More aggressive gains: ~3 ppm per frame, integral a bit faster.
-    constexpr double kKp = 3e-6;
-    constexpr double kKi = 5e-8;
-    constexpr double kIntegralClamp = 300000.0; // ~±300 ppm contribution
-
-    // Scale integration by elapsed time and stop integrating when already pinned at the clamp in the same direction.
     dt_sec = std::clamp(dt_sec, 0.001, 0.1); // guard against scheduler stalls
 
-    const bool at_upper_clamp = playback_rate_integral_ >= kIntegralClamp && error > 0.0;
-    const bool at_lower_clamp = playback_rate_integral_ <= -kIntegralClamp && error < 0.0;
-    if (!at_upper_clamp && !at_lower_clamp) {
-        // Dampen integral when the sign of error flips to bleed off windup.
-        if ((playback_rate_integral_ > 0 && error < 0) || (playback_rate_integral_ < 0 && error > 0)) {
-            playback_rate_integral_ *= 0.5;
+    if (has_rate_callback) {
+        // More aggressive gains: ~3 ppm per frame, integral a bit faster.
+        constexpr double kKp = 3e-6;
+        constexpr double kKi = 5e-8;
+        constexpr double kIntegralClamp = 300000.0; // ~±300 ppm contribution
+
+        // Scale integration by elapsed time and stop integrating when already pinned at the clamp in the same direction.
+
+        const bool at_upper_clamp = playback_rate_integral_ >= kIntegralClamp && error > 0.0;
+        const bool at_lower_clamp = playback_rate_integral_ <= -kIntegralClamp && error < 0.0;
+        if (!at_upper_clamp && !at_lower_clamp) {
+            // Dampen integral when the sign of error flips to bleed off windup.
+            if ((playback_rate_integral_ > 0 && error < 0) || (playback_rate_integral_ < 0 && error > 0)) {
+                playback_rate_integral_ *= 0.5;
+            }
+            playback_rate_integral_ = std::clamp(playback_rate_integral_ + error * dt_sec, -kIntegralClamp, kIntegralClamp);
         }
-        playback_rate_integral_ = std::clamp(playback_rate_integral_ + error * dt_sec, -kIntegralClamp, kIntegralClamp);
+
+        // Downstream resampler speeds up when rate < 1.0, so apply the PI term with inverted polarity.
+        double adjust = -((kKp * error) + (kKi * playback_rate_integral_));
+        constexpr double kMaxPpm = 800.0; // ±800 ppm
+        const double max_adjust = kMaxPpm * 1e-6;
+        adjust = std::clamp(adjust, -max_adjust, max_adjust);
+
+        double desired_rate = 1.0 + adjust;
+        constexpr double kMaxStepPpm = 80.0; // per update slew
+        const double max_step = kMaxStepPpm * 1e-6;
+        const double delta = std::clamp(desired_rate - last_playback_rate_command_, -max_step, max_step);
+        desired_rate = last_playback_rate_command_ + delta;
+
+        constexpr double kHardClamp = 0.96;
+        constexpr double kHardClampMax = 1.02;
+        desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
+
+        ++rate_log_counter_;
+        if (rate_log_counter_ % 100 == 0) {
+            LOG_CPP_INFO("[AlsaPlayback:%s] PI rate update: total_delay=%.1f (alsa=%.1f upstream=%.1f) target_total=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
+                         device_tag_.c_str(),
+                         total_delay_frames,
+                         filtered_delay_frames_,
+                         upstream_buffer_frames_,
+                         target_total_frames,
+                         error,
+                         adjust,
+                         desired_rate,
+                         playback_rate_integral_,
+                         kKp,
+                         kKi,
+                         kMaxPpm,
+                         kMaxStepPpm);
+        }
+
+        if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
+            last_playback_rate_command_ = desired_rate;
+            auto cb = playback_rate_callback_;
+            cb(desired_rate);
+        }
     }
 
-    // Downstream resampler speeds up when rate < 1.0, so apply the PI term with inverted polarity.
-    double adjust = -((kKp * error) + (kKi * playback_rate_integral_));
-    constexpr double kMaxPpm = 800.0; // ±800 ppm
-    const double max_adjust = kMaxPpm * 1e-6;
-    adjust = std::clamp(adjust, -max_adjust, max_adjust);
-
-    double desired_rate = 1.0 + adjust;
-    constexpr double kMaxStepPpm = 80.0; // per update slew
-    const double max_step = kMaxStepPpm * 1e-6;
-    const double delta = std::clamp(desired_rate - last_playback_rate_command_, -max_step, max_step);
-    desired_rate = last_playback_rate_command_ + delta;
-
-    constexpr double kHardClamp = 0.96;
-    constexpr double kHardClampMax = 1.02;
-    desired_rate = std::clamp(desired_rate, kHardClamp, kHardClampMax);
-
-    ++rate_log_counter_;
-    if (rate_log_counter_ % 100 == 0) {
-        LOG_CPP_INFO("[AlsaPlayback:%s] PI rate update: total_delay=%.1f (alsa=%.1f upstream=%.1f) target_total=%.1f err=%.1f adj=%.6f rate=%.6f int=%.1f k={%.6f,%.6f} clamp_ppm=%.0f step=%.0f",
-                     device_tag_.c_str(),
-                     total_delay_frames,
-                     filtered_delay_frames_,
-                     upstream_buffer_frames_,
-                     target_total_frames,
-                     error,
-                     adjust,
-                     desired_rate,
-                     playback_rate_integral_,
-                     kKp,
-                     kKi,
-                     kMaxPpm,
-                     kMaxStepPpm);
-    }
-
-    if (std::abs(desired_rate - last_playback_rate_command_) > 1e-6) {
-        last_playback_rate_command_ = desired_rate;
-        auto cb = playback_rate_callback_;
-        cb(desired_rate);
-    }
+    maybe_adjust_dynamic_latency_locked(filtered_delay_frames_, dt_sec);
 }
 
 void AlsaPlaybackSender::prefill_target_delay_locked() {
@@ -693,6 +710,7 @@ bool AlsaPlaybackSender::write_frames(const void* data, size_t frame_count, size
     }
 
     maybe_log_telemetry_locked();
+    apply_pending_dynamic_latency_locked();
     return true;
 }
 
@@ -751,6 +769,120 @@ unsigned int AlsaPlaybackSender::get_effective_channels() const {
 unsigned int AlsaPlaybackSender::get_effective_bit_depth() const {
     std::lock_guard<std::mutex> lock(state_mutex_);
     return static_cast<unsigned int>(bit_depth_);
+}
+
+void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_delay_frames, double dt_sec) {
+    if (!settings_ || sample_rate_ == 0) {
+        return;
+    }
+
+    auto& tuning = settings_->system_audio_tuning;
+    if (!tuning.alsa_dynamic_latency_enabled) {
+        dynamic_latency_reconfigure_pending_ = false;
+        return;
+    }
+
+    const double min_latency = std::max(1.0, tuning.alsa_latency_min_ms);
+    const double max_latency = std::max(min_latency, tuning.alsa_latency_max_ms);
+    const double baseline = std::clamp(
+        tuning.alsa_target_latency_ms > 0.0 ? tuning.alsa_target_latency_ms : min_latency,
+        min_latency,
+        max_latency);
+
+    if (dynamic_latency_target_ms_ <= 0.0) {
+        dynamic_latency_target_ms_ = baseline;
+    }
+    if (dynamic_latency_applied_ms_ <= 0.0) {
+        dynamic_latency_applied_ms_ = baseline;
+    }
+
+    const double sr = static_cast<double>(sample_rate_);
+    double delay_ms = 0.0;
+    if (filtered_delay_frames > 0.0 && sr > 0.0) {
+        delay_ms = 1000.0 * filtered_delay_frames / sr;
+    }
+
+    double error = 0.0;
+    if (delay_ms < tuning.alsa_latency_low_water_ms) {
+        error = tuning.alsa_latency_low_water_ms - delay_ms;
+    } else if (delay_ms > tuning.alsa_latency_high_water_ms) {
+        error = tuning.alsa_latency_high_water_ms - delay_ms;
+    } else {
+        const double idle_decay_rate = std::max(0.0, tuning.alsa_latency_idle_decay_ms_per_sec);
+        const double delta = dynamic_latency_target_ms_ - baseline;
+        if (idle_decay_rate > 0.0 && std::abs(delta) > 1e-3) {
+            double max_decay = idle_decay_rate * dt_sec;
+            max_decay = std::max(0.0, max_decay);
+            const double decay = std::clamp(delta, -max_decay, max_decay);
+            dynamic_latency_target_ms_ -= decay;
+        }
+    }
+
+    if (error != 0.0) {
+        const double gain = std::max(0.0, tuning.alsa_latency_integral_gain);
+        if (gain > 0.0) {
+            double delta = error * gain * dt_sec;
+            const double rate_limit = std::max(0.0, tuning.alsa_latency_rate_limit_ms_per_sec);
+            if (rate_limit > 0.0) {
+                const double max_delta = rate_limit * dt_sec;
+                delta = std::clamp(delta, -max_delta, max_delta);
+            }
+            dynamic_latency_target_ms_ = std::clamp(dynamic_latency_target_ms_ + delta, min_latency, max_latency);
+        }
+    }
+
+    const double hysteresis = std::max(0.0, tuning.alsa_latency_apply_hysteresis_ms);
+    if (std::abs(dynamic_latency_target_ms_ - dynamic_latency_applied_ms_) > hysteresis) {
+        schedule_dynamic_latency_reconfigure_locked(dynamic_latency_target_ms_);
+    }
+}
+
+void AlsaPlaybackSender::schedule_dynamic_latency_reconfigure_locked(double desired_latency_ms) {
+    if (!settings_) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const double cooldown_ms = settings_->system_audio_tuning.alsa_latency_reconfig_cooldown_ms;
+    if (!dynamic_latency_reconfigure_pending_ && cooldown_ms > 0.0) {
+        const auto cooldown = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double, std::milli>(cooldown_ms));
+        if (dynamic_latency_last_reconfig_.time_since_epoch().count() != 0 &&
+            now - dynamic_latency_last_reconfig_ < cooldown) {
+            return;
+        }
+    }
+
+    dynamic_latency_pending_latency_ms_ = desired_latency_ms;
+    dynamic_latency_reconfigure_pending_ = true;
+}
+
+void AlsaPlaybackSender::apply_pending_dynamic_latency_locked() {
+    if (!dynamic_latency_reconfigure_pending_) {
+        return;
+    }
+    dynamic_latency_reconfigure_pending_ = false;
+
+    const double new_latency_ms = dynamic_latency_pending_latency_ms_;
+    const double previous_latency_ms = dynamic_latency_applied_ms_;
+
+    if (settings_) {
+        settings_->system_audio_tuning.alsa_target_latency_ms = new_latency_ms;
+    }
+
+    dynamic_latency_applied_ms_ = new_latency_ms;
+    dynamic_latency_target_ms_ = new_latency_ms;
+    dynamic_latency_last_reconfig_ = std::chrono::steady_clock::now();
+
+    LOG_CPP_INFO("[AlsaPlayback:%s] Applying dynamic ALSA latency change %.1f ms -> %.1f ms",
+                 device_tag_.c_str(),
+                 previous_latency_ms,
+                 new_latency_ms);
+
+    close_locked();
+    if (!configure_device()) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to reconfigure ALSA device after latency update.", device_tag_.c_str());
+    }
 }
 
 #endif // __linux__

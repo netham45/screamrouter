@@ -53,6 +53,9 @@ private:
     void maybe_log_telemetry_locked();
     void maybe_update_playback_rate_locked(snd_pcm_sframes_t delay_frames);
     void prefill_target_delay_locked();
+    void maybe_adjust_dynamic_latency_locked(double filtered_delay_frames, double dt_sec);
+    void schedule_dynamic_latency_reconfigure_locked(double desired_latency_ms);
+    void apply_pending_dynamic_latency_locked();
 
     std::string device_tag_;
     std::string hw_device_name_;
@@ -76,6 +79,11 @@ private:
     std::chrono::steady_clock::time_point last_rate_update_;
     uint64_t rate_log_counter_ = 0;
     double filtered_delay_frames_ = 0.0;
+    double dynamic_latency_target_ms_ = 0.0;
+    double dynamic_latency_applied_ms_ = 0.0;
+    std::chrono::steady_clock::time_point dynamic_latency_last_reconfig_{};
+    bool dynamic_latency_reconfigure_pending_ = false;
+    double dynamic_latency_pending_latency_ms_ = 0.0;
 
     mutable std::mutex state_mutex_;
     std::chrono::steady_clock::time_point telemetry_last_log_time_{};

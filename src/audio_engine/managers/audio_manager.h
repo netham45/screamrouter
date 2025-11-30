@@ -452,7 +452,17 @@ inline void bind_audio_manager(pybind11::module_ &m) {
     py::class_<SystemAudioTuning>(m, "SystemAudioTuning")
         .def(py::init<>())
         .def_readwrite("alsa_target_latency_ms", &SystemAudioTuning::alsa_target_latency_ms)
-        .def_readwrite("alsa_periods_per_buffer", &SystemAudioTuning::alsa_periods_per_buffer);
+        .def_readwrite("alsa_periods_per_buffer", &SystemAudioTuning::alsa_periods_per_buffer)
+        .def_readwrite("alsa_dynamic_latency_enabled", &SystemAudioTuning::alsa_dynamic_latency_enabled)
+        .def_readwrite("alsa_latency_min_ms", &SystemAudioTuning::alsa_latency_min_ms)
+        .def_readwrite("alsa_latency_max_ms", &SystemAudioTuning::alsa_latency_max_ms)
+        .def_readwrite("alsa_latency_low_water_ms", &SystemAudioTuning::alsa_latency_low_water_ms)
+        .def_readwrite("alsa_latency_high_water_ms", &SystemAudioTuning::alsa_latency_high_water_ms)
+        .def_readwrite("alsa_latency_integral_gain", &SystemAudioTuning::alsa_latency_integral_gain)
+        .def_readwrite("alsa_latency_rate_limit_ms_per_sec", &SystemAudioTuning::alsa_latency_rate_limit_ms_per_sec)
+        .def_readwrite("alsa_latency_idle_decay_ms_per_sec", &SystemAudioTuning::alsa_latency_idle_decay_ms_per_sec)
+        .def_readwrite("alsa_latency_apply_hysteresis_ms", &SystemAudioTuning::alsa_latency_apply_hysteresis_ms)
+        .def_readwrite("alsa_latency_reconfig_cooldown_ms", &SystemAudioTuning::alsa_latency_reconfig_cooldown_ms);
 
     py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
         .def(py::init<>())
