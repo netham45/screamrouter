@@ -82,6 +82,7 @@ private:
     double dynamic_latency_target_ms_ = 0.0;
     double dynamic_latency_applied_ms_ = 0.0;
     std::chrono::steady_clock::time_point dynamic_latency_last_reconfig_{};
+    std::chrono::steady_clock::time_point dynamic_latency_last_log_{};
     bool dynamic_latency_reconfigure_pending_ = false;
     double dynamic_latency_pending_latency_ms_ = 0.0;
 

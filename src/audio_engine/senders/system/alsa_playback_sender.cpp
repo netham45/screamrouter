@@ -746,14 +746,18 @@ void AlsaPlaybackSender::maybe_log_telemetry_locked() {
     }
 
     LOG_CPP_INFO(
-        "[Telemetry][AlsaPlayback:%s] delay_frames=%ld delay_ms=%.3f buffer_frames=%lu (%.3f ms) period_frames=%lu (%.3f ms)",
+        "[Telemetry][AlsaPlayback:%s] delay_frames=%ld delay_ms=%.3f buffer_frames=%lu (%.3f ms) period_frames=%lu (%.3f ms) dyn_latency={target=%.2f applied=%.2f hysteresis=%.2f cooldown_ms=%.0f}",
         device_tag_.c_str(),
         static_cast<long>(delay_frames),
         delay_ms,
         static_cast<unsigned long>(buffer_frames_),
         buffer_ms,
         static_cast<unsigned long>(period_frames_),
-        period_ms);
+        period_ms,
+        dynamic_latency_target_ms_,
+        dynamic_latency_applied_ms_,
+        settings_ ? settings_->system_audio_tuning.alsa_latency_apply_hysteresis_ms : 0.0,
+        settings_ ? settings_->system_audio_tuning.alsa_latency_reconfig_cooldown_ms : 0.0);
 }
 
 unsigned int AlsaPlaybackSender::get_effective_sample_rate() const {
@@ -802,11 +806,14 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
         delay_ms = 1000.0 * filtered_delay_frames / sr;
     }
 
+    double controller_error = 0.0;
     double error = 0.0;
     if (delay_ms < tuning.alsa_latency_low_water_ms) {
         error = tuning.alsa_latency_low_water_ms - delay_ms;
+        controller_error = error;
     } else if (delay_ms > tuning.alsa_latency_high_water_ms) {
         error = tuning.alsa_latency_high_water_ms - delay_ms;
+        controller_error = error;
     } else {
         const double idle_decay_rate = std::max(0.0, tuning.alsa_latency_idle_decay_ms_per_sec);
         const double delta = dynamic_latency_target_ms_ - baseline;
@@ -832,8 +839,41 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
     }
 
     const double hysteresis = std::max(0.0, tuning.alsa_latency_apply_hysteresis_ms);
-    if (std::abs(dynamic_latency_target_ms_ - dynamic_latency_applied_ms_) > hysteresis) {
+    const double target_delta = std::abs(dynamic_latency_target_ms_ - dynamic_latency_applied_ms_);
+    if (target_delta > hysteresis) {
+        const bool already_pending = dynamic_latency_reconfigure_pending_;
+        const double pending_delta = std::abs(dynamic_latency_pending_latency_ms_ - dynamic_latency_target_ms_);
+        const bool new_request = !already_pending || pending_delta > 0.25;
+        if (new_request) {
+            LOG_CPP_INFO("[AlsaPlayback:%s] Dynamic ALSA latency target drifted %.2f ms (measured delay %.2f ms, error %.2f ms). Scheduling reconfigure to %.2f ms (applied %.2f ms).",
+                         device_tag_.c_str(),
+                         target_delta,
+                         delay_ms,
+                         controller_error,
+                         dynamic_latency_target_ms_,
+                         dynamic_latency_applied_ms_);
+        }
         schedule_dynamic_latency_reconfigure_locked(dynamic_latency_target_ms_);
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kLogInterval = std::chrono::seconds(1);
+    const bool log_interval_elapsed = dynamic_latency_last_log_.time_since_epoch().count() == 0 ||
+                                      now - dynamic_latency_last_log_ >= kLogInterval;
+    if (log_interval_elapsed) {
+        dynamic_latency_last_log_ = now;
+        LOG_CPP_DEBUG("[AlsaPlayback:%s] Dynamic latency ctrl delay=%.2f ms error=%.2f ms target=%.2f ms applied=%.2f ms baseline=%.2f ms range=[%.1f, %.1f] low=%.1f high=%.1f pending=%d",
+                      device_tag_.c_str(),
+                      delay_ms,
+                      controller_error,
+                      dynamic_latency_target_ms_,
+                      dynamic_latency_applied_ms_,
+                      baseline,
+                      min_latency,
+                      max_latency,
+                      tuning.alsa_latency_low_water_ms,
+                      tuning.alsa_latency_high_water_ms,
+                      dynamic_latency_reconfigure_pending_ ? 1 : 0);
     }
 }
 
@@ -849,6 +889,10 @@ void AlsaPlaybackSender::schedule_dynamic_latency_reconfigure_locked(double desi
             std::chrono::duration<double, std::milli>(cooldown_ms));
         if (dynamic_latency_last_reconfig_.time_since_epoch().count() != 0 &&
             now - dynamic_latency_last_reconfig_ < cooldown) {
+            LOG_CPP_DEBUG("[AlsaPlayback:%s] Dynamic ALSA latency update %.2f ms suppressed (cooldown %.0f ms active).",
+                          device_tag_.c_str(),
+                          desired_latency_ms,
+                          cooldown_ms);
             return;
         }
     }
