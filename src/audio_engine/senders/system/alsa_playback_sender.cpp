@@ -448,7 +448,9 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
         }
     }
 
-    maybe_adjust_dynamic_latency_locked(filtered_delay_frames_, dt_sec);
+    maybe_adjust_dynamic_latency_locked(filtered_delay_frames_,
+                                        static_cast<double>(delay_frames),
+                                        dt_sec);
 }
 
 void AlsaPlaybackSender::prefill_target_delay_locked() {
@@ -775,7 +777,9 @@ unsigned int AlsaPlaybackSender::get_effective_bit_depth() const {
     return static_cast<unsigned int>(bit_depth_);
 }
 
-void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_delay_frames, double dt_sec) {
+void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_delay_frames,
+                                                             double current_delay_frames,
+                                                             double dt_sec) {
     if (!settings_ || sample_rate_ == 0) {
         return;
     }
@@ -801,19 +805,24 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
     }
 
     const double sr = static_cast<double>(sample_rate_);
-    double delay_ms = 0.0;
-    if (filtered_delay_frames > 0.0 && sr > 0.0) {
-        delay_ms = 1000.0 * filtered_delay_frames / sr;
-    }
+    const double filtered_ms = (filtered_delay_frames > 0.0 && sr > 0.0)
+                                   ? 1000.0 * filtered_delay_frames / sr
+                                   : 0.0;
+    const double instant_ms = (current_delay_frames > 0.0 && sr > 0.0)
+                                  ? 1000.0 * current_delay_frames / sr
+                                  : filtered_ms;
+    const double low_metric_ms = filtered_ms > 0.0 ? std::min(filtered_ms, instant_ms) : instant_ms;
+    const double high_metric_ms = filtered_ms > 0.0 ? std::max(filtered_ms, instant_ms) : instant_ms;
+    const double reference_ms = filtered_ms > 0.0 ? filtered_ms : instant_ms;
 
     double controller_error = 0.0;
     double error = 0.0;
-    if (delay_ms < tuning.alsa_latency_low_water_ms) {
-        error = tuning.alsa_latency_low_water_ms - delay_ms;
-        controller_error = error;
-    } else if (delay_ms > tuning.alsa_latency_high_water_ms) {
-        error = tuning.alsa_latency_high_water_ms - delay_ms;
-        controller_error = error;
+    if (low_metric_ms < tuning.alsa_latency_low_water_ms) {
+        error = tuning.alsa_latency_low_water_ms - low_metric_ms;
+        controller_error = tuning.alsa_latency_low_water_ms - instant_ms;
+    } else if (high_metric_ms > tuning.alsa_latency_high_water_ms) {
+        error = tuning.alsa_latency_high_water_ms - high_metric_ms;
+        controller_error = tuning.alsa_latency_high_water_ms - instant_ms;
     } else {
         const double idle_decay_rate = std::max(0.0, tuning.alsa_latency_idle_decay_ms_per_sec);
         const double delta = dynamic_latency_target_ms_ - baseline;
@@ -848,7 +857,7 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
             LOG_CPP_INFO("[AlsaPlayback:%s] Dynamic ALSA latency target drifted %.2f ms (measured delay %.2f ms, error %.2f ms). Scheduling reconfigure to %.2f ms (applied %.2f ms).",
                          device_tag_.c_str(),
                          target_delta,
-                         delay_ms,
+                         instant_ms,
                          controller_error,
                          dynamic_latency_target_ms_,
                          dynamic_latency_applied_ms_);
@@ -862,9 +871,10 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
                                       now - dynamic_latency_last_log_ >= kLogInterval;
     if (log_interval_elapsed) {
         dynamic_latency_last_log_ = now;
-        LOG_CPP_DEBUG("[AlsaPlayback:%s] Dynamic latency ctrl delay=%.2f ms error=%.2f ms target=%.2f ms applied=%.2f ms baseline=%.2f ms range=[%.1f, %.1f] low=%.1f high=%.1f pending=%d",
+        LOG_CPP_DEBUG("[AlsaPlayback:%s] Dynamic latency ctrl delay=%.2f ms (filtered=%.2f ms) error=%.2f ms target=%.2f ms applied=%.2f ms baseline=%.2f ms range=[%.1f, %.1f] low=%.1f high=%.1f pending=%d",
                       device_tag_.c_str(),
-                      delay_ms,
+                      instant_ms,
+                      filtered_ms,
                       controller_error,
                       dynamic_latency_target_ms_,
                       dynamic_latency_applied_ms_,

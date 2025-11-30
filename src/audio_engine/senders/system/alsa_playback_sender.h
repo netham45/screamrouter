@@ -53,7 +53,9 @@ private:
     void maybe_log_telemetry_locked();
     void maybe_update_playback_rate_locked(snd_pcm_sframes_t delay_frames);
     void prefill_target_delay_locked();
-    void maybe_adjust_dynamic_latency_locked(double filtered_delay_frames, double dt_sec);
+    void maybe_adjust_dynamic_latency_locked(double filtered_delay_frames,
+                                             double current_delay_frames,
+                                             double dt_sec);
     void schedule_dynamic_latency_reconfigure_locked(double desired_latency_ms);
     void apply_pending_dynamic_latency_locked();
 
