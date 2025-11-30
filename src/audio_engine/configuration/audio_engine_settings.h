@@ -27,7 +27,7 @@ inline std::size_t compute_chunk_size_bytes_for_format(std::size_t frames_per_ch
 struct TimeshiftTuning {
     long cleanup_interval_ms = 1000;
     double late_packet_threshold_ms = 10.0;
-    double target_buffer_level_ms = 8.0;
+    double target_buffer_level_ms = 24.0;
     long loop_max_sleep_ms = 10;
     double max_catchup_lag_ms = 5000;
     double max_adaptive_delay_ms = 200.0;
@@ -75,7 +75,7 @@ struct MixerTuning {
     std::size_t max_input_queue_chunks = 32;
     std::size_t min_input_queue_chunks = 4;
     std::size_t max_ready_chunks_per_source = 8;
-    std::size_t max_queued_chunks = 3;
+    std::size_t max_queued_chunks = 7;
     double max_input_queue_duration_ms = 0.0;
     double min_input_queue_duration_ms = 0.0;
     double max_ready_queue_duration_ms = 0.0;
@@ -119,11 +119,11 @@ struct SynchronizationTuning {
 };
 
 struct SystemAudioTuning {
-    double alsa_target_latency_ms = 40.0;
+    double alsa_target_latency_ms = 64.0;
     unsigned int alsa_periods_per_buffer = 3;
     bool alsa_dynamic_latency_enabled = true;
     double alsa_latency_min_ms = 20.0;
-    double alsa_latency_max_ms = 120.0;
+    double alsa_latency_max_ms = 500.0;
     double alsa_latency_low_water_ms = 20.0;
     double alsa_latency_high_water_ms = 50.0;
     double alsa_latency_integral_gain = 0.4;          // ms adjustment per ms-error-second

@@ -127,6 +127,15 @@ export interface RouterServiceResponse {
   services: RouterMdnsService[];
 }
 
+export interface NeighborSinksRequest {
+  hostname: string;
+  port: number;
+  scheme?: 'http' | 'https';
+  api_path?: string;
+  verify_tls?: boolean;
+  timeout?: number;
+}
+
 /**
  * Interface for Equalizer object
  */
@@ -822,6 +831,8 @@ const ApiService = {
   getRouterServices: (timeout = 1.5) => cachedGet<RouterServiceResponse>('/mdns/router-services', {
     params: { timeout },
   }),
+  getNeighborSinks: (payload: NeighborSinksRequest) =>
+    axios.post<Record<string, Sink>>('/neighbors/sinks', payload),
 
   // --- Speaker Layout Update Methods ---
   updateSourceSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {

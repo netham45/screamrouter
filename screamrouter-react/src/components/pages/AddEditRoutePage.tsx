@@ -5,7 +5,6 @@
  * It allows the user to either add a new route or update an existing one.
  */
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import axios from 'axios';
 import { useSearchParams } from 'react-router-dom';
 import {
   Flex,
@@ -31,7 +30,7 @@ import {
   Spinner,
   SimpleGrid
 } from '@chakra-ui/react';
-import ApiService, { Route, Source, Sink, Equalizer } from '../../api/api';
+import ApiService, { Route, Source, Sink, Equalizer, NeighborSinksRequest } from '../../api/api';
 import { useTutorial } from '../../context/TutorialContext';
 import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
@@ -88,13 +87,18 @@ const AddEditRoutePage: React.FC = () => {
   const borderColor = useColorModeValue('gray.200', 'gray.700');
   const inputBg = useColorModeValue('white', 'gray.700');
 
-  const resolveApiBase = useCallback((instance: RouterInstance) => {
-    const apiPath = "/";//(instance.properties?.api || '').trim();
-    if (!apiPath) {
-      return instance.origin;
-    }
-    const normalized = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
-    return `${instance.origin}${normalized}`;
+  const buildNeighborPayload = useCallback((instance: RouterInstance): NeighborSinksRequest => {
+    const apiPath = (instance.properties?.api || '').trim();
+    const normalizedPath = apiPath
+      ? (apiPath.startsWith('/') ? apiPath : `/${apiPath}`)
+      : '/';
+    return {
+      hostname: instance.hostname,
+      port: instance.port,
+      scheme: (instance.scheme || 'https') as 'http' | 'https',
+      api_path: normalizedPath,
+      verify_tls: false,
+    };
   }, []);
 
   const refreshLocalSinks = useCallback(async () => {
@@ -110,12 +114,8 @@ const AddEditRoutePage: React.FC = () => {
     setRemoteLoading(true);
     setRemoteError(null);
     try {
-      const baseURL = resolveApiBase(instance).replace(/\/$/, '');
-      const [, sinksResponse] = await Promise.all([
-        Promise.resolve(),
-        axios.get<Record<string, Sink>>(`${baseURL}/sinks`)
-      ]);
-      setRemoteSinks(Object.values(sinksResponse.data || {}));
+      const response = await ApiService.getNeighborSinks(buildNeighborPayload(instance));
+      setRemoteSinks(Object.values(response.data || {}));
     } catch (err) {
       console.error('Failed to fetch remote sinks', err);
       setRemoteError('Failed to load remote sinks.');
@@ -123,7 +123,7 @@ const AddEditRoutePage: React.FC = () => {
     } finally {
       setRemoteLoading(false);
     }
-  }, [resolveApiBase]);
+  }, [buildNeighborPayload]);
 
   const ensureUniqueName = useCallback((base: string, existingNames: string[]) => {
     let candidate = base;

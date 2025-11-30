@@ -32,8 +32,7 @@ import {
   HStack,
   SimpleGrid
 } from '@chakra-ui/react';
-import axios from 'axios';
-import ApiService, { Sink, SystemAudioDeviceInfo } from '../../api/api';
+import ApiService, { NeighborSinksRequest, Sink, SystemAudioDeviceInfo } from '../../api/api';
 import { useTutorial } from '../../context/TutorialContext';
 import { useMdnsDiscovery } from '../../context/MdnsDiscoveryContext';
 import VolumeSlider from './controls/VolumeSlider';
@@ -266,21 +265,25 @@ const AddEditSinkPage: React.FC = () => {
     completeStep('sink-port-input');
   }, [port, completeStep]);
 
-  const resolveApiBase = useCallback((instance: RouterInstance) => {
-    const apiPath = "/";//(instance.properties?.api || '').trim();
-    if (!apiPath) {
-      return instance.origin;
-    }
-    const normalized = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
-    return `${instance.origin}${normalized}`;
+  const buildNeighborPayload = useCallback((instance: RouterInstance): NeighborSinksRequest => {
+    const apiPath = (instance.properties?.api || '').trim();
+    const normalizedPath = apiPath
+      ? (apiPath.startsWith('/') ? apiPath : `/${apiPath}`)
+      : '/';
+    return {
+      hostname: instance.hostname,
+      port: instance.port,
+      scheme: (instance.scheme || 'https') as 'http' | 'https',
+      api_path: normalizedPath,
+      verify_tls: false,
+    };
   }, []);
 
   const fetchRemoteSinks = useCallback(async (instance: RouterInstance) => {
     setRemoteLoading(true);
     setRemoteError(null);
     try {
-      const baseURL = resolveApiBase(instance).replace(/\/$/, '');
-      const response = await axios.get<Record<string, Sink>>(`${baseURL}/sinks`);
+      const response = await ApiService.getNeighborSinks(buildNeighborPayload(instance));
       setRemoteSinks(Object.values(response.data || {}));
     } catch (err) {
       console.error('Failed to fetch remote sinks', err);
@@ -289,7 +292,7 @@ const AddEditSinkPage: React.FC = () => {
     } finally {
       setRemoteLoading(false);
     }
-  }, [resolveApiBase]);
+  }, [buildNeighborPayload]);
 
   const randomHighPort = useCallback(() => Math.floor(Math.random() * 9000) + 41000, []);
 
