@@ -129,6 +129,7 @@ export interface RouterServiceResponse {
 
 export interface NeighborSinksRequest {
   hostname: string;
+  address?: string;
   port: number;
   scheme?: 'http' | 'https';
   api_path?: string;
@@ -832,7 +833,7 @@ const ApiService = {
     params: { timeout },
   }),
   getNeighborSinks: (payload: NeighborSinksRequest) =>
-    axios.post<Record<string, Sink>>('/neighbors/sinks', payload),
+    axios.post<Record<string, Sink> | Sink[]>('/neighbors/sinks', payload),
 
   // --- Speaker Layout Update Methods ---
   updateSourceSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {

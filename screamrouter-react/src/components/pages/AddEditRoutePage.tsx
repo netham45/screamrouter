@@ -88,15 +88,14 @@ const AddEditRoutePage: React.FC = () => {
   const inputBg = useColorModeValue('white', 'gray.700');
 
   const buildNeighborPayload = useCallback((instance: RouterInstance): NeighborSinksRequest => {
-    const apiPath = (instance.properties?.api || '').trim();
-    const normalizedPath = apiPath
-      ? (apiPath.startsWith('/') ? apiPath : `/${apiPath}`)
-      : '/';
+    const normalizedScheme = instance.scheme?.toLowerCase() === 'http' ? 'http' : 'https';
+    const fallbackHost = instance.address || instance.hostname;
     return {
-      hostname: instance.hostname,
+      hostname: instance.hostname || fallbackHost,
+      address: instance.address || undefined,
       port: instance.port,
-      scheme: (instance.scheme || 'https') as 'http' | 'https',
-      api_path: normalizedPath,
+      scheme: normalizedScheme,
+      api_path: '/',
       verify_tls: false,
     };
   }, []);
@@ -115,7 +114,9 @@ const AddEditRoutePage: React.FC = () => {
     setRemoteError(null);
     try {
       const response = await ApiService.getNeighborSinks(buildNeighborPayload(instance));
-      setRemoteSinks(Object.values(response.data || {}));
+      const payload = response.data;
+      const sinksList = Array.isArray(payload) ? payload : Object.values(payload || {});
+      setRemoteSinks(sinksList);
     } catch (err) {
       console.error('Failed to fetch remote sinks', err);
       setRemoteError('Failed to load remote sinks.');

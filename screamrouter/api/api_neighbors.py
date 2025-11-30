@@ -16,7 +16,11 @@ logger = get_logger(__name__)
 class NeighborInstance(BaseModel):
     """Description of a neighboring ScreamRouter instance."""
 
-    hostname: str = Field(description="Hostname or IP address advertised by the neighbor")
+    hostname: str = Field(description="Hostname or DNS name advertised by the neighbor")
+    address: str | None = Field(
+        default=None,
+        description="Direct IP address if available (preferred when DNS is not resolvable)",
+    )
     port: int = Field(default=443, ge=1, le=65535, description="API port exposed by the neighbor")
     scheme: str = Field(default="https", description="http or https")
     api_path: str = Field(default="/", description="Base path prefix for the neighbor API")
@@ -43,14 +47,15 @@ class NeighborInstance(BaseModel):
     def build_base_url(self) -> str:
         """Return the neighbor base URL without a trailing slash."""
         default_port = 443 if self.scheme == "https" else 80
-        host_port = self.hostname
+        target_host = (self.address or self.hostname or "").strip()
+        if not target_host:
+            msg = "Neighbor host/address not provided"
+            raise ValueError(msg)
+        host_port = target_host
         if self.port != default_port:
             host_port = f"{host_port}:{self.port}"
 
         base = f"{self.scheme}://{host_port}"
-        api_path = self.api_path.rstrip("/")
-        if api_path and api_path != "/":
-            return f"{base}{api_path}"
         return base
 
 
@@ -66,7 +71,7 @@ class APINeighbors:
             tags=["Neighbors"],
         )
 
-    async def get_neighbor_sinks(self, neighbor: NeighborInstance) -> Dict[str, Any]:
+    async def get_neighbor_sinks(self, neighbor: NeighborInstance) -> Any:
         """Fetch /sinks from another ScreamRouter instance."""
         base_url = neighbor.build_base_url()
         sinks_url = f"{base_url}/sinks"
@@ -99,13 +104,4 @@ class APINeighbors:
                 status_code=502, detail="Neighbor response was not valid JSON"
             ) from exc
 
-        if not isinstance(payload, dict):
-            logger.warning(
-                "Neighbor %s responded with unexpected payload type %s",
-                sinks_url,
-                type(payload),
-            )
-            raise HTTPException(
-                status_code=502, detail="Neighbor response format was unexpected"
-            )
         return payload
