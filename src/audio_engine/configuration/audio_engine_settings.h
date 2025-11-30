@@ -120,7 +120,7 @@ struct SynchronizationTuning {
 
 struct SystemAudioTuning {
     double alsa_target_latency_ms = 40.0;
-    unsigned int alsa_periods_per_buffer = 2;
+    unsigned int alsa_periods_per_buffer = 3;
     bool alsa_dynamic_latency_enabled = true;
     double alsa_latency_min_ms = 20.0;
     double alsa_latency_max_ms = 120.0;
@@ -132,6 +132,7 @@ struct SystemAudioTuning {
     double alsa_latency_apply_hysteresis_ms = 2.0;    // avoid thrashing hw params
     double alsa_latency_reconfig_cooldown_ms = 4000.0;
     double alsa_latency_xrun_boost_ms = 5.0;
+    double alsa_latency_low_step_ms = 3.0;            // step added immediately when buffer dips low
 };
 
 class AudioEngineSettings {

@@ -843,9 +843,11 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
 
     double controller_error = 0.0;
     double error = 0.0;
+    bool low_event = false;
     if (low_metric_ms < low_threshold_ms) {
         error = low_threshold_ms - low_metric_ms;
         controller_error = low_threshold_ms - instant_ms;
+        low_event = true;
     } else if (high_metric_ms > high_threshold_ms) {
         error = high_threshold_ms - high_metric_ms;
         controller_error = high_threshold_ms - instant_ms;
@@ -857,6 +859,22 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
             max_decay = std::max(0.0, max_decay);
             const double decay = std::clamp(delta, -max_decay, max_decay);
             dynamic_latency_target_ms_ -= decay;
+        }
+    }
+
+    if (low_event) {
+        const double low_step = std::max(0.0, tuning.alsa_latency_low_step_ms);
+        if (low_step > 0.0) {
+            const double step_prev = dynamic_latency_target_ms_;
+            dynamic_latency_target_ms_ = std::clamp(dynamic_latency_target_ms_ + low_step, min_latency, max_latency);
+            if (dynamic_latency_target_ms_ - step_prev > 1e-6) {
+                LOG_CPP_INFO("[AlsaPlayback:%s] Dynamic latency low buffer step: delay %.2f ms < %.2f ms, target stepped %.2f -> %.2f ms",
+                             device_tag_.c_str(),
+                             instant_ms,
+                             low_threshold_ms,
+                             step_prev,
+                             dynamic_latency_target_ms_);
+            }
         }
     }
 

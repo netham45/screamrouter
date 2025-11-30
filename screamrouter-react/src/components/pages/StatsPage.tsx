@@ -505,6 +505,7 @@ const StatsPage: React.FC = () => {
                     {renderTuningControl('system_audio_tuning', 'alsa_latency_apply_hysteresis_ms', 'Latency Hysteresis (ms)', 0.5)}
                     {renderTuningControl('system_audio_tuning', 'alsa_latency_reconfig_cooldown_ms', 'Reconfigure Cooldown (ms)', 10)}
                     {renderTuningControl('system_audio_tuning', 'alsa_latency_xrun_boost_ms', 'X-run Boost (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_low_step_ms', 'Low Buffer Step (ms)', 0.5)}
                   </SimpleGrid>
                 </Box>
 

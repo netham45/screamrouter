@@ -463,7 +463,8 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("alsa_latency_idle_decay_ms_per_sec", &SystemAudioTuning::alsa_latency_idle_decay_ms_per_sec)
         .def_readwrite("alsa_latency_apply_hysteresis_ms", &SystemAudioTuning::alsa_latency_apply_hysteresis_ms)
         .def_readwrite("alsa_latency_reconfig_cooldown_ms", &SystemAudioTuning::alsa_latency_reconfig_cooldown_ms)
-        .def_readwrite("alsa_latency_xrun_boost_ms", &SystemAudioTuning::alsa_latency_xrun_boost_ms);
+        .def_readwrite("alsa_latency_xrun_boost_ms", &SystemAudioTuning::alsa_latency_xrun_boost_ms)
+        .def_readwrite("alsa_latency_low_step_ms", &SystemAudioTuning::alsa_latency_low_step_ms);
 
     py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
         .def(py::init<>())

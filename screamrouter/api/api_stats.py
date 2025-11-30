@@ -180,6 +180,7 @@ def settings_to_dict(settings: AudioEngineSettings):
             "alsa_latency_apply_hysteresis_ms": settings.system_audio_tuning.alsa_latency_apply_hysteresis_ms,
             "alsa_latency_reconfig_cooldown_ms": settings.system_audio_tuning.alsa_latency_reconfig_cooldown_ms,
             "alsa_latency_xrun_boost_ms": settings.system_audio_tuning.alsa_latency_xrun_boost_ms,
+            "alsa_latency_low_step_ms": settings.system_audio_tuning.alsa_latency_low_step_ms,
         }
     }
 
