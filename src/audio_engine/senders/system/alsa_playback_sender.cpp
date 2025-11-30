@@ -537,9 +537,19 @@ bool AlsaPlaybackSender::handle_write_error(int err) {
         target_delay_frames_ = 0.0;
     }
     filtered_delay_frames_ = 0.0;
-    prefill_target_delay_locked();
+    bool reconfigured_due_to_xrun = false;
+    if (detected_xrun) {
+        handle_dynamic_latency_xrun_locked();
+        if (dynamic_latency_reconfigure_pending_) {
+            apply_pending_dynamic_latency_locked();
+            reconfigured_due_to_xrun = true;
+        }
+    }
+    if (!reconfigured_due_to_xrun) {
+        prefill_target_delay_locked();
+    }
 
-    if (detected_xrun && is_raspberry_pi_) {
+    if (detected_xrun && is_raspberry_pi_ && !reconfigured_due_to_xrun) {
         LOG_CPP_WARNING("[AlsaPlayback:%s] ALSA x-run detected on Raspberry Pi; recreating playback device.", device_tag_.c_str());
         close_locked();
         if (!configure_device()) {
@@ -790,6 +800,22 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
         return;
     }
 
+    const double hardware_buffer_ms = (buffer_frames_ > 0 && sample_rate_ > 0)
+                                          ? 1000.0 * static_cast<double>(buffer_frames_) / static_cast<double>(sample_rate_)
+                                          : 0.0;
+
+    double low_threshold_ms = tuning.alsa_latency_low_water_ms;
+    double high_threshold_ms = tuning.alsa_latency_high_water_ms;
+    if (hardware_buffer_ms > 0.0) {
+        const double min_low_bound = std::max(0.5, hardware_buffer_ms * 0.05);
+        const double max_low_bound = std::max(min_low_bound, hardware_buffer_ms * 0.5);
+        low_threshold_ms = std::clamp(low_threshold_ms, min_low_bound, max_low_bound);
+
+        const double high_lower_bound = std::max(low_threshold_ms + 0.5, hardware_buffer_ms * 0.6);
+        const double high_upper_bound = std::max(high_lower_bound + 0.5, hardware_buffer_ms - 0.5);
+        high_threshold_ms = std::clamp(high_threshold_ms, high_lower_bound, high_upper_bound);
+    }
+
     const double min_latency = std::max(1.0, tuning.alsa_latency_min_ms);
     const double max_latency = std::max(min_latency, tuning.alsa_latency_max_ms);
     const double baseline = std::clamp(
@@ -817,12 +843,12 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
 
     double controller_error = 0.0;
     double error = 0.0;
-    if (low_metric_ms < tuning.alsa_latency_low_water_ms) {
-        error = tuning.alsa_latency_low_water_ms - low_metric_ms;
-        controller_error = tuning.alsa_latency_low_water_ms - instant_ms;
-    } else if (high_metric_ms > tuning.alsa_latency_high_water_ms) {
-        error = tuning.alsa_latency_high_water_ms - high_metric_ms;
-        controller_error = tuning.alsa_latency_high_water_ms - instant_ms;
+    if (low_metric_ms < low_threshold_ms) {
+        error = low_threshold_ms - low_metric_ms;
+        controller_error = low_threshold_ms - instant_ms;
+    } else if (high_metric_ms > high_threshold_ms) {
+        error = high_threshold_ms - high_metric_ms;
+        controller_error = high_threshold_ms - instant_ms;
     } else {
         const double idle_decay_rate = std::max(0.0, tuning.alsa_latency_idle_decay_ms_per_sec);
         const double delta = dynamic_latency_target_ms_ - baseline;
@@ -862,7 +888,7 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
                          dynamic_latency_target_ms_,
                          dynamic_latency_applied_ms_);
         }
-        schedule_dynamic_latency_reconfigure_locked(dynamic_latency_target_ms_);
+        schedule_dynamic_latency_reconfigure_locked(dynamic_latency_target_ms_, false);
     }
 
     const auto now = std::chrono::steady_clock::now();
@@ -881,20 +907,21 @@ void AlsaPlaybackSender::maybe_adjust_dynamic_latency_locked(double filtered_del
                       baseline,
                       min_latency,
                       max_latency,
-                      tuning.alsa_latency_low_water_ms,
-                      tuning.alsa_latency_high_water_ms,
+                      low_threshold_ms,
+                      high_threshold_ms,
                       dynamic_latency_reconfigure_pending_ ? 1 : 0);
     }
 }
 
-void AlsaPlaybackSender::schedule_dynamic_latency_reconfigure_locked(double desired_latency_ms) {
+void AlsaPlaybackSender::schedule_dynamic_latency_reconfigure_locked(double desired_latency_ms,
+                                                                     bool force_reconfigure) {
     if (!settings_) {
         return;
     }
 
     const auto now = std::chrono::steady_clock::now();
     const double cooldown_ms = settings_->system_audio_tuning.alsa_latency_reconfig_cooldown_ms;
-    if (!dynamic_latency_reconfigure_pending_ && cooldown_ms > 0.0) {
+    if (!force_reconfigure && !dynamic_latency_reconfigure_pending_ && cooldown_ms > 0.0) {
         const auto cooldown = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
             std::chrono::duration<double, std::milli>(cooldown_ms));
         if (dynamic_latency_last_reconfig_.time_since_epoch().count() != 0 &&
@@ -909,6 +936,12 @@ void AlsaPlaybackSender::schedule_dynamic_latency_reconfigure_locked(double desi
 
     dynamic_latency_pending_latency_ms_ = desired_latency_ms;
     dynamic_latency_reconfigure_pending_ = true;
+
+    if (force_reconfigure) {
+        LOG_CPP_INFO("[AlsaPlayback:%s] Forcing ALSA latency reconfigure to %.2f ms (cooldown bypass).",
+                     device_tag_.c_str(),
+                     desired_latency_ms);
+    }
 }
 
 void AlsaPlaybackSender::apply_pending_dynamic_latency_locked() {
@@ -937,6 +970,45 @@ void AlsaPlaybackSender::apply_pending_dynamic_latency_locked() {
     if (!configure_device()) {
         LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to reconfigure ALSA device after latency update.", device_tag_.c_str());
     }
+}
+
+void AlsaPlaybackSender::handle_dynamic_latency_xrun_locked() {
+    if (!settings_) {
+        return;
+    }
+
+    auto& tuning = settings_->system_audio_tuning;
+    if (!tuning.alsa_dynamic_latency_enabled) {
+        return;
+    }
+
+    const double boost_ms = std::max(0.0, tuning.alsa_latency_xrun_boost_ms);
+    if (boost_ms <= 0.0) {
+        return;
+    }
+
+    if (dynamic_latency_target_ms_ <= 0.0) {
+        dynamic_latency_target_ms_ = tuning.alsa_target_latency_ms;
+    }
+    if (dynamic_latency_applied_ms_ <= 0.0) {
+        dynamic_latency_applied_ms_ = tuning.alsa_target_latency_ms;
+    }
+
+    const double new_target = std::clamp(dynamic_latency_target_ms_ + boost_ms,
+                                         tuning.alsa_latency_min_ms,
+                                         tuning.alsa_latency_max_ms);
+    if (new_target <= dynamic_latency_target_ms_ + 1e-3) {
+        return;
+    }
+
+    dynamic_latency_target_ms_ = new_target;
+    LOG_CPP_WARNING("[AlsaPlayback:%s] ALSA x-run boosting latency target by %.1f ms to %.1f ms (applied=%.1f ms).",
+                    device_tag_.c_str(),
+                    boost_ms,
+                    dynamic_latency_target_ms_,
+                    dynamic_latency_applied_ms_);
+
+    schedule_dynamic_latency_reconfigure_locked(dynamic_latency_target_ms_, true);
 }
 
 #endif // __linux__

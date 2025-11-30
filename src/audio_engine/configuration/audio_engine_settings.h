@@ -123,14 +123,15 @@ struct SystemAudioTuning {
     unsigned int alsa_periods_per_buffer = 2;
     bool alsa_dynamic_latency_enabled = true;
     double alsa_latency_min_ms = 20.0;
-    double alsa_latency_max_ms = 60.0;
-    double alsa_latency_low_water_ms = 5.0;
-    double alsa_latency_high_water_ms = 40.0;
+    double alsa_latency_max_ms = 120.0;
+    double alsa_latency_low_water_ms = 20.0;
+    double alsa_latency_high_water_ms = 50.0;
     double alsa_latency_integral_gain = 0.4;          // ms adjustment per ms-error-second
     double alsa_latency_rate_limit_ms_per_sec = 8.0;  // max slew rate when integrating
     double alsa_latency_idle_decay_ms_per_sec = 1.0;  // drift back toward baseline when stable
     double alsa_latency_apply_hysteresis_ms = 2.0;    // avoid thrashing hw params
     double alsa_latency_reconfig_cooldown_ms = 4000.0;
+    double alsa_latency_xrun_boost_ms = 5.0;
 };
 
 class AudioEngineSettings {

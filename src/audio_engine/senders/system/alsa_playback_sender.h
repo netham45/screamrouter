@@ -56,8 +56,10 @@ private:
     void maybe_adjust_dynamic_latency_locked(double filtered_delay_frames,
                                              double current_delay_frames,
                                              double dt_sec);
-    void schedule_dynamic_latency_reconfigure_locked(double desired_latency_ms);
+    void schedule_dynamic_latency_reconfigure_locked(double desired_latency_ms,
+                                                     bool force_reconfigure);
     void apply_pending_dynamic_latency_locked();
+    void handle_dynamic_latency_xrun_locked();
 
     std::string device_tag_;
     std::string hw_device_name_;

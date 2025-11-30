@@ -345,6 +345,7 @@ export interface SystemAudioTuning {
   alsa_latency_idle_decay_ms_per_sec: number;
   alsa_latency_apply_hysteresis_ms: number;
   alsa_latency_reconfig_cooldown_ms: number;
+  alsa_latency_xrun_boost_ms: number;
 }
 
 export interface AudioEngineSettings {
