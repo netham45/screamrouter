@@ -1933,9 +1933,6 @@ bool SinkAudioMixer::wait_for_mix_tick() {
                 (void)instance_id;
                 pending_chunks += queue.size();
             }
-            if (pending_chunks > 3) {
-               return true;
-            }
             // Bound total backlog based on active sources to avoid runaway latency/CPU.
             const std::size_t kMaxTotalQueuedChunks =
                 max_per_source * std::max<std::size_t>(1, source_count);
@@ -2072,192 +2069,204 @@ void SinkAudioMixer::run() {
             break;
         }
 
-        if (stop_flag_) {
-            break;
+        // Run all pending ticks back-to-back (bounded to avoid starvation).
+        uint64_t ticks_to_run = clock_pending_ticks_;
+        clock_pending_ticks_ = 0;
+        if (ticks_to_run == 0) {
+            ticks_to_run = 1;  // at least one tick was signaled
         }
+        constexpr uint64_t kMaxTicksPerLoop = 64;
 
-        profiling_cycles_++;
-        cleanup_closed_listeners();
+        uint64_t ticks_run = 0;
+        while (ticks_run < ticks_to_run && ticks_run < kMaxTicksPerLoop && !stop_flag_) {
+            ++ticks_run;
 
-        bool data_available = wait_for_source_data();
-        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Poll complete. Data available this cycle: %s",
-                      config_.sink_id.c_str(), data_available ? "true" : "false");
+            profiling_cycles_++;
+            cleanup_closed_listeners();
 
-        if (stop_flag_) {
-            break;
-        }
+            bool data_available = wait_for_source_data();
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Poll complete. Data available this cycle: %s (tick %llu/%llu)",
+                          config_.sink_id.c_str(),
+                          data_available ? "true" : "false",
+                          static_cast<unsigned long long>(ticks_run),
+                          static_cast<unsigned long long>(ticks_to_run));
 
-        std::unique_lock<std::mutex> lock(queues_mutex_);
-        bool has_active_sources = false;
-        for (const auto& [instance_id, is_active] : input_active_state_) {
-            (void)instance_id;
-            if (is_active) {
-                has_active_sources = true;
+            if (stop_flag_) {
                 break;
             }
-        }
 
-        bool should_mix = has_active_sources || underrun_silence_active_;
+            std::unique_lock<std::mutex> lock(queues_mutex_);
+            bool has_active_sources = false;
+            for (const auto& [instance_id, is_active] : input_active_state_) {
+                (void)instance_id;
+                if (is_active) {
+                    has_active_sources = true;
+                    break;
+                }
+            }
 
-        if (!should_mix) {
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No active sources and no underrun hold. Repeating last sample if available.",
-                          config_.sink_id.c_str());
-        }
+            bool should_mix = has_active_sources || underrun_silence_active_;
 
-        const bool coordination_active = coordination_mode_ && coordinator_;
-        std::optional<SinkSynchronizationCoordinator::DispatchTimingInfo> dispatch_timing;
-
-        if (coordination_active) {
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination enabled, waiting on barrier...", config_.sink_id.c_str());
-            if (!coordinator_->begin_dispatch()) {
-                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordinator requested skip, yielding cycle.",
+            if (!should_mix) {
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: No active sources and no underrun hold. Repeating last sample if available.",
                               config_.sink_id.c_str());
-                lock.unlock();
-                auto telemetry_now = std::chrono::steady_clock::now();
-                maybe_log_profiler();
-                maybe_log_telemetry(telemetry_now);
-                continue;
             }
 
-            dispatch_timing.emplace();
-            dispatch_timing->dispatch_start = std::chrono::steady_clock::now();
-            dispatch_timing->dispatch_end = dispatch_timing->dispatch_start;
+            const bool coordination_active = coordination_mode_ && coordinator_;
+            std::optional<SinkSynchronizationCoordinator::DispatchTimingInfo> dispatch_timing;
 
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Barrier cleared, proceeding with mix.", config_.sink_id.c_str());
-        }
+            if (coordination_active) {
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordination enabled, waiting on barrier...", config_.sink_id.c_str());
+                if (!coordinator_->begin_dispatch()) {
+                    LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Coordinator requested skip, yielding cycle.",
+                                  config_.sink_id.c_str());
+                    lock.unlock();
+                    auto telemetry_now = std::chrono::steady_clock::now();
+                    maybe_log_profiler();
+                    maybe_log_telemetry(telemetry_now);
+                    continue;
+                }
 
-        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing buffers...", config_.sink_id.c_str());
-        mix_buffers();
-        LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing complete.", config_.sink_id.c_str());
+                dispatch_timing.emplace();
+                dispatch_timing->dispatch_start = std::chrono::steady_clock::now();
+                dispatch_timing->dispatch_end = dispatch_timing->dispatch_start;
 
-        lock.unlock();
-
-        // Adaptive buffer draining: evaluate backlog to inform rate control.
-        update_drain_ratio();
-
-        downscale_buffer();
-
-        const int effective_bit_depth = (playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0)
-                                            ? playback_bit_depth_
-                                            : 16;
-        const std::size_t bytes_per_sample = static_cast<std::size_t>(effective_bit_depth) / 8;
-        const int effective_channels = std::max(playback_channels_, 1);
-        const std::size_t frame_bytes = bytes_per_sample * static_cast<std::size_t>(effective_channels);
-        const bool frame_metrics_valid = frame_bytes > 0 && (chunk_size_bytes_ % frame_bytes) == 0;
-        const std::size_t frames_per_chunk = frame_metrics_valid ? (chunk_size_bytes_ / frame_bytes) : 0;
-        uint64_t frames_dispatched = 0;
-
-        if (config_.protocol == "system_audio") {
-            double upstream_frames = 0.0;
-            double upstream_target_frames = 0.0;
-            if (frame_metrics_valid) {
-                upstream_frames = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(frame_bytes);
-                upstream_target_frames = static_cast<double>(frames_per_chunk);
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Barrier cleared, proceeding with mix.", config_.sink_id.c_str());
             }
+
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing buffers...", config_.sink_id.c_str());
+            mix_buffers();
+            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Mixing complete.", config_.sink_id.c_str());
+
+            lock.unlock();
+
+            // Adaptive buffer draining: evaluate backlog to inform rate control.
+            update_drain_ratio();
+
+            downscale_buffer();
+
+            const int effective_bit_depth = (playback_bit_depth_ > 0 && (playback_bit_depth_ % 8) == 0)
+                                                ? playback_bit_depth_
+                                                : 16;
+            const std::size_t bytes_per_sample = static_cast<std::size_t>(effective_bit_depth) / 8;
+            const int effective_channels = std::max(playback_channels_, 1);
+            const std::size_t frame_bytes = bytes_per_sample * static_cast<std::size_t>(effective_channels);
+            const bool frame_metrics_valid = frame_bytes > 0 && (chunk_size_bytes_ % frame_bytes) == 0;
+            const std::size_t frames_per_chunk = frame_metrics_valid ? (chunk_size_bytes_ / frame_bytes) : 0;
+            uint64_t frames_dispatched = 0;
+
+            if (config_.protocol == "system_audio") {
+                double upstream_frames = 0.0;
+                double upstream_target_frames = 0.0;
+                if (frame_metrics_valid) {
+                    upstream_frames = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(frame_bytes);
+                    upstream_target_frames = static_cast<double>(frames_per_chunk);
+                }
 #if defined(__linux__)
-            if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
-                alsa_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
-            }
+                if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+                    alsa_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
+                }
 #elif defined(_WIN32)
-            if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
-                wasapi_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
-            }
+                if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+                    wasapi_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
+                }
 #endif
-        }
-
-        if (!frame_metrics_valid && coordination_active) {
-            LOG_CPP_WARNING("[SinkMixer:%s] RunLoop: Unable to derive frames_per_chunk (bit_depth=%d, channels=%d).",
-                            config_.sink_id.c_str(), playback_bit_depth_, playback_channels_);
-        }
-
-        size_t chunks_dispatched = 0;
-        while (payload_buffer_fill_bytes_ >= chunk_size_bytes_) {
-            auto send_time = std::chrono::steady_clock::now();
-            if (profiling_last_chunk_send_time_.time_since_epoch().count() != 0) {
-                double gap_ms = std::chrono::duration<double, std::milli>(send_time - profiling_last_chunk_send_time_).count();
-                profiling_last_send_gap_ms_ = gap_ms;
-                profiling_send_gap_sum_ms_ += gap_ms;
-                profiling_send_gap_samples_++;
-                if (profiling_send_gap_samples_ == 1) {
-                    profiling_send_gap_min_ms_ = gap_ms;
-                    profiling_send_gap_max_ms_ = gap_ms;
-                } else {
-                    profiling_send_gap_min_ms_ = std::min(profiling_send_gap_min_ms_, gap_ms);
-                    profiling_send_gap_max_ms_ = std::max(profiling_send_gap_max_ms_, gap_ms);
-                }
             }
-            profiling_last_chunk_send_time_ = send_time;
-            if (network_sender_) {
-                const size_t capacity = payload_buffer_.size();
-                const size_t contiguous = std::min(chunk_size_bytes_, capacity - payload_buffer_read_pos_);
-                const uint8_t* send_ptr = payload_buffer_.data() + payload_buffer_read_pos_;
-                if (contiguous == chunk_size_bytes_) {
-                    std::lock_guard<std::mutex> lock(csrc_mutex_);
-                    network_sender_->send_payload(send_ptr, chunk_size_bytes_, current_csrcs_);
-                } else {
-                    if (payload_chunk_temp_.size() < chunk_size_bytes_) {
-                        payload_chunk_temp_.resize(chunk_size_bytes_);
+
+            if (!frame_metrics_valid && coordination_active) {
+                LOG_CPP_WARNING("[SinkMixer:%s] RunLoop: Unable to derive frames_per_chunk (bit_depth=%d, channels=%d).",
+                                config_.sink_id.c_str(), playback_bit_depth_, playback_channels_);
+            }
+
+            size_t chunks_dispatched = 0;
+            while (payload_buffer_fill_bytes_ >= chunk_size_bytes_) {
+                auto send_time = std::chrono::steady_clock::now();
+                if (profiling_last_chunk_send_time_.time_since_epoch().count() != 0) {
+                    double gap_ms = std::chrono::duration<double, std::milli>(send_time - profiling_last_chunk_send_time_).count();
+                    profiling_last_send_gap_ms_ = gap_ms;
+                    profiling_send_gap_sum_ms_ += gap_ms;
+                    profiling_send_gap_samples_++;
+                    if (profiling_send_gap_samples_ == 1) {
+                        profiling_send_gap_min_ms_ = gap_ms;
+                        profiling_send_gap_max_ms_ = gap_ms;
+                    } else {
+                        profiling_send_gap_min_ms_ = std::min(profiling_send_gap_min_ms_, gap_ms);
+                        profiling_send_gap_max_ms_ = std::max(profiling_send_gap_max_ms_, gap_ms);
                     }
-                    std::memcpy(payload_chunk_temp_.data(), send_ptr, contiguous);
-                    std::memcpy(payload_chunk_temp_.data() + contiguous, payload_buffer_.data(), chunk_size_bytes_ - contiguous);
-                    std::lock_guard<std::mutex> lock(csrc_mutex_);
-                    network_sender_->send_payload(payload_chunk_temp_.data(), chunk_size_bytes_, current_csrcs_);
+                }
+                profiling_last_chunk_send_time_ = send_time;
+                if (network_sender_) {
+                    const size_t capacity = payload_buffer_.size();
+                    const size_t contiguous = std::min(chunk_size_bytes_, capacity - payload_buffer_read_pos_);
+                    const uint8_t* send_ptr = payload_buffer_.data() + payload_buffer_read_pos_;
+                    if (contiguous == chunk_size_bytes_) {
+                        std::lock_guard<std::mutex> lock(csrc_mutex_);
+                        network_sender_->send_payload(send_ptr, chunk_size_bytes_, current_csrcs_);
+                    } else {
+                        if (payload_chunk_temp_.size() < chunk_size_bytes_) {
+                            payload_chunk_temp_.resize(chunk_size_bytes_);
+                        }
+                        std::memcpy(payload_chunk_temp_.data(), send_ptr, contiguous);
+                        std::memcpy(payload_chunk_temp_.data() + contiguous, payload_buffer_.data(), chunk_size_bytes_ - contiguous);
+                        std::lock_guard<std::mutex> lock(csrc_mutex_);
+                        network_sender_->send_payload(payload_chunk_temp_.data(), chunk_size_bytes_, current_csrcs_);
+                    }
+                }
+                profiling_chunks_sent_++;
+                profiling_payload_bytes_sent_ += chunk_size_bytes_;
+
+                if (frame_metrics_valid) {
+                    frames_dispatched += frames_per_chunk;
+                }
+                chunks_dispatched++;
+
+                payload_buffer_read_pos_ = (payload_buffer_read_pos_ + chunk_size_bytes_) % payload_buffer_.size();
+                payload_buffer_fill_bytes_ -= chunk_size_bytes_;
+
+                LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Sent chunk, remaining bytes in buffer: %zu",
+                              config_.sink_id.c_str(), payload_buffer_fill_bytes_);
+            }
+
+            if (coordination_active && dispatch_timing) {
+                dispatch_timing->dispatch_end = std::chrono::steady_clock::now();
+                if (!frame_metrics_valid) {
+                    if (chunks_dispatched > 0 && playback_sample_rate_ > 0) {
+                        const double period_seconds = std::chrono::duration<double>(mix_period_).count();
+                        const double frames_per_chunk_estimate = period_seconds > 0.0
+                                                                     ? static_cast<double>(playback_sample_rate_) * period_seconds
+                                                                     : 0.0;
+                        frames_dispatched = static_cast<uint64_t>(
+                            std::llround(frames_per_chunk_estimate * static_cast<double>(chunks_dispatched)));
+                    } else {
+                        frames_dispatched = 0;
+                    }
+                }
+                coordinator_->complete_dispatch(frames_dispatched, *dispatch_timing);
+            }
+
+            bool has_listeners;
+            {
+                std::lock_guard<std::mutex> lock(listener_senders_mutex_);
+                has_listeners = !listener_senders_.empty();
+            }
+            bool mp3_enabled = mp3_output_queue_ && mp3_thread_running_.load(std::memory_order_acquire);
+
+            if (has_listeners || mp3_enabled) {
+                size_t processed_samples = preprocess_for_listeners_and_mp3();
+                if (processed_samples > 0) {
+                    if (has_listeners) {
+                        dispatch_to_listeners(processed_samples);
+                    }
+                    if (mp3_enabled) {
+                        enqueue_mp3_pcm(stereo_buffer_.data(), processed_samples);
+                    }
                 }
             }
-            profiling_chunks_sent_++;
-            profiling_payload_bytes_sent_ += chunk_size_bytes_;
 
-            if (frame_metrics_valid) {
-                frames_dispatched += frames_per_chunk;
-            }
-            chunks_dispatched++;
-
-            payload_buffer_read_pos_ = (payload_buffer_read_pos_ + chunk_size_bytes_) % payload_buffer_.size();
-            payload_buffer_fill_bytes_ -= chunk_size_bytes_;
-
-            LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Sent chunk, remaining bytes in buffer: %zu",
-                          config_.sink_id.c_str(), payload_buffer_fill_bytes_);
+            auto telemetry_now = std::chrono::steady_clock::now();
+            maybe_log_profiler();
+            maybe_log_telemetry(telemetry_now);
         }
-
-        if (coordination_active && dispatch_timing) {
-            dispatch_timing->dispatch_end = std::chrono::steady_clock::now();
-            if (!frame_metrics_valid) {
-                if (chunks_dispatched > 0 && playback_sample_rate_ > 0) {
-                    const double period_seconds = std::chrono::duration<double>(mix_period_).count();
-                    const double frames_per_chunk_estimate = period_seconds > 0.0
-                                                                 ? static_cast<double>(playback_sample_rate_) * period_seconds
-                                                                 : 0.0;
-                    frames_dispatched = static_cast<uint64_t>(
-                        std::llround(frames_per_chunk_estimate * static_cast<double>(chunks_dispatched)));
-                } else {
-                    frames_dispatched = 0;
-                }
-            }
-            coordinator_->complete_dispatch(frames_dispatched, *dispatch_timing);
-        }
-
-        bool has_listeners;
-        {
-            std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-            has_listeners = !listener_senders_.empty();
-        }
-        bool mp3_enabled = mp3_output_queue_ && mp3_thread_running_.load(std::memory_order_acquire);
-
-        if (has_listeners || mp3_enabled) {
-            size_t processed_samples = preprocess_for_listeners_and_mp3();
-            if (processed_samples > 0) {
-                if (has_listeners) {
-                    dispatch_to_listeners(processed_samples);
-                }
-                if (mp3_enabled) {
-                    enqueue_mp3_pcm(stereo_buffer_.data(), processed_samples);
-                }
-            }
-        }
-
-        auto telemetry_now = std::chrono::steady_clock::now();
-        maybe_log_profiler();
-        maybe_log_telemetry(telemetry_now);
     }
 
     LOG_CPP_INFO("[SinkMixer:%s] Exiting run loop.", config_.sink_id.c_str());
