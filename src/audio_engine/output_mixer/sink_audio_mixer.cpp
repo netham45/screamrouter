@@ -1899,6 +1899,8 @@ void SinkAudioMixer::unregister_mix_timer() {
 
 bool SinkAudioMixer::wait_for_mix_tick() {
     PROFILE_FUNCTION();
+    if (pending_chunks > 3)
+        return true;
     if (stop_flag_) {
         return false;
     }
@@ -1923,14 +1925,54 @@ bool SinkAudioMixer::wait_for_mix_tick() {
 
         // If queues are backing up, force a tick instead of blocking on the clock.
         std::size_t pending_chunks = 0;
+        std::size_t source_count = 0;
+        std::size_t max_per_source = m_settings ? std::max<std::size_t>(1, m_settings->mixer_tuning.max_queued_chunks) : 3;
         {
             std::lock_guard<std::mutex> lock(queues_mutex_);
+            source_count = processed_ready_.size();
             for (const auto& [instance_id, queue] : processed_ready_) {
                 (void)instance_id;
                 pending_chunks += queue.size();
             }
+            // Bound total backlog based on active sources to avoid runaway latency/CPU.
+            const std::size_t kMaxTotalQueuedChunks =
+                max_per_source * std::max<std::size_t>(1, source_count);
+            if (pending_chunks > kMaxTotalQueuedChunks) {
+                std::size_t dropped = 0;
+                while (pending_chunks > kMaxTotalQueuedChunks) {
+                    auto biggest = std::max_element(
+                        processed_ready_.begin(), processed_ready_.end(),
+                        [](const auto& a, const auto& b) {
+                            return a.second.size() < b.second.size();
+                        });
+                    if (biggest == processed_ready_.end() || biggest->second.empty()) {
+                        break;
+                    }
+                    auto& queue = biggest->second;
+                    auto dropped_chunk = std::move(queue.front());
+                    queue.pop_front();
+                    pending_chunks--;
+                    dropped++;
+                    if (dropped_chunk.is_sentinel) {
+                        const std::string context = " [sink=" + config_.sink_id +
+                                                    " instance=" + biggest->first +
+                                                    " dropped_due_to_backlog]";
+                        utils::log_sentinel("sink_chunk_dropped", dropped_chunk, context);
+                    }
+                }
+                if (dropped > 0) {
+                    LOG_CPP_WARNING("[SinkMixer:%s] Dropped %zu queued chunks to reduce backlog (pending_chunks=%zu -> %zu).",
+                                    config_.sink_id.c_str(),
+                                    dropped,
+                                    pending_chunks + dropped,
+                                    pending_chunks);
+                }
+            }
         }
-        if (pending_chunks > 3) {
+        // Trigger catch-up only when per-source backlog is above tolerance.
+        const std::size_t backlog_threshold =
+            std::max<std::size_t>(3, source_count * std::max<std::size_t>(1, max_per_source / 2));
+        if (pending_chunks > backlog_threshold) {
             // Consume as many ticks as the backlog represents (bounded for safety) and
             // fold in any ticks the clock has already produced.
             constexpr uint64_t kMaxForcedTicks = 64;
@@ -1965,7 +2007,6 @@ bool SinkAudioMixer::wait_for_mix_tick() {
         }
     }
 
-    --clock_pending_ticks_;
     return true;
 }
 
