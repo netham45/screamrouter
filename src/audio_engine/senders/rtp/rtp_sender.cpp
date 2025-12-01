@@ -1,4 +1,5 @@
 #include "rtp_sender.h"
+#include "rtp_constants.h"
 #include "rtp_sender_registry.h"
 #include "../../audio_channel_layout.h"
 #include "../../utils/cpp_logger.h"
@@ -374,7 +375,6 @@ void RtpSender::close() {
 
 // As seen in rtp_receiver.cpp, this is a common payload type for this format.
 const int RTP_PAYLOAD_TYPE_L16_48K_STEREO = 127;
-constexpr std::size_t kDefaultRtpPayloadMtu = 1152;
 
 void RtpSender::send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) {
     if (payload_size == 0 || !rtp_core_) {

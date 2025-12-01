@@ -360,8 +360,7 @@ private:
     std::chrono::microseconds calculate_mix_period(int sample_rate, int channels, int bit_depth) const;
     void register_mix_timer();
     void unregister_mix_timer();
-    // Returns number of ticks to process (0 means stop/invalid).
-    uint64_t wait_for_mix_ticks();
+    bool wait_for_mix_tick();
 
     // Buffer drain control methods
     void update_drain_ratio();
