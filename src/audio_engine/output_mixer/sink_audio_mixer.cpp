@@ -1931,15 +1931,9 @@ bool SinkAudioMixer::wait_for_mix_tick() {
             }
         }
         if (pending_chunks > 3) {
-            constexpr uint64_t kMaxForcedTicks = 8;
-            clock_pending_ticks_ = static_cast<uint64_t>(
-                std::min<std::size_t>(pending_chunks, static_cast<std::size_t>(kMaxForcedTicks)));
-            // Align with the current timer sequence so we do not wait on stale ticks.
-            clock_last_sequence_ = condition->sequence;
-            LOG_CPP_WARNING("[SinkMixer:%s] Forcing %llu mix ticks due to backlog (pending_chunks=%zu).",
-                            config_.sink_id.c_str(),
-                            static_cast<unsigned long long>(clock_pending_ticks_),
-                            pending_chunks);
+            clock_pending_ticks_ = 1;
+            LOG_CPP_WARNING("[SinkMixer:%s] Forcing mix tick due to backlog (pending_chunks=%zu).",
+                            config_.sink_id.c_str(), pending_chunks);
             break;
         }
 

@@ -442,8 +442,8 @@ bool RtpSender::handle_send_payload(const uint8_t* payload_data, size_t payload_
             slice_size = std::min(remaining, bytes_per_frame > 0 ? bytes_per_frame : remaining);
         }
 
-        const bool marker = (offset + slice_size) >= payload_size;
-        if (!send_rtp_payload(network_payload.data() + offset, slice_size, csrcs, marker)) {
+        // Treat every packet as a complete frame so receivers don't buffer entire mixer chunks.
+        if (!send_rtp_payload(network_payload.data() + offset, slice_size, csrcs, true)) {
             return false;
         }
 

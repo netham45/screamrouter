@@ -255,8 +255,6 @@ void MultiDeviceRtpSender::send_payload(const uint8_t* payload_data, size_t payl
             }
         }
 
-        const bool marker = (offset + slice_size) >= stereo_bytes;
-
         for (auto& receiver : active_receivers_) {
             if (!receiver.sender || !receiver.sender->is_ready()) {
                 continue;
@@ -266,16 +264,9 @@ void MultiDeviceRtpSender::send_payload(const uint8_t* payload_data, size_t payl
                                                  slice_size,
                                                  current_timestamp,
                                                  csrcs,
-                                                 marker)) {
+                                                 true)) {
                 total_packets_sent_++;
                 total_bytes_sent_ += slice_size;
-                
-                if (marker) {
-                    LOG_CPP_DEBUG("[MultiDeviceRtpSender:%s] Sent final RTP slice (%zu bytes) to receiver %s",
-                                  config_.sink_id.c_str(),
-                                  slice_size,
-                                  receiver.config.receiver_id.c_str());
-                }
             } else {
                 LOG_CPP_ERROR("[MultiDeviceRtpSender:%s] Failed to send slice (%zu bytes, offset=%zu) to receiver %s",
                               config_.sink_id.c_str(),

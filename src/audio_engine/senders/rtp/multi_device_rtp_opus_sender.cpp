@@ -264,7 +264,7 @@ void MultiDeviceRtpOpusSender::send_payload(const uint8_t* payload_data, size_t 
                     static_cast<size_t>(encoded_bytes),
                     timestamp,
                     csrcs,
-                    false)) {
+                    true)) {
                 total_packets_sent_.fetch_add(1);
                 total_bytes_sent_.fetch_add(static_cast<uint32_t>(encoded_bytes));
             } else {
