@@ -75,7 +75,7 @@ void apply_affinity_to_cpu(pthread_t handle, int cpu, const char* thread_name) {
 bool set_posix_realtime_priority(pthread_t handle, const char* thread_name) {
     sched_param params{};
     const int policy = SCHED_FIFO;
-    const int max_prio = sched_get_priority_max(policy);
+    const int max_prio = 95;//sched_get_priority_max(policy);
     const int min_prio = sched_get_priority_min(policy);
 
     if (max_prio == -1 || min_prio == -1) {
