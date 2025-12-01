@@ -7,8 +7,8 @@
 namespace screamrouter {
 namespace audio {
 
-inline constexpr std::size_t kDefaultChunkSizeBytes = 4096;
-inline constexpr std::size_t kDefaultBaseFramesPerChunkMono16 = 2048; // 576/(16/8) = 288 = (288/<sample rate>)ms 
+inline constexpr std::size_t kDefaultChunkSizeBytes = 2304;
+inline constexpr std::size_t kDefaultBaseFramesPerChunkMono16 = 1152; // 576/(16/8) = 288 = (288/<sample rate>)ms 
 
 class AudioEngineSettings;
 
