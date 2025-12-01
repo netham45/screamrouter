@@ -1899,11 +1899,10 @@ void SinkAudioMixer::unregister_mix_timer() {
 
 bool SinkAudioMixer::wait_for_mix_tick() {
     PROFILE_FUNCTION();
-    if (pending_chunks > 3)
-        return true;
     if (stop_flag_) {
         return false;
     }
+
 
     if (!clock_manager_enabled_.load(std::memory_order_acquire)) {
         LOG_CPP_ERROR("[SinkMixer:%s] Clock manager not enabled; stopping mixer.", config_.sink_id.c_str());
@@ -1933,6 +1932,9 @@ bool SinkAudioMixer::wait_for_mix_tick() {
             for (const auto& [instance_id, queue] : processed_ready_) {
                 (void)instance_id;
                 pending_chunks += queue.size();
+            }
+            if (pending_chunks > 3) {
+               return true;
             }
             // Bound total backlog based on active sources to avoid runaway latency/CPU.
             const std::size_t kMaxTotalQueuedChunks =
