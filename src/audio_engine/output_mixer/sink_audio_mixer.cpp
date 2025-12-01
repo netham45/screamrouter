@@ -1897,29 +1897,29 @@ void SinkAudioMixer::unregister_mix_timer() {
     timer_bit_depth_ = 0;
 }
 
-bool SinkAudioMixer::wait_for_mix_tick() {
+uint64_t SinkAudioMixer::wait_for_mix_ticks() {
     PROFILE_FUNCTION();
     if (stop_flag_) {
-        return false;
+        return 0;
     }
 
 
     if (!clock_manager_enabled_.load(std::memory_order_acquire)) {
         LOG_CPP_ERROR("[SinkMixer:%s] Clock manager not enabled; stopping mixer.", config_.sink_id.c_str());
         stop_flag_ = true;
-        return false;
+        return 0;
     }
 
     while (clock_pending_ticks_ == 0) {
         if (stop_flag_) {
-            return false;
+            return 0;
         }
 
         auto condition = clock_condition_handle_.condition;
         if (!condition) {
             LOG_CPP_ERROR("[SinkMixer:%s] Clock condition handle invalid; stopping mixer.", config_.sink_id.c_str());
             stop_flag_ = true;
-            return false;
+            return 0;
         }
 
         // If queues are backing up, force a tick instead of blocking on the clock.
@@ -1996,7 +1996,7 @@ bool SinkAudioMixer::wait_for_mix_tick() {
         });
 
         if (stop_flag_) {
-            return false;
+            return 0;
         }
 
         const uint64_t sequence_snapshot = condition->sequence;
@@ -2006,7 +2006,7 @@ bool SinkAudioMixer::wait_for_mix_tick() {
         }
     }
 
-    return true;
+    return clock_pending_ticks_;
 }
 
 void SinkAudioMixer::cleanup_closed_listeners() {
@@ -2065,18 +2065,14 @@ void SinkAudioMixer::run() {
     utils::set_current_thread_realtime_priority(thread_name.c_str());
 
     while (!stop_flag_) {
-        if (!wait_for_mix_tick()) {
+        uint64_t ticks_to_run = wait_for_mix_ticks();
+        if (ticks_to_run == 0) {
             break;
         }
 
         // Run all pending ticks back-to-back (bounded to avoid starvation).
-        uint64_t ticks_to_run = clock_pending_ticks_;
         clock_pending_ticks_ = 0;
-        if (ticks_to_run == 0) {
-            ticks_to_run = 1;  // at least one tick was signaled
-        }
         constexpr uint64_t kMaxTicksPerLoop = 64;
-
         uint64_t ticks_run = 0;
         while (ticks_run < ticks_to_run && ticks_run < kMaxTicksPerLoop && !stop_flag_) {
             ++ticks_run;
