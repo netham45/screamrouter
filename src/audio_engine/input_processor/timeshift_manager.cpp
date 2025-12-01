@@ -1496,7 +1496,8 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
     }
 
     if (earliest_time == std::chrono::steady_clock::time_point::max()) {
-        earliest_time = reference_now;
+        // No pending packets. Sleep for at least a small interval to avoid busy looping.
+        earliest_time = std::min(next_cleanup_time, max_sleep_time);
     } else if (earliest_time < reference_now) {
         earliest_time = reference_now;
     }
