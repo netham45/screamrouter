@@ -34,15 +34,15 @@ struct TimeshiftTuning {
     std::size_t max_clock_pending_packets = 64;
     double rtp_continuity_slack_seconds = 0.25;
     double rtp_session_reset_threshold_seconds = 0.2;
-    double playback_ratio_max_deviation_ppm = 300.0;
-    double playback_ratio_slew_ppm_per_sec = 100.0;
-    double playback_ratio_kp = 5.0;
-    double playback_ratio_ki = 1.0;
-    double playback_ratio_integral_limit_ppm = 300.0;
-    double playback_ratio_smoothing = 0.05;
-    double playback_catchup_ppm_per_ms = 500.0;   // Extra speedup per ms of lateness (bounded)
+    double playback_ratio_max_deviation_ppm = 50000.0;
+    double playback_ratio_slew_ppm_per_sec = 200000.0;
+    double playback_ratio_kp = 200000.0;
+    double playback_ratio_ki = 4000000.0;
+    double playback_ratio_integral_limit_ppm = 50000.0;
+    double playback_ratio_smoothing = 0.2;
+    double playback_catchup_ppm_per_ms = 1000.0;   // Extra speedup per ms of lateness (bounded)
     double playback_catchup_max_ppm = 200000.0;   // Allow up to ~20% speedup when very late
-    double max_playout_lead_ms = 200.0;           // Clamp how far into the future we schedule playout
+    double max_playout_lead_ms = 25.0;           // Clamp how far into the future we schedule playout
 
     // --- Reanchoring settings ---
     bool reanchor_enabled = true;                     // Enable automatic reanchoring
