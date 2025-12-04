@@ -745,8 +745,6 @@ void SinkAudioMixer::join_startup_thread() {
 bool SinkAudioMixer::wait_for_source_data() {
     PROFILE_FUNCTION();
     bool data_actually_popped_this_cycle = false;
-    const std::size_t max_queued_chunks =
-        m_settings ? std::max<std::size_t>(1, m_settings->mixer_tuning.max_queued_chunks) : 3;
 
     bool had_any_active_sources = false;
     {
@@ -794,12 +792,6 @@ bool SinkAudioMixer::wait_for_source_data() {
                                                 " queued_depth=" + std::to_string(queue.size() + 1) + "]";
                     utils::log_sentinel("sink_chunk_received", chunk, context);
                     queue.push_back(std::move(chunk));
-                    while (queue.size() > max_queued_chunks) {
-                        if (queue.front().is_sentinel) {
-                            utils::log_sentinel("sink_chunk_dropped", queue.front(), " [sink=" + config_.sink_id + " instance=" + instance_id + " due_to_backlog]");
-                        }
-                        queue.pop_front();
-                    }
                 }
             }
             data_actually_popped_this_cycle = true;
