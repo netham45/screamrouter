@@ -314,6 +314,7 @@ export interface TimeshiftTuning {
   playback_ratio_ki: number;
   playback_ratio_integral_limit_ppm: number;
   playback_ratio_smoothing: number;
+  playback_ratio_inbound_rate_smoothing: number;
 }
 
 export interface MixerTuning {

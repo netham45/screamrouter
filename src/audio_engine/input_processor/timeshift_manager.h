@@ -115,6 +115,11 @@ struct StreamTimingState {
     int channels = 0;
     int bit_depth = 0;
     uint32_t samples_per_chunk = 0;
+    double last_inbound_rate_sps = 0.0;
+    double smoothed_inbound_rate_sps = 0.0;
+    bool inbound_rate_initialized = false;
+    double last_inbound_rate_error_sps = 0.0;
+    double last_inbound_rate_error_ratio = 0.0;
 
     // Stats
     std::atomic<uint64_t> total_packets{0};
