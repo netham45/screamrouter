@@ -70,6 +70,7 @@ struct StreamProperties {
     int bit_depth;        ///< The bit depth of the audio samples.
     Endianness endianness;///< The byte order of the audio samples.
     int port;             ///< The media port announced for the stream.
+    int payload_type;     ///< The RTP payload type advertised for the stream.
     StreamCodec codec;    ///< The codec used by the RTP stream payload.
     int opus_streams;     ///< Number of Opus streams (multistream).
     int opus_coupled_streams; ///< Number of coupled Opus streams.
@@ -82,6 +83,7 @@ struct StreamProperties {
           bit_depth(0),
           endianness(Endianness::BIG),
           port(0),
+          payload_type(-1),
           codec(StreamCodec::UNKNOWN),
           opus_streams(0),
           opus_coupled_streams(0),

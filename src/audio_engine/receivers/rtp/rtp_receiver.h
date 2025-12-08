@@ -80,6 +80,11 @@ protected:
         uint8_t payload_type,
         StreamProperties& out_properties
     ) const;
+    uint8_t canonicalize_payload_type(
+        uint8_t payload_type,
+        uint32_t ssrc,
+        const StreamProperties* props_override = nullptr
+    ) const;
 
     std::string get_source_key(const struct sockaddr_in& addr) const;
     void handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, const std::string& source_key);

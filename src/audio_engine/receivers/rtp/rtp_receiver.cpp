@@ -631,6 +631,7 @@ bool RtpReceiverBase::resolve_stream_properties(
     const int listen_port = config_.listen_port <= 0 ? 40000 : config_.listen_port;
 
     if (payload_type == kRtpPayloadTypeOpus && packet_port == listen_port && listen_port == 40000) {
+        out_properties.payload_type = payload_type;
         out_properties.sample_rate = kDefaultOpusSampleRate;
         out_properties.channels = kDefaultOpusChannels;
         out_properties.bit_depth = 16;
@@ -647,15 +648,42 @@ bool RtpReceiverBase::resolve_stream_properties(
     return false;
 }
 
+uint8_t RtpReceiverBase::canonicalize_payload_type(
+    uint8_t payload_type,
+    uint32_t ssrc,
+    const StreamProperties* props_override) const {
+    const StreamProperties* effective_props = props_override;
+    StreamProperties temp_props;
+    if (!effective_props && sap_listener_) {
+        if (sap_listener_->get_stream_properties(ssrc, temp_props)) {
+            effective_props = &temp_props;
+        }
+    }
+
+    if (effective_props &&
+        effective_props->payload_type >= 0 &&
+        payload_type == static_cast<uint8_t>(effective_props->payload_type)) {
+        if (effective_props->codec == StreamCodec::OPUS) {
+            return kRtpPayloadTypeOpus;
+        }
+        if (effective_props->codec == StreamCodec::PCM) {
+            return kRtpPayloadTypeL16Stereo;
+        }
+    }
+
+    return payload_type;
+}
+
 void RtpReceiverBase::register_payload_receiver(std::unique_ptr<RtpPayloadReceiver> receiver) {
     if (receiver) {
         payload_receivers_.push_back(std::move(receiver));
     }
 }
 
-bool RtpReceiverBase::supports_payload_type(uint8_t payload_type, uint32_t /*ssrc*/) const {
+bool RtpReceiverBase::supports_payload_type(uint8_t payload_type, uint32_t ssrc) const {
+    const uint8_t canonical_payload_type = canonicalize_payload_type(payload_type, ssrc);
     for (const auto& receiver : payload_receivers_) {
-        if (receiver && receiver->supports_payload_type(payload_type)) {
+        if (receiver && receiver->supports_payload_type(canonical_payload_type)) {
             return true;
         }
     }
@@ -725,9 +753,10 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
     }
 
     for (auto& packet_data : ready_packets) {
+        const uint8_t canonical_payload_type = canonicalize_payload_type(packet_data.payload_type, packet_data.ssrc, &props);
         RtpPayloadReceiver* handler = nullptr;
         for (const auto& receiver : payload_receivers_) {
-            if (receiver && receiver->supports_payload_type(packet_data.payload_type)) {
+            if (receiver && receiver->supports_payload_type(canonical_payload_type)) {
                 handler = receiver.get();
                 break;
             }

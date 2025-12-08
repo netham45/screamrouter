@@ -398,6 +398,7 @@ void SapListener::close_sockets() {
 }
 
 void SapListener::process_sap_packet(const char* buffer, int size, const std::string& source_ip) {
+    LOG_CPP_DEBUG("%s Received SAP packet from %s (%d bytes)", logger_prefix_.c_str(), source_ip.c_str(), size);
     if (!known_ips_.empty()) {
         bool is_known = false;
         for (const auto& ip : known_ips_) {
@@ -480,6 +481,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     }
 
     if (RtpSenderRegistry::get_instance().is_local_ssrc(ssrc)) {
+        LOG_CPP_DEBUG("%s Ignoring SAP packet for local SSRC %u from %s", logger_prefix_.c_str(), ssrc, source_ip.c_str());
         return;
     }
 
@@ -501,8 +503,10 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     std::string target_host;
     std::string stream_guid;
     std::vector<int> audio_payload_types;
+    bool media_line_found = false;
     for (const auto& line : sdp_lines) {
         if (line.rfind("m=audio ", 0) == 0) {
+            media_line_found = true;
             std::string m_body = line.substr(std::strlen("m=audio "));
             std::stringstream m_stream(m_body);
             m_stream >> port;
@@ -540,6 +544,18 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                 }
             }
         }
+    }
+
+    if (!media_line_found) {
+        LOG_CPP_WARNING("%s No m=audio line found in SAP packet from %s (SSRC=%u)", logger_prefix_.c_str(), source_ip.c_str(), ssrc);
+        return;
+    }
+    if (port <= 0) {
+        LOG_CPP_WARNING("%s Invalid/unknown RTP port in SAP packet from %s (SSRC=%u)", logger_prefix_.c_str(), source_ip.c_str(), ssrc);
+        return;
+    }
+    if (connection_ip.empty()) {
+        LOG_CPP_WARNING("%s No connection IP found in SAP packet from %s (SSRC=%u)", logger_prefix_.c_str(), source_ip.c_str(), ssrc);
     }
 
     struct RtpmapEntry {
@@ -710,6 +726,8 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                 }
             }
         }
+    } else {
+        LOG_CPP_WARNING("%s SAP packet for SSRC %u had no payload declarations (source %s)", logger_prefix_.c_str(), ssrc, source_ip.c_str());
     }
 
     if (!chosen_entry) {
@@ -813,6 +831,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
     }
 
     StreamProperties props;
+    props.payload_type = chosen_payload_type;
     props.codec = chosen_codec;
     props.sample_rate = chosen_entry->sample_rate;
     if (props.sample_rate <= 0 && chosen_codec == StreamCodec::OPUS) {
@@ -914,14 +933,18 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         ssrc_to_identity_[ssrc] = {stream_guid, session_name, connection_ip, port};
     }
 
-    LOG_CPP_DEBUG(
-        "%s Updated stream properties for SSRC %u from %s: %d Hz, %d channels, %d bits",
+    LOG_CPP_INFO(
+        "%s SAP update: SSRC %u from %s -> %s:%d (pt=%d codec=%s sr=%d ch=%d)",
         logger_prefix_.c_str(),
         ssrc,
         source_ip.c_str(),
+        connection_ip.empty() ? source_ip.c_str() : connection_ip.c_str(),
+        port,
+        props.payload_type,
+        (props.codec == StreamCodec::OPUS ? "opus" :
+            props.codec == StreamCodec::PCM ? "pcm" : "unknown"),
         props.sample_rate,
-        props.channels,
-        props.bit_depth);
+        props.channels);
 }
 
 } // namespace audio

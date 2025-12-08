@@ -14,10 +14,14 @@
 #include <sstream>
 #include <errno.h> // For errno, EAGAIN, EWOULDBLOCK, ETIMEDOUT
 
-#ifndef _WIN32
+#ifdef _WIN32
+    #include <iphlpapi.h> // For GetAdaptersAddresses
+#else
     #include <unistd.h> // For close()
     #include <arpa/inet.h> // For inet_pton, inet_ntop
     #include <sys/socket.h> // For socket, connect, getsockname
+    #include <ifaddrs.h> // For getifaddrs
+    #include <net/if.h> // For interface flags
 #endif
 
 namespace screamrouter {
@@ -83,6 +87,88 @@ std::string get_primary_source_ip() {
         LOG_CPP_ERROR("[RtpSender] inet_ntop failed for IP detection.");
         return "127.0.0.1"; // Fallback
     }
+}
+
+std::vector<std::string> enumerate_local_ipv4_interfaces() {
+    std::vector<std::string> addresses;
+#ifdef _WIN32
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG buffer_size = 15000;
+    std::vector<uint8_t> buffer(buffer_size);
+    PIP_ADAPTER_ADDRESSES adapter_addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data());
+    ULONG ret = GetAdaptersAddresses(AF_INET, flags, nullptr, adapter_addresses, &buffer_size);
+    if (ret == ERROR_BUFFER_OVERFLOW) {
+        buffer.resize(buffer_size);
+        adapter_addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.data());
+        ret = GetAdaptersAddresses(AF_INET, flags, nullptr, adapter_addresses, &buffer_size);
+    }
+    if (ret != NO_ERROR) {
+        LOG_CPP_WARNING("[RtpSender] GetAdaptersAddresses failed while enumerating interfaces (status=%lu)", ret);
+        return addresses;
+    }
+
+    for (PIP_ADAPTER_ADDRESSES adapter = adapter_addresses; adapter != nullptr; adapter = adapter->Next) {
+        if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK || adapter->OperStatus != IfOperStatusUp) {
+            continue;
+        }
+        for (PIP_ADAPTER_UNICAST_ADDRESS unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
+            if (!unicast->Address.lpSockaddr || unicast->Address.lpSockaddr->sa_family != AF_INET) {
+                continue;
+            }
+            const struct sockaddr_in* ipv4 = reinterpret_cast<struct sockaddr_in*>(unicast->Address.lpSockaddr);
+            char addr_buffer[INET_ADDRSTRLEN];
+            if (inet_ntop(AF_INET, &ipv4->sin_addr, addr_buffer, sizeof(addr_buffer)) != nullptr) {
+                addresses.emplace_back(addr_buffer);
+            }
+        }
+    }
+#else
+    struct ifaddrs* ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) == -1) {
+        LOG_CPP_WARNING("[RtpSender] getifaddrs failed while enumerating interfaces (errno=%d: %s)", errno, strerror(errno));
+        return addresses;
+    }
+
+    for (struct ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+        if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK)) {
+            continue;
+        }
+
+        const struct sockaddr_in* ipv4 = reinterpret_cast<struct sockaddr_in*>(ifa->ifa_addr);
+        char addr_buffer[INET_ADDRSTRLEN];
+        if (inet_ntop(AF_INET, &ipv4->sin_addr, addr_buffer, sizeof(addr_buffer)) != nullptr) {
+            addresses.emplace_back(addr_buffer);
+        }
+    }
+
+    freeifaddrs(ifaddr);
+#endif
+
+    std::vector<std::string> unique_addresses;
+    for (const auto& addr : addresses) {
+        if (std::find(unique_addresses.begin(), unique_addresses.end(), addr) == unique_addresses.end()) {
+            unique_addresses.push_back(addr);
+        }
+    }
+
+    return unique_addresses;
+}
+
+std::vector<std::string> get_sap_source_ips() {
+    std::vector<std::string> source_ips = enumerate_local_ipv4_interfaces();
+    if (!source_ips.empty()) {
+        return source_ips;
+    }
+
+    std::string fallback_ip = get_primary_source_ip();
+    if (!fallback_ip.empty()) {
+        LOG_CPP_WARNING("[RtpSender] Falling back to primary source IP %s for SAP announcements.", fallback_ip.c_str());
+        source_ips.push_back(fallback_ip);
+    }
+    return source_ips;
 }
 } // end anonymous namespace
 
@@ -518,18 +604,9 @@ void RtpSender::advance_rtp_timestamp(uint32_t samples_per_channel) {
 void RtpSender::sap_announcement_loop() {
     LOG_CPP_INFO("[RtpSender:%s] SAP announcement thread started.", config_.sink_id.c_str());
 
-    std::string source_ip = get_primary_source_ip();
-
     while (sap_thread_running_) {
         if (sap_socket_fd_ != PLATFORM_INVALID_SOCKET) {
-            // Construct SDP payload
             const std::string session_name = config_.friendly_name.empty() ? config_.sink_id : config_.friendly_name;
-            std::stringstream sdp;
-            sdp << "v=0\n";
-            sdp << "o=screamrouter " << ssrc_ << " 1 IN IP4 " << source_ip << "\n";
-            sdp << "s=" << session_name << "\n";
-            sdp << "c=IN IP4 " << config_.output_ip << "\n";
-            sdp << "t=0 0\n";
             const uint8_t payload_type = rtp_payload_type();
             const uint32_t effective_clock_rate = rtp_clock_rate() == 0 ? 48000 : rtp_clock_rate();
             const uint32_t channel_count = rtp_channel_count();
@@ -537,117 +614,185 @@ void RtpSender::sap_announcement_loop() {
             const auto extra_attributes = sdp_format_specific_attributes();
             const std::string stream_guid = config_.sink_id;
 
-            sdp << "m=audio " << config_.output_port << " RTP/AVP " << static_cast<int>(payload_type) << "\n"; 
-            sdp << "a=rtpmap:" << static_cast<int>(payload_type) << " " << codec_name << "/" << effective_clock_rate;
-            if (channel_count > 0) {
-                sdp << "/" << channel_count;
-            }
-            sdp << "\n";
-            if (!config_.sap_target_sink.empty()) {
-                sdp << "a=fmtp:" << static_cast<int>(payload_type) << " x-screamrouter-target=sink=" << config_.sap_target_sink;
-                if (!config_.sap_target_host.empty()) {
-                    sdp << ";host=" << config_.sap_target_host;
-                }
-                if (!stream_guid.empty()) {
-                    sdp << ";x-screamrouter-guid=" << stream_guid;
+            const std::vector<std::string> source_ips = get_sap_source_ips();
+            for (const auto& source_ip : source_ips) {
+                // Construct SDP payload
+                std::stringstream sdp;
+                sdp << "v=0\n";
+                sdp << "o=screamrouter " << ssrc_ << " 1 IN IP4 " << source_ip << "\n";
+                sdp << "s=" << session_name << "\n";
+                sdp << "c=IN IP4 " << config_.output_ip << "\n";
+                sdp << "t=0 0\n";
+
+                sdp << "m=audio " << config_.output_port << " RTP/AVP " << static_cast<int>(payload_type) << "\n"; 
+                sdp << "a=rtpmap:" << static_cast<int>(payload_type) << " " << codec_name << "/" << effective_clock_rate;
+                if (channel_count > 0) {
+                    sdp << "/" << channel_count;
                 }
                 sdp << "\n";
-            } else if (!stream_guid.empty()) {
-                // Expose GUID even when no SAP target is configured.
-                sdp << "a=fmtp:" << static_cast<int>(payload_type) << " x-screamrouter-guid=" << stream_guid << "\n";
-            }
-            for (const auto& attribute : extra_attributes) {
-                if (attribute.empty()) {
-                    continue;
+                if (!config_.sap_target_sink.empty()) {
+                    sdp << "a=fmtp:" << static_cast<int>(payload_type) << " x-screamrouter-target=sink=" << config_.sap_target_sink;
+                    if (!config_.sap_target_host.empty()) {
+                        sdp << ";host=" << config_.sap_target_host;
+                    }
+                    if (!stream_guid.empty()) {
+                        sdp << ";x-screamrouter-guid=" << stream_guid;
+                    }
+                    sdp << "\n";
+                } else if (!stream_guid.empty()) {
+                    // Expose GUID even when no SAP target is configured.
+                    sdp << "a=fmtp:" << static_cast<int>(payload_type) << " x-screamrouter-guid=" << stream_guid << "\n";
                 }
-                sdp << attribute;
-                if (attribute.back() != '\n') {
+                for (const auto& attribute : extra_attributes) {
+                    if (attribute.empty()) {
+                        continue;
+                    }
+                    sdp << attribute;
+                    if (attribute.back() != '\n') {
+                        sdp << "\n";
+                    }
+                }
+
+                if (!config_.sap_target_sink.empty()) {
+                    sdp << "a=x-screamrouter-target:sink=" << config_.sap_target_sink;
+                    if (!config_.sap_target_host.empty()) {
+                        sdp << ";host=" << config_.sap_target_host;
+                    }
                     sdp << "\n";
                 }
-            }
-
-            if (!config_.sap_target_sink.empty()) {
-                sdp << "a=x-screamrouter-target:sink=" << config_.sap_target_sink;
-                if (!config_.sap_target_host.empty()) {
-                    sdp << ";host=" << config_.sap_target_host;
+                if (!stream_guid.empty()) {
+                    sdp << "a=x-screamrouter-guid:" << stream_guid << "\n";
                 }
-                sdp << "\n";
-            }
-            if (!stream_guid.empty()) {
-                sdp << "a=x-screamrouter-guid:" << stream_guid << "\n";
-            }
 
-            // Add channel map if channels > 2, using the scream channel layout
-            if (config_.output_channels > 2 && codec_name != "opus") {
-                const uint32_t ch_mask = (static_cast<uint32_t>(config_.output_chlayout2) << 8) | config_.output_chlayout1;
-                std::vector<ChannelRole> layout_roles = channel_order_from_mask(ch_mask);
+                // Add channel map if channels > 2, using the scream channel layout
+                if (config_.output_channels > 2 && codec_name != "opus") {
+                    const uint32_t ch_mask = (static_cast<uint32_t>(config_.output_chlayout2) << 8) | config_.output_chlayout1;
+                    std::vector<ChannelRole> layout_roles = channel_order_from_mask(ch_mask);
 
-                if (layout_roles.size() == static_cast<size_t>(config_.output_channels)) {
-                    std::vector<int> channel_order = roles_to_indices(layout_roles);
-                    std::stringstream channel_map_ss;
-                    channel_map_ss << "a=channelmap:" << static_cast<int>(payload_type) << " " << config_.output_channels;
-                    for (size_t i = 0; i < channel_order.size(); ++i) {
-                        channel_map_ss << (i == 0 ? " " : ",") << channel_order[i];
+                    if (layout_roles.size() == static_cast<size_t>(config_.output_channels)) {
+                        std::vector<int> channel_order = roles_to_indices(layout_roles);
+                        std::stringstream channel_map_ss;
+                        channel_map_ss << "a=channelmap:" << static_cast<int>(payload_type) << " " << config_.output_channels;
+                        for (size_t i = 0; i < channel_order.size(); ++i) {
+                            channel_map_ss << (i == 0 ? " " : ",") << channel_order[i];
+                        }
+                        sdp << channel_map_ss.str() << "\n";
+                    } else {
+                        LOG_CPP_WARNING("[RtpSender:%s] Channel mask layout does not match channel count. Mask: %02X%02X, Count: %d. Skipping channelmap.",
+                                        config_.sink_id.c_str(), config_.output_chlayout2, config_.output_chlayout1, config_.output_channels);
                     }
-                    sdp << channel_map_ss.str() << "\n";
-                } else {
-                    LOG_CPP_WARNING("[RtpSender:%s] Channel mask layout does not match channel count. Mask: %02X%02X, Count: %d. Skipping channelmap.",
-                                    config_.sink_id.c_str(), config_.output_chlayout2, config_.output_chlayout1, config_.output_channels);
                 }
-            }
 
-            std::string sdp_str = sdp.str();
+                std::string sdp_str = sdp.str();
 
-            // Construct SAP Packet (RFC 2974)
-            const size_t sap_header_size = 8;
-            const std::string content_type = "application/sdp";
+                // Construct SAP Packet (RFC 2974)
+                const size_t sap_header_size = 8;
+                const std::string content_type = "application/sdp";
 
-            // Allocate space for all components: SAP header, content type + null, and SDP payload + null
-            std::vector<uint8_t> sap_packet(sap_header_size + content_type.length() + 1 + sdp_str.length() + 1);
+                // Allocate space for all components: SAP header, content type + null, and SDP payload + null
+                std::vector<uint8_t> sap_packet(sap_header_size + content_type.length() + 1 + sdp_str.length() + 1);
 
-            // SAP Header
-            sap_packet[0] = 0x20; // V=1, A=0, R=0, T=0, E=0, C=0
-            sap_packet[1] = 0;    // Auth len = 0 (no authentication)
-            uint16_t msg_id_hash = rtp_core_->get_sequence_number() % 65536;
-            uint16_t msg_id_hash_net = htons(msg_id_hash);
-            memcpy(&sap_packet[2], &msg_id_hash_net, 2);
-            struct in_addr src_addr;
-            inet_pton(AF_INET, source_ip.c_str(), &src_addr); // Use dynamically detected source IP
-            memcpy(&sap_packet[4], &src_addr.s_addr, 4);
+                // SAP Header
+                sap_packet[0] = 0x20; // V=1, A=0, R=0, T=0, E=0, C=0
+                sap_packet[1] = 0;    // Auth len = 0 (no authentication)
+                uint16_t msg_id_hash = rtp_core_->get_sequence_number() % 65536;
+                uint16_t msg_id_hash_net = htons(msg_id_hash);
+                memcpy(&sap_packet[2], &msg_id_hash_net, 2);
+                struct in_addr src_addr;
+                if (inet_pton(AF_INET, source_ip.c_str(), &src_addr) != 1) {
+                    LOG_CPP_ERROR("[RtpSender:%s] inet_pton failed for SAP source IP %s", config_.sink_id.c_str(), source_ip.c_str());
+                    continue;
+                }
+                memcpy(&sap_packet[4], &src_addr.s_addr, 4);
 
-            // Copy the content type string, followed by the SDP payload
-            size_t offset = sap_header_size;
-            memcpy(&sap_packet[offset], content_type.c_str(), content_type.length() + 1); // Include null terminator
-            offset += content_type.length() + 1;
-            memcpy(&sap_packet[offset], sdp_str.c_str(), sdp_str.length() + 1); // Include null terminator
+                // Copy the content type string, followed by the SDP payload
+                size_t offset = sap_header_size;
+                memcpy(&sap_packet[offset], content_type.c_str(), content_type.length() + 1); // Include null terminator
+                offset += content_type.length() + 1;
+                memcpy(&sap_packet[offset], sdp_str.c_str(), sdp_str.length() + 1); // Include null terminator
 
-            LOG_CPP_DEBUG("[RtpSender:%s] Sending SAP Announcement: %s", config_.sink_id.c_str(), sdp_str.c_str());
+#ifdef _WIN32
+                if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&src_addr), sizeof(src_addr)) < 0) {
+                    int last_error = WSAGetLastError();
+                    LOG_CPP_WARNING("[RtpSender:%s] Failed to set IP_MULTICAST_IF for SAP source IP %s (WSA error=%d)",
+                                    config_.sink_id.c_str(), source_ip.c_str(), last_error);
+                }
+#else
+                if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_MULTICAST_IF, &src_addr, sizeof(src_addr)) < 0) {
+                    LOG_CPP_WARNING("[RtpSender:%s] Failed to set IP_MULTICAST_IF for SAP source IP %s (errno=%d: %s)",
+                                    config_.sink_id.c_str(), source_ip.c_str(), errno, strerror(errno));
+                }
+#endif
 
-            for (const auto& dest_addr : sap_dest_addrs_) {
-                #ifdef _WIN32
-                int sent_bytes = sendto(sap_socket_fd_,
-                                        reinterpret_cast<const char*>(sap_packet.data()),
-                                        static_cast<int>(sap_packet.size()),
-                                        0,
-                                        (struct sockaddr *)&dest_addr,
-                                        sizeof(dest_addr));
-                #else
-                int sent_bytes = sendto(sap_socket_fd_,
-                                        sap_packet.data(),
-                                        sap_packet.size(),
-                                        0,
-                                        (struct sockaddr *)&dest_addr,
-                                        sizeof(dest_addr));
-                #endif
+                LOG_CPP_DEBUG("[RtpSender:%s] Sending SAP Announcement from %s: %s",
+                              config_.sink_id.c_str(), source_ip.c_str(), sdp_str.c_str());
 
-                if (sent_bytes < 0) {
-                    char ip_str[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &dest_addr.sin_addr, ip_str, INET_ADDRSTRLEN);
-                    LOG_CPP_ERROR("[RtpSender:%s] SAP sendto failed for %s", config_.sink_id.c_str(), ip_str);
-                } else if (static_cast<size_t>(sent_bytes) != sap_packet.size()) {
-                    char ip_str[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &dest_addr.sin_addr, ip_str, INET_ADDRSTRLEN);
-                    LOG_CPP_ERROR("[RtpSender:%s] SAP sendto sent partial data to %s: %d/%zu", config_.sink_id.c_str(), ip_str, sent_bytes, sap_packet.size());
+                for (const auto& dest_addr : sap_dest_addrs_) {
+                    #ifdef _WIN32
+                    int sent_bytes = sendto(sap_socket_fd_,
+                                            reinterpret_cast<const char*>(sap_packet.data()),
+                                            static_cast<int>(sap_packet.size()),
+                                            0,
+                                            (struct sockaddr *)&dest_addr,
+                                            sizeof(dest_addr));
+                    #else
+                    int sent_bytes = sendto(sap_socket_fd_,
+                                            sap_packet.data(),
+                                            sap_packet.size(),
+                                            0,
+                                            (struct sockaddr *)&dest_addr,
+                                            sizeof(dest_addr));
+                    #endif
+
+                    if (sent_bytes < 0) {
+                        char ip_str[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET, &dest_addr.sin_addr, ip_str, INET_ADDRSTRLEN);
+                        LOG_CPP_ERROR("[RtpSender:%s] SAP sendto failed for %s", config_.sink_id.c_str(), ip_str);
+                    } else if (static_cast<size_t>(sent_bytes) != sap_packet.size()) {
+                        char ip_str[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET, &dest_addr.sin_addr, ip_str, INET_ADDRSTRLEN);
+                        LOG_CPP_ERROR("[RtpSender:%s] SAP sendto sent partial data to %s: %d/%zu", config_.sink_id.c_str(), ip_str, sent_bytes, sap_packet.size());
+                    }
+                }
+
+                if (!config_.output_ip.empty() && !is_multicast(config_.output_ip)) {
+                    struct sockaddr_in direct_addr;
+                    memset(&direct_addr, 0, sizeof(direct_addr));
+                    direct_addr.sin_family = AF_INET;
+                    direct_addr.sin_port = htons(config_.output_port);
+                    if (inet_pton(AF_INET, config_.output_ip.c_str(), &direct_addr.sin_addr) != 1) {
+                        LOG_CPP_ERROR("[RtpSender:%s] Invalid unicast SAP target IP: %s", config_.sink_id.c_str(), config_.output_ip.c_str());
+                    } else {
+                        #ifdef _WIN32
+                        int sent_bytes = sendto(sap_socket_fd_,
+                                                reinterpret_cast<const char*>(sap_packet.data()),
+                                                static_cast<int>(sap_packet.size()),
+                                                0,
+                                                (struct sockaddr *)&direct_addr,
+                                                sizeof(direct_addr));
+                        #else
+                        int sent_bytes = sendto(sap_socket_fd_,
+                                                sap_packet.data(),
+                                                sap_packet.size(),
+                                                0,
+                                                (struct sockaddr *)&direct_addr,
+                                                sizeof(direct_addr));
+                        #endif
+
+                        if (sent_bytes < 0) {
+                            LOG_CPP_ERROR("[RtpSender:%s] SAP sendto failed for direct target %s:%d",
+                                          config_.sink_id.c_str(),
+                                          config_.output_ip.c_str(),
+                                          config_.output_port);
+                        } else if (static_cast<size_t>(sent_bytes) != sap_packet.size()) {
+                            LOG_CPP_ERROR("[RtpSender:%s] SAP sendto sent partial data to direct target %s:%d (%d/%zu)",
+                                          config_.sink_id.c_str(),
+                                          config_.output_ip.c_str(),
+                                          config_.output_port,
+                                          sent_bytes,
+                                          sap_packet.size());
+                        }
+                    }
                 }
             }
         }
