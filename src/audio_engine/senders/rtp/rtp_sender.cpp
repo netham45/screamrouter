@@ -29,6 +29,15 @@ namespace audio {
 
 namespace { // Anonymous namespace for helper function
 
+struct SapSourceInterface {
+    std::string ip;
+#ifdef _WIN32
+    ULONG if_index;
+#else
+    unsigned int if_index;
+#endif
+};
+
 bool is_multicast(const std::string& ip_address) {
     struct in_addr addr;
     if (inet_pton(AF_INET, ip_address.c_str(), &addr) != 1) {
@@ -89,8 +98,8 @@ std::string get_primary_source_ip() {
     }
 }
 
-std::vector<std::string> enumerate_local_ipv4_interfaces() {
-    std::vector<std::string> addresses;
+std::vector<SapSourceInterface> enumerate_local_ipv4_interfaces() {
+    std::vector<SapSourceInterface> interfaces;
 #ifdef _WIN32
     ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
     ULONG buffer_size = 15000;
@@ -104,7 +113,7 @@ std::vector<std::string> enumerate_local_ipv4_interfaces() {
     }
     if (ret != NO_ERROR) {
         LOG_CPP_WARNING("[RtpSender] GetAdaptersAddresses failed while enumerating interfaces (status=%lu)", ret);
-        return addresses;
+        return interfaces;
     }
 
     for (PIP_ADAPTER_ADDRESSES adapter = adapter_addresses; adapter != nullptr; adapter = adapter->Next) {
@@ -118,7 +127,7 @@ std::vector<std::string> enumerate_local_ipv4_interfaces() {
             const struct sockaddr_in* ipv4 = reinterpret_cast<struct sockaddr_in*>(unicast->Address.lpSockaddr);
             char addr_buffer[INET_ADDRSTRLEN];
             if (inet_ntop(AF_INET, &ipv4->sin_addr, addr_buffer, sizeof(addr_buffer)) != nullptr) {
-                addresses.emplace_back(addr_buffer);
+                interfaces.push_back({addr_buffer, adapter->IfIndex});
             }
         }
     }
@@ -126,7 +135,7 @@ std::vector<std::string> enumerate_local_ipv4_interfaces() {
     struct ifaddrs* ifaddr = nullptr;
     if (getifaddrs(&ifaddr) == -1) {
         LOG_CPP_WARNING("[RtpSender] getifaddrs failed while enumerating interfaces (errno=%d: %s)", errno, strerror(errno));
-        return addresses;
+        return interfaces;
     }
 
     for (struct ifaddrs* ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
@@ -140,35 +149,43 @@ std::vector<std::string> enumerate_local_ipv4_interfaces() {
         const struct sockaddr_in* ipv4 = reinterpret_cast<struct sockaddr_in*>(ifa->ifa_addr);
         char addr_buffer[INET_ADDRSTRLEN];
         if (inet_ntop(AF_INET, &ipv4->sin_addr, addr_buffer, sizeof(addr_buffer)) != nullptr) {
-            addresses.emplace_back(addr_buffer);
+            unsigned int if_index = if_nametoindex(ifa->ifa_name);
+            interfaces.push_back({addr_buffer, if_index});
         }
     }
 
     freeifaddrs(ifaddr);
 #endif
 
-    std::vector<std::string> unique_addresses;
-    for (const auto& addr : addresses) {
-        if (std::find(unique_addresses.begin(), unique_addresses.end(), addr) == unique_addresses.end()) {
-            unique_addresses.push_back(addr);
+    std::vector<SapSourceInterface> unique_interfaces;
+    for (const auto& iface : interfaces) {
+        auto dup_it = std::find_if(unique_interfaces.begin(), unique_interfaces.end(),
+                                   [&](const SapSourceInterface& existing) {
+                                       return existing.ip == iface.ip;
+                                   });
+        if (dup_it == unique_interfaces.end()) {
+            unique_interfaces.push_back(iface);
         }
     }
 
-    return unique_addresses;
+    return unique_interfaces;
 }
 
-std::vector<std::string> get_sap_source_ips() {
-    std::vector<std::string> source_ips = enumerate_local_ipv4_interfaces();
-    if (!source_ips.empty()) {
-        return source_ips;
+std::vector<SapSourceInterface> get_sap_source_interfaces() {
+    std::vector<SapSourceInterface> source_ifaces = enumerate_local_ipv4_interfaces();
+    if (!source_ifaces.empty()) {
+        return source_ifaces;
     }
 
     std::string fallback_ip = get_primary_source_ip();
     if (!fallback_ip.empty()) {
         LOG_CPP_WARNING("[RtpSender] Falling back to primary source IP %s for SAP announcements.", fallback_ip.c_str());
-        source_ips.push_back(fallback_ip);
+        SapSourceInterface fallback_iface;
+        fallback_iface.ip = fallback_ip;
+        fallback_iface.if_index = 0;
+        source_ifaces.push_back(fallback_iface);
     }
-    return source_ips;
+    return source_ifaces;
 }
 } // end anonymous namespace
 
@@ -614,8 +631,9 @@ void RtpSender::sap_announcement_loop() {
             const auto extra_attributes = sdp_format_specific_attributes();
             const std::string stream_guid = config_.sink_id;
 
-            const std::vector<std::string> source_ips = get_sap_source_ips();
-            for (const auto& source_ip : source_ips) {
+            const std::vector<SapSourceInterface> source_interfaces = get_sap_source_interfaces();
+            for (const auto& source_iface : source_interfaces) {
+                const std::string& source_ip = source_iface.ip;
                 // Construct SDP payload
                 std::stringstream sdp;
                 sdp << "v=0\n";
@@ -712,10 +730,25 @@ void RtpSender::sap_announcement_loop() {
                 memcpy(&sap_packet[offset], sdp_str.c_str(), sdp_str.length() + 1); // Include null terminator
 
 #ifdef _WIN32
-                if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&src_addr), sizeof(src_addr)) < 0) {
+                DWORD iface_index = source_iface.if_index;
+                if (iface_index != 0) {
+                    if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&iface_index), sizeof(iface_index)) < 0) {
+                        int last_error = WSAGetLastError();
+                        LOG_CPP_WARNING("[RtpSender:%s] Failed to set multicast IF index %lu for SAP source IP %s (WSA error=%d)",
+                                        config_.sink_id.c_str(), static_cast<unsigned long>(iface_index), source_ip.c_str(), last_error);
+                    }
+                } else if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&src_addr), sizeof(src_addr)) < 0) {
                     int last_error = WSAGetLastError();
                     LOG_CPP_WARNING("[RtpSender:%s] Failed to set IP_MULTICAST_IF for SAP source IP %s (WSA error=%d)",
                                     config_.sink_id.c_str(), source_ip.c_str(), last_error);
+                }
+
+                if (iface_index != 0) {
+                    if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<const char*>(&iface_index), sizeof(iface_index)) < 0) {
+                        int last_error = WSAGetLastError();
+                        LOG_CPP_WARNING("[RtpSender:%s] Failed to set IP_UNICAST_IF for SAP source IP %s (WSA error=%d)",
+                                        config_.sink_id.c_str(), source_ip.c_str(), last_error);
+                    }
                 }
 #else
                 if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_MULTICAST_IF, &src_addr, sizeof(src_addr)) < 0) {

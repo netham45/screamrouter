@@ -69,7 +69,7 @@ const DiscoveredDevicesContent: React.FC<ContentProps> = ({ setCurrentCategory: 
     unmatched_sinks: 0,
   });
   const [filter, setFilter] = useState<DiscoveryFilter>('all');
-  const [showMatched, setShowMatched] = useState(false);
+  const [showMatched, setShowMatched] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);

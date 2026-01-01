@@ -3307,14 +3307,13 @@ class ConfigurationManager(threading.Thread):
                         continue
 
                     rtp_properties = {"source": "cpp_engine"}
-                    if self._update_discovered_device_last_seen(
+                    updated = self._update_discovered_device_last_seen(
                         method="cpp_rtp",
                         identifier=ip_value,
                         ip=ip_value,
                         device_type="rtp_stream",
                         properties=rtp_properties,
-                    ):
-                        continue
+                    )
 
                     is_new_source = ip_value not in known_source_ips
                     if is_new_source:
@@ -3611,6 +3610,137 @@ class ConfigurationManager(threading.Thread):
             except Exception as e:
                 _logger.error("[Configuration Manager] Error processing SAP announcements from C++ RTP Receiver: %s", e)
             self._apply_sap_target_routes(sap_announcements)
+
+        # mDNS pinger for sources (senders)
+        for ip in self.mdns_pinger.get_source_ips():
+            ip_value = str(ip)
+            service_info = self.mdns_pinger.get_service_info(ip)
+            properties = service_info.get('properties', {}) if isinstance(service_info, dict) else {}
+
+            self._store_discovered_device(
+                method="mdns",
+                role="source",
+                identifier=ip_value,
+                ip=ip_value,
+                name=service_info.get('name') if isinstance(service_info, dict) else None,
+                port=service_info.get('port') if isinstance(service_info, dict) else None,
+                tag=properties.get('tag') if isinstance(properties, dict) else None,
+                properties=properties if isinstance(properties, dict) else {},
+                device_type=properties.get('type') if isinstance(properties, dict) else None,
+            )
+
+            if ip_value not in known_source_ips:
+                _logger.info("[Configuration Manager] Discovered new source (sender) from mDNS %s with info: %s", ip, service_info)
+                known_source_ips.append(ip_value)
+
+        # mDNS pinger for sinks (receivers)
+        for ip in self.mdns_pinger.get_sink_ips():
+            ip_value = str(ip)
+            service_info = self.mdns_pinger.get_service_info(ip)
+            properties = service_info.get('properties', {}) if isinstance(service_info, dict) else {}
+
+            self._store_discovered_device(
+                method="mdns",
+                role="sink",
+                identifier=ip_value,
+                ip=ip_value,
+                name=service_info.get('name') if isinstance(service_info, dict) else None,
+                port=service_info.get('port') if isinstance(service_info, dict) else None,
+                tag=properties.get('tag') if isinstance(properties, dict) else None,
+                properties=properties if isinstance(properties, dict) else {},
+                device_type=properties.get('type') if isinstance(properties, dict) else None,
+            )
+
+            if ip_value not in known_sink_ips:
+                _logger.info("[Configuration Manager] Discovered new sink (receiver) from mDNS %s with info: %s", ip, service_info)
+                known_sink_ips.append(ip_value)
+
+        # Process sink settings
+        known_source_config_ids: List[str] = [str(desc.config_id) for desc in self.source_descriptions if desc.config_id]
+
+        for entry in self.mdns_settings_pinger.get_all_sink_settings():
+            if entry.ip in known_sink_ips:
+                sink: SinkDescription = self.__get_sink_by_ip(entry.ip)
+                if not sink.config_id:
+                    sink.config_id = entry.receiver_id
+                    _logger.info("[Configuration Manager] Tagging sink at IP %s with ID %s",
+                                 entry.ip, entry.receiver_id)
+            if entry.receiver_id in known_sink_config_ids:
+                sink: SinkDescription = self.__get_sink_by_config_id(entry.receiver_id)
+                changed: bool = False
+                if (sink.bit_depth != entry.bit_depth or
+                    sink.channel_layout != entry.channel_layout or
+                    sink.channels != entry.channels or
+                    sink.sample_rate != entry.sample_rate):
+                    changed = True
+                    if entry.bit_depth:
+                        sink.bit_depth = entry.bit_depth
+                    if entry.channel_layout:
+                        sink.channel_layout = entry.channel_layout
+                    if entry.channels:
+                        sink.channels = entry.channels
+                    if entry.sample_rate:
+                        sink.sample_rate = entry.sample_rate
+                    _logger.info("[Configuration Manager] Sink %s (%s) reports settings change",
+                                 sink.name, entry.receiver_id)
+                if changed:
+                    self.__reload_configuration()
+
+        # Process source settings
+        for entry in self.mdns_settings_pinger.get_all_source_settings():
+            source_changed = False
+
+            # If not found by config_id, check by IP
+            if entry.ip in known_source_ips:
+                source = self.__get_source_by_ip(entry.ip)
+
+                # If source doesn't have a config_id, assign it
+                if not source.config_id:
+                    source.config_id = entry.source_id
+                    _logger.info("[Configuration Manager] Tagging source at IP %s with ID %s",
+                                 entry.ip, entry.source_id)
+
+            for source in [source for source in self.source_descriptions if source.is_process and
+                           source.tag[:15].strip() == str(entry.ip)]:
+                if source.config_id == entry.source_id or not source.config_id:
+                    source.config_id = entry.source_id
+                    if entry.tag:
+                        updated_tag = self._canonical_process_tag(entry.tag)
+                        if updated_tag and updated_tag != source.tag:
+                            source_changed = True
+                            source.tag = updated_tag
+                    if entry.vnc_ip and entry.vnc_ip != source.vnc_ip:
+                        source_changed = True
+                        source.vnc_ip = entry.vnc_ip
+                    if entry.vnc_port and entry.vnc_port != source.vnc_port:
+                        source_changed = True
+                        source.vnc_port = entry.vnc_port
+
+            # First check if we have a source with this config_id
+            if entry.source_id in known_source_config_ids:
+                for source in self.source_descriptions:
+                    if source.config_id == entry.source_id:
+                        if entry.ip and entry.ip != source.ip:
+                            source_changed = True
+                            source.ip = entry.ip
+                        if entry.tag:
+                            updated_tag = self._canonical_process_tag(entry.tag) if source.is_process else entry.tag
+                            if updated_tag and updated_tag != source.tag:
+                                source_changed = True
+                                source.tag = updated_tag
+                        if entry.vnc_ip and entry.vnc_ip != source.vnc_ip:
+                            source_changed = True
+                            source.vnc_ip = entry.vnc_ip
+                        if entry.vnc_port and entry.vnc_port != source.vnc_port:
+                            source_changed = True
+                            source.vnc_port = entry.vnc_port
+                        if source_changed:
+                            _logger.info("[Configuration Manager] Source %s (%s) updated from settings",
+                                         source.name, entry.source_id)
+
+            # Reload configuration if any source was changed
+            if source_changed:
+                self.__reload_configuration()
         # --- End C++ Engine Based Auto Source Detection ---
 
     def _sap_host_matches_local(self, target_host: str) -> bool:
@@ -3931,136 +4061,6 @@ class ConfigurationManager(threading.Thread):
                 max_age_seconds,
             )
         return pruned_routes, pruned_sources
-
-        # mDNS pinger for sources (senders)
-        for ip in self.mdns_pinger.get_source_ips():
-            ip_value = str(ip)
-            service_info = self.mdns_pinger.get_service_info(ip)
-            properties = service_info.get('properties', {}) if isinstance(service_info, dict) else {}
-
-            self._store_discovered_device(
-                method="mdns",
-                role="source",
-                identifier=ip_value,
-                ip=ip_value,
-                name=service_info.get('name') if isinstance(service_info, dict) else None,
-                port=service_info.get('port') if isinstance(service_info, dict) else None,
-                tag=properties.get('tag') if isinstance(properties, dict) else None,
-                properties=properties if isinstance(properties, dict) else {},
-                device_type=properties.get('type') if isinstance(properties, dict) else None,
-            )
-
-            if ip_value not in known_source_ips:
-                _logger.info("[Configuration Manager] Discovered new source (sender) from mDNS %s with info: %s", ip, service_info)
-                known_source_ips.append(ip_value)
-        # mDNS pinger for sinks (receivers)
-        for ip in self.mdns_pinger.get_sink_ips():
-            ip_value = str(ip)
-            service_info = self.mdns_pinger.get_service_info(ip)
-            properties = service_info.get('properties', {}) if isinstance(service_info, dict) else {}
-
-            self._store_discovered_device(
-                method="mdns",
-                role="sink",
-                identifier=ip_value,
-                ip=ip_value,
-                name=service_info.get('name') if isinstance(service_info, dict) else None,
-                port=service_info.get('port') if isinstance(service_info, dict) else None,
-                tag=properties.get('tag') if isinstance(properties, dict) else None,
-                properties=properties if isinstance(properties, dict) else {},
-                device_type=properties.get('type') if isinstance(properties, dict) else None,
-            )
-
-            if ip_value not in known_sink_ips:
-                _logger.info("[Configuration Manager] Discovered new sink (receiver) from mDNS %s with info: %s", ip, service_info)
-                known_sink_ips.append(ip_value)
-        # Process sink settings
-        known_source_config_ids: List[str] = [str(desc.config_id) for desc in self.source_descriptions if desc.config_id]
-        
-        for entry in self.mdns_settings_pinger.get_all_sink_settings():
-            if entry.ip in known_sink_ips:
-                sink: SinkDescription = self.__get_sink_by_ip(entry.ip)
-                if not sink.config_id:
-                    sink.config_id = entry.receiver_id
-                    _logger.info("[Configuration Manager] Tagging sink at IP %s with ID %s",
-                                 entry.ip, entry.receiver_id)
-            if entry.receiver_id in known_sink_config_ids:
-                sink: SinkDescription = self.__get_sink_by_config_id(entry.receiver_id)
-                changed: bool = False
-                if (sink.bit_depth != entry.bit_depth or
-                    sink.channel_layout != entry.channel_layout or
-                    sink.channels != entry.channels or
-                    sink.sample_rate != entry.sample_rate):
-                    changed = True
-                    if entry.bit_depth:
-                        sink.bit_depth = entry.bit_depth
-                    if entry.channel_layout:
-                        sink.channel_layout = entry.channel_layout
-                    if entry.channels:
-                        sink.channels = entry.channels
-                    if entry.sample_rate:
-                        sink.sample_rate = entry.sample_rate
-                    _logger.info("[Configuration Manager] Sink %s (%s) reports settings change",
-                                 sink.name, entry.receiver_id)
-                if changed:
-                    self.__reload_configuration()
-                    
-        # Process source settings
-        for entry in self.mdns_settings_pinger.get_all_source_settings():
-            source_changed = False
-
-            # If not found by config_id, check by IP
-            if entry.ip in known_source_ips:
-                source = self.__get_source_by_ip(entry.ip)
-                
-                # If source doesn't have a config_id, assign it
-                if not source.config_id:
-                    source.config_id = entry.source_id
-                    #source_changed = True
-                    _logger.info("[Configuration Manager] Tagging source at IP %s with ID %s",
-                                entry.ip, entry.source_id)
-                    
-            for source in [source for source in self.source_descriptions if source.is_process and
-                           source.tag[:15].strip() == str(entry.ip)]:
-                if source.config_id == entry.source_id or not source.config_id:
-                    source.config_id = entry.source_id
-                    if entry.tag:
-                        updated_tag = self._canonical_process_tag(entry.tag)
-                        if updated_tag and updated_tag != source.tag:
-                            source_changed = True
-                            source.tag = updated_tag
-                    if entry.vnc_ip and entry.vnc_ip != source.vnc_ip:
-                        source_changed = True
-                        source.vnc_ip = entry.vnc_ip
-                    if entry.vnc_port and entry.vnc_port != source.vnc_port:
-                        source_changed = True
-                        source.vnc_port = entry.vnc_port
-
-            # First check if we have a source with this config_id
-            if entry.source_id in known_source_config_ids:
-                for source in self.source_descriptions:
-                    if source.config_id == entry.source_id:
-                        if entry.ip and entry.ip != source.ip:
-                            source_changed = True
-                            source.ip = entry.ip
-                        if entry.tag:
-                            updated_tag = self._canonical_process_tag(entry.tag) if source.is_process else entry.tag
-                            if updated_tag and updated_tag != source.tag:
-                                source_changed = True
-                                source.tag = updated_tag
-                        if entry.vnc_ip and entry.vnc_ip != source.vnc_ip:
-                            source_changed = True
-                            source.vnc_ip = entry.vnc_ip
-                        if entry.vnc_port and entry.vnc_port != source.vnc_port:
-                            source_changed = True
-                            source.vnc_port = entry.vnc_port
-                        if source_changed:
-                            _logger.info("[Configuration Manager] Source %s (%s) updated from settings",
-                                        source.name, entry.source_id)
-            
-            # Reload configuration if any source was changed
-            if source_changed:
-                self.__reload_configuration()
         #for tag in self.scream_per_process_recevier.known_sources:
         #    if not str(tag) in known_source_tags:
         #        _logger.info("[Configuration Manager] Adding new per-process source %s", tag)

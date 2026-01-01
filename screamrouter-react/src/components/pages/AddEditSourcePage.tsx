@@ -385,7 +385,8 @@ const AddEditSourcePage: React.FC = () => {
         sourceData.tag = selectedCaptureTag;
         sourceData.ip = null; // clear existing network address if switching to system audio
       } else {
-        sourceData.ip = ip.trim();
+        const trimmedIp = ip.trim();
+        sourceData.ip = trimmedIp ? trimmedIp : null;
         sourceData.tag = sourceTag.trim() || null;
         sourceData.channels = null;
         sourceData.sample_rate = null;
