@@ -1919,7 +1919,8 @@ bool SinkAudioMixer::wait_for_mix_tick() {
             stop_flag_ = true;
             return false;
         }
-
+        const std::size_t max_queued_chunks =
+            m_settings ? std::max<std::size_t>(1, m_settings->mixer_tuning.max_queued_chunks) : 3;
         // If queues are backing up, force a tick instead of blocking on the clock.
         std::size_t pending_chunks = 0;
         {
@@ -1929,10 +1930,10 @@ bool SinkAudioMixer::wait_for_mix_tick() {
                 pending_chunks += queue.size();
             }
         }
-        if (pending_chunks > 3) {
-            clock_pending_ticks_ = 1;
-            LOG_CPP_WARNING("[SinkMixer:%s] Forcing mix tick due to backlog (pending_chunks=%zu).",
-                            config_.sink_id.c_str(), pending_chunks);
+        if (pending_chunks > max_queued_chunks) {
+            clock_pending_ticks_ = pending_chunks - max_queued_chunks;
+            LOG_CPP_WARNING("[SinkMixer:%s] Forcing mix tick due to backlog (pending_chunks=%zu, new pending_chunks=%zu).",
+                            config_.sink_id.c_str(), pending_chunks, pending_chunks - clock_pending_ticks_);
             break;
         }
 

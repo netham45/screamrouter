@@ -1075,33 +1075,65 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                 ts.head_playout_lag_ms_max = std::max(ts.head_playout_lag_ms_max, head_lag_ms);
                 ts.head_playout_lag_samples++;
 
-                // Update playback rate purely from buffer fill regardless of readiness
+                // Update playback rate based on buffer fill
                 const auto& tuning = m_settings->timeshift_tuning;
-                double rate_error_ratio = 0.0;
-                if (desired_latency_ms > 1e-3) {
-                    const double fill_ratio = buffer_level_ms / desired_latency_ms;
-                    rate_error_ratio = std::clamp(fill_ratio - 1.0, -1.0, 1.0);
+                double controller_dt_sec = 0.0;
+                if (ts.last_controller_update_time.time_since_epoch().count() != 0) {
+                    controller_dt_sec =
+                        std::chrono::duration<double>(now - ts.last_controller_update_time).count();
                 }
-                ts.buffer_fill_error_ratio = rate_error_ratio;
+                if (controller_dt_sec <= 0.0) {
+                    controller_dt_sec =
+                        std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
+                }
+                ts.last_controller_update_time = now;
+
+                double raw_ratio = 0.0;
+                if (desired_latency_ms > 1e-3) {
+                    raw_ratio = (desired_latency_ms - buffer_level_ms) / desired_latency_ms;
+                }
+                ts.buffer_fill_error_ratio = raw_ratio;
 
                 const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
-                const double rate_error_ppm = rate_error_ratio * kRatioToPpm;
-                const double proportional_ppm =
-                    std::clamp(tuning.playback_ratio_kp * rate_error_ppm,
-                               -max_deviation_ppm,
-                               max_deviation_ppm);
-                double denom = 1.0 + proportional_ppm * kPlaybackDriftGain;
-                double new_rate = (denom > 1e-9) ? (1.0 / denom) : 1.0;
+                double proportional_ppm = 0.0;
+                double integral_ppm = ts.playback_ratio_integral_ppm;
+                double rate_error_ppm = 0.0;
+                if (max_deviation_ppm > 0.0) {
+                    proportional_ppm =
+                        std::clamp(tuning.playback_ratio_kp * raw_ratio * max_deviation_ppm,
+                                   -max_deviation_ppm,
+                                   max_deviation_ppm);
+
+                    const double integral_gain_ppm_per_sec = tuning.playback_ratio_ki * max_deviation_ppm;
+                    if (integral_gain_ppm_per_sec > 0.0) {
+                        integral_ppm += raw_ratio * integral_gain_ppm_per_sec * controller_dt_sec;
+                        const double integral_limit =
+                            std::max(tuning.playback_ratio_integral_limit_ppm, max_deviation_ppm);
+                        integral_ppm = std::clamp(integral_ppm, -integral_limit, integral_limit);
+                    } else {
+                        integral_ppm = 0.0;
+                    }
+                    ts.playback_ratio_integral_ppm = integral_ppm;
+
+                    rate_error_ppm = proportional_ppm + integral_ppm;
+                    rate_error_ppm = std::clamp(rate_error_ppm, -max_deviation_ppm, max_deviation_ppm);
+                } else {
+                    ts.playback_ratio_integral_ppm = 0.0;
+                }
+
+                double new_rate = 1.0 - rate_error_ppm * kPlaybackDriftGain;
                 if (!std::isfinite(new_rate)) {
                     new_rate = 1.0;
                 }
                 if (std::abs(new_rate - ts.current_playback_rate) > 5e-4) {
                     LOG_CPP_DEBUG(
-                        "[TimeshiftManager] Adjusted playback rate for '%s': buffer_level=%.3fms target=%.3fms fill_err_ratio=%.6f rate_err_ppm=%.3f playback_rate=%.6f",
+                        "[TimeshiftManager] Adjusted playback rate for '%s': buffer_level=%.3fms target=%.3fms fill_err_ratio=%.6f prop_ppm=%.3f int_ppm=%.3f total_ppm=%.3f playback_rate=%.6f",
                         candidate_packet.source_tag.c_str(),
                         buffer_level_ms,
                         desired_latency_ms,
-                        rate_error_ratio,
+                        raw_ratio,
+                        proportional_ppm,
+                        integral_ppm,
                         rate_error_ppm,
                         new_rate);
                 }
