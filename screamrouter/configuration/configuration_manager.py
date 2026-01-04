@@ -1620,24 +1620,33 @@ class ConfigurationManager(threading.Thread):
         for item in raw_devices:
             model_data: Dict[str, Any]
             if isinstance(item, SystemAudioDeviceInfo):
-                devices.append(item)
-                continue
-
-            if hasattr(item, "model_dump"):
+                try:
+                    model_data = item.model_dump()
+                except AttributeError:
+                    model_data = getattr(item, "__dict__", {}).copy()
+                except Exception:  # pylint: disable=broad-except
+                    model_data = getattr(item, "__dict__", {}).copy()
+            elif hasattr(item, "model_dump"):
                 try:
                     model_data = item.model_dump()
                 except Exception:  # pylint: disable=broad-except
-                    model_data = dict(item)
+                    try:
+                        model_data = item.dict()
+                    except Exception:  # pylint: disable=broad-except
+                        model_data = dict(getattr(item, "__dict__", {}))
             elif isinstance(item, dict):
                 model_data = dict(item)
             else:
                 continue
 
-            tag = str(model_data.get("tag", "")).strip()
             direction = str(model_data.get("direction", direction_hint or "capture")).lower()
             if direction not in ("capture", "playback"):
                 direction = direction_hint or "capture"
 
+            card_index = int(model_data.get("card_index", -1))
+            device_index = int(model_data.get("device_index", -1))
+
+            tag = str(model_data.get("tag", "")).strip()
             channels_supported_raw = model_data.get("channels_supported", [])
             if isinstance(channels_supported_raw, list):
                 channels_supported = [int(c) for c in channels_supported_raw if isinstance(c, (int, float))]
@@ -1650,8 +1659,6 @@ class ConfigurationManager(threading.Thread):
             else:
                 sample_rates = []
 
-            card_index = int(model_data.get("card_index", -1))
-            device_index = int(model_data.get("device_index", -1))
             if card_index < 0 or device_index < 0:
                 inferred_card, inferred_device = self._infer_card_device_from_tag(tag, model_data.get("hw_id"))
                 if card_index < 0:
@@ -1663,6 +1670,28 @@ class ConfigurationManager(threading.Thread):
             hw_id = model_data.get("hw_id")
             endpoint_id = model_data.get("endpoint_id")
             present = bool(model_data.get("present", False))
+            bit_depth_value = model_data.get("bit_depth")
+            try:
+                bit_depth_value = int(bit_depth_value) if bit_depth_value not in (None, "") else None
+            except Exception:  # pylint: disable=broad-except
+                bit_depth_value = None
+
+            if not tag:
+                for candidate in (hw_id, endpoint_id, friendly_name):
+                    if candidate:
+                        tag = str(candidate).strip()
+                        break
+
+            if not tag:
+                if card_index >= 0 and device_index >= 0:
+                    tag = f"{direction}:{card_index}.{device_index}"
+                else:
+                    tag = f"{direction}:{uuid.uuid4()}"
+                _logger.warning(
+                    "[Configuration Manager] Loaded legacy system device entry without tag; generated fallback tag '%s' (direction=%s)",
+                    tag,
+                    direction,
+                )
 
             devices.append(SystemAudioDeviceInfo(
                 tag=tag,
@@ -1674,6 +1703,7 @@ class ConfigurationManager(threading.Thread):
                 device_index=device_index,
                 channels_supported=channels_supported,
                 sample_rates=sample_rates,
+                bit_depth=bit_depth_value,
                 present=present,
             ))
 
