@@ -34,11 +34,11 @@ struct TimeshiftTuning {
     std::size_t max_clock_pending_packets = 64;
     double rtp_continuity_slack_seconds = 0.25;
     double rtp_session_reset_threshold_seconds = 0.2;
-    double playback_ratio_max_deviation_ppm = 50000.0;
-    double playback_ratio_slew_ppm_per_sec = 200000.0;
-    double playback_ratio_kp = 200000.0;
-    double playback_ratio_ki = 4000000.0;
-    double playback_ratio_integral_limit_ppm = 50000.0;
+    double playback_ratio_max_deviation_ppm = 2000.0;
+    double playback_ratio_slew_ppm_per_sec = 1000.0;
+    double playback_ratio_kp = 0.75;     // Gain operates on ppm error derived from rate_error_ratio
+    double playback_ratio_ki = 0.1;      // Integral gain also operates on ppm error
+    double playback_ratio_integral_limit_ppm = 2000.0;
     double playback_ratio_smoothing = 0.2;
     double playback_ratio_inbound_rate_smoothing = 0.1; // Exponential smoothing factor [0,1] for measured inbound rate
     double playback_catchup_ppm_per_ms = 1000.0;   // Extra speedup per ms of lateness (bounded)

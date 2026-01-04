@@ -24,6 +24,7 @@ namespace audio {
 namespace {
 constexpr double kProcessingBudgetAlpha = 0.2;
 constexpr double kPlaybackDriftGain = 1.0 / 1'000'000.0; // Convert ppm to ratio
+constexpr double kRatioToPpm = 1'000'000.0;
 constexpr double kFallbackSmoothing = 0.1;
 constexpr double kDefaultInboundRateSmoothing = 0.1;
 
@@ -1169,9 +1170,10 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                 ts.last_inbound_rate_error_sps = rate_error_sps;
                 ts.last_inbound_rate_error_ratio = rate_error_ratio;
 
-                    const double proportional_ppm = tuning.playback_ratio_kp * rate_error_ratio;
+                    const double rate_error_ppm = rate_error_ratio * kRatioToPpm;
+                    const double proportional_ppm = tuning.playback_ratio_kp * rate_error_ppm;
                     ts.playback_ratio_integral_ppm +=
-                        tuning.playback_ratio_ki * rate_error_ratio * controller_dt_sec;
+                        tuning.playback_ratio_ki * rate_error_ppm * controller_dt_sec;
                     const double integral_cap_ppm =
                         std::max(tuning.playback_ratio_integral_limit_ppm,
                                  tuning.playback_ratio_max_deviation_ppm);
@@ -1213,11 +1215,12 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
 
                     if (std::abs(smoothed_rate - ts.current_playback_rate) > 5e-4) {
                         LOG_CPP_DEBUG(
-                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f rate_err_sps=%.3f rate_err_ratio=%.6f controller_ppm=%.3f combined_ppm=%.3f target=%.6f smoothed=%.6f",
+                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f rate_err_sps=%.3f rate_err_ratio=%.6f rate_err_ppm=%.3f controller_ppm=%.3f combined_ppm=%.3f target=%.6f smoothed=%.6f",
                             candidate_packet.source_tag.c_str(),
                             ts.last_clock_drift_ppm,
                             rate_error_sps,
                             rate_error_ratio,
+                            rate_error_ppm,
                             controller_ppm,
                             combined_ppm,
                             target_rate,
