@@ -1123,6 +1123,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
 
                 // Positive error indicates we are below target fill and must speed up, so add the correction.
                 double new_rate = 1.0 + rate_error_ppm * kPlaybackDriftGain;
+                new_rate = 1.0; //TODO: remove to re-enable
                 if (!std::isfinite(new_rate)) {
                     new_rate = 1.0;
                 }
