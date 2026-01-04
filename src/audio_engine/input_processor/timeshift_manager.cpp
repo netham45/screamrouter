@@ -1079,28 +1079,21 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                 const auto& tuning = m_settings->timeshift_tuning;
                 double rate_error_ratio = 0.0;
                 if (desired_latency_ms > 1e-3) {
-                    if (buffer_level_ms + 1e-6 < desired_latency_ms) {
-                        const double deficit_ms = desired_latency_ms - buffer_level_ms;
-                        rate_error_ratio = -std::clamp(deficit_ms / desired_latency_ms, 0.0, 1.0);
-                    } else if (buffer_level_ms > desired_latency_ms + 1e-6) {
-                        const double surplus_ms = buffer_level_ms - desired_latency_ms;
-                        rate_error_ratio = std::clamp(surplus_ms / desired_latency_ms, 0.0, 1.0);
-                    }
+                    const double fill_ratio = buffer_level_ms / desired_latency_ms;
+                    rate_error_ratio = std::clamp(fill_ratio - 1.0, -1.0, 1.0);
                 }
                 ts.buffer_fill_error_ratio = rate_error_ratio;
 
-                double rate_error_ppm = 0.0;
-                double new_rate = 1.0;
-                if (rate_error_ratio > 0.0) {
-                    rate_error_ppm = rate_error_ratio * kRatioToPpm;
-                    const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
-                    const double proportional_ppm = tuning.playback_ratio_kp * rate_error_ppm;
-                    const double clamped_ppm = std::clamp(proportional_ppm, -max_deviation_ppm, max_deviation_ppm);
-                    const double denom = 1.0 + clamped_ppm * kPlaybackDriftGain;
-                    new_rate = (denom > 1e-9) ? (1.0 / denom) : 1.0;
-                    if (!std::isfinite(new_rate)) {
-                        new_rate = 1.0;
-                    }
+                const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
+                const double rate_error_ppm = rate_error_ratio * kRatioToPpm;
+                const double proportional_ppm =
+                    std::clamp(tuning.playback_ratio_kp * rate_error_ppm,
+                               -max_deviation_ppm,
+                               max_deviation_ppm);
+                double denom = 1.0 + proportional_ppm * kPlaybackDriftGain;
+                double new_rate = (denom > 1e-9) ? (1.0 / denom) : 1.0;
+                if (!std::isfinite(new_rate)) {
+                    new_rate = 1.0;
                 }
                 if (std::abs(new_rate - ts.current_playback_rate) > 5e-4) {
                     LOG_CPP_DEBUG(

@@ -36,7 +36,7 @@ struct TimeshiftTuning {
     double rtp_session_reset_threshold_seconds = 0.2;
     double playback_ratio_max_deviation_ppm = 2000.0;
     double playback_ratio_slew_ppm_per_sec = 0.0;
-    double playback_ratio_kp = 0.75;     // Gain operates on ppm error derived from buffer fill error
+    double playback_ratio_kp = 0.02;     // Gain operates on ppm error derived from buffer fill error
     double playback_ratio_ki = 0.0;
     double playback_ratio_integral_limit_ppm = 0.0;
     double playback_ratio_smoothing = 0.0;
