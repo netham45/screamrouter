@@ -1930,12 +1930,12 @@ bool SinkAudioMixer::wait_for_mix_tick() {
                     pending_chunks = queue.size();
             }
         }
-        if (pending_chunks > 3) {
+        /*if (pending_chunks > 3) {
             clock_pending_ticks_ = 1;
             LOG_CPP_WARNING("[SinkMixer:%s] Forcing mix tick due to backlog (pending_chunks=%zu).",
                             config_.sink_id.c_str(), pending_chunks);
             break;
-        }
+        }*/
 
         std::unique_lock<std::mutex> condition_lock(condition->mutex);
         condition->cv.wait(condition_lock, [this, &condition]() {
