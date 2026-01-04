@@ -1,0 +1,85 @@
+ffmpeg started on 2026-01-01 at 14:31:01
+Report written to "ffmpeg-20260101-143101.log"
+Log level: 48
+Command line:
+ffmpeg -re -f lavfi -i "sine=frequency=440:duration=5" -f s16be -ar 48000 -ac 2 -f rtp -payload_type 127 -loglevel verbose -report -y rtp://127.0.0.1:50002
+ffmpeg version 5.1.7-0+deb12u1 Copyright (c) 2000-2025 the FFmpeg developers
+  built with gcc 12 (Debian 12.2.0-14+deb12u1)
+  configuration: --prefix=/usr --extra-version=0+deb12u1 --toolchain=hardened --libdir=/usr/lib/x86_64-linux-gnu --incdir=/usr/include/x86_64-linux-gnu --arch=amd64 --enable-gpl --disable-stripping --enable-gnutls --enable-ladspa --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libcaca --enable-libcdio --enable-libcodec2 --enable-libdav1d --enable-libflite --enable-libfontconfig --enable-libfreetype --enable-libfribidi --enable-libglslang --enable-libgme --enable-libgsm --enable-libjack --enable-libmp3lame --enable-libmysofa --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libpulse --enable-librabbitmq --enable-librist --enable-librubberband --enable-libshine --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libtwolame --enable-libvidstab --enable-libvorbis --enable-libvpx --enable-libwebp --enable-libx265 --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-  libavutil      57. 28.100 / 57. 28.100
+  libavcodec     59. 37.100 / 59. 37.100
+  libavformat    59. 27.100 / 59. 27.100
+  libavdevice    59.  7.100 / 59.  7.100
+  libavfilter     8. 44.100 /  8. 44.100
+  libswscale      6.  7.100 /  6.  7.100
+  libswresample   4.  7.100 /  4.  7.100
+  libpostproc    56.  6.100 / 56.  6.100
+Splitting the commandline.
+Reading option '-re' ... matched as option 're' (read input at native frame rate; equivalent to -readrate 1) with argument '1'.
+Reading option '-f' ... matched as option 'f' (force format) with argument 'lavfi'.
+Reading option '-i' ... matched as input url with argument 'sine=frequency=440:duration=5'.
+Reading option '-f' ... matched as option 'f' (force format) with argument 's16be'.
+Reading option '-ar' ... matched as option 'ar' (set audio sampling rate (in Hz)) with argument '48000'.
+Reading option '-ac' ... matched as option 'ac' (set number of audio channels) with argument '2'.
+Reading option '-f' ... matched as option 'f' (force format) with argument 'rtp'.
+Reading option '-payload_type' ... matched as AVOption 'payload_type' with argument '127'.
+Reading option '-loglevel' ... matched as option 'loglevel' (set logging level) with argument 'verbose'.
+Reading option '-report' ... matched as option 'report' (generate a report) with argument '1'.
+Reading option '-y' ... matched as option 'y' (overwrite output files) with argument '1'.
+Reading option 'rtp://127.0.0.1:50002' ... matched as output url.
+Finished splitting the commandline.
+Parsing a group of options: global .
+Applying option loglevel (set logging level) with argument verbose.
+Applying option report (generate a report) with argument 1.
+Applying option y (overwrite output files) with argument 1.
+Successfully parsed a group of options.
+Parsing a group of options: input url sine=frequency=440:duration=5.
+Applying option re (read input at native frame rate; equivalent to -readrate 1) with argument 1.
+Applying option f (force format) with argument lavfi.
+Successfully parsed a group of options.
+Opening an input file: sine=frequency=440:duration=5.
+detected 8 logical cores
+[Parsed_sine_0 @ 0x622b95da7a00] Setting 'frequency' to value '440'
+[Parsed_sine_0 @ 0x622b95da7a00] Setting 'duration' to value '5'
+[AVFilterGraph @ 0x622b95da5d00] query_formats: 2 queried, 3 merged, 0 already done, 0 delayed
+[lavfi @ 0x622b95da5100] All info found
+Input #0, lavfi, from 'sine=frequency=440:duration=5':
+  Duration: N/A, start: 0.000000, bitrate: 705 kb/s
+  Stream #0:0, 1, 1/44100: Audio: pcm_s16le, 44100 Hz, mono, s16, 705 kb/s
+Successfully opened the file.
+Parsing a group of options: output url rtp://127.0.0.1:50002.
+Applying option f (force format) with argument s16be.
+Applying option ar (set audio sampling rate (in Hz)) with argument 48000.
+Applying option ac (set number of audio channels) with argument 2.
+Applying option f (force format) with argument rtp.
+Successfully parsed a group of options.
+Opening an output file: rtp://127.0.0.1:50002.
+[rtp @ 0x622b95dbea40] No default whitelist set
+[udp @ 0x622b95dbef40] No default whitelist set
+[udp @ 0x622b95dcf480] No default whitelist set
+Successfully opened the file.
+Stream mapping:
+  Stream #0:0 -> #0:0 (pcm_s16le (native) -> pcm_mulaw (native))
+Press [q] to stop, [?] for help
+cur_dts is invalid st:0 (0) [init:0 i_done:0 finish:0] (this is harmless if it occurs once at the start per stream)
+[graph_0_in_0_0 @ 0x622b95de3180] Setting 'time_base' to value '1/44100'
+[graph_0_in_0_0 @ 0x622b95de3180] Setting 'sample_rate' to value '44100'
+[graph_0_in_0_0 @ 0x622b95de3180] Setting 'sample_fmt' to value 's16'
+[graph_0_in_0_0 @ 0x622b95de3180] Setting 'channel_layout' to value 'mono'
+[graph_0_in_0_0 @ 0x622b95de3180] tb:1/44100 samplefmt:s16 samplerate:44100 chlayout:mono
+[format_out_0_0 @ 0x622b95de4240] Setting 'sample_fmts' to value 's16'
+[format_out_0_0 @ 0x622b95de4240] Setting 'sample_rates' to value '48000'
+[format_out_0_0 @ 0x622b95de4240] Setting 'channel_layouts' to value 'stereo'
+[format_out_0_0 @ 0x622b95de4240] auto-inserting filter 'auto_aresample_0' between the filter 'Parsed_anull_0' and the filter 'format_out_0_0'
+[AVFilterGraph @ 0x622b95de1480] query_formats: 4 queried, 6 merged, 3 already done, 0 delayed
+[auto_aresample_0 @ 0x622b95de5bc0] [SWR @ 0x622b95de5d00] Using s16p internally between filters
+[auto_aresample_0 @ 0x622b95de5bc0] [SWR @ 0x622b95de5d00] Matrix coefficients:
+[auto_aresample_0 @ 0x622b95de5bc0] [SWR @ 0x622b95de5d00] FL: FC:0.707107 
+[auto_aresample_0 @ 0x622b95de5bc0] [SWR @ 0x622b95de5d00] FR: FC:0.707107 
+[auto_aresample_0 @ 0x622b95de5bc0] ch:1 chl:mono fmt:s16 r:44100Hz -> ch:2 chl:stereo fmt:s16 r:48000Hz
+Output #0, rtp, to 'rtp://127.0.0.1:50002':
+  Metadata:
+    encoder         : Lavf59.27.100
+  Stream #0:0, 0, 1/48000: Audio: pcm_mulaw, 48000 Hz, stereo, s16, 768 kb/s
+    Metadata:
+      encoder         : Lavc59.37.100 pcm_mulaw
+size=       2kB time=00:00:00.02 bitrate= 786.2kbits/s speed=N/A    size=      48kB time=00:00:00.51 bitrate= 776.7kbits/s speed=   1x    
