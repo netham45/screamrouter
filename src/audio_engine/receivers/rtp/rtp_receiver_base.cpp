@@ -6,6 +6,7 @@
 #include "../../utils/cpp_logger.h"
 #include "../../utils/sentinel_logging.h"
 #include "rtp_receiver_utils.h"
+#include "rtp_payload_defaults.h"
 
 #include <rtc/rtp.hpp>
 
@@ -100,6 +101,10 @@ void RtpReceiverBase::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, 
         if (reordering_buffers_.count(old_ssrc)) {
             reordering_buffers_.at(old_ssrc).reset();
         }
+    }
+    {
+        std::lock_guard<std::mutex> lock(ssrc_addr_mutex_);
+        ssrc_last_addr_.erase(old_ssrc);
     }
 
     for (auto& receiver : payload_receivers_) {
@@ -263,7 +268,17 @@ void RtpReceiverBase::run() {
             std::lock_guard<std::mutex> lock(reordering_buffer_mutex_);
             for (auto const& [ssrc, _] : reordering_buffers_) {
                 (void)_;
-                process_ready_packets_internal(ssrc, cliaddr, false);
+                struct sockaddr_in addr_copy{};
+                {
+                    std::lock_guard<std::mutex> addr_lock(ssrc_addr_mutex_);
+                    auto it = ssrc_last_addr_.find(ssrc);
+                    if (it != ssrc_last_addr_.end()) {
+                        addr_copy = it->second;
+                    }
+                }
+                if (addr_copy.sin_family == AF_INET) {
+                    process_ready_packets_internal(ssrc, addr_copy, false);
+                }
             }
             continue;
         }
@@ -311,17 +326,33 @@ void RtpReceiverBase::run() {
             }
 
             auto received_time = std::chrono::steady_clock::now();
+            const bool is_loopback =
+                (cliaddr.sin_family == AF_INET && ntohl(cliaddr.sin_addr.s_addr) == INADDR_LOOPBACK);
 
             if (static_cast<size_t>(n_received) < sizeof(rtc::RtpHeader)) {
+                if (is_loopback) {
+                    LOG_CPP_INFO("[RtpReceiver] Loopback packet dropped before RTP parse (size=%zd bytes).", n_received);
+                }
                 log_warning("Received packet too small to be an RTP packet (" + std::to_string(n_received) + " bytes).");
                 continue;
             }
 
             const rtc::RtpHeader* rtp_header = reinterpret_cast<const rtc::RtpHeader*>(raw_buffer);
+            if (is_loopback) {
+                LOG_CPP_INFO("[RtpReceiver] Loopback recv seq=%u ssrc=0x%08X len=%zd",
+                             rtp_header->seqNumber(),
+                             rtp_header->ssrc(),
+                             n_received);
+            }
             uint8_t pt = rtp_header->payloadType();
             uint32_t current_ssrc = rtp_header->ssrc();
 
             if (!supports_payload_type(pt, current_ssrc)) {
+                if (is_loopback) {
+                    LOG_CPP_INFO("[RtpReceiver] Loopback packet seq=%u filtered due to unsupported payload %u",
+                                 rtp_header->seqNumber(),
+                                 pt);
+                }
                 continue;
             }
 
@@ -340,6 +371,10 @@ void RtpReceiverBase::run() {
                     it->second = current_ssrc;
                 }
             }
+            {
+                std::lock_guard<std::mutex> lock(ssrc_addr_mutex_);
+                ssrc_last_addr_[current_ssrc] = cliaddr;
+            }
 
             RtpPacketData packet_data;
             packet_data.sequence_number = rtp_header->seqNumber();
@@ -347,9 +382,16 @@ void RtpReceiverBase::run() {
             packet_data.received_time = received_time;
             packet_data.ssrc = current_ssrc;
             packet_data.payload_type = pt;
+            packet_data.ingress_from_loopback = is_loopback;
 
             size_t header_len = 12 + (rtp_header->csrcCount() * sizeof(uint32_t));
             if (static_cast<size_t>(n_received) < header_len) {
+                if (is_loopback) {
+                    LOG_CPP_INFO("[RtpReceiver] Loopback packet seq=%u dropped due to truncated header (expected=%zu, actual=%zd)",
+                                 rtp_header->seqNumber(),
+                                 header_len,
+                                 n_received);
+                }
                 log_warning("Received RTP packet smaller than its own header length. SSRC: 0x" + std::to_string(current_ssrc));
                 continue;
             }
@@ -498,6 +540,7 @@ bool RtpReceiverBase::resolve_stream_properties(
     StreamProperties& out_properties) const {
     const int packet_port = ntohs(client_addr.sin_port);
     const int listen_port = config_.listen_port <= 0 ? 40000 : config_.listen_port;
+    const uint8_t canonical_payload_type = canonicalize_payload_type(payload_type, ssrc);
 
     if (sap_listener_) {
         if (sap_listener_->get_stream_properties(ssrc, out_properties)) {
@@ -515,44 +558,12 @@ bool RtpReceiverBase::resolve_stream_properties(
         }
     }
 
-    if (payload_type == kRtpPayloadTypeOpus && listen_port == 40000) {
-        out_properties.payload_type = payload_type;
-        out_properties.sample_rate = kDefaultOpusSampleRate;
-        out_properties.channels = kDefaultOpusChannels;
-        out_properties.bit_depth = 16;
-        out_properties.endianness = Endianness::LITTLE;
-        out_properties.port = listen_port;
-        out_properties.codec = StreamCodec::OPUS;
-        out_properties.opus_streams = 0;
-        out_properties.opus_coupled_streams = 0;
-        out_properties.opus_mapping_family = 0;
-        out_properties.opus_channel_mapping.clear();
-        return true;
+    if (listen_port != 40000) {
+        return false;
     }
 
-    if (payload_type == kRtpPayloadTypePcmu && listen_port == 40000) {
-        out_properties.payload_type = payload_type;
-        out_properties.sample_rate = kDefaultPcmuSampleRate;
-        out_properties.channels = kDefaultPcmuChannels;
-        out_properties.bit_depth = 8;
-        out_properties.endianness = Endianness::BIG;
-        out_properties.port = listen_port;
-        out_properties.codec = StreamCodec::PCMU;
-        return true;
-    }
-
-    if (listen_port == 40000) {
-        out_properties.payload_type = payload_type;
-        out_properties.sample_rate = 48000;
-        out_properties.channels = 2;
-        out_properties.bit_depth = 16;
-        out_properties.endianness = Endianness::BIG;
-        out_properties.port = listen_port;
-        out_properties.codec = StreamCodec::PCM;
-        return true;
-    }
-
-    return false;
+    return populate_stream_properties_from_payload(
+        payload_type, canonical_payload_type, listen_port, out_properties);
 }
 
 uint8_t RtpReceiverBase::canonicalize_payload_type(
@@ -579,6 +590,13 @@ uint8_t RtpReceiverBase::canonicalize_payload_type(
         if (effective_props->codec == StreamCodec::PCMU) {
             return kRtpPayloadTypePcmu;
         }
+        if (effective_props->codec == StreamCodec::PCMA) {
+            return kRtpPayloadTypePcma;
+        }
+    }
+
+    if (payload_type == 10 || payload_type == 11) {
+        return kRtpPayloadTypeL16Stereo;
     }
 
     return payload_type;
@@ -628,24 +646,32 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
     }
 
     const uint8_t payload_type = ready_packets.front().payload_type;
+    const uint8_t canonical_payload_type = canonicalize_payload_type(payload_type, ssrc);
 
     StreamProperties props{};
-    const bool has_properties = resolve_stream_properties(ssrc, client_addr, payload_type, props);
-    if (!has_properties) {
-        const int listen_port = config_.listen_port <= 0 ? 40000 : config_.listen_port;
-        char fallback_ip_str[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &(client_addr.sin_addr), fallback_ip_str, INET_ADDRSTRLEN);
-        register_source_tag(std::string(fallback_ip_str));
+        const bool has_properties = resolve_stream_properties(ssrc, client_addr, payload_type, props);
+        if (!has_properties) {
+            const int listen_port = config_.listen_port <= 0 ? 40000 : config_.listen_port;
+            if (listen_port == 40000) {
+                char fallback_ip_str[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &(client_addr.sin_addr), fallback_ip_str, INET_ADDRSTRLEN);
+                const int fallback_port = ntohs(client_addr.sin_port);
+                std::string fallback_tag = std::string(fallback_ip_str) + ":" + std::to_string(fallback_port);
+                register_source_tag(fallback_tag);
 
-        if (listen_port == 40000) {
-            LOG_CPP_DEBUG("[RtpReceiver] Applying default PCM properties for SSRC 0x%08X on fallback port 40000", ssrc);
-            props.payload_type = payload_type;
-            props.codec = StreamCodec::PCM;
-            props.sample_rate = 48000;
-            props.channels = 2;
-            props.bit_depth = 16;
-            props.endianness = Endianness::LITTLE;
-            props.port = listen_port;
+                if (populate_stream_properties_from_payload(
+                        payload_type, canonical_payload_type, listen_port, props)) {
+                    LOG_CPP_DEBUG("[RtpReceiver] Applying default payload mapping for SSRC 0x%08X on port 40000", ssrc);
+                } else {
+                LOG_CPP_DEBUG("[RtpReceiver] Applying generic PCM fallback for SSRC 0x%08X on port 40000", ssrc);
+                props.payload_type = payload_type;
+                props.codec = StreamCodec::PCM;
+                props.sample_rate = 48000;
+                props.channels = 2;
+                props.bit_depth = 16;
+                props.endianness = Endianness::LITTLE;
+                props.port = listen_port;
+            }
         } else {
             char ssrc_hex[12];
             snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", ssrc);
@@ -683,8 +709,8 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
     }
 
     for (auto& packet_data : ready_packets) {
-        const uint8_t canonical_payload_type = canonicalize_payload_type(packet_data.payload_type, packet_data.ssrc, &props);
-        RtpPayloadReceiver* handler = find_handler_for_payload(canonical_payload_type);
+        const uint8_t packet_canonical_type = canonicalize_payload_type(packet_data.payload_type, packet_data.ssrc, &props);
+        RtpPayloadReceiver* handler = find_handler_for_payload(packet_canonical_type);
 
         if (!handler) {
             if (props.codec == StreamCodec::OPUS) {
@@ -693,10 +719,17 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
                 handler = find_handler_for_payload(kRtpPayloadTypeL16Stereo);
             } else if (props.codec == StreamCodec::PCMU) {
                 handler = find_handler_for_payload(kRtpPayloadTypePcmu);
+            } else if (props.codec == StreamCodec::PCMA) {
+                handler = find_handler_for_payload(kRtpPayloadTypePcma);
             }
         }
 
         if (!handler) {
+            if (packet_data.ingress_from_loopback) {
+                LOG_CPP_INFO("[RtpReceiver] Loopback packet seq=%u dropped: no handler for payload=%u",
+                             packet_data.sequence_number,
+                             packet_data.payload_type);
+            }
             char ssrc_hex[12];
             snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", packet_data.ssrc);
             LOG_CPP_WARNING("[RtpReceiver] No handler for payload_type=%u (SSRC=%s). Dropping packet (size=%zu).",
@@ -710,6 +743,8 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
         packet.source_tag = source_tag;
         packet.received_time = packet_data.received_time;
         packet.rtp_timestamp = packet_data.rtp_timestamp;
+        packet.rtp_sequence_number = packet_data.sequence_number;
+        packet.ingress_from_loopback = packet_data.ingress_from_loopback;
         packet.ssrcs.reserve(1 + packet_data.csrcs.size());
         packet.ssrcs.push_back(packet_data.ssrc);
         packet.ssrcs.insert(packet.ssrcs.end(), packet_data.csrcs.begin(), packet_data.csrcs.end());
@@ -717,16 +752,28 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
         utils::log_sentinel("rtp_ready", packet);
 
         if (!handler->populate_packet(packet_data, props, packet)) {
+            if (packet.ingress_from_loopback && packet.rtp_sequence_number.has_value()) {
+                LOG_CPP_INFO("[RtpReceiver] Loopback packet seq=%u dropped: handler parse failure (payload=%u)",
+                             packet.rtp_sequence_number.value(),
+                             packet_data.payload_type);
+            }
             char ssrc_hex[12];
             snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", packet_data.ssrc);
-            LOG_CPP_WARNING("[RtpReceiver] Failed to parse payload_type=%u for SSRC=%s (size=%zu). Packet dropped.",
+            LOG_CPP_WARNING("[RtpReceiver] Failed to parse payload_type=%u for SSRC=%s (endpoint=%s:%d, size=%zu). Packet dropped.",
                             packet_data.payload_type,
                             ssrc_hex,
+                            client_ip_str,
+                            announced_port,
                             packet_data.payload.size());
             continue;
         }
 
         register_source_tag(packet.source_tag);
+        if (packet.ingress_from_loopback && packet.rtp_sequence_number.has_value()) {
+            LOG_CPP_INFO("[RtpReceiver] Loopback packet seq=%u ready for dispatch (source=%s)",
+                         packet.rtp_sequence_number.value(),
+                         packet.source_tag.c_str());
+        }
         dispatch_ready_packet(std::move(packet));
     }
 }

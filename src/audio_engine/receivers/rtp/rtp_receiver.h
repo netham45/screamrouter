@@ -8,6 +8,7 @@
 #include "rtp_receiver_base.h"
 #include "rtp_pcm_receiver.h"
 #include "rtp_pcmu_receiver.h"
+#include "rtp_pcma_receiver.h"
 #include "rtp_opus_receiver.h"
 
 namespace screamrouter {

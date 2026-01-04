@@ -333,6 +333,17 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                            parsed.session_name);
     }
 
+    const char* codec_name = "unknown";
+    if (parsed.properties.codec == StreamCodec::OPUS) {
+        codec_name = "opus";
+    } else if (parsed.properties.codec == StreamCodec::PCM) {
+        codec_name = "pcm";
+    } else if (parsed.properties.codec == StreamCodec::PCMU) {
+        codec_name = "pcmu";
+    } else if (parsed.properties.codec == StreamCodec::PCMA) {
+        codec_name = "pcma";
+    }
+
     LOG_CPP_INFO(
         "%s SAP update: SSRC %u from %s -> %s:%d (pt=%d codec=%s sr=%d ch=%d)",
         logger_prefix_.c_str(),
@@ -341,8 +352,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
         parsed.connection_ip.empty() ? source_ip.c_str() : parsed.connection_ip.c_str(),
         parsed.port,
         parsed.properties.payload_type,
-        (parsed.properties.codec == StreamCodec::OPUS ? "opus" :
-            parsed.properties.codec == StreamCodec::PCM ? "pcm" : "unknown"),
+        codec_name,
         parsed.properties.sample_rate,
         parsed.properties.channels);
 }

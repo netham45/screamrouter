@@ -19,6 +19,7 @@ struct RtpPacketData {
     uint32_t ssrc;
     std::vector<uint32_t> csrcs;
     uint8_t payload_type = 0;
+    bool ingress_from_loopback = false;
 };
 
 /**
@@ -75,6 +76,7 @@ private:
 
     // Prevents flooding logs when a burst of out-of-order packets arrives.
     std::chrono::steady_clock::time_point last_out_of_order_log_{};
+    std::chrono::steady_clock::time_point last_large_gap_log_{};
 
     // Helper to correctly compare 16-bit sequence numbers with wraparound.
     static bool is_sequence_greater(uint16_t seq1, uint16_t seq2);

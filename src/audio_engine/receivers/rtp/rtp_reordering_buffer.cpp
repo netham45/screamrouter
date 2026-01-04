@@ -3,8 +3,10 @@
 #include <limits>
 #include <utility>
 
-// The is_sequence_greater function is now a static member of the class.
-// The anonymous namespace is no longer needed.
+namespace {
+constexpr uint16_t kLargeGapResetThreshold = 192;
+constexpr auto kLargeGapLogInterval = std::chrono::seconds(2);
+}
 
 RtpReorderingBuffer::RtpReorderingBuffer(std::chrono::milliseconds max_delay, size_t max_size)
     : m_next_expected_seq(0),
@@ -23,16 +25,29 @@ void RtpReorderingBuffer::add_packet(RtpPacketData&& packet) {
     if (m_is_initialized &&
         packet.sequence_number != m_next_expected_seq &&
         is_sequence_greater(packet.sequence_number, m_next_expected_seq)) {
-        const auto now = std::chrono::steady_clock::now();
         const uint16_t seq_gap = static_cast<uint16_t>(packet.sequence_number - m_next_expected_seq);
-        if (last_out_of_order_log_.time_since_epoch().count() == 0 ||
-            now - last_out_of_order_log_ >= std::chrono::milliseconds(200)) {
-            LOG_CPP_WARNING(("[RtpReorderingBuffer] Out-of-order packet arrived. Expected seq " +
-                             std::to_string(m_next_expected_seq) + " but received " +
-                             std::to_string(packet.sequence_number) + " (gap=" +
-                             std::to_string(seq_gap) + ", buffered=" +
-                             std::to_string(m_buffer.size()) + ").").c_str());
-            last_out_of_order_log_ = now;
+        const auto now = std::chrono::steady_clock::now();
+
+        if (seq_gap >= kLargeGapResetThreshold && m_buffer.empty()) {
+            if (last_large_gap_log_.time_since_epoch().count() == 0 ||
+                now - last_large_gap_log_ >= kLargeGapLogInterval) {
+                LOG_CPP_WARNING(("[RtpReorderingBuffer] Large forward jump (gap=" +
+                                 std::to_string(seq_gap) +
+                                 ") detected. Resetting expectation to seq " +
+                                 std::to_string(packet.sequence_number) + ".").c_str());
+                last_large_gap_log_ = now;
+            }
+            m_next_expected_seq = packet.sequence_number;
+        } else {
+            if (last_out_of_order_log_.time_since_epoch().count() == 0 ||
+                now - last_out_of_order_log_ >= std::chrono::milliseconds(200)) {
+                LOG_CPP_WARNING(("[RtpReorderingBuffer] Out-of-order packet arrived. Expected seq " +
+                                 std::to_string(m_next_expected_seq) + " but received " +
+                                 std::to_string(packet.sequence_number) + " (gap=" +
+                                 std::to_string(seq_gap) + ", buffered=" +
+                                 std::to_string(m_buffer.size()) + ").").c_str());
+                last_out_of_order_log_ = now;
+            }
         }
     }
 

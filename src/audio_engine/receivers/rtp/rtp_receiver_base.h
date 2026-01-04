@@ -29,10 +29,14 @@ constexpr std::size_t kRawReceiveBufferSize = 2048;
 constexpr uint8_t kRtpPayloadTypeL16Stereo = 127;
 constexpr uint8_t kRtpPayloadTypeOpus = 111;
 constexpr uint8_t kRtpPayloadTypePcmu = 0;
+constexpr uint8_t kRtpPayloadTypePcma = 8;
 constexpr int kDefaultOpusSampleRate = 48000;
 constexpr int kDefaultOpusChannels = 2;
 constexpr int kDefaultPcmuSampleRate = 8000;
 constexpr int kDefaultPcmuChannels = 1;
+constexpr int kDefaultPcmaSampleRate = 8000;
+constexpr int kDefaultPcmaChannels = 1;
+constexpr int kStaticL16SampleRate = 44100;
 
 class RtpPayloadReceiver {
 public:
@@ -123,6 +127,9 @@ protected:
 
     std::map<std::string, uint32_t> source_to_last_ssrc_;
     std::mutex source_ssrc_mutex_;
+
+    std::map<uint32_t, struct sockaddr_in> ssrc_last_addr_;
+    std::mutex ssrc_addr_mutex_;
 
     std::map<uint32_t, RtpReorderingBuffer> reordering_buffers_;
     std::mutex reordering_buffer_mutex_;

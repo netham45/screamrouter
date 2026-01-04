@@ -368,6 +368,7 @@ private:
     // Inbound decoupling to avoid blocking capture threads on the main data mutex.
     utils::ThreadSafeQueue<TaggedAudioPacket> inbound_queue_;
     static constexpr std::size_t kInboundQueueMaxSize = 1024;
+    std::chrono::steady_clock::time_point last_inbound_drop_log_{};
 
     // Per-processor dispatch/drop accounting
     std::mutex processor_stats_mutex_;
@@ -384,6 +385,7 @@ private:
 
     /** @brief Process one inbound packet while holding data_mutex_. */
     void process_incoming_packet_unlocked(TaggedAudioPacket&& packet);
+    void ingest_packet_locked(TaggedAudioPacket&& packet, std::unique_lock<std::mutex>& data_lock);
     /**
      * @brief Calculates the time point for the next event to occur.
      * @return The time point of the next scheduled event.

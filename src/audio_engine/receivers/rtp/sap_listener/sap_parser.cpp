@@ -365,7 +365,8 @@ bool select_payload(const SdpAudioDescription& audio, PayloadSelection& selectio
                 !try_select("l16", StreamCodec::PCM) &&
                 !try_select("s16le", StreamCodec::PCM) &&
                 !try_select("pcm", StreamCodec::PCM) &&
-                !try_select("pcmu", StreamCodec::PCM)) {
+                !try_select("pcmu", StreamCodec::PCMU) &&
+                !try_select("pcma", StreamCodec::PCMA)) {
                 for (int pt : audio.payload_types) {
                     auto it = audio.rtpmap_entries.find(pt);
                     if (it != audio.rtpmap_entries.end()) {
@@ -390,11 +391,14 @@ bool select_payload(const SdpAudioDescription& audio, PayloadSelection& selectio
     if (selection.codec == StreamCodec::UNKNOWN) {
         if (selection.entry->encoding.find("opus") != std::string::npos) {
             selection.codec = StreamCodec::OPUS;
+        } else if (selection.entry->encoding.find("pcmu") != std::string::npos) {
+            selection.codec = StreamCodec::PCMU;
+        } else if (selection.entry->encoding.find("pcma") != std::string::npos) {
+            selection.codec = StreamCodec::PCMA;
         } else if (selection.entry->encoding.find("l24") != std::string::npos ||
                    selection.entry->encoding.find("l16") != std::string::npos ||
                    selection.entry->encoding.find("s16le") != std::string::npos ||
-                   selection.entry->encoding.find("pcm") != std::string::npos ||
-                   selection.entry->encoding.find("pcmu") != std::string::npos) {
+                   selection.entry->encoding.find("pcm") != std::string::npos) {
             selection.codec = StreamCodec::PCM;
         }
     }
@@ -412,6 +416,9 @@ StreamProperties build_stream_properties(const SdpMetadata& metadata, const Payl
     props.sample_rate = selection.entry ? selection.entry->sample_rate : 0;
     if (props.sample_rate <= 0 && props.codec == StreamCodec::OPUS) {
         props.sample_rate = 48000;
+    } else if (props.sample_rate <= 0 &&
+               (props.codec == StreamCodec::PCMU || props.codec == StreamCodec::PCMA)) {
+        props.sample_rate = 8000;
     }
 
     int derived_channels = (selection.entry && selection.entry->has_explicit_channels)
@@ -509,6 +516,9 @@ StreamProperties build_stream_properties(const SdpMetadata& metadata, const Payl
     if (selection.codec == StreamCodec::OPUS) {
         props.bit_depth = 16;
         props.endianness = Endianness::LITTLE;
+    } else if (selection.codec == StreamCodec::PCMU || selection.codec == StreamCodec::PCMA) {
+        props.bit_depth = 8;
+        props.endianness = Endianness::BIG;
     } else if (selection.entry && (selection.entry->encoding.find("s32le") != std::string::npos ||
                                    selection.entry->encoding.find("l32le") != std::string::npos ||
                                    selection.entry->encoding.find("pcm32le") != std::string::npos)) {
@@ -544,7 +554,11 @@ StreamProperties build_stream_properties(const SdpMetadata& metadata, const Payl
     } else if (selection.entry && selection.entry->encoding.find("pcmu") != std::string::npos) {
         props.bit_depth = 8;
         props.endianness = Endianness::BIG;
-        props.codec = StreamCodec::PCM;
+        props.codec = StreamCodec::PCMU;
+    } else if (selection.entry && selection.entry->encoding.find("pcma") != std::string::npos) {
+        props.bit_depth = 8;
+        props.endianness = Endianness::BIG;
+        props.codec = StreamCodec::PCMA;
     } else {
         props.bit_depth = 16;
         props.endianness = Endianness::BIG;

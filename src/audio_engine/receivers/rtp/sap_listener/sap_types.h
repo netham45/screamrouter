@@ -16,6 +16,7 @@ enum class Endianness {
 enum class StreamCodec {
     PCM,
     PCMU,
+    PCMA,
     OPUS,
     UNKNOWN
 };

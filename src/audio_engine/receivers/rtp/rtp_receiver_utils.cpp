@@ -47,6 +47,28 @@ int16_t decode_mulaw_sample(uint8_t value) {
     return static_cast<int16_t>(sign ? -sample : sample);
 }
 
+int16_t decode_alaw_sample(uint8_t value) {
+    value ^= 0x55;
+
+    int16_t t = (value & 0x0F) << 4;
+    int16_t segment = (value & 0x70) >> 4;
+
+    switch (segment) {
+        case 0:
+            t += 8;
+            break;
+        case 1:
+            t += 0x108;
+            break;
+        default:
+            t += 0x108;
+            t <<= (segment - 1);
+            break;
+    }
+
+    return (value & 0x80) ? t : static_cast<int16_t>(-t);
+}
+
 std::string sanitize_tag(const std::string& input) {
     std::string out;
     out.reserve(input.size());

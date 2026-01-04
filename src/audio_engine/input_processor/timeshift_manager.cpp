@@ -211,6 +211,7 @@ void TimeshiftManager::stop() {
     }
     LOG_CPP_INFO("[TimeshiftManager] Stopping... buffer=%zu processors=%zu", buf_size, processor_count);
     stop_flag_ = true;
+    inbound_queue_.stop();
     m_state_version_++;
     run_loop_cv_.notify_all();
 
@@ -232,11 +233,53 @@ void TimeshiftManager::stop() {
  * @param packet The packet to add, moved into the buffer.
  */
 void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
-     if (stop_flag_ || !packet.rtp_timestamp.has_value() || packet.sample_rate <= 0) {
-         return;
-     }
+    if (stop_flag_ || !packet.rtp_timestamp.has_value() || packet.sample_rate <= 0) {
+        return;
+    }
+
     utils::log_sentinel("timeshift_ingress", packet);
 
+    if (!is_running()) {
+        std::unique_lock<std::mutex> data_lock(data_mutex_);
+        ingest_packet_locked(std::move(packet), data_lock);
+        m_inbound_received++;
+        return;
+    }
+
+    const std::string source_tag_copy = packet.source_tag;
+    using PushResult = utils::ThreadSafeQueue<TaggedAudioPacket>::PushResult;
+    const PushResult result =
+        inbound_queue_.push_bounded(std::move(packet), kInboundQueueMaxSize, false);
+
+    if (result == PushResult::QueueFull) {
+        m_inbound_dropped++;
+        const auto now = std::chrono::steady_clock::now();
+        if (last_inbound_drop_log_.time_since_epoch().count() == 0 ||
+            now - last_inbound_drop_log_ >= std::chrono::seconds(1)) {
+            LOG_CPP_WARNING("[TimeshiftManager] Inbound queue full (%zu). Dropping packet from '%s'.",
+                            kInboundQueueMaxSize,
+                            source_tag_copy.c_str());
+            last_inbound_drop_log_ = now;
+        }
+        return;
+    }
+    if (result == PushResult::QueueStopped) {
+        return;
+    }
+
+    m_inbound_received++;
+
+    const size_t depth = inbound_queue_.size();
+    size_t previous = m_inbound_high_water.load();
+    while (depth > previous && !m_inbound_high_water.compare_exchange_weak(previous, depth)) {
+        // CAS retry
+    }
+
+    m_state_version_++;
+    run_loop_cv_.notify_one();
+}
+
+void TimeshiftManager::ingest_packet_locked(TaggedAudioPacket&& packet, std::unique_lock<std::mutex>& data_lock) {
     const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
     const double configured_reset_threshold_sec =
         (m_settings) ? m_settings->timeshift_tuning.rtp_session_reset_threshold_seconds : 0.2;
@@ -244,7 +287,6 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
     const uint32_t reset_threshold_frames = static_cast<uint32_t>(
         static_cast<double>(frames_per_second) * bounded_reset_threshold_sec);
 
-    std::unique_lock<std::mutex> data_lock(data_mutex_);
     auto timing_access = get_or_create_timing_state(packet.source_tag);
     StreamTimingState* state_ptr = timing_access.state;
     if (!state_ptr) {
@@ -522,6 +564,10 @@ std::optional<TimeshiftBufferExport> TimeshiftManager::export_recent_buffer(
 TimeshiftManagerStats TimeshiftManager::get_stats() {
     TimeshiftManagerStats stats;
     stats.total_packets_added = m_total_packets_added.load();
+    stats.total_inbound_received = m_inbound_received.load();
+    stats.total_inbound_dropped = m_inbound_dropped.load();
+    stats.inbound_queue_size = inbound_queue_.size();
+    stats.inbound_queue_high_water = m_inbound_high_water.load();
 
     struct ProcessorSnapshot {
         std::string instance_id;
@@ -888,8 +934,20 @@ void TimeshiftManager::run() {
     LOG_CPP_INFO("[TimeshiftManager] Run loop started.");
     uint64_t last_processed_version = m_state_version_.load();
     std::vector<WildcardMatchEvent> wildcard_matches;
+    std::vector<TaggedAudioPacket> inbound_batch;
+    inbound_batch.reserve(kInboundQueueMaxSize);
 
-    while (!stop_flag_) {
+    while (!stop_flag_ || !inbound_queue_.empty()) {
+        inbound_batch.clear();
+        TaggedAudioPacket pending_packet;
+        while (inbound_queue_.try_pop(pending_packet)) {
+            inbound_batch.push_back(std::move(pending_packet));
+        }
+        for (auto& packet : inbound_batch) {
+            std::unique_lock<std::mutex> ingest_lock(data_mutex_);
+            ingest_packet_locked(std::move(packet), ingest_lock);
+        }
+
         wildcard_matches.clear();
         std::unique_lock<std::mutex> lock(data_mutex_);
 

@@ -12,6 +12,7 @@ RtpReceiver::RtpReceiver(
     : RtpReceiverBase(std::move(config), std::move(notification_queue), timeshift_manager) {
     register_payload_receiver(std::make_unique<RtpPcmReceiver>());
     register_payload_receiver(std::make_unique<RtpPcmuReceiver>());
+    register_payload_receiver(std::make_unique<RtpPcmaReceiver>());
     register_payload_receiver(std::make_unique<RtpOpusReceiver>());
 }
 

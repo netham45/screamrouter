@@ -14,6 +14,7 @@ namespace audio {
 bool is_system_little_endian();
 void swap_endianness(uint8_t* data, size_t size, int bit_depth);
 int16_t decode_mulaw_sample(uint8_t value);
+int16_t decode_alaw_sample(uint8_t value);
 std::string sanitize_tag(const std::string& input);
 bool resolve_opus_multistream_layout(
     int channels,

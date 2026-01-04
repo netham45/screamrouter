@@ -89,8 +89,12 @@ struct TaggedAudioPacket {
     std::chrono::steady_clock::time_point received_time;
     /** @brief Optional RTP timestamp for dejittering. */
     std::optional<uint32_t> rtp_timestamp;
+    /** @brief Optional RTP sequence number propagated from network ingress. */
+    std::optional<uint16_t> rtp_sequence_number;
     /** @brief List of SSRC and CSRCs from the RTP header. */
     std::vector<uint32_t> ssrcs;
+    /** @brief True if the packet arrived from a loopback (127.0.0.1) address. */
+    bool ingress_from_loopback = false;
     // --- Audio Format Info ---
     /** @brief Number of audio channels in the payload. */
     int channels = 0;
