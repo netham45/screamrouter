@@ -25,9 +25,6 @@ namespace {
 constexpr double kProcessingBudgetAlpha = 0.2;
 constexpr double kPlaybackDriftGain = 1.0 / 1'000'000.0; // Convert ppm to ratio
 constexpr double kRatioToPpm = 1'000'000.0;
-constexpr double kFallbackSmoothing = 0.1;
-constexpr double kDefaultInboundRateSmoothing = 0.1;
-
 bool has_prefix(const std::string& value, const std::string& prefix) {
     if (prefix.empty()) {
         return true;
@@ -92,19 +89,6 @@ uint32_t rtp_timestamp_diff(uint32_t current, uint32_t previous) {
     return current - previous;
 }
 
-double smooth_playback_rate(double previous_rate,
-                            double target_rate,
-                            double smoothing_factor,
-                            double max_deviation_ppm) {
-    const double max_deviation_ratio =
-        std::max(max_deviation_ppm, 0.0) * kPlaybackDriftGain;
-    const double clamped_target =
-        std::clamp(target_rate, 1.0 - max_deviation_ratio, 1.0 + max_deviation_ratio);
-    const double clamped_smoothing = std::clamp(smoothing_factor, 0.0, 1.0);
-    const double blended =
-        previous_rate * (1.0 - clamped_smoothing) + clamped_target * clamped_smoothing;
-    return std::clamp(blended, 1.0 - max_deviation_ratio, 1.0 + max_deviation_ratio);
-}
 } // namespace
 
 /**
@@ -403,24 +387,6 @@ void TimeshiftManager::ingest_packet_locked(TaggedAudioPacket&& packet, std::uni
             std::chrono::duration<double>(packet.received_time - state.last_wallclock).count();
         const uint32_t timestamp_diff =
             rtp_timestamp_diff(packet.rtp_timestamp.value(), state.last_rtp_timestamp);
-        const double inbound_rate_alpha =
-            std::clamp(m_settings ? m_settings->timeshift_tuning.playback_ratio_inbound_rate_smoothing
-                                  : kDefaultInboundRateSmoothing,
-                       0.0,
-                       1.0);
-        if (arrival_delta_sec > 1e-6 && timestamp_diff > 0) {
-            const double measured_rate_sps =
-                static_cast<double>(timestamp_diff) / arrival_delta_sec;
-            state.last_inbound_rate_sps = measured_rate_sps;
-            if (state.inbound_rate_initialized) {
-                state.smoothed_inbound_rate_sps =
-                    state.smoothed_inbound_rate_sps * (1.0 - inbound_rate_alpha) +
-                    measured_rate_sps * inbound_rate_alpha;
-            } else {
-                state.smoothed_inbound_rate_sps = measured_rate_sps;
-                state.inbound_rate_initialized = true;
-            }
-        }
         const double rtp_delta_sec =
             static_cast<double>(timestamp_diff) / static_cast<double>(packet.sample_rate);
         const double transit_delta_sec = arrival_delta_sec - rtp_delta_sec;
@@ -1109,6 +1075,45 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                 ts.head_playout_lag_ms_max = std::max(ts.head_playout_lag_ms_max, head_lag_ms);
                 ts.head_playout_lag_samples++;
 
+                // Update playback rate purely from buffer fill regardless of readiness
+                const auto& tuning = m_settings->timeshift_tuning;
+                double rate_error_ratio = 0.0;
+                if (desired_latency_ms > 1e-3) {
+                    if (buffer_level_ms + 1e-6 < desired_latency_ms) {
+                        const double deficit_ms = desired_latency_ms - buffer_level_ms;
+                        rate_error_ratio = -std::clamp(deficit_ms / desired_latency_ms, 0.0, 1.0);
+                    } else if (buffer_level_ms > desired_latency_ms + 1e-6) {
+                        const double surplus_ms = buffer_level_ms - desired_latency_ms;
+                        rate_error_ratio = std::clamp(surplus_ms / desired_latency_ms, 0.0, 1.0);
+                    }
+                }
+                ts.buffer_fill_error_ratio = rate_error_ratio;
+
+                double rate_error_ppm = 0.0;
+                double new_rate = 1.0;
+                if (rate_error_ratio > 0.0) {
+                    rate_error_ppm = rate_error_ratio * kRatioToPpm;
+                    const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
+                    const double proportional_ppm = tuning.playback_ratio_kp * rate_error_ppm;
+                    const double clamped_ppm = std::clamp(proportional_ppm, -max_deviation_ppm, max_deviation_ppm);
+                    const double denom = 1.0 + clamped_ppm * kPlaybackDriftGain;
+                    new_rate = (denom > 1e-9) ? (1.0 / denom) : 1.0;
+                    if (!std::isfinite(new_rate)) {
+                        new_rate = 1.0;
+                    }
+                }
+                if (std::abs(new_rate - ts.current_playback_rate) > 5e-4) {
+                    LOG_CPP_DEBUG(
+                        "[TimeshiftManager] Adjusted playback rate for '%s': buffer_level=%.3fms target=%.3fms fill_err_ratio=%.6f rate_err_ppm=%.3f playback_rate=%.6f",
+                        candidate_packet.source_tag.c_str(),
+                        buffer_level_ms,
+                        desired_latency_ms,
+                        rate_error_ratio,
+                        rate_error_ppm,
+                        new_rate);
+                }
+                ts.current_playback_rate = new_rate;
+
                 // Check if the packet is ready to be played
                 if (ideal_playout_time <= now) {
                     const double lateness_ms = -time_until_playout_ms;
@@ -1119,7 +1124,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                         profiling_total_lateness_ms_ += lateness_ms;
                         profiling_packets_late_count_++;
                     }
-
                     ts.playout_deviation_ms_sum += lateness_ms;
                     ts.playout_deviation_ms_abs_sum += std::abs(lateness_ms);
                     ts.playout_deviation_ms_max = std::max(ts.playout_deviation_ms_max, lateness_ms);
@@ -1135,102 +1139,17 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                             log_tag.c_str(),
                             lateness_ms,
                             max_catchup_lag_ms);
-
                         target_info.next_packet_read_index++;
                         continue;
                     }
 
                     TaggedAudioPacket packet_to_send = candidate_packet;
                     utils::log_sentinel("timeshift_ready", packet_to_send);
-                    const auto& tuning = m_settings->timeshift_tuning;
-                    double controller_dt_sec = 0.0;
-                    if (ts.last_controller_update_time.time_since_epoch().count() != 0) {
-                        controller_dt_sec =
-                            std::chrono::duration<double>(now - ts.last_controller_update_time).count();
-                    }
-                    if (controller_dt_sec <= 0.0) {
-                        controller_dt_sec =
-                            std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
-                    }
-
-                // Rate above target -> positive error -> speed playback up to catch the skew.
-                const double target_rate_sps = static_cast<double>(candidate_packet.sample_rate);
-                double measured_rate_sps = target_rate_sps;
-                if (ts.inbound_rate_initialized && ts.smoothed_inbound_rate_sps > 0.0) {
-                    measured_rate_sps = ts.smoothed_inbound_rate_sps;
-                }
-                ts.last_controller_update_time = now;
-
-                double rate_error_sps = 0.0;
-                double rate_error_ratio = 0.0;
-                if (target_rate_sps > 0.0 && measured_rate_sps > 0.0) {
-                    rate_error_sps = measured_rate_sps - target_rate_sps;
-                    rate_error_ratio = rate_error_sps / target_rate_sps;
-                }
-                ts.last_inbound_rate_error_sps = rate_error_sps;
-                ts.last_inbound_rate_error_ratio = rate_error_ratio;
-
-                    const double rate_error_ppm = rate_error_ratio * kRatioToPpm;
-                    const double proportional_ppm = tuning.playback_ratio_kp * rate_error_ppm;
-                    ts.playback_ratio_integral_ppm +=
-                        tuning.playback_ratio_ki * rate_error_ppm * controller_dt_sec;
-                    const double integral_cap_ppm =
-                        std::max(tuning.playback_ratio_integral_limit_ppm,
-                                 tuning.playback_ratio_max_deviation_ppm);
-                    ts.playback_ratio_integral_ppm =
-                        std::clamp(ts.playback_ratio_integral_ppm,
-                                   -integral_cap_ppm,
-                                   integral_cap_ppm);
-
-                    double controller_ppm = proportional_ppm + ts.playback_ratio_integral_ppm;
-                    const double max_slew_ppm =
-                        std::max(tuning.playback_ratio_slew_ppm_per_sec, 0.0) * controller_dt_sec;
-                    if (max_slew_ppm > 0.0) {
-                        controller_ppm = std::clamp(controller_ppm,
-                                                    ts.playback_ratio_controller_ppm - max_slew_ppm,
-                                                    ts.playback_ratio_controller_ppm + max_slew_ppm);
-                    }
-
-                    const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
-                    controller_ppm = std::clamp(controller_ppm, -max_deviation_ppm, max_deviation_ppm);
-                    ts.playback_ratio_controller_ppm = controller_ppm;
-
-                    double combined_ppm = ts.last_clock_drift_ppm + controller_ppm;
-                    combined_ppm = std::clamp(combined_ppm, -max_deviation_ppm, max_deviation_ppm);
-
-                    // playback_rate < 1.0 means "play faster" because the resampler expands when rate > 1.
-                    const double denom = 1.0 + combined_ppm * kPlaybackDriftGain;
-                    double target_rate = (denom > 1e-9) ? (1.0 / denom) : 1.0;
-                    if (!std::isfinite(target_rate)) {
-                        target_rate = 1.0;
-                    }
-
-                    const double smoothing_factor =
-                        m_settings ? tuning.playback_ratio_smoothing : kFallbackSmoothing;
-                    const double smoothed_rate =
-                        smooth_playback_rate(ts.current_playback_rate,
-                                             target_rate,
-                                             smoothing_factor,
-                                             max_deviation_ppm);
-
-                    if (std::abs(smoothed_rate - ts.current_playback_rate) > 5e-4) {
-                        LOG_CPP_DEBUG(
-                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f rate_err_sps=%.3f rate_err_ratio=%.6f rate_err_ppm=%.3f controller_ppm=%.3f combined_ppm=%.3f target=%.6f smoothed=%.6f",
-                            candidate_packet.source_tag.c_str(),
-                            ts.last_clock_drift_ppm,
-                            rate_error_sps,
-                            rate_error_ratio,
-                            rate_error_ppm,
-                            controller_ppm,
-                            combined_ppm,
-                            target_rate,
-                            smoothed_rate);
-                    }
-
-                    ts.current_playback_rate = smoothed_rate;
                     ts.last_system_delay_ms = lateness_ms;
+                    packet_to_send.playback_rate = ts.current_playback_rate;
 
-                    packet_to_send.playback_rate = smoothed_rate;
+                    ts.last_system_delay_ms = lateness_ms;
+                    packet_to_send.playback_rate = ts.current_playback_rate;
 
                     size_t sinks_dispatched = 0;
                     for (auto it = target_info.sink_rings.begin(); it != target_info.sink_rings.end();) {
@@ -1280,7 +1199,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                     // If we consumed the available slack, let the outer loop reschedule.
                     break;
                 } else {
-                    // The loop is breaking because the next packet's playout time is in the future.
                     break;
                 }
             }
@@ -1308,6 +1226,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
         maybe_log_profiler_unlocked(iteration_end);
     }
 }
+
 
 void TimeshiftManager::reset_profiler_counters_unlocked(std::chrono::steady_clock::time_point now) {
     profiling_last_log_time_ = now;

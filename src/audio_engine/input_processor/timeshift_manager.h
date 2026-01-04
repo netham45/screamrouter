@@ -108,18 +108,12 @@ struct StreamTimingState {
     double buffer_target_fill_percentage = 0.0;
     uint32_t last_played_rtp_timestamp = 0;
     std::chrono::steady_clock::time_point last_controller_update_time{};
-    double playback_ratio_integral_ppm = 0.0;
-    double playback_ratio_controller_ppm = 0.0;
     double last_arrival_time_error_ms = 0.0; // For stats
     int sample_rate = 0;
     int channels = 0;
     int bit_depth = 0;
     uint32_t samples_per_chunk = 0;
-    double last_inbound_rate_sps = 0.0;
-    double smoothed_inbound_rate_sps = 0.0;
-    bool inbound_rate_initialized = false;
-    double last_inbound_rate_error_sps = 0.0;
-    double last_inbound_rate_error_ratio = 0.0;
+    double buffer_fill_error_ratio = 0.0;
 
     // Stats
     std::atomic<uint64_t> total_packets{0};

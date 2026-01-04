@@ -35,11 +35,11 @@ struct TimeshiftTuning {
     double rtp_continuity_slack_seconds = 0.25;
     double rtp_session_reset_threshold_seconds = 0.2;
     double playback_ratio_max_deviation_ppm = 2000.0;
-    double playback_ratio_slew_ppm_per_sec = 1000.0;
-    double playback_ratio_kp = 0.75;     // Gain operates on ppm error derived from rate_error_ratio
-    double playback_ratio_ki = 0.1;      // Integral gain also operates on ppm error
-    double playback_ratio_integral_limit_ppm = 2000.0;
-    double playback_ratio_smoothing = 0.2;
+    double playback_ratio_slew_ppm_per_sec = 0.0;
+    double playback_ratio_kp = 0.75;     // Gain operates on ppm error derived from buffer fill error
+    double playback_ratio_ki = 0.0;
+    double playback_ratio_integral_limit_ppm = 0.0;
+    double playback_ratio_smoothing = 0.0;
     double playback_ratio_inbound_rate_smoothing = 0.1; // Exponential smoothing factor [0,1] for measured inbound rate
     double playback_catchup_ppm_per_ms = 1000.0;   // Extra speedup per ms of lateness (bounded)
     double playback_catchup_max_ppm = 200000.0;   // Allow up to ~20% speedup when very late
@@ -82,7 +82,7 @@ struct MixerTuning {
     double max_ready_queue_duration_ms = 0.0;
 
     // Buffer drain control
-    bool enable_adaptive_buffer_drain = true;      // Enable buffer draining feature
+    bool enable_adaptive_buffer_drain = false;      // Disable buffer draining by default; timeshift manager drives rate
     double target_buffer_level_ms = ((kDefaultBaseFramesPerChunkMono16/2.0) / 48000.0 * 1000.0);          // Target buffer level in milliseconds
     double buffer_tolerance_ms = target_buffer_level_ms * 1.5;             // Don't adjust if within ±tolerance of target
     double max_speedup_factor = 1.02;             // Maximum playback speedup (1.02 = 2% faster)

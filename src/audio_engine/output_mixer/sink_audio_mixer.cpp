@@ -2301,6 +2301,9 @@ void SinkAudioMixer::dispatch_drain_adjustments(const InputBufferMetrics& metric
     }
 
     const auto& tuning = m_settings->mixer_tuning;
+    if (!tuning.enable_adaptive_buffer_drain) {
+        return;
+    }
 
     struct PendingDrainCommand {
         std::string instance_id;
