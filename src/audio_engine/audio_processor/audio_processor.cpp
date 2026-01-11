@@ -505,8 +505,9 @@ void AudioProcessor::resample() {
 
     // Unity bypass optimization: If ratio is 1.0 and no processing required, skip work
     const double current_playback_rate = std::max(1e-6, playback_rate_.load());
+    const double local_setRatio = 1.0 / current_playback_rate;  // Compute from atomic to avoid race
     const int oversample_factor = std::max(1, m_settings ? m_settings->processor_tuning.oversampling_factor : 1);
-    const double effective_output_rate = static_cast<double>(outputSampleRate) / (setRatio) * static_cast<double>(oversample_factor);
+    const double effective_output_rate = static_cast<double>(outputSampleRate) / local_setRatio * static_cast<double>(oversample_factor);
     const double ratio = ((effective_output_rate) / static_cast<double>(inputSampleRate));
 
     const double epsilon = 1e-6;

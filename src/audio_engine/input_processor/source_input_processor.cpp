@@ -23,7 +23,7 @@ using namespace screamrouter::audio::utils;
 namespace {
 constexpr double kMinPlaybackRate = 0.5;
 constexpr double kMaxPlaybackRate = 2.0;
-constexpr double kPlaybackRateEpsilon = 1e-4;
+constexpr double kPlaybackRateEpsilon = 1e-6;  // Allow rate changes as small as 1 ppm
 }
 
 const std::chrono::milliseconds TIMESIFT_CLEANUP_INTERVAL(1000);
