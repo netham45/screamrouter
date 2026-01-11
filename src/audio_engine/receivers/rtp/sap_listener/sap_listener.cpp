@@ -127,7 +127,7 @@ void SapListener::run() {
         tv.tv_sec = 1;
         tv.tv_usec = 0;
 
-        int n_events = select(max_fd_ + 1, &read_fds, nullptr, nullptr, &tv);
+        int n_events = select(static_cast<int>(max_fd_ + 1), &read_fds, nullptr, nullptr, &tv);
 #else
         int n_events = epoll_wait(epoll_fd_, events, kMaxEvents, 1000);
 #endif
@@ -158,7 +158,7 @@ void SapListener::run() {
             }
             struct sockaddr_in cliaddr;
             socklen_t len = sizeof(cliaddr);
-            ssize_t n_received = recvfrom(fd, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&cliaddr, &len);
+            int n_received = recvfrom(fd, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&cliaddr, &len);
             if (n_received > 0) {
                 buffer[n_received] = '\0';
                 char client_ip_str[INET_ADDRSTRLEN];
