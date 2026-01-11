@@ -730,9 +730,11 @@ void RtpSender::sap_announcement_loop() {
                 memcpy(&sap_packet[offset], sdp_str.c_str(), sdp_str.length() + 1); // Include null terminator
 
 #ifdef _WIN32
+                // Windows requires interface index in network byte order for IP_MULTICAST_IF and IP_UNICAST_IF
                 DWORD iface_index = source_iface.if_index;
+                DWORD iface_index_net = htonl(iface_index);  // Convert to network byte order
                 if (iface_index != 0) {
-                    if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&iface_index), sizeof(iface_index)) < 0) {
+                    if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_MULTICAST_IF, reinterpret_cast<const char*>(&iface_index_net), sizeof(iface_index_net)) < 0) {
                         int last_error = WSAGetLastError();
                         LOG_CPP_WARNING("[RtpSender:%s] Failed to set multicast IF index %lu for SAP source IP %s (WSA error=%d)",
                                         config_.sink_id.c_str(), static_cast<unsigned long>(iface_index), source_ip.c_str(), last_error);
@@ -744,7 +746,7 @@ void RtpSender::sap_announcement_loop() {
                 }
 
                 if (iface_index != 0) {
-                    if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<const char*>(&iface_index), sizeof(iface_index)) < 0) {
+                    if (setsockopt(sap_socket_fd_, IPPROTO_IP, IP_UNICAST_IF, reinterpret_cast<const char*>(&iface_index_net), sizeof(iface_index_net)) < 0) {
                         int last_error = WSAGetLastError();
                         LOG_CPP_WARNING("[RtpSender:%s] Failed to set IP_UNICAST_IF for SAP source IP %s (WSA error=%d)",
                                         config_.sink_id.c_str(), source_ip.c_str(), last_error);

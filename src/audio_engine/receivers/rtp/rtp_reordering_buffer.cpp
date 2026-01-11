@@ -2,7 +2,6 @@
 #include "../../utils/cpp_logger.h" // For logging
 #include <limits>
 #include <utility>
-#include <iostream>
 
 namespace {
 constexpr uint16_t kLargeGapResetThreshold = 192;
@@ -166,20 +165,13 @@ std::vector<RtpPacketData> RtpReorderingBuffer::get_ready_packets() {
         if (wait_time >= m_max_delay) {
             const uint16_t skipped = best_distance;
             if (skipped > 0) {
-                std::cout << "DEBUG: Skipped > 0. has_last=" << m_last_released_packet.has_value() << std::endl;
-                if (m_last_released_packet.has_value()) {
-                     std::cout << "DEBUG: Calling can_interpolate. Packet size: " << m_last_released_packet->payload.size() << std::endl;
-                }
                 if (m_last_released_packet.has_value() && can_interpolate(*m_last_released_packet, candidate_it->second)) {
-                    std::cout << "DEBUG: Interpolating..." << std::endl;
                     LOG_CPP_WARNING(("[RtpReorderingBuffer] Timed out. Interpolating " +
                                          std::to_string(skipped) + " packet(s) from seq " +
                                          std::to_string(m_next_expected_seq) + " using Crossfade.").c_str());
 
                     uint32_t start_ts = m_last_released_packet->rtp_timestamp;
                     uint32_t end_ts = candidate_it->second.rtp_timestamp;
-                    
-                    // std::cout << "DEBUG: TS " << start_ts << " -> " << end_ts << std::endl;
                     
                     int64_t ts_diff = static_cast<int64_t>(end_ts) - static_cast<int64_t>(start_ts);
                     if (end_ts < start_ts) {
