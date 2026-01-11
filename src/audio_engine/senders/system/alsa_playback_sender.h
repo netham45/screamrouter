@@ -30,6 +30,15 @@ public:
     void close() override;
     void send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) override;
     void set_playback_rate_callback(std::function<void(double)> cb);
+    
+    /**
+     * @brief Callback to report hardware buffer state upstream for unified rate control.
+     * @param hw_fill_ms Current hardware buffer fill level in milliseconds.
+     * @param hw_target_ms Target hardware buffer level in milliseconds.
+     */
+    using BufferStateCallback = std::function<void(double hw_fill_ms, double hw_target_ms)>;
+    void set_buffer_state_callback(BufferStateCallback cb);
+    
     void update_pipeline_backlog(double upstream_frames, double upstream_target_frames);
 
 #if defined(__linux__)
@@ -75,6 +84,7 @@ private:
     size_t bytes_per_frame_ = 0;
     bool is_raspberry_pi_ = false;
     std::function<void(double)> playback_rate_callback_;
+    BufferStateCallback buffer_state_callback_;
     double playback_rate_integral_ = 0.0;
     double target_delay_frames_ = 0.0;
     double upstream_buffer_frames_ = 0.0;

@@ -141,6 +141,11 @@ void AlsaPlaybackSender::set_playback_rate_callback(std::function<void(double)> 
     playback_rate_callback_ = std::move(cb);
 }
 
+void AlsaPlaybackSender::set_buffer_state_callback(BufferStateCallback cb) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    buffer_state_callback_ = std::move(cb);
+}
+
 void AlsaPlaybackSender::update_pipeline_backlog(double upstream_frames, double upstream_target_frames) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     upstream_buffer_frames_ = std::max(0.0, upstream_frames);
@@ -446,6 +451,14 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
             auto cb = playback_rate_callback_;
             cb(desired_rate);
         }
+    }
+
+    // Report hardware buffer state upstream for unified rate control
+    if (buffer_state_callback_ && sample_rate_ > 0) {
+        double hw_fill_ms = 1000.0 * filtered_delay_frames_ / static_cast<double>(sample_rate_);
+        double hw_target_ms = 1000.0 * target_delay_frames_ / static_cast<double>(sample_rate_);
+        auto cb = buffer_state_callback_;
+        cb(hw_fill_ms, hw_target_ms);
     }
 
     maybe_adjust_dynamic_latency_locked(filtered_delay_frames_,

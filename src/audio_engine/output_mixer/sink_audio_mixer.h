@@ -68,6 +68,17 @@ struct SinkAudioMixerStats {
     std::vector<SinkInputLaneStats> input_lanes;
 };
 
+/**
+ * @struct PipelineState
+ * @brief Aggregated buffer state from all stages for unified rate control.
+ */
+struct PipelineState {
+    double hw_fill_ms = 0.0;      ///< Hardware buffer fill level (ALSA/WASAPI)
+    double hw_target_ms = 0.0;    ///< Hardware buffer target level
+    double mixer_queue_ms = 0.0;  ///< Mixer input queue backlog
+    double mixer_target_ms = 0.0; ///< Mixer target queue level
+};
+
 using Mp3OutputQueue = utils::ThreadSafeQueue<EncodedMP3Data>;
 using ReadyPacketRing = utils::PacketRing<TaggedAudioPacket>;
 
@@ -165,6 +176,12 @@ public:
      * @param coord Pointer to the coordinator (not owned by mixer, must outlive mixer).
      */
     void set_coordinator(SinkSynchronizationCoordinator* coord);
+
+    /**
+     * @brief Gets the current aggregated pipeline buffer state for upstream rate control.
+     * @return PipelineState containing hardware and mixer queue levels.
+     */
+    PipelineState get_pipeline_state() const;
  
  protected:
      /** @brief The main processing loop for the mixer thread. */
@@ -211,6 +228,11 @@ private:
     std::vector<int32_t> output_post_buffer_;
     std::mutex output_processor_mutex_;
     std::atomic<double> output_playback_rate_{1.0};
+    
+    // Hardware buffer state from ALSA/WASAPI for unified rate control
+    std::atomic<double> hw_fill_ms_{0.0};
+    std::atomic<double> hw_target_ms_{0.0};
+    
     uint64_t output_post_log_counter_{0};
     std::vector<int32_t> stereo_buffer_;
     std::vector<uint8_t> payload_buffer_;

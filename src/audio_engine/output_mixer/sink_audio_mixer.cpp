@@ -177,10 +177,16 @@ SinkAudioMixer::SinkAudioMixer(
 #if defined(__linux__)
         if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
             alsa_sender->set_playback_rate_callback([this](double rate) { set_output_playback_rate(rate); });
+            // Register buffer state callback for unified rate control
+            alsa_sender->set_buffer_state_callback([this](double hw_fill_ms, double hw_target_ms) {
+                hw_fill_ms_.store(hw_fill_ms, std::memory_order_relaxed);
+                hw_target_ms_.store(hw_target_ms, std::memory_order_relaxed);
+            });
         }
 #elif defined(_WIN32)
         if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
             wasapi_sender->set_playback_rate_callback([this](double rate) { set_output_playback_rate(rate); });
+            // TODO: Add buffer state callback to WASAPI sender when implemented
         }
 #endif
     }
@@ -509,6 +515,45 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
 
 const SinkMixerConfig& SinkAudioMixer::get_config() const {
     return config_;
+}
+
+PipelineState SinkAudioMixer::get_pipeline_state() const {
+    PipelineState state;
+    
+    // Hardware buffer state (from ALSA/WASAPI callback)
+    state.hw_fill_ms = hw_fill_ms_.load(std::memory_order_relaxed);
+    state.hw_target_ms = hw_target_ms_.load(std::memory_order_relaxed);
+    
+    // Calculate mixer queue level from pending chunks
+    // Each chunk represents frames_per_chunk_ frames at playback_sample_rate_
+    double chunk_duration_ms = 0.0;
+    if (playback_sample_rate_ > 0) {
+        chunk_duration_ms = (static_cast<double>(frames_per_chunk_) * 1000.0) / 
+                            static_cast<double>(playback_sample_rate_);
+    }
+    
+    // Count total pending chunks across all sources
+    std::size_t total_pending_chunks = 0;
+    {
+        // processed_ready_ access requires lock, but we'll approximate with payload buffer
+        // to avoid blocking the hot path. This is acceptable since it's for feedback control.
+    }
+    
+    // Use payload buffer fill level as a proxy for mixer queue state
+    double payload_fill_ms = 0.0;
+    if (playback_sample_rate_ > 0 && playback_channels_ > 0 && playback_bit_depth_ > 0) {
+        size_t bytes_per_frame = static_cast<size_t>(playback_channels_ * playback_bit_depth_ / 8);
+        if (bytes_per_frame > 0) {
+            size_t frames_in_buffer = payload_buffer_fill_bytes_ / bytes_per_frame;
+            payload_fill_ms = (static_cast<double>(frames_in_buffer) * 1000.0) / 
+                              static_cast<double>(playback_sample_rate_);
+        }
+    }
+    
+    state.mixer_queue_ms = payload_fill_ms;
+    state.mixer_target_ms = chunk_duration_ms;  // Target is one chunk ready
+    
+    return state;
 }
 
 /**
