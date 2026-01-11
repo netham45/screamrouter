@@ -14,9 +14,12 @@
 #include <deque>
 #include <mutex>
 #include <atomic>
+
+#ifndef SCREAMROUTER_TESTING
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
+#endif // SCREAMROUTER_TESTING
 
 namespace screamrouter {
 namespace audio {
@@ -99,6 +102,7 @@ const char* get_base_filename(const char* path);
  * @brief Binds the C++ logging components to a Python module.
  * @param m The pybind11 module to which the components will be bound.
  */
+#ifndef SCREAMROUTER_TESTING
 inline void bind_logger(pybind11::module_ &m) {
     namespace py = pybind11;
     py::enum_<LogLevel>(m, "LogLevel_CPP")
@@ -132,6 +136,7 @@ inline void bind_logger(pybind11::module_ &m) {
           "Sets the C++ global log level.");
  
 }
+#endif // SCREAMROUTER_TESTING
 
 } // namespace logging
 } // namespace audio
