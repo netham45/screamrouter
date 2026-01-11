@@ -399,6 +399,8 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("playback_ratio_kp", &TimeshiftTuning::playback_ratio_kp)
         .def_readwrite("playback_ratio_ki", &TimeshiftTuning::playback_ratio_ki)
         .def_readwrite("playback_ratio_integral_limit_ppm", &TimeshiftTuning::playback_ratio_integral_limit_ppm)
+        .def_readwrite("playback_ratio_dead_zone_ratio", &TimeshiftTuning::playback_ratio_dead_zone_ratio)
+        .def_readwrite("playback_ratio_integral_decay", &TimeshiftTuning::playback_ratio_integral_decay)
         .def_readwrite("playback_ratio_smoothing", &TimeshiftTuning::playback_ratio_smoothing)
         .def_readwrite("playback_ratio_inbound_rate_smoothing", &TimeshiftTuning::playback_ratio_inbound_rate_smoothing)
         .def_readwrite("playback_catchup_ppm_per_ms", &TimeshiftTuning::playback_catchup_ppm_per_ms)

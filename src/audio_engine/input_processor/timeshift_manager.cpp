@@ -1105,8 +1105,16 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                                    max_deviation_ppm);
 
                     const double integral_gain_ppm_per_sec = tuning.playback_ratio_ki * max_deviation_ppm;
+                    const double dead_zone_ratio = std::max(tuning.playback_ratio_dead_zone_ratio, 0.0);
+                    const double integral_decay = std::clamp(tuning.playback_ratio_integral_decay, 0.0, 1.0);
+                    
                     if (integral_gain_ppm_per_sec > 0.0) {
-                        integral_ppm += raw_ratio * integral_gain_ppm_per_sec * controller_dt_sec;
+                        // When error is within dead zone, decay the integral to prevent windup
+                        if (std::abs(raw_ratio) < dead_zone_ratio) {
+                            integral_ppm *= integral_decay;
+                        } else {
+                            integral_ppm += raw_ratio * integral_gain_ppm_per_sec * controller_dt_sec;
+                        }
                         const double integral_limit =
                             std::max(tuning.playback_ratio_integral_limit_ppm, max_deviation_ppm);
                         integral_ppm = std::clamp(integral_ppm, -integral_limit, integral_limit);
@@ -1121,9 +1129,9 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                     ts.playback_ratio_integral_ppm = 0.0;
                 }
 
-                // Positive error indicates we are below target fill and must speed up, so add the correction.
-                double new_rate = 1.0 + rate_error_ppm * kPlaybackDriftGain;
-                new_rate = 1.0; //TODO: remove to re-enable
+                // Positive error indicates buffer is below target (underfilled).
+                // To refill, we must SLOW DOWN playback (rate < 1.0), so SUBTRACT the correction.
+                double new_rate = 1.0 - rate_error_ppm * kPlaybackDriftGain;
                 if (!std::isfinite(new_rate)) {
                     new_rate = 1.0;
                 }
