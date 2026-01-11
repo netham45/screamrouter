@@ -408,8 +408,8 @@ void AlsaPlaybackSender::maybe_update_playback_rate_locked(snd_pcm_sframes_t del
         }
 
         // Downstream resampler speeds up when rate < 1.0, so apply the PI term with inverted polarity.
-        double adjust = -((kKp * error) + (kKi * playback_rate_integral_));
-        constexpr double kMaxPpm = 800.0; // ±800 ppm
+        double adjust = ((kKp * error) + (kKi * playback_rate_integral_));
+        constexpr double kMaxPpm = 5000.0; // ±5000 ppm (0.5%) to handle cheap crystals
         const double max_adjust = kMaxPpm * 1e-6;
         adjust = std::clamp(adjust, -max_adjust, max_adjust);
 
