@@ -1025,6 +1025,15 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                 constexpr double kMaxSchedSlipMs = 200.0; // .2s slip guard
                 time_until_playout_ms = std::clamp(time_until_playout_ms, -kMaxSchedSlipMs, kMaxSchedSlipMs);
 
+                // --- Dispatch Gate Logic ---
+                // We must not strictly enforce ideal_playout_time for dispatch, because if the PI controller
+                // demands a playback rate > 1.0, the downstream sink will consume data faster than real-time.
+                // If we hold the packet until ideal_playout_time, we starve the sink (underruns).
+                // Instead, we use a much looser "Safe Dispatch Threshold" that only ensures we have a minimal
+                // buffer for reordering/jitter, effectively allowing the PI controller to "pull" data early.
+                const double safe_dispatch_latency_ms = std::min(desired_latency_ms * 0.5, 5.0);
+                auto dispatch_threshold_time = expected_arrival_time + std::chrono::duration<double, std::milli>(safe_dispatch_latency_ms);
+
                 // Model buffer as: lead until head starts (negative when late) + duration of head chunk + queued chunks + downstream backlog.
                 double buffer_level_ms = time_until_playout_ms;
 
@@ -1149,8 +1158,8 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                 }
                 ts.current_playback_rate = new_rate;
 
-                // Check if the packet is ready to be played
-                if (ideal_playout_time <= now) {
+                // Check if the packet is ready to be dispatched (passed safety gate)
+                if (dispatch_threshold_time <= now) {
                     const double lateness_ms = -time_until_playout_ms;
                     if (lateness_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
                         ts.late_packets_count++;
@@ -1227,7 +1236,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                     target_info.next_packet_read_index++;
 
                     now = std::chrono::steady_clock::now();
-                    if (ideal_playout_time > now) {
+                    if (dispatch_threshold_time > now) {
                         continue;
                     }
 
