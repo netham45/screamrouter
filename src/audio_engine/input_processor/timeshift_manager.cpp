@@ -1141,6 +1141,9 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                 // Positive error indicates buffer is below target (underfilled).
                 // To refill, we must SPEED UP playback (rate > 1.0), so ADD the correction.
                 double new_rate = 1.0 + rate_error_ppm * kPlaybackDriftGain;
+                if (!m_settings->timeshift_tuning.playback_rate_adjustment_enabled) {
+                    new_rate = 1.0;
+                }
                 if (!std::isfinite(new_rate)) {
                     new_rate = 1.0;
                 }

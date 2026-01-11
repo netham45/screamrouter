@@ -43,6 +43,7 @@ struct TimeshiftTuning {
     double playback_ratio_integral_decay = 0.95;   // Decay factor applied to integral when in dead zone
     double playback_ratio_smoothing = 0.0;
     double playback_ratio_inbound_rate_smoothing = 0.1; // Exponential smoothing factor [0,1] for measured inbound rate
+    bool playback_rate_adjustment_enabled = false;         // Toggle for rate adjustment (when false, rate stays at 1.0)
     double playback_catchup_ppm_per_ms = 1000.0;   // Extra speedup per ms of lateness (bounded)
     double playback_catchup_max_ppm = 200000.0;   // Allow up to ~20% speedup when very late
     double max_playout_lead_ms = 2500000.0;           // Clamp how far into the future we schedule playout

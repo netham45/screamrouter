@@ -70,7 +70,7 @@ const StatsPage: React.FC = () => {
   useEffect(() => {
     fetchAllData();
     const interval = setInterval(() => {
-        ApiService.getStats().then(response => setStats(response.data)).catch(err => console.error("Failed to fetch stats", err));
+      ApiService.getStats().then(response => setStats(response.data)).catch(err => console.error("Failed to fetch stats", err));
     }, 2000); // Refresh stats every 2 seconds
 
     return () => clearInterval(interval);
@@ -80,11 +80,11 @@ const StatsPage: React.FC = () => {
     if (settings) {
       setSettings(prevSettings => {
         if (!prevSettings) return null;
-        
+
         const newSettings = { ...prevSettings };
         // @ts-expect-error it throws an error and i want it quiet
         newSettings[category][field] = value;
-        
+
         return newSettings;
       });
     }
@@ -147,27 +147,27 @@ const StatsPage: React.FC = () => {
     if (!settings) return null;
     const value = settings[category][field as keyof typeof settings[typeof category]];
     const numericValue = typeof value === 'number' && !Number.isNaN(value) ? value : 0;
-    
+
     return (
       <FormControl>
         <FormLabel>{label}</FormLabel>
         {isSwitch ? (
-             <Switch isChecked={Boolean(value)} onChange={(e) => handleSettingsChange(category, field, e.target.checked)} />
+          <Switch isChecked={Boolean(value)} onChange={(e) => handleSettingsChange(category, field, e.target.checked)} />
         ) : (
-            <NumberInput
+          <NumberInput
             value={numericValue}
             onChange={(valueString) => {
               const nextValue = valueString === '' ? 0 : parseFloat(valueString);
               handleSettingsChange(category, field, Number.isNaN(nextValue) ? numericValue : nextValue);
             }}
             step={step}
-            >
+          >
             <NumberInputField />
             <NumberInputStepper>
-                <NumberIncrementStepper />
-                <NumberDecrementStepper />
+              <NumberIncrementStepper />
+              <NumberDecrementStepper />
             </NumberInputStepper>
-            </NumberInput>
+          </NumberInput>
         )}
       </FormControl>
     );
@@ -323,40 +323,40 @@ const StatsPage: React.FC = () => {
               <Heading size="sm" mb={2}>{sink.sink_id}</Heading>
               <HStack spacing={10} mb={4}>
                 <VStack align="start">
-                    <Text fontWeight="bold">Active Streams:</Text>
-                    <Text>{sink.active_input_streams?.toLocaleString() ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">Active Streams:</Text>
+                  <Text>{sink.active_input_streams?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">Total Streams:</Text>
-                    <Text>{sink.total_input_streams?.toLocaleString() ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">Total Streams:</Text>
+                  <Text>{sink.total_input_streams?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">Mixed/sec:</Text>
-                    <Text>{sink.packets_mixed_per_second?.toFixed(2) ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">Mixed/sec:</Text>
+                  <Text>{sink.packets_mixed_per_second?.toFixed(2) ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">Buffer Underruns:</Text>
-                    <Text>{sink.sink_buffer_underruns?.toLocaleString() ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">Buffer Underruns:</Text>
+                  <Text>{sink.sink_buffer_underruns?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">Buffer Overflows:</Text>
-                    <Text>{sink.sink_buffer_overflows?.toLocaleString() ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">Buffer Overflows:</Text>
+                  <Text>{sink.sink_buffer_overflows?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">MP3 Overflows:</Text>
-                    <Text>{sink.mp3_buffer_overflows?.toLocaleString() ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">MP3 Overflows:</Text>
+                  <Text>{sink.mp3_buffer_overflows?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">Payload Buffer:</Text>
-                    <Text>{formatBuffer(sink.payload_buffer)}</Text>
+                  <Text fontWeight="bold">Payload Buffer:</Text>
+                  <Text>{formatBuffer(sink.payload_buffer)}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">MP3 Out Buffer:</Text>
-                    <Text>{formatBuffer(sink.mp3_output_buffer)}</Text>
+                  <Text fontWeight="bold">MP3 Out Buffer:</Text>
+                  <Text>{formatBuffer(sink.mp3_output_buffer)}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">MP3 PCM Buffer:</Text>
-                    <Text>{formatBuffer(sink.mp3_pcm_buffer)}</Text>
+                  <Text fontWeight="bold">MP3 PCM Buffer:</Text>
+                  <Text>{formatBuffer(sink.mp3_pcm_buffer)}</Text>
                 </VStack>
               </HStack>
               <HStack spacing={6} mb={4}>
@@ -451,6 +451,7 @@ const StatsPage: React.FC = () => {
                     {renderTuningControl('timeshift_tuning', 'max_clock_pending_packets', 'Max Clock Pending Packets')}
                     {renderTuningControl('timeshift_tuning', 'rtp_continuity_slack_seconds', 'RTP Continuity Slack (s)', 0.01)}
                     {renderTuningControl('timeshift_tuning', 'rtp_session_reset_threshold_seconds', 'RTP Session Reset Threshold (s)', 0.01)}
+                    {renderTuningControl('timeshift_tuning', 'playback_rate_adjustment_enabled', 'Playback Rate Adjustment', 1, true)}
                   </SimpleGrid>
                 </Box>
 

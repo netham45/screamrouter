@@ -315,6 +315,7 @@ export interface TimeshiftTuning {
   playback_ratio_integral_limit_ppm: number;
   playback_ratio_smoothing: number;
   playback_ratio_inbound_rate_smoothing: number;
+  playback_rate_adjustment_enabled: boolean;
 }
 
 export interface MixerTuning {
@@ -493,7 +494,7 @@ const createWebSocket = () => {
   // Get the current URL's host and protocol
   const host = window.location.host;
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  
+
   // Use the same host without hardcoded port
   const wsUrl = `${protocol}//${host}/ws/config`;
   console.log("Creating WebSocket connection to:", wsUrl);
@@ -519,7 +520,7 @@ const createWebSocket = () => {
       notifyWebSocketState('disconnected');
       const reconnectDelay = manualReconnectRequested ? 0 : 5000;
       manualReconnectRequested = false;
-      
+
       // Attempt to reconnect after 5 seconds
       scheduleWebSocketReconnect(reconnectDelay);
     };
@@ -653,15 +654,15 @@ const ApiService = {
 
   // PUT requests for updating existing items
   updateSource: (name: string, data: Partial<Source>) => withCacheInvalidation(
-    axios.put<Source>( `/sources/${name}`, data),
+    axios.put<Source>(`/sources/${name}`, data),
     ['/sources']
   ),
   updateSink: (name: string, data: Partial<Sink>) => withCacheInvalidation(
-    axios.put<Sink>( `/sinks/${name}`, data),
+    axios.put<Sink>(`/sinks/${name}`, data),
     ['/sinks']
   ),
   updateRoute: (name: string, data: Partial<Route>) => withCacheInvalidation(
-    axios.put<Route>( `/routes/${name}`, data),
+    axios.put<Route>(`/routes/${name}`, data),
     ['/routes']
   ),
 
@@ -760,7 +761,7 @@ const ApiService = {
     axios.post(`/routes/${name}/equalizer`, equalizer),
     ['/routes']
   ),
-  
+
 
   // Reorder requests
   reorderSource: (name: string, newIndex: number) => withCacheInvalidation(
@@ -788,14 +789,14 @@ const ApiService = {
   getVncUrl: (sourceName: string) => `/site/vnc/${sourceName}`,
 
   // Custom equalizer requests
-  saveEqualizer: (name: string, equalizer: Equalizer) => { 
-    const new_eq = {... equalizer};
+  saveEqualizer: (name: string, equalizer: Equalizer) => {
+    const new_eq = { ...equalizer };
     new_eq.name = name;
     return withCacheInvalidation(
       axios.post('/equalizers/', new_eq),
       ['/equalizers/']
     );
-  } ,
+  },
   listEqualizers: () => cachedGet<{ equalizers: Equalizer[] }>('/equalizers/'),
   deleteEqualizer: (name: string) => withCacheInvalidation(
     axios.delete(`/equalizers/${name}`),
@@ -838,24 +839,24 @@ const ApiService = {
 
   // --- Speaker Layout Update Methods ---
   updateSourceSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
-      return withCacheInvalidation(
-        axios.post(`/api/sources/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
-        ['/sources']
-      );
+    return withCacheInvalidation(
+      axios.post(`/api/sources/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
+      ['/sources']
+    );
   },
 
   updateSinkSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
-      return withCacheInvalidation(
-        axios.post(`/api/sinks/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
-        ['/sinks']
-      );
+    return withCacheInvalidation(
+      axios.post(`/api/sinks/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
+      ['/sinks']
+    );
   },
 
   updateRouteSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
-      return withCacheInvalidation(
-        axios.post(`/api/routes/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
-        ['/routes']
-      );
+    return withCacheInvalidation(
+      axios.post(`/api/routes/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
+      ['/routes']
+    );
   },
   // --- End Speaker Layout Update Methods ---
 

@@ -405,7 +405,8 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("playback_ratio_inbound_rate_smoothing", &TimeshiftTuning::playback_ratio_inbound_rate_smoothing)
         .def_readwrite("playback_catchup_ppm_per_ms", &TimeshiftTuning::playback_catchup_ppm_per_ms)
         .def_readwrite("playback_catchup_max_ppm", &TimeshiftTuning::playback_catchup_max_ppm)
-        .def_readwrite("max_playout_lead_ms", &TimeshiftTuning::max_playout_lead_ms);
+        .def_readwrite("max_playout_lead_ms", &TimeshiftTuning::max_playout_lead_ms)
+        .def_readwrite("playback_rate_adjustment_enabled", &TimeshiftTuning::playback_rate_adjustment_enabled);
 
     py::class_<ProfilerSettings>(m, "ProfilerSettings")
         .def(py::init<>())
