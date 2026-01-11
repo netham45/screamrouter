@@ -2091,23 +2091,7 @@ void SinkAudioMixer::run() {
         const std::size_t frames_per_chunk = frame_metrics_valid ? (chunk_size_bytes_ / frame_bytes) : 0;
         uint64_t frames_dispatched = 0;
 
-        if (config_.protocol == "system_audio") {
-            double upstream_frames = 0.0;
-            double upstream_target_frames = 0.0;
-            if (frame_metrics_valid) {
-                upstream_frames = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(frame_bytes);
-                upstream_target_frames = static_cast<double>(frames_per_chunk);
-            }
-#if defined(__linux__)
-            if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
-                alsa_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
-            }
-#elif defined(_WIN32)
-            if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
-                wasapi_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
-            }
-#endif
-        }
+        // Pipeline backlog update moved to AFTER send loop for accurate buffer level
 
         if (!frame_metrics_valid && coordination_active) {
             LOG_CPP_WARNING("[SinkMixer:%s] RunLoop: Unable to derive frames_per_chunk (bit_depth=%d, channels=%d).",
@@ -2161,6 +2145,21 @@ void SinkAudioMixer::run() {
 
             LOG_CPP_DEBUG("[SinkMixer:%s] RunLoop: Sent chunk, remaining bytes in buffer: %zu",
                           config_.sink_id.c_str(), payload_buffer_fill_bytes_);
+        }
+
+        // Update pipeline backlog AFTER send loop so upstream_frames reflects actual remaining bytes
+        if (config_.protocol == "system_audio" && frame_metrics_valid) {
+            const double upstream_frames = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(frame_bytes);
+            const double upstream_target_frames = static_cast<double>(frames_per_chunk);
+#if defined(__linux__)
+            if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+                alsa_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
+            }
+#elif defined(_WIN32)
+            if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+                wasapi_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
+            }
+#endif
         }
 
         if (coordination_active && dispatch_timing) {
