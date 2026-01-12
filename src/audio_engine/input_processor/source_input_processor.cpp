@@ -411,8 +411,9 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
     // Variable input resampling: input size varies based on playback_rate, no fixed size check
     
     // Allocate a temporary output buffer large enough to hold the maximum possible output
-    // from AudioProcessor::processAudio. Match the size of AudioProcessor's internal processed_buffer.
-    std::vector<int32_t> processor_output_buffer(current_input_chunk_bytes_ * MAX_CHANNELS * 4);
+    // Size based on input bytes with safety margin (x2) to handle any resampling expansion
+    size_t alloc_size_bytes = std::max(current_input_chunk_bytes_, input_bytes) * 2;
+    std::vector<int32_t> processor_output_buffer(alloc_size_bytes * MAX_CHANNELS * 4 / sizeof(int32_t));
 
     int actual_samples_processed = 0;
     { // Lock mutex for accessing AudioProcessor
@@ -588,7 +589,7 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
     // Input frames needed = target * consumption_factor
     const size_t target_output_frames = base_frames_per_chunk_;
     size_t required_input_frames = static_cast<size_t>(
-        std::ceil(static_cast<double>(target_output_frames) * consumption_factor));
+        std::round(static_cast<double>(target_output_frames) * consumption_factor));
     size_t required_input_bytes = required_input_frames * input_bytes_per_frame_;
     
     // Use the calculated variable input size instead of fixed current_input_chunk_bytes_
