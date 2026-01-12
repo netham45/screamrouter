@@ -588,7 +588,7 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
     // Input frames needed = target * consumption_factor
     const size_t target_output_frames = base_frames_per_chunk_;
     size_t required_input_frames = static_cast<size_t>(
-        std::ceil(static_cast<double>(target_output_frames) * consumption_factor)) + 4;
+        std::ceil(static_cast<double>(target_output_frames) * consumption_factor));
     size_t required_input_bytes = required_input_frames * input_bytes_per_frame_;
     
     // Use the calculated variable input size instead of fixed current_input_chunk_bytes_
