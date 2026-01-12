@@ -853,6 +853,11 @@ void TimeshiftManager::set_wildcard_match_callback(std::function<void(const Wild
     wildcard_match_callback_ = std::move(cb);
 }
 
+void TimeshiftManager::set_pipeline_state_provider(PipelineStateProvider provider) {
+    std::lock_guard<std::mutex> lock(pipeline_state_mutex_);
+    pipeline_state_provider_ = std::move(provider);
+}
+
 void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
     LOG_CPP_INFO("[TimeshiftManager] Resetting stream state for tag %s", source_tag.c_str());
 
@@ -1097,9 +1102,35 @@ void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMa
                 }
                 ts.last_controller_update_time = now;
 
+                // === UNIFIED RATE CONTROL: Incorporate downstream pipeline state ===
+                double hw_error_ms = 0.0;
+                double mixer_error_ms = 0.0;
+                {
+                    std::lock_guard<std::mutex> plock(pipeline_state_mutex_);
+                    if (pipeline_state_provider_) {
+                        auto [hw_fill, hw_target, mixer_fill, mixer_target] = pipeline_state_provider_();
+                        // Positive error = over-filled = need to speed up (drain)
+                        hw_error_ms = hw_fill - hw_target;
+                        mixer_error_ms = mixer_fill - mixer_target;
+                    }
+                }
+                
+                // Local buffer error: positive = under-filled = need to slow down (fill)
+                double local_error_ms = desired_latency_ms - buffer_level_ms;
+                
+                // Combined error with weights. Downstream errors are inverted relative to local.
+                // hw/mixer over-filled means we need to speed up → negative local error equivalent
+                constexpr double kLocalWeight = 1.0;
+                constexpr double kHwWeight = 0.5;      // Hardware is high priority
+                constexpr double kMixerWeight = 0.3;   // Mixer queue is secondary
+                
+                double weighted_error_ms = kLocalWeight * local_error_ms 
+                                         - kHwWeight * hw_error_ms 
+                                         - kMixerWeight * mixer_error_ms;
+                
                 double raw_ratio = 0.0;
                 if (desired_latency_ms > 1e-3) {
-                    raw_ratio = (desired_latency_ms - buffer_level_ms) / desired_latency_ms;
+                    raw_ratio = weighted_error_ms / desired_latency_ms;
                 }
                 ts.buffer_fill_error_ratio = raw_ratio;
 

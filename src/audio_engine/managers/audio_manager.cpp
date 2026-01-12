@@ -57,6 +57,27 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
             [this](const WildcardMatchEvent& evt) {
                 this->handle_wildcard_match(evt);
             });
+        
+        // Wire up pipeline state provider for unified rate control
+        // This allows TimeshiftManager to see downstream hw/mixer buffer state
+        m_timeshift_manager->set_pipeline_state_provider(
+            [this]() -> std::tuple<double, double, double, double> {
+                double hw_fill = 0.0, hw_target = 0.0, mixer_queue = 0.0, mixer_target = 0.0;
+                if (m_sink_manager) {
+                    auto mixers = m_sink_manager->get_all_mixers();
+                    for (auto* mixer : mixers) {
+                        if (mixer) {
+                            auto state = mixer->get_pipeline_state();
+                            // Aggregate: use max fill and target across all sinks
+                            hw_fill = std::max(hw_fill, state.hw_fill_ms);
+                            hw_target = std::max(hw_target, state.hw_target_ms);
+                            mixer_queue = std::max(mixer_queue, state.mixer_queue_ms);
+                            mixer_target = std::max(mixer_target, state.mixer_target_ms);
+                        }
+                    }
+                }
+                return {hw_fill, hw_target, mixer_queue, mixer_target};
+            });
 
         current_stage = "creating NotificationQueue";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());

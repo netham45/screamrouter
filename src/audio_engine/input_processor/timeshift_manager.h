@@ -317,6 +317,18 @@ public:
      */
     TimeshiftManagerStats get_stats();
 
+    /**
+     * @brief Callback type to get downstream pipeline state for unified rate control.
+     * @return Tuple of (hw_fill_ms, hw_target_ms, mixer_queue_ms, mixer_target_ms)
+     */
+    using PipelineStateProvider = std::function<std::tuple<double, double, double, double>()>;
+    
+    /**
+     * @brief Registers a callback to provide downstream pipeline state.
+     * @param provider Callback that returns (hw_fill_ms, hw_target_ms, mixer_queue_ms, mixer_target_ms)
+     */
+    void set_pipeline_state_provider(PipelineStateProvider provider);
+
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> get_settings() const { return m_settings; }
 
 
@@ -372,6 +384,10 @@ private:
     std::map<std::string, size_t> processor_queue_high_water_;
     std::function<void(const WildcardMatchEvent&)> wildcard_match_callback_;
     mutable std::mutex wildcard_callback_mutex_;
+
+    // Unified rate control: downstream pipeline state provider
+    PipelineStateProvider pipeline_state_provider_;
+    mutable std::mutex pipeline_state_mutex_;
 
     /** @brief A single iteration of the processing loop. Collects ready packets while data_mutex_ is held. */
     void processing_loop_iteration_unlocked(std::vector<WildcardMatchEvent>& wildcard_matches);

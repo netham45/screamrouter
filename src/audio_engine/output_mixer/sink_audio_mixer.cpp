@@ -1826,13 +1826,17 @@ void SinkAudioMixer::setup_output_post_processor() {
 }
 
 void SinkAudioMixer::set_output_playback_rate(double rate) {
-    std::lock_guard<std::mutex> lock(output_processor_mutex_);
-    if (!output_post_processor_) {
-        return;
+    // DISABLED: Unified rate control via TimeshiftManager only.
+    // The output_post_processor_ now stays at unity (1.0).
+    // ALSA/WASAPI reports buffer state upstream for the unified PI loop.
+    (void)rate;
+    
+    // Log significant deviations for debugging (every 100th call)
+    static uint64_t log_counter = 0;
+    if (++log_counter % 100 == 0 && std::abs(rate - 1.0) > 0.001) {
+        LOG_CPP_DEBUG("[SinkMixer:%s] Ignoring output rate %.6f (unified control active)",
+                      config_.sink_id.c_str(), rate);
     }
-    const double clamped = std::clamp(rate, 0.96, 1.02);
-    output_playback_rate_.store(clamped);
-    output_post_processor_->set_playback_rate(clamped);
 }
 
 std::chrono::microseconds SinkAudioMixer::calculate_mix_period(int samplerate, int channels, int bit_depth) const {
