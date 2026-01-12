@@ -406,12 +406,9 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
         return;
     }
     const size_t input_bytes = input_chunk_data.size();
-    LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Processing chunk. Input Size=%zu bytes. Expected=%zu bytes.",
-                  config_.instance_id.c_str(), input_bytes, current_input_chunk_bytes_);
-    if (input_bytes != current_input_chunk_bytes_) {
-         LOG_CPP_ERROR("[SourceProc:%s] process_audio_chunk called with incorrect data size: %zu. Skipping processing.", config_.instance_id.c_str(), input_bytes);
-         return;
-    }
+    LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Processing chunk. Input Size=%zu bytes (variable input resampling).",
+                  config_.instance_id.c_str(), input_bytes);
+    // Variable input resampling: input size varies based on playback_rate, no fixed size check
     
     // Allocate a temporary output buffer large enough to hold the maximum possible output
     // from AudioProcessor::processAudio. Match the size of AudioProcessor's internal processed_buffer.
@@ -578,7 +575,26 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
         return false;
     }
 
-    if (input_ring_buffer_.size() < current_input_chunk_bytes_) {
+    // ===== VARIABLE INPUT RESAMPLING =====
+    // Calculate how many input frames we need to produce base_frames_per_chunk_ output frames
+    // When playback_rate > 1.0: ratio increases, we need fewer input frames
+    // When playback_rate < 1.0: ratio decreases, we need more input frames
+    double resample_ratio = 1.0;
+    if (m_current_ap_input_samplerate > 0 && config_.output_samplerate > 0) {
+        resample_ratio = (static_cast<double>(config_.output_samplerate) / 
+                          static_cast<double>(m_current_ap_input_samplerate)) * current_playback_rate_;
+    }
+    resample_ratio = std::max(0.1, std::min(10.0, resample_ratio));  // Clamp for safety
+    
+    // Input frames needed = output_frames / ratio
+    // Add margin for libsamplerate's internal state
+    const size_t target_output_frames = base_frames_per_chunk_;
+    size_t required_input_frames = static_cast<size_t>(
+        std::ceil(static_cast<double>(target_output_frames) / resample_ratio)) + 8;
+    size_t required_input_bytes = required_input_frames * input_bytes_per_frame_;
+    
+    // Use the calculated variable input size instead of fixed current_input_chunk_bytes_
+    if (input_ring_buffer_.size() < required_input_bytes) {
         return false;
     }
 
@@ -587,18 +603,19 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
     chunk_ssrcs.clear();
     chunk_is_sentinel = false;
 
-    chunk_data.resize(current_input_chunk_bytes_);
-    const std::size_t bytes_popped = input_ring_buffer_.pop(chunk_data.data(), current_input_chunk_bytes_);
-    if (bytes_popped != current_input_chunk_bytes_) {
+    chunk_data.resize(required_input_bytes);
+    const std::size_t bytes_popped = input_ring_buffer_.pop(chunk_data.data(), required_input_bytes);
+    if (bytes_popped != required_input_bytes) {
         LOG_CPP_ERROR("[SourceProc:%s] Ring buffer underflow while dequeuing chunk. Expected %zu, got %zu.",
-                      config_.instance_id.c_str(), current_input_chunk_bytes_, bytes_popped);
+                      config_.instance_id.c_str(), required_input_bytes, bytes_popped);
         chunk_data.clear();
         reset_input_accumulator();
         return false;
     }
     input_ring_base_offset_ += bytes_popped;
 
-    std::size_t remaining = current_input_chunk_bytes_;
+    // Track fragment consumption based on actual variable bytes popped
+    std::size_t remaining = bytes_popped;  // Use actual bytes, not fixed chunk size
     while (remaining > 0 && !input_fragments_.empty()) {
         auto& fragment = input_fragments_.front();
         if (fragment.consumed_bytes >= fragment.bytes) {

@@ -507,7 +507,7 @@ void AudioProcessor::resample() {
     const double current_playback_rate = std::max(1e-6, playback_rate_.load());
     const double local_setRatio = 1.0 / current_playback_rate;  // Compute from atomic to avoid race
     const int oversample_factor = std::max(1, m_settings ? m_settings->processor_tuning.oversampling_factor : 1);
-    const double effective_output_rate = static_cast<double>(outputSampleRate) / local_setRatio * static_cast<double>(oversample_factor);
+    const double effective_output_rate = static_cast<double>(outputSampleRate) / (local_setRatio) * static_cast<double>(oversample_factor);
     const double ratio = ((effective_output_rate) / static_cast<double>(inputSampleRate));
 
     const double epsilon = 1e-6;
@@ -600,6 +600,64 @@ void AudioProcessor::resample() {
     active_samples_ = output_samples;
     resample_buffer_pos = output_samples;
     swap_active_buffers();
+}
+
+
+size_t AudioProcessor::resample_to_fixed_output(
+    const float* input,
+    size_t max_input_frames,
+    float* output,
+    size_t target_output_frames,
+    double src_ratio,
+    int channels
+) {
+    if (!m_upsampler || !input || !output || target_output_frames == 0 || channels <= 0) {
+        return 0;
+    }
+    
+    // Handle unity ratio case - direct copy
+    if (std::abs(src_ratio - 1.0) < 1e-6) {
+        size_t frames_to_copy = std::min(max_input_frames, target_output_frames);
+        std::memcpy(output, input, frames_to_copy * channels * sizeof(float));
+        return frames_to_copy;
+    }
+    
+    size_t input_frames_consumed = 0;
+    size_t output_frames_generated = 0;
+    
+    // Loop until we have exactly target_output_frames of output
+    while (output_frames_generated < target_output_frames && input_frames_consumed < max_input_frames) {
+        SRC_DATA src_data = {0};
+        src_data.data_in = input + input_frames_consumed * channels;
+        src_data.input_frames = max_input_frames - input_frames_consumed;
+        src_data.data_out = output + output_frames_generated * channels;
+        src_data.output_frames = target_output_frames - output_frames_generated;
+        src_data.src_ratio = src_ratio;
+        src_data.end_of_input = 0;
+        
+        int error = src_process(m_upsampler, &src_data);
+        if (error) {
+            LOG_CPP_ERROR("[AudioProc] resample_to_fixed_output error: %s", src_strerror(error));
+            break;
+        }
+        
+        input_frames_consumed += src_data.input_frames_used;
+        output_frames_generated += src_data.output_frames_gen;
+        
+        if (src_data.input_frames_used == 0 && src_data.output_frames_gen == 0) {
+            LOG_CPP_WARNING("[AudioProc] resample_to_fixed_output: no progress, have %zu/%zu output",
+                           output_frames_generated, target_output_frames);
+            break;
+        }
+    }
+    
+    // Zero-fill any remaining output if we ran out of input
+    if (output_frames_generated < target_output_frames) {
+        size_t missing_samples = (target_output_frames - output_frames_generated) * channels;
+        std::memset(output + output_frames_generated * channels, 0, missing_samples * sizeof(float));
+    }
+    
+    return input_frames_consumed;
 }
 
 
