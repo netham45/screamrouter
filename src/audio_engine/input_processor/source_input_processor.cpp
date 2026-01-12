@@ -478,7 +478,22 @@ void SourceInputProcessor::push_output_chunk_if_ready(std::vector<ProcessedAudio
          output_chunk.audio_data.assign(process_buffer_.begin(), process_buffer_.begin() + required_samples);
          output_chunk.ssrcs = current_packet_ssrcs_;
          output_chunk.produced_time = std::chrono::steady_clock::now();
-         output_chunk.origin_time = m_last_packet_origin_time;
+         
+         // Adjust origin_time for playback rate dilation
+         // When rate > 1.0, we're consuming audio faster than real-time
+         // Each chunk's nominal duration is stretched/compressed by playback_rate
+         const double nominal_chunk_ms = (static_cast<double>(base_frames_per_chunk_) * 1000.0) / 
+                                         static_cast<double>(config_.output_samplerate);
+         // Time dilation: actual wall-clock time = nominal / rate
+         // Accumulated shift = sum of (nominal - nominal/rate) = nominal * (1 - 1/rate)
+         const double dilation_this_chunk_ms = nominal_chunk_ms * (1.0 - 1.0 / current_playback_rate_);
+         cumulative_time_dilation_ms_ += dilation_this_chunk_ms;
+         
+         // Apply cumulative dilation to origin_time
+         auto adjusted_origin = m_last_packet_origin_time + 
+             std::chrono::microseconds(static_cast<int64_t>(cumulative_time_dilation_ms_ * 1000.0));
+         output_chunk.origin_time = adjusted_origin;
+         
          output_chunk.playback_rate = current_playback_rate_;
          output_chunk.is_sentinel = pending_sentinel_samples_ > 0;
          size_t pushed_samples = output_chunk.audio_data.size();

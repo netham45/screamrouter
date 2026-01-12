@@ -183,6 +183,11 @@ private:
     std::chrono::steady_clock::time_point m_last_packet_origin_time;
     bool m_is_first_packet_after_discontinuity = true;
     std::size_t pending_sentinel_samples_ = 0;
+    
+    // Tracks cumulative time dilation from playback_rate != 1.0
+    // When rate > 1.0, we consume audio faster than real-time, so output timestamps
+    // should be shifted earlier. This accumulates the difference.
+    double cumulative_time_dilation_ms_ = 0.0;
 
     /**
      * @brief Processes a single chunk of raw audio data using the internal AudioProcessor.
