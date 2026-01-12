@@ -104,53 +104,80 @@ std::chrono::steady_clock::time_point simulate_packet_time(
     return start + std::chrono::milliseconds(static_cast<int>(packet_index * packet_duration_ms));
 }
 
-/// μ-law encoding table (linear 16-bit to 8-bit μ-law)
-uint8_t linear_to_ulaw(int16_t sample) {
-    const int16_t MULAW_BIAS = 33;
-    const int16_t MULAW_CLIP = 32635;
+/// μ-law encoding (ITU-T G.711)
+/// Properly encodes 16-bit linear PCM to 8-bit μ-law
+uint8_t linear_to_ulaw(int16_t pcm) {
+    // Segment table for μ-law encoding
+    static const int16_t seg_end[8] = {
+        0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF
+    };
     
-    int sign = (sample >> 8) & 0x80;
-    if (sign) sample = -sample;
-    if (sample > MULAW_CLIP) sample = MULAW_CLIP;
+    int sign = (pcm >> 8) & 0x80;
+    if (sign) pcm = -pcm;
     
-    sample += MULAW_BIAS;
+    // Add bias and clip
+    pcm += 0x84;  // 132 = bias
+    if (pcm > 0x7F7F) pcm = 0x7F7F;
     
-    int exponent = 7;
+    // Find segment
+    int seg = 0;
     for (int i = 0; i < 8; i++) {
-        if (sample & (1 << (i + 7))) {
-            exponent = 7 - i;
+        if (pcm <= seg_end[i]) {
+            seg = i;
             break;
         }
+        if (i == 7) seg = 7;
     }
     
-    int mantissa = (sample >> (exponent + 3)) & 0x0F;
-    uint8_t result = ~(sign | (exponent << 4) | mantissa);
-    return result;
+    // Combine sign, segment, and quantization step (mantissa)
+    int uval;
+    if (seg >= 8) {
+        uval = 0x7F ^ sign;
+    } else {
+        uval = (seg << 4) | ((pcm >> (seg + 3)) & 0x0F);
+        uval ^= 0x7F;  // Invert bits
+        uval |= sign;
+    }
+    
+    return static_cast<uint8_t>(uval ^ 0xFF);
 }
 
-/// A-law encoding table (linear 16-bit to 8-bit A-law)
-uint8_t linear_to_alaw(int16_t sample) {
+/// A-law encoding (ITU-T G.711)
+/// Properly encodes 16-bit linear PCM to 8-bit A-law
+uint8_t linear_to_alaw(int16_t pcm) {
+    // Segment table for A-law encoding
+    static const int16_t seg_end[8] = {
+        0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF
+    };
+    
     int sign = 0;
-    if (sample < 0) {
-        sample = -sample;
+    if (pcm < 0) {
         sign = 0x80;
+        pcm = -pcm;
     }
     
-    if (sample > 32635) sample = 32635;
-    
-    int exponent = 0;
-    for (int i = 12; i >= 0; i--) {
-        if (sample & (1 << i)) {
-            exponent = i - 4;
-            if (exponent < 0) exponent = 0;
+    // Find segment
+    int seg = 0;
+    for (int i = 0; i < 8; i++) {
+        if (pcm <= seg_end[i]) {
+            seg = i;
             break;
         }
+        if (i == 7) seg = 7;
     }
     
-    int mantissa = (sample >> (exponent + 3)) & 0x0F;
-    uint8_t result = sign | (exponent << 4) | mantissa;
-    result ^= 0xD5;  // A-law inversion
-    return result;
+    // Combine sign, segment, and quantization step
+    int aval;
+    if (seg >= 8) {
+        aval = 0x7F ^ sign;
+    } else if (seg == 0) {
+        aval = (pcm >> 4) & 0x0F;
+    } else {
+        aval = (seg << 4) | ((pcm >> (seg + 3)) & 0x0F);
+    }
+    aval ^= (sign ^ 0x55);  // A-law XOR pattern
+    
+    return static_cast<uint8_t>(aval);
 }
 
 /// Generate PCMU (μ-law) encoded audio

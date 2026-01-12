@@ -1886,19 +1886,25 @@ bool SinkAudioMixer::wait_for_mix_tick() {
             return false;
         }
 
-        // If queues are backing up, force a tick instead of blocking on the clock.
-        std::size_t pending_chunks = 0;
+        // If any source queue is backing up, force a tick instead of blocking on the clock.
+        bool source_backlogged = false;
+        std::string backlogged_source;
+        std::size_t backlogged_depth = 0;
         {
             std::lock_guard<std::mutex> lock(queues_mutex_);
             for (const auto& [instance_id, queue] : processed_ready_) {
-                (void)instance_id;
-                pending_chunks += queue.size();
+                if (queue.size() > 3) {
+                    source_backlogged = true;
+                    backlogged_source = instance_id;
+                    backlogged_depth = queue.size();
+                    break;
+                }
             }
         }
-        if (pending_chunks > 3 && clock_pending_ticks_ == 0) {
+        if (source_backlogged && clock_pending_ticks_ == 0) {
             clock_pending_ticks_ = 1;
-            LOG_CPP_WARNING("[SinkMixer:%s] Forcing mix tick due to backlog (pending_chunks=%zu).",
-                            config_.sink_id.c_str(), pending_chunks);
+            LOG_CPP_WARNING("[SinkMixer:%s] Forcing mix tick due to source backlog (source=%s depth=%zu).",
+                            config_.sink_id.c_str(), backlogged_source.c_str(), backlogged_depth);
             break;
         }
 

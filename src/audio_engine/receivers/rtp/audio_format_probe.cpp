@@ -147,6 +147,7 @@ bool AudioFormatProbe::finalize_detection() {
             double byte_rate = (seconds > 0) ? total_bytes_received_ / seconds : 0;
             
             // Try common channel counts and find closest sample rate match
+            // Prefer fewer channels when error is similar (stereo more common than 6ch)
             const int channel_options[] = {1, 2, 6, 8};
             int best_channels = 1;
             int best_sample_rate = 8000;
@@ -156,7 +157,22 @@ bool AudioFormatProbe::finalize_detection() {
                 int raw_rate = static_cast<int>(byte_rate / ch);
                 int rounded_rate = round_to_common_sample_rate(raw_rate);
                 int error = std::abs(raw_rate - rounded_rate);
-                if (error < min_error) {
+                
+                // Prefer this option if:
+                // 1. Error is strictly less, OR
+                // 2. Error is similar (<100 diff) AND fewer channels, OR
+                // 3. Error is similar AND same channels AND higher sample rate
+                bool better = (error < min_error);
+                if (!better && std::abs(error - min_error) < 100) {
+                    // Tie-breaker: prefer fewer channels, higher sample rates
+                    if (ch < best_channels) {
+                        better = true;
+                    } else if (ch == best_channels && rounded_rate > best_sample_rate) {
+                        better = true;
+                    }
+                }
+                
+                if (better) {
                     min_error = error;
                     best_channels = ch;
                     best_sample_rate = rounded_rate;
