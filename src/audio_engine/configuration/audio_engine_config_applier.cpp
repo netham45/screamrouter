@@ -20,7 +20,9 @@
 #include <unordered_map>
 #include <cmath> // For std::abs
 #include <limits> // For std::numeric_limits
+#ifndef SCREAMROUTER_TESTING
 #include <pybind11/pybind11.h>
+#endif
 #include <chrono>
 #include <functional>
 
