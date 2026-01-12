@@ -27,9 +27,11 @@
 #include <thread>
 #include <atomic>
 #include <optional>
+#ifndef SCREAMROUTER_TESTING
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
+#endif
 
 namespace screamrouter {
 namespace audio {
@@ -167,7 +169,9 @@ public:
      * @brief Retrieves SAP announcements detected by the main RTP receiver.
      * @return A Python list of dictionaries describing each SAP announcement.
      */
+#ifndef SCREAMROUTER_TESTING
     pybind11::list get_rtp_sap_announcements();
+#endif
 
     /**
      * @brief Retrieves seen source tags from a Raw Scream receiver.
@@ -377,6 +381,7 @@ private:
     void debug_dump_state(const char* label);
 };
     
+#ifndef SCREAMROUTER_TESTING
 /**
  * @brief Binds the AudioManager class and its methods to a Python module.
  * @param m The pybind11 module to which the class will be bound.
@@ -593,6 +598,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def("list_system_devices", &AudioManager::list_system_devices, "Returns the cached registry of system audio devices.")
         .def("drain_device_notifications", &AudioManager::drain_device_notifications, "Retrieves and clears pending device discovery notifications.");
 }
+#endif // !SCREAMROUTER_TESTING
 
 } // namespace audio
 } // namespace screamrouter

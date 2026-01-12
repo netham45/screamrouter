@@ -18,6 +18,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <optional>
+#include <functional>
 
 namespace screamrouter {
 namespace audio {

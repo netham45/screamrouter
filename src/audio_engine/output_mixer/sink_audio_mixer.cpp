@@ -204,8 +204,20 @@ SinkAudioMixer::SinkAudioMixer(
 
     if (mp3_output_queue_) {
         initialize_lame();
+        // Create Mp3Encoder helper
+        mp3_encoder_ = std::make_unique<Mp3Encoder>(
+            config_.sink_id, config_.output_samplerate, mp3_output_queue_, m_settings);
     }
 
+    // Create ListenerDispatcher helper
+    listener_dispatcher_ = std::make_unique<ListenerDispatcher>(config_.sink_id);
+
+    // Create SinkRateController helper with callback to send rate commands
+    rate_controller_ = std::make_unique<SinkRateController>(config_.sink_id, m_settings);
+    rate_controller_->set_rate_command_callback(
+        [this](const std::string& instance_id, double ratio) {
+            send_playback_rate_command(instance_id, ratio);
+        });
 
     last_drain_check_ = std::chrono::steady_clock::now();
 
@@ -254,6 +266,12 @@ void SinkAudioMixer::initialize_lame() {
 }
 
 void SinkAudioMixer::start_mp3_thread() {
+    // Start the new Mp3Encoder helper
+    if (mp3_encoder_) {
+        mp3_encoder_->start();
+    }
+    
+    // Legacy code path - keep until fully transitioned
     if (!mp3_output_queue_ || !lame_global_flags_) {
         return;
     }
@@ -278,6 +296,12 @@ void SinkAudioMixer::start_mp3_thread() {
 }
 
 void SinkAudioMixer::stop_mp3_thread() {
+    // Stop the new Mp3Encoder helper
+    if (mp3_encoder_) {
+        mp3_encoder_->stop();
+    }
+    
+    // Legacy code path - keep until fully transitioned
     mp3_stop_flag_.store(true, std::memory_order_release);
     mp3_cv_.notify_all();
     if (mp3_thread_.joinable()) {
@@ -347,38 +371,10 @@ void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
  * @param sender A unique pointer to the listener's network sender implementation.
  */
 void SinkAudioMixer::add_listener(const std::string& listener_id, std::unique_ptr<INetworkSender> sender) {
-    if (!sender) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Attempted to add null listener sender for ID: %s", config_.sink_id.c_str(), listener_id.c_str());
-        return;
-    }
-    
-    if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
-        webrtc_sender->set_cleanup_callback(listener_id, [this](const std::string& id) {
-            LOG_CPP_INFO("[SinkMixer:%s] Cleanup callback triggered for listener: %s", config_.sink_id.c_str(), id.c_str());
-        });
-    }
-    
-    // IMPORTANT: Do NOT call setup() here for WebRTC senders!
-    // WebRtcSender::setup() triggers callbacks that need the Python GIL.
-    // If we call it here while Python is still in the middle of add_webrtc_listener,
-    // it will deadlock. Instead, we'll call setup() separately after Python has
-    // released the GIL.
-    bool needs_deferred_setup = (dynamic_cast<WebRtcSender*>(sender.get()) != nullptr);
-    
-    if (!needs_deferred_setup) {
-        // For non-WebRTC senders, setup immediately as before
-        if (!sender->setup()) {
-            LOG_CPP_ERROR("[SinkMixer:%s] Failed to setup listener sender for ID: %s", config_.sink_id.c_str(), listener_id.c_str());
-            return;
-        }
-    }
-    
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        listener_senders_[listener_id] = std::move(sender);
-        LOG_CPP_INFO("[SinkMixer:%s] Added listener sender with ID: %s (setup %s)",
-                     config_.sink_id.c_str(), listener_id.c_str(),
-                     needs_deferred_setup ? "deferred" : "completed");
+    if (listener_dispatcher_) {
+        listener_dispatcher_->add_listener(listener_id, std::move(sender));
+    } else {
+        LOG_CPP_ERROR("[SinkMixer:%s] ListenerDispatcher not initialized", config_.sink_id.c_str());
     }
 }
 
@@ -387,27 +383,8 @@ void SinkAudioMixer::add_listener(const std::string& listener_id, std::unique_pt
  * @param listener_id The ID of the listener to remove.
  */
 void SinkAudioMixer::remove_listener(const std::string& listener_id) {
-    std::unique_ptr<INetworkSender> sender_to_remove;
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        auto it = listener_senders_.find(listener_id);
-        if (it != listener_senders_.end()) {
-            sender_to_remove = std::move(it->second);
-            listener_senders_.erase(it);
-            LOG_CPP_INFO("[SinkMixer:%s] Removed listener sender with ID: %s", config_.sink_id.c_str(), listener_id.c_str());
-        } else {
-            LOG_CPP_DEBUG("[SinkMixer:%s] Listener sender with ID already removed: %s", config_.sink_id.c_str(), listener_id.c_str());
-            return;
-        }
-    } // Release listener_senders_mutex_ before calling close()
-
-    // Close the sender WITHOUT holding the mutex to prevent deadlock
-    // close() can trigger libdatachannel callbacks that need the GIL
-    if (sender_to_remove) {
-        if (dynamic_cast<WebRtcSender*>(sender_to_remove.get())) {
-            LOG_CPP_INFO("[SinkMixer:%s] Force closing WebRTC connection for listener: %s", config_.sink_id.c_str(), listener_id.c_str());
-        }
-        sender_to_remove->close();
+    if (listener_dispatcher_) {
+        listener_dispatcher_->remove_listener(listener_id);
     }
 }
 
@@ -417,12 +394,7 @@ void SinkAudioMixer::remove_listener(const std::string& listener_id) {
  * @return A pointer to the `INetworkSender`, or `nullptr` if not found.
  */
 INetworkSender* SinkAudioMixer::get_listener(const std::string& listener_id) {
-    std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-    auto it = listener_senders_.find(listener_id);
-    if (it != listener_senders_.end()) {
-        return it->second.get();
-    }
-    return nullptr;
+    return listener_dispatcher_ ? listener_dispatcher_->get_listener(listener_id) : nullptr;
 }
 
 SinkAudioMixerStats SinkAudioMixer::get_stats() {
@@ -1212,44 +1184,11 @@ size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
 void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
     PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
-    std::vector<std::string> closed_listeners_to_remove;
-
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        if (listener_senders_.empty() || samples_to_dispatch == 0) {
-            return;
-        }
-
-        const uint8_t* payload_data = reinterpret_cast<const uint8_t*>(stereo_buffer_.data());
-        size_t payload_size = samples_to_dispatch * sizeof(int32_t);
-
-        if (payload_size > stereo_buffer_.size() * sizeof(int32_t)) {
-            LOG_CPP_ERROR("[SinkMixer:%s] Dispatch error: payload_size > stereo_buffer_ size", config_.sink_id.c_str());
-            return;
-        }
-
-        std::vector<uint32_t> empty_csrcs;
-
-        for (auto const& [id, sender] : listener_senders_) {
-            if (sender) {
-                if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
-                    if (webrtc_sender->is_closed()) {
-                        closed_listeners_to_remove.push_back(id);
-                        LOG_CPP_INFO("[SinkMixer:%s] Found closed listener during dispatch: %s", config_.sink_id.c_str(), id.c_str());
-                        // Don't call close() here while holding the lock!
-                        // It will be called in remove_listener() without the lock
-                        continue;
-                    }
-                }
-                sender->send_payload(payload_data, payload_size, empty_csrcs);
-            }
-        }
-    } // Release listener_senders_mutex_ before calling remove_listener
-
-    for (const auto& listener_id : closed_listeners_to_remove) {
-        remove_listener(listener_id);  // This will close() the sender without holding the lock
-        LOG_CPP_INFO("[SinkMixer:%s] Immediately removed closed listener: %s", config_.sink_id.c_str(), listener_id.c_str());
+    
+    if (listener_dispatcher_ && samples_to_dispatch > 0) {
+        listener_dispatcher_->dispatch_to_listeners(stereo_buffer_.data(), samples_to_dispatch);
     }
+    
     auto t1 = std::chrono::steady_clock::now();
     uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
     profiling_dispatch_calls_++;
@@ -1265,31 +1204,9 @@ void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
  */
 void SinkAudioMixer::enqueue_mp3_pcm(const int32_t* samples, size_t sample_count) {
     PROFILE_FUNCTION();
-    if (!mp3_output_queue_ || !samples || sample_count == 0) {
-        return;
+    if (mp3_encoder_ && mp3_encoder_->is_running()) {
+        mp3_encoder_->enqueue_pcm(samples, sample_count);
     }
-    if (!mp3_thread_running_.load(std::memory_order_acquire)) {
-        return;
-    }
-
-    std::unique_lock<std::mutex> lock(mp3_mutex_);
-    const size_t max_depth = mp3_pcm_queue_max_depth_ > 0 ? mp3_pcm_queue_max_depth_ : 3;
-    if (mp3_pcm_queue_.size() >= max_depth) {
-        mp3_pcm_queue_.pop_front(); // Drop oldest to keep freshest audio
-        m_mp3_buffer_overflows++;
-        LOG_CPP_DEBUG("[SinkMixer:%s] MP3 PCM queue full (depth=%zu), dropping oldest chunk.", config_.sink_id.c_str(), mp3_pcm_queue_.size());
-    }
-
-    std::vector<int32_t> buffer(sample_count);
-    std::memcpy(buffer.data(), samples, sample_count * sizeof(int32_t));
-    mp3_pcm_queue_.push_back(std::move(buffer));
-    size_t depth = mp3_pcm_queue_.size();
-    size_t hw = mp3_pcm_high_water_.load();
-    while (depth > hw && !mp3_pcm_high_water_.compare_exchange_weak(hw, depth)) {
-        // retry
-    }
-    lock.unlock();
-    mp3_cv_.notify_one();
 }
 
 /**
@@ -2007,29 +1924,8 @@ bool SinkAudioMixer::wait_for_mix_tick() {
 
 void SinkAudioMixer::cleanup_closed_listeners() {
     PROFILE_FUNCTION();
-    std::vector<std::string> listeners_to_remove;
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        for (const auto& pair : listener_senders_) {
-            if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(pair.second.get())) {
-                if (webrtc_sender->is_closed() || webrtc_sender->should_cleanup_due_to_timeout()) {
-                    listeners_to_remove.push_back(pair.first);
-                    LOG_CPP_INFO("[SinkMixer:%s] Found closed/timed-out listener to cleanup: %s", config_.sink_id.c_str(), pair.first.c_str());
-                    // Don't call close() here while holding the lock!
-                    // It will be called in remove_listener() without the lock
-                }
-            }
-        }
-    } // Release listener_senders_mutex_ before calling remove_listener
-
-    for (const auto& listener_id : listeners_to_remove) {
-        remove_listener(listener_id);  // This will close() the sender without holding the lock
-        LOG_CPP_INFO("[SinkMixer:%s] Successfully cleaned up listener: %s", config_.sink_id.c_str(), listener_id.c_str());
-    }
-
-    if (!listeners_to_remove.empty()) {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        LOG_CPP_INFO("[SinkMixer:%s] Cleanup complete. Remaining listeners: %zu", config_.sink_id.c_str(), listener_senders_.size());
+    if (listener_dispatcher_) {
+        listener_dispatcher_->cleanup_closed_listeners();
     }
 }
 

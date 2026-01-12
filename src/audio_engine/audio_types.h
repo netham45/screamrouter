@@ -16,9 +16,11 @@
 #include <optional> // For std::optional
 #include "audio_constants.h"
 #include <map>
+#ifndef SCREAMROUTER_TESTING
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/operators.h> // For operator overloads
+#endif
 #include "utils/thread_safe_queue.h"
 
 namespace screamrouter {
@@ -646,6 +648,7 @@ using ListenerRemovalRequest = std::pair<std::string, std::string>;
 /** @brief A thread-safe queue for handling requests to remove listeners. */
 using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
 
+#ifndef SCREAMROUTER_TESTING
     /**
      * @brief Binds the C++ audio types to the given Python module.
      * @param m The pybind11 module to which the types will be bound.
@@ -828,6 +831,7 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("source_stats", &AudioEngineStats::source_stats)
             .def_readwrite("sink_stats", &AudioEngineStats::sink_stats);
     }
+#endif // !SCREAMROUTER_TESTING
     
     } // namespace audio
     } // namespace screamrouter

@@ -599,6 +599,7 @@ std::vector<std::string> AudioManager::get_rtp_receiver_seen_tags() {
     return m_receiver_manager ? m_receiver_manager->get_rtp_receiver_seen_tags() : std::vector<std::string>();
 }
 
+#ifndef SCREAMROUTER_TESTING
 pybind11::list AudioManager::get_rtp_sap_announcements() {
     pybind11::list result;
     if (!m_receiver_manager) {
@@ -632,6 +633,7 @@ pybind11::list AudioManager::get_rtp_sap_announcements() {
 
     return result;
 }
+#endif // !SCREAMROUTER_TESTING
 
 std::vector<std::string> AudioManager::get_raw_scream_receiver_seen_tags(int listen_port) {
     return m_receiver_manager ? m_receiver_manager->get_raw_scream_receiver_seen_tags(listen_port) : std::vector<std::string>();

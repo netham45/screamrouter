@@ -18,6 +18,9 @@
 #include "../configuration/audio_engine_settings.h"
 #include "../receivers/clock_manager.h"
 #include "../utils/packet_ring.h"
+#include "mp3_encoder.h"
+#include "listener_dispatcher.h"
+#include "sink_rate_controller.h"
 
 #include <string>
 #include <vector>
@@ -197,8 +200,10 @@ private:
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
     std::unique_ptr<INetworkSender> network_sender_;
     
-    std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
-    std::mutex listener_senders_mutex_;
+    // Helper classes for modular functionality
+    std::unique_ptr<Mp3Encoder> mp3_encoder_;
+    std::unique_ptr<ListenerDispatcher> listener_dispatcher_;
+    std::unique_ptr<SinkRateController> rate_controller_;
 
     ReadyRingMap ready_rings_;
     std::mutex queues_mutex_;
@@ -245,8 +250,12 @@ private:
     std::vector<uint32_t> current_csrcs_;
     std::mutex csrc_mutex_;
 
-    lame_t lame_global_flags_ = nullptr;
+    lame_t lame_global_flags_ = nullptr;  // TODO: Remove after full Mp3Encoder integration
     std::unique_ptr<AudioProcessor> stereo_preprocessor_;
+    
+    // Legacy members - keep until legacy code removed from sink_audio_mixer.cpp
+    std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
+    std::mutex listener_senders_mutex_;
     std::vector<uint8_t> mp3_encode_buffer_;
     std::deque<std::vector<int32_t>> mp3_pcm_queue_;
     std::mutex mp3_mutex_;

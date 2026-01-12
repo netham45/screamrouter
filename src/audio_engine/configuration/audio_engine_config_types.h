@@ -14,8 +14,10 @@
 #include <set>
 #include "audio_constants.h"
 #include "audio_types.h"
+#ifndef SCREAMROUTER_TESTING
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#endif
 
 namespace screamrouter {
 namespace config {
@@ -119,6 +121,7 @@ struct DesiredEngineState {
     std::vector<AppliedSinkParams> sinks;
 };
     
+#ifndef SCREAMROUTER_TESTING
 /**
  * @brief Binds the configuration data structures to a Python module.
  * @param m The pybind11 module to which the types will be bound.
@@ -173,6 +176,7 @@ inline void bind_config_types(pybind11::module_ &m) {
         .def_readwrite("source_paths", &DesiredEngineState::source_paths, "List of all desired AppliedSourcePathParams")
         .def_readwrite("sinks", &DesiredEngineState::sinks, "List of all desired AppliedSinkParams");
 }
+#endif // !SCREAMROUTER_TESTING
 
 } // namespace config
 } // namespace screamrouter
