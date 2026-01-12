@@ -491,12 +491,12 @@ TEST_F(AudioFormatProbeTest, DetectionCompletePersistsAfterMoreData) {
 // --- Codec Detection Tests ---
 
 TEST_F(AudioFormatProbeTest, DetectsPCMUMono) {
-    const int sample_rate = 8000;
+    const int sample_rate = 48000;  // High rate to meet 192KB minimum
     const int channels = 1;
     
-    auto audio = generate_ulaw_audio(sample_rate, channels, 2.0);
+    auto audio = generate_ulaw_audio(sample_rate, channels, 5.0);  // 5 seconds
     
-    size_t chunk_size = sample_rate / 50 * channels;
+    size_t chunk_size = sample_rate / 50 * channels;  // 20ms chunks
     for (size_t offset = 0; offset < audio.size(); offset += chunk_size) {
         size_t end = std::min(offset + chunk_size, audio.size());
         std::vector<uint8_t> chunk(audio.begin() + offset, audio.begin() + end);
@@ -511,12 +511,12 @@ TEST_F(AudioFormatProbeTest, DetectsPCMUMono) {
 }
 
 TEST_F(AudioFormatProbeTest, DetectsPCMUStereo) {
-    const int sample_rate = 22050;
+    const int sample_rate = 48000;  // High rate to meet 192KB minimum
     const int channels = 2;
     
-    auto audio = generate_ulaw_audio(sample_rate, channels, 2.0);
+    auto audio = generate_ulaw_audio(sample_rate, channels, 3.0);  // 3 seconds
     
-    size_t chunk_size = sample_rate / 50 * channels;
+    size_t chunk_size = sample_rate / 50 * channels;  // 20ms chunks
     for (size_t offset = 0; offset < audio.size(); offset += chunk_size) {
         size_t end = std::min(offset + chunk_size, audio.size());
         std::vector<uint8_t> chunk(audio.begin() + offset, audio.begin() + end);
@@ -532,12 +532,12 @@ TEST_F(AudioFormatProbeTest, DetectsPCMUStereo) {
 }
 
 TEST_F(AudioFormatProbeTest, DetectsPCMAMono) {
-    const int sample_rate = 8000;
+    const int sample_rate = 48000;  // High rate to meet 192KB minimum
     const int channels = 1;
     
-    auto audio = generate_alaw_audio(sample_rate, channels, 2.0);
+    auto audio = generate_alaw_audio(sample_rate, channels, 5.0);  // 5 seconds
     
-    size_t chunk_size = sample_rate / 50 * channels;
+    size_t chunk_size = sample_rate / 50 * channels;  // 20ms chunks
     for (size_t offset = 0; offset < audio.size(); offset += chunk_size) {
         size_t end = std::min(offset + chunk_size, audio.size());
         std::vector<uint8_t> chunk(audio.begin() + offset, audio.begin() + end);
@@ -552,12 +552,12 @@ TEST_F(AudioFormatProbeTest, DetectsPCMAMono) {
 }
 
 TEST_F(AudioFormatProbeTest, DetectsPCMAStereo) {
-    const int sample_rate = 22050;
+    const int sample_rate = 48000;  // High rate to meet 192KB minimum
     const int channels = 2;
     
-    auto audio = generate_alaw_audio(sample_rate, channels, 2.0);
+    auto audio = generate_alaw_audio(sample_rate, channels, 3.0);  // 3 seconds
     
-    size_t chunk_size = sample_rate / 50 * channels;
+    size_t chunk_size = sample_rate / 50 * channels;  // 20ms chunks
     for (size_t offset = 0; offset < audio.size(); offset += chunk_size) {
         size_t end = std::min(offset + chunk_size, audio.size());
         std::vector<uint8_t> chunk(audio.begin() + offset, audio.begin() + end);
@@ -574,13 +574,13 @@ TEST_F(AudioFormatProbeTest, DetectsPCMAStereo) {
 
 // Regression test: PCM should NOT be detected as companded codec
 TEST_F(AudioFormatProbeTest, PCM16BitNotDetectedAsPCMA) {
-    const int sample_rate = 22050;
+    const int sample_rate = 48000;  // High rate to meet 192KB minimum
     const int channels = 2;
     const int bit_depth = 16;
     
     auto audio = generate_test_audio(sample_rate, channels, bit_depth, Endianness::BIG, 2.0);
     
-    size_t chunk_size = sample_rate / 50 * channels * (bit_depth / 8);
+    size_t chunk_size = sample_rate / 50 * channels * (bit_depth / 8);  // 20ms chunks
     for (size_t offset = 0; offset < audio.size(); offset += chunk_size) {
         size_t end = std::min(offset + chunk_size, audio.size());
         std::vector<uint8_t> chunk(audio.begin() + offset, audio.begin() + end);

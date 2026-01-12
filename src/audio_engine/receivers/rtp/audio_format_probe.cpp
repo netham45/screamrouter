@@ -524,11 +524,17 @@ StreamCodec AudioFormatProbe::detect_codec() const {
     auto best = std::min_element(scores.begin(), scores.end(),
         [](const CodecScore& a, const CodecScore& b) { return a.score < b.score; });
     
-    // Need significant improvement over best PCM to declare coded format
-    // If best PCM is smoother or similar, prefer PCM (return UNKNOWN)
-    constexpr double kImprovementThreshold = 0.5;  // Coded score must be < 50% of best PCM
+    // For coded format detection:
+    // 1. If the coded format score is very low (< 0.01), it's very smooth - likely correct codec
+    // 2. Otherwise, coded score must be < 80% of best PCM score
+    constexpr double kAbsoluteThreshold = 0.01;  // Very smooth decoded output
+    constexpr double kRelativeThreshold = 0.8;   // Must be at least 20% better than PCM
     
-    if (best_pcm_score > 0 && best->score / best_pcm_score < kImprovementThreshold) {
+    if (best->score < kAbsoluteThreshold) {
+        return best->codec;
+    }
+    
+    if (best_pcm_score > 0 && best->score / best_pcm_score < kRelativeThreshold) {
         return best->codec;
     }
 
