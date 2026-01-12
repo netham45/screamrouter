@@ -576,21 +576,19 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
     }
 
     // ===== VARIABLE INPUT RESAMPLING =====
-    // Calculate how many input frames we need to produce base_frames_per_chunk_ output frames
-    // When playback_rate > 1.0: ratio increases, we need fewer input frames
-    // When playback_rate < 1.0: ratio decreases, we need more input frames
-    double resample_ratio = 1.0;
-    if (m_current_ap_input_samplerate > 0 && config_.output_samplerate > 0) {
-        resample_ratio = (static_cast<double>(config_.output_samplerate) / 
-                          static_cast<double>(m_current_ap_input_samplerate)) * current_playback_rate_;
+    // When buffer is high: PI gives playback_rate < 1.0, we want to DRAIN (consume MORE input)
+    // When buffer is low:  PI gives playback_rate > 1.0, we want to FILL (consume LESS input)
+    // The consumption_factor is INVERTED from playback_rate:
+    double consumption_factor = 1.0;
+    if (current_playback_rate_ > 0.0) {
+        consumption_factor = 1.0 / current_playback_rate_;  // INVERTED!
     }
-    resample_ratio = std::max(0.1, std::min(10.0, resample_ratio));  // Clamp for safety
+    consumption_factor = std::max(0.9, std::min(1.1, consumption_factor));  // Clamp ±10%
     
-    // Input frames needed = output_frames / ratio
-    // Add margin for libsamplerate's internal state
+    // Input frames needed = target * consumption_factor
     const size_t target_output_frames = base_frames_per_chunk_;
     size_t required_input_frames = static_cast<size_t>(
-        std::ceil(static_cast<double>(target_output_frames) / resample_ratio)) + 8;
+        std::ceil(static_cast<double>(target_output_frames) * consumption_factor)) + 4;
     size_t required_input_bytes = required_input_frames * input_bytes_per_frame_;
     
     // Use the calculated variable input size instead of fixed current_input_chunk_bytes_
