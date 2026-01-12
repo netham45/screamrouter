@@ -1,8 +1,10 @@
 #include "webrtc_sender.h"
 #include "../../utils/cpp_logger.h"
+#ifndef SCREAMROUTER_TESTING
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/gil.h>
+#endif
 #include <rtc/rtc.hpp>
 #include <rtc/frameinfo.hpp>
 #include <chrono>
@@ -277,7 +279,9 @@ void WebRtcSender::setup_peer_connection() {
         if (on_local_description_callback_) {
             std::string sdp_string = std::string(desc);
             LOG_CPP_ERROR("[WebRtcSender:%s] DEADLOCK_DEBUG: About to acquire GIL and call Python callback", config_.sink_id.c_str());
+#ifndef SCREAMROUTER_TESTING
             pybind11::gil_scoped_acquire acquire;
+#endif
             LOG_CPP_ERROR("[WebRtcSender:%s] DEADLOCK_DEBUG: GIL acquired, calling Python callback", config_.sink_id.c_str());
             on_local_description_callback_(sdp_string);
             LOG_CPP_ERROR("[WebRtcSender:%s] DEADLOCK_DEBUG: Python callback completed", config_.sink_id.c_str());
@@ -289,7 +293,9 @@ void WebRtcSender::setup_peer_connection() {
             std::string candidate_str = std::string(cand);
             std::string sdp_mid_str = cand.mid();
             LOG_CPP_INFO("[WebRtcSender:%s] Generated local ICE candidate. Forwarding to Python.", config_.sink_id.c_str());
+#ifndef SCREAMROUTER_TESTING
             pybind11::gil_scoped_acquire acquire;
+#endif
             on_ice_candidate_callback_(candidate_str, sdp_mid_str);
         }
     });

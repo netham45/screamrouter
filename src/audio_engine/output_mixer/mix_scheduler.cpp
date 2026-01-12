@@ -3,6 +3,7 @@
 #include "../utils/thread_priority.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace screamrouter {
 namespace audio {

@@ -95,6 +95,23 @@ if(SCREAMROUTER_USE_GTEST)
     target_link_libraries(test_rtp_reordering_buffer GTest::gtest_main)
     gtest_discover_tests(test_rtp_reordering_buffer)
     
+    # --- AudioFormatProbe Tests ---
+    add_executable(test_audio_format_probe
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit/test_audio_format_probe.cpp
+        ${AUDIO_ENGINE_ROOT}/receivers/rtp/audio_format_probe.cpp
+    )
+    target_include_directories(test_audio_format_probe PRIVATE 
+        ${AUDIO_ENGINE_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/include
+    )
+    target_compile_definitions(test_audio_format_probe PRIVATE SCREAMROUTER_TESTING)
+    target_link_libraries(test_audio_format_probe 
+        GTest::gtest_main
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libopus.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libmp3lame.a
+    )
+    gtest_discover_tests(test_audio_format_probe)
+    
     # --- Phase 3/6: Audio Channel Layout Tests ---
     add_executable(test_audio_channel_layout
         ${CMAKE_CURRENT_SOURCE_DIR}/unit/test_audio_channel_layout.cpp
@@ -143,6 +160,39 @@ if(SCREAMROUTER_USE_GTEST)
     target_compile_definitions(test_audio_mixing PRIVATE SCREAMROUTER_TESTING)
     target_link_libraries(test_audio_mixing GTest::gtest_main)
     gtest_discover_tests(test_audio_mixing)
+    
+    # --- AudioProcessor Unit Tests (Phase 1: Core DSP) ---
+    add_executable(test_audio_processor
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit/test_audio_processor.cpp
+        ${AUDIO_ENGINE_ROOT}/audio_processor/audio_processor.cpp
+        ${AUDIO_ENGINE_ROOT}/audio_processor/biquad/biquad.cpp
+        ${AUDIO_ENGINE_ROOT}/audio_channel_layout.cpp
+        ${AUDIO_ENGINE_ROOT}/utils/cpp_logger.cpp
+        ${AUDIO_ENGINE_ROOT}/utils/profiler.cpp
+    )
+    target_include_directories(test_audio_processor PRIVATE 
+        ${AUDIO_ENGINE_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/include
+    )
+    target_compile_definitions(test_audio_processor PRIVATE SCREAMROUTER_TESTING)
+    target_link_libraries(test_audio_processor 
+        GTest::gtest_main 
+        pthread
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libsamplerate.a
+    )
+    gtest_discover_tests(test_audio_processor)
+    
+    # --- SinkRateController Unit Tests (Phase 1: Core DSP) ---
+    add_executable(test_sink_rate_controller
+        ${CMAKE_CURRENT_SOURCE_DIR}/unit/test_sink_rate_controller.cpp
+        ${AUDIO_ENGINE_ROOT}/output_mixer/sink_rate_controller.cpp
+        ${AUDIO_ENGINE_ROOT}/utils/cpp_logger.cpp
+        ${AUDIO_ENGINE_ROOT}/utils/profiler.cpp
+    )
+    target_include_directories(test_sink_rate_controller PRIVATE ${AUDIO_ENGINE_INCLUDE_DIRS})
+    target_compile_definitions(test_sink_rate_controller PRIVATE SCREAMROUTER_TESTING)
+    target_link_libraries(test_sink_rate_controller GTest::gtest_main pthread)
+    gtest_discover_tests(test_sink_rate_controller)
     
     # --- Phase 9: Integration Tests ---
     # Source files needed for SourceInputProcessor integration test

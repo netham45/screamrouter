@@ -6,7 +6,8 @@
 #ifndef PROCESSOR_REGISTRY_H
 #define PROCESSOR_REGISTRY_H
 
-#include "../utils/packet_ring.h"
+#include "timeshift_manager.h"  // For ProcessorTargetInfo, WildcardMatchEvent, PacketRing
+
 #include <string>
 #include <map>
 #include <set>
@@ -20,44 +21,7 @@
 namespace screamrouter {
 namespace audio {
 
-// Forward declarations
-struct TaggedAudioPacket;
-class AudioEngineSettings;
-
-using PacketRing = utils::PacketRing<TaggedAudioPacket>;
-
-/**
- * @struct ProcessorTargetInfo
- * @brief Tracks state for a registered audio processor.
- */
-struct ProcessorTargetInfo {
-    std::string instance_id;
-    std::string source_tag_filter;
-    std::string bound_source_tag;
-    std::string wildcard_prefix;
-    std::string last_logged_mismatch_tag;
-    std::set<std::string> matched_concrete_tags;
-    
-    bool is_wildcard = false;
-    int current_delay_ms = 0;
-    float current_timeshift_backshift_sec = 0.0f;
-    std::size_t next_packet_read_index = 0;
-    uint64_t dropped_packets = 0;
-    
-    // Sink rings associated with this processor
-    std::map<std::string, std::weak_ptr<PacketRing>> sink_rings;
-};
-
-/**
- * @struct WildcardMatchEvent
- * @brief Records when a wildcard matches a concrete source tag.
- */
-struct WildcardMatchEvent {
-    std::string instance_id;
-    std::string wildcard_filter;
-    std::string matched_source_tag;
-    bool is_first_match = false;
-};
+// ProcessorTargetInfo, WildcardMatchEvent, and PacketRing are now defined in timeshift_manager.h
 
 /**
  * @class ProcessorRegistry

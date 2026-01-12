@@ -106,6 +106,14 @@ void RtpReceiverBase::handle_ssrc_changed(uint32_t old_ssrc, uint32_t new_ssrc, 
         std::lock_guard<std::mutex> lock(ssrc_addr_mutex_);
         ssrc_last_addr_.erase(old_ssrc);
     }
+    {
+        std::lock_guard<std::mutex> lock(format_probes_mutex_);
+        format_probes_.erase(old_ssrc);
+    }
+    {
+        std::lock_guard<std::mutex> lock(detected_formats_mutex_);
+        detected_formats_.erase(old_ssrc);
+    }
 
     for (auto& receiver : payload_receivers_) {
         receiver->on_ssrc_state_cleared(old_ssrc);
@@ -610,7 +618,18 @@ void RtpReceiverBase::register_payload_receiver(std::unique_ptr<RtpPayloadReceiv
 
 bool RtpReceiverBase::supports_payload_type(uint8_t payload_type, uint32_t ssrc) const {
     const uint8_t canonical_payload_type = canonicalize_payload_type(payload_type, ssrc);
-    return find_handler_for_payload(canonical_payload_type) != nullptr;
+    if (find_handler_for_payload(canonical_payload_type) != nullptr) {
+        return true;
+    }
+    
+    // Accept unknown dynamic payload types (96-127) on port 40000 for format probing
+    const int listen_port = config_.listen_port <= 0 ? 40000 : config_.listen_port;
+    if (listen_port == 40000 && payload_type >= 96 && payload_type <= 127) {
+        // Route through PCM handler for format detection
+        return find_handler_for_payload(kRtpPayloadTypeL16Stereo) != nullptr;
+    }
+    
+    return false;
 }
 
 RtpPayloadReceiver* RtpReceiverBase::find_handler_for_payload(uint8_t canonical_payload_type) const {
@@ -649,28 +668,92 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
     const uint8_t canonical_payload_type = canonicalize_payload_type(payload_type, ssrc);
 
     StreamProperties props{};
-        const bool has_properties = resolve_stream_properties(ssrc, client_addr, payload_type, props);
-        if (!has_properties) {
-            const int listen_port = config_.listen_port <= 0 ? 40000 : config_.listen_port;
-            if (listen_port == 40000) {
-                char fallback_ip_str[INET_ADDRSTRLEN];
-                inet_ntop(AF_INET, &(client_addr.sin_addr), fallback_ip_str, INET_ADDRSTRLEN);
-                const int fallback_port = ntohs(client_addr.sin_port);
-                std::string fallback_tag = std::string(fallback_ip_str) + ":" + std::to_string(fallback_port);
-                register_source_tag(fallback_tag);
+    const bool has_properties = resolve_stream_properties(ssrc, client_addr, payload_type, props);
+    if (!has_properties) {
+        const int listen_port = config_.listen_port <= 0 ? 40000 : config_.listen_port;
+        if (listen_port == 40000) {
+            char fallback_ip_str[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &(client_addr.sin_addr), fallback_ip_str, INET_ADDRSTRLEN);
+            const int fallback_port = ntohs(client_addr.sin_port);
+            std::string fallback_tag = std::string(fallback_ip_str) + ":" + std::to_string(fallback_port);
+            register_source_tag(fallback_tag);
 
-                if (populate_stream_properties_from_payload(
-                        payload_type, canonical_payload_type, listen_port, props)) {
-                    LOG_CPP_DEBUG("[RtpReceiver] Applying default payload mapping for SSRC 0x%08X on port 40000", ssrc);
+            if (populate_stream_properties_from_payload(
+                    payload_type, canonical_payload_type, listen_port, props)) {
+                LOG_CPP_DEBUG("[RtpReceiver] Applying default payload mapping for SSRC 0x%08X on port 40000", ssrc);
+            } else {
+                // Check for cached detected format first
+                {
+                    std::lock_guard<std::mutex> fmt_lock(detected_formats_mutex_);
+                    auto fmt_it = detected_formats_.find(ssrc);
+                    if (fmt_it != detected_formats_.end()) {
+                        props = fmt_it->second;
+                        props.port = listen_port;
+                        LOG_CPP_DEBUG("[RtpReceiver] Using cached auto-detected format for SSRC 0x%08X: %dHz %dch %dbit",
+                                      ssrc, props.sample_rate, props.channels, props.bit_depth);
+                        goto format_resolved;
+                    }
+                }
+
+                // Get or create probe for this SSRC
+                AudioFormatProbe* probe = nullptr;
+                {
+                    std::lock_guard<std::mutex> probe_lock(format_probes_mutex_);
+                    auto& probe_ptr = format_probes_[ssrc];
+                    if (!probe_ptr) {
+                        probe_ptr = std::make_unique<AudioFormatProbe>();
+                        char ssrc_hex[12];
+                        snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", ssrc);
+                        LOG_CPP_INFO("[RtpReceiver] Starting format auto-detection for SSRC %s", ssrc_hex);
+                    }
+                    probe = probe_ptr.get();
+                }
+
+                // Feed all ready packets to the probe
+                for (const auto& packet : ready_packets) {
+                    if (!packet.payload.empty()) {
+                        probe->add_data(packet.payload, packet.received_time);
+                    }
+                }
+
+                // Check if detection can finalize
+                if (probe->has_sufficient_data() && probe->finalize_detection()) {
+                    const StreamProperties& detected = probe->get_detected_format();
+                    float confidence = probe->get_confidence();
+
+                    const char* codec_str = "PCM";
+                    if (detected.codec == StreamCodec::PCMU) codec_str = "PCMU";
+                    else if (detected.codec == StreamCodec::PCMA) codec_str = "PCMA";
+                    else if (detected.codec == StreamCodec::OPUS) codec_str = "OPUS";
+
+                    LOG_CPP_INFO("[RtpReceiver] Auto-detected format for SSRC 0x%08X: %s %dHz %dch %dbit %s (confidence: %.1f%%)",
+                                 ssrc, codec_str, detected.sample_rate, detected.channels, detected.bit_depth,
+                                 detected.endianness == Endianness::BIG ? "BE" : "LE",
+                                 confidence * 100.0f);
+
+                    // Cache the detected format
+                    {
+                        std::lock_guard<std::mutex> fmt_lock(detected_formats_mutex_);
+                        detected_formats_[ssrc] = detected;
+                    }
+
+                    // Clean up probe since detection is complete
+                    {
+                        std::lock_guard<std::mutex> probe_lock(format_probes_mutex_);
+                        format_probes_.erase(ssrc);
+                    }
+
+                    props = detected;
+                    props.port = listen_port;
+                    props.payload_type = payload_type;
                 } else {
-                LOG_CPP_DEBUG("[RtpReceiver] Applying generic PCM fallback for SSRC 0x%08X on port 40000", ssrc);
-                props.payload_type = payload_type;
-                props.codec = StreamCodec::PCM;
-                props.sample_rate = 48000;
-                props.channels = 2;
-                props.bit_depth = 16;
-                props.endianness = Endianness::LITTLE;
-                props.port = listen_port;
+                    // Still probing - don't process packets yet
+                    char ssrc_hex[12];
+                    snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", ssrc);
+                    LOG_CPP_DEBUG("[RtpReceiver] Still probing format for SSRC %s (buffered %zu bytes)",
+                                  ssrc_hex, probe->has_sufficient_data() ? 0 : 1);
+                    return;
+                }
             }
         } else {
             char ssrc_hex[12];
@@ -680,6 +763,7 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
             return;
         }
     }
+    format_resolved:
 
     char client_ip_str[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip_str, INET_ADDRSTRLEN);

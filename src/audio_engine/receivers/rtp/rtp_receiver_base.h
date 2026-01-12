@@ -7,6 +7,7 @@
 
 #include "../network_audio_receiver.h"
 #include "../../audio_types.h"
+#include "audio_format_probe.h"
 #include "sap_listener/sap_listener.h"
 #include "rtp_reordering_buffer.h"
 
@@ -142,6 +143,14 @@ protected:
     std::vector<std::unique_ptr<RtpPayloadReceiver>> payload_receivers_;
     std::unordered_map<uint32_t, uint32_t> ssrc_last_sentinel_bucket_;
     std::mutex sentinel_bucket_mutex_;
+
+    /// Per-SSRC format probes for auto-detection when SAP is unavailable
+    std::unordered_map<uint32_t, std::unique_ptr<AudioFormatProbe>> format_probes_;
+    std::mutex format_probes_mutex_;
+
+    /// Cached detected formats per-SSRC (after probing completes)
+    std::unordered_map<uint32_t, StreamProperties> detected_formats_;
+    std::mutex detected_formats_mutex_;
 
     std::chrono::steady_clock::time_point telemetry_last_log_time_{};
 };

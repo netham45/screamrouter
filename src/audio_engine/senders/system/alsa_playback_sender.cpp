@@ -10,6 +10,7 @@
 #include <limits>
 #include <sstream>
 #include <vector>
+#include <thread>
 
 namespace screamrouter {
 namespace audio {
