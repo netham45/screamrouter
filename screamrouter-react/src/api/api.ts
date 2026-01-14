@@ -361,11 +361,17 @@ export interface SystemAudioTuning {
   alsa_latency_low_step_ms: number;
 }
 
+export interface RtpReceiverTuning {
+  format_probe_duration_ms: number;
+  format_probe_min_bytes: number;
+}
+
 export interface AudioEngineSettings {
   timeshift_tuning: TimeshiftTuning;
   mixer_tuning: MixerTuning;
   source_processor_tuning: SourceProcessorTuning;
   processor_tuning: ProcessorTuning;
+  rtp_receiver_tuning: RtpReceiverTuning;
   system_audio_tuning: SystemAudioTuning;
 }
 // --- End Audio Engine Settings Interfaces ---

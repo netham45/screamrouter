@@ -1085,7 +1085,7 @@ void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix, s
             ucred cred{};
             socklen_t cl = sizeof(cred);
             if (::getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &cred, &cl) == 0) {
-                (void)cred;
+                LOG_CPP_INFO("[PulseAudioReceiver] Accepted UNIX connection from PID %d", cred.pid);
                 conn->peer_identity = "127.0.0.1";
             }
 #endif

@@ -991,6 +991,11 @@ void AudioManager::set_audio_settings(const AudioEngineSettings& new_settings) {
     if (m_settings) {
         *m_settings = new_settings;
     }
+    // Propagate RTP receiver tuning to receiver manager
+    if (m_receiver_manager) {
+        m_receiver_manager->set_format_probe_duration_ms(new_settings.rtp_receiver_tuning.format_probe_duration_ms);
+        m_receiver_manager->set_format_probe_min_bytes(new_settings.rtp_receiver_tuning.format_probe_min_bytes);
+    }
 }
 
 SystemDeviceRegistry AudioManager::list_system_devices() {

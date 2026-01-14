@@ -67,6 +67,18 @@ public:
 
     std::vector<SapAnnouncement> get_sap_announcements();
 
+    /**
+     * @brief Set the format probe duration in milliseconds.
+     * @param duration_ms Probe duration for format auto-detection.
+     */
+    void set_format_probe_duration_ms(double duration_ms);
+
+    /**
+     * @brief Set the minimum bytes required for format probe.
+     * @param min_bytes Minimum bytes for format auto-detection.
+     */
+    void set_format_probe_min_bytes(size_t min_bytes);
+
 protected:
     void run() override;
     bool setup_socket() override;
@@ -153,6 +165,12 @@ protected:
     std::mutex detected_formats_mutex_;
 
     std::chrono::steady_clock::time_point telemetry_last_log_time_{};
+
+    /// Configurable format probe duration in milliseconds
+    double format_probe_duration_ms_ = 500.0;
+
+    /// Configurable format probe minimum bytes
+    size_t format_probe_min_bytes_ = 5000;
 };
 
 } // namespace audio

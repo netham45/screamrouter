@@ -122,6 +122,11 @@ struct SynchronizationTuning {
     double sync_smoothing_factor = 0.9;
 };
 
+struct RtpReceiverTuning {
+    double format_probe_duration_ms = 500.0;  // How long to probe before format detection
+    size_t format_probe_min_bytes = 5000;     // Minimum bytes before format detection
+};
+
 struct SystemAudioTuning {
     double alsa_target_latency_ms = 64.0;
     unsigned int alsa_periods_per_buffer = 3;
@@ -151,6 +156,7 @@ public:
     ProcessorTuning processor_tuning;
     SynchronizationSettings synchronization;
     SynchronizationTuning synchronization_tuning;
+    RtpReceiverTuning rtp_receiver_tuning;
     SystemAudioTuning system_audio_tuning;
 };
 

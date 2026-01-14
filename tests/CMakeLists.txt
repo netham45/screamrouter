@@ -286,6 +286,61 @@ if(SCREAMROUTER_USE_GTEST)
     )
     gtest_discover_tests(test_audio_graph)
     
+    # --- Receiver Lifecycle Stress Tests ---
+    # Tests rapid add/remove of sinks/sources to detect deadlocks
+    add_executable(test_receiver_stress
+        ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_receiver_stress.cpp
+        ${AUDIO_ENGINE_ALL_SOURCES}
+    )
+    target_include_directories(test_receiver_stress PRIVATE 
+        ${AUDIO_ENGINE_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/audio_engine/deps/libdatachannel/include
+    )
+    target_compile_definitions(test_receiver_stress PRIVATE SCREAMROUTER_TESTING)
+    target_link_libraries(test_receiver_stress 
+        GTest::gtest_main 
+        pthread
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libsamplerate.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libmp3lame.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libopus.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libdatachannel.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libjuice.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libsrtp2.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libusrsctp.a
+        asound
+        ssl
+        crypto
+    )
+    gtest_discover_tests(test_receiver_stress)
+
+    # --- Configuration Applier Tests ---
+    add_executable(test_config_applier
+        ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_config_applier.cpp
+        ${AUDIO_ENGINE_ALL_SOURCES}
+    )
+    target_include_directories(test_config_applier PRIVATE 
+        ${AUDIO_ENGINE_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/audio_engine/deps/libdatachannel/include
+    )
+    target_compile_definitions(test_config_applier PRIVATE SCREAMROUTER_TESTING)
+    target_link_libraries(test_config_applier 
+        GTest::gtest_main 
+        pthread
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libsamplerate.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libmp3lame.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libopus.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libdatachannel.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libjuice.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libsrtp2.a
+        ${CMAKE_CURRENT_SOURCE_DIR}/../build/deps/lib/libusrsctp.a
+        asound
+        ssl
+        crypto
+    )
+    gtest_discover_tests(test_config_applier)
+    
 endif()
 
 # --- CTest Integration ---

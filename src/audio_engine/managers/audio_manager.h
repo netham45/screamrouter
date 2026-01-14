@@ -475,6 +475,11 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("alsa_latency_xrun_boost_ms", &SystemAudioTuning::alsa_latency_xrun_boost_ms)
         .def_readwrite("alsa_latency_low_step_ms", &SystemAudioTuning::alsa_latency_low_step_ms);
 
+    py::class_<RtpReceiverTuning>(m, "RtpReceiverTuning")
+        .def(py::init<>())
+        .def_readwrite("format_probe_duration_ms", &RtpReceiverTuning::format_probe_duration_ms)
+        .def_readwrite("format_probe_min_bytes", &RtpReceiverTuning::format_probe_min_bytes);
+
     py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
         .def(py::init<>())
         .def_readwrite("chunk_size_bytes", &AudioEngineSettings::chunk_size_bytes)
@@ -486,6 +491,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("processor_tuning", &AudioEngineSettings::processor_tuning)
         .def_readwrite("synchronization", &AudioEngineSettings::synchronization)
         .def_readwrite("synchronization_tuning", &AudioEngineSettings::synchronization_tuning)
+        .def_readwrite("rtp_receiver_tuning", &AudioEngineSettings::rtp_receiver_tuning)
         .def_readwrite("system_audio_tuning", &AudioEngineSettings::system_audio_tuning);
 
     py::class_<TimeshiftBufferExport>(m, "TimeshiftBufferExport")

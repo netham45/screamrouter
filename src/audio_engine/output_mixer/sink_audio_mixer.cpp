@@ -588,6 +588,12 @@ void SinkAudioMixer::start() {
  * @brief Stops the mixer's processing thread and cleans up resources.
  */
 void SinkAudioMixer::stop() {
+    auto stop_start = std::chrono::steady_clock::now();
+    auto log_elapsed = [&](const char* label) {
+        auto now = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - stop_start).count();
+        LOG_CPP_DEBUG("[SinkMixer:%s] %s (elapsed=%lldms)", config_.sink_id.c_str(), label, (long long)ms);
+    };
     LOG_CPP_INFO("[SinkMixer:%s] stop(): enter", config_.sink_id.c_str());
     join_startup_thread();
 
@@ -607,16 +613,33 @@ void SinkAudioMixer::stop() {
         listeners = listener_senders_.size();
     }
     LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_fill_bytes_, clock_manager_enabled_.load() ? 1 : 0);
+    
+    // Set stop flag first
     stop_flag_ = true;
-
-    if (clock_condition_handle_.condition) {
-        clock_condition_handle_.condition->cv.notify_all();
+    
+    // Signal the condition variable with lock held to ensure the run loop sees the stop_flag
+    // Notify multiple times to handle race conditions where thread may not be waiting yet
+    auto condition = clock_condition_handle_.condition;
+    if (condition) {
+        {
+            std::lock_guard<std::mutex> lk(condition->mutex);
+            // Bump sequence to ensure wait condition is satisfied
+            condition->sequence++;
+        }
+        condition->cv.notify_all();
     }
 
+    // Unregister timer BEFORE joining (this also notifies)
     unregister_mix_timer();
     LOG_CPP_INFO("[SinkMixer:%s] Mix timer unregistered", config_.sink_id.c_str());
+    
+    // Notify again after unregistering in case thread was re-entering wait
+    if (condition) {
+        condition->cv.notify_all();
+    }
 
     stop_mp3_thread();
+    log_elapsed("stop_mp3_thread complete");
 
     if (mp3_output_queue_ && lame_global_flags_) {
         LOG_CPP_INFO("[SinkMixer:%s] Flushing LAME buffer...", config_.sink_id.c_str());
@@ -628,18 +651,46 @@ void SinkAudioMixer::stop() {
         }
     }
 
+    // Join the thread directly - the timed wait_for() in wait_for_mix_tick() ensures
+    // the run loop will check stop_flag_ at most every 100ms and exit promptly.
     if (component_thread_.joinable()) {
+        LOG_CPP_INFO("[SinkMixer:%s] Waiting for component thread to exit...", config_.sink_id.c_str());
         try {
             component_thread_.join();
             LOG_CPP_INFO("[SinkMixer:%s] Thread joined.", config_.sink_id.c_str());
         } catch (const std::system_error& e) {
             LOG_CPP_ERROR("[SinkMixer:%s] Error joining thread: %s", config_.sink_id.c_str(), e.what());
         }
+        log_elapsed("component_thread joined");
     }
 
     if (network_sender_) {
-        LOG_CPP_INFO("[SinkMixer:%s] Closing primary network sender...", config_.sink_id.c_str());
+        const char* sender_type = "Unknown";
+        if (dynamic_cast<MultiDeviceRtpSender*>(network_sender_.get())) {
+            sender_type = "MultiDeviceRtpSender";
+        } else if (dynamic_cast<MultiDeviceRtpOpusSender*>(network_sender_.get())) {
+            sender_type = "MultiDeviceRtpOpusSender";
+        } else if (dynamic_cast<RtpOpusSender*>(network_sender_.get())) {
+            sender_type = "RtpOpusSender";
+        } else if (dynamic_cast<RtpSender*>(network_sender_.get())) {
+            sender_type = "RtpSender";
+        } else if (dynamic_cast<ScreamSender*>(network_sender_.get())) {
+            sender_type = "ScreamSender";
+        } else if (dynamic_cast<WebRtcSender*>(network_sender_.get())) {
+            sender_type = "WebRtcSender";
+#if defined(__linux__)
+        } else if (dynamic_cast<ScreamrouterFifoSender*>(network_sender_.get())) {
+            sender_type = "ScreamrouterFifoSender";
+        } else if (dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+            sender_type = "AlsaPlaybackSender";
+#elif defined(_WIN32)
+        } else if (dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+            sender_type = "WasapiPlaybackSender";
+#endif
+        }
+        LOG_CPP_INFO("[SinkMixer:%s] Closing primary network sender (type=%s)...", config_.sink_id.c_str(), sender_type);
         network_sender_->close();
+        log_elapsed("network_sender closed");
     }
 
     {
@@ -653,6 +704,7 @@ void SinkAudioMixer::stop() {
         listener_senders_.clear();
         LOG_CPP_INFO("[SinkMixer:%s] All listener senders closed and cleared.", config_.sink_id.c_str());
     }
+    log_elapsed("listener cleanup complete");
     LOG_CPP_INFO("[SinkMixer:%s] stop(): exit", config_.sink_id.c_str());
 }
 
@@ -1865,6 +1917,7 @@ void SinkAudioMixer::unregister_mix_timer() {
 bool SinkAudioMixer::wait_for_mix_tick() {
     PROFILE_FUNCTION();
     if (stop_flag_) {
+        std::cerr << "[DEBUG-TICK:" << config_.sink_id << "] stop_flag_ seen at entry" << std::endl << std::flush;
         return false;
     }
 
@@ -1909,7 +1962,9 @@ bool SinkAudioMixer::wait_for_mix_tick() {
         }
 
         std::unique_lock<std::mutex> condition_lock(condition->mutex);
-        condition->cv.wait(condition_lock, [this, &condition]() {
+        // Use timed wait to periodically check stop_flag_ even if notification is lost
+        constexpr auto kWaitTimeout = std::chrono::milliseconds(100);
+        condition->cv.wait_for(condition_lock, kWaitTimeout, [this, &condition]() {
             return stop_flag_ || condition->sequence > clock_last_sequence_;
         });
 
@@ -2130,6 +2185,11 @@ void SinkAudioMixer::run() {
             coordinator_->complete_dispatch(frames_dispatched, *dispatch_timing);
         }
 
+        // Check stop_flag_ before acquiring mutex to avoid blocking stop()
+        if (stop_flag_) {
+            break;
+        }
+        
         bool has_listeners;
         {
             std::lock_guard<std::mutex> lock(listener_senders_mutex_);

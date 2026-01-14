@@ -123,6 +123,18 @@ public:
     void release_capture_receiver(const std::string& tag);
 
     /**
+     * @brief Set the format probe duration for RTP receivers.
+     * @param duration_ms Probe duration in milliseconds.
+     */
+    void set_format_probe_duration_ms(double duration_ms);
+
+    /**
+     * @brief Set the minimum bytes required for format probe.
+     * @param min_bytes Minimum bytes before detection.
+     */
+    void set_format_probe_min_bytes(size_t min_bytes);
+
+    /**
      * @brief Logs the current status of receivers for debugging.
      */
     void log_status();

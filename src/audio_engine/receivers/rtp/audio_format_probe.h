@@ -75,13 +75,31 @@ public:
      */
     void reset();
 
+    /**
+     * @brief Set the probe duration in milliseconds.
+     * @param duration_ms Minimum time to probe before detection (default 500ms).
+     */
+    void set_probe_duration_ms(double duration_ms);
+
+    /**
+     * @brief Set the minimum bytes required before detection.
+     * @param min_bytes Minimum bytes before detection (default 5000).
+     */
+    void set_probe_min_bytes(size_t min_bytes);
+
 private:
+    struct InterchannelStats {
+        double normalized_difference = 1.0;  ///< Avg |ch - ref| normalized by max amp
+        double relative_difference = 1.0;    ///< Cross diff relative to sequential diff
+    };
+
     /// Candidate format for brute-force testing
     struct FormatCandidate {
         int channels;
         int bit_depth;
         Endianness endianness;
         double score;  // Lower is better (fewer discontinuities)
+        InterchannelStats interchannel_stats;
     };
 
     /**
@@ -91,6 +109,16 @@ private:
      * then counts large amplitude jumps between consecutive samples.
      */
     double compute_discontinuity_score(int channels, int bit_depth, Endianness endianness) const;
+
+    /**
+     * @brief Measure cross-channel similarity statistics.
+     *
+     * Captures both the absolute difference between channels and how that
+     * compares to the average difference between consecutive samples in the
+     * stream. This helps distinguish "true" mono streams from stereo streams
+     * that merely duplicate a channel.
+     */
+    InterchannelStats compute_interchannel_stats(int channels, int bit_depth, Endianness endianness) const;
 
     /**
      * @brief Detect endianness using byte volatility analysis.
@@ -163,6 +191,12 @@ private:
 
     /// Whether detection has been finalized
     bool detection_complete_ = false;
+
+    /// Configurable probe duration in milliseconds
+    double probe_duration_ms_ = 500.0;
+
+    /// Configurable minimum bytes for detection
+    size_t probe_min_bytes_ = 5000;
 };
 
 }  // namespace audio

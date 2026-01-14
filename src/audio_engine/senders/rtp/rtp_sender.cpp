@@ -449,6 +449,10 @@ void RtpSender::close() {
     if (sap_thread_running_) {
         LOG_CPP_INFO("[RtpSender:%s] Stopping SAP announcement thread...", config_.sink_id.c_str());
         sap_thread_running_ = false;
+        {
+            std::lock_guard<std::mutex> lock(sap_thread_mutex_);
+            sap_thread_cv_.notify_all();
+        }
         if (sap_thread_.joinable()) {
             sap_thread_.join();
         }
@@ -832,7 +836,15 @@ void RtpSender::sap_announcement_loop() {
             }
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+        if (!sap_thread_running_) {
+            break;
+        }
+        {
+            std::unique_lock<std::mutex> wait_lock(sap_thread_mutex_);
+            sap_thread_cv_.wait_for(wait_lock, std::chrono::seconds(5), [this]() {
+                return !sap_thread_running_.load();
+            });
+        }
     }
 
     LOG_CPP_INFO("[RtpSender:%s] SAP announcement thread finished.", config_.sink_id.c_str());

@@ -510,6 +510,14 @@ const StatsPage: React.FC = () => {
                   </SimpleGrid>
                 </Box>
 
+                <Box>
+                  <Heading size="sm" mb={4}>RTP Receiver Tuning</Heading>
+                  <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                    {renderTuningControl('rtp_receiver_tuning', 'format_probe_duration_ms', 'Format Probe Duration (ms)', 50)}
+                    {renderTuningControl('rtp_receiver_tuning', 'format_probe_min_bytes', 'Format Probe Min Bytes', 100)}
+                  </SimpleGrid>
+                </Box>
+
                 <HStack justify="flex-end" spacing={4}>
                   <Button onClick={handleResetSettings}>Reset</Button>
                   <Button colorScheme="blue" onClick={handleSaveSettings}>Save</Button>

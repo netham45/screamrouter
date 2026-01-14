@@ -334,6 +334,20 @@ void ReceiverManager::release_capture_receiver(const std::string& tag) {
     }
 }
 
+void ReceiverManager::set_format_probe_duration_ms(double duration_ms) {
+    if (m_rtp_receiver) {
+        m_rtp_receiver->set_format_probe_duration_ms(duration_ms);
+        LOG_CPP_INFO("[ReceiverManager] Set RTP format probe duration to %.0f ms", duration_ms);
+    }
+}
+
+void ReceiverManager::set_format_probe_min_bytes(size_t min_bytes) {
+    if (m_rtp_receiver) {
+        m_rtp_receiver->set_format_probe_min_bytes(min_bytes);
+        LOG_CPP_INFO("[ReceiverManager] Set RTP format probe min bytes to %zu", min_bytes);
+    }
+}
+
 void ReceiverManager::log_status() {
     // RTP
     if (m_rtp_receiver) {

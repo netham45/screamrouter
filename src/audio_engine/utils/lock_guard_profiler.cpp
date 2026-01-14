@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <set>
 #include <cstdlib>  // for std::abort()
+#include <algorithm>
 
 namespace screamrouter {
 namespace audio {
@@ -107,60 +108,83 @@ void LockWatchdog::dumpAllHeldLocks() {
 // LockGuardProfiler Implementation
 //=============================================================================
 
-LockGuardProfiler::LockGuardProfiler(std::shared_mutex& m, LockType type, 
+LockGuardProfiler::LockGuardProfiler(std::shared_mutex& m, LockType type,
                                      const char* file, int line)
-    : mutex_(m), lock_type_(type), file_(file), line_(line) {
-    
-    // Check for self-deadlock (same thread trying to lock non-recursive mutex twice)
-    void* mutex_ptr = static_cast<void*>(&mutex_);
-    
-    if (tls_held_mutexes.find(mutex_ptr) != tls_held_mutexes.end()) {
+    : LockGuardProfiler(static_cast<void*>(&m), type, file, line, MutexFlavor::SHARED) {
+    shared_mutex_ = &m;
+    if (lock_type_ == LockType::WRITE) {
+        shared_unique_lock_ = std::unique_lock<std::shared_mutex>(*shared_mutex_);
+    } else {
+        shared_shared_lock_ = std::shared_lock<std::shared_mutex>(*shared_mutex_);
+    }
+}
+
+LockGuardProfiler::LockGuardProfiler(std::mutex& m, LockType type,
+                                     const char* file, int line)
+    : LockGuardProfiler(static_cast<void*>(&m), type, file, line, MutexFlavor::STD) {
+    std_mutex_ = &m;
+    std_unique_lock_ = std::unique_lock<std::mutex>(*std_mutex_);
+}
+
+LockGuardProfiler::LockGuardProfiler(void* mutex_ptr, LockType type, const char* file,
+                                     int line, MutexFlavor flavor)
+    : mutex_flavor_(flavor),
+      mutex_ptr_(mutex_ptr),
+      shared_mutex_(nullptr),
+      std_mutex_(nullptr),
+      lock_type_(type),
+      file_(file),
+      line_(line) {
+
+    if (mutex_flavor_ == MutexFlavor::STD) {
+        lock_type_ = LockType::WRITE;
+    }
+
+    check_self_deadlock();
+
+    start_time_ = std::chrono::steady_clock::now();
+
+    track_lock_acquisition();
+
+    LockWatchdog::getInstance().registerLock(this, lock_type_, file_, line_, start_time_);
+}
+
+void LockGuardProfiler::check_self_deadlock() {
+    if (tls_held_mutexes.find(mutex_ptr_) != tls_held_mutexes.end()) {
         std::stringstream ss;
         ss << "SELF-DEADLOCK DETECTED: Thread " << std::this_thread::get_id()
-           << " attempting to lock mutex at " << mutex_ptr 
+           << " attempting to lock mutex at " << mutex_ptr_
            << " which it already holds!"
-           << "\n  Current lock attempt: " << file << ":" << line
-           << "\n  Previously locked at: " << tls_held_locks[mutex_ptr].first 
-           << ":" << tls_held_locks[mutex_ptr].second;
+           << "\n  Current lock attempt: " << file_ << ":" << line_
+           << "\n  Previously locked at: " << tls_held_locks[mutex_ptr_].first
+           << ":" << tls_held_locks[mutex_ptr_].second;
         
         // Dump all locks before fatal error
         LockWatchdog::getInstance().dumpAllHeldLocks();
         LOG_CPP_ERROR("%s", ss.str().c_str());
         std::abort(); // Fatal error - terminate the program
     }
-    
-    // Record the start time for profiling
-    start_time_ = std::chrono::steady_clock::now();
-    
-    // Acquire the lock based on type
-    if (lock_type_ == LockType::WRITE) {
-        unique_lock_ = std::unique_lock<std::shared_mutex>(mutex_);
-    } else {
-        shared_lock_ = std::shared_lock<std::shared_mutex>(mutex_);
-    }
-    
-    // Track this lock in thread-local storage
-    tls_held_mutexes.insert(mutex_ptr);
-    tls_held_locks[mutex_ptr] = {std::string(file), line};
+}
+
+void LockGuardProfiler::track_lock_acquisition() {
+    tls_held_mutexes.insert(mutex_ptr_);
+    tls_held_locks[mutex_ptr_] = {std::string(file_), line_};
     tls_lock_count++;
     
-    // Update global registry for debugging
     {
         std::lock_guard<std::mutex> lock(g_lock_registry_mutex);
         std::stringstream ss;
         ss << (lock_type_ == LockType::WRITE ? "W" : "R") 
-           << "@" << mutex_ptr << " (" << file << ":" << line << ")";
+           << "@" << mutex_ptr_ << " (" << file_ << ":" << line_ << ")";
         g_thread_lock_registry[std::this_thread::get_id()].push_back(ss.str());
     }
     
-    // Warn if holding multiple locks (potential deadlock risk)
     if (tls_lock_count > 1) {
         std::stringstream ss;
         ss << "WARNING: Thread " << std::this_thread::get_id() 
            << " now holds " << tls_lock_count << " locks simultaneously"
-           << " (latest: " << file << ":" << line << ")";
+           << " (latest: " << file_ << ":" << line_ << ")";
         
-        // List all held locks
         ss << "\n  Held locks:";
         for (const auto& [ptr, info] : tls_held_locks) {
             ss << "\n    - " << ptr << " at " << info.first << ":" << info.second;
@@ -168,9 +192,32 @@ LockGuardProfiler::LockGuardProfiler(std::shared_mutex& m, LockType type,
         
         LOG_CPP_WARNING("%s", ss.str().c_str());
     }
+}
+
+void LockGuardProfiler::release_lock_tracking() {
+    tls_held_mutexes.erase(mutex_ptr_);
+    tls_held_locks.erase(mutex_ptr_);
+    tls_lock_count--;
     
-    // Register with watchdog
-    LockWatchdog::getInstance().registerLock(this, lock_type_, file_, line_, start_time_);
+    {
+        std::lock_guard<std::mutex> lock(g_lock_registry_mutex);
+        auto& locks = g_thread_lock_registry[std::this_thread::get_id()];
+        if (!locks.empty()) {
+            std::stringstream ss;
+            ss << (lock_type_ == LockType::WRITE ? "W" : "R") 
+               << "@" << mutex_ptr_ << " (" << file_ << ":" << line_ << ")";
+            auto lock_str = ss.str();
+            
+            auto it = std::find(locks.rbegin(), locks.rend(), lock_str);
+            if (it != locks.rend()) {
+                locks.erase(std::next(it).base());
+            }
+        }
+        
+        if (locks.empty()) {
+            g_thread_lock_registry.erase(std::this_thread::get_id());
+        }
+    }
 }
 
 LockGuardProfiler::~LockGuardProfiler() {
@@ -192,39 +239,9 @@ LockGuardProfiler::~LockGuardProfiler() {
         LOG_CPP_WARNING("%s", ss.str().c_str());
     }
     
-    // Unregister from watchdog
     LockWatchdog::getInstance().unregisterLock(this);
     
-    // Remove from thread-local tracking
-    void* mutex_ptr = static_cast<void*>(&mutex_);
-    tls_held_mutexes.erase(mutex_ptr);
-    tls_held_locks.erase(mutex_ptr);
-    tls_lock_count--;
-    
-    // Update global registry
-    {
-        std::lock_guard<std::mutex> lock(g_lock_registry_mutex);
-        auto& locks = g_thread_lock_registry[std::this_thread::get_id()];
-        if (!locks.empty()) {
-            // Remove the last matching lock entry
-            std::stringstream ss;
-            ss << (lock_type_ == LockType::WRITE ? "W" : "R") 
-               << "@" << mutex_ptr << " (" << file_ << ":" << line_ << ")";
-            auto lock_str = ss.str();
-            
-            auto it = std::find(locks.rbegin(), locks.rend(), lock_str);
-            if (it != locks.rend()) {
-                locks.erase(std::next(it).base());
-            }
-        }
-        
-        // Clean up empty entries
-        if (locks.empty()) {
-            g_thread_lock_registry.erase(std::this_thread::get_id());
-        }
-    }
-    
-    // Release the lock (happens automatically when unique_lock/shared_lock go out of scope)
+    release_lock_tracking();
 }
 
 // Static method to dump all currently held locks (for debugging)

@@ -80,6 +80,28 @@ std::vector<SapAnnouncement> RtpReceiverBase::get_sap_announcements() {
     return {};
 }
 
+void RtpReceiverBase::set_format_probe_duration_ms(double duration_ms) {
+    format_probe_duration_ms_ = duration_ms;
+    // Also update any existing probes
+    std::lock_guard<std::mutex> lock(format_probes_mutex_);
+    for (auto& [ssrc, probe] : format_probes_) {
+        if (probe) {
+            probe->set_probe_duration_ms(duration_ms);
+        }
+    }
+}
+
+void RtpReceiverBase::set_format_probe_min_bytes(size_t min_bytes) {
+    format_probe_min_bytes_ = min_bytes;
+    // Also update any existing probes
+    std::lock_guard<std::mutex> lock(format_probes_mutex_);
+    for (auto& [ssrc, probe] : format_probes_) {
+        if (probe) {
+            probe->set_probe_min_bytes(min_bytes);
+        }
+    }
+}
+
 std::string RtpReceiverBase::get_source_key(const struct sockaddr_in& addr) const {
     char ip_str[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(addr.sin_addr), ip_str, INET_ADDRSTRLEN);
@@ -702,9 +724,11 @@ void RtpReceiverBase::process_ready_packets_internal(uint32_t ssrc, const struct
                     auto& probe_ptr = format_probes_[ssrc];
                     if (!probe_ptr) {
                         probe_ptr = std::make_unique<AudioFormatProbe>();
+                        probe_ptr->set_probe_duration_ms(format_probe_duration_ms_);
+                        probe_ptr->set_probe_min_bytes(format_probe_min_bytes_);
                         char ssrc_hex[12];
                         snprintf(ssrc_hex, sizeof(ssrc_hex), "0x%08X", ssrc);
-                        LOG_CPP_INFO("[RtpReceiver] Starting format auto-detection for SSRC %s", ssrc_hex);
+                        LOG_CPP_INFO("[RtpReceiver] Starting format auto-detection for SSRC %s (duration: %.0fms, min_bytes: %zu)", ssrc_hex, format_probe_duration_ms_, format_probe_min_bytes_);
                     }
                     probe = probe_ptr.get();
                 }
