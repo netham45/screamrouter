@@ -156,6 +156,15 @@ std::vector<std::string> ReceiverManager::get_pulse_receiver_seen_tags() {
 #endif
 
 std::optional<std::string> ReceiverManager::resolve_stream_tag(const std::string& tag) {
+    auto normalize = [](const std::string& value) {
+        const auto hash_pos = value.find('#');
+        return hash_pos == std::string::npos ? value : value.substr(0, hash_pos);
+    };
+
+    const bool is_wildcard = !tag.empty() && tag.back() == '*';
+    const std::string prefix = is_wildcard ? tag.substr(0, tag.size() - 1) : tag;
+    const std::string normalized_prefix = normalize(prefix);
+
 #if !defined(_WIN32)
     if (m_pulse_receiver) {
         LOG_CPP_DEBUG("[ReceiverManager] resolve_stream_tag('%s') -> querying Pulse", tag.c_str());
@@ -166,8 +175,19 @@ std::optional<std::string> ReceiverManager::resolve_stream_tag(const std::string
         }
     }
 #endif
+
+    if (is_wildcard && m_rtp_receiver) {
+        auto candidates = m_rtp_receiver->get_seen_tags();
+        for (const auto& candidate : candidates) {
+            const std::string candidate_norm = normalize(candidate);
+            if (candidate_norm.rfind(normalized_prefix, 0) == 0) {
+                LOG_CPP_INFO("[ReceiverManager] resolve_stream_tag('%s') => '%s' (RTP wildcard)", tag.c_str(), candidate.c_str());
+                return candidate;
+            }
+        }
+    }
+
     LOG_CPP_DEBUG("[ReceiverManager] resolve_stream_tag('%s') => <none>", tag.c_str());
-    (void)tag;
     return std::nullopt;
 }
 
@@ -176,10 +196,28 @@ std::vector<std::string> ReceiverManager::list_stream_tags_for_wildcard(const st
     if (m_pulse_receiver) {
         return m_pulse_receiver->list_stream_tags_for_wildcard(wildcard_tag);
     }
-#else
-    (void)wildcard_tag;
 #endif
-    return {};
+
+    std::vector<std::string> matches;
+    const bool is_wildcard = !wildcard_tag.empty() && wildcard_tag.back() == '*';
+    if (!is_wildcard || !m_rtp_receiver) {
+        return matches;
+    }
+    auto normalize = [](const std::string& value) {
+        const auto hash_pos = value.find('#');
+        return hash_pos == std::string::npos ? value : value.substr(0, hash_pos);
+    };
+    const std::string prefix = wildcard_tag.substr(0, wildcard_tag.size() - 1);
+    const std::string normalized_prefix = normalize(prefix);
+
+    auto candidates = m_rtp_receiver->get_seen_tags();
+    for (const auto& candidate : candidates) {
+        const std::string candidate_norm = normalize(candidate);
+        if (candidate_norm.rfind(normalized_prefix, 0) == 0) {
+            matches.push_back(candidate);
+        }
+    }
+    return matches;
 }
 
 void ReceiverManager::set_stream_tag_callbacks(
@@ -293,6 +331,20 @@ void ReceiverManager::release_capture_receiver(const std::string& tag) {
     } else {
         LOG_CPP_INFO("ReceiverManager decremented capture receiver %s (ref_count=%zu).",
                      tag.c_str(), usage_it->second);
+    }
+}
+
+void ReceiverManager::set_format_probe_duration_ms(double duration_ms) {
+    if (m_rtp_receiver) {
+        m_rtp_receiver->set_format_probe_duration_ms(duration_ms);
+        LOG_CPP_INFO("[ReceiverManager] Set RTP format probe duration to %.0f ms", duration_ms);
+    }
+}
+
+void ReceiverManager::set_format_probe_min_bytes(size_t min_bytes) {
+    if (m_rtp_receiver) {
+        m_rtp_receiver->set_format_probe_min_bytes(min_bytes);
+        LOG_CPP_INFO("[ReceiverManager] Set RTP format probe min bytes to %zu", min_bytes);
     }
 }
 

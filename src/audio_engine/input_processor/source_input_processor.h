@@ -103,6 +103,8 @@ public:
     const std::string& get_instance_id() const { return config_.instance_id; }
     /** @brief Gets the tag of the source this processor is handling. */
     const std::string& get_source_tag() const;
+    /** @brief Checks if an incoming tag matches this processor (ignoring optional '#ip.port' suffix). */
+    bool matches_source_tag(const std::string& actual_tag) const;
     /** @brief Gets the full configuration struct of this processor. */
     const SourceProcessorConfig& get_config() const { return config_; }
     /**
@@ -132,6 +134,15 @@ public:
     void set_volume_normalization(bool enabled);
     void set_speaker_mix(int input_channel_key, const CppSpeakerLayout& layout);
 
+    // --- runtime state helpers for cloning/cascading ---
+    float get_current_volume() const;
+    std::vector<float> get_current_eq() const;
+    int get_current_delay_ms() const;
+    float get_current_timeshift_sec() const;
+    bool is_eq_normalization_enabled() const;
+    bool is_volume_normalization_enabled() const;
+    std::map<int, screamrouter::audio::CppSpeakerLayout> get_current_speaker_layouts() const;
+
 protected:
     void run() override;
 
@@ -146,7 +157,7 @@ private:
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
 
     std::unique_ptr<AudioProcessor> audio_processor_;
-    std::mutex processor_config_mutex_;
+    mutable std::mutex processor_config_mutex_;
 
     std::vector<int32_t> process_buffer_;
     std::vector<uint32_t> current_packet_ssrcs_;
@@ -160,6 +171,8 @@ private:
 
     std::map<int, screamrouter::audio::CppSpeakerLayout> current_speaker_layouts_map_;
     double current_playback_rate_ = 1.0;
+    bool eq_normalization_enabled_ = false;
+    bool volume_normalization_enabled_ = false;
 
     std::atomic<uint64_t> m_total_packets_processed{0};
     std::atomic<uint64_t> m_reconfigurations{0};
@@ -170,6 +183,11 @@ private:
     std::chrono::steady_clock::time_point m_last_packet_origin_time;
     bool m_is_first_packet_after_discontinuity = true;
     std::size_t pending_sentinel_samples_ = 0;
+    
+    // Tracks cumulative time dilation from playback_rate != 1.0
+    // When rate > 1.0, we consume audio faster than real-time, so output timestamps
+    // should be shifted earlier. This accumulates the difference.
+    double cumulative_time_dilation_ms_ = 0.0;
 
     /**
      * @brief Processes a single chunk of raw audio data using the internal AudioProcessor.

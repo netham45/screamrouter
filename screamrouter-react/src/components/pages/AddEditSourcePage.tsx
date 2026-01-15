@@ -4,7 +4,7 @@
  * volume, delay, timeshift, and VNC settings.
  * It allows the user to either add a new source or update an existing one.
  */
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Flex,
@@ -33,6 +33,7 @@ import {
   Textarea
 } from '@chakra-ui/react';
 import ApiService, { Source, SystemAudioDeviceInfo } from '../../api/api';
+import { DiscoveredDevice } from '../../types/preferences';
 import { useTutorial } from '../../context/TutorialContext';
 import { useMdnsDiscovery } from '../../context/MdnsDiscoveryContext';
 import VolumeSlider from './controls/VolumeSlider';
@@ -78,6 +79,38 @@ const AddEditSourcePage: React.FC = () => {
   const [success, setSuccess] = useState<string | null>(null);
   const [configId, setConfigId] = useState('');
   const [sourceTag, setSourceTag] = useState('');
+
+  const normalizeSapTagValue = useCallback((value: string) => {
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }, []);
+
+  const deriveRtpSapTag = useCallback((device: DiscoveredDevice): string => {
+    const props = (device?.properties ?? {}) as Record<string, unknown>;
+    const existingTag = typeof device.tag === 'string' ? device.tag : '';
+    const sapGuid = typeof props['sap_guid'] === 'string'
+      ? (props['sap_guid'] as string)
+      : (typeof props['stream_guid'] === 'string' ? (props['stream_guid'] as string) : '');
+    const sessionName = typeof props['sap_session_name'] === 'string'
+      ? (props['sap_session_name'] as string)
+      : (typeof props['session_name'] === 'string' ? (props['session_name'] as string) : '');
+
+    if (existingTag.startsWith('rtp:')) {
+      return existingTag;
+    }
+    if (sapGuid) {
+      return `rtp:${sapGuid}`;
+    }
+    if (sessionName) {
+      const normalized = normalizeSapTagValue(sessionName);
+      if (normalized) {
+        return `rtp:${normalized}`;
+      }
+    }
+    return '';
+  }, [normalizeSapTagValue]);
 
   // Color values for light/dark mode
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -276,11 +309,18 @@ const AddEditSourcePage: React.FC = () => {
       }
       if (device.ip) {
         setIp(device.ip);
+        setInputMode('network');
+      }
+      const sapTag = deriveRtpSapTag(device);
+      if (sapTag) {
+        setSourceTag(sapTag);
+      } else if (device.tag) {
+        setSourceTag(device.tag);
       }
     });
 
     return unregister;
-  }, [registerSelectionHandler]);
+  }, [deriveRtpSapTag, registerSelectionHandler]);
 
   const handleGroupMembersChange = (value: string) => {
     setGroupMembersText(value);
@@ -303,10 +343,6 @@ const AddEditSourcePage: React.FC = () => {
     }
 
     if (!isGroup) {
-      if (inputMode === 'network' && !ip.trim()) {
-        setError('Please provide an IP address for the source.');
-        return;
-      }
 
       if (inputMode === 'system' && !selectedCaptureTag) {
         setError('Select a system audio capture device for this source.');
@@ -349,8 +385,9 @@ const AddEditSourcePage: React.FC = () => {
         sourceData.tag = selectedCaptureTag;
         sourceData.ip = null; // clear existing network address if switching to system audio
       } else {
-        sourceData.ip = ip.trim();
-        sourceData.tag = null;
+        const trimmedIp = ip.trim();
+        sourceData.ip = trimmedIp ? trimmedIp : null;
+        sourceData.tag = sourceTag.trim() || null;
         sourceData.channels = null;
         sourceData.sample_rate = null;
         sourceData.bit_depth = null;
@@ -555,7 +592,7 @@ const AddEditSourcePage: React.FC = () => {
           </SimpleGrid>
 
           {!isGroup && inputMode === 'network' && (
-            <FormControl isRequired>
+            <FormControl>
               <FormLabel>Source IP</FormLabel>
               <Stack
                 direction={{ base: 'column', md: 'row' }}

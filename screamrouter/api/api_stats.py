@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from screamrouter.configuration.configuration_manager import ConfigurationManager
-from screamrouter_audio_engine import AudioEngineSettings, TimeshiftTuning, MixerTuning, SourceProcessorTuning, ProcessorTuning, SynchronizationSettings, SynchronizationTuning
+from screamrouter_audio_engine import AudioEngineSettings, TimeshiftTuning, MixerTuning, SourceProcessorTuning, ProcessorTuning, SynchronizationSettings, SynchronizationTuning, RtpReceiverTuning
 
 def buffer_to_dict(buf):
     return {
@@ -165,6 +165,26 @@ def settings_to_dict(settings: AudioEngineSettings):
             "sync_proportional_gain": settings.synchronization_tuning.sync_proportional_gain,
             "max_rate_adjustment": settings.synchronization_tuning.max_rate_adjustment,
             "sync_smoothing_factor": settings.synchronization_tuning.sync_smoothing_factor,
+        },
+        "rtp_receiver_tuning": {
+            "format_probe_duration_ms": settings.rtp_receiver_tuning.format_probe_duration_ms,
+            "format_probe_min_bytes": settings.rtp_receiver_tuning.format_probe_min_bytes,
+        },
+        "system_audio_tuning": {
+            "alsa_target_latency_ms": settings.system_audio_tuning.alsa_target_latency_ms,
+            "alsa_periods_per_buffer": settings.system_audio_tuning.alsa_periods_per_buffer,
+            "alsa_dynamic_latency_enabled": settings.system_audio_tuning.alsa_dynamic_latency_enabled,
+            "alsa_latency_min_ms": settings.system_audio_tuning.alsa_latency_min_ms,
+            "alsa_latency_max_ms": settings.system_audio_tuning.alsa_latency_max_ms,
+            "alsa_latency_low_water_ms": settings.system_audio_tuning.alsa_latency_low_water_ms,
+            "alsa_latency_high_water_ms": settings.system_audio_tuning.alsa_latency_high_water_ms,
+            "alsa_latency_integral_gain": settings.system_audio_tuning.alsa_latency_integral_gain,
+            "alsa_latency_rate_limit_ms_per_sec": settings.system_audio_tuning.alsa_latency_rate_limit_ms_per_sec,
+            "alsa_latency_idle_decay_ms_per_sec": settings.system_audio_tuning.alsa_latency_idle_decay_ms_per_sec,
+            "alsa_latency_apply_hysteresis_ms": settings.system_audio_tuning.alsa_latency_apply_hysteresis_ms,
+            "alsa_latency_reconfig_cooldown_ms": settings.system_audio_tuning.alsa_latency_reconfig_cooldown_ms,
+            "alsa_latency_xrun_boost_ms": settings.system_audio_tuning.alsa_latency_xrun_boost_ms,
+            "alsa_latency_low_step_ms": settings.system_audio_tuning.alsa_latency_low_step_ms,
         }
     }
 
@@ -182,6 +202,8 @@ def dict_to_settings(settings_dict: dict, existing_settings: AudioEngineSettings
     apply_updates(existing_settings.processor_tuning, settings_dict.get("processor_tuning", {}))
     apply_updates(existing_settings.synchronization, settings_dict.get("synchronization", {}))
     apply_updates(existing_settings.synchronization_tuning, settings_dict.get("synchronization_tuning", {}))
+    apply_updates(existing_settings.rtp_receiver_tuning, settings_dict.get("rtp_receiver_tuning", {}))
+    apply_updates(existing_settings.system_audio_tuning, settings_dict.get("system_audio_tuning", {}))
     return existing_settings
 
 class APIStats:

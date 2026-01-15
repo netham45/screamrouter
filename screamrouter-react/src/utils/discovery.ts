@@ -35,7 +35,7 @@ export const formatLastSeen = (value: string | null | undefined) => {
   }
 };
 
-const MAX_DEVICE_AGE_SECONDS = 90;
+const MAX_DEVICE_AGE_SECONDS = 900;
 
 export const isDeviceRecentlySeen = (
   device: DiscoveredDevice,

@@ -20,6 +20,7 @@
 #include <map>
 #include <optional>
 #include <unordered_map>
+#include <deque>
 
 #include "../utils/audio_component.h"
 #include "../utils/thread_safe_queue.h"
@@ -185,10 +186,13 @@ protected:
     std::string logger_prefix_;
 
     struct SourceAccumulator {
+        struct ContributionInfo {
+            std::size_t bytes = 0;
+            std::chrono::steady_clock::time_point arrival{};
+        };
+
         ::screamrouter::audio::utils::ByteRingBuffer buffer;
-        std::chrono::steady_clock::time_point first_received{};
-        std::chrono::steady_clock::time_point last_delivery{};
-        bool has_last_delivery = false;
+        std::deque<ContributionInfo> contributions;
         std::optional<uint32_t> base_rtp_timestamp;
         uint64_t frame_cursor = 0;
         int channels = 0;

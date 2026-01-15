@@ -23,7 +23,7 @@ using namespace screamrouter::audio::utils;
 namespace {
 constexpr double kMinPlaybackRate = 0.5;
 constexpr double kMaxPlaybackRate = 2.0;
-constexpr double kPlaybackRateEpsilon = 1e-4;
+constexpr double kPlaybackRateEpsilon = 1e-6;  // Allow rate changes as small as 1 ppm
 }
 
 const std::chrono::milliseconds TIMESIFT_CLEANUP_INTERVAL(1000);
@@ -72,6 +72,19 @@ const std::string& SourceInputProcessor::get_source_tag() const {
     // This getter is needed by AudioManager to interact with RtpReceiver/SinkMixer
     // which might still rely on the original source tag (IP) until fully refactored.
     return config_.source_tag;
+}
+
+bool SourceInputProcessor::matches_source_tag(const std::string& actual_tag) const {
+    if (config_.source_tag.empty()) {
+        return false;
+    }
+    const bool config_is_wildcard = !config_.source_tag.empty() && config_.source_tag.back() == '*';
+    if (!config_is_wildcard) {
+        return actual_tag == config_.source_tag;
+    }
+    const std::string config_prefix = config_.source_tag.substr(0, config_.source_tag.size() - 1);
+    return actual_tag.size() >= config_prefix.size() &&
+        actual_tag.compare(0, config_prefix.size(), config_prefix) == 0;
 }
 
 SourceInputProcessorStats SourceInputProcessor::get_stats() {
@@ -189,6 +202,7 @@ void SourceInputProcessor::set_timeshift(float timeshift_sec) {
 
 void SourceInputProcessor::set_eq_normalization(bool enabled) {
     std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    eq_normalization_enabled_ = enabled;
     if (audio_processor_) {
         audio_processor_->setEqNormalization(enabled);
     }
@@ -196,6 +210,7 @@ void SourceInputProcessor::set_eq_normalization(bool enabled) {
 
 void SourceInputProcessor::set_volume_normalization(bool enabled) {
     std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    volume_normalization_enabled_ = enabled;
     if (audio_processor_) {
         audio_processor_->setVolumeNormalization(enabled);
     }
@@ -207,6 +222,41 @@ void SourceInputProcessor::set_speaker_mix(int input_channel_key, const CppSpeak
     if (audio_processor_) {
         audio_processor_->update_speaker_layouts_config(current_speaker_layouts_map_);
     }
+}
+
+float SourceInputProcessor::get_current_volume() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return current_volume_;
+}
+
+std::vector<float> SourceInputProcessor::get_current_eq() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return current_eq_;
+}
+
+int SourceInputProcessor::get_current_delay_ms() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return current_delay_ms_;
+}
+
+float SourceInputProcessor::get_current_timeshift_sec() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return current_timeshift_backshift_sec_config_;
+}
+
+bool SourceInputProcessor::is_eq_normalization_enabled() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return eq_normalization_enabled_;
+}
+
+bool SourceInputProcessor::is_volume_normalization_enabled() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return volume_normalization_enabled_;
+}
+
+std::map<int, screamrouter::audio::CppSpeakerLayout> SourceInputProcessor::get_current_speaker_layouts() const {
+    std::lock_guard<std::mutex> lock(processor_config_mutex_);
+    return current_speaker_layouts_map_;
 }
 
 void SourceInputProcessor::apply_control_command(const ControlCommand& cmd) {
@@ -356,16 +406,14 @@ void SourceInputProcessor::process_audio_chunk(const std::vector<uint8_t>& input
         return;
     }
     const size_t input_bytes = input_chunk_data.size();
-    LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Processing chunk. Input Size=%zu bytes. Expected=%zu bytes.",
-                  config_.instance_id.c_str(), input_bytes, current_input_chunk_bytes_);
-    if (input_bytes != current_input_chunk_bytes_) {
-         LOG_CPP_ERROR("[SourceProc:%s] process_audio_chunk called with incorrect data size: %zu. Skipping processing.", config_.instance_id.c_str(), input_bytes);
-         return;
-    }
+    LOG_CPP_DEBUG("[SourceProc:%s] ProcessAudio: Processing chunk. Input Size=%zu bytes (variable input resampling).",
+                  config_.instance_id.c_str(), input_bytes);
+    // Variable input resampling: input size varies based on playback_rate, no fixed size check
     
     // Allocate a temporary output buffer large enough to hold the maximum possible output
-    // from AudioProcessor::processAudio. Match the size of AudioProcessor's internal processed_buffer.
-    std::vector<int32_t> processor_output_buffer(current_input_chunk_bytes_ * MAX_CHANNELS * 4);
+    // Size based on input bytes with safety margin (x2) to handle any resampling expansion
+    size_t alloc_size_bytes = std::max(current_input_chunk_bytes_, input_bytes) * 2;
+    std::vector<int32_t> processor_output_buffer(alloc_size_bytes * MAX_CHANNELS * 4 / sizeof(int32_t));
 
     int actual_samples_processed = 0;
     { // Lock mutex for accessing AudioProcessor
@@ -428,7 +476,22 @@ void SourceInputProcessor::push_output_chunk_if_ready(std::vector<ProcessedAudio
          output_chunk.audio_data.assign(process_buffer_.begin(), process_buffer_.begin() + required_samples);
          output_chunk.ssrcs = current_packet_ssrcs_;
          output_chunk.produced_time = std::chrono::steady_clock::now();
-         output_chunk.origin_time = m_last_packet_origin_time;
+         
+         // Adjust origin_time for playback rate dilation
+         // When rate > 1.0, we're consuming audio faster than real-time
+         // Each chunk's nominal duration is stretched/compressed by playback_rate
+         const double nominal_chunk_ms = (static_cast<double>(base_frames_per_chunk_) * 1000.0) / 
+                                         static_cast<double>(config_.output_samplerate);
+         // Time dilation: actual wall-clock time = nominal / rate
+         // Accumulated shift = sum of (nominal - nominal/rate) = nominal * (1 - 1/rate)
+         const double dilation_this_chunk_ms = nominal_chunk_ms * (1.0 - 1.0 / current_playback_rate_);
+         cumulative_time_dilation_ms_ += dilation_this_chunk_ms;
+         
+         // Apply cumulative dilation to origin_time
+         auto adjusted_origin = m_last_packet_origin_time + 
+             std::chrono::microseconds(static_cast<int64_t>(cumulative_time_dilation_ms_ * 1000.0));
+         output_chunk.origin_time = adjusted_origin;
+         
          output_chunk.playback_rate = current_playback_rate_;
          output_chunk.is_sentinel = pending_sentinel_samples_ > 0;
          size_t pushed_samples = output_chunk.audio_data.size();
@@ -513,7 +576,24 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
         return false;
     }
 
-    if (input_ring_buffer_.size() < current_input_chunk_bytes_) {
+    // ===== VARIABLE INPUT RESAMPLING =====
+    // When buffer is high: PI gives playback_rate < 1.0, we want to DRAIN (consume MORE input)
+    // When buffer is low:  PI gives playback_rate > 1.0, we want to FILL (consume LESS input)
+    // The consumption_factor is INVERTED from playback_rate:
+    double consumption_factor = 1.0;
+    if (current_playback_rate_ > 0.0) {
+        consumption_factor = 1.0 / current_playback_rate_;  // INVERTED!
+    }
+    consumption_factor = std::max(0.9, std::min(1.1, consumption_factor));  // Clamp ±10%
+    
+    // Input frames needed = target * consumption_factor
+    const size_t target_output_frames = base_frames_per_chunk_;
+    size_t required_input_frames = static_cast<size_t>(
+        std::round(static_cast<double>(target_output_frames) * consumption_factor));
+    size_t required_input_bytes = required_input_frames * input_bytes_per_frame_;
+    
+    // Use the calculated variable input size instead of fixed current_input_chunk_bytes_
+    if (input_ring_buffer_.size() < required_input_bytes) {
         return false;
     }
 
@@ -522,18 +602,19 @@ bool SourceInputProcessor::try_dequeue_input_chunk(std::vector<uint8_t>& chunk_d
     chunk_ssrcs.clear();
     chunk_is_sentinel = false;
 
-    chunk_data.resize(current_input_chunk_bytes_);
-    const std::size_t bytes_popped = input_ring_buffer_.pop(chunk_data.data(), current_input_chunk_bytes_);
-    if (bytes_popped != current_input_chunk_bytes_) {
+    chunk_data.resize(required_input_bytes);
+    const std::size_t bytes_popped = input_ring_buffer_.pop(chunk_data.data(), required_input_bytes);
+    if (bytes_popped != required_input_bytes) {
         LOG_CPP_ERROR("[SourceProc:%s] Ring buffer underflow while dequeuing chunk. Expected %zu, got %zu.",
-                      config_.instance_id.c_str(), current_input_chunk_bytes_, bytes_popped);
+                      config_.instance_id.c_str(), required_input_bytes, bytes_popped);
         chunk_data.clear();
         reset_input_accumulator();
         return false;
     }
     input_ring_base_offset_ += bytes_popped;
 
-    std::size_t remaining = current_input_chunk_bytes_;
+    // Track fragment consumption based on actual variable bytes popped
+    std::size_t remaining = bytes_popped;  // Use actual bytes, not fixed chunk size
     while (remaining > 0 && !input_fragments_.empty()) {
         auto& fragment = input_fragments_.front();
         if (fragment.consumed_bytes >= fragment.bytes) {

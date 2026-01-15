@@ -1,0 +1,208 @@
+/**
+ * @file listener_dispatcher.cpp
+ * @brief Implementation of listener management for SinkAudioMixer.
+ */
+#include "listener_dispatcher.h"
+#include "../utils/cpp_logger.h"
+#include "../utils/profiler.h"
+#include "../senders/webrtc/webrtc_sender.h"
+#include <chrono>
+
+namespace screamrouter {
+namespace audio {
+
+ListenerDispatcher::ListenerDispatcher(const std::string& sink_id)
+    : sink_id_(sink_id)
+{
+}
+
+bool ListenerDispatcher::add_listener(const std::string& listener_id, std::unique_ptr<INetworkSender> sender) {
+    if (!sender) {
+        LOG_CPP_ERROR("[ListenerDispatcher:%s] Attempted to add null sender for ID: %s",
+                      sink_id_.c_str(), listener_id.c_str());
+        return false;
+    }
+    
+    // Setup cleanup callback for WebRTC senders
+    if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
+        webrtc_sender->set_cleanup_callback(listener_id, [this](const std::string& id) {
+            LOG_CPP_INFO("[ListenerDispatcher:%s] Cleanup callback triggered for listener: %s",
+                         sink_id_.c_str(), id.c_str());
+        });
+    }
+    
+    // IMPORTANT: Do NOT call setup() here for WebRTC senders!
+    // WebRtcSender::setup() triggers callbacks that need the Python GIL.
+    // If we call it here while Python is still in the middle of add_webrtc_listener,
+    // it will deadlock. Instead, setup() is called separately after Python releases GIL.
+    bool needs_deferred_setup = (dynamic_cast<WebRtcSender*>(sender.get()) != nullptr);
+    
+    if (!needs_deferred_setup) {
+        // For non-WebRTC senders, setup immediately
+        if (!sender->setup()) {
+            LOG_CPP_ERROR("[ListenerDispatcher:%s] Failed to setup sender for ID: %s",
+                          sink_id_.c_str(), listener_id.c_str());
+            return false;
+        }
+    }
+    
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        listeners_[listener_id] = std::move(sender);
+        LOG_CPP_INFO("[ListenerDispatcher:%s] Added listener: %s (setup %s)",
+                     sink_id_.c_str(), listener_id.c_str(),
+                     needs_deferred_setup ? "deferred" : "completed");
+    }
+    
+    return true;
+}
+
+void ListenerDispatcher::remove_listener(const std::string& listener_id) {
+    std::unique_ptr<INetworkSender> sender_to_remove;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = listeners_.find(listener_id);
+        if (it != listeners_.end()) {
+            sender_to_remove = std::move(it->second);
+            listeners_.erase(it);
+            LOG_CPP_INFO("[ListenerDispatcher:%s] Removed listener: %s",
+                         sink_id_.c_str(), listener_id.c_str());
+        } else {
+            LOG_CPP_DEBUG("[ListenerDispatcher:%s] Listener not found: %s",
+                          sink_id_.c_str(), listener_id.c_str());
+            return;
+        }
+    } // Release mutex before calling close()
+    
+    // Close the sender WITHOUT holding the mutex to prevent deadlock
+    // close() can trigger libdatachannel callbacks that need the GIL
+    if (sender_to_remove) {
+        if (dynamic_cast<WebRtcSender*>(sender_to_remove.get())) {
+            LOG_CPP_INFO("[ListenerDispatcher:%s] Force closing WebRTC connection: %s",
+                         sink_id_.c_str(), listener_id.c_str());
+        }
+        sender_to_remove->close();
+    }
+}
+
+INetworkSender* ListenerDispatcher::get_listener(const std::string& listener_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = listeners_.find(listener_id);
+    if (it != listeners_.end()) {
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+void ListenerDispatcher::dispatch_to_listeners(const int32_t* stereo_samples, size_t sample_count) {
+    PROFILE_FUNCTION();
+    auto t0 = std::chrono::steady_clock::now();
+    
+    std::vector<std::string> closed_listeners;
+    
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (listeners_.empty() || sample_count == 0 || !stereo_samples) {
+            return;
+        }
+        
+        const uint8_t* payload_data = reinterpret_cast<const uint8_t*>(stereo_samples);
+        size_t payload_size = sample_count * sizeof(int32_t);
+        std::vector<uint32_t> empty_csrcs;
+        
+        for (const auto& [id, sender] : listeners_) {
+            if (sender) {
+                if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
+                    if (webrtc_sender->is_closed()) {
+                        closed_listeners.push_back(id);
+                        LOG_CPP_INFO("[ListenerDispatcher:%s] Found closed listener: %s",
+                                     sink_id_.c_str(), id.c_str());
+                        continue;
+                    }
+                }
+                sender->send_payload(payload_data, payload_size, empty_csrcs);
+            }
+        }
+    } // Release mutex before removing closed listeners
+    
+    for (const auto& listener_id : closed_listeners) {
+        remove_listener(listener_id);
+        LOG_CPP_INFO("[ListenerDispatcher:%s] Removed closed listener: %s",
+                     sink_id_.c_str(), listener_id.c_str());
+    }
+    
+    auto t1 = std::chrono::steady_clock::now();
+    uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    dispatch_calls_++;
+    dispatch_ns_sum_ += static_cast<long double>(dt);
+    if (dt > dispatch_ns_max_) dispatch_ns_max_ = dt;
+    if (dt < dispatch_ns_min_) dispatch_ns_min_ = dt;
+}
+
+void ListenerDispatcher::cleanup_closed_listeners() {
+    PROFILE_FUNCTION();
+    std::vector<std::string> to_remove;
+    
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [id, sender] : listeners_) {
+            if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
+                if (webrtc_sender->is_closed() || webrtc_sender->should_cleanup_due_to_timeout()) {
+                    to_remove.push_back(id);
+                    LOG_CPP_INFO("[ListenerDispatcher:%s] Found listener to cleanup: %s",
+                                 sink_id_.c_str(), id.c_str());
+                }
+            }
+        }
+    }
+    
+    for (const auto& listener_id : to_remove) {
+        remove_listener(listener_id);
+        LOG_CPP_INFO("[ListenerDispatcher:%s] Cleaned up listener: %s",
+                     sink_id_.c_str(), listener_id.c_str());
+    }
+    
+    if (!to_remove.empty()) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        LOG_CPP_INFO("[ListenerDispatcher:%s] Cleanup complete. Remaining: %zu",
+                     sink_id_.c_str(), listeners_.size());
+    }
+}
+
+void ListenerDispatcher::close_all() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [id, sender] : listeners_) {
+        if (sender) {
+            LOG_CPP_INFO("[ListenerDispatcher:%s] Closing listener: %s",
+                         sink_id_.c_str(), id.c_str());
+            sender->close();
+        }
+    }
+    listeners_.clear();
+    LOG_CPP_INFO("[ListenerDispatcher:%s] All listeners closed.", sink_id_.c_str());
+}
+
+std::vector<std::string> ListenerDispatcher::get_listener_ids() const {
+    std::vector<std::string> ids;
+    std::lock_guard<std::mutex> lock(mutex_);
+    ids.reserve(listeners_.size());
+    for (const auto& [id, sender] : listeners_) {
+        ids.push_back(id);
+    }
+    return ids;
+}
+
+size_t ListenerDispatcher::count() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return listeners_.size();
+}
+
+void ListenerDispatcher::reset_profiling_counters() {
+    dispatch_calls_ = 0;
+    dispatch_ns_sum_ = 0.0L;
+    dispatch_ns_max_ = 0;
+    dispatch_ns_min_ = std::numeric_limits<uint64_t>::max();
+}
+
+} // namespace audio
+} // namespace screamrouter

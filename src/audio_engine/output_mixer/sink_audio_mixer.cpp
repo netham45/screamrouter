@@ -147,7 +147,7 @@ SinkAudioMixer::SinkAudioMixer(
         } else {
             LOG_CPP_INFO("[SinkMixer:%s] Creating AlsaPlaybackSender for device %s.",
                          config_.sink_id.c_str(), config_.output_ip.c_str());
-            network_sender_ = std::make_unique<AlsaPlaybackSender>(config_);
+            network_sender_ = std::make_unique<AlsaPlaybackSender>(config_, m_settings);
         }
 #elif defined(_WIN32)
         LOG_CPP_INFO("[SinkMixer:%s] Creating WasapiPlaybackSender for endpoint %s.",
@@ -177,10 +177,16 @@ SinkAudioMixer::SinkAudioMixer(
 #if defined(__linux__)
         if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
             alsa_sender->set_playback_rate_callback([this](double rate) { set_output_playback_rate(rate); });
+            // Register buffer state callback for unified rate control
+            alsa_sender->set_buffer_state_callback([this](double hw_fill_ms, double hw_target_ms) {
+                hw_fill_ms_.store(hw_fill_ms, std::memory_order_relaxed);
+                hw_target_ms_.store(hw_target_ms, std::memory_order_relaxed);
+            });
         }
 #elif defined(_WIN32)
         if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
             wasapi_sender->set_playback_rate_callback([this](double rate) { set_output_playback_rate(rate); });
+            // TODO: Add buffer state callback to WASAPI sender when implemented
         }
 #endif
     }
@@ -198,8 +204,20 @@ SinkAudioMixer::SinkAudioMixer(
 
     if (mp3_output_queue_) {
         initialize_lame();
+        // Create Mp3Encoder helper
+        mp3_encoder_ = std::make_unique<Mp3Encoder>(
+            config_.sink_id, config_.output_samplerate, mp3_output_queue_, m_settings);
     }
 
+    // Create ListenerDispatcher helper
+    listener_dispatcher_ = std::make_unique<ListenerDispatcher>(config_.sink_id);
+
+    // Create SinkRateController helper with callback to send rate commands
+    rate_controller_ = std::make_unique<SinkRateController>(config_.sink_id, m_settings);
+    rate_controller_->set_rate_command_callback(
+        [this](const std::string& instance_id, double ratio) {
+            send_playback_rate_command(instance_id, ratio);
+        });
 
     last_drain_check_ = std::chrono::steady_clock::now();
 
@@ -248,6 +266,12 @@ void SinkAudioMixer::initialize_lame() {
 }
 
 void SinkAudioMixer::start_mp3_thread() {
+    // Start the new Mp3Encoder helper
+    if (mp3_encoder_) {
+        mp3_encoder_->start();
+    }
+    
+    // Legacy code path - keep until fully transitioned
     if (!mp3_output_queue_ || !lame_global_flags_) {
         return;
     }
@@ -272,6 +296,12 @@ void SinkAudioMixer::start_mp3_thread() {
 }
 
 void SinkAudioMixer::stop_mp3_thread() {
+    // Stop the new Mp3Encoder helper
+    if (mp3_encoder_) {
+        mp3_encoder_->stop();
+    }
+    
+    // Legacy code path - keep until fully transitioned
     mp3_stop_flag_.store(true, std::memory_order_release);
     mp3_cv_.notify_all();
     if (mp3_thread_.joinable()) {
@@ -341,38 +371,10 @@ void SinkAudioMixer::remove_input_queue(const std::string& instance_id) {
  * @param sender A unique pointer to the listener's network sender implementation.
  */
 void SinkAudioMixer::add_listener(const std::string& listener_id, std::unique_ptr<INetworkSender> sender) {
-    if (!sender) {
-        LOG_CPP_ERROR("[SinkMixer:%s] Attempted to add null listener sender for ID: %s", config_.sink_id.c_str(), listener_id.c_str());
-        return;
-    }
-    
-    if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
-        webrtc_sender->set_cleanup_callback(listener_id, [this](const std::string& id) {
-            LOG_CPP_INFO("[SinkMixer:%s] Cleanup callback triggered for listener: %s", config_.sink_id.c_str(), id.c_str());
-        });
-    }
-    
-    // IMPORTANT: Do NOT call setup() here for WebRTC senders!
-    // WebRtcSender::setup() triggers callbacks that need the Python GIL.
-    // If we call it here while Python is still in the middle of add_webrtc_listener,
-    // it will deadlock. Instead, we'll call setup() separately after Python has
-    // released the GIL.
-    bool needs_deferred_setup = (dynamic_cast<WebRtcSender*>(sender.get()) != nullptr);
-    
-    if (!needs_deferred_setup) {
-        // For non-WebRTC senders, setup immediately as before
-        if (!sender->setup()) {
-            LOG_CPP_ERROR("[SinkMixer:%s] Failed to setup listener sender for ID: %s", config_.sink_id.c_str(), listener_id.c_str());
-            return;
-        }
-    }
-    
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        listener_senders_[listener_id] = std::move(sender);
-        LOG_CPP_INFO("[SinkMixer:%s] Added listener sender with ID: %s (setup %s)",
-                     config_.sink_id.c_str(), listener_id.c_str(),
-                     needs_deferred_setup ? "deferred" : "completed");
+    if (listener_dispatcher_) {
+        listener_dispatcher_->add_listener(listener_id, std::move(sender));
+    } else {
+        LOG_CPP_ERROR("[SinkMixer:%s] ListenerDispatcher not initialized", config_.sink_id.c_str());
     }
 }
 
@@ -381,27 +383,8 @@ void SinkAudioMixer::add_listener(const std::string& listener_id, std::unique_pt
  * @param listener_id The ID of the listener to remove.
  */
 void SinkAudioMixer::remove_listener(const std::string& listener_id) {
-    std::unique_ptr<INetworkSender> sender_to_remove;
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        auto it = listener_senders_.find(listener_id);
-        if (it != listener_senders_.end()) {
-            sender_to_remove = std::move(it->second);
-            listener_senders_.erase(it);
-            LOG_CPP_INFO("[SinkMixer:%s] Removed listener sender with ID: %s", config_.sink_id.c_str(), listener_id.c_str());
-        } else {
-            LOG_CPP_DEBUG("[SinkMixer:%s] Listener sender with ID already removed: %s", config_.sink_id.c_str(), listener_id.c_str());
-            return;
-        }
-    } // Release listener_senders_mutex_ before calling close()
-
-    // Close the sender WITHOUT holding the mutex to prevent deadlock
-    // close() can trigger libdatachannel callbacks that need the GIL
-    if (sender_to_remove) {
-        if (dynamic_cast<WebRtcSender*>(sender_to_remove.get())) {
-            LOG_CPP_INFO("[SinkMixer:%s] Force closing WebRTC connection for listener: %s", config_.sink_id.c_str(), listener_id.c_str());
-        }
-        sender_to_remove->close();
+    if (listener_dispatcher_) {
+        listener_dispatcher_->remove_listener(listener_id);
     }
 }
 
@@ -411,12 +394,7 @@ void SinkAudioMixer::remove_listener(const std::string& listener_id) {
  * @return A pointer to the `INetworkSender`, or `nullptr` if not found.
  */
 INetworkSender* SinkAudioMixer::get_listener(const std::string& listener_id) {
-    std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-    auto it = listener_senders_.find(listener_id);
-    if (it != listener_senders_.end()) {
-        return it->second.get();
-    }
-    return nullptr;
+    return listener_dispatcher_ ? listener_dispatcher_->get_listener(listener_id) : nullptr;
 }
 
 SinkAudioMixerStats SinkAudioMixer::get_stats() {
@@ -466,6 +444,8 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
 
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
+        const std::size_t max_ready_chunks =
+            m_settings ? std::max<std::size_t>(1, m_settings->mixer_tuning.max_queued_chunks) : 3;
         stats.total_input_streams = ready_rings_.size();
         size_t active_count = 0;
         for (const auto& [id, is_active] : input_active_state_) {
@@ -493,6 +473,32 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
                 lane.underrun_events = underrun_it->second;
             }
 
+            auto ready_queue_it = processed_ready_.find(instance_id);
+            if (ready_queue_it != processed_ready_.end()) {
+                const size_t ready_depth = ready_queue_it->second.size();
+                lane.ready_queue.size = ready_depth;
+                auto ready_hw_it = ready_queue_high_water_.find(instance_id);
+                if (ready_hw_it != ready_queue_high_water_.end()) {
+                    lane.ready_queue.high_watermark = ready_hw_it->second;
+                }
+                if (chunk_ms > 0.0) {
+                    lane.ready_queue.depth_ms = chunk_ms * static_cast<double>(ready_depth);
+                }
+                if (max_ready_chunks > 0) {
+                    double fill = (static_cast<double>(ready_depth) / static_cast<double>(max_ready_chunks)) * 100.0;
+                    lane.ready_queue.fill_percent = std::clamp(fill, 0.0, 100.0);
+                }
+            }
+            if (auto recv_it = ready_total_received_.find(instance_id); recv_it != ready_total_received_.end()) {
+                lane.ready_total_received = recv_it->second;
+            }
+            if (auto pop_it = ready_total_popped_.find(instance_id); pop_it != ready_total_popped_.end()) {
+                lane.ready_total_popped = pop_it->second;
+            }
+            if (auto drop_it = ready_total_dropped_.find(instance_id); drop_it != ready_total_dropped_.end()) {
+                lane.ready_total_dropped = drop_it->second;
+            }
+
             stats.input_lanes.push_back(std::move(lane));
         }
     }
@@ -509,6 +515,45 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
 
 const SinkMixerConfig& SinkAudioMixer::get_config() const {
     return config_;
+}
+
+PipelineState SinkAudioMixer::get_pipeline_state() const {
+    PipelineState state;
+    
+    // Hardware buffer state (from ALSA/WASAPI callback)
+    state.hw_fill_ms = hw_fill_ms_.load(std::memory_order_relaxed);
+    state.hw_target_ms = hw_target_ms_.load(std::memory_order_relaxed);
+    
+    // Calculate mixer queue level from pending chunks
+    // Each chunk represents frames_per_chunk_ frames at playback_sample_rate_
+    double chunk_duration_ms = 0.0;
+    if (playback_sample_rate_ > 0) {
+        chunk_duration_ms = (static_cast<double>(frames_per_chunk_) * 1000.0) / 
+                            static_cast<double>(playback_sample_rate_);
+    }
+    
+    // Count total pending chunks across all sources
+    std::size_t total_pending_chunks = 0;
+    {
+        // processed_ready_ access requires lock, but we'll approximate with payload buffer
+        // to avoid blocking the hot path. This is acceptable since it's for feedback control.
+    }
+    
+    // Use payload buffer fill level as a proxy for mixer queue state
+    double payload_fill_ms = 0.0;
+    if (playback_sample_rate_ > 0 && playback_channels_ > 0 && playback_bit_depth_ > 0) {
+        size_t bytes_per_frame = static_cast<size_t>(playback_channels_ * playback_bit_depth_ / 8);
+        if (bytes_per_frame > 0) {
+            size_t frames_in_buffer = payload_buffer_fill_bytes_ / bytes_per_frame;
+            payload_fill_ms = (static_cast<double>(frames_in_buffer) * 1000.0) / 
+                              static_cast<double>(playback_sample_rate_);
+        }
+    }
+    
+    state.mixer_queue_ms = payload_fill_ms;
+    state.mixer_target_ms = chunk_duration_ms;  // Target is one chunk ready
+    
+    return state;
 }
 
 /**
@@ -571,6 +616,12 @@ void SinkAudioMixer::start() {
  * @brief Stops the mixer's processing thread and cleans up resources.
  */
 void SinkAudioMixer::stop() {
+    auto stop_start = std::chrono::steady_clock::now();
+    auto log_elapsed = [&](const char* label) {
+        auto now = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - stop_start).count();
+        LOG_CPP_DEBUG("[SinkMixer:%s] %s (elapsed=%lldms)", config_.sink_id.c_str(), label, (long long)ms);
+    };
     LOG_CPP_INFO("[SinkMixer:%s] stop(): enter", config_.sink_id.c_str());
     join_startup_thread();
 
@@ -590,16 +641,33 @@ void SinkAudioMixer::stop() {
         listeners = listener_senders_.size();
     }
     LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_fill_bytes_, clock_manager_enabled_.load() ? 1 : 0);
+    
+    // Set stop flag first
     stop_flag_ = true;
-
-    if (clock_condition_handle_.condition) {
-        clock_condition_handle_.condition->cv.notify_all();
+    
+    // Signal the condition variable with lock held to ensure the run loop sees the stop_flag
+    // Notify multiple times to handle race conditions where thread may not be waiting yet
+    auto condition = clock_condition_handle_.condition;
+    if (condition) {
+        {
+            std::lock_guard<std::mutex> lk(condition->mutex);
+            // Bump sequence to ensure wait condition is satisfied
+            condition->sequence++;
+        }
+        condition->cv.notify_all();
     }
 
+    // Unregister timer BEFORE joining (this also notifies)
     unregister_mix_timer();
     LOG_CPP_INFO("[SinkMixer:%s] Mix timer unregistered", config_.sink_id.c_str());
+    
+    // Notify again after unregistering in case thread was re-entering wait
+    if (condition) {
+        condition->cv.notify_all();
+    }
 
     stop_mp3_thread();
+    log_elapsed("stop_mp3_thread complete");
 
     if (mp3_output_queue_ && lame_global_flags_) {
         LOG_CPP_INFO("[SinkMixer:%s] Flushing LAME buffer...", config_.sink_id.c_str());
@@ -611,18 +679,46 @@ void SinkAudioMixer::stop() {
         }
     }
 
+    // Join the thread directly - the timed wait_for() in wait_for_mix_tick() ensures
+    // the run loop will check stop_flag_ at most every 100ms and exit promptly.
     if (component_thread_.joinable()) {
+        LOG_CPP_INFO("[SinkMixer:%s] Waiting for component thread to exit...", config_.sink_id.c_str());
         try {
             component_thread_.join();
             LOG_CPP_INFO("[SinkMixer:%s] Thread joined.", config_.sink_id.c_str());
         } catch (const std::system_error& e) {
             LOG_CPP_ERROR("[SinkMixer:%s] Error joining thread: %s", config_.sink_id.c_str(), e.what());
         }
+        log_elapsed("component_thread joined");
     }
 
     if (network_sender_) {
-        LOG_CPP_INFO("[SinkMixer:%s] Closing primary network sender...", config_.sink_id.c_str());
+        const char* sender_type = "Unknown";
+        if (dynamic_cast<MultiDeviceRtpSender*>(network_sender_.get())) {
+            sender_type = "MultiDeviceRtpSender";
+        } else if (dynamic_cast<MultiDeviceRtpOpusSender*>(network_sender_.get())) {
+            sender_type = "MultiDeviceRtpOpusSender";
+        } else if (dynamic_cast<RtpOpusSender*>(network_sender_.get())) {
+            sender_type = "RtpOpusSender";
+        } else if (dynamic_cast<RtpSender*>(network_sender_.get())) {
+            sender_type = "RtpSender";
+        } else if (dynamic_cast<ScreamSender*>(network_sender_.get())) {
+            sender_type = "ScreamSender";
+        } else if (dynamic_cast<WebRtcSender*>(network_sender_.get())) {
+            sender_type = "WebRtcSender";
+#if defined(__linux__)
+        } else if (dynamic_cast<ScreamrouterFifoSender*>(network_sender_.get())) {
+            sender_type = "ScreamrouterFifoSender";
+        } else if (dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+            sender_type = "AlsaPlaybackSender";
+#elif defined(_WIN32)
+        } else if (dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+            sender_type = "WasapiPlaybackSender";
+#endif
+        }
+        LOG_CPP_INFO("[SinkMixer:%s] Closing primary network sender (type=%s)...", config_.sink_id.c_str(), sender_type);
         network_sender_->close();
+        log_elapsed("network_sender closed");
     }
 
     {
@@ -636,6 +732,7 @@ void SinkAudioMixer::stop() {
         listener_senders_.clear();
         LOG_CPP_INFO("[SinkMixer:%s] All listener senders closed and cleared.", config_.sink_id.c_str());
     }
+    log_elapsed("listener cleanup complete");
     LOG_CPP_INFO("[SinkMixer:%s] stop(): exit", config_.sink_id.c_str());
 }
 
@@ -747,7 +844,7 @@ bool SinkAudioMixer::wait_for_source_data() {
     bool data_actually_popped_this_cycle = false;
     const std::size_t max_queued_chunks =
         m_settings ? std::max<std::size_t>(1, m_settings->mixer_tuning.max_queued_chunks) : 3;
-
+    constexpr double ready_queue_catchup_seconds = 5.0;
     bool had_any_active_sources = false;
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
@@ -794,11 +891,51 @@ bool SinkAudioMixer::wait_for_source_data() {
                                                 " queued_depth=" + std::to_string(queue.size() + 1) + "]";
                     utils::log_sentinel("sink_chunk_received", chunk, context);
                     queue.push_back(std::move(chunk));
-                    while (queue.size() > max_queued_chunks) {
-                        if (queue.front().is_sentinel) {
-                            utils::log_sentinel("sink_chunk_dropped", queue.front(), " [sink=" + config_.sink_id + " instance=" + instance_id + " due_to_backlog]");
+                    ready_total_received_[instance_id]++;
+                    auto& ready_hw = ready_queue_high_water_[instance_id];
+                    if (queue.size() > ready_hw) {
+                        ready_hw = queue.size();
+                    }
+                    if (queue.size() > max_queued_chunks) {
+                        const auto now = std::chrono::steady_clock::now();
+                        auto& drop_state = ready_queue_drop_state_[instance_id];
+                        if (drop_state.last_update.time_since_epoch().count() == 0) {
+                            drop_state.last_update = now;
+                            drop_state.drop_credit = 0.0;
                         }
-                        queue.pop_front();
+                        double elapsed_sec = std::chrono::duration<double>(now - drop_state.last_update).count();
+                        if (elapsed_sec < 0.0) {
+                            elapsed_sec = 0.0;
+                        }
+                        drop_state.last_update = now;
+                        const size_t overage = queue.size() - max_queued_chunks;
+                        if (ready_queue_catchup_seconds > 0.0) {
+                            const double drop_rate = static_cast<double>(overage) / ready_queue_catchup_seconds;
+                            drop_state.drop_credit += drop_rate * elapsed_sec;
+                        }
+                        const double max_credit = static_cast<double>(queue.size() - max_queued_chunks);
+                        if (drop_state.drop_credit > max_credit) {
+                            drop_state.drop_credit = max_credit;
+                        }
+                        while (queue.size() > max_queued_chunks && drop_state.drop_credit >= 1.0) {
+                            if (queue.front().is_sentinel) {
+                                utils::log_sentinel("sink_chunk_dropped", queue.front(), " [sink=" + config_.sink_id + " instance=" + instance_id + " due_to_backlog]");
+                            }
+                            queue.pop_front();
+                            ready_total_dropped_[instance_id]++;
+                            drop_state.drop_credit -= 1.0;
+                            if (queue.size() > max_queued_chunks) {
+                                const double remaining_overage = static_cast<double>(queue.size() - max_queued_chunks);
+                                if (drop_state.drop_credit > remaining_overage) {
+                                    drop_state.drop_credit = remaining_overage;
+                                }
+                            } else {
+                                drop_state.drop_credit = 0.0;
+                                break;
+                            }
+                        }
+                    } else {
+                        ready_queue_drop_state_.erase(instance_id);
                     }
                 }
             }
@@ -816,6 +953,7 @@ bool SinkAudioMixer::wait_for_source_data() {
         if (!queue.empty()) {
             ProcessedAudioChunk chunk = std::move(queue.front());
             queue.pop_front();
+            ready_total_popped_[instance_id]++;
             const size_t sample_count = chunk.audio_data.size();
             if (sample_count != mixing_buffer_samples_) {
                 LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
@@ -1168,44 +1306,11 @@ size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
 void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
     PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
-    std::vector<std::string> closed_listeners_to_remove;
-
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        if (listener_senders_.empty() || samples_to_dispatch == 0) {
-            return;
-        }
-
-        const uint8_t* payload_data = reinterpret_cast<const uint8_t*>(stereo_buffer_.data());
-        size_t payload_size = samples_to_dispatch * sizeof(int32_t);
-
-        if (payload_size > stereo_buffer_.size() * sizeof(int32_t)) {
-            LOG_CPP_ERROR("[SinkMixer:%s] Dispatch error: payload_size > stereo_buffer_ size", config_.sink_id.c_str());
-            return;
-        }
-
-        std::vector<uint32_t> empty_csrcs;
-
-        for (auto const& [id, sender] : listener_senders_) {
-            if (sender) {
-                if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
-                    if (webrtc_sender->is_closed()) {
-                        closed_listeners_to_remove.push_back(id);
-                        LOG_CPP_INFO("[SinkMixer:%s] Found closed listener during dispatch: %s", config_.sink_id.c_str(), id.c_str());
-                        // Don't call close() here while holding the lock!
-                        // It will be called in remove_listener() without the lock
-                        continue;
-                    }
-                }
-                sender->send_payload(payload_data, payload_size, empty_csrcs);
-            }
-        }
-    } // Release listener_senders_mutex_ before calling remove_listener
-
-    for (const auto& listener_id : closed_listeners_to_remove) {
-        remove_listener(listener_id);  // This will close() the sender without holding the lock
-        LOG_CPP_INFO("[SinkMixer:%s] Immediately removed closed listener: %s", config_.sink_id.c_str(), listener_id.c_str());
+    
+    if (listener_dispatcher_ && samples_to_dispatch > 0) {
+        listener_dispatcher_->dispatch_to_listeners(stereo_buffer_.data(), samples_to_dispatch);
     }
+    
     auto t1 = std::chrono::steady_clock::now();
     uint64_t dt = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
     profiling_dispatch_calls_++;
@@ -1221,31 +1326,9 @@ void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
  */
 void SinkAudioMixer::enqueue_mp3_pcm(const int32_t* samples, size_t sample_count) {
     PROFILE_FUNCTION();
-    if (!mp3_output_queue_ || !samples || sample_count == 0) {
-        return;
+    if (mp3_encoder_ && mp3_encoder_->is_running()) {
+        mp3_encoder_->enqueue_pcm(samples, sample_count);
     }
-    if (!mp3_thread_running_.load(std::memory_order_acquire)) {
-        return;
-    }
-
-    std::unique_lock<std::mutex> lock(mp3_mutex_);
-    const size_t max_depth = mp3_pcm_queue_max_depth_ > 0 ? mp3_pcm_queue_max_depth_ : 3;
-    if (mp3_pcm_queue_.size() >= max_depth) {
-        mp3_pcm_queue_.pop_front(); // Drop oldest to keep freshest audio
-        m_mp3_buffer_overflows++;
-        LOG_CPP_DEBUG("[SinkMixer:%s] MP3 PCM queue full (depth=%zu), dropping oldest chunk.", config_.sink_id.c_str(), mp3_pcm_queue_.size());
-    }
-
-    std::vector<int32_t> buffer(sample_count);
-    std::memcpy(buffer.data(), samples, sample_count * sizeof(int32_t));
-    mp3_pcm_queue_.push_back(std::move(buffer));
-    size_t depth = mp3_pcm_queue_.size();
-    size_t hw = mp3_pcm_high_water_.load();
-    while (depth > hw && !mp3_pcm_high_water_.compare_exchange_weak(hw, depth)) {
-        // retry
-    }
-    lock.unlock();
-    mp3_cv_.notify_one();
 }
 
 /**
@@ -1782,13 +1865,17 @@ void SinkAudioMixer::setup_output_post_processor() {
 }
 
 void SinkAudioMixer::set_output_playback_rate(double rate) {
-    std::lock_guard<std::mutex> lock(output_processor_mutex_);
-    if (!output_post_processor_) {
-        return;
+    // DISABLED: Unified rate control via TimeshiftManager only.
+    // The output_post_processor_ now stays at unity (1.0).
+    // ALSA/WASAPI reports buffer state upstream for the unified PI loop.
+    (void)rate;
+    
+    // Log significant deviations for debugging (every 100th call)
+    static uint64_t log_counter = 0;
+    if (++log_counter % 100 == 0 && std::abs(rate - 1.0) > 0.001) {
+        LOG_CPP_DEBUG("[SinkMixer:%s] Ignoring output rate %.6f (unified control active)",
+                      config_.sink_id.c_str(), rate);
     }
-    const double clamped = std::clamp(rate, 0.96, 1.02);
-    output_playback_rate_.store(clamped);
-    output_post_processor_->set_playback_rate(clamped);
 }
 
 std::chrono::microseconds SinkAudioMixer::calculate_mix_period(int samplerate, int channels, int bit_depth) const {
@@ -1900,6 +1987,7 @@ void SinkAudioMixer::unregister_mix_timer() {
 bool SinkAudioMixer::wait_for_mix_tick() {
     PROFILE_FUNCTION();
     if (stop_flag_) {
+        std::cerr << "[DEBUG-TICK:" << config_.sink_id << "] stop_flag_ seen at entry" << std::endl << std::flush;
         return false;
     }
 
@@ -1921,24 +2009,32 @@ bool SinkAudioMixer::wait_for_mix_tick() {
             return false;
         }
 
-        // If queues are backing up, force a tick instead of blocking on the clock.
-        std::size_t pending_chunks = 0;
+        // If any source queue is backing up, force a tick instead of blocking on the clock.
+        bool source_backlogged = false;
+        std::string backlogged_source;
+        std::size_t backlogged_depth = 0;
         {
             std::lock_guard<std::mutex> lock(queues_mutex_);
             for (const auto& [instance_id, queue] : processed_ready_) {
-                (void)instance_id;
-                pending_chunks += queue.size();
+                if (queue.size() > 3) {
+                    source_backlogged = true;
+                    backlogged_source = instance_id;
+                    backlogged_depth = queue.size();
+                    break;
+                }
             }
         }
-        if (pending_chunks > 3) {
+        if (source_backlogged && clock_pending_ticks_ == 0) {
             clock_pending_ticks_ = 1;
-            LOG_CPP_WARNING("[SinkMixer:%s] Forcing mix tick due to backlog (pending_chunks=%zu).",
-                            config_.sink_id.c_str(), pending_chunks);
+            LOG_CPP_WARNING("[SinkMixer:%s] Forcing mix tick due to source backlog (source=%s depth=%zu).",
+                            config_.sink_id.c_str(), backlogged_source.c_str(), backlogged_depth);
             break;
         }
 
         std::unique_lock<std::mutex> condition_lock(condition->mutex);
-        condition->cv.wait(condition_lock, [this, &condition]() {
+        // Use timed wait to periodically check stop_flag_ even if notification is lost
+        constexpr auto kWaitTimeout = std::chrono::milliseconds(100);
+        condition->cv.wait_for(condition_lock, kWaitTimeout, [this, &condition]() {
             return stop_flag_ || condition->sequence > clock_last_sequence_;
         });
 
@@ -1959,29 +2055,8 @@ bool SinkAudioMixer::wait_for_mix_tick() {
 
 void SinkAudioMixer::cleanup_closed_listeners() {
     PROFILE_FUNCTION();
-    std::vector<std::string> listeners_to_remove;
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        for (const auto& pair : listener_senders_) {
-            if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(pair.second.get())) {
-                if (webrtc_sender->is_closed() || webrtc_sender->should_cleanup_due_to_timeout()) {
-                    listeners_to_remove.push_back(pair.first);
-                    LOG_CPP_INFO("[SinkMixer:%s] Found closed/timed-out listener to cleanup: %s", config_.sink_id.c_str(), pair.first.c_str());
-                    // Don't call close() here while holding the lock!
-                    // It will be called in remove_listener() without the lock
-                }
-            }
-        }
-    } // Release listener_senders_mutex_ before calling remove_listener
-
-    for (const auto& listener_id : listeners_to_remove) {
-        remove_listener(listener_id);  // This will close() the sender without holding the lock
-        LOG_CPP_INFO("[SinkMixer:%s] Successfully cleaned up listener: %s", config_.sink_id.c_str(), listener_id.c_str());
-    }
-
-    if (!listeners_to_remove.empty()) {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        LOG_CPP_INFO("[SinkMixer:%s] Cleanup complete. Remaining listeners: %zu", config_.sink_id.c_str(), listener_senders_.size());
+    if (listener_dispatcher_) {
+        listener_dispatcher_->cleanup_closed_listeners();
     }
 }
 
@@ -2092,23 +2167,7 @@ void SinkAudioMixer::run() {
         const std::size_t frames_per_chunk = frame_metrics_valid ? (chunk_size_bytes_ / frame_bytes) : 0;
         uint64_t frames_dispatched = 0;
 
-        if (config_.protocol == "system_audio") {
-            double upstream_frames = 0.0;
-            double upstream_target_frames = 0.0;
-            if (frame_metrics_valid) {
-                upstream_frames = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(frame_bytes);
-                upstream_target_frames = static_cast<double>(frames_per_chunk);
-            }
-#if defined(__linux__)
-            if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
-                alsa_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
-            }
-#elif defined(_WIN32)
-            if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
-                wasapi_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
-            }
-#endif
-        }
+        // Pipeline backlog update moved to AFTER send loop for accurate buffer level
 
         if (!frame_metrics_valid && coordination_active) {
             LOG_CPP_WARNING("[SinkMixer:%s] RunLoop: Unable to derive frames_per_chunk (bit_depth=%d, channels=%d).",
@@ -2164,6 +2223,21 @@ void SinkAudioMixer::run() {
                           config_.sink_id.c_str(), payload_buffer_fill_bytes_);
         }
 
+        // Update pipeline backlog AFTER send loop so upstream_frames reflects actual remaining bytes
+        if (config_.protocol == "system_audio" && frame_metrics_valid) {
+            const double upstream_frames = static_cast<double>(payload_buffer_fill_bytes_) / static_cast<double>(frame_bytes);
+            const double upstream_target_frames = static_cast<double>(frames_per_chunk);
+#if defined(__linux__)
+            if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+                alsa_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
+            }
+#elif defined(_WIN32)
+            if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+                wasapi_sender->update_pipeline_backlog(upstream_frames, upstream_target_frames);
+            }
+#endif
+        }
+
         if (coordination_active && dispatch_timing) {
             dispatch_timing->dispatch_end = std::chrono::steady_clock::now();
             if (!frame_metrics_valid) {
@@ -2181,6 +2255,11 @@ void SinkAudioMixer::run() {
             coordinator_->complete_dispatch(frames_dispatched, *dispatch_timing);
         }
 
+        // Check stop_flag_ before acquiring mutex to avoid blocking stop()
+        if (stop_flag_) {
+            break;
+        }
+        
         bool has_listeners;
         {
             std::lock_guard<std::mutex> lock(listener_senders_mutex_);
@@ -2302,6 +2381,9 @@ void SinkAudioMixer::dispatch_drain_adjustments(const InputBufferMetrics& metric
     }
 
     const auto& tuning = m_settings->mixer_tuning;
+    if (!tuning.enable_adaptive_buffer_drain) {
+        return;
+    }
 
     struct PendingDrainCommand {
         std::string instance_id;

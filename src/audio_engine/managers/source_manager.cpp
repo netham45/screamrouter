@@ -142,9 +142,146 @@ std::string SourceManager::configure_source(const SourceConfig& config, bool run
     return instance_id;
 }
 
+std::string SourceManager::spawn_child_source(const std::string& parent_instance_id,
+                                              const std::string& concrete_tag,
+                                              bool running) {
+    if (!running) {
+        LOG_CPP_WARNING("SourceManager cannot spawn child for %s while engine is stopped.", parent_instance_id.c_str());
+        return "";
+    }
+
+    SourceProcessorConfig child_config;
+    std::map<int, screamrouter::audio::CppSpeakerLayout> speaker_layouts;
+    bool eq_norm = false;
+    bool vol_norm = false;
+    SourceInputProcessor* child_ptr = nullptr;
+
+    {
+        std::scoped_lock lock(m_manager_mutex);
+        auto parent_it = m_sources.find(parent_instance_id);
+        if (parent_it == m_sources.end() || !parent_it->second) {
+            LOG_CPP_WARNING("SourceManager failed to spawn child: parent %s not found.", parent_instance_id.c_str());
+            return "";
+        }
+
+        auto existing_child = wildcard_children_[parent_instance_id].find(concrete_tag);
+        if (existing_child != wildcard_children_[parent_instance_id].end()) {
+            return existing_child->second;
+        }
+
+        auto* parent_proc = parent_it->second.get();
+        child_config = parent_proc->get_config();
+        child_config.instance_id = generate_unique_instance_id(child_config.source_tag);
+        child_config.source_tag = concrete_tag;
+        child_config.initial_volume = parent_proc->get_current_volume();
+        child_config.initial_eq = parent_proc->get_current_eq();
+        child_config.initial_delay_ms = parent_proc->get_current_delay_ms();
+        child_config.initial_timeshift_sec = parent_proc->get_current_timeshift_sec();
+
+        speaker_layouts = parent_proc->get_current_speaker_layouts();
+        eq_norm = parent_proc->is_eq_normalization_enabled();
+        vol_norm = parent_proc->is_volume_normalization_enabled();
+
+        auto new_source = std::make_unique<SourceInputProcessor>(child_config, m_settings);
+        child_ptr = new_source.get();
+        m_sources[child_config.instance_id] = std::move(new_source);
+        wildcard_children_[parent_instance_id][concrete_tag] = child_config.instance_id;
+        child_to_parent_[child_config.instance_id] = parent_instance_id;
+        LOG_CPP_INFO("SourceManager spawning child instance %s for parent %s tag %s",
+                     child_config.instance_id.c_str(), parent_instance_id.c_str(), concrete_tag.c_str());
+    }
+
+    if (!m_timeshift_manager) {
+        LOG_CPP_ERROR("TimeshiftManager is null. Cannot register child source %s", child_config.instance_id.c_str());
+        remove_source(child_config.instance_id);
+        return "";
+    }
+
+    m_timeshift_manager->register_processor(child_config.instance_id,
+                                            child_config.source_tag,
+                                            child_config.initial_delay_ms,
+                                            child_config.initial_timeshift_sec);
+
+    if (child_ptr) {
+        if (!speaker_layouts.empty()) {
+            child_ptr->set_speaker_layouts_config(speaker_layouts);
+        }
+        child_ptr->set_eq_normalization(eq_norm);
+        child_ptr->set_volume_normalization(vol_norm);
+        child_ptr->start();
+    }
+
+    return child_config.instance_id;
+}
+
+bool SourceManager::has_child_for_tag(const std::string& parent_instance_id,
+                                      const std::string& concrete_tag) const {
+    std::scoped_lock lock(m_manager_mutex);
+    auto it = wildcard_children_.find(parent_instance_id);
+    if (it == wildcard_children_.end()) {
+        return false;
+    }
+    return it->second.find(concrete_tag) != it->second.end();
+}
+
+std::vector<std::string> SourceManager::get_child_instances(const std::string& parent_instance_id) const {
+    std::vector<std::string> children;
+    std::scoped_lock lock(m_manager_mutex);
+    auto it = wildcard_children_.find(parent_instance_id);
+    if (it == wildcard_children_.end()) {
+        return children;
+    }
+    children.reserve(it->second.size());
+    for (const auto& [tag, child_id] : it->second) {
+        (void)tag;
+        children.push_back(child_id);
+    }
+    return children;
+}
+
+std::optional<std::string> SourceManager::get_parent_instance(const std::string& child_instance_id) const {
+    std::scoped_lock lock(m_manager_mutex);
+    auto it = child_to_parent_.find(child_instance_id);
+    if (it == child_to_parent_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
 bool SourceManager::remove_source(const std::string& instance_id) {
+    auto children = get_child_instances(instance_id);
+    for (const auto& child_id : children) {
+        remove_source(child_id);
+    }
+    if (!children.empty()) {
+        std::scoped_lock lock(m_manager_mutex);
+        wildcard_children_.erase(instance_id);
+    }
+
+    {
+        std::scoped_lock lock(m_manager_mutex);
+        auto parent_it = child_to_parent_.find(instance_id);
+        if (parent_it != child_to_parent_.end()) {
+            auto parent_id = parent_it->second;
+            auto mapping_it = wildcard_children_.find(parent_id);
+            if (mapping_it != wildcard_children_.end()) {
+                for (auto it = mapping_it->second.begin(); it != mapping_it->second.end(); ++it) {
+                    if (it->second == instance_id) {
+                        mapping_it->second.erase(it);
+                        break;
+                    }
+                }
+                if (mapping_it->second.empty()) {
+                    wildcard_children_.erase(mapping_it);
+                }
+            }
+            child_to_parent_.erase(parent_it);
+        }
+    }
+
     std::unique_ptr<SourceInputProcessor> source_to_remove;
     std::string source_tag_for_removal;
+    bool should_unregister = false;
 
     {
         std::scoped_lock lock(m_manager_mutex);
@@ -184,9 +321,13 @@ bool SourceManager::remove_source(const std::string& instance_id) {
         }
 
         if (m_timeshift_manager && !source_tag_for_removal.empty()) {
-            m_timeshift_manager->unregister_processor(instance_id, source_tag_for_removal);
-            LOG_CPP_INFO("Unregistered instance %s (tag: %s) from TimeshiftManager.", instance_id.c_str(), source_tag_for_removal.c_str());
+            should_unregister = true;
         }
+    }
+
+    if (should_unregister && m_timeshift_manager) {
+        m_timeshift_manager->unregister_processor(instance_id, source_tag_for_removal);
+        LOG_CPP_INFO("Unregistered instance %s (tag: %s) from TimeshiftManager.", instance_id.c_str(), source_tag_for_removal.c_str());
     }
 
     if (source_to_remove) {
@@ -226,6 +367,8 @@ void SourceManager::stop_all() {
             to_stop.push_back(std::move(entry.second));
         }
         m_sources.clear();
+        wildcard_children_.clear();
+        child_to_parent_.clear();
 
         // Gather capture tags to release
         for (auto const &kv : m_instance_to_capture_tag) {

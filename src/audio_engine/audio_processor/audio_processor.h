@@ -113,6 +113,25 @@ public:
      */
     void calculateAndApplyAutoSpeakerMix();
 
+    /**
+     * @brief Resamples variable input to produce exactly target_output_frames output.
+     * @param input Pointer to interleaved float input samples.
+     * @param max_input_frames Maximum input frames available.
+     * @param output Pointer to output buffer.
+     * @param target_output_frames Exact number of output frames to produce.
+     * @param src_ratio The resample ratio (output_rate / input_rate).
+     * @param channels Number of interleaved channels.
+     * @return Number of input frames actually consumed.
+     */
+    size_t resample_to_fixed_output(
+        const float* input,
+        size_t max_input_frames,
+        float* output,
+        size_t target_output_frames,
+        double src_ratio,
+        int channels
+    );
+
 private:
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> m_settings;
     const std::size_t chunk_size_bytes_;
@@ -187,6 +206,7 @@ private:
     void volumeAdjust();
     float softClip(float sample);
     void resample();
+    
     void downsample(int32_t* outputBuffer);
     void splitBufferToChannels();
     void mixSpeakers();

@@ -66,30 +66,12 @@ void AlsaDeviceEnumerator::stop() {
             (void)write(wake_pipe_[1], &b, 1);
         }
         if (monitor_thread_.joinable()) {
-            LOG_CPP_INFO("[ALSA-Enumerator] Joining monitor thread (with timeout)...");
-#if defined(__linux__)
-            // Try a timed join using pthread_timedjoin_np to avoid indefinite hangs
-            pthread_t th = monitor_thread_.native_handle();
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_sec += 2; // 2s timeout
-            int rc = pthread_timedjoin_np(th, nullptr, &ts);
-            if (rc == 0) {
-                LOG_CPP_INFO("[ALSA-Enumerator] Monitor thread joined.");
-                // std::thread is now joined by pthread; invalidate it safely
-                // Workaround: create a dummy thread and swap to reset joinable state
-                std::thread().swap(monitor_thread_);
-            } else if (rc == ETIMEDOUT) {
-                LOG_CPP_WARNING("[ALSA-Enumerator] Monitor thread join timed out; detaching to avoid hang.");
-                monitor_thread_.detach();
-            } else {
-                LOG_CPP_WARNING("[ALSA-Enumerator] pthread_timedjoin_np returned rc=%d (%s); detaching thread.", rc, std::strerror(rc));
-                monitor_thread_.detach();
-            }
-#else
+            LOG_CPP_INFO("[ALSA-Enumerator] Joining monitor thread...");
+            // The wake pipe signals the thread to exit promptly, so we can use
+            // a regular join here. The thread's event loop checks running_ and
+            // the wake pipe to exit cleanly.
             monitor_thread_.join();
             LOG_CPP_INFO("[ALSA-Enumerator] Monitor thread joined.");
-#endif
         } else {
             LOG_CPP_INFO("[ALSA-Enumerator] Monitor thread not joinable.");
         }

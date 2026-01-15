@@ -36,6 +36,7 @@ import urllib
 import urllib.request
 import shlex
 import time
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from setuptools import setup, Extension, find_packages
@@ -728,6 +729,10 @@ class BuildExtCommand(build_ext):
         reused_count = 0
         compiled_count = 0
 
+        depends_fingerprint = None
+        if object_cache and depends:
+            depends_fingerprint = self._dependency_fingerprint(depends)
+
         compiler_descriptor = [
             getattr(compiler, "compiler_type", "unknown"),
             compiler.__class__.__name__,
@@ -738,6 +743,8 @@ class BuildExtCommand(build_ext):
             os.environ.get("CXXFLAGS", ""),
             os.environ.get("LDFLAGS", ""),
         ]
+        if depends_fingerprint:
+            extra_key.append(f"depends:{depends_fingerprint}")
         macros_key = self._serialise_macros(macros_cfg)
         include_key = sorted(include_dirs or [])
         postargs_key = list(extra_postargs_final or [])
@@ -853,6 +860,25 @@ class BuildExtCommand(build_ext):
         if object_cache and fingerprint:
             object_cache.store_object(fingerprint, Path(obj_path))
         return obj_path
+
+    def _dependency_fingerprint(self, dependencies):
+        if not dependencies:
+            return None
+        hasher = hashlib.sha256()
+        seen = set()
+        for dep in sorted(dependencies):
+            if not dep or dep in seen:
+                continue
+            seen.add(dep)
+            path = Path(dep)
+            hasher.update(str(path.resolve()).encode("utf-8"))
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            hasher.update(str(stat.st_mtime_ns).encode("ascii"))
+            hasher.update(str(stat.st_size).encode("ascii"))
+        return hasher.hexdigest()
 
     def _prepare_windows_resources(self, ext, sources):
         rc_files = [s for s in sources if s.endswith(".rc")]

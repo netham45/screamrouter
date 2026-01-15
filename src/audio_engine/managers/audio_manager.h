@@ -27,9 +27,11 @@
 #include <thread>
 #include <atomic>
 #include <optional>
+#ifndef SCREAMROUTER_TESTING
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
+#endif
 
 namespace screamrouter {
 namespace audio {
@@ -167,7 +169,9 @@ public:
      * @brief Retrieves SAP announcements detected by the main RTP receiver.
      * @return A Python list of dictionaries describing each SAP announcement.
      */
+#ifndef SCREAMROUTER_TESTING
     pybind11::list get_rtp_sap_announcements();
+#endif
 
     /**
      * @brief Retrieves seen source tags from a Raw Scream receiver.
@@ -321,6 +325,7 @@ public:
     void handle_stream_tag_resolved(const std::string& wildcard_tag,
                                     const std::string& concrete_tag);
     void handle_stream_tag_removed(const std::string& wildcard_tag);
+    void handle_wildcard_match(const WildcardMatchEvent& event);
 
     void set_stream_tag_listener(std::function<void(const std::string&, const std::string&)> on_resolved,
                                  std::function<void(const std::string&)> on_removed);
@@ -376,6 +381,7 @@ private:
     void debug_dump_state(const char* label);
 };
     
+#ifndef SCREAMROUTER_TESTING
 /**
  * @brief Binds the AudioManager class and its methods to a Python module.
  * @param m The pybind11 module to which the class will be bound.
@@ -398,10 +404,14 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("playback_ratio_kp", &TimeshiftTuning::playback_ratio_kp)
         .def_readwrite("playback_ratio_ki", &TimeshiftTuning::playback_ratio_ki)
         .def_readwrite("playback_ratio_integral_limit_ppm", &TimeshiftTuning::playback_ratio_integral_limit_ppm)
+        .def_readwrite("playback_ratio_dead_zone_ratio", &TimeshiftTuning::playback_ratio_dead_zone_ratio)
+        .def_readwrite("playback_ratio_integral_decay", &TimeshiftTuning::playback_ratio_integral_decay)
         .def_readwrite("playback_ratio_smoothing", &TimeshiftTuning::playback_ratio_smoothing)
+        .def_readwrite("playback_ratio_inbound_rate_smoothing", &TimeshiftTuning::playback_ratio_inbound_rate_smoothing)
         .def_readwrite("playback_catchup_ppm_per_ms", &TimeshiftTuning::playback_catchup_ppm_per_ms)
         .def_readwrite("playback_catchup_max_ppm", &TimeshiftTuning::playback_catchup_max_ppm)
-        .def_readwrite("max_playout_lead_ms", &TimeshiftTuning::max_playout_lead_ms);
+        .def_readwrite("max_playout_lead_ms", &TimeshiftTuning::max_playout_lead_ms)
+        .def_readwrite("playback_rate_adjustment_enabled", &TimeshiftTuning::playback_rate_adjustment_enabled);
 
     py::class_<ProfilerSettings>(m, "ProfilerSettings")
         .def(py::init<>())
@@ -448,6 +458,28 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("max_rate_adjustment", &SynchronizationTuning::max_rate_adjustment)
         .def_readwrite("sync_smoothing_factor", &SynchronizationTuning::sync_smoothing_factor);
 
+    py::class_<SystemAudioTuning>(m, "SystemAudioTuning")
+        .def(py::init<>())
+        .def_readwrite("alsa_target_latency_ms", &SystemAudioTuning::alsa_target_latency_ms)
+        .def_readwrite("alsa_periods_per_buffer", &SystemAudioTuning::alsa_periods_per_buffer)
+        .def_readwrite("alsa_dynamic_latency_enabled", &SystemAudioTuning::alsa_dynamic_latency_enabled)
+        .def_readwrite("alsa_latency_min_ms", &SystemAudioTuning::alsa_latency_min_ms)
+        .def_readwrite("alsa_latency_max_ms", &SystemAudioTuning::alsa_latency_max_ms)
+        .def_readwrite("alsa_latency_low_water_ms", &SystemAudioTuning::alsa_latency_low_water_ms)
+        .def_readwrite("alsa_latency_high_water_ms", &SystemAudioTuning::alsa_latency_high_water_ms)
+        .def_readwrite("alsa_latency_integral_gain", &SystemAudioTuning::alsa_latency_integral_gain)
+        .def_readwrite("alsa_latency_rate_limit_ms_per_sec", &SystemAudioTuning::alsa_latency_rate_limit_ms_per_sec)
+        .def_readwrite("alsa_latency_idle_decay_ms_per_sec", &SystemAudioTuning::alsa_latency_idle_decay_ms_per_sec)
+        .def_readwrite("alsa_latency_apply_hysteresis_ms", &SystemAudioTuning::alsa_latency_apply_hysteresis_ms)
+        .def_readwrite("alsa_latency_reconfig_cooldown_ms", &SystemAudioTuning::alsa_latency_reconfig_cooldown_ms)
+        .def_readwrite("alsa_latency_xrun_boost_ms", &SystemAudioTuning::alsa_latency_xrun_boost_ms)
+        .def_readwrite("alsa_latency_low_step_ms", &SystemAudioTuning::alsa_latency_low_step_ms);
+
+    py::class_<RtpReceiverTuning>(m, "RtpReceiverTuning")
+        .def(py::init<>())
+        .def_readwrite("format_probe_duration_ms", &RtpReceiverTuning::format_probe_duration_ms)
+        .def_readwrite("format_probe_min_bytes", &RtpReceiverTuning::format_probe_min_bytes);
+
     py::class_<AudioEngineSettings>(m, "AudioEngineSettings")
         .def(py::init<>())
         .def_readwrite("chunk_size_bytes", &AudioEngineSettings::chunk_size_bytes)
@@ -458,7 +490,9 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def_readwrite("source_processor_tuning", &AudioEngineSettings::source_processor_tuning)
         .def_readwrite("processor_tuning", &AudioEngineSettings::processor_tuning)
         .def_readwrite("synchronization", &AudioEngineSettings::synchronization)
-        .def_readwrite("synchronization_tuning", &AudioEngineSettings::synchronization_tuning);
+        .def_readwrite("synchronization_tuning", &AudioEngineSettings::synchronization_tuning)
+        .def_readwrite("rtp_receiver_tuning", &AudioEngineSettings::rtp_receiver_tuning)
+        .def_readwrite("system_audio_tuning", &AudioEngineSettings::system_audio_tuning);
 
     py::class_<TimeshiftBufferExport>(m, "TimeshiftBufferExport")
         .def(py::init<>())
@@ -570,6 +604,7 @@ inline void bind_audio_manager(pybind11::module_ &m) {
         .def("list_system_devices", &AudioManager::list_system_devices, "Returns the cached registry of system audio devices.")
         .def("drain_device_notifications", &AudioManager::drain_device_notifications, "Retrieves and clears pending device discovery notifications.");
 }
+#endif // !SCREAMROUTER_TESTING
 
 } // namespace audio
 } // namespace screamrouter

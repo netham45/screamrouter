@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Box,
   Heading,
@@ -31,13 +31,16 @@ import {
   Collapse,
   useDisclosure,
   Switch,
+  Tooltip,
 } from '@chakra-ui/react';
-import ApiService, { AudioEngineStats, AudioEngineSettings, BufferMetrics } from '../../api/api';
+import ApiService, { AudioEngineStats, AudioEngineSettings, BufferMetrics, Source, Sink, SourceStats, SinkStats } from '../../api/api';
 
 const StatsPage: React.FC = () => {
   const [stats, setStats] = useState<AudioEngineStats | null>(null);
   const [settings, setSettings] = useState<AudioEngineSettings | null>(null);
   const [initialSettings, setInitialSettings] = useState<AudioEngineSettings | null>(null);
+  const [sourceCatalog, setSourceCatalog] = useState<Record<string, Source>>({});
+  const [sinkCatalog, setSinkCatalog] = useState<Record<string, Sink>>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
@@ -52,13 +55,17 @@ const StatsPage: React.FC = () => {
 
   const fetchAllData = async () => {
     try {
-      const [statsResponse, settingsResponse] = await Promise.all([
+      const [statsResponse, settingsResponse, sourcesResponse, sinksResponse] = await Promise.all([
         ApiService.getStats(),
         ApiService.getSettings(),
+        ApiService.getSources(),
+        ApiService.getSinks(),
       ]);
       setStats(statsResponse.data);
       setSettings(settingsResponse.data);
       setInitialSettings(JSON.parse(JSON.stringify(settingsResponse.data))); // Deep copy
+      setSourceCatalog(sourcesResponse.data ?? {});
+      setSinkCatalog(sinksResponse.data ?? {});
     } catch (err) {
       setError('Failed to fetch data. Please try again later.');
       console.error(err);
@@ -70,7 +77,7 @@ const StatsPage: React.FC = () => {
   useEffect(() => {
     fetchAllData();
     const interval = setInterval(() => {
-        ApiService.getStats().then(response => setStats(response.data)).catch(err => console.error("Failed to fetch stats", err));
+      ApiService.getStats().then(response => setStats(response.data)).catch(err => console.error("Failed to fetch stats", err));
     }, 2000); // Refresh stats every 2 seconds
 
     return () => clearInterval(interval);
@@ -80,11 +87,11 @@ const StatsPage: React.FC = () => {
     if (settings) {
       setSettings(prevSettings => {
         if (!prevSettings) return null;
-        
+
         const newSettings = { ...prevSettings };
         // @ts-expect-error it throws an error and i want it quiet
         newSettings[category][field] = value;
-        
+
         return newSettings;
       });
     }
@@ -121,6 +128,133 @@ const StatsPage: React.FC = () => {
     }
   };
 
+  const sourceLookup = useMemo(() => {
+    const map = new Map<string, Source>();
+    Object.values(sourceCatalog || {}).forEach((source) => {
+      const keys = [
+        source.name,
+        source.name?.toLowerCase(),
+        source.tag,
+        source.tag?.toLowerCase(),
+        source.ip,
+        source.ip?.toLowerCase(),
+      ].filter(Boolean) as string[];
+      keys.forEach((key) => {
+        if (!map.has(key)) {
+          map.set(key, source);
+        }
+      });
+    });
+    return map;
+  }, [sourceCatalog]);
+
+  const sinkLookup = useMemo(() => {
+    const map = new Map<string, Sink>();
+    Object.values(sinkCatalog || {}).forEach((sinkEntry) => {
+      const keys = [
+        sinkEntry.config_id,
+        sinkEntry.config_id?.toLowerCase(),
+        sinkEntry.name,
+        sinkEntry.name?.toLowerCase(),
+        sinkEntry.ip,
+        sinkEntry.ip?.toLowerCase(),
+      ].filter(Boolean) as string[];
+      keys.forEach((key) => {
+        if (!map.has(key)) {
+          map.set(key, sinkEntry);
+        }
+      });
+    });
+    return map;
+  }, [sinkCatalog]);
+
+  const findSourceDetails = useCallback((sourceStatId: string) => {
+    if (!sourceStatId) return undefined;
+    return sourceLookup.get(sourceStatId) || sourceLookup.get(sourceStatId.toLowerCase());
+  }, [sourceLookup]);
+
+  const findSourceMetadata = useCallback((sourceStat: SourceStats) => {
+    return (
+      findSourceDetails(sourceStat.source_tag) ||
+      findSourceDetails(sourceStat.instance_id)
+    );
+  }, [findSourceDetails]);
+
+  const findSinkMetadata = useCallback((sinkId: string) => {
+    if (!sinkId) return undefined;
+    return sinkLookup.get(sinkId) || sinkLookup.get(sinkId.toLowerCase());
+  }, [sinkLookup]);
+
+  const formatBoolean = (value?: boolean | null) => {
+    if (value === undefined || value === null) {
+      return 'N/A';
+    }
+    return value ? 'Yes' : 'No';
+  };
+
+  const formatDestination = (sinkMeta?: Sink) => {
+    if (!sinkMeta || !sinkMeta.ip) {
+      return 'N/A';
+    }
+    return sinkMeta.port ? `${sinkMeta.ip}:${sinkMeta.port}` : sinkMeta.ip;
+  };
+
+  const renderDetailLine = (label: string, value: React.ReactNode) => (
+    <Text key={label} fontSize="sm">
+      <Text as="span" fontWeight="bold">{label}: </Text>
+      {value !== undefined && value !== null && value !== '' ? value : 'N/A'}
+    </Text>
+  );
+
+  const renderSourceTooltipContent = (source: SourceStats) => {
+    const metadata = findSourceMetadata(source);
+    return (
+      <Box maxW="360px">
+        <Heading size="xs" mb={1}>Source Properties</Heading>
+        <VStack align="start" spacing={0.5}>
+          {renderDetailLine('Instance ID', source.instance_id)}
+          {renderDetailLine('Source Tag', source.source_tag)}
+          {renderDetailLine('Name', metadata?.name ?? source.source_tag)}
+          {renderDetailLine('Type', metadata ? (metadata.is_group ? 'Group' : metadata.is_process ? 'Process' : 'Standard') : 'N/A')}
+          {renderDetailLine('Channels', metadata?.channels)}
+          {renderDetailLine('Sample Rate', metadata?.sample_rate ? `${metadata.sample_rate.toLocaleString()} Hz` : 'N/A')}
+          {renderDetailLine('Bit Depth', metadata?.bit_depth)}
+          {renderDetailLine('Destination / IP', metadata?.ip ?? 'N/A')}
+          {renderDetailLine('Delay', metadata?.delay !== undefined ? `${metadata.delay} ms` : 'N/A')}
+          {renderDetailLine('Timeshift', metadata?.timeshift !== undefined ? `${metadata.timeshift} ms` : 'N/A')}
+          {renderDetailLine('Volume', metadata?.volume !== undefined ? `${metadata.volume}%` : 'N/A')}
+          {renderDetailLine('Favorite', formatBoolean(metadata?.favorite))}
+        </VStack>
+      </Box>
+    );
+  };
+
+  const renderSinkTooltipContent = (sink: SinkStats) => {
+    const metadata = findSinkMetadata(sink.sink_id);
+    return (
+      <Box maxW="360px">
+        <Heading size="xs" mb={1}>Sink Properties</Heading>
+        <VStack align="start" spacing={0.5}>
+          {renderDetailLine('Sink ID', sink.sink_id)}
+          {renderDetailLine('Name', metadata?.name ?? sink.sink_id)}
+          {renderDetailLine('Type', metadata?.protocol ?? 'N/A')}
+          {renderDetailLine('Destination', formatDestination(metadata))}
+          {renderDetailLine('Target Server UUID', metadata?.sap_target_host)}
+          {renderDetailLine('Target Sink UUID', metadata?.sap_target_sink)}
+          {renderDetailLine('Channels', metadata?.channels)}
+          {renderDetailLine('Sample Rate', metadata?.sample_rate ? `${metadata.sample_rate.toLocaleString()} Hz` : 'N/A')}
+          {renderDetailLine('Bit Depth', metadata?.bit_depth)}
+          {renderDetailLine('Channel Layout', metadata?.channel_layout ?? 'N/A')}
+          {renderDetailLine('Delay', metadata?.delay !== undefined ? `${metadata.delay} ms` : 'N/A')}
+          {renderDetailLine('Timeshift', metadata?.timeshift !== undefined ? `${metadata.timeshift} ms` : 'N/A')}
+          {renderDetailLine('Volume', metadata?.volume !== undefined ? `${metadata.volume}%` : 'N/A')}
+          {renderDetailLine('Multi-Device', formatBoolean(metadata?.multi_device_mode))}
+          {renderDetailLine('System Audio Sync', formatBoolean(metadata?.time_sync))}
+        </VStack>
+      </Box>
+    );
+  };
+
   if (loading) {
     return (
       <Box textAlign="center" mt="20">
@@ -147,27 +281,27 @@ const StatsPage: React.FC = () => {
     if (!settings) return null;
     const value = settings[category][field as keyof typeof settings[typeof category]];
     const numericValue = typeof value === 'number' && !Number.isNaN(value) ? value : 0;
-    
+
     return (
       <FormControl>
         <FormLabel>{label}</FormLabel>
         {isSwitch ? (
-             <Switch isChecked={Boolean(value)} onChange={(e) => handleSettingsChange(category, field, e.target.checked)} />
+          <Switch isChecked={Boolean(value)} onChange={(e) => handleSettingsChange(category, field, e.target.checked)} />
         ) : (
-            <NumberInput
+          <NumberInput
             value={numericValue}
             onChange={(valueString) => {
               const nextValue = valueString === '' ? 0 : parseFloat(valueString);
               handleSettingsChange(category, field, Number.isNaN(nextValue) ? numericValue : nextValue);
             }}
             step={step}
-            >
+          >
             <NumberInputField />
             <NumberInputStepper>
-                <NumberIncrementStepper />
-                <NumberDecrementStepper />
+              <NumberIncrementStepper />
+              <NumberDecrementStepper />
             </NumberInputStepper>
-            </NumberInput>
+          </NumberInput>
         )}
       </FormControl>
     );
@@ -288,24 +422,26 @@ const StatsPage: React.FC = () => {
               </Thead>
               <Tbody>
                 {stats.source_stats.map((source) => (
-                  <Tr key={source.instance_id}>
-                    <Td>{source.instance_id}</Td>
-                    <Td>{source.source_tag}</Td>
-                    <Td isNumeric>{source.input_queue_size?.toLocaleString() ?? 'N/A'}</Td>
-                    <Td isNumeric>{source.input_buffer?.depth_ms !== undefined ? source.input_buffer.depth_ms.toFixed(2) : 'N/A'}</Td>
-                    <Td isNumeric>{formatRate(source.input_buffer?.push_rate_per_second)}</Td>
-                    <Td isNumeric>{formatRate(source.input_buffer?.pop_rate_per_second)}</Td>
-                    <Td isNumeric>{source.output_queue_size?.toLocaleString() ?? 'N/A'}</Td>
-                    <Td isNumeric>{source.output_buffer?.depth_ms !== undefined ? source.output_buffer.depth_ms.toFixed(2) : 'N/A'}</Td>
-                    <Td isNumeric>{formatRate(source.output_buffer?.push_rate_per_second)}</Td>
-                    <Td isNumeric>{source.process_buffer?.depth_ms !== undefined ? source.process_buffer.depth_ms.toFixed(2) : 'N/A'}</Td>
-                    <Td isNumeric>{source.packets_processed_per_second?.toFixed(2) ?? 'N/A'}</Td>
-                    <Td isNumeric>{source.playback_rate?.toFixed(4) ?? 'N/A'}</Td>
-                    <Td isNumeric>{source.resample_ratio?.toFixed(4) ?? 'N/A'}</Td>
-                    <Td isNumeric>{source.chunks_pushed?.toLocaleString() ?? 'N/A'}</Td>
-                    <Td isNumeric>{source.discarded_packets?.toLocaleString() ?? 'N/A'}</Td>
-                    <Td isNumeric>{source.reconfigurations?.toLocaleString() ?? 'N/A'}</Td>
-                  </Tr>
+                  <Tooltip key={source.instance_id} label={renderSourceTooltipContent(source)} hasArrow openDelay={300} placement="auto">
+                    <Tr>
+                      <Td>{source.instance_id}</Td>
+                      <Td>{source.source_tag}</Td>
+                      <Td isNumeric>{source.input_queue_size?.toLocaleString() ?? 'N/A'}</Td>
+                      <Td isNumeric>{source.input_buffer?.depth_ms !== undefined ? source.input_buffer.depth_ms.toFixed(2) : 'N/A'}</Td>
+                      <Td isNumeric>{formatRate(source.input_buffer?.push_rate_per_second)}</Td>
+                      <Td isNumeric>{formatRate(source.input_buffer?.pop_rate_per_second)}</Td>
+                      <Td isNumeric>{source.output_queue_size?.toLocaleString() ?? 'N/A'}</Td>
+                      <Td isNumeric>{source.output_buffer?.depth_ms !== undefined ? source.output_buffer.depth_ms.toFixed(2) : 'N/A'}</Td>
+                      <Td isNumeric>{formatRate(source.output_buffer?.push_rate_per_second)}</Td>
+                      <Td isNumeric>{source.process_buffer?.depth_ms !== undefined ? source.process_buffer.depth_ms.toFixed(2) : 'N/A'}</Td>
+                      <Td isNumeric>{source.packets_processed_per_second?.toFixed(2) ?? 'N/A'}</Td>
+                      <Td isNumeric>{source.playback_rate?.toFixed(4) ?? 'N/A'}</Td>
+                      <Td isNumeric>{source.resample_ratio?.toFixed(4) ?? 'N/A'}</Td>
+                      <Td isNumeric>{source.chunks_pushed?.toLocaleString() ?? 'N/A'}</Td>
+                      <Td isNumeric>{source.discarded_packets?.toLocaleString() ?? 'N/A'}</Td>
+                      <Td isNumeric>{source.reconfigurations?.toLocaleString() ?? 'N/A'}</Td>
+                    </Tr>
+                  </Tooltip>
                 ))}
               </Tbody>
             </Table>
@@ -319,44 +455,45 @@ const StatsPage: React.FC = () => {
         </CardHeader>
         <CardBody>
           {stats.sink_stats.map((sink) => (
-            <Box key={sink.sink_id} mb={4} p={4} borderWidth="1px" borderRadius="md">
-              <Heading size="sm" mb={2}>{sink.sink_id}</Heading>
-              <HStack spacing={10} mb={4}>
+            <Tooltip key={sink.sink_id} label={renderSinkTooltipContent(sink)} hasArrow openDelay={300} placement="auto">
+              <Box mb={4} p={4} borderWidth="1px" borderRadius="md">
+                <Heading size="sm" mb={2}>{sink.sink_id}</Heading>
+                <HStack spacing={10} mb={4}>
                 <VStack align="start">
-                    <Text fontWeight="bold">Active Streams:</Text>
-                    <Text>{sink.active_input_streams?.toLocaleString() ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">Active Streams:</Text>
+                  <Text>{sink.active_input_streams?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">Total Streams:</Text>
-                    <Text>{sink.total_input_streams?.toLocaleString() ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">Total Streams:</Text>
+                  <Text>{sink.total_input_streams?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">Mixed/sec:</Text>
-                    <Text>{sink.packets_mixed_per_second?.toFixed(2) ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">Mixed/sec:</Text>
+                  <Text>{sink.packets_mixed_per_second?.toFixed(2) ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">Buffer Underruns:</Text>
-                    <Text>{sink.sink_buffer_underruns?.toLocaleString() ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">Buffer Underruns:</Text>
+                  <Text>{sink.sink_buffer_underruns?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">Buffer Overflows:</Text>
-                    <Text>{sink.sink_buffer_overflows?.toLocaleString() ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">Buffer Overflows:</Text>
+                  <Text>{sink.sink_buffer_overflows?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">MP3 Overflows:</Text>
-                    <Text>{sink.mp3_buffer_overflows?.toLocaleString() ?? 'N/A'}</Text>
+                  <Text fontWeight="bold">MP3 Overflows:</Text>
+                  <Text>{sink.mp3_buffer_overflows?.toLocaleString() ?? 'N/A'}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">Payload Buffer:</Text>
-                    <Text>{formatBuffer(sink.payload_buffer)}</Text>
+                  <Text fontWeight="bold">Payload Buffer:</Text>
+                  <Text>{formatBuffer(sink.payload_buffer)}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">MP3 Out Buffer:</Text>
-                    <Text>{formatBuffer(sink.mp3_output_buffer)}</Text>
+                  <Text fontWeight="bold">MP3 Out Buffer:</Text>
+                  <Text>{formatBuffer(sink.mp3_output_buffer)}</Text>
                 </VStack>
                 <VStack align="start">
-                    <Text fontWeight="bold">MP3 PCM Buffer:</Text>
-                    <Text>{formatBuffer(sink.mp3_pcm_buffer)}</Text>
+                  <Text fontWeight="bold">MP3 PCM Buffer:</Text>
+                  <Text>{formatBuffer(sink.mp3_pcm_buffer)}</Text>
                 </VStack>
               </HStack>
               <HStack spacing={6} mb={4}>
@@ -424,7 +561,8 @@ const StatsPage: React.FC = () => {
                   </TableContainer>
                 </>
               )}
-            </Box>
+              </Box>
+            </Tooltip>
           ))}
         </CardBody>
       </Card>
@@ -451,6 +589,7 @@ const StatsPage: React.FC = () => {
                     {renderTuningControl('timeshift_tuning', 'max_clock_pending_packets', 'Max Clock Pending Packets')}
                     {renderTuningControl('timeshift_tuning', 'rtp_continuity_slack_seconds', 'RTP Continuity Slack (s)', 0.01)}
                     {renderTuningControl('timeshift_tuning', 'rtp_session_reset_threshold_seconds', 'RTP Session Reset Threshold (s)', 0.01)}
+                    {renderTuningControl('timeshift_tuning', 'playback_rate_adjustment_enabled', 'Playback Rate Adjustment', 1, true)}
                   </SimpleGrid>
                 </Box>
 
@@ -486,6 +625,34 @@ const StatsPage: React.FC = () => {
                     {renderTuningControl('processor_tuning', 'normalization_attack_smoothing', 'Normalization Attack Smoothing', 0.01)}
                     {renderTuningControl('processor_tuning', 'normalization_decay_smoothing', 'Normalization Decay Smoothing', 0.01)}
                     {renderTuningControl('processor_tuning', 'dither_noise_shaping_factor', 'Dither Noise Shaping Factor', 0.01)}
+                  </SimpleGrid>
+                </Box>
+
+                <Box>
+                  <Heading size="sm" mb={4}>System Audio Tuning</Heading>
+                  <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                    {renderTuningControl('system_audio_tuning', 'alsa_target_latency_ms', 'ALSA Target Latency (ms)')}
+                    {renderTuningControl('system_audio_tuning', 'alsa_periods_per_buffer', 'ALSA Periods per Buffer')}
+                    {renderTuningControl('system_audio_tuning', 'alsa_dynamic_latency_enabled', 'Enable Dynamic Latency', 1, true)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_min_ms', 'Latency Minimum (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_max_ms', 'Latency Maximum (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_low_water_ms', 'Low Buffer Threshold (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_high_water_ms', 'High Buffer Threshold (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_integral_gain', 'Latency Integral Gain', 0.01)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_rate_limit_ms_per_sec', 'Latency Rate Limit (ms/sec)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_idle_decay_ms_per_sec', 'Idle Decay (ms/sec)', 0.1)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_apply_hysteresis_ms', 'Latency Hysteresis (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_reconfig_cooldown_ms', 'Reconfigure Cooldown (ms)', 10)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_xrun_boost_ms', 'X-run Boost (ms)', 0.5)}
+                    {renderTuningControl('system_audio_tuning', 'alsa_latency_low_step_ms', 'Low Buffer Step (ms)', 0.5)}
+                  </SimpleGrid>
+                </Box>
+
+                <Box>
+                  <Heading size="sm" mb={4}>RTP Receiver Tuning</Heading>
+                  <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                    {renderTuningControl('rtp_receiver_tuning', 'format_probe_duration_ms', 'Format Probe Duration (ms)', 50)}
+                    {renderTuningControl('rtp_receiver_tuning', 'format_probe_min_bytes', 'Format Probe Min Bytes', 100)}
                   </SimpleGrid>
                 </Box>
 

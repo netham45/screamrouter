@@ -348,7 +348,7 @@ bool RtpOpusSender::handle_send_payload(const uint8_t* payload_data, size_t payl
             continue;
         }
 
-        const bool packet_sent = send_rtp_payload(opus_buffer_.data(), static_cast<size_t>(encoded_bytes), csrcs, false);
+        const bool packet_sent = send_rtp_payload(opus_buffer_.data(), static_cast<size_t>(encoded_bytes), csrcs, true);
         // Always advance the RTP timestamp once the frame is encoded so we never reuse timestamps after a send failure.
         advance_rtp_timestamp(static_cast<uint32_t>(opus_frame_size_));
         if (packet_sent) {

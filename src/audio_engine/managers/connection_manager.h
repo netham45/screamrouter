@@ -14,6 +14,7 @@
 #include "../utils/packet_ring.h"
 #include <string>
 #include <mutex>
+#include <vector>
 
 namespace screamrouter {
 namespace audio {
@@ -62,6 +63,8 @@ public:
      * @return true if the disconnection was successful, false otherwise.
      */
     bool disconnect_source_sink(const std::string& source_instance_id, const std::string& sink_id, bool running);
+
+    std::vector<std::string> list_sinks_for_source(const std::string& source_instance_id) const;
 
 private:
     std::recursive_mutex& m_manager_mutex;

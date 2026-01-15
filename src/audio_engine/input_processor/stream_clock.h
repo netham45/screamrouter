@@ -72,6 +72,12 @@ private:
     // The sample rate of the RTP clock.
     const double m_sample_rate;
 
+    // RTP unwrapping/reference
+    bool m_has_reference;
+    uint32_t m_last_rtp_timestamp;
+    uint64_t m_unwrapped_rtp;
+    std::chrono::steady_clock::time_point m_reference_arrival_time;
+
     // Kalman filter state variables
     // x = [offset, drift]'
     double m_offset; // Estimated offset of RTP clock from local clock (in seconds)

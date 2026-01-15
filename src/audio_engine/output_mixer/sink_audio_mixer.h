@@ -18,6 +18,9 @@
 #include "../configuration/audio_engine_settings.h"
 #include "../receivers/clock_manager.h"
 #include "../utils/packet_ring.h"
+#include "mp3_encoder.h"
+#include "listener_dispatcher.h"
+#include "sink_rate_controller.h"
 
 #include <string>
 #include <vector>
@@ -66,6 +69,17 @@ struct SinkAudioMixerStats {
     double last_send_gap_ms = 0.0;
     double avg_send_gap_ms = 0.0;
     std::vector<SinkInputLaneStats> input_lanes;
+};
+
+/**
+ * @struct PipelineState
+ * @brief Aggregated buffer state from all stages for unified rate control.
+ */
+struct PipelineState {
+    double hw_fill_ms = 0.0;      ///< Hardware buffer fill level (ALSA/WASAPI)
+    double hw_target_ms = 0.0;    ///< Hardware buffer target level
+    double mixer_queue_ms = 0.0;  ///< Mixer input queue backlog
+    double mixer_target_ms = 0.0; ///< Mixer target queue level
 };
 
 using Mp3OutputQueue = utils::ThreadSafeQueue<EncodedMP3Data>;
@@ -165,6 +179,12 @@ public:
      * @param coord Pointer to the coordinator (not owned by mixer, must outlive mixer).
      */
     void set_coordinator(SinkSynchronizationCoordinator* coord);
+
+    /**
+     * @brief Gets the current aggregated pipeline buffer state for upstream rate control.
+     * @return PipelineState containing hardware and mixer queue levels.
+     */
+    PipelineState get_pipeline_state() const;
  
  protected:
      /** @brief The main processing loop for the mixer thread. */
@@ -180,8 +200,10 @@ private:
     std::shared_ptr<Mp3OutputQueue> mp3_output_queue_;
     std::unique_ptr<INetworkSender> network_sender_;
     
-    std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
-    std::mutex listener_senders_mutex_;
+    // Helper classes for modular functionality
+    std::unique_ptr<Mp3Encoder> mp3_encoder_;
+    std::unique_ptr<ListenerDispatcher> listener_dispatcher_;
+    std::unique_ptr<SinkRateController> rate_controller_;
 
     ReadyRingMap ready_rings_;
     std::mutex queues_mutex_;
@@ -190,6 +212,15 @@ private:
     std::map<std::string, bool> input_active_state_;
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
     std::map<std::string, std::deque<ProcessedAudioChunk>> processed_ready_;
+    struct ReadyQueueDropState {
+        std::chrono::steady_clock::time_point last_update{};
+        double drop_credit = 0.0;
+    };
+    std::unordered_map<std::string, ReadyQueueDropState> ready_queue_drop_state_;
+    std::unordered_map<std::string, size_t> ready_queue_high_water_;
+    std::unordered_map<std::string, uint64_t> ready_total_received_;
+    std::unordered_map<std::string, uint64_t> ready_total_popped_;
+    std::unordered_map<std::string, uint64_t> ready_total_dropped_;
 
     std::unique_ptr<ClockManager> clock_manager_;
     std::atomic<bool> clock_manager_enabled_{false};
@@ -211,6 +242,11 @@ private:
     std::vector<int32_t> output_post_buffer_;
     std::mutex output_processor_mutex_;
     std::atomic<double> output_playback_rate_{1.0};
+    
+    // Hardware buffer state from ALSA/WASAPI for unified rate control
+    std::atomic<double> hw_fill_ms_{0.0};
+    std::atomic<double> hw_target_ms_{0.0};
+    
     uint64_t output_post_log_counter_{0};
     std::vector<int32_t> stereo_buffer_;
     std::vector<uint8_t> payload_buffer_;
@@ -223,8 +259,12 @@ private:
     std::vector<uint32_t> current_csrcs_;
     std::mutex csrc_mutex_;
 
-    lame_t lame_global_flags_ = nullptr;
+    lame_t lame_global_flags_ = nullptr;  // TODO: Remove after full Mp3Encoder integration
     std::unique_ptr<AudioProcessor> stereo_preprocessor_;
+    
+    // Legacy members - keep until legacy code removed from sink_audio_mixer.cpp
+    std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
+    std::mutex listener_senders_mutex_;
     std::vector<uint8_t> mp3_encode_buffer_;
     std::deque<std::vector<int32_t>> mp3_pcm_queue_;
     std::mutex mp3_mutex_;

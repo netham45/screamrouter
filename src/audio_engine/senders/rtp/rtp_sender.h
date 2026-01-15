@@ -18,6 +18,8 @@
 #include <chrono>
 #include <memory>
 #include <vector>
+#include <mutex>
+#include <condition_variable>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -96,6 +98,8 @@ private:
     std::vector<struct sockaddr_in> sap_dest_addrs_;
     std::thread sap_thread_;
     std::atomic<bool> sap_thread_running_;
+    std::mutex sap_thread_mutex_;
+    std::condition_variable sap_thread_cv_;
 
     // RTCP socket infrastructure
     socket_t rtcp_socket_fd_;                              ///< Socket for RTCP communication

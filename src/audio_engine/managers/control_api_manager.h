@@ -22,6 +22,7 @@ namespace screamrouter {
 namespace audio {
 
 class TimeshiftManager;
+class SourceManager;
 
 /**
  * @class ControlApiManager
@@ -42,7 +43,8 @@ public:
     ControlApiManager(
         std::recursive_mutex& manager_mutex,
         TimeshiftManager* timeshift_manager,
-        std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources
+        std::map<std::string, std::unique_ptr<SourceInputProcessor>>& sources,
+        SourceManager* source_manager
     );
     /**
      * @brief Destructor.
@@ -93,6 +95,7 @@ private:
     std::recursive_mutex& m_manager_mutex;
     TimeshiftManager* m_timeshift_manager;
     std::map<std::string, std::unique_ptr<SourceInputProcessor>>& m_sources;
+    SourceManager* m_source_manager;
     std::unordered_map<std::string, uint32_t> m_plugin_rtp_counters;
     std::mutex m_plugin_rtp_mutex;
 };

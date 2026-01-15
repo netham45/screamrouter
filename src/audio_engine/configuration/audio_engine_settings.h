@@ -7,8 +7,8 @@
 namespace screamrouter {
 namespace audio {
 
-inline constexpr std::size_t kDefaultChunkSizeBytes = 1152;
-inline constexpr std::size_t kDefaultBaseFramesPerChunkMono16 = 576; // 576/(16/8) = 288 = (288/<sample rate>)ms 
+inline constexpr std::size_t kDefaultChunkSizeBytes = 2304;
+inline constexpr std::size_t kDefaultBaseFramesPerChunkMono16 = 1152; // 576/(16/8) = 288 = (288/<sample rate>)ms 
 
 class AudioEngineSettings;
 
@@ -27,22 +27,26 @@ inline std::size_t compute_chunk_size_bytes_for_format(std::size_t frames_per_ch
 struct TimeshiftTuning {
     long cleanup_interval_ms = 1000;
     double late_packet_threshold_ms = 10.0;
-    double target_buffer_level_ms = 8.0;
+    double target_buffer_level_ms = 24.0;
     long loop_max_sleep_ms = 10;
     double max_catchup_lag_ms = 5000;
     double max_adaptive_delay_ms = 200.0;
     std::size_t max_clock_pending_packets = 64;
     double rtp_continuity_slack_seconds = 0.25;
     double rtp_session_reset_threshold_seconds = 0.2;
-    double playback_ratio_max_deviation_ppm = 300.0;
-    double playback_ratio_slew_ppm_per_sec = 100.0;
-    double playback_ratio_kp = 5.0;
-    double playback_ratio_ki = 1.0;
-    double playback_ratio_integral_limit_ppm = 300.0;
-    double playback_ratio_smoothing = 0.05;
-    double playback_catchup_ppm_per_ms = 500.0;   // Extra speedup per ms of lateness (bounded)
+    double playback_ratio_max_deviation_ppm = 2000.0;
+    double playback_ratio_slew_ppm_per_sec = 0.0;
+    double playback_ratio_kp = 0.25;     // Proportional gain (relative to max deviation) for buffer fill error
+    double playback_ratio_ki = 0.05;     // Integral gain (relative to max deviation) per second for buffer fill error
+    double playback_ratio_integral_limit_ppm = 2000.0;
+    double playback_ratio_dead_zone_ratio = 0.05;  // Buffer fill within ±5% of target triggers integral decay
+    double playback_ratio_integral_decay = 0.95;   // Decay factor applied to integral when in dead zone
+    double playback_ratio_smoothing = 0.0;
+    double playback_ratio_inbound_rate_smoothing = 0.1; // Exponential smoothing factor [0,1] for measured inbound rate
+    bool playback_rate_adjustment_enabled = false;         // Toggle for rate adjustment (when false, rate stays at 1.0)
+    double playback_catchup_ppm_per_ms = 1000.0;   // Extra speedup per ms of lateness (bounded)
     double playback_catchup_max_ppm = 200000.0;   // Allow up to ~20% speedup when very late
-    double max_playout_lead_ms = 200.0;           // Clamp how far into the future we schedule playout
+    double max_playout_lead_ms = 2500000.0;           // Clamp how far into the future we schedule playout
 
     // --- Reanchoring settings ---
     bool reanchor_enabled = true;                     // Enable automatic reanchoring
@@ -75,13 +79,13 @@ struct MixerTuning {
     std::size_t max_input_queue_chunks = 32;
     std::size_t min_input_queue_chunks = 4;
     std::size_t max_ready_chunks_per_source = 8;
-    std::size_t max_queued_chunks = 3;
+    std::size_t max_queued_chunks = 1;
     double max_input_queue_duration_ms = 0.0;
     double min_input_queue_duration_ms = 0.0;
     double max_ready_queue_duration_ms = 0.0;
 
     // Buffer drain control
-    bool enable_adaptive_buffer_drain = true;      // Enable buffer draining feature
+    bool enable_adaptive_buffer_drain = false;      // Disable buffer draining by default; timeshift manager drives rate
     double target_buffer_level_ms = ((kDefaultBaseFramesPerChunkMono16/2.0) / 48000.0 * 1000.0);          // Target buffer level in milliseconds
     double buffer_tolerance_ms = target_buffer_level_ms * 1.5;             // Don't adjust if within ±tolerance of target
     double max_speedup_factor = 1.02;             // Maximum playback speedup (1.02 = 2% faster)
@@ -118,6 +122,28 @@ struct SynchronizationTuning {
     double sync_smoothing_factor = 0.9;
 };
 
+struct RtpReceiverTuning {
+    double format_probe_duration_ms = 500.0;  // How long to probe before format detection
+    size_t format_probe_min_bytes = 5000;     // Minimum bytes before format detection
+};
+
+struct SystemAudioTuning {
+    double alsa_target_latency_ms = 64.0;
+    unsigned int alsa_periods_per_buffer = 3;
+    bool alsa_dynamic_latency_enabled = true;
+    double alsa_latency_min_ms = 20.0;
+    double alsa_latency_max_ms = 500.0;
+    double alsa_latency_low_water_ms = 20.0;
+    double alsa_latency_high_water_ms = 50.0;
+    double alsa_latency_integral_gain = 0.4;          // ms adjustment per ms-error-second
+    double alsa_latency_rate_limit_ms_per_sec = 8.0;  // max slew rate when integrating
+    double alsa_latency_idle_decay_ms_per_sec = 1.0;  // drift back toward baseline when stable
+    double alsa_latency_apply_hysteresis_ms = 2.0;    // avoid thrashing hw params
+    double alsa_latency_reconfig_cooldown_ms = 4000.0;
+    double alsa_latency_xrun_boost_ms = 5.0;
+    double alsa_latency_low_step_ms = 3.0;            // step added immediately when buffer dips low
+};
+
 class AudioEngineSettings {
 public:
     std::size_t chunk_size_bytes = kDefaultChunkSizeBytes;
@@ -130,6 +156,8 @@ public:
     ProcessorTuning processor_tuning;
     SynchronizationSettings synchronization;
     SynchronizationTuning synchronization_tuning;
+    RtpReceiverTuning rtp_receiver_tuning;
+    SystemAudioTuning system_audio_tuning;
 };
 
 inline std::size_t resolve_chunk_size_bytes(const std::shared_ptr<AudioEngineSettings>& settings) {

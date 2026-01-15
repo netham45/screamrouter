@@ -881,7 +881,6 @@ bool PulseAudioReceiver::Impl::initialize() {
 
     debug_packets = false;
     log("PulseAudioReceiver protocol tracing enabled");
-
     // Setup TCP listener if requested.
     if (config.tcp_listen_port != 0) {
         tcp_listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -953,7 +952,6 @@ bool PulseAudioReceiver::Impl::initialize() {
             unix_listen_fd = -1;
             return false;
         }
-
         if (!config.socket_owner_user.empty() || !config.socket_owner_group.empty()) {
             uid_t uid = static_cast<uid_t>(-1);
             gid_t gid = static_cast<gid_t>(-1);
@@ -1087,7 +1085,7 @@ void PulseAudioReceiver::Impl::accept_connections(int listen_fd, bool is_unix, s
             ucred cred{};
             socklen_t cl = sizeof(cred);
             if (::getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED, &cred, &cl) == 0) {
-                (void)cred;
+                LOG_CPP_INFO("[PulseAudioReceiver] Accepted UNIX connection from PID %d", cred.pid);
                 conn->peer_identity = "127.0.0.1";
             }
 #endif

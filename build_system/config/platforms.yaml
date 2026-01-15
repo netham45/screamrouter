@@ -63,7 +63,7 @@ platforms:
       make: "make"
       flags:
         CFLAGS: "-O2 -fPIC"
-        CXXFLAGS: "-O2 -fPIC -std=c++17"
+        CXXFLAGS: "-O2 -fPIC -std=c++17 -g"
         LDFLAGS: "-L{install_dir}/lib -L{install_dir}/lib64"
       parallel_make: "-j{cpu_count}"
         

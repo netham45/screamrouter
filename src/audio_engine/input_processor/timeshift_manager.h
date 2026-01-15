@@ -27,6 +27,8 @@
 #include <limits>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
+#include <functional>
 
 namespace screamrouter {
 namespace audio {
@@ -71,6 +73,12 @@ struct ProcessorTargetInfo {
     /** @brief Per-sink ready rings for dispatch. */
     std::map<std::string, std::weak_ptr<PacketRing>> sink_rings;
     uint64_t dropped_packets = 0;
+    /** @brief Owning processor instance identifier. */
+    std::string instance_id;
+    /** @brief Tracks concrete tags already observed for this wildcard. */
+    std::unordered_set<std::string> matched_concrete_tags;
+    /** @brief Last actual tag logged for mismatch diagnostics. */
+    std::string last_logged_mismatch_tag;
 };
 
 /**
@@ -101,12 +109,12 @@ struct StreamTimingState {
     uint32_t last_played_rtp_timestamp = 0;
     std::chrono::steady_clock::time_point last_controller_update_time{};
     double playback_ratio_integral_ppm = 0.0;
-    double playback_ratio_controller_ppm = 0.0;
     double last_arrival_time_error_ms = 0.0; // For stats
     int sample_rate = 0;
     int channels = 0;
     int bit_depth = 0;
     uint32_t samples_per_chunk = 0;
+    double buffer_fill_error_ratio = 0.0;
 
     // Stats
     std::atomic<uint64_t> total_packets{0};
@@ -215,6 +223,13 @@ struct TimeshiftManagerStats {
     std::map<std::string, ProcessorStats> processor_stats;
 };
 
+struct WildcardMatchEvent {
+    std::string processor_instance_id;
+    std::string filter_tag;
+    std::string concrete_tag;
+    bool is_primary_binding = false;
+};
+
 /**
  * @class TimeshiftManager
  * @brief Manages a global timeshift buffer for multiple audio streams and processors.
@@ -291,11 +306,28 @@ public:
      * @brief Detaches a sink-ready ring.
      */
     void detach_sink_ring(const std::string& instance_id, const std::string& source_tag, const std::string& sink_id);
+
+    /**
+     * @brief Registers a listener for wildcard source matches.
+     */
+    void set_wildcard_match_callback(std::function<void(const WildcardMatchEvent&)> cb);
     /**
      * @brief Retrieves the current statistics from the manager.
      * @return A struct containing the current stats.
      */
     TimeshiftManagerStats get_stats();
+
+    /**
+     * @brief Callback type to get downstream pipeline state for unified rate control.
+     * @return Tuple of (hw_fill_ms, hw_target_ms, mixer_queue_ms, mixer_target_ms)
+     */
+    using PipelineStateProvider = std::function<std::tuple<double, double, double, double>()>;
+    
+    /**
+     * @brief Registers a callback to provide downstream pipeline state.
+     * @param provider Callback that returns (hw_fill_ms, hw_target_ms, mixer_queue_ms, mixer_target_ms)
+     */
+    void set_pipeline_state_provider(PipelineStateProvider provider);
 
     std::shared_ptr<screamrouter::audio::AudioEngineSettings> get_settings() const { return m_settings; }
 
@@ -343,20 +375,28 @@ private:
     // Inbound decoupling to avoid blocking capture threads on the main data mutex.
     utils::ThreadSafeQueue<TaggedAudioPacket> inbound_queue_;
     static constexpr std::size_t kInboundQueueMaxSize = 1024;
+    std::chrono::steady_clock::time_point last_inbound_drop_log_{};
 
     // Per-processor dispatch/drop accounting
     std::mutex processor_stats_mutex_;
     std::map<std::string, uint64_t> processor_dispatched_totals_;
     std::map<std::string, uint64_t> processor_dropped_totals_;
     std::map<std::string, size_t> processor_queue_high_water_;
+    std::function<void(const WildcardMatchEvent&)> wildcard_match_callback_;
+    mutable std::mutex wildcard_callback_mutex_;
+
+    // Unified rate control: downstream pipeline state provider
+    PipelineStateProvider pipeline_state_provider_;
+    mutable std::mutex pipeline_state_mutex_;
 
     /** @brief A single iteration of the processing loop. Collects ready packets while data_mutex_ is held. */
-    void processing_loop_iteration_unlocked();
+    void processing_loop_iteration_unlocked(std::vector<WildcardMatchEvent>& wildcard_matches);
     /** @brief Periodically cleans up old packets from the global buffer. Assumes data_mutex_ is held. */
     void cleanup_global_buffer_unlocked();
 
     /** @brief Process one inbound packet while holding data_mutex_. */
     void process_incoming_packet_unlocked(TaggedAudioPacket&& packet);
+    void ingest_packet_locked(TaggedAudioPacket&& packet, std::unique_lock<std::mutex>& data_lock);
     /**
      * @brief Calculates the time point for the next event to occur.
      * @return The time point of the next scheduled event.
@@ -390,6 +430,7 @@ private:
     double smoothed_processing_per_packet_us_{0.0};
     bool processing_budget_initialized_{false};
     std::chrono::steady_clock::time_point last_iteration_finish_time_{};
+    std::chrono::steady_clock::time_point last_lock_budget_log_time_{};
 
     // --- Timing helpers ---
     std::shared_ptr<std::mutex> acquire_timing_lock(const std::string& source_tag);

@@ -97,6 +97,17 @@ export interface Route {
   timeshift: number;
   favorite?: boolean;
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
+  remote_target?: RemoteRouteTarget;
+}
+
+export interface RemoteRouteTarget {
+  router_uuid?: string;
+  router_hostname?: string;
+  router_address?: string;
+  router_port?: number;
+  router_scheme?: 'http' | 'https';
+  sink_config_id?: string;
+  sink_name?: string;
 }
 
 export interface SystemAudioDeviceInfo {
@@ -125,6 +136,16 @@ export interface RouterMdnsService {
 export interface RouterServiceResponse {
   timeout: number;
   services: RouterMdnsService[];
+}
+
+export interface NeighborSinksRequest {
+  hostname: string;
+  address?: string;
+  port: number;
+  scheme?: 'http' | 'https';
+  api_path?: string;
+  verify_tls?: boolean;
+  timeout?: number;
 }
 
 /**
@@ -304,6 +325,8 @@ export interface TimeshiftTuning {
   playback_ratio_ki: number;
   playback_ratio_integral_limit_ppm: number;
   playback_ratio_smoothing: number;
+  playback_ratio_inbound_rate_smoothing: number;
+  playback_rate_adjustment_enabled: boolean;
 }
 
 export interface MixerTuning {
@@ -332,11 +355,35 @@ export interface ProcessorTuning {
   dither_noise_shaping_factor: number;
 }
 
+export interface SystemAudioTuning {
+  alsa_target_latency_ms: number;
+  alsa_periods_per_buffer: number;
+  alsa_dynamic_latency_enabled: boolean;
+  alsa_latency_min_ms: number;
+  alsa_latency_max_ms: number;
+  alsa_latency_low_water_ms: number;
+  alsa_latency_high_water_ms: number;
+  alsa_latency_integral_gain: number;
+  alsa_latency_rate_limit_ms_per_sec: number;
+  alsa_latency_idle_decay_ms_per_sec: number;
+  alsa_latency_apply_hysteresis_ms: number;
+  alsa_latency_reconfig_cooldown_ms: number;
+  alsa_latency_xrun_boost_ms: number;
+  alsa_latency_low_step_ms: number;
+}
+
+export interface RtpReceiverTuning {
+  format_probe_duration_ms: number;
+  format_probe_min_bytes: number;
+}
+
 export interface AudioEngineSettings {
   timeshift_tuning: TimeshiftTuning;
   mixer_tuning: MixerTuning;
   source_processor_tuning: SourceProcessorTuning;
   processor_tuning: ProcessorTuning;
+  rtp_receiver_tuning: RtpReceiverTuning;
+  system_audio_tuning: SystemAudioTuning;
 }
 // --- End Audio Engine Settings Interfaces ---
 
@@ -464,7 +511,7 @@ const createWebSocket = () => {
   // Get the current URL's host and protocol
   const host = window.location.host;
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  
+
   // Use the same host without hardcoded port
   const wsUrl = `${protocol}//${host}/ws/config`;
   console.log("Creating WebSocket connection to:", wsUrl);
@@ -490,7 +537,7 @@ const createWebSocket = () => {
       notifyWebSocketState('disconnected');
       const reconnectDelay = manualReconnectRequested ? 0 : 5000;
       manualReconnectRequested = false;
-      
+
       // Attempt to reconnect after 5 seconds
       scheduleWebSocketReconnect(reconnectDelay);
     };
@@ -624,15 +671,15 @@ const ApiService = {
 
   // PUT requests for updating existing items
   updateSource: (name: string, data: Partial<Source>) => withCacheInvalidation(
-    axios.put<Source>( `/sources/${name}`, data),
+    axios.put<Source>(`/sources/${name}`, data),
     ['/sources']
   ),
   updateSink: (name: string, data: Partial<Sink>) => withCacheInvalidation(
-    axios.put<Sink>( `/sinks/${name}`, data),
+    axios.put<Sink>(`/sinks/${name}`, data),
     ['/sinks']
   ),
   updateRoute: (name: string, data: Partial<Route>) => withCacheInvalidation(
-    axios.put<Route>( `/routes/${name}`, data),
+    axios.put<Route>(`/routes/${name}`, data),
     ['/routes']
   ),
 
@@ -731,7 +778,7 @@ const ApiService = {
     axios.post(`/routes/${name}/equalizer`, equalizer),
     ['/routes']
   ),
-  
+
 
   // Reorder requests
   reorderSource: (name: string, newIndex: number) => withCacheInvalidation(
@@ -759,14 +806,14 @@ const ApiService = {
   getVncUrl: (sourceName: string) => `/site/vnc/${sourceName}`,
 
   // Custom equalizer requests
-  saveEqualizer: (name: string, equalizer: Equalizer) => { 
-    const new_eq = {... equalizer};
+  saveEqualizer: (name: string, equalizer: Equalizer) => {
+    const new_eq = { ...equalizer };
     new_eq.name = name;
     return withCacheInvalidation(
       axios.post('/equalizers/', new_eq),
       ['/equalizers/']
     );
-  } ,
+  },
   listEqualizers: () => cachedGet<{ equalizers: Equalizer[] }>('/equalizers/'),
   deleteEqualizer: (name: string) => withCacheInvalidation(
     axios.delete(`/equalizers/${name}`),
@@ -804,27 +851,29 @@ const ApiService = {
   getRouterServices: (timeout = 1.5) => cachedGet<RouterServiceResponse>('/mdns/router-services', {
     params: { timeout },
   }),
+  getNeighborSinks: (payload: NeighborSinksRequest) =>
+    axios.post<Record<string, Sink> | Sink[]>('/neighbors/sinks', payload),
 
   // --- Speaker Layout Update Methods ---
   updateSourceSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
-      return withCacheInvalidation(
-        axios.post(`/api/sources/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
-        ['/sources']
-      );
+    return withCacheInvalidation(
+      axios.post(`/api/sources/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
+      ['/sources']
+    );
   },
 
   updateSinkSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
-      return withCacheInvalidation(
-        axios.post(`/api/sinks/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
-        ['/sinks']
-      );
+    return withCacheInvalidation(
+      axios.post(`/api/sinks/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
+      ['/sinks']
+    );
   },
 
   updateRouteSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {
-      return withCacheInvalidation(
-        axios.post(`/api/routes/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
-        ['/routes']
-      );
+    return withCacheInvalidation(
+      axios.post(`/api/routes/${encodeURIComponent(name)}/speaker_layout/${inputChannelKey}`, layout),
+      ['/routes']
+    );
   },
   // --- End Speaker Layout Update Methods ---
 

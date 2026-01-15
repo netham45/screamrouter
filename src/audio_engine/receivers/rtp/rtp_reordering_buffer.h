@@ -6,6 +6,7 @@
 #include <optional>
 #include <chrono>
 #include <vector>
+#include "sap_listener/sap_types.h" // For StreamProperties
 
 /**
  * @brief A structure to hold the essential data of a received RTP packet
@@ -19,6 +20,7 @@ struct RtpPacketData {
     uint32_t ssrc;
     std::vector<uint32_t> csrcs;
     uint8_t payload_type = 0;
+    bool ingress_from_loopback = false;
 };
 
 /**
@@ -36,7 +38,7 @@ public:
      * @param max_size The maximum number of packets to store to prevent buffer bloat.
      */
     explicit RtpReorderingBuffer(
-        std::chrono::milliseconds max_delay = std::chrono::milliseconds(50),
+        std::chrono::milliseconds max_delay = std::chrono::milliseconds(6),
         size_t max_size = 128
     );
 
@@ -59,6 +61,17 @@ public:
     void reset();
 
     /**
+     * @brief Updates the stream properties used for interpolation logic.
+     * @param props The properties resolved from SAP or headers.
+     */
+    void set_properties(const screamrouter::audio::StreamProperties& props);
+
+    /**
+     * @brief Returns the payload type of the next available packet in the buffer, if any.
+     */
+    std::optional<uint8_t> get_head_payload_type() const;
+
+    /**
      * @brief Gets the current number of packets stored in the buffer.
      */
     size_t size() const;
@@ -75,7 +88,23 @@ private:
 
     // Prevents flooding logs when a burst of out-of-order packets arrives.
     std::chrono::steady_clock::time_point last_out_of_order_log_{};
+    std::chrono::steady_clock::time_point last_large_gap_log_{};
 
     // Helper to correctly compare 16-bit sequence numbers with wraparound.
+    // Helper to correctly compare 16-bit sequence numbers with wraparound.
     static bool is_sequence_greater(uint16_t seq1, uint16_t seq2);
+
+    // Interpolation state
+    std::optional<RtpPacketData> m_last_released_packet;
+    screamrouter::audio::StreamProperties m_properties;
+
+    // Interpolation helpers
+    bool can_interpolate(const RtpPacketData& old_pkt, const RtpPacketData& new_pkt) const;
+    std::vector<uint8_t> generate_interpolated_payload(const std::vector<uint8_t>& old_data, 
+                                                       const std::vector<uint8_t>& new_data, 
+                                                       float alpha_start, 
+                                                       float alpha_end) const;
+    
+    static int32_t read_sample(const uint8_t* ptr, int bit_depth, screamrouter::audio::Endianness endianness);
+    static void write_sample(uint8_t* ptr, int32_t sample, int bit_depth, screamrouter::audio::Endianness endianness);
 };

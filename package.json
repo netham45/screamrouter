@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@openai/codex": "^0.77.0",
     "cloc": "^2.6.0-cloc",
     "jslint": "^0.12.1"
   }

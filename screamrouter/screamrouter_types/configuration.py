@@ -478,12 +478,54 @@ class SourceDescription(BaseModel):
                 # Convert list to a sorted tuple to make it hashable
                 members_list = getattr(self, field_name, [])
                 values_to_hash.append(tuple(sorted(members_list)))
+            elif field_name == "remote_target":
+                target = getattr(self, field_name, None)
+                if target is None:
+                    values_to_hash.append(None)
+                else:
+                    target_dump = target.model_dump(mode="json")
+                    values_to_hash.append(tuple(sorted(target_dump.items())))
             else:
                 try:
                     values_to_hash.append(getattr(self, field_name))
                 except AttributeError:
                     values_to_hash.append(self.model_fields[field_name].default)
         return hash(tuple(values_to_hash))
+
+
+class RemoteRouteTarget(BaseModel):
+    """Metadata describing a remote router + sink target."""
+    model_config = ConfigDict(from_attributes=True,
+                              arbitrary_types_allowed=True,
+                              json_schema_serialization_defaults_required=True)
+
+    router_uuid: Optional[str] = None
+    """Remote router UUID advertised over mDNS."""
+    router_hostname: Optional[str] = None
+    """Human-friendly hostname for the remote router (mDNS hostname)."""
+    router_address: Optional[str] = None
+    """Direct IP address of the remote router."""
+    router_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    """HTTPS port exposed by the remote router (defaults to 443 when omitted)."""
+    router_scheme: Literal["http", "https"] = "https"
+    """Scheme to use when contacting the remote router (default: https)."""
+    sink_config_id: Optional[str] = None
+    """Remote sink config_id."""
+    sink_name: Optional[str] = None
+    """Remote sink display name (fallback when config_id missing)."""
+
+    def __hash__(self):
+        """Allow RouteDescription hashing when remote_target is present."""
+        values = (
+            self.router_uuid,
+            self.router_hostname,
+            self.router_address,
+            self.router_port,
+            self.router_scheme,
+            self.sink_config_id,
+            self.sink_name,
+        )
+        return hash(values)
 
 
 class RouteDescription(BaseModel):
@@ -516,6 +558,8 @@ class RouteDescription(BaseModel):
     """Unique GUID for this route, auto-generated on creation if not provided"""
     is_temporary: bool = Field(default=False, exclude=True)
     """Indicates if this route is temporary and should not be persisted"""
+    remote_target: Optional["RemoteRouteTarget"] = None
+    """Optional remote route metadata (router UUID + sink UUID)"""
 
     @model_validator(mode='after')
     def ensure_config_id(self):

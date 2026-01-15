@@ -103,7 +103,7 @@ bool NetworkAudioReceiver::setup_socket() {
         return false;
     }
 
-    const auto desired_buffer_bytes = default_chunk_size_bytes_ * 10;
+    const auto desired_buffer_bytes = default_chunk_size_bytes_ * 100;
     const int buffer_size = desired_buffer_bytes > static_cast<std::size_t>(std::numeric_limits<int>::max())
                                 ? std::numeric_limits<int>::max()
                                 : static_cast<int>(desired_buffer_bytes);
@@ -344,6 +344,11 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
         return;
     }
     utils::log_sentinel("receiver_dispatch_entry", packet);
+    if (packet.ingress_from_loopback && packet.rtp_sequence_number.has_value()) {
+        LOG_CPP_INFO("[NetworkAudioReceiver] Loopback seq=%u entering accumulator (source=%s)",
+                     packet.rtp_sequence_number.value(),
+                     packet.source_tag.c_str());
+    }
 
     const uint32_t bytes_per_sample = packet.bit_depth > 0 ? static_cast<uint32_t>(std::max(packet.bit_depth / 8, 1)) : 0;
     const std::size_t bytes_per_frame = (bytes_per_sample > 0 && packet.channels > 0)
@@ -372,12 +377,10 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
                                     acc.chlayout2 != packet.chlayout2;
         if (format_changed || acc.chunk_bytes != chunk_bytes) {
             acc.buffer.clear();
-            acc.first_received = {};
-            acc.last_delivery = {};
-            acc.has_last_delivery = false;
             acc.base_rtp_timestamp.reset();
             acc.frame_cursor = 0;
             acc.ssrcs.clear();
+            acc.contributions.clear();
         }
 
         acc.channels = packet.channels;
@@ -392,9 +395,6 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
             acc.buffer.reserve(acc.chunk_bytes * 2);
         }
 
-        if (acc.first_received == std::chrono::steady_clock::time_point{}) {
-            acc.first_received = packet.received_time;
-        }
         if (!packet.ssrcs.empty()) {
             acc.ssrcs = packet.ssrcs;
         }
@@ -404,6 +404,12 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
         }
 
         acc.buffer.write(packet.audio_data.data(), packet.audio_data.size());
+        if (!packet.audio_data.empty()) {
+            SourceAccumulator::ContributionInfo info;
+            info.bytes = packet.audio_data.size();
+            info.arrival = packet.received_time;
+            acc.contributions.push_back(info);
+        }
 
         while (acc.chunk_bytes > 0 && acc.buffer.size() >= acc.chunk_bytes) {
             std::vector<uint8_t> chunk(acc.chunk_bytes);
@@ -422,19 +428,32 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
             out.chlayout1 = acc.chlayout1;
             out.chlayout2 = acc.chlayout2;
             out.ssrcs = acc.ssrcs.empty() ? packet.ssrcs : acc.ssrcs;
+            out.ingress_from_loopback = packet.ingress_from_loopback;
+            out.rtp_sequence_number = packet.rtp_sequence_number;
             out.is_sentinel = packet.is_sentinel;
 
             const std::size_t chunk_frames = (acc.bytes_per_frame > 0) ? (popped / acc.bytes_per_frame) : 0;
 
-            if (!acc.has_last_delivery) {
-                if (acc.first_received == std::chrono::steady_clock::time_point{}) {
-                    acc.first_received = std::chrono::steady_clock::now();
+            auto derive_chunk_arrival = [&](std::size_t bytes_consumed,
+                                            std::chrono::steady_clock::time_point fallback) {
+                auto arrival = fallback;
+                std::size_t remaining = bytes_consumed;
+                while (remaining > 0 && !acc.contributions.empty()) {
+                    auto& contrib = acc.contributions.front();
+                    if (contrib.bytes <= remaining) {
+                        arrival = contrib.arrival;
+                        remaining -= contrib.bytes;
+                        acc.contributions.pop_front();
+                    } else {
+                        arrival = contrib.arrival;
+                        contrib.bytes -= remaining;
+                        remaining = 0;
+                    }
                 }
-                acc.last_delivery = acc.first_received;
-                acc.has_last_delivery = true;
-            }
+                return arrival;
+            };
 
-            out.received_time = acc.last_delivery;
+            out.received_time = derive_chunk_arrival(popped, packet.received_time);
 
             if (acc.base_rtp_timestamp.has_value()) {
                 const uint64_t ts64 = static_cast<uint64_t>(*acc.base_rtp_timestamp) + acc.frame_cursor;
@@ -445,12 +464,6 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
 
             if (chunk_frames > 0) {
                 acc.frame_cursor += chunk_frames;
-                if (acc.sample_rate > 0) {
-                    const uint64_t usec = (static_cast<uint64_t>(chunk_frames) * 1'000'000ULL) /
-                                          static_cast<uint64_t>(acc.sample_rate);
-                    acc.last_delivery += std::chrono::microseconds(usec);
-                    acc.first_received = acc.last_delivery;
-                }
             }
 
             ready_chunks.push_back(std::move(out));
@@ -458,11 +471,17 @@ void NetworkAudioReceiver::dispatch_ready_packet(TaggedAudioPacket&& packet) {
         }
 
         if (acc.buffer.size() == 0) {
-            acc.first_received = {};
+            acc.contributions.clear();
         }
     }
 
     for (auto& ready_packet : ready_chunks) {
+        if (ready_packet.ingress_from_loopback && ready_packet.rtp_sequence_number.has_value()) {
+            LOG_CPP_INFO("[NetworkAudioReceiver] Loopback seq=%u enqueued to TimeshiftManager (chunk_bytes=%zu, source=%s)",
+                         ready_packet.rtp_sequence_number.value(),
+                         ready_packet.audio_data.size(),
+                         ready_packet.source_tag.c_str());
+        }
         timeshift_manager_->add_packet(std::move(ready_packet));
     }
 }

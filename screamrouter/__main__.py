@@ -88,6 +88,7 @@ import screamrouter.constants.constants as constants
 from screamrouter.api.api_configuration import APIConfiguration
 from screamrouter.api.api_equalizer import APIEqualizer
 from screamrouter.api.api_mdns import APIMdns
+from screamrouter.api.api_neighbors import APINeighbors
 from screamrouter.api.api_log_viewer import APILogViewer
 from screamrouter.api.api_preferences import APIPreferences
 from screamrouter.api.api_stats import APIStats
@@ -483,6 +484,10 @@ def main():
             {
                 "name": "Logs",
                 "description": "Log file viewing and streaming"
+            },
+            {
+                "name": "Neighbors",
+                "description": "Proxy endpoints for nearby ScreamRouter instances"
             }
         ])
     set_process_name("SR Scream Router", "Scream Router Main Thread")
@@ -663,6 +668,7 @@ def main():
     log_viewer: APILogViewer = APILogViewer(app)
     preferences_manager = PreferencesManager()
     preferences_api: APIPreferences = APIPreferences(app, preferences_manager)
+    neighbors_api: APINeighbors = APINeighbors(app)
 
     if enable_desktop_overlay:
         try:

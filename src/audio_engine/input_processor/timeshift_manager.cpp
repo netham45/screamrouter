@@ -10,22 +10,137 @@
 #include "../utils/cpp_logger.h"
 #include "../audio_types.h"
 #include "../utils/sentinel_logging.h"
+#include "../utils/lock_guard_profiler.h"
 
 #include <iostream>
+#include <array>
 #include <algorithm>
 #include <thread>
 #include <utility>
 #include <vector>
+#include <optional>
 #include <cmath>
+#include <sstream>
+
+#if defined(__linux__)
+#include <execinfo.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <cstring>
+#include <csignal>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#endif
 
 namespace screamrouter {
 namespace audio {
 
+// Global tracker for data_mutex_ holder (for deadlock debugging)
+static std::atomic<const char*> g_data_mutex_holder_file{nullptr};
+static std::atomic<int> g_data_mutex_holder_line{0};
+#if defined(__linux__)
+static std::atomic<pid_t> g_data_mutex_holder_tid{0};
+static constexpr int kDataMutexHolderMaxFrames = 64;
+static std::array<void*, kDataMutexHolderMaxFrames> g_data_mutex_holder_stack{};
+static int g_data_mutex_holder_stack_frames = 0;
+static std::mutex g_data_mutex_holder_stack_mutex;
+
+// Read kernel stack trace of a thread via /proc
+static void dump_thread_stack(pid_t tid) {
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/self/task/%d/stack", tid);
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        LOG_CPP_ERROR("[TimeshiftManager] Could not open %s", path);
+        return;
+    }
+    LOG_CPP_ERROR("[TimeshiftManager] ==== HOLDER KERNEL STACK (tid=%d) ====", tid);
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        // Remove trailing newline
+        size_t len = strlen(line);
+        if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
+        LOG_CPP_ERROR("  %s", line);
+    }
+    fclose(f);
+    LOG_CPP_ERROR("[TimeshiftManager] ==== END HOLDER KERNEL STACK ====");
+}
+
+// Dump the user-space stack that was captured when the holder grabbed the lock.
+static void dump_holder_user_stack() {
+    std::array<void*, kDataMutexHolderMaxFrames> local_stack{};
+    int frames = 0;
+    {
+        std::lock_guard<std::mutex> guard(g_data_mutex_holder_stack_mutex);
+        frames = std::min(g_data_mutex_holder_stack_frames, kDataMutexHolderMaxFrames);
+        if (frames > 0) {
+            std::copy_n(g_data_mutex_holder_stack.begin(), frames, local_stack.begin());
+        }
+    }
+    if (frames <= 0) {
+        LOG_CPP_ERROR("[TimeshiftManager] Holder user stack unavailable.");
+        return;
+    }
+    char** symbols = backtrace_symbols(local_stack.data(), frames);
+    LOG_CPP_ERROR("[TimeshiftManager] ==== HOLDER USER STACK (%d frames) ====", frames);
+    for (int i = 0; i < frames; ++i) {
+        LOG_CPP_ERROR("  [%d] %s", i, symbols ? symbols[i] : "??");
+    }
+    LOG_CPP_ERROR("[TimeshiftManager] ==== END HOLDER USER STACK ====");
+    if (symbols) {
+        free(symbols);
+    }
+}
+#endif
+
+static inline void update_data_mutex_holder_site(const char* file, int line) {
+#if defined(__linux__)
+    g_data_mutex_holder_file.store(file);
+    g_data_mutex_holder_line.store(line);
+#else
+    (void)file;
+    (void)line;
+#endif
+}
+
+// RAII helper to track lock holder
+struct HolderTracker {
+    HolderTracker(const char* file, int line) {
+        g_data_mutex_holder_file.store(file);
+        g_data_mutex_holder_line.store(line);
+#if defined(__linux__)
+        void* stack[kDataMutexHolderMaxFrames];
+        const int frames = backtrace(stack, kDataMutexHolderMaxFrames);
+        {
+            std::lock_guard<std::mutex> guard(g_data_mutex_holder_stack_mutex);
+            g_data_mutex_holder_stack_frames = frames;
+            std::copy_n(stack,
+                        std::min(frames, kDataMutexHolderMaxFrames),
+                        g_data_mutex_holder_stack.begin());
+        }
+        g_data_mutex_holder_tid.store(static_cast<pid_t>(syscall(SYS_gettid)));
+#endif
+    }
+    ~HolderTracker() {
+        g_data_mutex_holder_file.store(nullptr);
+        g_data_mutex_holder_line.store(0);
+#if defined(__linux__)
+        {
+            std::lock_guard<std::mutex> guard(g_data_mutex_holder_stack_mutex);
+            g_data_mutex_holder_stack_frames = 0;
+        }
+        g_data_mutex_holder_tid.store(0);
+#endif
+    }
+    HolderTracker(const HolderTracker&) = delete;
+    HolderTracker& operator=(const HolderTracker&) = delete;
+};
+
 namespace {
 constexpr double kProcessingBudgetAlpha = 0.2;
+constexpr int kDataMutexProcessingBudgetMs = 10;
 constexpr double kPlaybackDriftGain = 1.0 / 1'000'000.0; // Convert ppm to ratio
-constexpr double kFallbackSmoothing = 0.1;
-
+constexpr double kRatioToPpm = 1'000'000.0;
 bool has_prefix(const std::string& value, const std::string& prefix) {
     if (prefix.empty()) {
         return true;
@@ -36,18 +151,48 @@ bool has_prefix(const std::string& value, const std::string& prefix) {
     return value.compare(0, prefix.size(), prefix) == 0;
 }
 
-bool match_and_bind_source(ProcessorTargetInfo& info, const std::string& actual_tag) {
+bool match_and_bind_source(ProcessorTargetInfo& info,
+                           const std::string& actual_tag,
+                           std::vector<WildcardMatchEvent>* wildcard_matches) {
     if (!info.is_wildcard) {
         return actual_tag == info.source_tag_filter;
     }
     if (!info.bound_source_tag.empty()) {
-        return info.bound_source_tag == actual_tag;
+        if (info.bound_source_tag == actual_tag) {
+            return true;
+        }
+        if (has_prefix(actual_tag, info.wildcard_prefix)) {
+            if (info.matched_concrete_tags.insert(actual_tag).second && wildcard_matches) {
+                wildcard_matches->push_back(
+                    {info.instance_id, info.source_tag_filter, actual_tag, false});
+            }
+        }
+        else if (info.last_logged_mismatch_tag != actual_tag) {
+            info.last_logged_mismatch_tag = actual_tag;
+            LOG_CPP_DEBUG("[TimeshiftManager] Wildcard '%s' (prefix '%s') skipping tag '%s'",
+                          info.source_tag_filter.c_str(),
+                          info.wildcard_prefix.c_str(),
+                          actual_tag.c_str());
+        }
+        return false;
     }
     if (has_prefix(actual_tag, info.wildcard_prefix)) {
         info.bound_source_tag = actual_tag;
+        info.matched_concrete_tags.insert(actual_tag);
+        if (wildcard_matches) {
+            wildcard_matches->push_back(
+                {info.instance_id, info.source_tag_filter, actual_tag, true});
+        }
         LOG_CPP_INFO("[TimeshiftManager] Bound wildcard '%s*' -> '%s'",
                      info.wildcard_prefix.c_str(), actual_tag.c_str());
         return true;
+    }
+    if (info.last_logged_mismatch_tag != actual_tag) {
+        info.last_logged_mismatch_tag = actual_tag;
+        LOG_CPP_DEBUG("[TimeshiftManager] Wildcard '%s' (prefix '%s') ignoring non-matching tag '%s'",
+                      info.source_tag_filter.c_str(),
+                      info.wildcard_prefix.c_str(),
+                      actual_tag.c_str());
     }
     return false;
 }
@@ -60,19 +205,6 @@ uint32_t rtp_timestamp_diff(uint32_t current, uint32_t previous) {
     return current - previous;
 }
 
-double smooth_playback_rate(double previous_rate,
-                            double target_rate,
-                            double smoothing_factor,
-                            double max_deviation_ppm) {
-    const double max_deviation_ratio =
-        std::max(max_deviation_ppm, 0.0) * kPlaybackDriftGain;
-    const double clamped_target =
-        std::clamp(target_rate, 1.0 - max_deviation_ratio, 1.0 + max_deviation_ratio);
-    const double clamped_smoothing = std::clamp(smoothing_factor, 0.0, 1.0);
-    const double blended =
-        previous_rate * (1.0 - clamped_smoothing) + clamped_target * clamped_smoothing;
-    return std::clamp(blended, 1.0 - max_deviation_ratio, 1.0 + max_deviation_ratio);
-}
 } // namespace
 
 /**
@@ -148,7 +280,9 @@ void TimeshiftManager::start() {
     LOG_CPP_INFO("[TimeshiftManager] Starting...");
     stop_flag_ = false;
     {
+        std::optional<HolderTracker> holder_tracker;
         std::lock_guard<std::mutex> lock(data_mutex_);
+        holder_tracker.emplace(__FILE__, __LINE__);
         reset_profiler_counters_unlocked(std::chrono::steady_clock::now());
     }
     try {
@@ -172,7 +306,9 @@ void TimeshiftManager::stop() {
     size_t buf_size = 0;
     size_t processor_count = 0;
     {
+        std::optional<HolderTracker> holder_tracker;
         std::lock_guard<std::mutex> lock(data_mutex_);
+        holder_tracker.emplace(__FILE__, __LINE__);
         buf_size = global_timeshift_buffer_.size();
         for (auto const& kv : processor_targets_) {
             processor_count += kv.second.size();
@@ -180,6 +316,7 @@ void TimeshiftManager::stop() {
     }
     LOG_CPP_INFO("[TimeshiftManager] Stopping... buffer=%zu processors=%zu", buf_size, processor_count);
     stop_flag_ = true;
+    inbound_queue_.stop();
     m_state_version_++;
     run_loop_cv_.notify_all();
 
@@ -201,11 +338,55 @@ void TimeshiftManager::stop() {
  * @param packet The packet to add, moved into the buffer.
  */
 void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
-     if (stop_flag_ || !packet.rtp_timestamp.has_value() || packet.sample_rate <= 0) {
-         return;
-     }
+    if (stop_flag_ || !packet.rtp_timestamp.has_value() || packet.sample_rate <= 0) {
+        return;
+    }
+
     utils::log_sentinel("timeshift_ingress", packet);
 
+    if (!is_running()) {
+        std::optional<HolderTracker> holder_tracker;
+        std::unique_lock<std::mutex> data_lock(data_mutex_);
+        holder_tracker.emplace(__FILE__, __LINE__);
+        ingest_packet_locked(std::move(packet), data_lock);
+        m_inbound_received++;
+        return;
+    }
+
+    const std::string source_tag_copy = packet.source_tag;
+    using PushResult = utils::ThreadSafeQueue<TaggedAudioPacket>::PushResult;
+    const PushResult result =
+        inbound_queue_.push_bounded(std::move(packet), kInboundQueueMaxSize, false);
+
+    if (result == PushResult::QueueFull) {
+        m_inbound_dropped++;
+        const auto now = std::chrono::steady_clock::now();
+        if (last_inbound_drop_log_.time_since_epoch().count() == 0 ||
+            now - last_inbound_drop_log_ >= std::chrono::seconds(1)) {
+            LOG_CPP_WARNING("[TimeshiftManager] Inbound queue full (%zu). Dropping packet from '%s'.",
+                            kInboundQueueMaxSize,
+                            source_tag_copy.c_str());
+            last_inbound_drop_log_ = now;
+        }
+        return;
+    }
+    if (result == PushResult::QueueStopped) {
+        return;
+    }
+
+    m_inbound_received++;
+
+    const size_t depth = inbound_queue_.size();
+    size_t previous = m_inbound_high_water.load();
+    while (depth > previous && !m_inbound_high_water.compare_exchange_weak(previous, depth)) {
+        // CAS retry
+    }
+
+    m_state_version_++;
+    run_loop_cv_.notify_one();
+}
+
+void TimeshiftManager::ingest_packet_locked(TaggedAudioPacket&& packet, std::unique_lock<std::mutex>& data_lock) {
     const uint32_t frames_per_second = static_cast<uint32_t>(packet.sample_rate);
     const double configured_reset_threshold_sec =
         (m_settings) ? m_settings->timeshift_tuning.rtp_session_reset_threshold_seconds : 0.2;
@@ -213,7 +394,6 @@ void TimeshiftManager::add_packet(TaggedAudioPacket&& packet) {
     const uint32_t reset_threshold_frames = static_cast<uint32_t>(
         static_cast<double>(frames_per_second) * bounded_reset_threshold_sec);
 
-    std::unique_lock<std::mutex> data_lock(data_mutex_);
     auto timing_access = get_or_create_timing_state(packet.source_tag);
     StreamTimingState* state_ptr = timing_access.state;
     if (!state_ptr) {
@@ -393,7 +573,9 @@ std::optional<TimeshiftBufferExport> TimeshiftManager::export_recent_buffer(
     bool metadata_initialized = false;
 
     {
+        std::optional<HolderTracker> holder_tracker;
         std::lock_guard<std::mutex> lock(data_mutex_);
+        holder_tracker.emplace(__FILE__, __LINE__);
         selected_packets.reserve(global_timeshift_buffer_.size());
 
         for (const auto& packet : global_timeshift_buffer_) {
@@ -473,6 +655,10 @@ std::optional<TimeshiftBufferExport> TimeshiftManager::export_recent_buffer(
 TimeshiftManagerStats TimeshiftManager::get_stats() {
     TimeshiftManagerStats stats;
     stats.total_packets_added = m_total_packets_added.load();
+    stats.total_inbound_received = m_inbound_received.load();
+    stats.total_inbound_dropped = m_inbound_dropped.load();
+    stats.inbound_queue_size = inbound_queue_.size();
+    stats.inbound_queue_high_water = m_inbound_high_water.load();
 
     struct ProcessorSnapshot {
         std::string instance_id;
@@ -481,7 +667,9 @@ TimeshiftManagerStats TimeshiftManager::get_stats() {
     std::vector<ProcessorSnapshot> processor_snapshots;
 
     {
+        std::optional<HolderTracker> holder_tracker;
         std::lock_guard<std::mutex> lock(data_mutex_);
+        holder_tracker.emplace(__FILE__, __LINE__);
         stats.global_buffer_size = global_timeshift_buffer_.size();
         for (const auto& [source_tag, source_map] : processor_targets_) {
             for (const auto& [instance_id, target_info] : source_map) {
@@ -627,16 +815,20 @@ void TimeshiftManager::register_processor(
     info.current_timeshift_backshift_sec = initial_timeshift_sec;
     info.source_tag_filter = source_tag;
     info.is_wildcard = !source_tag.empty() && source_tag.back() == '*';
+    info.instance_id = instance_id;
     if (info.is_wildcard) {
         info.wildcard_prefix = source_tag.substr(0, source_tag.size() - 1);
         LOG_CPP_INFO("[TimeshiftManager] Processor %s registered with wildcard prefix '%s'",
                      instance_id.c_str(), info.wildcard_prefix.c_str());
     } else {
         info.bound_source_tag = source_tag;
+        info.matched_concrete_tags.insert(source_tag);
     }
 
     {
+        std::optional<HolderTracker> holder_tracker;
         std::lock_guard<std::mutex> lock(data_mutex_);
+        holder_tracker.emplace(__FILE__, __LINE__);
         if (initial_timeshift_sec > 0.0f && !global_timeshift_buffer_.empty()) {
             auto now = std::chrono::steady_clock::now();
             auto target_past_time = now - std::chrono::milliseconds(initial_delay_ms) - std::chrono::duration<double>(initial_timeshift_sec);
@@ -672,7 +864,9 @@ void TimeshiftManager::register_processor(
  */
 void TimeshiftManager::unregister_processor(const std::string& instance_id, const std::string& source_tag) {
     LOG_CPP_INFO("[TimeshiftManager] Unregistering processor: instance_id=%s, source_tag=%s", instance_id.c_str(), source_tag.c_str());
+    std::optional<HolderTracker> holder_tracker;
     std::lock_guard<std::mutex> lock(data_mutex_);
+    holder_tracker.emplace(__FILE__, __LINE__);
     auto& source_map = processor_targets_[source_tag];
     source_map.erase(instance_id);
     if (source_map.empty()) {
@@ -691,7 +885,34 @@ void TimeshiftManager::unregister_processor(const std::string& instance_id, cons
  */
 void TimeshiftManager::update_processor_delay(const std::string& instance_id, int delay_ms) {
     LOG_CPP_INFO("[TimeshiftManager] Updating delay for processor %s to %dms", instance_id.c_str(), delay_ms);
+    std::optional<HolderTracker> holder_tracker;
+#if defined(__linux__)
+    // Try to acquire lock with timeout, dump holder's kernel stack if blocked too long
+    std::unique_lock<std::mutex> lock(data_mutex_, std::defer_lock);
+    auto start = std::chrono::steady_clock::now();
+    while (!lock.try_lock()) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        if (elapsed > 50) {
+            // Log contention and dump holder's kernel stack
+            pid_t holder_tid = g_data_mutex_holder_tid.load();
+            LOG_CPP_ERROR("[TimeshiftManager] CONTENTION: update_processor_delay waited %ldms for data_mutex_ held at %s:%d (holder tid=%d)",
+                          elapsed, g_data_mutex_holder_file.load(), g_data_mutex_holder_line.load(), holder_tid);
+            dump_holder_user_stack();
+            if (holder_tid != 0) {
+                dump_thread_stack(holder_tid);
+            }
+            // Now just wait for the lock
+            lock.lock();
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+#else
     std::lock_guard<std::mutex> lock(data_mutex_);
+#endif
+    // Track lock holder
+    holder_tracker.emplace(__FILE__, __LINE__);
     bool found = false;
     for (auto& [tag, source_map] : processor_targets_) {
         auto it = source_map.find(instance_id);
@@ -715,7 +936,35 @@ void TimeshiftManager::update_processor_delay(const std::string& instance_id, in
  */
 void TimeshiftManager::update_processor_timeshift(const std::string& instance_id, float timeshift_sec) {
     LOG_CPP_INFO("[TimeshiftManager] Updating timeshift for processor %s to %.2fs", instance_id.c_str(), timeshift_sec);
+    
+    std::optional<HolderTracker> holder_tracker;
+#if defined(__linux__)
+    // Try to acquire lock with timeout, log if blocked too long
+    std::unique_lock<std::mutex> lock(data_mutex_, std::defer_lock);
+    auto start = std::chrono::steady_clock::now();
+    while (!lock.try_lock()) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count();
+        if (elapsed > 50) {
+            // Log contention info and dump holder's kernel stack
+            pid_t holder_tid = g_data_mutex_holder_tid.load();
+            LOG_CPP_ERROR("[TimeshiftManager] CONTENTION: update_processor_timeshift waited %ldms for data_mutex_ held at %s:%d (holder tid=%d)",
+                          elapsed, g_data_mutex_holder_file.load(), g_data_mutex_holder_line.load(), holder_tid);
+            dump_holder_user_stack();
+            if (holder_tid != 0) {
+                dump_thread_stack(holder_tid);
+            }
+            // Just wait for the lock
+            lock.lock();
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+#else
     std::lock_guard<std::mutex> lock(data_mutex_);
+#endif
+    // Track lock holder
+    holder_tracker.emplace(__FILE__, __LINE__);
     bool found_processor = false;
     for (auto& [tag, source_map] : processor_targets_) {
         auto proc_it = source_map.find(instance_id);
@@ -755,7 +1004,9 @@ void TimeshiftManager::attach_sink_ring(const std::string& instance_id,
                                         const std::string& source_tag,
                                         const std::string& sink_id,
                                         std::shared_ptr<PacketRing> ring) {
+    std::optional<HolderTracker> holder_tracker;
     std::lock_guard<std::mutex> lock(data_mutex_);
+    holder_tracker.emplace(__FILE__, __LINE__);
     auto& source_map = processor_targets_[source_tag];
     auto it = source_map.find(instance_id);
     if (it == source_map.end()) {
@@ -770,7 +1021,9 @@ void TimeshiftManager::attach_sink_ring(const std::string& instance_id,
 void TimeshiftManager::detach_sink_ring(const std::string& instance_id,
                                         const std::string& source_tag,
                                         const std::string& sink_id) {
+    std::optional<HolderTracker> holder_tracker;
     std::lock_guard<std::mutex> lock(data_mutex_);
+    holder_tracker.emplace(__FILE__, __LINE__);
     auto source_it = processor_targets_.find(source_tag);
     if (source_it == processor_targets_.end()) {
         return;
@@ -784,12 +1037,24 @@ void TimeshiftManager::detach_sink_ring(const std::string& instance_id,
     run_loop_cv_.notify_one();
 }
 
+void TimeshiftManager::set_wildcard_match_callback(std::function<void(const WildcardMatchEvent&)> cb) {
+    std::lock_guard<std::mutex> lock(wildcard_callback_mutex_);
+    wildcard_match_callback_ = std::move(cb);
+}
+
+void TimeshiftManager::set_pipeline_state_provider(PipelineStateProvider provider) {
+    std::lock_guard<std::mutex> lock(pipeline_state_mutex_);
+    pipeline_state_provider_ = std::move(provider);
+}
+
 void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
     LOG_CPP_INFO("[TimeshiftManager] Resetting stream state for tag %s", source_tag.c_str());
 
     size_t reset_position = 0;
     {
+        std::optional<HolderTracker> holder_tracker;
         std::lock_guard<std::mutex> data_lock(data_mutex_);
+        holder_tracker.emplace(__FILE__, __LINE__);
         reset_position = global_timeshift_buffer_.size();
 
         for (auto& [filter_tag, source_map] : processor_targets_) {
@@ -831,30 +1096,88 @@ void TimeshiftManager::reset_stream_state(const std::string& source_tag) {
 void TimeshiftManager::run() {
     LOG_CPP_INFO("[TimeshiftManager] Run loop started.");
     uint64_t last_processed_version = m_state_version_.load();
+    std::vector<WildcardMatchEvent> wildcard_matches;
+    std::vector<TaggedAudioPacket> inbound_batch;
+    inbound_batch.reserve(kInboundQueueMaxSize);
 
-    while (!stop_flag_) {
-        std::unique_lock<std::mutex> lock(data_mutex_);
-
-        // Process any packets that are already due.
-        processing_loop_iteration_unlocked();
-
-        // Perform cleanup if needed.
-        auto now = std::chrono::steady_clock::now();
-        if (now - last_cleanup_time_ > std::chrono::milliseconds(m_settings->timeshift_tuning.cleanup_interval_ms)) {
-            cleanup_global_buffer_unlocked();
-            last_cleanup_time_ = now;
+    while (!stop_flag_ || !inbound_queue_.empty()) {
+        inbound_batch.clear();
+        TaggedAudioPacket pending_packet;
+        while (inbound_queue_.try_pop(pending_packet)) {
+            inbound_batch.push_back(std::move(pending_packet));
+        }
+        for (auto& packet : inbound_batch) {
+            std::optional<HolderTracker> holder_tracker;
+            std::unique_lock<std::mutex> ingest_lock(data_mutex_);
+            holder_tracker.emplace(__FILE__, __LINE__);
+            ingest_packet_locked(std::move(packet), ingest_lock);
         }
 
-        // Calculate the next time we need to wake up.
-        auto next_wakeup_time = calculate_next_wakeup_time();
-        
-        // Wait until the next event or until notified.
-        run_loop_cv_.wait_until(lock, next_wakeup_time, [this, &last_processed_version] {
-            return stop_flag_.load() || (m_state_version_.load() != last_processed_version);
-        });
+        wildcard_matches.clear();
+        auto next_wakeup_time = std::chrono::steady_clock::now();
+        {
+            auto lock_start = std::chrono::steady_clock::now();
+            std::optional<HolderTracker> holder_tracker;
+            std::unique_lock<std::mutex> lock(data_mutex_);
+            holder_tracker.emplace(__FILE__, __LINE__);
 
-        // Update the version so we don't spin on the same notification.
-        last_processed_version = m_state_version_.load();
+            // Process any packets that are already due.
+            processing_loop_iteration_unlocked(wildcard_matches);
+
+            // Perform cleanup if needed.
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_cleanup_time_ > std::chrono::milliseconds(m_settings->timeshift_tuning.cleanup_interval_ms)) {
+                cleanup_global_buffer_unlocked();
+                last_cleanup_time_ = now;
+            }
+
+            // Calculate the next time we need to wake up.
+            next_wakeup_time = calculate_next_wakeup_time();
+
+            auto lock_held_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - lock_start).count();
+            if (lock_held_ms > 50) {
+                LOG_CPP_WARNING("[TimeshiftManager] Run loop held data_mutex_ for %ldms during processing",
+                                static_cast<long>(lock_held_ms));
+#if defined(__linux__)
+                // Dump our own backtrace since WE are the holder
+                constexpr int MAX_FRAMES = 64;
+                void* callstack[MAX_FRAMES];
+                int frames = backtrace(callstack, MAX_FRAMES);
+                char** symbols = backtrace_symbols(callstack, frames);
+                std::ostringstream oss;
+                oss << "[TimeshiftManager] HOLDER BACKTRACE (" << frames << " frames):\n";
+                for (int i = 0; i < frames; ++i) {
+                    oss << "  [" << i << "] " << (symbols ? symbols[i] : "??") << "\n";
+                }
+                LOG_CPP_WARNING("%s", oss.str().c_str());
+                if (symbols) free(symbols);
+#endif
+            }
+        }
+        std::function<void(const WildcardMatchEvent&)> callback;
+        {
+            std::lock_guard<std::mutex> cb_lock(wildcard_callback_mutex_);
+            callback = wildcard_match_callback_;
+        }
+        if (!wildcard_matches.empty() && callback) {
+            for (const auto& evt : wildcard_matches) {
+                if (!evt.processor_instance_id.empty() && !evt.concrete_tag.empty()) {
+                    callback(evt);
+                }
+            }
+        }
+
+        {
+            std::unique_lock<std::mutex> wait_lock(data_mutex_);
+            // Wait until the next event or until notified.
+            run_loop_cv_.wait_until(wait_lock, next_wakeup_time, [this, &last_processed_version] {
+                return stop_flag_.load() || (m_state_version_.load() != last_processed_version);
+            });
+
+            // Update the version so we don't spin on the same notification.
+            last_processed_version = m_state_version_.load();
+        }
     }
     LOG_CPP_INFO("[TimeshiftManager] Run loop exiting.");
 }
@@ -862,23 +1185,41 @@ void TimeshiftManager::run() {
 /**
  * @brief A single iteration of the processing loop to dispatch ready packets. Assumes data_mutex_ is held.
  */
-void TimeshiftManager::processing_loop_iteration_unlocked() {
+void TimeshiftManager::processing_loop_iteration_unlocked(std::vector<WildcardMatchEvent>& wildcard_matches) {
     if (global_timeshift_buffer_.empty()) {
         return;
     }
 
     const auto iteration_start = std::chrono::steady_clock::now();
+    const auto budget_deadline = iteration_start + std::chrono::milliseconds(kDataMutexProcessingBudgetMs);
+    bool budget_exhausted = false;
     auto now = iteration_start;
     const double max_catchup_lag_ms = m_settings->timeshift_tuning.max_catchup_lag_ms;
     size_t packets_processed = 0;
 
     for (auto& [source_tag, source_map] : processor_targets_) {
+        update_data_mutex_holder_site(__FILE__, __LINE__);
+        if (budget_exhausted) {
+            break;
+        }
         (void)source_tag;
         for (auto& [instance_id, target_info] : source_map) {
+            update_data_mutex_holder_site(__FILE__, __LINE__);
+            if (budget_exhausted) {
+                break;
+            }
             while (target_info.next_packet_read_index < global_timeshift_buffer_.size()) {
-                const auto& candidate_packet = global_timeshift_buffer_[target_info.next_packet_read_index];
+                update_data_mutex_holder_site(__FILE__, __LINE__);
+                if (std::chrono::steady_clock::now() >= budget_deadline) {
+                    budget_exhausted = true;
+                    break;
+                }
 
-                if (!match_and_bind_source(target_info, candidate_packet.source_tag)) {
+                const auto& candidate_packet = global_timeshift_buffer_[target_info.next_packet_read_index];
+                update_data_mutex_holder_site(__FILE__, __LINE__);
+
+                if (!match_and_bind_source(target_info, candidate_packet.source_tag, &wildcard_matches)) {
+                    update_data_mutex_holder_site(__FILE__, __LINE__);
                     if (target_info.is_wildcard && (target_info.next_packet_read_index % 256 == 0)) {
                         LOG_CPP_DEBUG("[TimeshiftManager] Instance %s skipping packet tag '%s' (filter '%s')",
                                       instance_id.c_str(), candidate_packet.source_tag.c_str(), target_info.source_tag_filter.c_str());
@@ -893,6 +1234,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 }
 
                 auto timing_access = get_timing_state(candidate_packet.source_tag);
+                update_data_mutex_holder_site(__FILE__, __LINE__);
                 if (!timing_access.state || !timing_access.state->clock) {
                     target_info.next_packet_read_index++;
                     continue;
@@ -921,24 +1263,82 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 ts.last_target_update_time = now;
 
                 auto ideal_playout_time = expected_arrival_time + std::chrono::duration<double, std::milli>(desired_latency_ms);
-                auto time_until_playout_ms = std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
+                double time_until_playout_ms =
+                    std::chrono::duration<double, std::milli>(ideal_playout_time - now).count();
+                // Clamp to a reasonable window to avoid runaway buffer math when the scheduler runs late.
+                constexpr double kMaxSchedSlipMs = 200.0; // .2s slip guard
+                time_until_playout_ms = std::clamp(time_until_playout_ms, -kMaxSchedSlipMs, kMaxSchedSlipMs);
 
-                double buffer_level_ms = std::max(time_until_playout_ms, 0.0);
+                // --- Dispatch Gate Logic ---
+                // We must not strictly enforce ideal_playout_time for dispatch, because if the PI controller
+                // demands a playback rate > 1.0, the downstream sink will consume data faster than real-time.
+                // If we hold the packet until ideal_playout_time, we starve the sink (underruns).
+                // Instead, we use a much looser "Safe Dispatch Threshold" that only ensures we have a minimal
+                // buffer for reordering/jitter, effectively allowing the PI controller to "pull" data early.
+                const double safe_dispatch_latency_ms = std::min(desired_latency_ms * 0.5, 5.0);
+                auto dispatch_threshold_time = expected_arrival_time + std::chrono::duration<double, std::milli>(safe_dispatch_latency_ms);
 
-                // Fold in downstream backlog (ready ring depth) so the controller sees what the sink still has queued.
+                // Model buffer as: lead until head starts (negative when late) + duration of head chunk + queued chunks + downstream backlog.
+                double buffer_level_ms = time_until_playout_ms;
+
                 double block_duration_ms = 0.0;
-                if (ts.sample_rate > 0 && ts.samples_per_chunk > 0) {
-                    block_duration_ms = (static_cast<double>(ts.samples_per_chunk) * 1000.0) /
-                                        static_cast<double>(ts.sample_rate);
-                }
-                if (block_duration_ms > 0.0 && !target_info.sink_rings.empty()) {
-                    std::size_t downstream_blocks = 0;
-                    for (const auto& [sink_id, ring_weak] : target_info.sink_rings) {
-                        (void)sink_id;
-                        if (auto ring = ring_weak.lock()) {
-                            downstream_blocks += ring->size();
+                if (candidate_packet.sample_rate > 0 &&
+                    candidate_packet.channels > 0 &&
+                    candidate_packet.bit_depth > 0 &&
+                    (candidate_packet.bit_depth % 8) == 0) {
+                    const std::size_t bytes_per_frame =
+                        static_cast<std::size_t>(candidate_packet.channels) *
+                        static_cast<std::size_t>(candidate_packet.bit_depth / 8);
+                    if (bytes_per_frame > 0) {
+                        const std::size_t samples_this_packet =
+                            candidate_packet.audio_data.size() / bytes_per_frame;
+                        if (samples_this_packet > 0) {
+                            block_duration_ms =
+                                (static_cast<double>(samples_this_packet) * 1000.0) /
+                                static_cast<double>(candidate_packet.sample_rate);
+                            buffer_level_ms += block_duration_ms; // include the head chunk itself
                         }
                     }
+                }
+
+                if (block_duration_ms > 0.0 && !target_info.sink_rings.empty()) {
+                    update_data_mutex_holder_site(__FILE__, __LINE__);
+                    std::size_t downstream_blocks = 0;
+                    size_t ring_count = 0;
+                    LOG_CPP_DEBUG("[TimeshiftManager] Sink backlog scan start: inst=%s source=%s sinks=%zu block_ms=%.2f",
+                                  instance_id.c_str(),
+                                  target_info.bound_source_tag.empty() ? target_info.source_tag_filter.c_str() : target_info.bound_source_tag.c_str(),
+                                  target_info.sink_rings.size(),
+                                  block_duration_ms);
+                    for (const auto& [sink_id, ring_weak] : target_info.sink_rings) {
+                        ++ring_count;
+                        update_data_mutex_holder_site(__FILE__, __LINE__);
+                        auto start = std::chrono::steady_clock::now();
+                        std::size_t ring_depth = 0;
+                        if (auto ring = ring_weak.lock()) {
+                            ring_depth = ring->size();
+                            downstream_blocks += ring_depth;
+                        } else {
+                            LOG_CPP_DEBUG("[TimeshiftManager] Sink ring expired: inst=%s sink=%s index=%zu",
+                                          instance_id.c_str(), sink_id.c_str(), ring_count);
+                        }
+                        auto dur_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - start).count();
+                        LOG_CPP_DEBUG("[TimeshiftManager] Sink backlog ring=%s depth=%zu query_us=%lld inst=%s",
+                                      sink_id.c_str(),
+                                      ring_depth,
+                                      static_cast<long long>(dur_us),
+                                      instance_id.c_str());
+                        if (dur_us > 500) {
+                            LOG_CPP_WARNING("[TimeshiftManager] Sink backlog ring query slow: ring=%s took %lldus",
+                                            sink_id.c_str(),
+                                            static_cast<long long>(dur_us));
+                        }
+                    }
+                    LOG_CPP_DEBUG("[TimeshiftManager] Sink backlog scan done: inst=%s downstream_blocks=%zu rings=%zu",
+                                  instance_id.c_str(),
+                                  downstream_blocks,
+                                  ring_count);
                     if (downstream_blocks > 0) {
                         buffer_level_ms += block_duration_ms * static_cast<double>(downstream_blocks);
                     }
@@ -958,8 +1358,112 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                 ts.head_playout_lag_ms_max = std::max(ts.head_playout_lag_ms_max, head_lag_ms);
                 ts.head_playout_lag_samples++;
 
-                // Check if the packet is ready to be played
-                if (ideal_playout_time <= now) {
+                // Update playback rate based on buffer fill
+                const auto& tuning = m_settings->timeshift_tuning;
+                double controller_dt_sec = 0.0;
+                if (ts.last_controller_update_time.time_since_epoch().count() != 0) {
+                    controller_dt_sec =
+                        std::chrono::duration<double>(now - ts.last_controller_update_time).count();
+                }
+                if (controller_dt_sec <= 0.0) {
+                    controller_dt_sec =
+                        std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
+                }
+                ts.last_controller_update_time = now;
+
+                // === UNIFIED RATE CONTROL: Incorporate downstream pipeline state ===
+                double hw_error_ms = 0.0;
+                double mixer_error_ms = 0.0;
+                {
+                    std::lock_guard<std::mutex> plock(pipeline_state_mutex_);
+                    if (pipeline_state_provider_) {
+                        auto [hw_fill, hw_target, mixer_fill, mixer_target] = pipeline_state_provider_();
+                        // Positive error = over-filled = need to speed up (drain)
+                        hw_error_ms = hw_fill - hw_target;
+                        mixer_error_ms = mixer_fill - mixer_target;
+                    }
+                }
+                
+                // Local buffer error: positive = under-filled = need to slow down (fill)
+                double local_error_ms = desired_latency_ms - buffer_level_ms;
+                
+                // Combined error with weights. Downstream errors are inverted relative to local.
+                // hw/mixer over-filled means we need to speed up → negative local error equivalent
+                constexpr double kLocalWeight = 1.0;
+                constexpr double kHwWeight = 0.5;      // Hardware is high priority
+                constexpr double kMixerWeight = 0.3;   // Mixer queue is secondary
+                
+                double weighted_error_ms = kLocalWeight * local_error_ms 
+                                         - kHwWeight * hw_error_ms 
+                                         - kMixerWeight * mixer_error_ms;
+                
+                double raw_ratio = 0.0;
+                if (desired_latency_ms > 1e-3) {
+                    raw_ratio = weighted_error_ms / desired_latency_ms;
+                }
+                ts.buffer_fill_error_ratio = raw_ratio;
+
+                const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
+                double proportional_ppm = 0.0;
+                double integral_ppm = ts.playback_ratio_integral_ppm;
+                double rate_error_ppm = 0.0;
+                if (max_deviation_ppm > 0.0) {
+                    proportional_ppm =
+                        std::clamp(tuning.playback_ratio_kp * raw_ratio * max_deviation_ppm,
+                                   -max_deviation_ppm,
+                                   max_deviation_ppm);
+
+                    const double integral_gain_ppm_per_sec = tuning.playback_ratio_ki * max_deviation_ppm;
+                    const double dead_zone_ratio = std::max(tuning.playback_ratio_dead_zone_ratio, 0.0);
+                    const double integral_decay = std::clamp(tuning.playback_ratio_integral_decay, 0.0, 1.0);
+                    
+                    if (integral_gain_ppm_per_sec > 0.0) {
+                        // When error is within dead zone, decay the integral to prevent windup
+                        if (std::abs(raw_ratio) < dead_zone_ratio) {
+                            integral_ppm *= integral_decay;
+                        } else {
+                            integral_ppm += raw_ratio * integral_gain_ppm_per_sec * controller_dt_sec;
+                        }
+                        const double integral_limit =
+                            std::max(tuning.playback_ratio_integral_limit_ppm, max_deviation_ppm);
+                        integral_ppm = std::clamp(integral_ppm, -integral_limit, integral_limit);
+                    } else {
+                        integral_ppm = 0.0;
+                    }
+                    ts.playback_ratio_integral_ppm = integral_ppm;
+
+                    rate_error_ppm = proportional_ppm + integral_ppm;
+                    rate_error_ppm = std::clamp(rate_error_ppm, -max_deviation_ppm, max_deviation_ppm);
+                } else {
+                    ts.playback_ratio_integral_ppm = 0.0;
+                }
+
+                // Positive error indicates buffer is below target (underfilled).
+                // To refill, we must SPEED UP playback (rate > 1.0), so ADD the correction.
+                double new_rate = 1.0 + rate_error_ppm * kPlaybackDriftGain;
+                if (!m_settings->timeshift_tuning.playback_rate_adjustment_enabled) {
+                    new_rate = 1.0;
+                }
+                if (!std::isfinite(new_rate)) {
+                    new_rate = 1.0;
+                }
+                if (std::abs(new_rate - ts.current_playback_rate) > 5e-4) {
+                    LOG_CPP_DEBUG(
+                        "[TimeshiftManager] Adjusted playback rate for '%s': buffer_level=%.3fms target=%.3fms fill_err_ratio=%.6f prop_ppm=%.3f int_ppm=%.3f total_ppm=%.3f playback_rate=%.6f",
+                        candidate_packet.source_tag.c_str(),
+                        buffer_level_ms,
+                        desired_latency_ms,
+                        raw_ratio,
+                        proportional_ppm,
+                        integral_ppm,
+                        rate_error_ppm,
+                        new_rate);
+                }
+                ts.current_playback_rate = new_rate;
+
+                // Check if the packet is ready to be dispatched (passed safety gate)
+                if (dispatch_threshold_time <= now) {
+                    update_data_mutex_holder_site(__FILE__, __LINE__);
                     const double lateness_ms = -time_until_playout_ms;
                     if (lateness_ms > m_settings->timeshift_tuning.late_packet_threshold_ms) {
                         ts.late_packets_count++;
@@ -968,7 +1472,6 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         profiling_total_lateness_ms_ += lateness_ms;
                         profiling_packets_late_count_++;
                     }
-
                     ts.playout_deviation_ms_sum += lateness_ms;
                     ts.playout_deviation_ms_abs_sum += std::abs(lateness_ms);
                     ts.playout_deviation_ms_max = std::max(ts.playout_deviation_ms_max, lateness_ms);
@@ -984,86 +1487,21 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                             log_tag.c_str(),
                             lateness_ms,
                             max_catchup_lag_ms);
-
                         target_info.next_packet_read_index++;
                         continue;
                     }
 
                     TaggedAudioPacket packet_to_send = candidate_packet;
                     utils::log_sentinel("timeshift_ready", packet_to_send);
-                    const auto& tuning = m_settings->timeshift_tuning;
-                    double controller_dt_sec = 0.0;
-                    if (ts.last_controller_update_time.time_since_epoch().count() != 0) {
-                        controller_dt_sec =
-                            std::chrono::duration<double>(now - ts.last_controller_update_time).count();
-                    }
-                    if (controller_dt_sec <= 0.0) {
-                        controller_dt_sec =
-                            std::max(static_cast<double>(tuning.loop_max_sleep_ms) / 1000.0, 0.001);
-                    }
-
-                    const double buffer_error_ms = desired_latency_ms - buffer_level_ms;
-                    ts.last_controller_update_time = now;
-
-                    const double proportional_ppm = tuning.playback_ratio_kp * buffer_error_ms;
-                    ts.playback_ratio_integral_ppm +=
-                        tuning.playback_ratio_ki * buffer_error_ms * controller_dt_sec;
-                    const double integral_cap_ppm =
-                        std::max(tuning.playback_ratio_integral_limit_ppm,
-                                 tuning.playback_ratio_max_deviation_ppm);
-                    ts.playback_ratio_integral_ppm =
-                        std::clamp(ts.playback_ratio_integral_ppm,
-                                   -integral_cap_ppm,
-                                   integral_cap_ppm);
-
-                    double controller_ppm = proportional_ppm + ts.playback_ratio_integral_ppm;
-                    const double max_slew_ppm =
-                        std::max(tuning.playback_ratio_slew_ppm_per_sec, 0.0) * controller_dt_sec;
-                    if (max_slew_ppm > 0.0) {
-                        controller_ppm = std::clamp(controller_ppm,
-                                                    ts.playback_ratio_controller_ppm - max_slew_ppm,
-                                                    ts.playback_ratio_controller_ppm + max_slew_ppm);
-                    }
-
-                    const double max_deviation_ppm = std::max(tuning.playback_ratio_max_deviation_ppm, 0.0);
-                    controller_ppm = std::clamp(controller_ppm, -max_deviation_ppm, max_deviation_ppm);
-                    ts.playback_ratio_controller_ppm = controller_ppm;
-
-                    double combined_ppm = ts.last_clock_drift_ppm + controller_ppm;
-                    combined_ppm = std::clamp(combined_ppm, -max_deviation_ppm, max_deviation_ppm);
-
-                    double target_rate = 1.0 + combined_ppm * kPlaybackDriftGain;
-                    if (!std::isfinite(target_rate)) {
-                        target_rate = 1.0;
-                    }
-
-                    const double smoothing_factor =
-                        m_settings ? tuning.playback_ratio_smoothing : kFallbackSmoothing;
-                    const double smoothed_rate =
-                        smooth_playback_rate(ts.current_playback_rate,
-                                             target_rate,
-                                             smoothing_factor,
-                                             max_deviation_ppm);
-
-                    if (std::abs(smoothed_rate - ts.current_playback_rate) > 5e-4) {
-                        LOG_CPP_DEBUG(
-                            "[TimeshiftManager] Adjusted playback rate for '%s': drift_ppm=%.3f error_ms=%.3f controller_ppm=%.3f combined_ppm=%.3f target=%.6f smoothed=%.6f",
-                            candidate_packet.source_tag.c_str(),
-                            ts.last_clock_drift_ppm,
-                            buffer_error_ms,
-                            controller_ppm,
-                            combined_ppm,
-                            target_rate,
-                            smoothed_rate);
-                    }
-
-                    ts.current_playback_rate = smoothed_rate;
                     ts.last_system_delay_ms = lateness_ms;
+                    packet_to_send.playback_rate = ts.current_playback_rate;
 
-                    packet_to_send.playback_rate = smoothed_rate;
+                    ts.last_system_delay_ms = lateness_ms;
+                    packet_to_send.playback_rate = ts.current_playback_rate;
 
                     size_t sinks_dispatched = 0;
                     for (auto it = target_info.sink_rings.begin(); it != target_info.sink_rings.end();) {
+                        update_data_mutex_holder_site(__FILE__, __LINE__);
                         auto ring_ptr = it->second.lock();
                         if (!ring_ptr) {
                             it = target_info.sink_rings.erase(it);
@@ -1077,6 +1515,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                         const std::size_t ring_size = ring_ptr->size();
 
                         {
+                            update_data_mutex_holder_site(__FILE__, __LINE__);
                             std::lock_guard<std::mutex> stats_lock(processor_stats_mutex_);
                             processor_dispatched_totals_[instance_id]++;
                             processor_queue_high_water_[instance_id] =
@@ -1103,14 +1542,17 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
                     target_info.next_packet_read_index++;
 
                     now = std::chrono::steady_clock::now();
-                    if (ideal_playout_time > now) {
+                    if (now >= budget_deadline) {
+                        budget_exhausted = true;
+                        break;
+                    }
+                    if (dispatch_threshold_time > now) {
                         continue;
                     }
 
                     // If we consumed the available slack, let the outer loop reschedule.
                     break;
                 } else {
-                    // The loop is breaking because the next packet's playout time is in the future.
                     break;
                 }
             }
@@ -1119,6 +1561,19 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
 
     const auto iteration_end = std::chrono::steady_clock::now();
     last_iteration_finish_time_ = iteration_end;
+
+    if (budget_exhausted) {
+        if (last_lock_budget_log_time_.time_since_epoch().count() == 0 ||
+            iteration_end - last_lock_budget_log_time_ >= std::chrono::seconds(1)) {
+            LOG_CPP_WARNING(
+                "[TimeshiftManager] Processing loop aborted after %dms budget (buffer=%zu processors=%zu packets_processed=%zu)",
+                kDataMutexProcessingBudgetMs,
+                global_timeshift_buffer_.size(),
+                processor_targets_.size(),
+                packets_processed);
+            last_lock_budget_log_time_ = iteration_end;
+        }
+    }
 
     if (packets_processed > 0) {
         const double iteration_us = std::chrono::duration<double, std::micro>(iteration_end - iteration_start).count();
@@ -1138,6 +1593,7 @@ void TimeshiftManager::processing_loop_iteration_unlocked() {
         maybe_log_profiler_unlocked(iteration_end);
     }
 }
+
 
 void TimeshiftManager::reset_profiler_counters_unlocked(std::chrono::steady_clock::time_point now) {
     profiling_last_log_time_ = now;
@@ -1420,7 +1876,8 @@ std::chrono::steady_clock::time_point TimeshiftManager::calculate_next_wakeup_ti
     }
 
     if (earliest_time == std::chrono::steady_clock::time_point::max()) {
-        earliest_time = reference_now;
+        // No pending packets. Sleep for at least a small interval to avoid busy looping.
+        earliest_time = std::min(next_cleanup_time, max_sleep_time);
     } else if (earliest_time < reference_now) {
         earliest_time = reference_now;
     }

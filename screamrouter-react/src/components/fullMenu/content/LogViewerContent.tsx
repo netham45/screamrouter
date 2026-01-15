@@ -16,6 +16,7 @@ import {
   Tooltip,
   Flex,
   Spacer,
+  Input,
 } from '@chakra-ui/react';
 import {
   FaPlay,
@@ -51,7 +52,8 @@ const LogViewerContent: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
-  
+  const [searchFilter, setSearchFilter] = useState<string>('');
+
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<HTMLDivElement>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -74,7 +76,7 @@ const LogViewerContent: React.FC = () => {
       }
       const data = await response.json();
       setLogFiles(data.logs || []);
-      
+
       // Auto-select first log if none selected
       if (!selectedFile && data.logs && data.logs.length > 0) {
         setSelectedFile(data.logs[0].filename);
@@ -101,9 +103,9 @@ const LogViewerContent: React.FC = () => {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/logs/${encodeURIComponent(selectedFile)}/${initialLines}`;
-    
+
     console.log('Connecting to WebSocket:', wsUrl);
-    
+
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
@@ -117,7 +119,7 @@ const LogViewerContent: React.FC = () => {
     ws.onmessage = (event) => {
       try {
         const message: LogMessage = JSON.parse(event.data);
-        
+
         if (message.type === 'initial' && message.lines) {
           setLogContent(message.lines);
         } else if (message.type === 'append' && message.line) {
@@ -158,12 +160,12 @@ const LogViewerContent: React.FC = () => {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
-    
+
     if (wsRef.current) {
       wsRef.current.close(1000, 'User disconnected');
       wsRef.current = null;
     }
-    
+
     setConnectionStatus('disconnected');
     setIsStreaming(false);
   }, []);
@@ -259,6 +261,17 @@ const LogViewerContent: React.FC = () => {
         <Box bg={cardBg} p={4} borderRadius="md" borderWidth="1px" borderColor={borderColor}>
           <VStack spacing={3} align="stretch">
             <HStack spacing={3} flexWrap="wrap">
+              {/* Search filter */}
+              <Box minW="150px">
+                <Text fontSize="sm" mb={1}>Search</Text>
+                <Input
+                  placeholder="Filter files..."
+                  value={searchFilter}
+                  onChange={(e) => setSearchFilter(e.target.value)}
+                  size="sm"
+                />
+              </Box>
+
               {/* Log file selector */}
               <Box minW="200px">
                 <Text fontSize="sm" mb={1}>Log File</Text>
@@ -273,11 +286,13 @@ const LogViewerContent: React.FC = () => {
                   isDisabled={isLoading}
                 >
                   <option value="">Select a log file</option>
-                  {logFiles.map((file) => (
-                    <option key={file.filename} value={file.filename}>
-                      {file.filename} ({file.lines} lines, {(file.size / 1024).toFixed(1)} KB)
-                    </option>
-                  ))}
+                  {logFiles
+                    .filter((file) => file.filename.toLowerCase().includes(searchFilter.toLowerCase()))
+                    .map((file) => (
+                      <option key={file.filename} value={file.filename}>
+                        {file.filename} ({file.lines} lines, {(file.size / 1024).toFixed(1)} KB)
+                      </option>
+                    ))}
                 </Select>
               </Box>
 

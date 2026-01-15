@@ -15,9 +15,12 @@
 #include <set>
 #include <unordered_map>
 #include <optional>
+#include <mutex>
+#ifndef SCREAMROUTER_TESTING
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
+#endif
 
 #include "audio_engine_config_types.h"
 
@@ -149,7 +152,8 @@ private:
     bool cached_desired_state_valid_ = false;
     std::unordered_map<std::string, std::string> clone_filter_lookup_;
 };
-    
+
+#ifndef SCREAMROUTER_TESTING
 /**
  * @brief Binds the AudioEngineConfigApplier class to a Python module.
  * @param m The pybind11 module to which the class will be bound.
@@ -163,13 +167,9 @@ inline void bind_config_applier(pybind11::module_ &m) {
         
        .def("apply_state", &AudioEngineConfigApplier::apply_state, py::arg("desired_state"), py::call_guard<py::gil_scoped_release>(), "Applies a desired state.");
 }
+#endif // !SCREAMROUTER_TESTING
 
 } // namespace config
 } // namespace screamrouter
 
 #endif // AUDIO_ENGINE_CONFIG_APPLIER_H
-    enum class SourcePathAddResult {
-        Added,
-        PendingStream,
-        Failed
-    };

@@ -3,6 +3,7 @@
  * @brief Implementation of the MultiDeviceRtpSender class.
  */
 #include "multi_device_rtp_sender.h"
+#include "rtp_constants.h"
 #include "../../utils/cpp_logger.h"
 #include <cstring>
 #include <random>
@@ -219,33 +220,68 @@ void MultiDeviceRtpSender::send_payload(const uint8_t* payload_data, size_t payl
         convert_to_network_byte_order(receiver.network_buffer.data(), stereo_bytes, config_.output_bitdepth);
     }
     
+    const size_t stereo_frame_bytes = bytes_per_sample * 2;
+    if (stereo_frame_bytes == 0) {
+        LOG_CPP_ERROR("[MultiDeviceRtpSender:%s] Invalid stereo frame size (bit_depth=%d)",
+                      config_.sink_id.c_str(), config_.output_bitdepth);
+        return;
+    }
+
+    const std::size_t mtu_bytes = kDefaultRtpPayloadMtu;
+    size_t slice_cap = mtu_bytes;
+    if (slice_cap > 0) {
+        const size_t frames_per_slice = std::max<std::size_t>(1, slice_cap / stereo_frame_bytes);
+        slice_cap = frames_per_slice * stereo_frame_bytes;
+    } else {
+        slice_cap = stereo_bytes;
+    }
+
     // Capture timestamp AFTER all processing is complete
     uint32_t current_timestamp = rtp_timestamp_.load();
     
     // Phase 2: Send all packets (I/O work) - now very fast, minimal per-stream delay
-    for (auto& receiver : active_receivers_) {
-        if (!receiver.sender || !receiver.sender->is_ready()) {
-            continue;
+    size_t offset = 0;
+    while (offset < stereo_bytes) {
+        size_t remaining = stereo_bytes - offset;
+        size_t slice_size = std::min(remaining, slice_cap);
+        const size_t remainder = slice_size % stereo_frame_bytes;
+        if (remainder != 0) {
+            slice_size -= remainder;
         }
-        
-        // Send via RTP using pre-processed network buffer
-        if (receiver.sender->send_rtp_packet(receiver.network_buffer.data(), stereo_bytes,
-                                            current_timestamp, csrcs, false)) {
-            total_packets_sent_++;
-            total_bytes_sent_ += stereo_bytes;
+        if (slice_size == 0) {
+            slice_size = std::min(remaining, stereo_frame_bytes);
+            if (slice_size == 0) {
+                break;
+            }
+        }
+
+        for (auto& receiver : active_receivers_) {
+            if (!receiver.sender || !receiver.sender->is_ready()) {
+                continue;
+            }
             
-            LOG_CPP_DEBUG("[MultiDeviceRtpSender:%s] Sent %zu bytes to receiver %s",
-                         config_.sink_id.c_str(), stereo_bytes,
-                         receiver.config.receiver_id.c_str());
-        } else {
-            LOG_CPP_ERROR("[MultiDeviceRtpSender:%s] Failed to send to receiver %s",
-                         config_.sink_id.c_str(),
-                         receiver.config.receiver_id.c_str());
+            if (receiver.sender->send_rtp_packet(receiver.network_buffer.data() + offset,
+                                                 slice_size,
+                                                 current_timestamp,
+                                                 csrcs,
+                                                 true)) {
+                total_packets_sent_++;
+                total_bytes_sent_ += slice_size;
+            } else {
+                LOG_CPP_ERROR("[MultiDeviceRtpSender:%s] Failed to send slice (%zu bytes, offset=%zu) to receiver %s",
+                              config_.sink_id.c_str(),
+                              slice_size,
+                              offset,
+                              receiver.config.receiver_id.c_str());
+            }
         }
+
+        current_timestamp += static_cast<uint32_t>(slice_size / stereo_frame_bytes);
+        offset += slice_size;
     }
-    
-    // Increment shared timestamp by number of frames
-    rtp_timestamp_ += frame_count;
+
+    // Increment shared timestamp by number of frames sent
+    rtp_timestamp_.store(current_timestamp);
     
     // Log statistics periodically
     if (total_packets_sent_ % 100 == 0) {

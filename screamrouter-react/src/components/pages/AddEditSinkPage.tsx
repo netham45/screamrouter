@@ -32,7 +32,6 @@ import {
   HStack,
   SimpleGrid
 } from '@chakra-ui/react';
-import axios from 'axios';
 import ApiService, { Sink, SystemAudioDeviceInfo } from '../../api/api';
 import { useTutorial } from '../../context/TutorialContext';
 import { useMdnsDiscovery } from '../../context/MdnsDiscoveryContext';
@@ -40,7 +39,6 @@ import VolumeSlider from './controls/VolumeSlider';
 import TimeshiftSlider from './controls/TimeshiftSlider';
 import MultiRtpReceiverManager, { RtpReceiverMapping } from './controls/MultiRtpReceiverManager';
 import { useAppContext } from '../../context/AppContext';
-import { useRouterInstances, RouterInstance } from '../../hooks/useRouterInstances';
 
 const AddEditSinkPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -81,19 +79,8 @@ const AddEditSinkPage: React.FC = () => {
   const [rtpReceiverMappings, setRtpReceiverMappings] = useState<RtpReceiverMapping[]>([]);
   const [sapTargetSink, setSapTargetSink] = useState('');
   const [sapTargetHost, setSapTargetHost] = useState('');
-  const [selectedServerId, setSelectedServerId] = useState('local');
-  const [remoteSinks, setRemoteSinks] = useState<Sink[]>([]);
-  const [remoteSelection, setRemoteSelection] = useState('');
-  const [remotePrefillApplied, setRemotePrefillApplied] = useState(false);
-  const [remoteLoading, setRemoteLoading] = useState(false);
-  const [remoteError, setRemoteError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const { instances, loading: instancesLoading, error: instancesError, refresh: refreshInstances } = useRouterInstances();
-  const selectedInstance = useMemo<RouterInstance | null>(
-    () => instances.find(inst => inst.id === selectedServerId) || null,
-    [instances, selectedServerId]
-  );
 
   // Color values for light/dark mode
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -103,6 +90,8 @@ const AddEditSinkPage: React.FC = () => {
   const selectedPlaybackDevice = useMemo<SystemAudioDeviceInfo | undefined>(() => {
     return systemPlaybackDevices.find(device => device.tag === selectedPlaybackTag);
   }, [systemPlaybackDevices, selectedPlaybackTag]);
+
+  const rtpOpusForcedFormat = useMemo(() => protocol === 'rtp_opus' && outputMode === 'network', [outputMode, protocol]);
 
   const normalizePlaybackTag = (value?: string | null): string => {
     if (!value) {
@@ -258,31 +247,6 @@ const AddEditSinkPage: React.FC = () => {
     }
     completeStep('sink-port-input');
   }, [port, completeStep]);
-
-  const resolveApiBase = useCallback((instance: RouterInstance) => {
-    const apiPath = "/";//(instance.properties?.api || '').trim();
-    if (!apiPath) {
-      return instance.origin;
-    }
-    const normalized = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
-    return `${instance.origin}${normalized}`;
-  }, []);
-
-  const fetchRemoteSinks = useCallback(async (instance: RouterInstance) => {
-    setRemoteLoading(true);
-    setRemoteError(null);
-    try {
-      const baseURL = resolveApiBase(instance).replace(/\/$/, '');
-      const response = await axios.get<Record<string, Sink>>(`${baseURL}/sinks`);
-      setRemoteSinks(Object.values(response.data || {}));
-    } catch (err) {
-      console.error('Failed to fetch remote sinks', err);
-      setRemoteError('Failed to load remote sinks.');
-      setRemoteSinks([]);
-    } finally {
-      setRemoteLoading(false);
-    }
-  }, [resolveApiBase]);
 
   const randomHighPort = useCallback(() => Math.floor(Math.random() * 9000) + 41000, []);
 
@@ -554,82 +518,6 @@ const AddEditSinkPage: React.FC = () => {
     return unregister;
   }, [layoutFromChannelCount, registerSelectionHandler]);
 
-  useEffect(() => {
-    if (remotePrefillApplied || !sapTargetHost || instances.length === 0) {
-      return;
-    }
-
-    const targetHost = normalizeHostValue(sapTargetHost);
-    if (!targetHost) {
-      return;
-    }
-
-    const matchingInstance = instances.find(inst => {
-      return (
-        targetHost === normalizeHostValue(inst.uuid) ||
-        targetHost === normalizeHostValue(inst.hostname) ||
-        targetHost === normalizeHostValue(inst.address)
-      );
-    });
-
-    if (matchingInstance) {
-      setSelectedServerId(matchingInstance.id);
-      setRemoteSelection('');
-      setRemoteError(null);
-      setRemoteSinks([]);
-      void fetchRemoteSinks(matchingInstance);
-    }
-  }, [fetchRemoteSinks, instances, normalizeHostValue, remotePrefillApplied, sapTargetHost]);
-
-  useEffect(() => {
-    if (remotePrefillApplied || !sapTargetSink || !selectedInstance) {
-      return;
-    }
-
-    const matchingRemoteSink = remoteSinks.find(
-      rs => rs.config_id === sapTargetSink || rs.name === sapTargetSink
-    );
-
-    if (!matchingRemoteSink) {
-      return;
-    }
-
-    setRemoteSelection(matchingRemoteSink.name);
-    setRemotePrefillApplied(true);
-    setOutputMode('network');
-    setProtocol(prev => (prev === 'system_audio' ? 'rtp' : (prev || 'rtp')));
-    setSapTargetSink(matchingRemoteSink.config_id || matchingRemoteSink.name);
-    setSapTargetHost(
-      selectedInstance.uuid || selectedInstance.hostname || selectedInstance.address || sapTargetHost
-    );
-
-    if (!name.trim()) {
-      const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${matchingRemoteSink.name}`;
-      setName(baseName);
-    }
-
-    setIp(prev => prev && prev !== '0' ? prev : (selectedInstance.address || selectedInstance.hostname || matchingRemoteSink.ip || ''));
-    setPort(prev => (prev && prev !== '0' && prev !== '4010') ? prev : randomHighPort().toString());
-    setBitDepth((matchingRemoteSink.bit_depth || 16).toString());
-    setSampleRate((matchingRemoteSink.sample_rate || 48000).toString());
-    const remoteLayout = matchingRemoteSink.channel_layout || layoutFromChannelCount(matchingRemoteSink.channels) || 'stereo';
-    setChannelLayout(remoteLayout);
-    setVolume(typeof matchingRemoteSink.volume === 'number' ? matchingRemoteSink.volume : 1);
-    setDelay(matchingRemoteSink.delay ?? 0);
-    setTimeshift(matchingRemoteSink.timeshift ?? 0);
-    setTimeSync(matchingRemoteSink.time_sync ?? false);
-    setTimeSyncDelay((matchingRemoteSink.time_sync_delay ?? 0).toString());
-    setVolumeNormalization(matchingRemoteSink.volume_normalization ?? false);
-  }, [
-    remotePrefillApplied,
-    remoteSinks,
-    sapTargetHost,
-    sapTargetSink,
-    selectedInstance,
-    randomHighPort,
-    layoutFromChannelCount
-  ]);
-
   /**
    * Handles form submission to add or update a sink.
    * Validates input and sends the data to the API service.
@@ -651,6 +539,18 @@ const AddEditSinkPage: React.FC = () => {
       setOutputMode('system');
     }
   }, [outputMode, protocol]);
+
+  useEffect(() => {
+    if (!rtpOpusForcedFormat) {
+      return;
+    }
+    if (bitDepth !== '16') {
+      setBitDepth('16');
+    }
+    if (sampleRate !== '48000') {
+      setSampleRate('48000');
+    }
+  }, [bitDepth, rtpOpusForcedFormat, sampleRate]);
 
   const handleSubmit = async () => {
     const trimmedName = name.trim();
@@ -690,6 +590,13 @@ const AddEditSinkPage: React.FC = () => {
     if (isNaN(channelsNum) || channelsNum < 1 || channelsNum > 8) {
       setError('Channel layout must resolve to between 1 and 8 channels');
       return;
+    }
+
+    if (rtpOpusForcedFormat) {
+      if (bitDepthNum !== 16 || sampleRateNum !== 48000) {
+        setError('RTP (Opus) requires 16-bit depth and 48000 Hz sample rate.');
+        return;
+      }
     }
 
     const sinkData: Partial<Sink> = {
@@ -1017,108 +924,6 @@ const AddEditSinkPage: React.FC = () => {
           </SimpleGrid>
 
           {outputMode === 'network' && (
-            <FormControl>
-              <FormLabel>Sink ScreamRouter Server</FormLabel>
-              <HStack spacing={2} align="center">
-                <Select
-                  value={selectedServerId}
-                  onChange={(e) => {
-                    const nextId = e.target.value;
-                    setSelectedServerId(nextId);
-                    setRemoteSelection('');
-                    setRemoteError(null);
-                    setRemoteSinks([]);
-                    setSapTargetSink('');
-                    setSapTargetHost('');
-                    if (nextId !== 'local') {
-                      const inst = instances.find(inst => inst.id === nextId);
-                      if (inst) {
-                        setSapTargetHost(inst.hostname || inst.address || '');
-                        void fetchRemoteSinks(inst);
-                      }
-                    }
-                  }}
-                  bg={inputBg}
-                >
-                  <option value="local">Local</option>
-                  {instances.filter(inst => !inst.isCurrent).map(inst => (
-                    <option key={inst.id} value={inst.id}>
-                      {inst.label} {inst.isCurrent ? '(current)' : ''}
-                    </option>
-                  ))}
-                </Select>
-                <Button
-                  size="sm"
-                  onClick={() => { void refreshInstances(); }}
-                  isLoading={instancesLoading}
-                  variant="outline"
-                >
-                  Refresh
-                </Button>
-              </HStack>
-              {instancesError && (
-                <Text mt={1} fontSize="sm" color="red.400">
-                  {instancesError}
-                </Text>
-              )}
-            </FormControl>
-          )}
-          
-          {outputMode === 'network' && selectedServerId !== 'local' && (
-            <FormControl>
-              <FormLabel>Remote Sink</FormLabel>
-              <Select
-                placeholder={remoteLoading ? 'Loading remote sinks...' : 'Select a remote sink'}
-                value={remoteSelection}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setRemoteSelection(value);
-                  const remoteSink = remoteSinks.find(rs => rs.name === value);
-                  if (!remoteSink || !selectedInstance) {
-                    return;
-                  }
-          const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${remoteSink.name}`;
-          setName(baseName);
-          setSapTargetSink(remoteSink.config_id || remoteSink.name);
-          setSapTargetHost(selectedInstance.uuid || selectedInstance.hostname || selectedInstance.address || '');
-          setProtocol('rtp');
-          setOutputMode('network');
-          setIp(selectedInstance.address || selectedInstance.hostname || remoteSink.ip || '');
-          setPort(randomHighPort().toString());
-          setBitDepth((remoteSink.bit_depth || 16).toString());
-          setSampleRate((remoteSink.sample_rate || 48000).toString());
-          const remoteLayout = remoteSink.channel_layout || layoutFromChannelCount(remoteSink.channels) || 'stereo';
-          setChannelLayout(remoteLayout);
-          setVolume(remoteSink.volume ?? 1);
-          setDelay(remoteSink.delay ?? 0);
-          setTimeshift(remoteSink.timeshift ?? 0);
-          setTimeSync(remoteSink.time_sync ?? false);
-          setTimeSyncDelay((remoteSink.time_sync_delay ?? 0).toString());
-          setVolumeNormalization(remoteSink.volume_normalization ?? false);
-        }}
-                isDisabled={remoteLoading}
-                bg={inputBg}
-              >
-                {remoteSinks.map(rs => (
-                  <option key={rs.name} value={rs.name}>
-                    {rs.name}
-                  </option>
-                ))}
-              </Select>
-              {remoteError && (
-                <Text mt={1} fontSize="sm" color="red.400">
-                  {remoteError}
-                </Text>
-              )}
-              {!remoteLoading && remoteSinks.length === 0 && !remoteError && (
-                <Text mt={1} fontSize="sm" color="gray.500">
-                  No remote sinks found on this server.
-                </Text>
-              )}
-            </FormControl>
-          )}
-
-          {outputMode === 'network' && selectedServerId === 'local' && (
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
               <FormControl isRequired={outputMode === 'network'}>
                 <FormLabel>{outputMode === 'system' ? 'Playback Tag' : 'RTP/Scream Sink IP'}</FormLabel>
@@ -1240,11 +1045,17 @@ const AddEditSinkPage: React.FC = () => {
                 value={bitDepth}
                 onChange={(e) => setBitDepth(e.target.value)}
                 bg={inputBg}
+                isDisabled={rtpOpusForcedFormat}
               >
                 <option value="16">16</option>
                 <option value="24">24</option>
                 <option value="32">32</option>
               </Select>
+              {rtpOpusForcedFormat && (
+                <Text mt={1} fontSize="sm" color="gray.500">
+                  Opus RTP requires 16-bit PCM input.
+                </Text>
+              )}
             </FormControl>
             
             <FormControl>
@@ -1254,6 +1065,7 @@ const AddEditSinkPage: React.FC = () => {
                 value={sampleRate}
                 onChange={(e) => setSampleRate(e.target.value)}
                 bg={inputBg}
+                isDisabled={rtpOpusForcedFormat}
               >
                 <option value="44100">44100</option>
                 <option value="48000">48000</option>
@@ -1261,6 +1073,11 @@ const AddEditSinkPage: React.FC = () => {
                 <option value="96000">96000</option>
                 <option value="192000">192000</option>
               </Select>
+              {rtpOpusForcedFormat && (
+                <Text mt={1} fontSize="sm" color="gray.500">
+                  Opus RTP advertises a fixed 48000 Hz clock rate.
+                </Text>
+              )}
             </FormControl>
             
             <FormControl>

@@ -53,6 +53,31 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
         current_stage = "constructing TimeshiftManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s (buffer=%ds)", current_stage.c_str(), global_timeshift_buffer_duration_sec);
         m_timeshift_manager = std::make_unique<TimeshiftManager>(std::chrono::seconds(global_timeshift_buffer_duration_sec), m_settings);
+        m_timeshift_manager->set_wildcard_match_callback(
+            [this](const WildcardMatchEvent& evt) {
+                this->handle_wildcard_match(evt);
+            });
+        
+        // Wire up pipeline state provider for unified rate control
+        // This allows TimeshiftManager to see downstream hw/mixer buffer state
+        m_timeshift_manager->set_pipeline_state_provider(
+            [this]() -> std::tuple<double, double, double, double> {
+                double hw_fill = 0.0, hw_target = 0.0, mixer_queue = 0.0, mixer_target = 0.0;
+                if (m_sink_manager) {
+                    auto mixers = m_sink_manager->get_all_mixers();
+                    for (auto* mixer : mixers) {
+                        if (mixer) {
+                            auto state = mixer->get_pipeline_state();
+                            // Aggregate: use max fill and target across all sinks
+                            hw_fill = std::max(hw_fill, state.hw_fill_ms);
+                            hw_target = std::max(hw_target, state.hw_target_ms);
+                            mixer_queue = std::max(mixer_queue, state.mixer_queue_ms);
+                            mixer_target = std::max(mixer_target, state.mixer_target_ms);
+                        }
+                    }
+                }
+                return {hw_fill, hw_target, mixer_queue, mixer_target};
+            });
 
         current_stage = "creating NotificationQueue";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
@@ -155,7 +180,7 @@ bool AudioManager::initialize(int rtp_listen_port, int global_timeshift_buffer_d
 
         current_stage = "creating ControlApiManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
-        m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_timeshift_manager.get(), m_source_manager->get_sources());
+        m_control_api_manager = std::make_unique<ControlApiManager>(m_manager_mutex, m_timeshift_manager.get(), m_source_manager->get_sources(), m_source_manager.get());
 
         current_stage = "creating MP3DataApiManager";
         LOG_CPP_INFO("[AudioManager::initialize] Stage: %s", current_stage.c_str());
@@ -574,6 +599,7 @@ std::vector<std::string> AudioManager::get_rtp_receiver_seen_tags() {
     return m_receiver_manager ? m_receiver_manager->get_rtp_receiver_seen_tags() : std::vector<std::string>();
 }
 
+#ifndef SCREAMROUTER_TESTING
 pybind11::list AudioManager::get_rtp_sap_announcements() {
     pybind11::list result;
     if (!m_receiver_manager) {
@@ -599,11 +625,15 @@ pybind11::list AudioManager::get_rtp_sap_announcements() {
         if (!announcement.session_name.empty()) {
             entry["session_name"] = announcement.session_name;
         }
+        if (!announcement.stream_guid.empty()) {
+            entry["stream_guid"] = announcement.stream_guid;
+        }
         result.append(entry);
     }
 
     return result;
 }
+#endif // !SCREAMROUTER_TESTING
 
 std::vector<std::string> AudioManager::get_raw_scream_receiver_seen_tags(int listen_port) {
     return m_receiver_manager ? m_receiver_manager->get_raw_scream_receiver_seen_tags(listen_port) : std::vector<std::string>();
@@ -668,6 +698,35 @@ void AudioManager::handle_stream_tag_removed(const std::string& wildcard_tag) {
         listener(wildcard_tag);
     } else {
         LOG_CPP_DEBUG("[AudioManager] No stream tag listener registered for removal events.");
+    }
+}
+
+void AudioManager::handle_wildcard_match(const WildcardMatchEvent& event) {
+    if (!m_source_manager || !m_connection_manager) {
+        return;
+    }
+    if (event.processor_instance_id.empty() || event.concrete_tag.empty()) {
+        return;
+    }
+    if (event.is_primary_binding) {
+        return;
+    }
+
+    if (m_source_manager->has_child_for_tag(event.processor_instance_id, event.concrete_tag)) {
+        return;
+    }
+
+    const std::string child_instance_id =
+        m_source_manager->spawn_child_source(event.processor_instance_id, event.concrete_tag, m_running);
+    if (child_instance_id.empty()) {
+        return;
+    }
+
+    auto sink_ids = m_connection_manager->list_sinks_for_source(event.processor_instance_id);
+    for (const auto& sink_id : sink_ids) {
+        if (!sink_id.empty()) {
+            m_connection_manager->connect_source_sink(child_instance_id, sink_id, m_running);
+        }
     }
 }
 
@@ -931,6 +990,11 @@ void AudioManager::set_audio_settings(const AudioEngineSettings& new_settings) {
     std::scoped_lock lock(m_manager_mutex);
     if (m_settings) {
         *m_settings = new_settings;
+    }
+    // Propagate RTP receiver tuning to receiver manager
+    if (m_receiver_manager) {
+        m_receiver_manager->set_format_probe_duration_ms(new_settings.rtp_receiver_tuning.format_probe_duration_ms);
+        m_receiver_manager->set_format_probe_min_bytes(new_settings.rtp_receiver_tuning.format_probe_min_bytes);
     }
 }
 

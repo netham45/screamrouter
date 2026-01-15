@@ -16,9 +16,11 @@
 #include <optional> // For std::optional
 #include "audio_constants.h"
 #include <map>
+#ifndef SCREAMROUTER_TESTING
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/operators.h> // For operator overloads
+#endif
 #include "utils/thread_safe_queue.h"
 
 namespace screamrouter {
@@ -89,8 +91,12 @@ struct TaggedAudioPacket {
     std::chrono::steady_clock::time_point received_time;
     /** @brief Optional RTP timestamp for dejittering. */
     std::optional<uint32_t> rtp_timestamp;
+    /** @brief Optional RTP sequence number propagated from network ingress. */
+    std::optional<uint16_t> rtp_sequence_number;
     /** @brief List of SSRC and CSRCs from the RTP header. */
     std::vector<uint32_t> ssrcs;
+    /** @brief True if the packet arrived from a loopback (127.0.0.1) address. */
+    bool ingress_from_loopback = false;
     // --- Audio Format Info ---
     /** @brief Number of audio channels in the payload. */
     int channels = 0;
@@ -642,6 +648,7 @@ using ListenerRemovalRequest = std::pair<std::string, std::string>;
 /** @brief A thread-safe queue for handling requests to remove listeners. */
 using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
 
+#ifndef SCREAMROUTER_TESTING
     /**
      * @brief Binds the C++ audio types to the given Python module.
      * @param m The pybind11 module to which the types will be bound.
@@ -824,6 +831,7 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("source_stats", &AudioEngineStats::source_stats)
             .def_readwrite("sink_stats", &AudioEngineStats::sink_stats);
     }
+#endif // !SCREAMROUTER_TESTING
     
     } // namespace audio
     } // namespace screamrouter

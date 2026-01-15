@@ -18,6 +18,11 @@
 #include <atomic>
 #include "cpp_logger.h"
 
+#if defined(__linux__)
+#include <pthread.h>
+#include <signal.h>
+#endif
+
 namespace screamrouter {
 namespace audio {
 namespace utils {
@@ -76,6 +81,9 @@ private:
         const char* file;
         int line;
         std::chrono::steady_clock::time_point start_time;
+#if defined(__linux__)
+        pthread_t holder_thread;
+#endif
     };
 
     std::mutex mutex_;
@@ -104,6 +112,15 @@ public:
     LockGuardProfiler(std::shared_mutex& m, LockType type, const char* file, int line);
 
     /**
+     * @brief Constructs a LockGuardProfiler for standard mutex types.
+     * @param m The `std::mutex` to lock (exclusive only).
+     * @param type The lock type (READ treated as WRITE for std::mutex).
+     * @param file Source file where the lock is acquired.
+     * @param line Line where the lock is acquired.
+     */
+    LockGuardProfiler(std::mutex& m, LockType type, const char* file, int line);
+
+    /**
      * @brief Destructor. Releases the lock and logs the duration if it exceeds a threshold.
      */
     ~LockGuardProfiler();
@@ -115,14 +132,29 @@ public:
     LockGuardProfiler& operator=(LockGuardProfiler&&) = delete;
 
 private:
-    std::shared_mutex& mutex_;
+    enum class MutexFlavor {
+        SHARED,
+        STD
+    };
+
+    LockGuardProfiler(void* mutex_ptr, LockType type, const char* file, int line, MutexFlavor flavor);
+
+    void check_self_deadlock();
+    void track_lock_acquisition();
+    void release_lock_tracking();
+
+    MutexFlavor mutex_flavor_;
+    void* mutex_ptr_;
+    std::shared_mutex* shared_mutex_;
+    std::mutex* std_mutex_;
     LockType lock_type_;
     const char* file_;
     int line_;
     std::chrono::steady_clock::time_point start_time_;
 
-    std::unique_lock<std::shared_mutex> unique_lock_;
-    std::shared_lock<std::shared_mutex> shared_lock_;
+    std::unique_lock<std::shared_mutex> shared_unique_lock_;
+    std::shared_lock<std::shared_mutex> shared_shared_lock_;
+    std::unique_lock<std::mutex> std_unique_lock_;
 };
 
 /**
