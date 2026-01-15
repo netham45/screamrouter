@@ -281,6 +281,7 @@ bool SourceManager::remove_source(const std::string& instance_id) {
 
     std::unique_ptr<SourceInputProcessor> source_to_remove;
     std::string source_tag_for_removal;
+    bool should_unregister = false;
 
     {
         std::scoped_lock lock(m_manager_mutex);
@@ -320,9 +321,13 @@ bool SourceManager::remove_source(const std::string& instance_id) {
         }
 
         if (m_timeshift_manager && !source_tag_for_removal.empty()) {
-            m_timeshift_manager->unregister_processor(instance_id, source_tag_for_removal);
-            LOG_CPP_INFO("Unregistered instance %s (tag: %s) from TimeshiftManager.", instance_id.c_str(), source_tag_for_removal.c_str());
+            should_unregister = true;
         }
+    }
+
+    if (should_unregister && m_timeshift_manager) {
+        m_timeshift_manager->unregister_processor(instance_id, source_tag_for_removal);
+        LOG_CPP_INFO("Unregistered instance %s (tag: %s) from TimeshiftManager.", instance_id.c_str(), source_tag_for_removal.c_str());
     }
 
     if (source_to_remove) {

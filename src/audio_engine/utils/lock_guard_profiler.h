@@ -18,6 +18,11 @@
 #include <atomic>
 #include "cpp_logger.h"
 
+#if defined(__linux__)
+#include <pthread.h>
+#include <signal.h>
+#endif
+
 namespace screamrouter {
 namespace audio {
 namespace utils {
@@ -76,6 +81,9 @@ private:
         const char* file;
         int line;
         std::chrono::steady_clock::time_point start_time;
+#if defined(__linux__)
+        pthread_t holder_thread;
+#endif
     };
 
     std::mutex mutex_;

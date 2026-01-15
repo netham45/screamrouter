@@ -16,6 +16,22 @@
             "request": "launch",
             "module": "screamrouter",
             "jinja": true
+        },
+        {
+            "name": "(gdb) Attach",
+            "type": "cppdbg",
+            "request": "attach",
+            "program": "/usr/bin/python3", // This lets you pick the program binary/path
+            "processId": "${command:pickProcess}", // This prompts you to select the running process
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb", // Update this path if gdb is in a different location
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
         }
     ]
 }

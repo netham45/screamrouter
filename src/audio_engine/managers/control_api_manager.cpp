@@ -24,54 +24,80 @@ ControlApiManager::~ControlApiManager() {
 }
 
 void ControlApiManager::update_source_parameters(const std::string& instance_id, SourceParameterUpdates params, bool running) {
-    std::scoped_lock lock(m_manager_mutex);
-    if (!running) return;
+    std::vector<std::pair<std::string, int>> pending_delay_updates;
+    std::vector<std::pair<std::string, float>> pending_timeshift_updates;
 
-    std::vector<std::string> child_ids;
-    if (m_source_manager) {
-        child_ids = m_source_manager->get_child_instances(instance_id);
+    {
+        std::scoped_lock lock(m_manager_mutex);
+        if (!running) return;
+
+        std::vector<std::string> child_ids;
+        if (m_source_manager) {
+            child_ids = m_source_manager->get_child_instances(instance_id);
+        }
+
+        auto apply_to_children = [&](auto&& fn) {
+            for (const auto& child_id : child_ids) {
+                fn(child_id);
+            }
+        };
+
+        if (params.volume.has_value()) {
+            update_source_volume_nolock(instance_id, params.volume.value());
+            apply_to_children([&](const std::string& child_id) {
+                update_source_volume_nolock(child_id, params.volume.value());
+            });
+        }
+        if (params.eq_values.has_value()) {
+            update_source_equalizer_nolock(instance_id, params.eq_values.value());
+            apply_to_children([&](const std::string& child_id) {
+                update_source_equalizer_nolock(child_id, params.eq_values.value());
+            });
+        }
+        if (params.eq_normalization.has_value()) {
+            update_source_eq_normalization_nolock(instance_id, params.eq_normalization.value());
+            apply_to_children([&](const std::string& child_id) {
+                update_source_eq_normalization_nolock(child_id, params.eq_normalization.value());
+            });
+        }
+        if (params.volume_normalization.has_value()) {
+            update_source_volume_normalization_nolock(instance_id, params.volume_normalization.value());
+            apply_to_children([&](const std::string& child_id) {
+                update_source_volume_normalization_nolock(child_id, params.volume_normalization.value());
+            });
+        }
+        if (params.delay_ms.has_value()) {
+            const int delay = params.delay_ms.value();
+            update_source_delay_nolock(instance_id, delay);
+            pending_delay_updates.emplace_back(instance_id, delay);
+            apply_to_children([&](const std::string& child_id) {
+                update_source_delay_nolock(child_id, delay);
+                pending_delay_updates.emplace_back(child_id, delay);
+            });
+        }
+        if (params.timeshift_sec.has_value()) {
+            const float timeshift = params.timeshift_sec.value();
+            update_source_timeshift_nolock(instance_id, timeshift);
+            pending_timeshift_updates.emplace_back(instance_id, timeshift);
+            apply_to_children([&](const std::string& child_id) {
+                update_source_timeshift_nolock(child_id, timeshift);
+                pending_timeshift_updates.emplace_back(child_id, timeshift);
+            });
+        }
+        if (params.speaker_layouts_map.has_value()) {
+            update_source_speaker_layouts_map_nolock(instance_id, params.speaker_layouts_map.value());
+            apply_to_children([&](const std::string& child_id) {
+                update_source_speaker_layouts_map_nolock(child_id, params.speaker_layouts_map.value());
+            });
+        }
     }
 
-    if (params.volume.has_value()) {
-        update_source_volume_nolock(instance_id, params.volume.value());
-        for (const auto& child_id : child_ids) {
-            update_source_volume_nolock(child_id, params.volume.value());
+    if (m_timeshift_manager) {
+        for (const auto& [id, delay] : pending_delay_updates) {
+            m_timeshift_manager->update_processor_delay(id, delay);
         }
-    }
-    if (params.eq_values.has_value()) {
-        update_source_equalizer_nolock(instance_id, params.eq_values.value());
-        for (const auto& child_id : child_ids) {
-            update_source_equalizer_nolock(child_id, params.eq_values.value());
-        }
-    }
-    if (params.eq_normalization.has_value()) {
-        update_source_eq_normalization_nolock(instance_id, params.eq_normalization.value());
-        for (const auto& child_id : child_ids) {
-            update_source_eq_normalization_nolock(child_id, params.eq_normalization.value());
-        }
-    }
-    if (params.volume_normalization.has_value()) {
-        update_source_volume_normalization_nolock(instance_id, params.volume_normalization.value());
-        for (const auto& child_id : child_ids) {
-            update_source_volume_normalization_nolock(child_id, params.volume_normalization.value());
-        }
-    }
-    if (params.delay_ms.has_value()) {
-        update_source_delay_nolock(instance_id, params.delay_ms.value());
-        for (const auto& child_id : child_ids) {
-            update_source_delay_nolock(child_id, params.delay_ms.value());
-        }
-    }
-    if (params.timeshift_sec.has_value()) {
-        update_source_timeshift_nolock(instance_id, params.timeshift_sec.value());
-        for (const auto& child_id : child_ids) {
-            update_source_timeshift_nolock(child_id, params.timeshift_sec.value());
-        }
-    }
-    if (params.speaker_layouts_map.has_value()) {
-        update_source_speaker_layouts_map_nolock(instance_id, params.speaker_layouts_map.value());
-        for (const auto& child_id : child_ids) {
-            update_source_speaker_layouts_map_nolock(child_id, params.speaker_layouts_map.value());
+        for (const auto& [id, timeshift] : pending_timeshift_updates) {
+            m_timeshift_manager->update_processor_timeshift(id, timeshift);
         }
     }
 }
@@ -114,19 +140,11 @@ void ControlApiManager::update_source_delay_nolock(const std::string& instance_i
     if (auto* sip = find_source_nolock(instance_id)) {
         sip->set_delay(delay_ms);
     }
-
-    if (m_timeshift_manager) {
-        m_timeshift_manager->update_processor_delay(instance_id, delay_ms);
-    }
 }
 
 void ControlApiManager::update_source_timeshift_nolock(const std::string& instance_id, float timeshift_sec) {
     if (auto* sip = find_source_nolock(instance_id)) {
         sip->set_timeshift(timeshift_sec);
-    }
-
-    if (m_timeshift_manager) {
-        m_timeshift_manager->update_processor_timeshift(instance_id, timeshift_sec);
     }
 }
 

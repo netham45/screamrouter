@@ -430,6 +430,7 @@ private:
     double smoothed_processing_per_packet_us_{0.0};
     bool processing_budget_initialized_{false};
     std::chrono::steady_clock::time_point last_iteration_finish_time_{};
+    std::chrono::steady_clock::time_point last_lock_budget_log_time_{};
 
     // --- Timing helpers ---
     std::shared_ptr<std::mutex> acquire_timing_lock(const std::string& source_tag);

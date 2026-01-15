@@ -18,7 +18,7 @@ namespace { // Anonymous namespace for internal linkage
     std::deque<screamrouter::audio::logging::LogEntry> internal_log_queue;
     std::mutex internal_log_queue_mutex;
     std::condition_variable internal_log_queue_cv;
-    const size_t MAX_LOG_QUEUE_SIZE = 2048; // Max number of log entries in queue
+    const size_t MAX_LOG_QUEUE_SIZE = 8192; // Max number of log entries in queue
     bool shutdown_requested = false;
     bool overflow_message_logged_since_clear = false; // To prevent spamming overflow messages
     std::atomic<bool> stderr_mirror{false};

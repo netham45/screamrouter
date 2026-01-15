@@ -269,7 +269,17 @@ bool RtpSender::setup() {
     LOG_CPP_INFO("[RtpSender:%s] RTCP will be configured regardless of protocol (time_sync_enabled=%s)",
                  config_.sink_id.c_str(),
                  config_.time_sync_enabled ? "true" : "false");
-    
+
+    const bool threads_active = sap_thread_.joinable() || rtcp_thread_.joinable();
+    const bool sockets_active = (sap_socket_fd_ != PLATFORM_INVALID_SOCKET) ||
+                                (rtcp_socket_fd_ != PLATFORM_INVALID_SOCKET);
+    const bool rtp_ready = rtp_core_ && rtp_core_->is_ready();
+    if (threads_active || sockets_active || rtp_ready) {
+        LOG_CPP_WARNING("[RtpSender:%s] setup() called while previous session still active; closing existing resources first.",
+                        config_.sink_id.c_str());
+        close();
+    }
+
     LOG_CPP_INFO("[RtpSender:%s] Setting up networking (protocol=%s, time_sync=%s, delay=%dms)...",
                  config_.sink_id.c_str(),
                  config_.protocol.c_str(),
@@ -623,6 +633,7 @@ void RtpSender::advance_rtp_timestamp(uint32_t samples_per_channel) {
 }
 
 void RtpSender::sap_announcement_loop() {
+    try {
     LOG_CPP_INFO("[RtpSender:%s] SAP announcement thread started.", config_.sink_id.c_str());
 
     while (sap_thread_running_) {
@@ -848,6 +859,11 @@ void RtpSender::sap_announcement_loop() {
     }
 
     LOG_CPP_INFO("[RtpSender:%s] SAP announcement thread finished.", config_.sink_id.c_str());
+    } catch (const std::exception& e) {
+        LOG_CPP_ERROR("[RtpSender:%s] Exception in SAP thread: %s", config_.sink_id.c_str(), e.what());
+    } catch (...) {
+        LOG_CPP_ERROR("[RtpSender:%s] Unknown exception in SAP thread", config_.sink_id.c_str());
+    }
 }
 uint64_t RtpSender::get_ntp_timestamp_with_delay() {
     // Get current time
@@ -896,6 +912,7 @@ uint64_t RtpSender::get_ntp_timestamp_with_delay() {
 }
 
 void RtpSender::rtcp_thread_loop() {
+    try {
     LOG_CPP_INFO("[RtpSender:%s] RTCP thread loop started (socket_fd=%d, target=%s:%d)",
                 config_.sink_id.c_str(),
                 rtcp_socket_fd_,
@@ -1020,6 +1037,11 @@ void RtpSender::rtcp_thread_loop() {
     
     LOG_CPP_INFO("[RtpSender:%s] RTCP thread loop exited (loop_count=%d)",
                 config_.sink_id.c_str(), loop_count);
+    } catch (const std::exception& e) {
+        LOG_CPP_ERROR("[RtpSender:%s] Exception in RTCP thread: %s", config_.sink_id.c_str(), e.what());
+    } catch (...) {
+        LOG_CPP_ERROR("[RtpSender:%s] Unknown exception in RTCP thread", config_.sink_id.c_str());
+    }
 }
 
 void RtpSender::send_rtcp_sr() {

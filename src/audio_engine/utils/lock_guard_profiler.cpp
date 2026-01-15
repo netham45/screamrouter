@@ -10,6 +10,48 @@
 #include <cstdlib>  // for std::abort()
 #include <algorithm>
 
+#if defined(__linux__)
+#include <execinfo.h>
+#include <cstring>
+
+// Flag and storage for holder backtrace
+static volatile sig_atomic_t g_holder_backtrace_requested = 0;
+
+// Signal handler to dump backtrace of holder thread
+static void sigusr2_holder_backtrace_handler(int /*sig*/) {
+    if (!g_holder_backtrace_requested) return;
+    g_holder_backtrace_requested = 0;
+    
+    constexpr int MAX_FRAMES = 64;
+    void* callstack[MAX_FRAMES];
+    int frames = backtrace(callstack, MAX_FRAMES);
+    char** symbols = backtrace_symbols(callstack, frames);
+    
+    std::ostringstream oss;
+    oss << "[LockProfiler] HOLDER THREAD BACKTRACE (" << frames << " frames):\n";
+    for (int i = 0; i < frames; ++i) {
+        oss << "  [" << i << "] " << (symbols ? symbols[i] : "??") << "\n";
+    }
+    LOG_CPP_ERROR("%s", oss.str().c_str());
+    
+    if (symbols) {
+        free(symbols);
+    }
+}
+
+static std::once_flag g_sigusr2_handler_installed;
+static void install_sigusr2_handler() {
+    std::call_once(g_sigusr2_handler_installed, []() {
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = sigusr2_holder_backtrace_handler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+        sigaction(SIGUSR2, &sa, nullptr);
+    });
+}
+#endif
+
 namespace screamrouter {
 namespace audio {
 namespace utils {
@@ -47,7 +89,11 @@ void LockWatchdog::registerLock(LockGuardProfiler* profiler, LockType type,
                                 const char* file, int line, 
                                 std::chrono::steady_clock::time_point start_time) {
     std::lock_guard<std::mutex> lock(mutex_);
+#if defined(__linux__)
+    active_locks_[profiler] = {type, file, line, start_time, pthread_self()};
+#else
     active_locks_[profiler] = {type, file, line, start_time};
+#endif
 }
 
 void LockWatchdog::unregisterLock(LockGuardProfiler* profiler) {
@@ -56,6 +102,9 @@ void LockWatchdog::unregisterLock(LockGuardProfiler* profiler) {
 }
 
 void LockWatchdog::watchdogLoop() {
+#if defined(__linux__)
+    install_sigusr2_handler();
+#endif
     while (running_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         
@@ -71,16 +120,26 @@ void LockWatchdog::watchdogLoop() {
             
             if (duration > threshold) {
                 std::stringstream ss;
-                ss << "DEADLOCK DETECTED: " 
+                ss << "LOCK HELD TOO LONG: " 
                    << (info.type == LockType::WRITE ? "Write" : "Read")
                    << " lock held for " << duration.count() << "ms"
                    << " at " << info.file << ":" << info.line
                    << " (threshold: " << threshold.count() << "ms)";
                 
+                LOG_CPP_ERROR("%s", ss.str().c_str());
+                
+#if defined(__linux__)
+                // Signal the holder thread to dump its backtrace
+                LOG_CPP_ERROR("[LockProfiler] Signaling holder thread to dump backtrace...");
+                g_holder_backtrace_requested = 1;
+                pthread_kill(info.holder_thread, SIGUSR2);
+                // Give the signal handler time to run
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+#endif
+                
                 // Dump all currently held locks for debugging
                 dumpAllHeldLocks();
                 
-                LOG_CPP_ERROR("%s", ss.str().c_str());
                 std::abort(); // Fatal error - terminate the program
             }
         }
@@ -123,7 +182,23 @@ LockGuardProfiler::LockGuardProfiler(std::mutex& m, LockType type,
                                      const char* file, int line)
     : LockGuardProfiler(static_cast<void*>(&m), type, file, line, MutexFlavor::STD) {
     std_mutex_ = &m;
+    
+    // Measure wait time (time spent blocked waiting to acquire)
+    auto wait_start = std::chrono::steady_clock::now();
     std_unique_lock_ = std::unique_lock<std::mutex>(*std_mutex_);
+    auto wait_end = std::chrono::steady_clock::now();
+    
+    auto wait_duration = std::chrono::duration_cast<std::chrono::milliseconds>(wait_end - wait_start);
+    if (wait_duration.count() > 10) {  // Log if wait > 10ms
+        LOG_CPP_WARNING("[LockProfiler] CONTENTION: Waited %ldms to acquire lock at %s:%d",
+                        static_cast<long>(wait_duration.count()), file, line);
+        // Dump all held locks to show who was holding what
+        LOG_CPP_WARNING("[LockProfiler] Dumping all held locks to identify holder:");
+        dumpAllHeldLocks();
+    }
+    
+    // Reset start_time for hold duration measurement
+    start_time_ = std::chrono::steady_clock::now();
 }
 
 LockGuardProfiler::LockGuardProfiler(void* mutex_ptr, LockType type, const char* file,

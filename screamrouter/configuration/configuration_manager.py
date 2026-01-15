@@ -198,6 +198,12 @@ class ConfigurationManager(threading.Thread):
         self._hostname_cache_lock: threading.Lock = threading.Lock()
         """Synchronizes access to the hostname cache"""
 
+        # Lock holder tracking for diagnostics
+        self._lock_holder_thread_id: Optional[int] = None
+        """Thread ident of the current reload_condition holder"""
+        self._lock_holder_stack: Optional[str] = None
+        """Stack trace captured when the lock was acquired"""
+
         self.system_capture_devices: List[SystemAudioDeviceInfo] = []
         """Cached metadata for system capture endpoints."""
         self.system_playback_devices: List[SystemAudioDeviceInfo] = []
@@ -773,8 +779,10 @@ class ConfigurationManager(threading.Thread):
 
     def __notify_volume_eq_condition(self) -> None:
         """Signal listeners that volume/delay/timeshift have changed."""
-        if not self.reload_condition.acquire(timeout=10):
-            _logger.warning("[Configuration Manager] Failed to acquire volume/eq condition semaphore")
+        if not self._acquire_reload_condition(timeout=10.0, caller="__notify_volume_eq_condition"):
+            holder_stack = self._get_lock_holder_stack_trace()
+            _logger.warning("[Configuration Manager] Failed to acquire volume/eq condition semaphore.\n"
+                           "Lock holder stack trace:\n%s", holder_stack)
             return
         try:
             _logger.info("[Configuration Manager] Volume/EQ notify stack trace\n%s", "".join(traceback.format_stack()))
@@ -782,7 +790,7 @@ class ConfigurationManager(threading.Thread):
         except RuntimeError:
             pass
         finally:
-            self.reload_condition.release()
+            self._release_reload_condition(caller="__notify_volume_eq_condition")
 
     def delete_route(self, route_name: RouteNameType) -> bool:
         """Deletes a route by name"""
@@ -2650,12 +2658,48 @@ class ConfigurationManager(threading.Thread):
             return False
         return False # Should not be reached, but default to false
 
+    def _get_lock_holder_stack_trace(self) -> str:
+        """Get stack trace from the thread currently holding the reload_condition lock."""
+        if self._lock_holder_thread_id is None:
+            return "Lock holder unknown (no tracking data)"
+        
+        frames = sys._current_frames()
+        holder_frame = frames.get(self._lock_holder_thread_id)
+        if holder_frame is None:
+            return (f"Lock holder thread {self._lock_holder_thread_id} no longer exists.\n"
+                    f"Acquisition stack:\n{self._lock_holder_stack or 'Not captured'}")
+        
+        current_stack = ''.join(traceback.format_stack(holder_frame))
+        return (f"Lock holder thread {self._lock_holder_thread_id} current stack:\n{current_stack}\n"
+                f"Acquisition stack:\n{self._lock_holder_stack or 'Not captured'}")
+
+    def _acquire_reload_condition(self, timeout: float, caller: str = "") -> bool:
+        """Acquire the reload condition and track the holder for diagnostics."""
+        acquired = self.reload_condition.acquire(timeout=timeout)
+        if acquired:
+            self._lock_holder_thread_id = threading.current_thread().ident
+            self._lock_holder_stack = ''.join(traceback.format_stack())
+            _logger.debug("[Configuration Manager] %s acquired reload_condition", caller)
+        return acquired
+
+    def _release_reload_condition(self, caller: str = "") -> None:
+        """Release the reload condition and clear tracking."""
+        self._lock_holder_thread_id = None
+        self._lock_holder_stack = None
+        self.reload_condition.release()
+        _logger.debug("[Configuration Manager] %s released reload_condition", caller)
+
     def __reload_configuration(self) -> None:
         """Notifies the configuration manager to reload the configuration"""
         self._safe_async_run(self._broadcast_full_configuration())
         _logger.debug("[Configuration Manager] Requesting config reload")
-        if not self.reload_condition.acquire(timeout=10):
-            raise TimeoutError("Failed to get configuration reload condition")
+        if not self._acquire_reload_condition(timeout=10.0, caller="__reload_configuration"):
+            holder_stack = self._get_lock_holder_stack_trace()
+            _logger.error(
+                "[Configuration Manager] Timeout acquiring reload_condition.\n"
+                "Lock holder stack trace:\n%s", holder_stack
+            )
+            raise TimeoutError(f"Failed to get configuration reload condition.\nHolder stack:\n{holder_stack}")
         try:
             _logger.debug("[Configuration Manager] Requesting Reload - Got lock")
             _logger.info("[Configuration Manager] Reload notify stack trace\n%s", "".join(traceback.format_stack()))
@@ -2663,7 +2707,7 @@ class ConfigurationManager(threading.Thread):
         except RuntimeError:
             pass
         _logger.debug("[Configuration Manager] Requesting Reload - Released lock")
-        self.reload_condition.release()
+        self._release_reload_condition(caller="__reload_configuration")
         self.reload_config = True
         _logger.debug("[Configuration Manager] Marking config for reload")
     
@@ -2684,8 +2728,13 @@ class ConfigurationManager(threading.Thread):
             self.system_playback_devices,
         ))
         _logger.debug("[Configuration Manager] Requesting config reload (without save)")
-        if not self.reload_condition.acquire(timeout=10):
-            raise TimeoutError("Failed to get configuration reload condition")
+        if not self._acquire_reload_condition(timeout=10.0, caller="__reload_configuration_without_save"):
+            holder_stack = self._get_lock_holder_stack_trace()
+            _logger.error(
+                "[Configuration Manager] Timeout acquiring reload_condition.\n"
+                "Lock holder stack trace:\n%s", holder_stack
+            )
+            raise TimeoutError(f"Failed to get configuration reload condition.\nHolder stack:\n{holder_stack}")
         try:
             _logger.debug("[Configuration Manager] Requesting Reload (without save) - Got lock")
             _logger.info("[Configuration Manager] Reload (without save) notify stack trace\n%s", "".join(traceback.format_stack()))
@@ -2693,7 +2742,7 @@ class ConfigurationManager(threading.Thread):
         except RuntimeError:
             pass
         _logger.debug("[Configuration Manager] Requesting Reload (without save) - Released lock")
-        self.reload_condition.release()
+        self._release_reload_condition(caller="__reload_configuration_without_save")
         self.reload_config = True
         _logger.debug("[Configuration Manager] Marking config for reload (without save)")
 
@@ -2761,21 +2810,38 @@ class ConfigurationManager(threading.Thread):
             _logger.debug("[Configuration Manager] Skipping save due to temporary entities")
 
         try:
-            self.reload_condition.release()
-            _logger.debug("Process - Releasedconfiguration reload condition")
+            self._release_reload_condition(caller="__process_and_apply_configuration")
+            _logger.debug("Process - Released configuration reload condition")
         except:
             pass
 
     def __process_and_apply_configuration_with_timeout(self):
         """Apply the configuration with a timeout for logging and ensuring it doesn't hang"""
+        worker_thread_id = None
+        
+        def tracked_process():
+            nonlocal worker_thread_id
+            worker_thread_id = threading.current_thread().ident
+            return self.__process_and_apply_configuration()
+        
         with concurrent.futures.ThreadPoolExecutor() as executor:
             _logger.debug("Running with timeout")
-            future = executor.submit(self.__process_and_apply_configuration)
+            future = executor.submit(tracked_process)
             try:
                 future.result(timeout=constants.CONFIGURATION_RELOAD_TIMEOUT)
             except concurrent.futures.TimeoutError:
                 _logger.error(f"Configuration reload timed out after {constants.CONFIGURATION_RELOAD_TIMEOUT} seconds. Aborting reload.")
-                _logger.error("Stack trace:\n%s", ''.join(traceback.format_stack()))
+                # Dump the worker thread's stack trace
+                if worker_thread_id:
+                    frames = sys._current_frames()
+                    worker_frame = frames.get(worker_thread_id)
+                    if worker_frame:
+                        worker_stack = ''.join(traceback.format_stack(worker_frame))
+                        _logger.error("Worker thread %d stack trace:\n%s", worker_thread_id, worker_stack)
+                    else:
+                        _logger.error("Worker thread %d no longer exists", worker_thread_id)
+                else:
+                    _logger.error("Worker thread ID not captured")
                 return False
             except Exception as e:
                 _logger.error("Error during configuration reload: %s", str(e))
@@ -4101,8 +4167,13 @@ class ConfigurationManager(threading.Thread):
         self.__process_and_apply_configuration()
         while self.running:
             try:
-                if not self.reload_condition.acquire(timeout=1):
-                    raise TimeoutError("Failed to get configuration reload condition")
+                if not self._acquire_reload_condition(timeout=10.0, caller="run_loop"):
+                    holder_stack = self._get_lock_holder_stack_trace()
+                    _logger.error(
+                        "[Configuration Manager] run() timeout acquiring reload_condition.\n"
+                        "Lock holder stack trace:\n%s", holder_stack
+                    )
+                    raise TimeoutError(f"Failed to get configuration reload condition.\nHolder stack:\n{holder_stack}")
 
                 try:
                     notified = self.reload_condition.wait(timeout=.3)
@@ -4122,7 +4193,7 @@ class ConfigurationManager(threading.Thread):
                                 continue  # Skip the rest of the loop iteration
                 finally:
                     try:
-                        self.reload_condition.release()
+                        self._release_reload_condition(caller="run_loop")
                     except RuntimeError:
                         pass
 

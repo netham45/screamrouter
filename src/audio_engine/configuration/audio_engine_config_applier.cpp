@@ -25,6 +25,16 @@
 #endif
 #include <chrono>
 #include <functional>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#if defined(__linux__)
+#include <execinfo.h>
+#include <cxxabi.h>
+#include <signal.h>
+#include <unistd.h>
+#endif
 
 using namespace screamrouter::audio;
 
@@ -32,6 +42,24 @@ namespace screamrouter {
 namespace config {
 
 namespace {
+class PhaseLogger {
+public:
+    explicit PhaseLogger(std::string label)
+        : label_(std::move(label)),
+          start_(std::chrono::steady_clock::now()) {
+        LOG_CPP_INFO("[ConfigApplier] >>> %s", label_.c_str());
+    }
+    ~PhaseLogger() {
+        auto end = std::chrono::steady_clock::now();
+        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_).count();
+        LOG_CPP_INFO("[ConfigApplier] <<< %s (%lld ms)", label_.c_str(), static_cast<long long>(elapsed_ms));
+    }
+
+private:
+    std::string label_;
+    std::chrono::steady_clock::time_point start_;
+};
+
 std::string sanitize_screamrouter_label(const std::string& label) {
     std::string out;
     out.reserve(label.size());
@@ -57,6 +85,103 @@ std::string sanitize_clone_suffix(const std::string& tag) {
     }
     return out;
 }
+
+#if defined(__linux__)
+// Global for signal handler - NOT thread_local so watchdog thread can set it
+static const char* g_watchdog_phase_name = nullptr;
+static volatile sig_atomic_t g_dump_requested = 0;
+
+// Signal handler that dumps backtrace - runs in context of blocked thread
+static void sigusr1_backtrace_handler(int /*sig*/) {
+    if (!g_dump_requested) return;
+    g_dump_requested = 0;
+    
+    constexpr int MAX_FRAMES = 64;
+    void* callstack[MAX_FRAMES];
+    int frames = backtrace(callstack, MAX_FRAMES);
+    char** symbols = backtrace_symbols(callstack, frames);
+    
+    // Use write() since it's async-signal-safe, but we need LOG_CPP_ERROR
+    // Since we're in a hang situation, we'll risk calling LOG_CPP_ERROR
+    std::ostringstream oss;
+    oss << "[ConfigApplier] BLOCKED THREAD backtrace (" << frames << " frames):\n";
+    for (int i = 0; i < frames; ++i) {
+        oss << "  [" << i << "] " << (symbols ? symbols[i] : "??") << "\n";
+    }
+    LOG_CPP_ERROR("%s", oss.str().c_str());
+    
+    if (symbols) {
+        free(symbols);
+    }
+}
+
+// Install signal handler once
+static std::once_flag g_sigusr1_handler_installed;
+static void install_sigusr1_handler() {
+    std::call_once(g_sigusr1_handler_installed, []() {
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = sigusr1_backtrace_handler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;  // No SA_RESTART - we want to interrupt blocking calls
+        sigaction(SIGUSR1, &sa, nullptr);
+    });
+}
+#endif
+
+// Watchdog that spawns a thread to signal the blocked thread on timeout  
+class ApplyStateWatchdog {
+public:
+    ApplyStateWatchdog(const char* phase_name, int timeout_ms = 500)
+        : phase_name_(phase_name), timeout_ms_(timeout_ms), done_(false) {
+#if defined(__linux__)
+        install_sigusr1_handler();
+        blocked_thread_ = pthread_self();
+        g_watchdog_phase_name = phase_name;
+        g_dump_requested = 0;
+#endif
+        watchdog_thread_ = std::thread([this]() {
+            std::unique_lock<std::mutex> lock(mutex_);
+            bool timed_out = !cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms_), [this] { return done_.load(); });
+            if (timed_out) {
+                LOG_CPP_ERROR("[ConfigApplier] TIMEOUT: Phase '%s' exceeded %d ms - still running!",
+                              phase_name_, timeout_ms_);
+#if defined(__linux__)
+                // Signal the blocked thread to dump its own backtrace
+                g_dump_requested = 1;
+                pthread_kill(blocked_thread_, SIGUSR1);
+                // Small delay to let signal handler run
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+#endif
+            }
+        });
+    }
+    
+    ~ApplyStateWatchdog() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            done_.store(true);
+        }
+        cv_.notify_all();
+        if (watchdog_thread_.joinable()) {
+            watchdog_thread_.join();
+        }
+#if defined(__linux__)
+        g_watchdog_phase_name = nullptr;
+#endif
+    }
+    
+private:
+    const char* phase_name_;
+    int timeout_ms_;
+    std::atomic<bool> done_;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::thread watchdog_thread_;
+#if defined(__linux__)
+    pthread_t blocked_thread_;
+#endif
+};
 }
 
 
@@ -103,8 +228,13 @@ AudioEngineConfigApplier::~AudioEngineConfigApplier() {
  */
 bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
     std::lock_guard<std::recursive_mutex> lock(apply_mutex_);
+    PhaseLogger apply_scope("apply_state");
     cached_desired_state_ = desired_state;
-    DesiredEngineState effective_state = build_effective_state(desired_state);
+    DesiredEngineState effective_state;
+    {
+        PhaseLogger phase("apply_state::build_effective_state");
+        effective_state = build_effective_state(desired_state);
+    }
     cached_desired_state_valid_ = true;
     using clock = std::chrono::steady_clock;
     const auto t_start = clock::now();
@@ -121,62 +251,78 @@ bool AudioEngineConfigApplier::apply_state(DesiredEngineState desired_state) {
     std::vector<AppliedSourcePathParams> paths_to_update;
 
     // 1) Reconcile current vs desired
-    const auto t_rec_start = clock::now();
-    reconcile_sinks(effective_state.sinks, sink_ids_to_remove, sinks_to_add, sinks_to_update);
-    reconcile_source_paths(effective_state.source_paths, path_ids_to_remove, paths_to_add, paths_to_update);
-    const auto t_rec_end = clock::now();
-    LOG_CPP_INFO("[ConfigApplier] Reconcile: %lld ms | sinks(-%zu +%zu ~%zu) paths(-%zu +%zu ~%zu)",
-                 (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_rec_end - t_rec_start).count(),
-                 sink_ids_to_remove.size(), sinks_to_add.size(), sinks_to_update.size(),
-                 path_ids_to_remove.size(), paths_to_add.size(), paths_to_update.size());
+    {
+        PhaseLogger phase("apply_state::reconcile");
+        ApplyStateWatchdog watchdog("reconcile", 500);
+        const auto t_rec_start = clock::now();
+        reconcile_sinks(effective_state.sinks, sink_ids_to_remove, sinks_to_add, sinks_to_update);
+        reconcile_source_paths(effective_state.source_paths, path_ids_to_remove, paths_to_add, paths_to_update);
+        const auto t_rec_end = clock::now();
+        LOG_CPP_INFO("[ConfigApplier] Reconcile: %lld ms | sinks(-%zu +%zu ~%zu) paths(-%zu +%zu ~%zu)",
+                     (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_rec_end - t_rec_start).count(),
+                     sink_ids_to_remove.size(), sinks_to_add.size(), sinks_to_update.size(),
+                     path_ids_to_remove.size(), paths_to_add.size(), paths_to_update.size());
+    }
 
     // 2) Removals first (paths then sinks)
-    const auto t_rem_start = clock::now();
-    LOG_CPP_INFO("[ConfigApplier] Removing: paths=%zu, sinks=%zu",
-                 path_ids_to_remove.size(), sink_ids_to_remove.size());
-    process_source_path_removals(path_ids_to_remove);
-    process_sink_removals(sink_ids_to_remove);
-    const auto t_rem_end = clock::now();
-    LOG_CPP_INFO("[ConfigApplier] Removals: %lld ms", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_rem_end - t_rem_start).count());
+    {
+        PhaseLogger phase("apply_state::removals");
+        ApplyStateWatchdog watchdog("removals", 500);
+        const auto t_rem_start = clock::now();
+        LOG_CPP_INFO("[ConfigApplier] Removing: paths=%zu, sinks=%zu",
+                     path_ids_to_remove.size(), sink_ids_to_remove.size());
+        process_source_path_removals(path_ids_to_remove);
+        process_sink_removals(sink_ids_to_remove);
+        const auto t_rem_end = clock::now();
+        LOG_CPP_INFO("[ConfigApplier] Removals: %lld ms", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_rem_end - t_rem_start).count());
+    }
 
     // 3) Additions (paths then sinks)
-    const auto t_add_start = clock::now();
-    LOG_CPP_INFO("[ConfigApplier] Adding: paths=%zu, sinks=%zu", paths_to_add.size(), sinks_to_add.size());
-    for (auto& path_param : paths_to_add) {
-        const auto t_one_start = clock::now();
-        const std::string filter_tag = get_filter_for_path_id(path_param.path_id, path_param.source_tag);
-        const auto add_result = process_source_path_addition(path_param, filter_tag);
-        if (add_result == SourcePathAddResult::Added) {
-            InternalSourcePathState state;
-            state.params = path_param;
-            state.filter_tag = filter_tag;
-            active_source_paths_[path_param.path_id] = std::move(state);
-            const auto t_one_end = clock::now();
-            LOG_CPP_INFO("[ConfigApplier] +Path id='%s' -> instance='%s' in %lld ms",
-                         path_param.path_id.c_str(), path_param.generated_instance_id.c_str(),
-                         (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_one_end - t_one_start).count());
-        } else if (add_result == SourcePathAddResult::PendingStream) {
-            const auto t_one_end = clock::now();
-            LOG_CPP_INFO("[ConfigApplier] +Path id='%s' waiting for concrete stream '%s' (%lld ms)",
-                         path_param.path_id.c_str(), filter_tag.c_str(),
-                         (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_one_end - t_one_start).count());
-        } else {
-            const auto t_one_end = clock::now();
-            LOG_CPP_ERROR("[ConfigApplier] +Path FAILED id='%s' after %lld ms",
-                          path_param.path_id.c_str(),
-                          (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_one_end - t_one_start).count());
+    {
+        PhaseLogger phase("apply_state::additions");
+        ApplyStateWatchdog watchdog("additions", 500);
+        const auto t_add_start = clock::now();
+        LOG_CPP_INFO("[ConfigApplier] Adding: paths=%zu, sinks=%zu", paths_to_add.size(), sinks_to_add.size());
+        for (auto& path_param : paths_to_add) {
+            const auto t_one_start = clock::now();
+            const std::string filter_tag = get_filter_for_path_id(path_param.path_id, path_param.source_tag);
+            const auto add_result = process_source_path_addition(path_param, filter_tag);
+            if (add_result == SourcePathAddResult::Added) {
+                InternalSourcePathState state;
+                state.params = path_param;
+                state.filter_tag = filter_tag;
+                active_source_paths_[path_param.path_id] = std::move(state);
+                const auto t_one_end = clock::now();
+                LOG_CPP_INFO("[ConfigApplier] +Path id='%s' -> instance='%s' in %lld ms",
+                             path_param.path_id.c_str(), path_param.generated_instance_id.c_str(),
+                             (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_one_end - t_one_start).count());
+            } else if (add_result == SourcePathAddResult::PendingStream) {
+                const auto t_one_end = clock::now();
+                LOG_CPP_INFO("[ConfigApplier] +Path id='%s' waiting for concrete stream '%s' (%lld ms)",
+                             path_param.path_id.c_str(), filter_tag.c_str(),
+                             (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_one_end - t_one_start).count());
+            } else {
+                const auto t_one_end = clock::now();
+                LOG_CPP_ERROR("[ConfigApplier] +Path FAILED id='%s' after %lld ms",
+                              path_param.path_id.c_str(),
+                              (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_one_end - t_one_start).count());
+            }
         }
+        process_sink_additions(sinks_to_add);
+        const auto t_add_end = clock::now();
+        LOG_CPP_INFO("[ConfigApplier] Additions: %lld ms", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_add_end - t_add_start).count());
     }
-    process_sink_additions(sinks_to_add);
-    const auto t_add_end = clock::now();
-    LOG_CPP_INFO("[ConfigApplier] Additions: %lld ms", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_add_end - t_add_start).count());
 
     // 4) Updates
-    const auto t_upd_start = clock::now();
-    process_source_path_updates(paths_to_update);
-    process_sink_updates(sinks_to_update);
-    const auto t_upd_end = clock::now();
-    LOG_CPP_INFO("[ConfigApplier] Updates: %lld ms", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_upd_end - t_upd_start).count());
+    {
+        PhaseLogger phase("apply_state::updates");
+        ApplyStateWatchdog watchdog("updates", 500);
+        const auto t_upd_start = clock::now();
+        process_source_path_updates(paths_to_update);
+        process_sink_updates(sinks_to_update);
+        const auto t_upd_end = clock::now();
+        LOG_CPP_INFO("[ConfigApplier] Updates: %lld ms", (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_upd_end - t_upd_start).count());
+    }
 
     const auto t_end = clock::now();
     LOG_CPP_INFO("[ConfigApplier] Finished apply_state in %lld ms",
@@ -292,6 +438,21 @@ void AudioEngineConfigApplier::reconcile_sinks(
     }
     LOG_CPP_DEBUG("Sink reconciliation complete. To remove: %zu, To add: %zu, To update: %zu",
                  sink_ids_to_remove.size(), sinks_to_add.size(), sinks_to_update.size());
+    for (const auto& id : sink_ids_to_remove) {
+        LOG_CPP_INFO("[ConfigApplier]   sink_remove_pending id=%s", id.c_str());
+    }
+    for (const auto& sink : sinks_to_add) {
+        LOG_CPP_INFO("[ConfigApplier]   sink_add_pending id=%s proto=%s target=%s:%d",
+                     sink.sink_id.c_str(),
+                     sink.sink_engine_config.protocol.c_str(),
+                     sink.sink_engine_config.output_ip.c_str(),
+                     sink.sink_engine_config.output_port);
+    }
+    for (const auto& sink : sinks_to_update) {
+        LOG_CPP_INFO("[ConfigApplier]   sink_update_pending id=%s connections=%zu",
+                     sink.sink_id.c_str(),
+                     sink.connected_source_path_ids.size());
+    }
 }
 
 /**
@@ -528,6 +689,18 @@ void AudioEngineConfigApplier::reconcile_source_paths(
     }
      LOG_CPP_DEBUG("Source path reconciliation complete. To remove: %zu, To add: %zu, To update: %zu",
                   path_ids_to_remove.size(), paths_to_add.size(), paths_to_update.size());
+    for (const auto& id : path_ids_to_remove) {
+        LOG_CPP_INFO("[ConfigApplier]   path_remove_pending id=%s", id.c_str());
+    }
+    for (const auto& path : paths_to_add) {
+        LOG_CPP_INFO("[ConfigApplier]   path_add_pending id=%s sink=%s tag=%s",
+                     path.path_id.c_str(),
+                     path.target_sink_id.c_str(),
+                     path.source_tag.c_str());
+    }
+    for (const auto& path : paths_to_update) {
+        LOG_CPP_INFO("[ConfigApplier]   path_update_pending id=%s sink=%s", path.path_id.c_str(), path.target_sink_id.c_str());
+    }
 }
 
 /**
@@ -535,16 +708,16 @@ void AudioEngineConfigApplier::reconcile_source_paths(
  * @param path_ids_to_remove A vector of path IDs to be removed.
  */
 void AudioEngineConfigApplier::process_source_path_removals(const std::vector<std::string>& path_ids_to_remove) {
-    LOG_CPP_DEBUG("Processing %zu source path removals...", path_ids_to_remove.size());
+    LOG_CPP_INFO("[ConfigApplier] Processing %zu source path removals...", path_ids_to_remove.size());
     for (const auto& path_id : path_ids_to_remove) {
-        LOG_CPP_DEBUG("  - Removing path: %s", path_id.c_str());
+        LOG_CPP_INFO("[ConfigApplier]   - Removing path: %s", path_id.c_str());
         auto it = active_source_paths_.find(path_id);
         if (it != active_source_paths_.end()) {
             const std::string source_tag = it->second.params.source_tag;
             const std::string& instance_id = it->second.params.generated_instance_id;
             if (!instance_id.empty()) {
                 if (audio_manager_.remove_source(instance_id)) {
-                    LOG_CPP_DEBUG("    Source instance %s removed successfully from AudioManager.", instance_id.c_str());
+                    LOG_CPP_INFO("[ConfigApplier]     Source instance %s removed from AudioManager.", instance_id.c_str());
                 } else {
                     LOG_CPP_ERROR("    AudioManager failed to remove source instance: %s for path: %s", instance_id.c_str(), path_id.c_str());
                 }
@@ -553,11 +726,11 @@ void AudioEngineConfigApplier::process_source_path_removals(const std::vector<st
             }
             if (!source_tag.empty() && (source_tag.rfind("ac:", 0) == 0 || source_tag.rfind("sr_out:", 0) == 0 || source_tag.rfind("hw:", 0) == 0)) {
                 audio_manager_.remove_system_capture_reference(source_tag);
-                LOG_CPP_DEBUG("    Released system capture reference for %s", source_tag.c_str());
+                LOG_CPP_INFO("[ConfigApplier]     Released system capture reference for %s", source_tag.c_str());
             }
             // Remove from internal state regardless of AudioManager success to avoid repeated attempts.
             active_source_paths_.erase(it);
-            LOG_CPP_DEBUG("    Path %s removed from internal state.", path_id.c_str());
+            LOG_CPP_INFO("[ConfigApplier]     Path %s removed from internal state.", path_id.c_str());
         } else {
             LOG_CPP_ERROR("    Path %s marked for removal but not found in active_source_paths_.", path_id.c_str());
         }
