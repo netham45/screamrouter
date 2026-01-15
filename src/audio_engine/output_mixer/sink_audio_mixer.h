@@ -212,7 +212,15 @@ private:
     std::map<std::string, bool> input_active_state_;
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
     std::map<std::string, std::deque<ProcessedAudioChunk>> processed_ready_;
-    std::unordered_map<std::string, std::chrono::steady_clock::time_point> throttled_drop_timestamps_;
+    struct ReadyQueueDropState {
+        std::chrono::steady_clock::time_point last_update{};
+        double drop_credit = 0.0;
+    };
+    std::unordered_map<std::string, ReadyQueueDropState> ready_queue_drop_state_;
+    std::unordered_map<std::string, size_t> ready_queue_high_water_;
+    std::unordered_map<std::string, uint64_t> ready_total_received_;
+    std::unordered_map<std::string, uint64_t> ready_total_popped_;
+    std::unordered_map<std::string, uint64_t> ready_total_dropped_;
 
     std::unique_ptr<ClockManager> clock_manager_;
     std::atomic<bool> clock_manager_enabled_{false};

@@ -444,6 +444,8 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
 
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
+        const std::size_t max_ready_chunks =
+            m_settings ? std::max<std::size_t>(1, m_settings->mixer_tuning.max_queued_chunks) : 3;
         stats.total_input_streams = ready_rings_.size();
         size_t active_count = 0;
         for (const auto& [id, is_active] : input_active_state_) {
@@ -469,6 +471,32 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
             auto underrun_it = profiling_source_underruns_.find(instance_id);
             if (underrun_it != profiling_source_underruns_.end()) {
                 lane.underrun_events = underrun_it->second;
+            }
+
+            auto ready_queue_it = processed_ready_.find(instance_id);
+            if (ready_queue_it != processed_ready_.end()) {
+                const size_t ready_depth = ready_queue_it->second.size();
+                lane.ready_queue.size = ready_depth;
+                auto ready_hw_it = ready_queue_high_water_.find(instance_id);
+                if (ready_hw_it != ready_queue_high_water_.end()) {
+                    lane.ready_queue.high_watermark = ready_hw_it->second;
+                }
+                if (chunk_ms > 0.0) {
+                    lane.ready_queue.depth_ms = chunk_ms * static_cast<double>(ready_depth);
+                }
+                if (max_ready_chunks > 0) {
+                    double fill = (static_cast<double>(ready_depth) / static_cast<double>(max_ready_chunks)) * 100.0;
+                    lane.ready_queue.fill_percent = std::clamp(fill, 0.0, 100.0);
+                }
+            }
+            if (auto recv_it = ready_total_received_.find(instance_id); recv_it != ready_total_received_.end()) {
+                lane.ready_total_received = recv_it->second;
+            }
+            if (auto pop_it = ready_total_popped_.find(instance_id); pop_it != ready_total_popped_.end()) {
+                lane.ready_total_popped = pop_it->second;
+            }
+            if (auto drop_it = ready_total_dropped_.find(instance_id); drop_it != ready_total_dropped_.end()) {
+                lane.ready_total_dropped = drop_it->second;
             }
 
             stats.input_lanes.push_back(std::move(lane));
@@ -816,6 +844,7 @@ bool SinkAudioMixer::wait_for_source_data() {
     bool data_actually_popped_this_cycle = false;
     const std::size_t max_queued_chunks =
         m_settings ? std::max<std::size_t>(1, m_settings->mixer_tuning.max_queued_chunks) : 3;
+    constexpr double ready_queue_catchup_seconds = 5.0;
     bool had_any_active_sources = false;
     {
         std::lock_guard<std::mutex> lock(queues_mutex_);
@@ -862,24 +891,51 @@ bool SinkAudioMixer::wait_for_source_data() {
                                                 " queued_depth=" + std::to_string(queue.size() + 1) + "]";
                     utils::log_sentinel("sink_chunk_received", chunk, context);
                     queue.push_back(std::move(chunk));
+                    ready_total_received_[instance_id]++;
+                    auto& ready_hw = ready_queue_high_water_[instance_id];
+                    if (queue.size() > ready_hw) {
+                        ready_hw = queue.size();
+                    }
                     if (queue.size() > max_queued_chunks) {
                         const auto now = std::chrono::steady_clock::now();
-                        auto drop_it = throttled_drop_timestamps_.find(instance_id);
-                        bool allow_drop = false;
-                        if (drop_it == throttled_drop_timestamps_.end()) {
-                            allow_drop = true;
-                        } else if ((now - drop_it->second) >= std::chrono::seconds(1)) {
-                            allow_drop = true;
+                        auto& drop_state = ready_queue_drop_state_[instance_id];
+                        if (drop_state.last_update.time_since_epoch().count() == 0) {
+                            drop_state.last_update = now;
+                            drop_state.drop_credit = 0.0;
                         }
-                        if (allow_drop && !queue.empty()) {
+                        double elapsed_sec = std::chrono::duration<double>(now - drop_state.last_update).count();
+                        if (elapsed_sec < 0.0) {
+                            elapsed_sec = 0.0;
+                        }
+                        drop_state.last_update = now;
+                        const size_t overage = queue.size() - max_queued_chunks;
+                        if (ready_queue_catchup_seconds > 0.0) {
+                            const double drop_rate = static_cast<double>(overage) / ready_queue_catchup_seconds;
+                            drop_state.drop_credit += drop_rate * elapsed_sec;
+                        }
+                        const double max_credit = static_cast<double>(queue.size() - max_queued_chunks);
+                        if (drop_state.drop_credit > max_credit) {
+                            drop_state.drop_credit = max_credit;
+                        }
+                        while (queue.size() > max_queued_chunks && drop_state.drop_credit >= 1.0) {
                             if (queue.front().is_sentinel) {
                                 utils::log_sentinel("sink_chunk_dropped", queue.front(), " [sink=" + config_.sink_id + " instance=" + instance_id + " due_to_backlog]");
                             }
                             queue.pop_front();
-                            throttled_drop_timestamps_[instance_id] = now;
+                            ready_total_dropped_[instance_id]++;
+                            drop_state.drop_credit -= 1.0;
+                            if (queue.size() > max_queued_chunks) {
+                                const double remaining_overage = static_cast<double>(queue.size() - max_queued_chunks);
+                                if (drop_state.drop_credit > remaining_overage) {
+                                    drop_state.drop_credit = remaining_overage;
+                                }
+                            } else {
+                                drop_state.drop_credit = 0.0;
+                                break;
+                            }
                         }
                     } else {
-                        throttled_drop_timestamps_.erase(instance_id);
+                        ready_queue_drop_state_.erase(instance_id);
                     }
                 }
             }
@@ -897,6 +953,7 @@ bool SinkAudioMixer::wait_for_source_data() {
         if (!queue.empty()) {
             ProcessedAudioChunk chunk = std::move(queue.front());
             queue.pop_front();
+            ready_total_popped_[instance_id]++;
             const size_t sample_count = chunk.audio_data.size();
             if (sample_count != mixing_buffer_samples_) {
                 LOG_CPP_ERROR("[SinkMixer:%s] WaitForData: Received chunk from instance %s with unexpected sample count: %zu. Discarding.",
