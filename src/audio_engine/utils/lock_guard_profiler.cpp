@@ -10,9 +10,13 @@
 #include <cstdlib>  // for std::abort()
 #include <algorithm>
 
-#if defined(__linux__)
+#if defined(__linux__) && defined(__GLIBC__)
+#define SR_LOCK_PROFILER_HAS_BACKTRACE 1
 #include <execinfo.h>
 #include <cstring>
+#endif
+
+#if defined(SR_LOCK_PROFILER_HAS_BACKTRACE)
 
 // Flag and storage for holder backtrace
 static volatile sig_atomic_t g_holder_backtrace_requested = 0;
@@ -50,7 +54,7 @@ static void install_sigusr2_handler() {
         sigaction(SIGUSR2, &sa, nullptr);
     });
 }
-#endif
+#endif  // SR_LOCK_PROFILER_HAS_BACKTRACE
 
 namespace screamrouter {
 namespace audio {
@@ -102,7 +106,7 @@ void LockWatchdog::unregisterLock(LockGuardProfiler* profiler) {
 }
 
 void LockWatchdog::watchdogLoop() {
-#if defined(__linux__)
+#if defined(SR_LOCK_PROFILER_HAS_BACKTRACE)
     install_sigusr2_handler();
 #endif
     while (running_) {
@@ -128,7 +132,7 @@ void LockWatchdog::watchdogLoop() {
                 
                 LOG_CPP_ERROR("%s", ss.str().c_str());
                 
-#if defined(__linux__)
+#if defined(SR_LOCK_PROFILER_HAS_BACKTRACE)
                 // Signal the holder thread to dump its backtrace
                 LOG_CPP_ERROR("[LockProfiler] Signaling holder thread to dump backtrace...");
                 g_holder_backtrace_requested = 1;
