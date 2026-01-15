@@ -97,6 +97,17 @@ export interface Route {
   timeshift: number;
   favorite?: boolean;
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
+  remote_target?: RemoteRouteTarget;
+}
+
+export interface RemoteRouteTarget {
+  router_uuid?: string;
+  router_hostname?: string;
+  router_address?: string;
+  router_port?: number;
+  router_scheme?: 'http' | 'https';
+  sink_config_id?: string;
+  sink_name?: string;
 }
 
 export interface SystemAudioDeviceInfo {

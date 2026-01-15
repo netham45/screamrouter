@@ -4,7 +4,7 @@
  * volume, delay, and timeshift settings.
  * It allows the user to either add a new route or update an existing one.
  */
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Flex,
@@ -42,8 +42,7 @@ const flatEqualizer: Equalizer = {
   b13: 1, b14: 1, b15: 1, b16: 1, b17: 1, b18: 1,
   normalization_enabled: false,
 };
-
-const DEFAULT_REMOTE_RTP_PORT = 40000;
+const REMOTE_UNAVAILABLE_MESSAGE = 'Remote server/sink unavailable (not found).';
 
 const AddEditRoutePage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -70,22 +69,32 @@ const AddEditRoutePage: React.FC = () => {
   const [sources, setSources] = useState<Source[]>([]);
   const [sinks, setSinks] = useState<Sink[]>([]);
   const [remoteSinks, setRemoteSinks] = useState<Sink[]>([]);
-  const [selectedServerId, setSelectedServerId] = useState('local');
+  const [destinationMode, setDestinationMode] = useState<'local' | 'remote'>('local');
+  const [remoteInstanceId, setRemoteInstanceId] = useState('');
+  const [remoteTarget, setRemoteTarget] = useState<Route['remote_target'] | null>(null);
   const [remoteSinkSelection, setRemoteSinkSelection] = useState('');
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const { instances, loading: instancesLoading, error: instancesError, refresh: refreshInstances } = useRouterInstances();
-  const selectedInstance = useMemo<RouterInstance | null>(
-    () => instances.find(instance => instance.id === selectedServerId) || null,
-    [instances, selectedServerId]
+  const selectedRemoteInstance = useMemo<RouterInstance | null>(
+    () => instances.find(instance => instance.id === remoteInstanceId) || null,
+    [instances, remoteInstanceId]
   );
+  const remoteFetchKeyRef = useRef<string | null>(null);
 
   // Color values for light/dark mode
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
   const inputBg = useColorModeValue('white', 'gray.700');
+
+  const normalizeHostValue = useCallback((value?: string | null): string => {
+    if (!value) {
+      return '';
+    }
+    return value.trim().replace(/\.$/, '').toLowerCase();
+  }, []);
 
   const buildNeighborPayload = useCallback((instance: RouterInstance): NeighborSinksRequest => {
     const normalizedScheme = instance.scheme?.toLowerCase() === 'http' ? 'http' : 'https';
@@ -119,12 +128,82 @@ const AddEditRoutePage: React.FC = () => {
       setRemoteSinks(sinksList);
     } catch (err) {
       console.error('Failed to fetch remote sinks', err);
-      setRemoteError('Failed to load remote sinks.');
+      setRemoteError(REMOTE_UNAVAILABLE_MESSAGE);
       setRemoteSinks([]);
     } finally {
       setRemoteLoading(false);
     }
   }, [buildNeighborPayload]);
+
+  const buildPayloadFromTarget = useCallback((target: Route['remote_target'] | null): NeighborSinksRequest | null => {
+    if (!target) {
+      return null;
+    }
+    const host = target.router_hostname || target.router_address;
+    if (!host) {
+      return null;
+    }
+    const scheme = target.router_scheme === 'http' ? 'http' : 'https';
+    const port = target.router_port || (scheme === 'http' ? 80 : 443);
+    return {
+      hostname: host,
+      address: target.router_address || undefined,
+      port,
+      scheme,
+      api_path: '/',
+      verify_tls: false,
+    };
+  }, []);
+
+  const fetchRemoteResourcesFromTarget = useCallback(async (target: Route['remote_target']) => {
+    const payload = buildPayloadFromTarget(target);
+    if (!payload) {
+      setRemoteError(REMOTE_UNAVAILABLE_MESSAGE);
+      setRemoteSinks([]);
+      return;
+    }
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      const response = await ApiService.getNeighborSinks(payload);
+      const data = response.data;
+      const sinksList = Array.isArray(data) ? data : Object.values(data || {});
+      setRemoteSinks(sinksList);
+    } catch (err) {
+      console.error('Failed to fetch remote sinks', err);
+      setRemoteError(REMOTE_UNAVAILABLE_MESSAGE);
+      setRemoteSinks([]);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }, [buildPayloadFromTarget]);
+
+  const findInstanceForTarget = useCallback((target: Route['remote_target'] | null): RouterInstance | null => {
+    if (!target) {
+      return null;
+    }
+    const targetUuid = target.router_uuid?.trim();
+    const targetHost = normalizeHostValue(target.router_hostname);
+    const targetAddr = normalizeHostValue(target.router_address);
+    const targetPort = target.router_port || (target.router_scheme === 'http' ? 80 : 443);
+
+    return (
+      instances.find(instance => {
+        if (targetUuid && instance.uuid === targetUuid) {
+          return true;
+        }
+        const instanceHost = normalizeHostValue(instance.hostname);
+        const instanceAddr = normalizeHostValue(instance.address);
+        if (targetHost && instanceHost === targetHost && instance.port === targetPort) {
+          return true;
+        }
+        if (targetAddr && instanceAddr === targetAddr && instance.port === targetPort) {
+          return true;
+        }
+        return false;
+      }) || null
+    );
+  }, [instances, normalizeHostValue]);
 
   const ensureUniqueName = useCallback((base: string, existingNames: string[]) => {
     let candidate = base;
@@ -136,113 +215,53 @@ const AddEditRoutePage: React.FC = () => {
     return candidate;
   }, []);
 
-  const findExistingLocalSink = useCallback((remoteSink: Sink, instance: RouterInstance | null) => {
-    if (!instance) {
-      return null;
-    }
-    const candidates = [instance.hostname, instance.address, instance.uuid].filter(Boolean);
-    const match = sinks.find((localSink) => {
-      const sinkMatch = localSink.sap_target_sink === remoteSink.config_id || localSink.sap_target_sink === remoteSink.name;
-      if (!sinkMatch) {
-        return false;
-      }
-      if (!localSink.sap_target_host) {
-        return true;
-      }
-      return candidates.includes(localSink.sap_target_host);
-    });
-    return match ? match.name : null;
-  }, [sinks]);
+  const handleSinkChange = useCallback((value: string) => {
+    setSink(value);
+    setRemoteTarget(null);
+    setRemoteSinkSelection('');
+  }, []);
 
-  const ensureRemoteSinkMapping = useCallback(async (remoteSink: Sink): Promise<string | null> => {
-    if (!selectedInstance) {
-      setError('Select a server first.');
-      return null;
-    }
-    const targetHost = selectedInstance.uuid || selectedInstance.hostname || selectedInstance.address || '';
-    const matching = findExistingLocalSink(remoteSink, selectedInstance);
-    if (matching) {
-      setSelectedServerId('local');
-      setRemoteSinkSelection('');
-      setSink(matching);
-      setSuccess(`Using existing mapped sink "${matching}" for remote sink "${remoteSink.name}".`);
-      return matching;
-    }
-
-    const baseName = `${selectedInstance.hostname || selectedInstance.label || 'Remote'}-${remoteSink.name}`;
-    const sinkName = ensureUniqueName(baseName, sinks.map(s => s.name));
-    const destinationHost = selectedInstance.address || selectedInstance.hostname || remoteSink.ip || '';
-    const randomizedPort = Math.floor(Math.random() * 9000) + 41000; // 41000-49999
-
-    const sinkPayload: Sink = {
-      ...remoteSink,
-      name: sinkName,
-      ip: destinationHost,
-      port: randomizedPort || DEFAULT_REMOTE_RTP_PORT,
-      enabled: true,
-      is_group: false,
-      group_members: [],
-      volume: remoteSink.volume ?? 1,
-      equalizer: remoteSink.equalizer || flatEqualizer,
-      bit_depth: remoteSink.bit_depth || 16,
-      sample_rate: remoteSink.sample_rate || 48000,
-      channels: remoteSink.channels || 2,
-      channel_layout: remoteSink.channel_layout || 'stereo',
-      delay: remoteSink.delay ?? 0,
-      timeshift: remoteSink.timeshift ?? 0,
-      time_sync: remoteSink.time_sync ?? false,
-      time_sync_delay: remoteSink.time_sync_delay ?? 0,
-      speaker_layouts: remoteSink.speaker_layouts || {},
-      protocol: 'rtp',
-      volume_normalization: remoteSink.volume_normalization ?? false,
-      multi_device_mode: false,
-      rtp_receiver_mappings: [],
-      sap_target_sink: remoteSink.config_id || remoteSink.name,
-      sap_target_host: targetHost,
-    };
-
-    try {
-      setError(null);
-      await ApiService.addSink(sinkPayload);
-      await refreshLocalSinks();
-      setSelectedServerId('local');
-      setRemoteSinkSelection('');
-      setSuccess(`Created sink "${sinkName}" targeting ${remoteSink.name} on ${selectedInstance.label || selectedInstance.hostname}.`);
-      return sinkName;
-    } catch (err) {
-      console.error('Failed to create remote sink mapping', err);
-      setError('Failed to create a local sink for the remote target.');
-      return null;
-    }
-  }, [ensureUniqueName, refreshLocalSinks, selectedInstance, sinks]);
-
-  const handleSinkChange = useCallback(async (value: string) => {
-    if (selectedServerId === 'local') {
-      setSink(value);
-      setRemoteSinkSelection('');
+  const handleRemoteInstanceChange = useCallback((value: string) => {
+    setRemoteInstanceId(value);
+    setRemoteSinkSelection('');
+    setRemoteTarget(null);
+    setRemoteError(null);
+    setRemoteSinks([]);
+    if (!value) {
       return;
     }
+    const instance = instances.find(inst => inst.id === value);
+    if (instance) {
+      void fetchRemoteResources(instance);
+    }
+  }, [fetchRemoteResources, instances]);
+
+  const handleRemoteSinkSelection = useCallback((value: string) => {
     setRemoteSinkSelection(value);
+    if (!value) {
+      setRemoteTarget(null);
+      return;
+    }
+    const instance = selectedRemoteInstance;
     const remoteSink = remoteSinks.find(s => s.name === value);
-    if (!remoteSink || !selectedInstance) {
+    if (!instance || !remoteSink) {
       setError('Select a remote server and sink first.');
       return;
     }
-    const existing = findExistingLocalSink(remoteSink, selectedInstance);
-    if (existing) {
-      setSink(existing);
-      setSelectedServerId('local');
-      setRemoteSinkSelection('');
-      setSuccess(`Using existing mapped sink "${existing}" for remote sink "${remoteSink.name}".`);
-      return;
-    }
-    const mappedName = await ensureRemoteSinkMapping(remoteSink);
-    if (mappedName) {
-      setSink(mappedName);
-      setSelectedServerId('local');
-      setRemoteSinkSelection('');
-    }
-  }, [ensureRemoteSinkMapping, findExistingLocalSink, remoteSinks, selectedInstance, selectedServerId]);
+    const baseName = `${remoteSink.name} @ ${instance.label || instance.hostname || instance.address || 'Remote'}`;
+    const sinkName = ensureUniqueName(baseName, sinks.map(s => s.name));
+    setSink(sinkName);
+    setRemoteTarget({
+      router_uuid: instance.uuid,
+      router_hostname: instance.hostname,
+      router_address: instance.address,
+      router_port: instance.port,
+      router_scheme: instance.scheme === 'http' ? 'http' : 'https',
+      sink_config_id: remoteSink.config_id,
+      sink_name: remoteSink.name,
+    });
+    setSuccess(`Route will target remote sink "${remoteSink.name}" on ${instance.label || instance.hostname}.`);
+  }, [ensureUniqueName, remoteSinks, selectedRemoteInstance, sinks]);
 
   useEffect(() => {
     if (!name.trim()) {
@@ -264,6 +283,93 @@ const AddEditRoutePage: React.FC = () => {
     }
     completeStep('route-sink-select');
   }, [sink, completeStep]);
+
+  useEffect(() => {
+    if (destinationMode === 'local') {
+      setRemoteInstanceId('');
+      setRemoteTarget(null);
+      setRemoteSinkSelection('');
+      setRemoteSinks([]);
+      setRemoteError(null);
+      setRemoteLoading(false);
+    }
+  }, [destinationMode]);
+
+  useEffect(() => {
+    if (remoteTarget?.sink_name) {
+      setRemoteSinkSelection(remoteTarget.sink_name);
+    }
+  }, [remoteTarget]);
+
+  useEffect(() => {
+    if (!remoteTarget) {
+      return;
+    }
+    if (!remoteSinks.length) {
+      return;
+    }
+    const matchByConfig = remoteTarget.sink_config_id
+      ? remoteSinks.find(s => s.config_id === remoteTarget.sink_config_id)
+      : undefined;
+    const matchByName = remoteSinks.find(s => s.name === remoteTarget.sink_name);
+    const resolved = matchByConfig || matchByName;
+    if (resolved) {
+      setRemoteSinkSelection(resolved.name);
+      setRemoteError(null);
+    } else if (!remoteLoading) {
+      setRemoteError(REMOTE_UNAVAILABLE_MESSAGE);
+    }
+  }, [remoteTarget, remoteSinks, remoteLoading]);
+
+  useEffect(() => {
+    if (!remoteTarget) {
+      return;
+    }
+    const matchingInstance = findInstanceForTarget(remoteTarget);
+    if (matchingInstance) {
+      if (matchingInstance.id !== remoteInstanceId) {
+        setRemoteInstanceId(matchingInstance.id);
+      }
+    } else if (remoteInstanceId) {
+      setRemoteInstanceId('');
+    }
+  }, [findInstanceForTarget, remoteInstanceId, remoteTarget]);
+
+  useEffect(() => {
+    if (destinationMode !== 'remote') {
+      remoteFetchKeyRef.current = null;
+      return;
+    }
+    if (remoteInstanceId) {
+      const instance = instances.find(inst => inst.id === remoteInstanceId);
+      if (instance) {
+        const key = `instance:${remoteInstanceId}`;
+        if (remoteFetchKeyRef.current !== key) {
+          remoteFetchKeyRef.current = key;
+          void fetchRemoteResources(instance);
+        }
+        return;
+      }
+    }
+    if (remoteTarget) {
+      const hostKey = `${normalizeHostValue(remoteTarget.router_hostname || remoteTarget.router_address)}:${remoteTarget.router_port || (remoteTarget.router_scheme === 'http' ? 80 : 443)}`;
+      const key = `target:${hostKey}`;
+      if (remoteFetchKeyRef.current !== key) {
+        remoteFetchKeyRef.current = key;
+        void fetchRemoteResourcesFromTarget(remoteTarget);
+      }
+      return;
+    }
+    remoteFetchKeyRef.current = null;
+  }, [
+    destinationMode,
+    remoteInstanceId,
+    remoteTarget,
+    instances,
+    fetchRemoteResources,
+    fetchRemoteResourcesFromTarget,
+    normalizeHostValue,
+  ]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -347,6 +453,15 @@ const AddEditRoutePage: React.FC = () => {
             setTimeshift(routeData.timeshift || 0);
             setConfigId((routeData as any).config_id || '');
             setRouteTag((routeData as any).tag || '');
+            if ((routeData as Route).remote_target) {
+              setDestinationMode('remote');
+              setRemoteTarget(routeData.remote_target || null);
+              setRemoteSinkSelection(routeData.remote_target?.sink_name || routeData.remote_target?.sink_config_id || '');
+            } else {
+              setDestinationMode('local');
+              setRemoteTarget(null);
+              setRemoteSinkSelection('');
+            }
           } else {
             setError(`Route "${routeName}" not found.`);
           }
@@ -383,6 +498,11 @@ const AddEditRoutePage: React.FC = () => {
       return;
     }
 
+    if (destinationMode === 'remote' && !remoteTarget) {
+      setError('Please select a remote sink.');
+      return;
+    }
+
     const routeData: Partial<Route> = {
       name,
       source,
@@ -390,7 +510,8 @@ const AddEditRoutePage: React.FC = () => {
       enabled,
       volume,
       delay,
-      timeshift
+      timeshift,
+      remote_target: destinationMode === 'remote' ? remoteTarget || undefined : undefined,
     };
 
     try {
@@ -431,6 +552,10 @@ const AddEditRoutePage: React.FC = () => {
         setTimeshift(0);
         setConfigId('');
         setRouteTag('');
+        setDestinationMode('local');
+        setRemoteTarget(null);
+        setRemoteInstanceId('');
+        setRemoteSinkSelection('');
       }
 
       if (window.opener) {
@@ -575,75 +700,102 @@ const AddEditRoutePage: React.FC = () => {
               </Select>
             </FormControl>
 
-            <FormControl isRequired>
-              <FormLabel>Sink Location</FormLabel>
+            <FormControl>
+              <FormLabel>Destination Type</FormLabel>
               <Select
-                value={selectedServerId}
-                onChange={(e) => {
-                  const nextId = e.target.value;
-                  setSelectedServerId(nextId);
-                  setRemoteSinkSelection('');
-                  if (nextId === 'local') {
-                    setRemoteSinks([]);
-                    setRemoteError(null);
-                    setRemoteLoading(false);
-                    setRemoteSinkSelection('');
-                  } else {
-                    const instance = instances.find(inst => inst.id === nextId);
-                    if (instance) {
-                      void fetchRemoteResources(instance);
-                    }
-                  }
-                }}
+                value={destinationMode}
+                onChange={(e) => setDestinationMode(e.target.value as 'local' | 'remote')}
+                bg={inputBg}
               >
-                <option value="local">Network IP (RTP)</option>
-                {instances.filter(instance => !instance.isCurrent).map(instance => (
-                  <option key={instance.id} value={instance.id}>
-                    ScreamRouter - {instance.label} {instance.isCurrent ? '(current)' : ''}
-                  </option>
-                ))}
+                <option value="local">Local sink</option>
+                <option value="remote">Remote router sink</option>
               </Select>
-              {selectedServerId !== 'local' && (
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  Remote sink selection will create a local RTP sender tagged for the target router.
-                </Text>
-              )}
             </FormControl>
           </SimpleGrid>
 
+          {destinationMode === 'remote' && (
+            <FormControl>
+              <FormLabel>Remote Router</FormLabel>
+              <Stack direction={{ base: 'column', md: 'row' }} spacing={2}>
+                <Select
+                  value={remoteInstanceId}
+                  onChange={(e) => handleRemoteInstanceChange(e.target.value)}
+                  placeholder="Select a remote router"
+                  bg={inputBg}
+                  flex="1"
+                >
+                  {instances.filter(instance => !instance.isCurrent).map(instance => (
+                    <option key={instance.id} value={instance.id}>
+                      ScreamRouter - {instance.label}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  size="sm"
+                  onClick={() => { remoteFetchKeyRef.current = null; void refreshInstances(); }}
+                  isLoading={instancesLoading}
+                  variant="outline"
+                >
+                  Refresh
+                </Button>
+              </Stack>
+              {instancesError && (
+                <Text mt={1} fontSize="sm" color="red.400">
+                  {instancesError}
+                </Text>
+              )}
+              {remoteTarget && !remoteInstanceId && (
+                <Text mt={1} fontSize="sm" color="gray.400">
+                  Stored target: {remoteTarget.sink_name || remoteTarget.sink_config_id || 'remote sink'} on {remoteTarget.router_hostname || remoteTarget.router_address || 'remote router'}
+                </Text>
+              )}
+            </FormControl>
+          )}
+
           <FormControl isRequired>
-            <FormLabel>Sink</FormLabel>
-            <Select
-              data-tutorial-id="route-sink-select"
-              value={selectedServerId === 'local' ? sink : remoteSinkSelection}
-              onChange={(e) => { void handleSinkChange(e.target.value); }}
-              bg={inputBg}
-              placeholder={selectedServerId === 'local' ? 'Select a sink' : (remoteLoading ? 'Loading remote sinks...' : 'Select a remote sink')}
-              isDisabled={selectedServerId !== 'local' && (remoteLoading || Boolean(remoteError))}
-            >
-              {(selectedServerId === 'local' ? sinks : remoteSinks).map(s => (
-                <option key={s.name} value={s.name}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-            {remoteError && (
-              <Alert status="error" mt={2} borderRadius="md">
-                <AlertIcon />
-                {remoteError}
-              </Alert>
-            )}
-            {instancesError && selectedServerId !== 'local' && (
-              <Alert status="error" mt={2} borderRadius="md">
-                <AlertIcon />
-                {instancesError}
-              </Alert>
-            )}
-            {remoteLoading && selectedServerId !== 'local' && (
-              <Flex align="center" gap={2} mt={2}>
-                <Spinner size="sm" />
-                <Text fontSize="sm">Loading remote sinks...</Text>
-              </Flex>
+            <FormLabel>{destinationMode === 'remote' ? 'Remote Sink' : 'Sink'}</FormLabel>
+            {destinationMode === 'remote' ? (
+              <>
+                <Select
+                  value={remoteSinkSelection}
+                  onChange={(e) => handleRemoteSinkSelection(e.target.value)}
+                  bg={inputBg}
+                  placeholder={remoteLoading ? 'Loading remote sinks...' : 'Select a remote sink'}
+                  isDisabled={!remoteInstanceId || remoteLoading || Boolean(remoteError)}
+                >
+                  {remoteSinks.map(s => (
+                    <option key={s.name} value={s.name}>
+                      {s.name}
+                    </option>
+                  ))}
+                </Select>
+                {remoteError && (
+                  <Alert status="error" mt={2} borderRadius="md">
+                    <AlertIcon />
+                    {remoteError}
+                  </Alert>
+                )}
+                {remoteLoading && (
+                  <Flex align="center" gap={2} mt={2}>
+                    <Spinner size="sm" />
+                    <Text fontSize="sm">Loading remote sinks...</Text>
+                  </Flex>
+                )}
+              </>
+            ) : (
+              <Select
+                data-tutorial-id="route-sink-select"
+                value={sink}
+                onChange={(e) => handleSinkChange(e.target.value)}
+                bg={inputBg}
+                placeholder="Select a sink"
+              >
+                {sinks.map(s => (
+                  <option key={s.name} value={s.name}>
+                    {s.name}
+                  </option>
+                ))}
+              </Select>
             )}
           </FormControl>
 

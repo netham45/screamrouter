@@ -2,6 +2,8 @@
    then runs audio controllers for each source"""
 import asyncio
 import concurrent.futures
+import hashlib
+import json
 import os
 import socket
 import sys
@@ -43,6 +45,7 @@ import dns.rdtypes.ANY.PTR
 import dns.resolver
 import dns.rrset
 import fastapi
+import httpx
 import yaml
 from fastapi import Request
 from zeroconf import ServiceInfo, Zeroconf
@@ -59,6 +62,7 @@ from screamrouter.screamrouter_types.annotations import (DelayType, IPAddressTyp
                                                 SourceNameType, TimeshiftType,
                                                 VolumeType)
 from screamrouter.screamrouter_types.configuration import (Equalizer, RouteDescription,
+                                                  RemoteRouteTarget,
                                                   SinkDescription,
                                                   SourceDescription,
                                                   SpeakerLayout,
@@ -77,6 +81,7 @@ from screamrouter.utils.mdns_router_service_advertiser import RouterServiceAdver
 _logger = screamrouter_logger.get_logger(__name__)
 
 from screamrouter.utils.simple_vnc_client import SimpleVNCClient
+from screamrouter.utils.mdns_router_service_browser import discover_router_services
 
 # --- C++ Engine Import ---
 try:
@@ -165,6 +170,18 @@ class ConfigurationManager(threading.Thread):
         """List of active temporary routes"""
         self.active_temporary_sources: List[SourceDescription] = []
         """List of active temporary sources"""
+        self.remote_route_sinks: Dict[str, SinkDescription] = {}
+        """Temporary sink replicas for remote routes, keyed by route config_id"""
+        self._remote_route_sink_hashes: Dict[str, str] = {}
+        """Content hashes for remote sink snapshots"""
+        self._remote_route_poll_interval: float = 60.0
+        """Interval (seconds) between remote route refreshes"""
+        self._next_remote_route_poll: float = 0.0
+        """Timestamp for the next remote route refresh"""
+        self._router_service_cache: List[Dict[str, Any]] = []
+        """Cached mDNS router service entries"""
+        self._router_service_cache_expiry: float = 0.0
+        """Expiry timestamp for the mDNS router service cache"""
         self._sap_route_signature: set[str] = set()
         self._sap_route_last_seen: dict[str, tuple[float, str]] = {}
         """Tracking signature for SAP-directed temporary routes/sources"""
@@ -270,7 +287,7 @@ class ConfigurationManager(threading.Thread):
         """Return coroutine to broadcast current configuration and device metadata."""
         return self.websocket_config.broadcast_config_update(
             self.source_descriptions,
-            self.sink_descriptions,
+            self._get_all_known_sinks(),
             self.route_descriptions,
             self.system_capture_devices,
             self.system_playback_devices,
@@ -281,21 +298,13 @@ class ConfigurationManager(threading.Thread):
     def get_sinks(self) -> List[SinkDescription]:
         """Returns a list of all sinks (including temporary ones)"""
         _sinks: List[SinkDescription] = []
-        for sink in self.sink_descriptions:
+        for sink in self._get_all_known_sinks():
             sink_copy = copy(sink)
             if not hasattr(sink_copy, "sap_target_sink"):
                 sink_copy.sap_target_sink = None
             if not hasattr(sink_copy, "sap_target_host"):
                 sink_copy.sap_target_host = None
             _sinks.append(self._apply_hostname_to_entity(sink_copy))
-        # Include temporary sinks
-        for temp_sink in self.active_temporary_sinks:
-            temp_sink_copy = copy(temp_sink)
-            if not hasattr(temp_sink_copy, "sap_target_sink"):
-                temp_sink_copy.sap_target_sink = None
-            if not hasattr(temp_sink_copy, "sap_target_host"):
-                temp_sink_copy.sap_target_host = None
-            _sinks.append(self._apply_hostname_to_entity(temp_sink_copy))
         return _sinks
 
     def get_permanent_sinks(self) -> List[SinkDescription]:
@@ -749,6 +758,9 @@ class ConfigurationManager(threading.Thread):
             route.config_id = str(uuid.uuid4())
             _logger.info(f"Generated config_id {route.config_id} for new route '{route.name}'")
         self.route_descriptions.append(route)
+        if getattr(route, "remote_target", None):
+            self._prime_remote_routes_for_reload()
+            self._schedule_remote_route_refresh()
         self.__reload_configuration()
         return True
 
@@ -756,6 +768,7 @@ class ConfigurationManager(threading.Thread):
         """Updates fields on the route indicated by old_route_name to what is specified in new_route
            Undefined fields are ignored"""
         changed_route: RouteDescription = self.get_route_by_name(old_route_name)
+        previous_remote_target = getattr(changed_route, "remote_target", None)
         notify_volume_eq: bool = False
         if new_route.name != old_route_name:
             for route in self.route_descriptions:
@@ -772,6 +785,10 @@ class ConfigurationManager(threading.Thread):
             if field in {"volume", "delay", "timeshift"} and new_value != old_value:
                 notify_volume_eq = True
         # Always trigger a full reload
+        updated_remote_target = getattr(changed_route, "remote_target", None)
+        if previous_remote_target is not None or updated_remote_target is not None:
+            self._prime_remote_routes_for_reload()
+            self._schedule_remote_route_refresh()
         self.__reload_configuration()
         if notify_volume_eq:
             self.__notify_volume_eq_condition()
@@ -796,6 +813,9 @@ class ConfigurationManager(threading.Thread):
         """Deletes a route by name"""
         route: RouteDescription = self.get_route_by_name(route_name)
         self.route_descriptions.remove(route)
+        if getattr(route, "remote_target", None):
+            self._prime_remote_routes_for_reload()
+            self._schedule_remote_route_refresh()
         self.__reload_configuration()
         return True
 
@@ -803,6 +823,9 @@ class ConfigurationManager(threading.Thread):
         """Enables a route by name"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.enabled = True
+        if getattr(route, "remote_target", None):
+            self._prime_remote_routes_for_reload()
+            self._schedule_remote_route_refresh()
         self.__reload_configuration()
         return True
 
@@ -810,6 +833,9 @@ class ConfigurationManager(threading.Thread):
         """Disables a route by name"""
         route: RouteDescription = self.get_route_by_name(route_name)
         route.enabled = False
+        if getattr(route, "remote_target", None):
+            self._prime_remote_routes_for_reload()
+            self._schedule_remote_route_refresh()
         self.__reload_configuration()
         return True
     
@@ -1232,6 +1258,11 @@ class ConfigurationManager(threading.Thread):
                                                          if sink.name == sink_name]
         if len(temp_sink_locator) > 0:
             return temp_sink_locator[0]
+
+        # Check remote-route backed sinks
+        for sink in self.remote_route_sinks.values():
+            if sink.name == sink_name:
+                return sink
         
         raise NameError(f"sink {sink_name} not found")
 
@@ -1258,7 +1289,7 @@ class ConfigurationManager(threading.Thread):
            with all of the known Sources, Sinks, and Routes (including temporary ones)
         """
         # Combine permanent and temporary entities
-        all_sinks = self.sink_descriptions + self.active_temporary_sinks
+        all_sinks = self._get_all_known_sinks()
         all_routes = self.route_descriptions + self.active_temporary_routes
         
         data: Tuple[List[SourceDescription], List[SinkDescription], List[RouteDescription]]
@@ -1272,8 +1303,8 @@ class ConfigurationManager(threading.Thread):
     def __verify_new_sink(self, sink: SinkDescription) -> None:
         """Verifies all sink group members exist and the sink doesn't
            Throws exception on failure"""
-        # Check both permanent and temporary sinks for name conflicts
-        for _sink in self.sink_descriptions + self.active_temporary_sinks:
+        # Check both permanent, remote, and temporary sinks for name conflicts
+        for _sink in self._get_all_known_sinks():
             if sink.name == _sink.name:
                 raise ValueError(f"Sink name '{sink.name}' already in use")
         for member in sink.group_members:
@@ -1294,13 +1325,14 @@ class ConfigurationManager(threading.Thread):
 
     def __verify_new_route(self, route: RouteDescription) -> None:
         """Verifies route sink and source exist, throws exception if not"""
-        self.get_sink_by_name(route.sink)
+        if not getattr(route, "remote_target", None):
+            self.get_sink_by_name(route.sink)
         self.get_source_by_name(route.source)
 
     def __remove_sink_from_groups(self, sink_name: SinkNameType) -> Dict[SinkNameType, List[SinkNameType]]:
         """Remove the sink from every group that references it."""
         groups_updated: Dict[SinkNameType, List[SinkNameType]] = {}
-        for group in self.sink_descriptions + self.active_temporary_sinks:
+        for group in self._get_all_known_sinks():
             if not group.is_group or group.name == sink_name:
                 continue
             if sink_name in group.group_members:
@@ -1321,7 +1353,7 @@ class ConfigurationManager(threading.Thread):
 
     def __restore_sink_memberships(self, original_memberships: Dict[SinkNameType, List[SinkNameType]]) -> None:
         """Restore group membership state when deletion cannot proceed."""
-        for group in self.sink_descriptions + self.active_temporary_sinks:
+        for group in self._get_all_known_sinks():
             if group.name in original_memberships:
                 group.group_members = original_memberships[group.name]
 
@@ -1336,7 +1368,7 @@ class ConfigurationManager(threading.Thread):
         if visited is None:
             visited = set()
         sink_groups: List[SinkDescription] = []
-        for group in self.sink_descriptions + self.active_temporary_sinks:
+        for group in self._get_all_known_sinks():
             if not group.is_group or group.name in visited:
                 continue
             if member_name in group.group_members:
@@ -1412,6 +1444,9 @@ class ConfigurationManager(threading.Thread):
         self.route_descriptions = []
         self.system_capture_devices = []
         self.system_playback_devices = []
+        self.remote_route_sinks.clear()
+        self._remote_route_sink_hashes.clear()
+        self._schedule_remote_route_refresh()
         config_needs_save = False  # Track if we need to save due to missing config_ids
         
         try:
@@ -1462,7 +1497,6 @@ class ConfigurationManager(threading.Thread):
                             _logger.warning(f"Skipping unexpected sink data type: {type(item_data)} for data: {item_data}")
                     except Exception as e:
                         _logger.error(f"Failed to parse sink data: {item_data}. Error: {e}")
-                
                 raw_sources = savedata.get("sources", [])
                 for item_data in raw_sources:
                     try:
@@ -1552,21 +1586,23 @@ class ConfigurationManager(threading.Thread):
                             _logger.warning(f"Skipping unexpected route data type: {type(item_data)} for data: {item_data}")
                     except Exception as e:
                         _logger.error(f"Failed to parse route data: {item_data}. Error: {e}")
-                raw_capture_devices = savedata.get("system_capture_devices")
-                raw_playback_devices = savedata.get("system_playback_devices")
 
-                if raw_capture_devices is None:
-                    raw_capture_devices = []
-                    config_needs_save = True
-                if raw_playback_devices is None:
-                    raw_playback_devices = []
-                    config_needs_save = True
+            # Prime remote route mirrors so initial reloads see temporary sinks
+            raw_capture_devices = savedata.get("system_capture_devices")
+            raw_playback_devices = savedata.get("system_playback_devices")
 
-                self.system_capture_devices = self._parse_system_device_list(raw_capture_devices, "capture")
-                self.system_playback_devices = self._parse_system_device_list(raw_playback_devices, "playback")
+            if raw_capture_devices is None:
+                raw_capture_devices = []
+                config_needs_save = True
+            if raw_playback_devices is None:
+                raw_playback_devices = []
+                config_needs_save = True
 
-                # The Pydantic models now have default_factory=dict for speaker_layouts,
-                # so the old check loop for None speaker_layout is no longer needed.
+            self.system_capture_devices = self._parse_system_device_list(raw_capture_devices, "capture")
+            self.system_playback_devices = self._parse_system_device_list(raw_playback_devices, "playback")
+
+            # The Pydantic models now have default_factory=dict for speaker_layouts,
+            # so the old check loop for None speaker_layout is no longer needed.
 
         except FileNotFoundError:
             _logger.warning("[Configuration Manager] Configuration not found., making new config. Initializing with empty lists.")
@@ -2559,9 +2595,14 @@ class ConfigurationManager(threading.Thread):
         """
 
         _logger.debug("[Configuration Manager] Processing new configuration")
+
+        try:
+            self._service_remote_routes(force=True, apply_changes=False)
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.warning("[Configuration Manager] Remote route refresh during solve failed: %s", exc)
         
         # Merge temporary entities with regular ones for solving
-        combined_sinks = self.sink_descriptions + self.active_temporary_sinks
+        combined_sinks = self._get_all_known_sinks()
         combined_routes = self.route_descriptions + self.active_temporary_routes
         
         # Add plugin sources, don't overwrite existing unless they were from the plugin
@@ -2578,8 +2619,11 @@ class ConfigurationManager(threading.Thread):
                     self.source_descriptions.append(plugin_source)
 
         # Get a new resolved configuration from the current state (including temporary entities)
-        _logger.debug("[Configuration Manager] Solving Configuration (including %d temporary sinks, %d temporary routes, %d temporary sources)",
-                     len(self.active_temporary_sinks), len(self.active_temporary_routes), len(self.active_temporary_sources))
+        _logger.debug("[Configuration Manager] Solving Configuration (including %d temporary sinks, %d remote sinks, %d temporary routes, %d temporary sources)",
+                     len(self.active_temporary_sinks),
+                     len(self.remote_route_sinks),
+                     len(self.active_temporary_routes),
+                     len(self.active_temporary_sources))
         combined_sources = self.source_descriptions + self.active_temporary_sources
         self.active_configuration = ConfigurationSolver(combined_sources,
                                                         combined_sinks,
@@ -2679,7 +2723,6 @@ class ConfigurationManager(threading.Thread):
         if acquired:
             self._lock_holder_thread_id = threading.current_thread().ident
             self._lock_holder_stack = ''.join(traceback.format_stack())
-            _logger.debug("[Configuration Manager] %s acquired reload_condition", caller)
         return acquired
 
     def _release_reload_condition(self, caller: str = "") -> None:
@@ -2687,7 +2730,6 @@ class ConfigurationManager(threading.Thread):
         self._lock_holder_thread_id = None
         self._lock_holder_stack = None
         self.reload_condition.release()
-        _logger.debug("[Configuration Manager] %s released reload_condition", caller)
 
     def __reload_configuration(self) -> None:
         """Notifies the configuration manager to reload the configuration"""
@@ -2714,15 +2756,18 @@ class ConfigurationManager(threading.Thread):
     def __reload_configuration_without_save(self) -> None:
         """Notifies the configuration manager to reload the configuration without saving to disk"""
         # Log temporary entities being processed
-        _logger.info("[Configuration Manager] Reloading configuration without save - Temporary sinks: %d, Temporary routes: %d",
-                     len(self.active_temporary_sinks), len(self.active_temporary_routes))
+        _logger.info("[Configuration Manager] Reloading configuration without save - Temporary sinks: %d, Remote sinks: %d, Temporary routes: %d",
+                     len(self.active_temporary_sinks), len(self.remote_route_sinks), len(self.active_temporary_routes))
         for sink in self.active_temporary_sinks:
             _logger.debug("[Configuration Manager] Temporary sink: name='%s', config_id='%s', protocol='%s', enabled=%s",
                          sink.name, sink.config_id, sink.protocol, sink.enabled)
+        for sink in self.remote_route_sinks.values():
+            _logger.debug("[Configuration Manager] Remote sink: name='%s', config_id='%s', protocol='%s', enabled=%s",
+                          sink.name, sink.config_id, sink.protocol, sink.enabled)
         
         self._safe_async_run(self.websocket_config.broadcast_config_update(
             self.source_descriptions,
-            self.sink_descriptions + self.active_temporary_sinks,
+            self._get_all_known_sinks(),
             self.route_descriptions + self.active_temporary_routes,
             self.system_capture_devices,
             self.system_playback_devices,
@@ -2781,7 +2826,7 @@ class ConfigurationManager(threading.Thread):
         # Update websocket clients
         self._safe_async_run(self.websocket_config.broadcast_config_update(
             self.source_descriptions,
-            self.sink_descriptions,
+            self._get_all_known_sinks(),
             self.route_descriptions,
             self.system_capture_devices,
             self.system_playback_devices,
@@ -2959,6 +3004,347 @@ class ConfigurationManager(threading.Thread):
             if resolved_name:
                 entity.name = resolved_name
         return entity
+
+    def _get_all_known_sinks(self) -> List[SinkDescription]:
+        """Return a combined list of permanent, temporary, and remote-route sinks."""
+        return self.sink_descriptions + self.active_temporary_sinks + list(self.remote_route_sinks.values())
+
+    def _coerce_remote_route_target(self, route: RouteDescription) -> Optional[RemoteRouteTarget]:
+        """Ensure route.remote_target is a RemoteRouteTarget instance."""
+        target = getattr(route, "remote_target", None)
+        if target is None:
+            return None
+        if isinstance(target, RemoteRouteTarget):
+            return target
+        if hasattr(target, "model_dump"):
+            try:
+                serialized = target.model_dump()
+                if isinstance(serialized, dict):
+                    coerced = RemoteRouteTarget(**serialized)
+                    return coerced
+            except Exception as exc:  # pylint: disable=broad-except
+                _logger.warning("[Configuration Manager] Route '%s' remote_target model_dump failed: %s",
+                                getattr(route, "name", "<unnamed>"), exc)
+        if hasattr(target, "__dict__") and not isinstance(target, dict):
+            try:
+                dict_view = dict(getattr(target, "__dict__", {}))
+                if dict_view:
+                    coerced = RemoteRouteTarget(**dict_view)
+                    return coerced
+            except Exception as exc:  # pylint: disable=broad-except
+                _logger.warning("[Configuration Manager] Route '%s' remote_target __dict__ coercion failed: %s",
+                                getattr(route, "name", "<unnamed>"), exc)
+        # Generic attribute-based fallback for arbitrary objects
+        candidate: Dict[str, Any] = {}
+        for field_name in getattr(RemoteRouteTarget, "model_fields", {}):
+            if hasattr(target, field_name):
+                value = getattr(target, field_name)
+                if value is not None:
+                    candidate[field_name] = value
+        if candidate:
+            try:
+                coerced = RemoteRouteTarget(**candidate)
+                return coerced
+            except Exception as exc:  # pylint: disable=broad-except
+                _logger.warning("[Configuration Manager] Route '%s' remote_target attribute coercion failed: %s",
+                                getattr(route, "name", "<unnamed>"), exc)
+        if isinstance(target, str):
+            stripped = target.strip()
+            if not stripped or stripped.lower() in {"null", "none"}:
+                return None
+            try:
+                decoded = json.loads(stripped)
+                if isinstance(decoded, dict):
+                    coerced = RemoteRouteTarget(**decoded)
+                    try:
+                        route.remote_target = coerced
+                    except Exception:  # pylint: disable=broad-except
+                        pass
+                    return coerced
+            except json.JSONDecodeError:
+                _logger.warning("[Configuration Manager] Route '%s' remote_target string is not valid JSON",
+                                getattr(route, "name", "<unnamed>"))
+        if isinstance(target, dict):
+            try:
+                coerced = RemoteRouteTarget(**target)
+            except Exception as exc:  # pylint: disable=broad-except
+                _logger.warning("[Configuration Manager] Route '%s' has invalid remote_target payload: %s",
+                                getattr(route, "name", "<unnamed>"), exc)
+                return None
+            try:
+                route.remote_target = coerced
+            except Exception:  # pylint: disable=broad-except
+                # RouteDescription may be frozen; ignore assignment failures
+                pass
+            return coerced
+        _logger.warning("[Configuration Manager] Route '%s' has unsupported remote_target type %s",
+                        getattr(route, "name", "<unnamed>"), type(target).__name__)
+        return None
+
+    def _schedule_remote_route_refresh(self) -> None:
+        """Force the remote route poller to refresh on the next maintenance tick."""
+        self._next_remote_route_poll = 0.0
+
+    def _hash_remote_sink_snapshot(self, route: RouteDescription, payload: Dict[str, Any]) -> str:
+        """Generate a deterministic hash for a remote sink payload."""
+        snapshot = {
+            "route_sink": route.sink,
+            "payload": payload,
+        }
+        encoded = json.dumps(snapshot, sort_keys=True, default=str).encode("utf-8", "ignore")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _lookup_router_service_by_uuid(self, router_uuid: str) -> Optional[Dict[str, Any]]:
+        """Resolve router service metadata via mDNS for a given UUID."""
+        if not router_uuid:
+            return None
+        now = time.monotonic()
+        if now >= self._router_service_cache_expiry:
+            try:
+                self._router_service_cache = discover_router_services(timeout=1.5)
+            except Exception as exc:  # pylint: disable=broad-except
+                _logger.warning("[Configuration Manager] Failed to refresh router service cache: %s", exc)
+                self._router_service_cache = []
+            self._router_service_cache_expiry = now + 30.0
+        for entry in self._router_service_cache:
+            properties = entry.get("properties") or {}
+            if properties.get("uuid") == router_uuid:
+                return entry
+        return None
+
+    def _build_remote_base_url(self, target: RemoteRouteTarget) -> Optional[str]:
+        """Construct the remote router base URL."""
+        scheme = (target.router_scheme or "https").lower()
+        host = (target.router_address or target.router_hostname or "").strip()
+        port = target.router_port or (443 if scheme == "https" else 80)
+
+        if not host and target.router_uuid:
+            service_info = self._lookup_router_service_by_uuid(target.router_uuid)
+            if service_info:
+                addresses = service_info.get("addresses") or []
+                service_host = (service_info.get("host") or "").strip()
+                host = addresses[0] if addresses else service_host
+                props = service_info.get("properties") or {}
+                if props:
+                    scheme = (props.get("scheme") or scheme).lower()
+                    try:
+                        port = int(props.get("port", port))
+                    except (TypeError, ValueError):
+                        pass
+
+        if not host:
+            return None
+
+        try:
+            parsed_ip = ipaddress.ip_address(host)
+            if isinstance(parsed_ip, ipaddress.IPv6Address):
+                host = f"[{host}]"
+        except ValueError:
+            pass
+
+        default_port = 443 if scheme == "https" else 80
+        if port == default_port:
+            return f"{scheme}://{host}"
+        return f"{scheme}://{host}:{port}"
+
+    def _fetch_remote_sink_payload(self, target: RemoteRouteTarget) -> Dict[str, Any]:
+        """Fetch the remote router sink list and return the relevant sink payload."""
+        base_url = self._build_remote_base_url(target)
+        if not base_url:
+            raise RuntimeError("Unable to resolve remote router host for remote route")
+
+        sinks_url = f"{base_url}/sinks"
+        _logger.debug("[Configuration Manager] Fetching remote sinks from %s", sinks_url)
+        try:
+            response = httpx.get(sinks_url, timeout=10.0, verify=False)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"Remote router responded with HTTP {exc.response.status_code}") from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError(f"Failed to reach remote router at {sinks_url}: {exc}") from exc
+
+        try:
+            payload = response.json()
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Remote router returned invalid JSON for /sinks") from exc
+
+        sinks_list: List[Dict[str, Any]]
+        if isinstance(payload, list):
+            sinks_list = payload
+        elif isinstance(payload, dict):
+            sinks_list = list(payload.values())
+        else:
+            raise RuntimeError("Remote router returned unexpected payload for /sinks")
+
+        sink_payload: Optional[Dict[str, Any]] = None
+        if target.sink_config_id:
+            for sink_candidate in sinks_list:
+                if sink_candidate.get("config_id") == target.sink_config_id:
+                    sink_payload = sink_candidate
+                    break
+        if sink_payload is None and target.sink_name:
+            for sink_candidate in sinks_list:
+                if sink_candidate.get("name") == target.sink_name:
+                    sink_payload = sink_candidate
+                    break
+        if sink_payload is None:
+            raise RuntimeError("Remote sink not found on remote router")
+
+        return sink_payload
+
+    def _allocate_remote_sink_port(self, route_identifier: str) -> int:
+        """Deterministically choose a high UDP port for remote proxy sinks."""
+        digest = hashlib.sha1(route_identifier.encode("utf-8", "ignore")).hexdigest()
+        base = 41000
+        span = 9000
+        return base + (int(digest[:6], 16) % span)
+
+    def _generate_remote_sink_description(self, route: RouteDescription, payload: Dict[str, Any], target: RemoteRouteTarget) -> SinkDescription:
+        """Convert a remote sink payload into a temporary SinkDescription."""
+        route_identifier = route.config_id or uuid.uuid4().hex
+        sink_name = route.sink or payload.get("name") or f"RemoteSink-{route_identifier[:8]}"
+        sink_config_id = f"remote-sink-{route_identifier}"
+
+        target_host = (target.router_address or target.router_hostname or "").strip()
+        if not target_host:
+            target_host = str(payload.get("ip") or "").strip()
+        if not target_host:
+            raise RuntimeError("Remote router host/address not provided for remote route")
+
+        try:
+            parsed_ip = ipaddress.ip_address(target_host)
+            if isinstance(parsed_ip, ipaddress.IPv6Address):
+                target_host = f"[{target_host}]"
+        except ValueError:
+            pass
+
+        port_value = payload.get("port")
+        try:
+            port_int = int(port_value) if port_value is not None else None
+        except (TypeError, ValueError):
+            port_int = None
+        if not port_int or port_int <= 0:
+            port_int = self._allocate_remote_sink_port(route_identifier)
+
+        sap_target_sink = payload.get("config_id") or payload.get("name") or target.sink_config_id or target.sink_name
+        sap_target_host = target.router_uuid or target.router_hostname or target.router_address
+
+        sink_payload = dict(payload)
+        sink_payload["name"] = sink_name
+        sink_payload["config_id"] = sink_config_id
+        sink_payload["enabled"] = True
+        sink_payload["is_group"] = False
+        sink_payload["protocol"] = "rtp"
+        sink_payload["ip"] = target_host
+        sink_payload["port"] = port_int
+        sink_payload["sap_target_sink"] = sap_target_sink
+        sink_payload["sap_target_host"] = sap_target_host
+        sink_payload["multi_device_mode"] = False
+        sink_payload["rtp_receiver_mappings"] = []
+        sink_desc = SinkDescription(**sink_payload)
+        sink_desc.is_temporary = True
+        return sink_desc
+
+    def _service_remote_routes(self, force: bool = False, apply_changes: bool = True) -> None:
+        """Ensure remote routes have up-to-date temporary sink representations."""
+        remote_routes: List[RouteDescription] = []
+        declared_remote_routes = 0
+        missing_identity: List[str] = []
+        for route in self.route_descriptions:
+            raw_target = getattr(route, "remote_target", None)
+            if raw_target:
+                declared_remote_routes += 1
+            target = self._coerce_remote_route_target(route)
+            if not target:
+                raw_type = type(raw_target).__name__ if raw_target is not None else "NoneType"
+                safe_repr = repr(raw_target)[:160] if raw_target is not None else "None"
+                _logger.debug("[Configuration Manager] Route '%s' marked remote but target could not be coerced (type=%s, value=%s)",
+                              getattr(route, "name", "<unnamed>"),
+                              raw_type,
+                              safe_repr)
+                continue
+            if not (target.sink_config_id or target.sink_name):
+                missing_identity.append(getattr(route, "name", "<unnamed>"))
+                continue
+            remote_routes.append(route)
+        if missing_identity:
+            _logger.warning("[Configuration Manager] Remote routes missing sink identity (sink_config_id or sink_name): %s",
+                            ", ".join(missing_identity))
+        if not remote_routes:
+            if declared_remote_routes:
+                _logger.info("[Configuration Manager] No serviceable remote routes found (declared=%d).", declared_remote_routes)
+            if self.remote_route_sinks:
+                self.remote_route_sinks.clear()
+                self._remote_route_sink_hashes.clear()
+                _logger.info("[Configuration Manager] Cleared remote route sinks (no remote routes configured)")
+                self.__apply_temporary_configuration_sync()
+            return
+
+        now = time.monotonic()
+        if not force and now < self._next_remote_route_poll:
+            _logger.debug("[Configuration Manager] Skipping remote route poll; next refresh in %.1fs",
+                          self._next_remote_route_poll - now)
+            return
+        self._next_remote_route_poll = now + self._remote_route_poll_interval
+
+        changes_applied = False
+        active_route_ids: Set[str] = set()
+        _logger.info("[Configuration Manager] Refreshing %d remote route(s)", len(remote_routes))
+        for route in remote_routes:
+            target = self._coerce_remote_route_target(route)
+            if not target or not route.enabled:
+                if route.enabled and not target:
+                    _logger.debug("[Configuration Manager] Remote route '%s' missing target during refresh; skipping", route.name)
+                if not route.enabled and route.config_id in self.remote_route_sinks:
+                    self.remote_route_sinks.pop(route.config_id, None)
+                    self._remote_route_sink_hashes.pop(route.config_id, None)
+                    changes_applied = True
+                continue
+            route_label = getattr(route, "name", route.config_id or "<remote-route>")
+            sink_label = target.sink_config_id or target.sink_name or "<unnamed>"
+            _logger.debug("[Configuration Manager] Remote route '%s' -> requesting sink '%s' from %s",
+                          route_label,
+                          sink_label,
+                          target.router_address or target.router_hostname or target.router_uuid or "unknown host")
+            try:
+                payload = self._fetch_remote_sink_payload(target)
+                _logger.debug("[Configuration Manager] Remote route '%s' fetched sink payload keys: %s",
+                              route_label, list(payload.keys()))
+                sink_desc = self._generate_remote_sink_description(route, payload, target)
+                snapshot_hash = self._hash_remote_sink_snapshot(route, payload)
+                existing_hash = self._remote_route_sink_hashes.get(route.config_id)
+                if existing_hash != snapshot_hash:
+                    self.remote_route_sinks[route.config_id] = sink_desc
+                    self._remote_route_sink_hashes[route.config_id] = snapshot_hash
+                    _logger.info("[Configuration Manager] Updated remote sink '%s' for route '%s'", sink_desc.name, route_label)
+                    changes_applied = True
+                else:
+                    _logger.debug("[Configuration Manager] Remote sink '%s' for route '%s' unchanged (hash match)",
+                                  sink_desc.name, route_label)
+                active_route_ids.add(route.config_id)
+            except Exception as exc:  # pylint: disable=broad-except
+                if route.config_id in self.remote_route_sinks:
+                    self.remote_route_sinks.pop(route.config_id, None)
+                    self._remote_route_sink_hashes.pop(route.config_id, None)
+                    changes_applied = True
+                _logger.warning("[Configuration Manager] Remote route '%s' refresh failed: %s", route_label, exc)
+
+        for route_id in list(self.remote_route_sinks.keys()):
+            if route_id not in active_route_ids:
+                _logger.info("[Configuration Manager] Removing remote sink for stale route id %s", route_id)
+                self.remote_route_sinks.pop(route_id, None)
+                self._remote_route_sink_hashes.pop(route_id, None)
+                changes_applied = True
+
+        if changes_applied and apply_changes:
+            self.__apply_temporary_configuration_sync()
+
+    def _prime_remote_routes_for_reload(self) -> None:
+        """Fetch remote sink definitions so the next reload sees up-to-date mirrors."""
+        try:
+            self._service_remote_routes(force=True, apply_changes=True)
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.warning("[Configuration Manager] Failed to prime remote routes: %s", exc)
 
     def auto_add_source(self, ip: IPAddressType, service_info: dict = None):
         """Checks if VNC is available and adds a source by IP with the correct options
@@ -3413,10 +3799,6 @@ class ConfigurationManager(threading.Thread):
 
                     is_new_source = ip_value not in known_source_ips
                     if is_new_source:
-                        _logger.info(
-                            "[Configuration Manager] Discovered new source from C++ RTP Receiver: %s",
-                            ip_value,
-                        )
                         known_source_ips.append(ip_value)
 
                     self._store_discovered_device(
@@ -3748,7 +4130,6 @@ class ConfigurationManager(threading.Thread):
             )
 
             if ip_value not in known_sink_ips:
-                _logger.info("[Configuration Manager] Discovered new sink (receiver) from mDNS %s with info: %s", ip, service_info)
                 known_sink_ips.append(ip_value)
 
         # Process sink settings
@@ -3837,6 +4218,12 @@ class ConfigurationManager(threading.Thread):
             # Reload configuration if any source was changed
             if source_changed:
                 self.__reload_configuration()
+
+        # Refresh any remote-route backed sinks on the configured interval
+        try:
+            self._service_remote_routes()
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.warning("[Configuration Manager] Remote route refresh failed: %s", exc)
         # --- End C++ Engine Based Auto Source Detection ---
 
     def _sap_host_matches_local(self, target_host: str) -> bool:
