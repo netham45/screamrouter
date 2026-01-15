@@ -30,10 +30,13 @@
 #include <condition_variable>
 #include <atomic>
 #if defined(__linux__)
-#include <execinfo.h>
 #include <cxxabi.h>
 #include <signal.h>
 #include <unistd.h>
+#if defined(__GLIBC__)
+#define SR_CONFIG_APPLIER_HAS_BACKTRACE 1
+#include <execinfo.h>
+#endif
 #endif
 
 using namespace screamrouter::audio;
@@ -86,7 +89,7 @@ std::string sanitize_clone_suffix(const std::string& tag) {
     return out;
 }
 
-#if defined(__linux__)
+#if defined(SR_CONFIG_APPLIER_HAS_BACKTRACE)
 // Global for signal handler - NOT thread_local so watchdog thread can set it
 static const char* g_watchdog_phase_name = nullptr;
 static volatile sig_atomic_t g_dump_requested = 0;
@@ -127,14 +130,14 @@ static void install_sigusr1_handler() {
         sigaction(SIGUSR1, &sa, nullptr);
     });
 }
-#endif
+#endif  // SR_CONFIG_APPLIER_HAS_BACKTRACE
 
 // Watchdog that spawns a thread to signal the blocked thread on timeout  
 class ApplyStateWatchdog {
 public:
     ApplyStateWatchdog(const char* phase_name, int timeout_ms = 500)
         : phase_name_(phase_name), timeout_ms_(timeout_ms), done_(false) {
-#if defined(__linux__)
+#if defined(SR_CONFIG_APPLIER_HAS_BACKTRACE)
         install_sigusr1_handler();
         blocked_thread_ = pthread_self();
         g_watchdog_phase_name = phase_name;
@@ -146,7 +149,7 @@ public:
             if (timed_out) {
                 LOG_CPP_ERROR("[ConfigApplier] TIMEOUT: Phase '%s' exceeded %d ms - still running!",
                               phase_name_, timeout_ms_);
-#if defined(__linux__)
+#if defined(SR_CONFIG_APPLIER_HAS_BACKTRACE)
                 // Signal the blocked thread to dump its own backtrace
                 g_dump_requested = 1;
                 pthread_kill(blocked_thread_, SIGUSR1);
@@ -166,7 +169,7 @@ public:
         if (watchdog_thread_.joinable()) {
             watchdog_thread_.join();
         }
-#if defined(__linux__)
+#if defined(SR_CONFIG_APPLIER_HAS_BACKTRACE)
         g_watchdog_phase_name = nullptr;
 #endif
     }
@@ -176,9 +179,9 @@ private:
     int timeout_ms_;
     std::atomic<bool> done_;
     std::mutex mutex_;
-    std::condition_variable cv_;
+   std::condition_variable cv_;
     std::thread watchdog_thread_;
-#if defined(__linux__)
+#if defined(SR_CONFIG_APPLIER_HAS_BACKTRACE)
     pthread_t blocked_thread_;
 #endif
 };

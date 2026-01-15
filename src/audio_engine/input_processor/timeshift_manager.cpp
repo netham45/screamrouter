@@ -23,13 +23,16 @@
 #include <sstream>
 
 #if defined(__linux__)
-#include <execinfo.h>
 #include <pthread.h>
 #include <unistd.h>
 #include <cstring>
 #include <csignal>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#if defined(__GLIBC__)
+#define SR_TIMESHIFT_HAS_BACKTRACE 1
+#include <execinfo.h>
+#endif
 #endif
 
 namespace screamrouter {
@@ -40,11 +43,15 @@ static std::atomic<const char*> g_data_mutex_holder_file{nullptr};
 static std::atomic<int> g_data_mutex_holder_line{0};
 #if defined(__linux__)
 static std::atomic<pid_t> g_data_mutex_holder_tid{0};
+#endif
+#if defined(SR_TIMESHIFT_HAS_BACKTRACE)
 static constexpr int kDataMutexHolderMaxFrames = 64;
 static std::array<void*, kDataMutexHolderMaxFrames> g_data_mutex_holder_stack{};
 static int g_data_mutex_holder_stack_frames = 0;
 static std::mutex g_data_mutex_holder_stack_mutex;
+#endif
 
+#if defined(__linux__)
 // Read kernel stack trace of a thread via /proc
 static void dump_thread_stack(pid_t tid) {
     char path[64];
@@ -68,6 +75,7 @@ static void dump_thread_stack(pid_t tid) {
 
 // Dump the user-space stack that was captured when the holder grabbed the lock.
 static void dump_holder_user_stack() {
+#if defined(SR_TIMESHIFT_HAS_BACKTRACE)
     std::array<void*, kDataMutexHolderMaxFrames> local_stack{};
     int frames = 0;
     {
@@ -90,8 +98,11 @@ static void dump_holder_user_stack() {
     if (symbols) {
         free(symbols);
     }
-}
+#else
+    // Backtrace support unavailable on this platform.
 #endif
+}
+#endif  // defined(__linux__)
 
 static inline void update_data_mutex_holder_site(const char* file, int line) {
 #if defined(__linux__)
@@ -109,6 +120,7 @@ struct HolderTracker {
         g_data_mutex_holder_file.store(file);
         g_data_mutex_holder_line.store(line);
 #if defined(__linux__)
+#if defined(SR_TIMESHIFT_HAS_BACKTRACE)
         void* stack[kDataMutexHolderMaxFrames];
         const int frames = backtrace(stack, kDataMutexHolderMaxFrames);
         {
@@ -118,6 +130,7 @@ struct HolderTracker {
                         std::min(frames, kDataMutexHolderMaxFrames),
                         g_data_mutex_holder_stack.begin());
         }
+#endif
         g_data_mutex_holder_tid.store(static_cast<pid_t>(syscall(SYS_gettid)));
 #endif
     }
@@ -125,10 +138,12 @@ struct HolderTracker {
         g_data_mutex_holder_file.store(nullptr);
         g_data_mutex_holder_line.store(0);
 #if defined(__linux__)
+#if defined(SR_TIMESHIFT_HAS_BACKTRACE)
         {
             std::lock_guard<std::mutex> guard(g_data_mutex_holder_stack_mutex);
             g_data_mutex_holder_stack_frames = 0;
         }
+#endif
         g_data_mutex_holder_tid.store(0);
 #endif
     }
@@ -1139,7 +1154,7 @@ void TimeshiftManager::run() {
             if (lock_held_ms > 50) {
                 LOG_CPP_WARNING("[TimeshiftManager] Run loop held data_mutex_ for %ldms during processing",
                                 static_cast<long>(lock_held_ms));
-#if defined(__linux__)
+#if defined(SR_TIMESHIFT_HAS_BACKTRACE)
                 // Dump our own backtrace since WE are the holder
                 constexpr int MAX_FRAMES = 64;
                 void* callstack[MAX_FRAMES];
