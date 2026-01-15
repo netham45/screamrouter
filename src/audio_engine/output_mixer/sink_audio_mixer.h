@@ -212,6 +212,7 @@ private:
     std::map<std::string, bool> input_active_state_;
     std::map<std::string, ProcessedAudioChunk> source_buffers_;
     std::map<std::string, std::deque<ProcessedAudioChunk>> processed_ready_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> throttled_drop_timestamps_;
 
     std::unique_ptr<ClockManager> clock_manager_;
     std::atomic<bool> clock_manager_enabled_{false};

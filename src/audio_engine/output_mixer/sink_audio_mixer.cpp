@@ -862,11 +862,24 @@ bool SinkAudioMixer::wait_for_source_data() {
                                                 " queued_depth=" + std::to_string(queue.size() + 1) + "]";
                     utils::log_sentinel("sink_chunk_received", chunk, context);
                     queue.push_back(std::move(chunk));
-                    while (queue.size() > max_queued_chunks) {
-                        if (queue.front().is_sentinel) {
-                            utils::log_sentinel("sink_chunk_dropped", queue.front(), " [sink=" + config_.sink_id + " instance=" + instance_id + " due_to_backlog]");
+                    if (queue.size() > max_queued_chunks) {
+                        const auto now = std::chrono::steady_clock::now();
+                        auto drop_it = throttled_drop_timestamps_.find(instance_id);
+                        bool allow_drop = false;
+                        if (drop_it == throttled_drop_timestamps_.end()) {
+                            allow_drop = true;
+                        } else if ((now - drop_it->second) >= std::chrono::seconds(1)) {
+                            allow_drop = true;
                         }
-                        queue.pop_front();
+                        if (allow_drop && !queue.empty()) {
+                            if (queue.front().is_sentinel) {
+                                utils::log_sentinel("sink_chunk_dropped", queue.front(), " [sink=" + config_.sink_id + " instance=" + instance_id + " due_to_backlog]");
+                            }
+                            queue.pop_front();
+                            throttled_drop_timestamps_[instance_id] = now;
+                        }
+                    } else {
+                        throttled_drop_timestamps_.erase(instance_id);
                     }
                 }
             }
