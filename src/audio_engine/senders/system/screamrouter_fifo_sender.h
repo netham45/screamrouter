@@ -2,8 +2,10 @@
 
 #include "../i_network_sender.h"
 #include "../../audio_types.h"
+#include "../../system_audio/runtime_device_advertiser.h"
 
 #include <mutex>
+#include <memory>
 #include <string>
 
 #if defined(__linux__)
@@ -35,9 +37,9 @@ private:
 #if SCREAMROUTER_FIFO_SENDER_AVAILABLE
     int fifo_fd_ = -1;
     std::mutex state_mutex_;
+    std::unique_ptr<system_audio::RuntimeDeviceAdvertiser> runtime_advertiser_;
 #endif
 };
 
 } // namespace audio
 } // namespace screamrouter
-

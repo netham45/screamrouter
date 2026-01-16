@@ -56,6 +56,14 @@ AlsaPlaybackSender::AlsaPlaybackSender(const SinkMixerConfig& config,
     sample_rate_ = static_cast<unsigned int>(config.output_samplerate);
     channels_ = static_cast<unsigned int>(config.output_channels);
     bit_depth_ = config.output_bitdepth;
+    hardware_bit_depth_ = static_cast<unsigned int>(std::max(0, config.output_bitdepth));
+    source_sample_rate_ = sample_rate_;
+    source_channels_ = std::max(1u, channels_);
+    source_bit_depth_ = hardware_bit_depth_;
+    const unsigned int bytes_per_sample = (source_bit_depth_ == 24) ? 3u : (source_bit_depth_ / 8u);
+    source_bytes_per_frame_ = bytes_per_sample * static_cast<unsigned int>(source_channels_);
+    pending_format_notification_ = {};
+    format_notification_pending_ = false;
 #endif
 }
 
@@ -65,11 +73,20 @@ AlsaPlaybackSender::~AlsaPlaybackSender() {
 
 bool AlsaPlaybackSender::setup() {
 #if defined(__linux__)
-    std::lock_guard<std::mutex> lock(state_mutex_);
-    if (pcm_handle_) {
-        return true;
+    bool configured = true;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (!pcm_handle_) {
+            configured = configure_device();
+        }
     }
-    return configure_device();
+    if (configured) {
+        auto note = consume_pending_format_notification();
+        if (note.valid) {
+            dispatch_format_notification(note);
+        }
+    }
+    return configured;
 #else
     LOG_CPP_WARNING("AlsaPlaybackSender setup called on unsupported platform.");
     return false;
@@ -92,41 +109,13 @@ void AlsaPlaybackSender::send_payload(const uint8_t* payload_data, size_t payloa
         return;
     }
 
-    std::lock_guard<std::mutex> lock(state_mutex_);
-    if (!pcm_handle_) {
-        if (!configure_device()) {
-            LOG_CPP_ERROR("[AlsaPlayback:%s] Unable to configure device before playback.", device_tag_.c_str());
-            return;
-        }
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        send_payload_locked(payload_data, payload_size, csrcs);
     }
-
-    // The sink audio mixer already outputs data in the correct bit depth and little-endian format
-    // We just need to write it directly to ALSA
-    const unsigned int source_bit_depth = static_cast<unsigned int>(config_.output_bitdepth);
-    const size_t bytes_per_source_sample = source_bit_depth / 8;
-    if (bytes_per_source_sample == 0 || channels_ == 0) {
-        LOG_CPP_ERROR("[AlsaPlayback:%s] Invalid source format: bitdepth=%u channels=%u",
-                      device_tag_.c_str(), source_bit_depth, channels_);
-        return;
-    }
-
-    const size_t source_frame_bytes = bytes_per_source_sample * channels_;
-    if (payload_size % source_frame_bytes != 0) {
-        LOG_CPP_ERROR("[AlsaPlayback:%s] Payload size %zu not aligned with frame size %zu.",
-                      device_tag_.c_str(), payload_size, source_frame_bytes);
-        return;
-    }
-
-    const size_t frames_in_payload = payload_size / source_frame_bytes;
-    if (frames_in_payload == 0) {
-        return;
-    }
-
-    // Write directly to ALSA - no conversion needed
-    bool write_result = write_frames(payload_data, frames_in_payload, source_frame_bytes);
-
-    if (!write_result) {
-        LOG_CPP_WARNING("[AlsaPlayback:%s] Dropped audio chunk due to write failure.", device_tag_.c_str());
+    auto note = consume_pending_format_notification();
+    if (note.valid) {
+        dispatch_format_notification(note);
     }
 #else
     (void)payload_data;
@@ -151,6 +140,96 @@ void AlsaPlaybackSender::update_pipeline_backlog(double upstream_frames, double 
     std::lock_guard<std::mutex> lock(state_mutex_);
     upstream_buffer_frames_ = std::max(0.0, upstream_frames);
     upstream_target_frames_ = std::max(0.0, upstream_target_frames);
+}
+
+void AlsaPlaybackSender::set_format_change_callback(FormatChangeCallback cb) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    format_change_callback_ = std::move(cb);
+}
+
+void AlsaPlaybackSender::update_source_format(unsigned int sample_rate,
+                                              unsigned int channels,
+                                              unsigned int bit_depth) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    update_source_format_locked(sample_rate, channels, bit_depth);
+}
+
+bool AlsaPlaybackSender::send_payload_locked(const uint8_t* payload_data,
+                                             size_t payload_size,
+                                             const std::vector<uint32_t>& csrcs) {
+    (void)csrcs;
+    if (!pcm_handle_) {
+        if (!configure_device()) {
+            LOG_CPP_ERROR("[AlsaPlayback:%s] Unable to configure device before playback.", device_tag_.c_str());
+            return false;
+        }
+    }
+
+    const unsigned int source_bit_depth = source_bit_depth_;
+    const unsigned int source_channels = source_channels_;
+    const size_t source_frame_bytes = source_bytes_per_frame_ > 0
+                                          ? source_bytes_per_frame_
+                                          : static_cast<size_t>((source_bit_depth / 8u) * std::max(1u, source_channels));
+    if (source_bit_depth == 0 || source_frame_bytes == 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Invalid source format: bitdepth=%u channels=%u",
+                      device_tag_.c_str(), source_bit_depth, source_channels);
+        return false;
+    }
+    if (payload_size % source_frame_bytes != 0) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Payload size %zu not aligned with frame size %zu.",
+                      device_tag_.c_str(), payload_size, source_frame_bytes);
+        return false;
+    }
+
+    const size_t frames_in_payload = payload_size / source_frame_bytes;
+    if (frames_in_payload == 0) {
+        return true;
+    }
+
+    bool write_result = write_frames(payload_data, frames_in_payload, source_frame_bytes);
+    if (!write_result) {
+        LOG_CPP_WARNING("[AlsaPlayback:%s] Dropped audio chunk due to write failure.", device_tag_.c_str());
+    }
+    return write_result;
+}
+
+void AlsaPlaybackSender::update_source_format_locked(unsigned int sample_rate,
+                                                     unsigned int channels,
+                                                     unsigned int bit_depth) {
+    source_sample_rate_ = sample_rate > 0 ? sample_rate : source_sample_rate_;
+    source_channels_ = std::max(1u, channels);
+    unsigned int sanitized_bit_depth = (bit_depth >= 8) ? (bit_depth - (bit_depth % 8)) : 16u;
+    source_bit_depth_ = sanitized_bit_depth;
+    config_.output_samplerate = static_cast<int>(source_sample_rate_);
+    config_.output_channels = static_cast<int>(source_channels_);
+    config_.output_bitdepth = static_cast<int>(source_bit_depth_);
+    const unsigned int bytes_per_sample = (source_bit_depth_ == 24u) ? 3u : (source_bit_depth_ / 8u);
+    source_bytes_per_frame_ = bytes_per_sample * static_cast<size_t>(source_channels_);
+}
+
+void AlsaPlaybackSender::dispatch_format_notification(const FormatNotification& note) {
+    if (!note.valid) {
+        return;
+    }
+    FormatChangeCallback cb;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        cb = format_change_callback_;
+    }
+    if (cb) {
+        cb(note.sample_rate, note.channels, note.bit_depth);
+    }
+}
+
+AlsaPlaybackSender::FormatNotification AlsaPlaybackSender::consume_pending_format_notification() {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    FormatNotification note{};
+    if (format_notification_pending_) {
+        note = pending_format_notification_;
+        pending_format_notification_ = {};
+        format_notification_pending_ = false;
+    }
+    return note;
 }
 
 bool AlsaPlaybackSender::parse_legacy_card_device(const std::string& value, int& card, int& device) const {
@@ -205,36 +284,94 @@ bool AlsaPlaybackSender::configure_device() {
         return false;
     }
 
-    // Use the bit depth from the sink mixer configuration
-    switch (bit_depth_) {
-        case 16:
-            sample_format_ = SND_PCM_FORMAT_S16_LE;
-            hardware_bit_depth_ = 16;
-            bytes_per_frame_ = channels_ * sizeof(int16_t);
-            break;
-        case 24:
-            sample_format_ = SND_PCM_FORMAT_S24_3LE;
-            hardware_bit_depth_ = 24;
-            bytes_per_frame_ = channels_ * 3;
-            break;
-        case 32:
-            sample_format_ = SND_PCM_FORMAT_S32_LE;
-            hardware_bit_depth_ = 32;
-            bytes_per_frame_ = channels_ * sizeof(int32_t);
-            break;
-        default:
-            LOG_CPP_ERROR("[AlsaPlayback:%s] Unsupported bit depth %d, defaulting to 16-bit.",
-                          device_tag_.c_str(), bit_depth_);
-            sample_format_ = SND_PCM_FORMAT_S16_LE;
-            hardware_bit_depth_ = 16;
-            bytes_per_frame_ = channels_ * sizeof(int16_t);
-            bit_depth_ = 16;
-            break;
-    }
+    const auto format_for_bit_depth = [](unsigned int bits) -> snd_pcm_format_t {
+        switch (bits) {
+            case 16:
+                return SND_PCM_FORMAT_S16_LE;
+            case 24:
+                return SND_PCM_FORMAT_S24_3LE;
+            case 32:
+                return SND_PCM_FORMAT_S32_LE;
+            default:
+                return SND_PCM_FORMAT_UNKNOWN;
+        }
+    };
+
+    const auto bytes_per_sample_for = [](unsigned int bits) -> size_t {
+        if (bits == 24) {
+            return 3;
+        }
+        return bits / 8;
+    };
+
+    auto append_candidate = [](std::vector<unsigned int>& list, unsigned int candidate) {
+        if (candidate == 0) {
+            return;
+        }
+        if (std::find(list.begin(), list.end(), candidate) == list.end()) {
+            list.push_back(candidate);
+        }
+    };
+
+    const unsigned int requested_source_depth = source_bit_depth_ > 0
+                                                    ? source_bit_depth_
+                                                    : static_cast<unsigned int>(std::max(bit_depth_, 0));
+    std::vector<unsigned int> bit_depth_candidates;
+    append_candidate(bit_depth_candidates, requested_source_depth);
+    append_candidate(bit_depth_candidates, 32);
+    append_candidate(bit_depth_candidates, 24);
+    append_candidate(bit_depth_candidates, 16);
 
     snd_pcm_hw_params_t* hw_params = nullptr;
     snd_pcm_hw_params_malloc(&hw_params);
     snd_pcm_hw_params_any(pcm_handle_, hw_params);
+
+    unsigned int selected_bit_depth = 0;
+    bool format_selected = false;
+    for (unsigned int candidate : bit_depth_candidates) {
+        snd_pcm_format_t fmt = format_for_bit_depth(candidate);
+        if (fmt == SND_PCM_FORMAT_UNKNOWN) {
+            continue;
+        }
+
+        size_t bytes_per_sample = bytes_per_sample_for(candidate);
+        err = snd_pcm_hw_params_set_format(pcm_handle_, hw_params, fmt);
+        if (err < 0) {
+            LOG_CPP_WARNING("[AlsaPlayback:%s] Failed to set %u-bit format (%s).",
+                            device_tag_.c_str(), candidate, snd_strerror(err));
+            continue;
+        }
+
+        sample_format_ = fmt;
+        hardware_bit_depth_ = candidate;
+        bytes_per_frame_ = channels_ * bytes_per_sample;
+        selected_bit_depth = candidate;
+        format_selected = true;
+        if (candidate != requested_source_depth) {
+            LOG_CPP_WARNING("[AlsaPlayback:%s] Requested %u-bit playback but ALSA accepted %u-bit. Will notify mixer.",
+                            device_tag_.c_str(), requested_source_depth, candidate);
+        }
+        break;
+    }
+
+    if (!format_selected) {
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to negotiate any supported PCM format.", device_tag_.c_str());
+        snd_pcm_hw_params_free(hw_params);
+        snd_pcm_close(pcm_handle_);
+        pcm_handle_ = nullptr;
+        return false;
+    }
+    bit_depth_ = static_cast<int>(selected_bit_depth);
+    if (selected_bit_depth != 0 && selected_bit_depth != requested_source_depth) {
+        pending_format_notification_.valid = true;
+        pending_format_notification_.sample_rate = sample_rate_;
+        pending_format_notification_.channels = channels_;
+        pending_format_notification_.bit_depth = selected_bit_depth;
+        format_notification_pending_ = true;
+    } else {
+        pending_format_notification_ = {};
+        format_notification_pending_ = false;
+    }
 
     // Disable hidden conversions so latency stays predictable.
     snd_pcm_hw_params_set_rate_resample(pcm_handle_, hw_params, 0);
@@ -1047,6 +1184,20 @@ void AlsaPlaybackSender::handle_dynamic_latency_xrun_locked() {
 }
 
 #endif // __linux__
+
+#if !defined(__linux__)
+void AlsaPlaybackSender::set_format_change_callback(FormatChangeCallback cb) {
+    (void)cb;
+}
+
+void AlsaPlaybackSender::update_source_format(unsigned int sample_rate,
+                                              unsigned int channels,
+                                              unsigned int bit_depth) {
+    (void)sample_rate;
+    (void)channels;
+    (void)bit_depth;
+}
+#endif
 
 } // namespace audio
 } // namespace screamrouter

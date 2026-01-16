@@ -2157,6 +2157,7 @@ class ConfigurationManager(threading.Thread):
             cpp_sink_engine_config.id = cpp_applied_sink.sink_id # Use the same ID
             friendly_name = py_sink_desc.name if getattr(py_sink_desc, "name", None) is not None else ""
             cpp_sink_engine_config.friendly_name = str(friendly_name)
+            cpp_sink_engine_config.system_device_tag = ""
             sink_ip_value = py_sink_desc.ip
             if isinstance(sink_ip_value, str):
                 sink_address = sink_ip_value
@@ -2206,6 +2207,7 @@ class ConfigurationManager(threading.Thread):
                         lookup_tag = f"ap:{card_str}.{device_str}"
 
                 if lookup_tag:
+                    cpp_sink_engine_config.system_device_tag = lookup_tag
                     device_info = self._find_system_device_by_tag(lookup_tag)
                     backend_label = "WASAPI" if (protocol_lower == "wasapi" or is_windows) else "ALSA"
                     if device_info:

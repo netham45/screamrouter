@@ -182,6 +182,13 @@ SinkAudioMixer::SinkAudioMixer(
                 hw_fill_ms_.store(hw_fill_ms, std::memory_order_relaxed);
                 hw_target_ms_.store(hw_target_ms, std::memory_order_relaxed);
             });
+            alsa_sender->set_format_change_callback(
+                [this](unsigned int device_rate, unsigned int device_channels, unsigned int device_bit_depth) {
+                    handle_system_audio_format_change(device_rate, device_channels, device_bit_depth);
+                });
+            alsa_sender->update_source_format(static_cast<unsigned int>(std::max(playback_sample_rate_, 0)),
+                                              static_cast<unsigned int>(std::max(playback_channels_, 1)),
+                                              static_cast<unsigned int>(std::max(playback_bit_depth_, 8)));
         }
 #elif defined(_WIN32)
         if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
@@ -1828,6 +1835,42 @@ void SinkAudioMixer::update_playback_format_from_sender() {
         }
         return;
     }
+#endif
+}
+
+void SinkAudioMixer::handle_system_audio_format_change(unsigned int device_rate,
+                                                       unsigned int device_channels,
+                                                       unsigned int device_bit_depth) {
+#if defined(__linux__)
+    const int new_sample_rate = device_rate > 0 ? static_cast<int>(device_rate) : playback_sample_rate_;
+    const int new_channels = device_channels > 0 ? static_cast<int>(device_channels) : playback_channels_;
+    const int new_bit_depth = device_bit_depth > 0 ? static_cast<int>(device_bit_depth) : playback_bit_depth_;
+    const bool changed = (new_sample_rate != playback_sample_rate_) ||
+                         (new_channels != playback_channels_) ||
+                         (new_bit_depth != playback_bit_depth_);
+    if (!changed) {
+        return;
+    }
+
+    LOG_CPP_WARNING("[SinkMixer:%s] ALSA device forced format change -> rate=%d Hz channels=%d bit_depth=%d (was %d Hz/%d ch/%d-bit).",
+                    config_.sink_id.c_str(),
+                    new_sample_rate,
+                    new_channels,
+                    new_bit_depth,
+                    playback_sample_rate_,
+                    playback_channels_,
+                    playback_bit_depth_);
+
+    set_playback_format(new_sample_rate, new_channels, new_bit_depth);
+    if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+        alsa_sender->update_source_format(static_cast<unsigned int>(std::max(playback_sample_rate_, 0)),
+                                          static_cast<unsigned int>(std::max(playback_channels_, 1)),
+                                          static_cast<unsigned int>(std::max(playback_bit_depth_, 8)));
+    }
+#else
+    (void)device_rate;
+    (void)device_channels;
+    (void)device_bit_depth;
 #endif
 }
 

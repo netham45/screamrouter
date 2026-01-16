@@ -302,6 +302,9 @@ private:
     void mp3_thread_loop();
 
     void refresh_format_dependent_buffers(int sample_rate, int channels, int bit_depth);
+    void handle_system_audio_format_change(unsigned int device_rate,
+                                           unsigned int device_channels,
+                                           unsigned int device_bit_depth);
     bool wait_for_source_data();
     void mix_buffers();
     void downscale_buffer();

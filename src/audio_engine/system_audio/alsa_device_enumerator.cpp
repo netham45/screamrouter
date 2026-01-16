@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <fstream>
+#include <map>
 
 #if defined(__linux__)
 extern "C" {
@@ -891,6 +893,130 @@ std::optional<SystemDeviceInfo> AlsaDeviceEnumerator::parse_screamrouter_fifo_en
     return info;
 }
 
+unsigned int parse_unsigned_manifest_value(const std::map<std::string, std::string>& kv,
+                                           const char* key,
+                                           unsigned int default_value) {
+    auto it = kv.find(key);
+    if (it == kv.end() || it->second.empty()) {
+        return default_value;
+    }
+    try {
+        return static_cast<unsigned int>(std::stoul(it->second));
+    } catch (...) {
+        return default_value;
+    }
+}
+
+int parse_signed_manifest_value(const std::map<std::string, std::string>& kv,
+                                const char* key,
+                                int default_value) {
+    auto it = kv.find(key);
+    if (it == kv.end() || it->second.empty()) {
+        return default_value;
+    }
+    try {
+        return std::stoi(it->second);
+    } catch (...) {
+        return default_value;
+    }
+}
+
+std::vector<unsigned int> parse_manifest_bit_depths(const std::string& csv) {
+    std::vector<unsigned int> depths;
+    if (csv.empty()) {
+        return depths;
+    }
+    std::stringstream ss(csv);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        token = trim_whitespace(token);
+        if (token.empty()) {
+            continue;
+        }
+        try {
+            depths.push_back(static_cast<unsigned int>(std::stoul(token)));
+        } catch (...) {
+        }
+    }
+    std::sort(depths.begin(), depths.end());
+    depths.erase(std::unique(depths.begin(), depths.end()), depths.end());
+    return depths;
+}
+
+DeviceDirection parse_manifest_direction(const std::string& value) {
+    std::string lower = value;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (lower == "capture" || lower == "input") {
+        return DeviceDirection::CAPTURE;
+    }
+    return DeviceDirection::PLAYBACK;
+}
+
+std::optional<SystemDeviceInfo> parse_runtime_manifest_file(const std::string& manifest_path) {
+    std::ifstream file(manifest_path);
+    if (!file.is_open()) {
+        return std::nullopt;
+    }
+
+    std::map<std::string, std::string> values;
+    std::string line;
+    while (std::getline(file, line)) {
+        auto pos = line.find('=');
+        if (pos == std::string::npos) {
+            continue;
+        }
+        std::string key = trim_whitespace(line.substr(0, pos));
+        std::string value = trim_whitespace(line.substr(pos + 1));
+        if (!key.empty()) {
+            values[key] = value;
+        }
+    }
+
+    auto tag_it = values.find("tag");
+    if (tag_it == values.end() || tag_it->second.empty()) {
+        return std::nullopt;
+    }
+
+    SystemDeviceInfo info;
+    info.tag = tag_it->second;
+    info.direction = parse_manifest_direction(values["direction"]);
+    info.friendly_name = values.count("friendly_name") ? values["friendly_name"] : info.tag;
+    info.hw_id = values.count("hw_id") ? values["hw_id"] : "";
+    info.endpoint_id = values.count("endpoint_id") ? values["endpoint_id"] : info.hw_id;
+    info.card_index = parse_signed_manifest_value(values, "card_index", -1);
+    info.device_index = parse_signed_manifest_value(values, "device_index", -1);
+    info.channels.min = parse_unsigned_manifest_value(values, "channels_min", 0);
+    info.channels.max = parse_unsigned_manifest_value(values, "channels_max", info.channels.min);
+    info.sample_rates.min = parse_unsigned_manifest_value(values, "sample_rate_min", 0);
+    info.sample_rates.max = parse_unsigned_manifest_value(values, "sample_rate_max", info.sample_rates.min);
+    info.bit_depth = parse_unsigned_manifest_value(values, "bit_depth", 0);
+    info.bit_depths = parse_manifest_bit_depths(values.count("bit_depths") ? values["bit_depths"] : "");
+    if (info.bit_depths.empty() && info.bit_depth > 0) {
+        info.bit_depths = {info.bit_depth};
+    }
+
+    auto present_it = values.find("present");
+    if (present_it != values.end()) {
+        std::string present_value = present_it->second;
+        std::transform(present_value.begin(), present_value.end(), present_value.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        info.present = !(present_value == "0" || present_value == "false" || present_value == "no");
+    } else {
+        info.present = true;
+    }
+
+    if (info.friendly_name.empty()) {
+        info.friendly_name = info.tag;
+    }
+    if (info.endpoint_id.empty()) {
+        info.endpoint_id = info.hw_id;
+    }
+    return info;
+}
+
 void AlsaDeviceEnumerator::append_screamrouter_runtime_devices(Registry& registry) {
     if (!ensure_runtime_dir_exists()) {
         return;
@@ -902,20 +1028,33 @@ void AlsaDeviceEnumerator::append_screamrouter_runtime_devices(Registry& registr
     }
 
     while (auto* entry = readdir(dir)) {
-        if (entry->d_type != DT_FIFO && entry->d_type != DT_UNKNOWN) {
-            continue;
-        }
         const std::string filename(entry->d_name);
-        auto info_opt = parse_screamrouter_fifo_entry(filename);
-        if (!info_opt.has_value()) {
+        if (filename.empty() || filename[0] == '.') {
             continue;
         }
 
-        std::string fifo_path = runtime_dir + "/" + filename;
-        SystemDeviceInfo info = std::move(info_opt.value());
-        info.hw_id = fifo_path;
-        info.endpoint_id = fifo_path;
-        registry[info.tag] = info;
+        const std::string full_path = runtime_dir + "/" + filename;
+        bool handled = false;
+
+        if (filename.rfind("srmeta.", 0) == 0) {
+            auto manifest_info = parse_runtime_manifest_file(full_path);
+            if (manifest_info.has_value()) {
+                registry[manifest_info->tag] = *manifest_info;
+            }
+            handled = true;
+        }
+
+        if (!handled && (entry->d_type == DT_FIFO || entry->d_type == DT_UNKNOWN)) {
+            auto info_opt = parse_screamrouter_fifo_entry(filename);
+            if (!info_opt.has_value()) {
+                continue;
+            }
+
+            SystemDeviceInfo info = std::move(info_opt.value());
+            info.hw_id = full_path;
+            info.endpoint_id = full_path;
+            registry[info.tag] = info;
+        }
     }
 
     closedir(dir);

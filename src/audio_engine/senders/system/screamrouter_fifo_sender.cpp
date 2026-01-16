@@ -2,6 +2,8 @@
 
 #include "../../utils/cpp_logger.h"
 
+#include <algorithm>
+
 #if SCREAMROUTER_FIFO_SENDER_AVAILABLE
 #include <cerrno>
 #include <cstring>
@@ -20,6 +22,34 @@ ScreamrouterFifoSender::ScreamrouterFifoSender(const SinkMixerConfig& config)
     if (fifo_path_.rfind("sr_in:", 0) == 0) {
         LOG_CPP_WARNING("[SR-FIFO-Sender:%s] Expected FIFO path but received tag '%s'. Configure output_ip with the FIFO path from system device enumeration.",
                         config_.sink_id.c_str(), fifo_path_.c_str());
+    }
+#endif
+
+#if SCREAMROUTER_FIFO_SENDER_AVAILABLE
+    if (!config_.system_device_tag.empty() &&
+        config_.system_device_tag.rfind("sr_in:", 0) == 0) {
+        SystemDeviceInfo advertised_info;
+        advertised_info.tag = config_.system_device_tag;
+        advertised_info.direction = DeviceDirection::PLAYBACK;
+        advertised_info.friendly_name = config_.friendly_name.empty()
+                                            ? config_.system_device_tag
+                                            : config_.friendly_name;
+        advertised_info.hw_id = fifo_path_;
+        advertised_info.endpoint_id = fifo_path_;
+        advertised_info.card_index = -1;
+        advertised_info.device_index = -1;
+        advertised_info.channels.min = static_cast<unsigned int>(std::max(0, config_.output_channels));
+        advertised_info.channels.max = advertised_info.channels.min;
+        advertised_info.sample_rates.min = static_cast<unsigned int>(std::max(0, config_.output_samplerate));
+        advertised_info.sample_rates.max = advertised_info.sample_rates.min;
+        advertised_info.bit_depth = static_cast<unsigned int>(std::max(0, config_.output_bitdepth));
+        if (advertised_info.bit_depth > 0) {
+            advertised_info.bit_depths = {advertised_info.bit_depth};
+        }
+        advertised_info.present = true;
+
+        runtime_advertiser_ = std::make_unique<system_audio::RuntimeDeviceAdvertiser>();
+        runtime_advertiser_->publish(advertised_info);
     }
 #endif
 }
