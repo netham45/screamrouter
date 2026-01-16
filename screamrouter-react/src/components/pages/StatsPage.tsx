@@ -58,8 +58,8 @@ const StatsPage: React.FC = () => {
       const [statsResponse, settingsResponse, sourcesResponse, sinksResponse] = await Promise.all([
         ApiService.getStats(),
         ApiService.getSettings(),
-        ApiService.getSources(),
-        ApiService.getSinks(),
+        ApiService.getSources({ includeTemporary: true }),
+        ApiService.getSinks({ includeTemporary: true }),
       ]);
       setStats(statsResponse.data);
       setSettings(settingsResponse.data);

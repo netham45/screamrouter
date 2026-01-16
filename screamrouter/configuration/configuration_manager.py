@@ -307,11 +307,13 @@ class ConfigurationManager(threading.Thread):
             _sinks.append(self._apply_hostname_to_entity(sink_copy))
         return _sinks
 
-    def get_permanent_sinks(self) -> List[SinkDescription]:
-        """Returns a list of all sinks (excluding temporary ones)"""
+    def get_permanent_sinks(self, include_temporary: bool = False) -> List[SinkDescription]:
+        """Returns a list of sinks, optionally including temporary ones."""
+        sink_pool: List[SinkDescription]
+        sink_pool = self._get_all_known_sinks() if include_temporary else self.sink_descriptions
         _sinks: List[SinkDescription] = []
-        for sink in self.sink_descriptions:
-            if sink.is_temporary:
+        for sink in sink_pool:
+            if not include_temporary and getattr(sink, "is_temporary", False):
                 continue
             sink_copy = copy(sink)
             if not hasattr(sink_copy, "sap_target_sink"):
@@ -404,10 +406,15 @@ class ConfigurationManager(threading.Thread):
         self.__reload_configuration()
         return True
 
-    def get_sources(self) -> List[SourceDescription]:
-        """Get a list of all sources"""
+    def get_sources(self, include_temporary: bool = False) -> List[SourceDescription]:
+        """Get a list of sources, optionally including temporary ones."""
+        source_pool: List[SourceDescription] = list(self.source_descriptions)
+        if include_temporary:
+            source_pool += self.active_temporary_sources
         sources: List[SourceDescription] = []
-        for source in self.source_descriptions:
+        for source in source_pool:
+            if not include_temporary and getattr(source, "is_temporary", False):
+                continue
             source_copy = copy(source)
             sources.append(self._apply_hostname_to_entity(source_copy))
         return sources
