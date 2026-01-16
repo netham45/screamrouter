@@ -169,7 +169,7 @@ bool WebRtcManager::remove_webrtc_listener(const std::string& sink_id, const std
     } // Release m_manager_mutex here to prevent deadlock
     
     // Step 2: Perform the actual removal WITHOUT holding m_manager_mutex
-    // This prevents deadlock with SinkAudioMixer's listener_senders_mutex_
+    // This prevents deadlock with SinkAudioMixer's listener dispatcher mutex
     m_sink_manager->remove_listener_from_sink(sink_id, listener_id);
     
     // Step 3: Update our internal state (reacquire lock)

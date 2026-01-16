@@ -263,8 +263,6 @@ private:
     std::unique_ptr<AudioProcessor> stereo_preprocessor_;
     
     // Legacy members - keep until legacy code removed from sink_audio_mixer.cpp
-    std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
-    std::mutex listener_senders_mutex_;
     std::vector<uint8_t> mp3_encode_buffer_;
     std::deque<std::vector<int32_t>> mp3_pcm_queue_;
     std::mutex mp3_mutex_;

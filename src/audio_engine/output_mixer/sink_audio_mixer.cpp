@@ -510,11 +510,9 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
         }
     }
 
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        for (const auto& [id, sender] : listener_senders_) {
-            stats.listener_ids.push_back(id);
-        }
+    if (listener_dispatcher_) {
+        auto listener_ids = listener_dispatcher_->get_listener_ids();
+        stats.listener_ids.insert(stats.listener_ids.end(), listener_ids.begin(), listener_ids.end());
     }
 
     return stats;
@@ -643,10 +641,7 @@ void SinkAudioMixer::stop() {
         std::lock_guard<std::mutex> lock(queues_mutex_);
         inputs = ready_rings_.size();
     }
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        listeners = listener_senders_.size();
-    }
+    listeners = listener_dispatcher_ ? listener_dispatcher_->count() : 0;
     LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_fill_bytes_, clock_manager_enabled_.load() ? 1 : 0);
     
     // Set stop flag first
@@ -728,15 +723,8 @@ void SinkAudioMixer::stop() {
         log_elapsed("network_sender closed");
     }
 
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        for (auto& pair : listener_senders_) {
-            if (pair.second) {
-                LOG_CPP_INFO("[SinkMixer:%s] Closing listener sender id=%s", config_.sink_id.c_str(), pair.first.c_str());
-                pair.second->close();
-            }
-        }
-        listener_senders_.clear();
+    if (listener_dispatcher_) {
+        listener_dispatcher_->close_all();
         LOG_CPP_INFO("[SinkMixer:%s] All listener senders closed and cleared.", config_.sink_id.c_str());
     }
     log_elapsed("listener cleanup complete");
@@ -2303,11 +2291,7 @@ void SinkAudioMixer::run() {
             break;
         }
         
-        bool has_listeners;
-        {
-            std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-            has_listeners = !listener_senders_.empty();
-        }
+        bool has_listeners = listener_dispatcher_ && listener_dispatcher_->count() > 0;
         bool mp3_enabled = mp3_output_queue_ && mp3_thread_running_.load(std::memory_order_acquire);
 
         if (has_listeners || mp3_enabled) {
