@@ -233,6 +233,7 @@ class SystemAudioDeviceInfo(BaseModel):
     channels_supported: List[int]
     sample_rates: List[int]
     bit_depth: Optional[int] = None
+    bit_depths: List[int] = Field(default_factory=list)
     present: bool
 
 

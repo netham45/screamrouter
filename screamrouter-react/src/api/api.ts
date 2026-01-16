@@ -120,6 +120,8 @@ export interface SystemAudioDeviceInfo {
   device_index: number;
   channels_supported: number[];
   sample_rates: number[];
+  bit_depth?: number | null;
+  bit_depths?: number[];
   present: boolean;
 }
 

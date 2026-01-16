@@ -376,6 +376,17 @@ SystemDeviceInfo WasapiDeviceEnumerator::BuildDeviceInfo(IMMDevice* device,
             const WAVEFORMATEX* base = ResolveBaseFormat(mix_format);
             info.channels = BuildChannelRange(base);
             info.sample_rates = BuildSampleRateRange(base);
+            unsigned int bits = base ? base->wBitsPerSample : 0;
+            if (mix_format->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+                auto* extensible = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(mix_format);
+                if (extensible->Samples.wValidBitsPerSample > 0) {
+                    bits = extensible->Samples.wValidBitsPerSample;
+                }
+            }
+            if (bits > 0) {
+                info.bit_depth = bits;
+                info.bit_depths = {bits};
+            }
             CoTaskMemFree(mix_format);
         }
     }

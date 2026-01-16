@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <utility>
 
 #if defined(__linux__)
 extern "C" {
@@ -97,6 +98,33 @@ AlsaDeviceEnumerator::Registry AlsaDeviceEnumerator::get_registry_snapshot() con
 
 namespace {
 constexpr int kPollTimeoutMs = 2000;
+
+std::vector<unsigned int> DetectSupportedBitDepths(snd_pcm_t* pcm_handle, snd_pcm_hw_params_t* params) {
+    if (!pcm_handle || !params) {
+        return {};
+    }
+    struct FormatCandidate {
+        snd_pcm_format_t format;
+        unsigned int bit_depth;
+    };
+    static constexpr FormatCandidate kCandidates[] = {
+        {SND_PCM_FORMAT_S16_LE, 16},
+        {SND_PCM_FORMAT_S24_3LE, 24},
+        {SND_PCM_FORMAT_S24_LE, 24},
+        {SND_PCM_FORMAT_S32_LE, 32},
+    };
+
+    std::vector<unsigned int> supported;
+    supported.reserve(sizeof(kCandidates) / sizeof(kCandidates[0]));
+    for (const auto& candidate : kCandidates) {
+        if (snd_pcm_hw_params_test_format(pcm_handle, params, candidate.format) == 0) {
+            supported.push_back(candidate.bit_depth);
+        }
+    }
+    std::sort(supported.begin(), supported.end());
+    supported.erase(std::unique(supported.begin(), supported.end()), supported.end());
+    return supported;
+}
 
 bool ensure_runtime_dir_exists() {
     const std::string runtime_dir = screamrouter::audio::system_audio::screamrouter_runtime_dir();
@@ -268,6 +296,12 @@ void populate_pcm_capabilities(SystemDeviceInfo& info, snd_pcm_stream_t stream) 
         info.sample_rates.max = max_rate;
     }
 
+    auto bit_depths = DetectSupportedBitDepths(pcm_handle, params);
+    if (!bit_depths.empty()) {
+        info.bit_depths = std::move(bit_depths);
+        info.bit_depth = info.bit_depths.back();
+    }
+
     snd_pcm_hw_params_free(params);
     snd_pcm_close(pcm_handle);
 }
@@ -294,6 +328,7 @@ SystemDeviceInfo create_hint_device_info(
         info.channels = previous_info->channels;
         info.sample_rates = previous_info->sample_rates;
         info.bit_depth = previous_info->bit_depth;
+        info.bit_depths = previous_info->bit_depths;
     }
 
     std::string friendly = clean_description(description);
@@ -849,6 +884,7 @@ std::optional<SystemDeviceInfo> AlsaDeviceEnumerator::parse_screamrouter_fifo_en
     info.sample_rates.min = rate;
     info.sample_rates.max = rate;
     info.bit_depth = bits;
+    info.bit_depths = {bits};
     info.card_index = -1;
     info.device_index = -1;
     info.present = true;

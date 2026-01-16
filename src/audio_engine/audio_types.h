@@ -210,6 +210,7 @@ struct SystemDeviceInfo {
     DeviceCapabilityRange channels;
     DeviceCapabilityRange sample_rates;
     unsigned int bit_depth = 0;
+    std::vector<unsigned int> bit_depths;
     bool present = false;
 
     bool operator==(const SystemDeviceInfo& other) const {
@@ -223,6 +224,7 @@ struct SystemDeviceInfo {
                channels == other.channels &&
                sample_rates == other.sample_rates &&
                bit_depth == other.bit_depth &&
+               bit_depths == other.bit_depths &&
                present == other.present;
     }
 };
@@ -702,6 +704,7 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("channels", &SystemDeviceInfo::channels)
             .def_readwrite("sample_rates", &SystemDeviceInfo::sample_rates)
             .def_readwrite("bit_depth", &SystemDeviceInfo::bit_depth)
+            .def_readwrite("bit_depths", &SystemDeviceInfo::bit_depths)
             .def_readwrite("present", &SystemDeviceInfo::present);
 
         py::class_<DeviceDiscoveryNotification>(m, "DeviceDiscoveryNotification", "Notification emitted when a system device changes state")

@@ -213,7 +213,7 @@ bool AlsaPlaybackSender::configure_device() {
             bytes_per_frame_ = channels_ * sizeof(int16_t);
             break;
         case 24:
-            sample_format_ = SND_PCM_FORMAT_S24_LE;
+            sample_format_ = SND_PCM_FORMAT_S24_3LE;
             hardware_bit_depth_ = 24;
             bytes_per_frame_ = channels_ * 3;
             break;
@@ -242,8 +242,11 @@ bool AlsaPlaybackSender::configure_device() {
     snd_pcm_hw_params_set_access(pcm_handle_, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
     err = snd_pcm_hw_params_set_format(pcm_handle_, hw_params, sample_format_);
     if (err < 0) {
-        LOG_CPP_WARNING("[AlsaPlayback:%s] Failed to set %d-bit format (%s); continuing without applying format override.",
-                        device_tag_.c_str(), bit_depth_, snd_strerror(err));
+        LOG_CPP_ERROR("[AlsaPlayback:%s] Failed to set %d-bit format (%s).",
+                      device_tag_.c_str(), bit_depth_, snd_strerror(err));
+        snd_pcm_hw_params_free(hw_params);
+        close_locked();
+        return false;
     }
     snd_pcm_hw_params_set_channels(pcm_handle_, hw_params, channels_);
     err = snd_pcm_hw_params_set_rate(pcm_handle_, hw_params, sample_rate_, 0);

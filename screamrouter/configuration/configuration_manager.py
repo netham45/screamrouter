@@ -1816,6 +1816,36 @@ class ConfigurationManager(threading.Thread):
         except Exception:  # pylint: disable=broad-except
             bit_depth_value = None
 
+        raw_bit_depths = getattr(info, "bit_depths", None)
+        if raw_bit_depths is None and isinstance(info, dict):
+            raw_bit_depths = info.get("bit_depths")
+        bit_depth_list: List[int] = []
+        if raw_bit_depths is not None:
+            if isinstance(raw_bit_depths, str):
+                candidates = [part.strip() for part in raw_bit_depths.split(',') if part.strip()]
+                for candidate in candidates:
+                    try:
+                        value = int(candidate)
+                    except Exception:  # pylint: disable=broad-except
+                        continue
+                    if value > 0:
+                        bit_depth_list.append(value)
+            else:
+                try:
+                    iterator = list(raw_bit_depths)  # type: ignore[arg-type]
+                except TypeError:
+                    iterator = [raw_bit_depths]
+                for candidate in iterator:
+                    try:
+                        value = int(candidate)
+                    except Exception:  # pylint: disable=broad-except
+                        continue
+                    if value > 0:
+                        bit_depth_list.append(value)
+        if bit_depth_value and bit_depth_value not in bit_depth_list:
+            bit_depth_list.append(bit_depth_value)
+        bit_depth_list = sorted(set(bit_depth_list))
+
         return SystemAudioDeviceInfo(
             tag=tag,
             direction=direction,
@@ -1827,6 +1857,7 @@ class ConfigurationManager(threading.Thread):
             channels_supported=channels_supported,
             sample_rates=sample_rates,
             bit_depth=bit_depth_value,
+            bit_depths=bit_depth_list,
             present=present,
         )
 
