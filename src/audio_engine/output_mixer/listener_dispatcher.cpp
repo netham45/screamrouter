@@ -25,6 +25,7 @@ bool ListenerDispatcher::add_listener(const std::string& listener_id, std::uniqu
     
     // Setup cleanup callback for WebRTC senders
     if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
+        LOG_CPP_INFO("[ListenerDispatcher:%s] Registering WebRTC listener '%s'", sink_id_.c_str(), listener_id.c_str());
         webrtc_sender->set_cleanup_callback(listener_id, [this](const std::string& id) {
             LOG_CPP_INFO("[ListenerDispatcher:%s] Cleanup callback triggered for listener: %s",
                          sink_id_.c_str(), id.c_str());
@@ -105,6 +106,8 @@ void ListenerDispatcher::dispatch_to_listeners(const int32_t* stereo_samples, si
         if (listeners_.empty() || sample_count == 0 || !stereo_samples) {
             return;
         }
+        LOG_CPP_DEBUG("[ListenerDispatcher:%s] Dispatching %zu samples to %zu listeners",
+                      sink_id_.c_str(), sample_count, listeners_.size());
         
         const uint8_t* payload_data = reinterpret_cast<const uint8_t*>(stereo_samples);
         size_t payload_size = sample_count * sizeof(int32_t);
@@ -126,6 +129,8 @@ void ListenerDispatcher::dispatch_to_listeners(const int32_t* stereo_samples, si
     } // Release mutex before removing closed listeners
     
     for (const auto& listener_id : closed_listeners) {
+        LOG_CPP_INFO("[ListenerDispatcher:%s] Listener '%s' closed during dispatch; removing.",
+                     sink_id_.c_str(), listener_id.c_str());
         remove_listener(listener_id);
         LOG_CPP_INFO("[ListenerDispatcher:%s] Removed closed listener: %s",
                      sink_id_.c_str(), listener_id.c_str());

@@ -2298,6 +2298,9 @@ void SinkAudioMixer::run() {
             size_t processed_samples = preprocess_for_listeners_and_mp3();
             if (processed_samples > 0) {
                 if (has_listeners) {
+                    LOG_CPP_DEBUG("[SinkMixer:%s] Dispatching %zu stereo samples to %zu listeners",
+                                  config_.sink_id.c_str(), processed_samples,
+                                  listener_dispatcher_ ? listener_dispatcher_->count() : 0);
                     dispatch_to_listeners(processed_samples);
                 }
                 if (mp3_enabled) {

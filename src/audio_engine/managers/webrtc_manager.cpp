@@ -37,6 +37,8 @@ bool WebRtcManager::add_webrtc_listener(
     bool running,
     const std::string& client_ip)
 {
+    LOG_CPP_INFO("[WebRtcManager] add_webrtc_listener sink_id=%s listener_id=%s client_ip=%s running=%d",
+                 sink_id.c_str(), listener_id.c_str(), client_ip.c_str(), running ? 1 : 0);
     if (!running) {
         LOG_CPP_ERROR("[WebRtcManager] Cannot add WebRTC listener, manager is not running.");
         return false;
@@ -48,7 +50,8 @@ bool WebRtcManager::add_webrtc_listener(
         std::scoped_lock lock(m_manager_mutex);
         for (auto it = m_webrtc_listeners.begin(); it != m_webrtc_listeners.end(); ++it) {
             if (it->second.ip_address == client_ip) {
-                LOG_CPP_INFO("[WebRtcManager] Found existing WebRTC listener %s from IP %s. Will remove it.", it->second.listener_id.c_str(), client_ip.c_str());
+                LOG_CPP_INFO("[WebRtcManager] Found existing WebRTC listener %s from IP %s. Will remove it before adding %s.",
+                             it->second.listener_id.c_str(), client_ip.c_str(), listener_id.c_str());
                 listeners_to_remove.push_back({it->second.sink_id, it->second.listener_id});
             }
         }
@@ -85,6 +88,8 @@ bool WebRtcManager::add_webrtc_listener(
         mixer_config.sap_target_sink = sink_config.sap_target_sink;
         mixer_config.sap_target_host = sink_config.sap_target_host;
         mixer_config.speaker_layout = sink_config.speaker_layout;
+        LOG_CPP_INFO("[WebRtcManager] Config for listener %s: rate=%d channels=%d bit=%d",
+                     listener_id.c_str(), mixer_config.output_samplerate, mixer_config.output_channels, mixer_config.output_bitdepth);
     } // Release m_manager_mutex here to prevent deadlock
 
     // Step 2: Create WebRtcSender WITHOUT holding m_manager_mutex
@@ -92,6 +97,7 @@ bool WebRtcManager::add_webrtc_listener(
     std::unique_ptr<WebRtcSender> webrtc_sender;
     try {
         webrtc_sender = std::make_unique<WebRtcSender>(mixer_config, offer_sdp, on_local_description_callback, on_ice_candidate_callback);
+        LOG_CPP_INFO("[WebRtcManager] Created WebRtcSender %p for listener %s", webrtc_sender.get(), listener_id.c_str());
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("[WebRtcManager] Failed to create WebRtcSender for listener %s on sink %s: %s", listener_id.c_str(), sink_id.c_str(), e.what());
         return false;
@@ -99,6 +105,7 @@ bool WebRtcManager::add_webrtc_listener(
 
     // Step 3: Add the sender to the sink WITHOUT holding m_manager_mutex
     // Note: We do NOT call setup() here - it will be done separately to avoid deadlock
+    LOG_CPP_INFO("[WebRtcManager] Attaching WebRTC sender '%s' to sink '%s'", listener_id.c_str(), sink_id.c_str());
     m_sink_manager->add_listener_to_sink(sink_id, listener_id, std::move(webrtc_sender));
     
     // Step 4: Update internal state (reacquire lock)
@@ -128,9 +135,11 @@ bool WebRtcManager::add_webrtc_listener(
     {
         std::lock_guard<std::mutex> lock(setup_threads_mutex_);
         setup_threads_.emplace_back([this, sink_id, listener_id]() {
+            LOG_CPP_INFO("[WebRtcManager] Deferred setup thread started for listener %s sink %s", listener_id.c_str(), sink_id.c_str());
             // Small delay to ensure Python has released the GIL
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             if (shutting_down_.load(std::memory_order_acquire)) {
+                LOG_CPP_INFO("[WebRtcManager] Shutdown in progress; skipping setup for listener %s", listener_id.c_str());
                 return;
             }
 
@@ -140,6 +149,8 @@ bool WebRtcManager::add_webrtc_listener(
                     LOG_CPP_ERROR("[WebRtcManager] Failed to setup WebRTC connection for listener %s", listener_id.c_str());
                     // Clean up on failure
                     remove_webrtc_listener(sink_id, listener_id, true);
+                } else {
+                    LOG_CPP_INFO("[WebRtcManager] Completed WebRTC setup for listener %s sink %s", listener_id.c_str(), sink_id.c_str());
                 }
             } else {
                 LOG_CPP_ERROR("[WebRtcManager] Could not find sender for listener %s after adding", listener_id.c_str());
@@ -151,6 +162,8 @@ bool WebRtcManager::add_webrtc_listener(
 }
 
 bool WebRtcManager::remove_webrtc_listener(const std::string& sink_id, const std::string& listener_id, bool running) {
+    LOG_CPP_INFO("[WebRtcManager] remove_webrtc_listener sink_id=%s listener_id=%s running=%d",
+                 sink_id.c_str(), listener_id.c_str(), running ? 1 : 0);
     // Step 1: Check if we should proceed and validate listener exists (under lock)
     {
         std::scoped_lock lock(m_manager_mutex);
@@ -204,6 +217,7 @@ void WebRtcManager::add_webrtc_remote_ice_candidate(const std::string& sink_id, 
     // Step 2: Call into WebRTC without holding m_manager_mutex
     // This prevents deadlock with libdatachannel callbacks that need the GIL
     if (webrtc_sender) {
+        LOG_CPP_DEBUG("[WebRtcManager] add_remote_ice_candidate sink=%s listener=%s mid=%s", sink_id.c_str(), listener_id.c_str(), sdpMid.c_str());
         webrtc_sender->add_remote_ice_candidate(candidate, sdpMid);
     }
 }
@@ -233,6 +247,7 @@ void WebRtcManager::set_webrtc_remote_description(const std::string& sink_id,
     }
 
     if (webrtc_sender) {
+        LOG_CPP_INFO("[WebRtcManager] set_remote_description sink=%s listener=%s type=%s", sink_id.c_str(), listener_id.c_str(), type.c_str());
         webrtc_sender->set_remote_description(sdp, type);
     }
 }

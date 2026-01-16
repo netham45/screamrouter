@@ -858,6 +858,8 @@ class ConfigurationManager(threading.Thread):
         
         # Add to active temporary sinks list
         self.active_temporary_sinks.append(sink)
+        _logger.info("[Configuration Manager] Temporary sink '%s' added (config_id=%s). Total temporary sinks: %d",
+                     sink.name, sink.config_id, len(self.active_temporary_sinks))
         
         # Apply configuration synchronously for temporary entities
         # This ensures the C++ engine knows about the sink before WebRTC tries to use it
@@ -877,6 +879,8 @@ class ConfigurationManager(threading.Thread):
         
         # Add to active temporary routes list
         self.active_temporary_routes.append(route)
+        _logger.info("[Configuration Manager] Temporary route '%s' added (config_id=%s). Total temporary routes: %d",
+                     route.name, route.config_id, len(self.active_temporary_routes))
         
         # Apply configuration synchronously for temporary entities
         # This ensures the C++ engine knows about the route before it's used
@@ -902,7 +906,7 @@ class ConfigurationManager(threading.Thread):
         for sink in self.active_temporary_sinks[:]:
             if sink.name == sink_name:
                 self.active_temporary_sinks.remove(sink)
-                _logger.info(f"Removed temporary sink '{sink_name}'")
+                _logger.info(f"Removed temporary sink '{sink_name}' (config_id={sink.config_id}). Remaining temporary sinks: {len(self.active_temporary_sinks)}")
                 # Also remove any associated temporary routes
                 for route in self.active_temporary_routes[:]:
                     if route.sink == sink_name:
@@ -921,7 +925,7 @@ class ConfigurationManager(threading.Thread):
         for route in self.active_temporary_routes[:]:
             if route.name == route_name:
                 self.active_temporary_routes.remove(route)
-                _logger.info(f"Removed temporary route '{route_name}'")
+                _logger.info(f"Removed temporary route '{route_name}' (config_id={route.config_id}). Remaining temporary routes: {len(self.active_temporary_routes)}")
                 # Apply configuration synchronously for temporary entity removal
                 self.__apply_temporary_configuration_sync()
                 return True
@@ -2840,7 +2844,11 @@ class ConfigurationManager(threading.Thread):
         Synchronously applies temporary configuration changes to the C++ engine.
         This is used for temporary entities that need immediate availability (e.g., WebRTC sinks).
         """
-        _logger.info("[Configuration Manager] Applying temporary configuration synchronously")
+        _logger.info("[Configuration Manager] Applying temporary configuration synchronously "
+                     "(temp_sinks=%d temp_routes=%d temp_sources=%d)",
+                     len(self.active_temporary_sinks),
+                     len(self.active_temporary_routes),
+                     len(self.active_temporary_sources))
         
         # Process the configuration to update the active_configuration
         self.__process_configuration()

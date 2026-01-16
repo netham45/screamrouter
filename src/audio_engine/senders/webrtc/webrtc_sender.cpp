@@ -83,6 +83,8 @@ WebRtcSender::WebRtcSender(
       audio_track_(nullptr),
       current_timestamp_(0) {
     opus_channels_ = std::clamp(config_.output_channels > 0 ? config_.output_channels : 2, 1, 8);
+    LOG_CPP_INFO("[WebRtcSender:%s] Constructing sender (channels=%d samplerate=%d)",
+                 config_.sink_id.c_str(), opus_channels_, config_.output_samplerate);
     LOG_CPP_INFO("[WebRtcSender] DEADLOCK_DEBUG: Constructor START for sink: %s", config_.sink_id.c_str());
     initialize_opus_encoder();
     LOG_CPP_INFO("[WebRtcSender] DEADLOCK_DEBUG: Constructor END for sink: %s", config_.sink_id.c_str());
@@ -305,7 +307,7 @@ void WebRtcSender::setup_peer_connection() {
             LOG_CPP_ERROR("[WebRtcSender:%s] Cannot setup peer connection without a remote offer.", config_.sink_id.c_str());
             return;
         }
-        LOG_CPP_INFO("[WebRtcSender:%s] Processing remote offer.", config_.sink_id.c_str());
+        LOG_CPP_INFO("[WebRtcSender:%s] Processing remote offer (SDP size=%zu).", config_.sink_id.c_str(), offer_sdp_.size());
         rtc::Description offer(offer_sdp_, "offer");
 
         // Find the audio media description in the client's offer
@@ -333,6 +335,7 @@ void WebRtcSender::setup_peer_connection() {
 
         // Set the remote description first.
         peer_connection_->setRemoteDescription(offer);
+        LOG_CPP_INFO("[WebRtcSender:%s] Remote description applied", config_.sink_id.c_str());
 
 
         // Add our track using the reciprocated description.
@@ -423,6 +426,7 @@ void WebRtcSender::setup_peer_connection() {
 
         // With auto-negotiation disabled, we manually generate the answer *after* adding the track.
         peer_connection_->setLocalDescription();
+        LOG_CPP_INFO("[WebRtcSender:%s] Local description set; awaiting ICE", config_.sink_id.c_str());
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("[WebRtcSender:%s] Exception during peer connection setup: %s", config_.sink_id.c_str(), e.what());
         throw;
@@ -443,6 +447,7 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
     
     // Early return if this sender is closed or marked for cleanup
     if (is_closed()) {
+        LOG_CPP_DEBUG("[WebRtcSender:%s] Dropping payload because sender is closed (size=%zu)", config_.sink_id.c_str(), payload_size);
         return;
     }
     
@@ -480,6 +485,7 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
         }
     }
 
+    LOG_CPP_DEBUG("[WebRtcSender:%s] Encoding %zu bytes of PCM for listener", config_.sink_id.c_str(), payload_size);
     const int32_t* input = reinterpret_cast<const int32_t*>(payload_data);
     size_t num_samples_interleaved = payload_size / sizeof(int32_t);
 
@@ -522,6 +528,9 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
             const auto* opus_data_byte_ptr = reinterpret_cast<const std::byte*>(opus_buffer_.data());
             audio_track_->sendFrame(rtc::binary(opus_data_byte_ptr, opus_data_byte_ptr + encoded_bytes), frame_info);
             m_total_packets_sent++;
+            LOG_CPP_DEBUG("[WebRtcSender:%s] Sent Opus frame (encoded_bytes=%d timestamp=%u total_packets=%llu)",
+                          config_.sink_id.c_str(), encoded_bytes, current_timestamp_,
+                          static_cast<unsigned long long>(m_total_packets_sent.load()));
             current_timestamp_ += static_cast<uint32_t>(frame_samples_per_channel);
         }
 
