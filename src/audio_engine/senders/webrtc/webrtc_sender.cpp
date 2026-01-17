@@ -660,6 +660,14 @@ std::string WebRtcSender::build_opus_fmtp_profile() const {
     return ss.str();
 }
 
+bool WebRtcSender::wants_multichannel_audio() const {
+    return allow_multichannel_output_ && opus_channels_ > 2 && use_multistream_;
+}
+
+int WebRtcSender::channel_count() const {
+    return opus_channels_;
+}
+
 void WebRtcSender::set_cleanup_callback(const std::string& listener_id,
                                        std::function<void(const std::string&)> callback) {
     listener_id_ = listener_id;

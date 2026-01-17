@@ -107,6 +107,8 @@ public:
      * @return A struct containing the current stats.
      */
     WebRtcSenderStats get_stats();
+    bool wants_multichannel_audio() const;
+    int channel_count() const;
 
 private:
     void trigger_cleanup_if_needed();

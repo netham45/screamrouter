@@ -1295,15 +1295,29 @@ size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
 }
 
 /**
- * @brief Dispatches the pre-processed stereo audio to all registered listeners.
+ * @brief Dispatches audio buffers to all registered listeners.
  * @param samples_to_dispatch The number of stereo samples to send.
  */
 void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
     PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     
-    if (listener_dispatcher_ && samples_to_dispatch > 0) {
-        listener_dispatcher_->dispatch_to_listeners(stereo_buffer_.data(), samples_to_dispatch);
+    if (listener_dispatcher_) {
+        ListenerAudioBuffer stereo_buffer;
+        if (samples_to_dispatch > 0 && !stereo_buffer_.empty()) {
+            stereo_buffer.data = stereo_buffer_.data();
+            stereo_buffer.sample_count = samples_to_dispatch;
+            stereo_buffer.channels = 2;
+        }
+        
+        ListenerAudioBuffer multichannel_buffer;
+        if (!mixing_buffer_.empty()) {
+            multichannel_buffer.data = mixing_buffer_.data();
+            multichannel_buffer.sample_count = mixing_buffer_.size();
+            multichannel_buffer.channels = std::max(playback_channels_, 1);
+        }
+        
+        listener_dispatcher_->dispatch_to_listeners(stereo_buffer, multichannel_buffer);
     }
     
     auto t1 = std::chrono::steady_clock::now();

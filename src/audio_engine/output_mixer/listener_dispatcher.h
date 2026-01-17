@@ -19,6 +19,12 @@
 namespace screamrouter {
 namespace audio {
 
+struct ListenerAudioBuffer {
+    const int32_t* data = nullptr;
+    size_t sample_count = 0;
+    int channels = 0;
+};
+
 /**
  * @class ListenerDispatcher
  * @brief Manages network listeners and dispatches audio to them.
@@ -61,10 +67,11 @@ public:
     
     /**
      * @brief Dispatches audio payload to all active listeners.
-     * @param stereo_samples Pointer to stereo int32 samples.
-     * @param sample_count Number of int32 samples to dispatch.
+     * @param stereo_buffer Preprocessed stereo buffer metadata.
+     * @param multichannel_buffer Mixed multichannel buffer metadata.
      */
-    void dispatch_to_listeners(const int32_t* stereo_samples, size_t sample_count);
+    void dispatch_to_listeners(const ListenerAudioBuffer& stereo_buffer,
+                               const ListenerAudioBuffer& multichannel_buffer);
     
     /**
      * @brief Cleans up closed or timed-out listeners.
