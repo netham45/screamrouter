@@ -210,6 +210,7 @@ struct SystemDeviceInfo {
     DeviceCapabilityRange channels;
     DeviceCapabilityRange sample_rates;
     unsigned int bit_depth = 0;
+    std::vector<unsigned int> bit_depths;
     bool present = false;
 
     bool operator==(const SystemDeviceInfo& other) const {
@@ -223,6 +224,7 @@ struct SystemDeviceInfo {
                channels == other.channels &&
                sample_rates == other.sample_rates &&
                bit_depth == other.bit_depth &&
+               bit_depths == other.bit_depths &&
                present == other.present;
     }
 };
@@ -403,6 +405,8 @@ struct SinkConfig {
     std::string id;
     /** @brief Human-friendly display name for this sink. */
     std::string friendly_name;
+    /** @brief Original system device tag (e.g., sr_in:livingroom) if configured. */
+    std::string system_device_tag;
     /** @brief Destination IP address for UDP output. */
     std::string output_ip;
     /** @brief Destination port for UDP output. */
@@ -573,6 +577,8 @@ struct SinkMixerConfig {
     std::string sink_id;
     /** @brief Human-friendly display name for the sink. */
     std::string friendly_name;
+    /** @brief Original system device tag (if provided). */
+    std::string system_device_tag;
     /** @brief Destination IP address. */
     std::string output_ip;
     /** @brief Destination port. */
@@ -660,6 +666,7 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def(py::init<>()) // Bind the default constructor
             .def_readwrite("id", &SinkConfig::id, "Unique identifier for this sink instance")
             .def_readwrite("friendly_name", &SinkConfig::friendly_name, "Human-friendly display name for this sink")
+            .def_readwrite("system_device_tag", &SinkConfig::system_device_tag, "Original system device tag for this sink (if any)")
             .def_readwrite("output_ip", &SinkConfig::output_ip, "Destination IP address for UDP output")
             .def_readwrite("output_port", &SinkConfig::output_port, "Destination port for UDP output")
             .def_readwrite("bitdepth", &SinkConfig::bitdepth, "Output bit depth (e.g., 16)")
@@ -702,6 +709,7 @@ using ListenerRemovalQueue = utils::ThreadSafeQueue<ListenerRemovalRequest>;
             .def_readwrite("channels", &SystemDeviceInfo::channels)
             .def_readwrite("sample_rates", &SystemDeviceInfo::sample_rates)
             .def_readwrite("bit_depth", &SystemDeviceInfo::bit_depth)
+            .def_readwrite("bit_depths", &SystemDeviceInfo::bit_depths)
             .def_readwrite("present", &SystemDeviceInfo::present);
 
         py::class_<DeviceDiscoveryNotification>(m, "DeviceDiscoveryNotification", "Notification emitted when a system device changes state")

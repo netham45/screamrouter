@@ -263,8 +263,6 @@ private:
     std::unique_ptr<AudioProcessor> stereo_preprocessor_;
     
     // Legacy members - keep until legacy code removed from sink_audio_mixer.cpp
-    std::map<std::string, std::unique_ptr<INetworkSender>> listener_senders_;
-    std::mutex listener_senders_mutex_;
     std::vector<uint8_t> mp3_encode_buffer_;
     std::deque<std::vector<int32_t>> mp3_pcm_queue_;
     std::mutex mp3_mutex_;
@@ -302,6 +300,9 @@ private:
     void mp3_thread_loop();
 
     void refresh_format_dependent_buffers(int sample_rate, int channels, int bit_depth);
+    void handle_system_audio_format_change(unsigned int device_rate,
+                                           unsigned int device_channels,
+                                           unsigned int device_bit_depth);
     bool wait_for_source_data();
     void mix_buffers();
     void downscale_buffer();

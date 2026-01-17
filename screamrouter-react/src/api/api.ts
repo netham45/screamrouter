@@ -120,6 +120,8 @@ export interface SystemAudioDeviceInfo {
   device_index: number;
   channels_supported: number[];
   sample_rates: number[];
+  bit_depth?: number | null;
+  bit_depths?: number[];
   present: boolean;
 }
 
@@ -647,8 +649,14 @@ const ApiService = {
   forceWebSocketReconnect,
 
   // GET requests
-  getSources: () => cachedGet<Record<string, Source>>('/sources'),
-  getSinks: () => cachedGet<Record<string, Sink>>('/sinks'),
+  getSources: (options?: { includeTemporary?: boolean }) => cachedGet<Record<string, Source>>(
+    '/sources',
+    options?.includeTemporary ? { params: { include_temporary: true } } : undefined,
+  ),
+  getSinks: (options?: { includeTemporary?: boolean }) => cachedGet<Record<string, Sink>>(
+    '/sinks',
+    options?.includeTemporary ? { params: { include_temporary: true } } : undefined,
+  ),
   getRoutes: () => cachedGet<Record<string, Route>>('/routes'),
   getSystemAudioDevices: () => cachedGet<{
     system_capture_devices?: SystemAudioDeviceInfo[] | Record<string, SystemAudioDeviceInfo>;

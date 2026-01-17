@@ -48,6 +48,21 @@ const renderSampleRates = (rates: number[]): string => {
     .join(', ');
 };
 
+const formatBitDepths = (device: SystemAudioDeviceInfo): string => {
+  const list = Array.isArray(device.bit_depths)
+    ? device.bit_depths.filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    : [];
+  if (list.length === 0 && typeof device.bit_depth === 'number' && device.bit_depth > 0) {
+    list.push(device.bit_depth);
+  }
+  if (list.length === 0) {
+    return '—';
+  }
+  const unique = Array.from(new Set(list));
+  unique.sort((a, b) => a - b);
+  return unique.map(depth => `${depth}-bit`).join(', ');
+};
+
 interface DeviceSectionProps {
   title: string;
   icon: React.ComponentType;
@@ -100,6 +115,7 @@ const DeviceSection: React.FC<DeviceSectionProps> = ({ title, icon, devices }) =
                 <Th>Card/Device</Th>
                 <Th>Channels</Th>
                 <Th>Sample Rates</Th>
+                <Th>Bit Depths</Th>
                 <Th>Status</Th>
               </Tr>
             </Thead>
@@ -116,6 +132,7 @@ const DeviceSection: React.FC<DeviceSectionProps> = ({ title, icon, devices }) =
                   <Td>{`${device.card_index}.${device.device_index}`}</Td>
                   <Td>{formatChannelList(device.channels_supported)}</Td>
                   <Td>{renderSampleRates(device.sample_rates)}</Td>
+                  <Td>{formatBitDepths(device)}</Td>
                   <Td>
                     <Badge
                       colorScheme={device.present ? 'green' : 'orange'}

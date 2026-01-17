@@ -148,8 +148,10 @@ class APIWebRTC:
         Handles the whep POST request to initiate a WebRTC session.
         This endpoint receives an SDP offer and returns an SDP answer.
         """
+        logger.info(f"[whep] Incoming WHEP offer for sink '{sink_id}' from {request.client.host if request.client else 'unknown'}")
         # whep requires a specific content type
         if request.headers.get("Content-Type") != "application/sdp":
+            logger.warning(f"[whep:{sink_id}] Rejecting request due to invalid Content-Type: {request.headers.get('Content-Type')}")
             return Response(
                 status_code=415,
                 content="Unsupported Media Type: Content-Type must be application/sdp"
@@ -182,6 +184,7 @@ class APIWebRTC:
 
         # Prepare a list to store ICE candidates for this listener
         self.ice_candidates[listener_id] = []
+        logger.debug(f"[whep:{listener_id}] Initialized candidate store for sink '{actual_sink_id}'")
 
         def on_ice_candidate(candidate: str, sdp_mid: str):
             """
@@ -222,10 +225,13 @@ class APIWebRTC:
                 raise RuntimeError("Failed to add WebRTC listener in audio engine.")
 
             # Wait for the on_local_description callback to be called.
+            logger.info(f"[whep:{listener_id}] Waiting for SDP answer from C++ engine (sink='{actual_sink_id}')")
             await asyncio.wait_for(answer_sdp_event.wait(), timeout=5.0)
 
             if not answer_sdp:
                 raise RuntimeError("Audio engine did not provide an SDP answer in time.")
+            else:
+                logger.info(f"[whep:{listener_id}] Received SDP answer from C++ engine (length={len(answer_sdp)})")
 
             # If successful, add to our tracked listeners
             async with self.listeners_lock:
@@ -236,6 +242,7 @@ class APIWebRTC:
                     "ip": client_ip
                 }
                 logger.info(f"[whep_post] Stored listener '{listener_id}' for sink '{sink_id}' with actual_sink_id '{actual_sink_id}'")
+                logger.debug(f"[whep_post] Currently tracked listeners: {list(self.listeners_info.keys())}")
         except Exception as e:
             logger.error(f"Failed to create whep listener for sink '{sink_id}': {e}", exc_info=True)
             # Clean up if the listener was partially created
@@ -261,8 +268,10 @@ class APIWebRTC:
         """
         Handles the whep PATCH request to trickle ICE candidates.
         """
+        logger.debug(f"[whep_patch:{listener_id}] Received ICE candidate PATCH for sink '{sink_id}'")
         # whep requires a specific content type for trickling ICE
         if "application/json" not in request.headers.get("Content-Type", ""):
+            logger.warning(f"[whep_patch:{listener_id}] Bad content-type: {request.headers.get('Content-Type')}")
             return Response(
                 status_code=415,
                 content="Unsupported Media Type: Content-Type must be application/json"
@@ -284,8 +293,9 @@ class APIWebRTC:
                 if listener_id in self.listeners_info:
                     actual_sink_id = self.listeners_info[listener_id].get("sink_id", sink_id)
             
+            logger.info(f"[whep:{listener_id}] Relaying ICE candidate (len={len(candidate)}) to sink '{actual_sink_id}'")
             self.audio_manager.add_webrtc_remote_ice_candidate(actual_sink_id, listener_id, candidate, sdp_mid)
-            logger.info(f"[whep:{listener_id}] Relayed ICE candidate to C++ engine for sink '{actual_sink_id}'.")
+            logger.debug(f"[whep:{listener_id}] ICE relay complete for sink '{actual_sink_id}'")
             return Response(status_code=204)
         except Exception as e:
             logger.error(f"Failed to process ICE candidate for listener '{listener_id}': {e}", exc_info=True)
@@ -296,6 +306,7 @@ class APIWebRTC:
         Handles the whep DELETE request to terminate a session.
         """
         try:
+            logger.info(f"[whep_delete] Closing listener '{listener_id}' on sink '{sink_id}'")
             # Remove from our tracking first to prevent race conditions with the cleanup task
             info = None
             async with self.listeners_lock:
@@ -330,8 +341,10 @@ class APIWebRTC:
         Handles GET requests for server ICE candidates.
         Returns any pending server ICE candidates for the client.
         """
+        logger.debug(f"[whep_get_candidates:{listener_id}] Client polling for candidates (sink '{sink_id}')")
         try:
             if listener_id not in self.pending_server_candidates:
+                logger.debug(f"[whep_get_candidates:{listener_id}] No pending candidates")
                 return Response(content="[]", status_code=200, headers={"Content-Type": "application/json"})
             
             # Get all pending candidates and clear the list
@@ -373,7 +386,9 @@ class APIWebRTC:
         2. Use existing WHEP endpoints with the temporary sink
         3. Clean up when done
         """
+        logger.info(f"[setup_source_listener] Request received for source '{source_id}'")
         if not self.configuration_manager:
+            logger.error("[setup_source_listener] Configuration manager unavailable")
             return Response(status_code=500, content=json.dumps({"error": "Configuration manager not available"}))
         
         try:
@@ -404,7 +419,7 @@ class APIWebRTC:
             )
             
             # Add temporary sink
-            logger.info(f"[setup_source_listener] Creating temporary sink '{temp_sink_name}' for source '{source_id}'")
+            logger.info(f"[setup_source_listener] Creating temporary sink '{temp_sink_name}' (id hint={temp_id}) for source '{source_id}'")
             if not self.configuration_manager.add_temporary_sink(temp_sink):
                 raise RuntimeError(f"Failed to create temporary sink for source '{source_id}'")
             
@@ -448,7 +463,7 @@ class APIWebRTC:
             )
             
         except Exception as e:
-            logger.error(f"Failed to setup source listener for '{source_id}': {e}", exc_info=True)
+            logger.error(f"[setup_source_listener] Failed for '{source_id}': {e}", exc_info=True)
             return Response(
                 status_code=500,
                 content=json.dumps({"error": f"Failed to setup source listener: {str(e)}"})
@@ -465,7 +480,9 @@ class APIWebRTC:
         2. Use existing WHEP endpoints with the temporary sink
         3. Clean up when done
         """
+        logger.info(f"[setup_route_listener] Request received for route '{route_id}'")
         if not self.configuration_manager:
+            logger.error("[setup_route_listener] Configuration manager unavailable")
             return Response(status_code=500, content=json.dumps({"error": "Configuration manager not available"}))
         
         try:
@@ -506,7 +523,7 @@ class APIWebRTC:
             )
             
             # Add temporary sink
-            logger.info(f"[setup_route_listener] Creating temporary sink '{temp_sink_name}' for route '{route_id}'")
+            logger.info(f"[setup_route_listener] Creating temporary sink '{temp_sink_name}' (id hint={temp_id}) for route '{route_id}' (mirror of sink '{original_sink_name}')")
             if not self.configuration_manager.add_temporary_sink(temp_sink):
                 raise RuntimeError(f"Failed to create temporary sink for route '{route_id}'")
             
@@ -554,7 +571,7 @@ class APIWebRTC:
             )
             
         except Exception as e:
-            logger.error(f"Failed to setup route listener for '{route_id}': {e}", exc_info=True)
+            logger.error(f"[setup_route_listener] Failed for '{route_id}': {e}", exc_info=True)
             return Response(
                 status_code=500,
                 content=json.dumps({"error": f"Failed to setup route listener: {str(e)}"})
@@ -570,7 +587,9 @@ class APIWebRTC:
         Args:
             sink_id: The config_id or name of the temporary sink to remove
         """
+        logger.info(f"[cleanup_temporary_sink] Request received to remove temporary sink '{sink_id}'")
         if not self.configuration_manager:
+            logger.error("[cleanup_temporary_sink] Configuration manager unavailable")
             return Response(status_code=500, content=json.dumps({"error": "Configuration manager not available"}))
         
         try:
@@ -614,7 +633,7 @@ class APIWebRTC:
             return Response(status_code=204)
             
         except Exception as e:
-            logger.error(f"Failed to cleanup temporary sink '{sink_id}': {e}", exc_info=True)
+            logger.error(f"[cleanup_temporary_sink] Failed for '{sink_id}': {e}", exc_info=True)
             return Response(
                 status_code=500,
                 content=json.dumps({"error": f"Failed to cleanup temporary sink: {str(e)}"})

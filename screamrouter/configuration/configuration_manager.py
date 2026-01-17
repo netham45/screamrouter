@@ -307,11 +307,13 @@ class ConfigurationManager(threading.Thread):
             _sinks.append(self._apply_hostname_to_entity(sink_copy))
         return _sinks
 
-    def get_permanent_sinks(self) -> List[SinkDescription]:
-        """Returns a list of all sinks (excluding temporary ones)"""
+    def get_permanent_sinks(self, include_temporary: bool = False) -> List[SinkDescription]:
+        """Returns a list of sinks, optionally including temporary ones."""
+        sink_pool: List[SinkDescription]
+        sink_pool = self._get_all_known_sinks() if include_temporary else self.sink_descriptions
         _sinks: List[SinkDescription] = []
-        for sink in self.sink_descriptions:
-            if sink.is_temporary:
+        for sink in sink_pool:
+            if not include_temporary and getattr(sink, "is_temporary", False):
                 continue
             sink_copy = copy(sink)
             if not hasattr(sink_copy, "sap_target_sink"):
@@ -404,10 +406,15 @@ class ConfigurationManager(threading.Thread):
         self.__reload_configuration()
         return True
 
-    def get_sources(self) -> List[SourceDescription]:
-        """Get a list of all sources"""
+    def get_sources(self, include_temporary: bool = False) -> List[SourceDescription]:
+        """Get a list of sources, optionally including temporary ones."""
+        source_pool: List[SourceDescription] = list(self.source_descriptions)
+        if include_temporary:
+            source_pool += self.active_temporary_sources
         sources: List[SourceDescription] = []
-        for source in self.source_descriptions:
+        for source in source_pool:
+            if not include_temporary and getattr(source, "is_temporary", False):
+                continue
             source_copy = copy(source)
             sources.append(self._apply_hostname_to_entity(source_copy))
         return sources
@@ -851,6 +858,8 @@ class ConfigurationManager(threading.Thread):
         
         # Add to active temporary sinks list
         self.active_temporary_sinks.append(sink)
+        _logger.info("[Configuration Manager] Temporary sink '%s' added (config_id=%s). Total temporary sinks: %d",
+                     sink.name, sink.config_id, len(self.active_temporary_sinks))
         
         # Apply configuration synchronously for temporary entities
         # This ensures the C++ engine knows about the sink before WebRTC tries to use it
@@ -870,6 +879,8 @@ class ConfigurationManager(threading.Thread):
         
         # Add to active temporary routes list
         self.active_temporary_routes.append(route)
+        _logger.info("[Configuration Manager] Temporary route '%s' added (config_id=%s). Total temporary routes: %d",
+                     route.name, route.config_id, len(self.active_temporary_routes))
         
         # Apply configuration synchronously for temporary entities
         # This ensures the C++ engine knows about the route before it's used
@@ -895,7 +906,7 @@ class ConfigurationManager(threading.Thread):
         for sink in self.active_temporary_sinks[:]:
             if sink.name == sink_name:
                 self.active_temporary_sinks.remove(sink)
-                _logger.info(f"Removed temporary sink '{sink_name}'")
+                _logger.info(f"Removed temporary sink '{sink_name}' (config_id={sink.config_id}). Remaining temporary sinks: {len(self.active_temporary_sinks)}")
                 # Also remove any associated temporary routes
                 for route in self.active_temporary_routes[:]:
                     if route.sink == sink_name:
@@ -914,7 +925,7 @@ class ConfigurationManager(threading.Thread):
         for route in self.active_temporary_routes[:]:
             if route.name == route_name:
                 self.active_temporary_routes.remove(route)
-                _logger.info(f"Removed temporary route '{route_name}'")
+                _logger.info(f"Removed temporary route '{route_name}' (config_id={route.config_id}). Remaining temporary routes: {len(self.active_temporary_routes)}")
                 # Apply configuration synchronously for temporary entity removal
                 self.__apply_temporary_configuration_sync()
                 return True
@@ -1809,6 +1820,36 @@ class ConfigurationManager(threading.Thread):
         except Exception:  # pylint: disable=broad-except
             bit_depth_value = None
 
+        raw_bit_depths = getattr(info, "bit_depths", None)
+        if raw_bit_depths is None and isinstance(info, dict):
+            raw_bit_depths = info.get("bit_depths")
+        bit_depth_list: List[int] = []
+        if raw_bit_depths is not None:
+            if isinstance(raw_bit_depths, str):
+                candidates = [part.strip() for part in raw_bit_depths.split(',') if part.strip()]
+                for candidate in candidates:
+                    try:
+                        value = int(candidate)
+                    except Exception:  # pylint: disable=broad-except
+                        continue
+                    if value > 0:
+                        bit_depth_list.append(value)
+            else:
+                try:
+                    iterator = list(raw_bit_depths)  # type: ignore[arg-type]
+                except TypeError:
+                    iterator = [raw_bit_depths]
+                for candidate in iterator:
+                    try:
+                        value = int(candidate)
+                    except Exception:  # pylint: disable=broad-except
+                        continue
+                    if value > 0:
+                        bit_depth_list.append(value)
+        if bit_depth_value and bit_depth_value not in bit_depth_list:
+            bit_depth_list.append(bit_depth_value)
+        bit_depth_list = sorted(set(bit_depth_list))
+
         return SystemAudioDeviceInfo(
             tag=tag,
             direction=direction,
@@ -1820,6 +1861,7 @@ class ConfigurationManager(threading.Thread):
             channels_supported=channels_supported,
             sample_rates=sample_rates,
             bit_depth=bit_depth_value,
+            bit_depths=bit_depth_list,
             present=present,
         )
 
@@ -2119,6 +2161,7 @@ class ConfigurationManager(threading.Thread):
             cpp_sink_engine_config.id = cpp_applied_sink.sink_id # Use the same ID
             friendly_name = py_sink_desc.name if getattr(py_sink_desc, "name", None) is not None else ""
             cpp_sink_engine_config.friendly_name = str(friendly_name)
+            cpp_sink_engine_config.system_device_tag = ""
             sink_ip_value = py_sink_desc.ip
             if isinstance(sink_ip_value, str):
                 sink_address = sink_ip_value
@@ -2168,6 +2211,7 @@ class ConfigurationManager(threading.Thread):
                         lookup_tag = f"ap:{card_str}.{device_str}"
 
                 if lookup_tag:
+                    cpp_sink_engine_config.system_device_tag = lookup_tag
                     device_info = self._find_system_device_by_tag(lookup_tag)
                     backend_label = "WASAPI" if (protocol_lower == "wasapi" or is_windows) else "ALSA"
                     if device_info:
@@ -2800,7 +2844,11 @@ class ConfigurationManager(threading.Thread):
         Synchronously applies temporary configuration changes to the C++ engine.
         This is used for temporary entities that need immediate availability (e.g., WebRTC sinks).
         """
-        _logger.info("[Configuration Manager] Applying temporary configuration synchronously")
+        _logger.info("[Configuration Manager] Applying temporary configuration synchronously "
+                     "(temp_sinks=%d temp_routes=%d temp_sources=%d)",
+                     len(self.active_temporary_sinks),
+                     len(self.active_temporary_routes),
+                     len(self.active_temporary_sources))
         
         # Process the configuration to update the active_configuration
         self.__process_configuration()

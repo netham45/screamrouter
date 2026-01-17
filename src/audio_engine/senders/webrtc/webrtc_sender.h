@@ -107,6 +107,8 @@ public:
      * @return A struct containing the current stats.
      */
     WebRtcSenderStats get_stats();
+    bool wants_multichannel_audio() const;
+    int channel_count() const;
 
 private:
     void trigger_cleanup_if_needed();
@@ -128,7 +130,7 @@ private:
     OpusMSEncoder* opus_ms_encoder_ = nullptr;
     std::vector<int16_t> pcm_buffer_;
     std::vector<unsigned char> opus_buffer_;
-    
+
     uint32_t current_timestamp_ = 0;
     static constexpr uint32_t OPUS_SAMPLES_PER_FRAME = 120;
     
@@ -140,13 +142,13 @@ private:
     std::atomic<bool> has_been_connected_{false};
     std::atomic<uint64_t> m_total_packets_sent{0};
 
+    bool allow_multichannel_output_ = false;
     int opus_channels_ = 2;
     bool use_multistream_ = false;
     int opus_streams_ = 0;
     int opus_coupled_streams_ = 0;
     std::vector<unsigned char> opus_mapping_;
     std::string opus_fmtp_profile_;
-
     bool configure_multistream_layout();
     std::string build_opus_fmtp_profile() const;
 };

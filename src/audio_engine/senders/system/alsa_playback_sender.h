@@ -40,6 +40,11 @@ public:
     void set_buffer_state_callback(BufferStateCallback cb);
     
     void update_pipeline_backlog(double upstream_frames, double upstream_target_frames);
+    using FormatChangeCallback = std::function<void(unsigned int device_rate,
+                                                   unsigned int device_channels,
+                                                   unsigned int device_bit_depth)>;
+    void set_format_change_callback(FormatChangeCallback cb);
+    void update_source_format(unsigned int sample_rate, unsigned int channels, unsigned int bit_depth);
 
 #if defined(__linux__)
     unsigned int get_effective_sample_rate() const;
@@ -54,6 +59,12 @@ private:
 #if defined(__linux__)
     bool parse_legacy_card_device(const std::string& value, int& card, int& device) const;
     std::string resolve_alsa_device_name() const;
+    struct FormatNotification {
+        bool valid = false;
+        unsigned int sample_rate = 0;
+        unsigned int channels = 0;
+        unsigned int bit_depth = 0;
+    };
     bool configure_device();
     bool handle_write_error(int err);
     bool write_frames(const void* data, size_t frame_count, size_t bytes_per_frame);
@@ -69,6 +80,10 @@ private:
                                                      bool force_reconfigure);
     void apply_pending_dynamic_latency_locked();
     void handle_dynamic_latency_xrun_locked();
+    bool send_payload_locked(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs);
+    void dispatch_format_notification(const FormatNotification& note);
+    FormatNotification consume_pending_format_notification();
+    void update_source_format_locked(unsigned int sample_rate, unsigned int channels, unsigned int bit_depth);
 
     std::string device_tag_;
     std::string hw_device_name_;
@@ -82,9 +97,16 @@ private:
     snd_pcm_uframes_t period_frames_ = 0;
     snd_pcm_uframes_t buffer_frames_ = 0;
     size_t bytes_per_frame_ = 0;
+    unsigned int source_sample_rate_ = 0;
+    unsigned int source_channels_ = 0;
+    unsigned int source_bit_depth_ = 0;
+    size_t source_bytes_per_frame_ = 0;
     bool is_raspberry_pi_ = false;
     std::function<void(double)> playback_rate_callback_;
     BufferStateCallback buffer_state_callback_;
+    FormatChangeCallback format_change_callback_;
+    FormatNotification pending_format_notification_{};
+    bool format_notification_pending_ = false;
     double playback_rate_integral_ = 0.0;
     double target_delay_frames_ = 0.0;
     double upstream_buffer_frames_ = 0.0;

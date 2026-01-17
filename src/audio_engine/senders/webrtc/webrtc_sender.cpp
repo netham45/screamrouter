@@ -13,6 +13,8 @@
 #include <string>
 #include <algorithm>
 #include <sstream>
+#include <cstdlib>
+#include <cctype>
 
 namespace screamrouter {
 namespace audio {
@@ -83,6 +85,22 @@ WebRtcSender::WebRtcSender(
       audio_track_(nullptr),
       current_timestamp_(0) {
     opus_channels_ = std::clamp(config_.output_channels > 0 ? config_.output_channels : 2, 1, 8);
+    allow_multichannel_output_ = false;
+    if (const char* env = std::getenv("SCREAMROUTER_ENABLE_WEBRTC_MULTICHANNEL")) {
+        std::string env_value(env);
+        std::transform(env_value.begin(), env_value.end(), env_value.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (env_value == "1" || env_value == "true" || env_value == "yes" || env_value == "enable") {
+            allow_multichannel_output_ = true;
+        }
+    }
+    if (!allow_multichannel_output_ && opus_channels_ > 2) {
+        LOG_CPP_INFO("[WebRtcSender:%s] Browser multichannel support limited; forcing stereo answer (requested=%d)",
+                     config_.sink_id.c_str(), opus_channels_);
+        opus_channels_ = 2;
+    }
+    LOG_CPP_INFO("[WebRtcSender:%s] Constructing sender (opus_channels=%d samplerate=%d)",
+                 config_.sink_id.c_str(), opus_channels_, config_.output_samplerate);
     LOG_CPP_INFO("[WebRtcSender] DEADLOCK_DEBUG: Constructor START for sink: %s", config_.sink_id.c_str());
     initialize_opus_encoder();
     LOG_CPP_INFO("[WebRtcSender] DEADLOCK_DEBUG: Constructor END for sink: %s", config_.sink_id.c_str());
@@ -305,7 +323,7 @@ void WebRtcSender::setup_peer_connection() {
             LOG_CPP_ERROR("[WebRtcSender:%s] Cannot setup peer connection without a remote offer.", config_.sink_id.c_str());
             return;
         }
-        LOG_CPP_INFO("[WebRtcSender:%s] Processing remote offer.", config_.sink_id.c_str());
+        LOG_CPP_INFO("[WebRtcSender:%s] Processing remote offer (SDP size=%zu).", config_.sink_id.c_str(), offer_sdp_.size());
         rtc::Description offer(offer_sdp_, "offer");
 
         // Find the audio media description in the client's offer
@@ -333,6 +351,7 @@ void WebRtcSender::setup_peer_connection() {
 
         // Set the remote description first.
         peer_connection_->setRemoteDescription(offer);
+        LOG_CPP_INFO("[WebRtcSender:%s] Remote description applied", config_.sink_id.c_str());
 
 
         // Add our track using the reciprocated description.
@@ -423,6 +442,7 @@ void WebRtcSender::setup_peer_connection() {
 
         // With auto-negotiation disabled, we manually generate the answer *after* adding the track.
         peer_connection_->setLocalDescription();
+        LOG_CPP_INFO("[WebRtcSender:%s] Local description set; awaiting ICE", config_.sink_id.c_str());
     } catch (const std::exception& e) {
         LOG_CPP_ERROR("[WebRtcSender:%s] Exception during peer connection setup: %s", config_.sink_id.c_str(), e.what());
         throw;
@@ -443,6 +463,7 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
     
     // Early return if this sender is closed or marked for cleanup
     if (is_closed()) {
+        LOG_CPP_DEBUG("[WebRtcSender:%s] Dropping payload because sender is closed (size=%zu)", config_.sink_id.c_str(), payload_size);
         return;
     }
     
@@ -480,8 +501,15 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
         }
     }
 
+    LOG_CPP_DEBUG("[WebRtcSender:%s] Encoding %zu bytes of PCM for listener", config_.sink_id.c_str(), payload_size);
     const int32_t* input = reinterpret_cast<const int32_t*>(payload_data);
     size_t num_samples_interleaved = payload_size / sizeof(int32_t);
+
+    if (num_samples_interleaved % static_cast<size_t>(opus_channels_) != 0) {
+        LOG_CPP_ERROR("[WebRtcSender:%s] Payload samples (%zu) not divisible by channel count %d",
+                      config_.sink_id.c_str(), num_samples_interleaved, opus_channels_);
+        return;
+    }
 
     std::vector<int16_t> pcm16_buffer(num_samples_interleaved);
     for (size_t i = 0; i < num_samples_interleaved; ++i) {
@@ -522,6 +550,9 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
             const auto* opus_data_byte_ptr = reinterpret_cast<const std::byte*>(opus_buffer_.data());
             audio_track_->sendFrame(rtc::binary(opus_data_byte_ptr, opus_data_byte_ptr + encoded_bytes), frame_info);
             m_total_packets_sent++;
+            LOG_CPP_DEBUG("[WebRtcSender:%s] Sent Opus frame (encoded_bytes=%d timestamp=%u total_packets=%llu)",
+                          config_.sink_id.c_str(), encoded_bytes, current_timestamp_,
+                          static_cast<unsigned long long>(m_total_packets_sent.load()));
             current_timestamp_ += static_cast<uint32_t>(frame_samples_per_channel);
         }
 
@@ -627,6 +658,14 @@ std::string WebRtcSender::build_opus_fmtp_profile() const {
     }
 
     return ss.str();
+}
+
+bool WebRtcSender::wants_multichannel_audio() const {
+    return allow_multichannel_output_ && opus_channels_ > 2 && use_multistream_;
+}
+
+int WebRtcSender::channel_count() const {
+    return opus_channels_;
 }
 
 void WebRtcSender::set_cleanup_callback(const std::string& listener_id,

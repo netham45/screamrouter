@@ -182,6 +182,13 @@ SinkAudioMixer::SinkAudioMixer(
                 hw_fill_ms_.store(hw_fill_ms, std::memory_order_relaxed);
                 hw_target_ms_.store(hw_target_ms, std::memory_order_relaxed);
             });
+            alsa_sender->set_format_change_callback(
+                [this](unsigned int device_rate, unsigned int device_channels, unsigned int device_bit_depth) {
+                    handle_system_audio_format_change(device_rate, device_channels, device_bit_depth);
+                });
+            alsa_sender->update_source_format(static_cast<unsigned int>(std::max(playback_sample_rate_, 0)),
+                                              static_cast<unsigned int>(std::max(playback_channels_, 1)),
+                                              static_cast<unsigned int>(std::max(playback_bit_depth_, 8)));
         }
 #elif defined(_WIN32)
         if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
@@ -503,11 +510,9 @@ SinkAudioMixerStats SinkAudioMixer::get_stats() {
         }
     }
 
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        for (const auto& [id, sender] : listener_senders_) {
-            stats.listener_ids.push_back(id);
-        }
+    if (listener_dispatcher_) {
+        auto listener_ids = listener_dispatcher_->get_listener_ids();
+        stats.listener_ids.insert(stats.listener_ids.end(), listener_ids.begin(), listener_ids.end());
     }
 
     return stats;
@@ -636,10 +641,7 @@ void SinkAudioMixer::stop() {
         std::lock_guard<std::mutex> lock(queues_mutex_);
         inputs = ready_rings_.size();
     }
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        listeners = listener_senders_.size();
-    }
+    listeners = listener_dispatcher_ ? listener_dispatcher_->count() : 0;
     LOG_CPP_INFO("[SinkMixer:%s] Stopping... input_queues=%zu listeners=%zu startup_in_progress=%d component_joinable=%d payload_bytes=%zu clock_enabled=%d", config_.sink_id.c_str(), inputs, listeners, startup_in_progress_.load() ? 1 : 0, component_thread_.joinable() ? 1 : 0, payload_buffer_fill_bytes_, clock_manager_enabled_.load() ? 1 : 0);
     
     // Set stop flag first
@@ -721,15 +723,8 @@ void SinkAudioMixer::stop() {
         log_elapsed("network_sender closed");
     }
 
-    {
-        std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-        for (auto& pair : listener_senders_) {
-            if (pair.second) {
-                LOG_CPP_INFO("[SinkMixer:%s] Closing listener sender id=%s", config_.sink_id.c_str(), pair.first.c_str());
-                pair.second->close();
-            }
-        }
-        listener_senders_.clear();
+    if (listener_dispatcher_) {
+        listener_dispatcher_->close_all();
         LOG_CPP_INFO("[SinkMixer:%s] All listener senders closed and cleared.", config_.sink_id.c_str());
     }
     log_elapsed("listener cleanup complete");
@@ -1300,15 +1295,29 @@ size_t SinkAudioMixer::preprocess_for_listeners_and_mp3() {
 }
 
 /**
- * @brief Dispatches the pre-processed stereo audio to all registered listeners.
+ * @brief Dispatches audio buffers to all registered listeners.
  * @param samples_to_dispatch The number of stereo samples to send.
  */
 void SinkAudioMixer::dispatch_to_listeners(size_t samples_to_dispatch) {
     PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     
-    if (listener_dispatcher_ && samples_to_dispatch > 0) {
-        listener_dispatcher_->dispatch_to_listeners(stereo_buffer_.data(), samples_to_dispatch);
+    if (listener_dispatcher_) {
+        ListenerAudioBuffer stereo_buffer;
+        if (samples_to_dispatch > 0 && !stereo_buffer_.empty()) {
+            stereo_buffer.data = stereo_buffer_.data();
+            stereo_buffer.sample_count = samples_to_dispatch;
+            stereo_buffer.channels = 2;
+        }
+        
+        ListenerAudioBuffer multichannel_buffer;
+        if (!mixing_buffer_.empty()) {
+            multichannel_buffer.data = mixing_buffer_.data();
+            multichannel_buffer.sample_count = mixing_buffer_.size();
+            multichannel_buffer.channels = std::max(playback_channels_, 1);
+        }
+        
+        listener_dispatcher_->dispatch_to_listeners(stereo_buffer, multichannel_buffer);
     }
     
     auto t1 = std::chrono::steady_clock::now();
@@ -1831,6 +1840,42 @@ void SinkAudioMixer::update_playback_format_from_sender() {
 #endif
 }
 
+void SinkAudioMixer::handle_system_audio_format_change(unsigned int device_rate,
+                                                       unsigned int device_channels,
+                                                       unsigned int device_bit_depth) {
+#if defined(__linux__)
+    const int new_sample_rate = device_rate > 0 ? static_cast<int>(device_rate) : playback_sample_rate_;
+    const int new_channels = device_channels > 0 ? static_cast<int>(device_channels) : playback_channels_;
+    const int new_bit_depth = device_bit_depth > 0 ? static_cast<int>(device_bit_depth) : playback_bit_depth_;
+    const bool changed = (new_sample_rate != playback_sample_rate_) ||
+                         (new_channels != playback_channels_) ||
+                         (new_bit_depth != playback_bit_depth_);
+    if (!changed) {
+        return;
+    }
+
+    LOG_CPP_WARNING("[SinkMixer:%s] ALSA device forced format change -> rate=%d Hz channels=%d bit_depth=%d (was %d Hz/%d ch/%d-bit).",
+                    config_.sink_id.c_str(),
+                    new_sample_rate,
+                    new_channels,
+                    new_bit_depth,
+                    playback_sample_rate_,
+                    playback_channels_,
+                    playback_bit_depth_);
+
+    set_playback_format(new_sample_rate, new_channels, new_bit_depth);
+    if (auto alsa_sender = dynamic_cast<AlsaPlaybackSender*>(network_sender_.get())) {
+        alsa_sender->update_source_format(static_cast<unsigned int>(std::max(playback_sample_rate_, 0)),
+                                          static_cast<unsigned int>(std::max(playback_channels_, 1)),
+                                          static_cast<unsigned int>(std::max(playback_bit_depth_, 8)));
+    }
+#else
+    (void)device_rate;
+    (void)device_channels;
+    (void)device_bit_depth;
+#endif
+}
+
 void SinkAudioMixer::setup_output_post_processor() {
     if (config_.protocol != "system_audio") {
         return;
@@ -2260,17 +2305,16 @@ void SinkAudioMixer::run() {
             break;
         }
         
-        bool has_listeners;
-        {
-            std::lock_guard<std::mutex> lock(listener_senders_mutex_);
-            has_listeners = !listener_senders_.empty();
-        }
+        bool has_listeners = listener_dispatcher_ && listener_dispatcher_->count() > 0;
         bool mp3_enabled = mp3_output_queue_ && mp3_thread_running_.load(std::memory_order_acquire);
 
         if (has_listeners || mp3_enabled) {
             size_t processed_samples = preprocess_for_listeners_and_mp3();
             if (processed_samples > 0) {
                 if (has_listeners) {
+                    LOG_CPP_DEBUG("[SinkMixer:%s] Dispatching %zu stereo samples to %zu listeners",
+                                  config_.sink_id.c_str(), processed_samples,
+                                  listener_dispatcher_ ? listener_dispatcher_->count() : 0);
                     dispatch_to_listeners(processed_samples);
                 }
                 if (mp3_enabled) {

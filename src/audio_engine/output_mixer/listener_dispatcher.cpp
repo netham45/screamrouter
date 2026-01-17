@@ -25,6 +25,7 @@ bool ListenerDispatcher::add_listener(const std::string& listener_id, std::uniqu
     
     // Setup cleanup callback for WebRTC senders
     if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
+        LOG_CPP_INFO("[ListenerDispatcher:%s] Registering WebRTC listener '%s'", sink_id_.c_str(), listener_id.c_str());
         webrtc_sender->set_cleanup_callback(listener_id, [this](const std::string& id) {
             LOG_CPP_INFO("[ListenerDispatcher:%s] Cleanup callback triggered for listener: %s",
                          sink_id_.c_str(), id.c_str());
@@ -94,7 +95,8 @@ INetworkSender* ListenerDispatcher::get_listener(const std::string& listener_id)
     return nullptr;
 }
 
-void ListenerDispatcher::dispatch_to_listeners(const int32_t* stereo_samples, size_t sample_count) {
+void ListenerDispatcher::dispatch_to_listeners(const ListenerAudioBuffer& stereo_buffer,
+                                               const ListenerAudioBuffer& multichannel_buffer) {
     PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     
@@ -102,16 +104,36 @@ void ListenerDispatcher::dispatch_to_listeners(const int32_t* stereo_samples, si
     
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (listeners_.empty() || sample_count == 0 || !stereo_samples) {
+        const bool has_stereo = stereo_buffer.data && stereo_buffer.sample_count > 0;
+        const bool has_multichannel = multichannel_buffer.data && multichannel_buffer.sample_count > 0;
+        if (listeners_.empty() || (!has_stereo && !has_multichannel)) {
             return;
         }
+        LOG_CPP_DEBUG("[ListenerDispatcher:%s] Dispatching stereo=%zu samples multichannel=%zu samples to %zu listeners",
+                      sink_id_.c_str(),
+                      has_stereo ? stereo_buffer.sample_count : 0,
+                      has_multichannel ? multichannel_buffer.sample_count : 0,
+                      listeners_.size());
         
-        const uint8_t* payload_data = reinterpret_cast<const uint8_t*>(stereo_samples);
-        size_t payload_size = sample_count * sizeof(int32_t);
+        const uint8_t* stereo_payload = has_stereo
+            ? reinterpret_cast<const uint8_t*>(stereo_buffer.data)
+            : nullptr;
+        const size_t stereo_payload_size = has_stereo
+            ? stereo_buffer.sample_count * sizeof(int32_t)
+            : 0;
+        const uint8_t* multichannel_payload = has_multichannel
+            ? reinterpret_cast<const uint8_t*>(multichannel_buffer.data)
+            : nullptr;
+        const size_t multichannel_payload_size = has_multichannel
+            ? multichannel_buffer.sample_count * sizeof(int32_t)
+            : 0;
         std::vector<uint32_t> empty_csrcs;
         
         for (const auto& [id, sender] : listeners_) {
             if (sender) {
+                const uint8_t* payload_data = stereo_payload;
+                size_t payload_size = stereo_payload_size;
+                
                 if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
                     if (webrtc_sender->is_closed()) {
                         closed_listeners.push_back(id);
@@ -119,13 +141,35 @@ void ListenerDispatcher::dispatch_to_listeners(const int32_t* stereo_samples, si
                                      sink_id_.c_str(), id.c_str());
                         continue;
                     }
+
+                    if (webrtc_sender->wants_multichannel_audio()) {
+                        if (has_multichannel &&
+                            multichannel_buffer.channels == webrtc_sender->channel_count()) {
+                            payload_data = multichannel_payload;
+                            payload_size = multichannel_payload_size;
+                        } else if (!has_multichannel) {
+                            LOG_CPP_WARNING("[ListenerDispatcher:%s] Multichannel requested by %s but no buffer available; falling back to stereo",
+                                            sink_id_.c_str(), id.c_str());
+                        } else {
+                            LOG_CPP_WARNING("[ListenerDispatcher:%s] Multichannel buffer channels (%d) mismatch WebRTC sender expectation (%d) for %s; falling back to stereo",
+                                            sink_id_.c_str(),
+                                            multichannel_buffer.channels,
+                                            webrtc_sender->channel_count(),
+                                            id.c_str());
+                        }
+                    }
                 }
-                sender->send_payload(payload_data, payload_size, empty_csrcs);
+
+                if (payload_data && payload_size > 0) {
+                    sender->send_payload(payload_data, payload_size, empty_csrcs);
+                }
             }
         }
     } // Release mutex before removing closed listeners
     
     for (const auto& listener_id : closed_listeners) {
+        LOG_CPP_INFO("[ListenerDispatcher:%s] Listener '%s' closed during dispatch; removing.",
+                     sink_id_.c_str(), listener_id.c_str());
         remove_listener(listener_id);
         LOG_CPP_INFO("[ListenerDispatcher:%s] Removed closed listener: %s",
                      sink_id_.c_str(), listener_id.c_str());

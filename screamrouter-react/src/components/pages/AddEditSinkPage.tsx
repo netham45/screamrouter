@@ -93,6 +93,26 @@ const AddEditSinkPage: React.FC = () => {
 
   const rtpOpusForcedFormat = useMemo(() => protocol === 'rtp_opus' && outputMode === 'network', [outputMode, protocol]);
 
+  const availableBitDepths = useMemo(() => {
+    const defaultDepths = [16, 24, 32];
+    if (outputMode !== 'system' || !selectedPlaybackDevice) {
+      return defaultDepths;
+    }
+    const fromDevice = Array.isArray(selectedPlaybackDevice.bit_depths)
+      ? selectedPlaybackDevice.bit_depths.filter((depth): depth is number => typeof depth === 'number' && Number.isFinite(depth) && depth > 0)
+      : [];
+    if (fromDevice.length === 0 && typeof selectedPlaybackDevice.bit_depth === 'number' && selectedPlaybackDevice.bit_depth > 0) {
+      fromDevice.push(selectedPlaybackDevice.bit_depth);
+    }
+    const filtered = fromDevice.filter(depth => defaultDepths.includes(depth));
+    if (filtered.length === 0) {
+      return defaultDepths;
+    }
+    const unique = Array.from(new Set(filtered));
+    unique.sort((a, b) => a - b);
+    return unique;
+  }, [outputMode, selectedPlaybackDevice]);
+
   const normalizePlaybackTag = (value?: string | null): string => {
     if (!value) {
       return '';
@@ -131,6 +151,22 @@ const AddEditSinkPage: React.FC = () => {
         }
         return `${rate} Hz`;
       })
+      .join(', ');
+  };
+
+  const formatBitDepthList = (depths?: number[], fallback?: number | null): string => {
+    const sanitized = (depths || [])
+      .filter((depth): depth is number => typeof depth === 'number' && Number.isFinite(depth) && depth > 0);
+    if (sanitized.length === 0 && fallback && fallback > 0) {
+      sanitized.push(fallback);
+    }
+    if (sanitized.length === 0) {
+      return '—';
+    }
+    return sanitized
+      .slice()
+      .sort((a, b) => a - b)
+      .map(depth => `${depth}-bit`)
       .join(', ');
   };
 
@@ -551,6 +587,19 @@ const AddEditSinkPage: React.FC = () => {
       setSampleRate('48000');
     }
   }, [bitDepth, rtpOpusForcedFormat, sampleRate]);
+
+  useEffect(() => {
+    if (rtpOpusForcedFormat) {
+      return;
+    }
+    const currentDepth = Number.parseInt(bitDepth, 10);
+    if (!availableBitDepths.includes(currentDepth)) {
+      const fallback = availableBitDepths[availableBitDepths.length - 1] ?? 16;
+      if (fallback.toString() !== bitDepth) {
+        setBitDepth(fallback.toString());
+      }
+    }
+  }, [availableBitDepths, bitDepth, rtpOpusForcedFormat]);
 
   const handleSubmit = async () => {
     const trimmedName = name.trim();
@@ -1027,6 +1076,9 @@ const AddEditSinkPage: React.FC = () => {
                   <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
                     Sample Rates: {formatSampleRateList(selectedPlaybackDevice.sample_rates)}
                   </Text>
+                  <Text fontSize="sm" color={useColorModeValue('gray.600', 'gray.300')}>
+                    Bit Depths: {formatBitDepthList(selectedPlaybackDevice.bit_depths, selectedPlaybackDevice.bit_depth ?? null)}
+                  </Text>
                   {!selectedPlaybackDevice.present && (
                     <Text fontSize="sm" color="orange.500" mt={2}>
                       This device is currently offline. Routes will activate automatically when it becomes available.
@@ -1047,9 +1099,11 @@ const AddEditSinkPage: React.FC = () => {
                 bg={inputBg}
                 isDisabled={rtpOpusForcedFormat}
               >
-                <option value="16">16</option>
-                <option value="24">24</option>
-                <option value="32">32</option>
+                {availableBitDepths.map(depth => (
+                  <option key={`bit-depth-${depth}`} value={depth.toString()}>
+                    {depth}
+                  </option>
+                ))}
               </Select>
               {rtpOpusForcedFormat && (
                 <Text mt={1} fontSize="sm" color="gray.500">
