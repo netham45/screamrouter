@@ -13,6 +13,8 @@
 #include <string>
 #include <algorithm>
 #include <sstream>
+#include <cstdlib>
+#include <cctype>
 
 namespace screamrouter {
 namespace audio {
@@ -83,7 +85,21 @@ WebRtcSender::WebRtcSender(
       audio_track_(nullptr),
       current_timestamp_(0) {
     opus_channels_ = std::clamp(config_.output_channels > 0 ? config_.output_channels : 2, 1, 8);
-    LOG_CPP_INFO("[WebRtcSender:%s] Constructing sender (channels=%d samplerate=%d)",
+    allow_multichannel_output_ = false;
+    if (const char* env = std::getenv("SCREAMROUTER_ENABLE_WEBRTC_MULTICHANNEL")) {
+        std::string env_value(env);
+        std::transform(env_value.begin(), env_value.end(), env_value.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (env_value == "1" || env_value == "true" || env_value == "yes" || env_value == "enable") {
+            allow_multichannel_output_ = true;
+        }
+    }
+    if (!allow_multichannel_output_ && opus_channels_ > 2) {
+        LOG_CPP_INFO("[WebRtcSender:%s] Browser multichannel support limited; forcing stereo answer (requested=%d)",
+                     config_.sink_id.c_str(), opus_channels_);
+        opus_channels_ = 2;
+    }
+    LOG_CPP_INFO("[WebRtcSender:%s] Constructing sender (opus_channels=%d samplerate=%d)",
                  config_.sink_id.c_str(), opus_channels_, config_.output_samplerate);
     LOG_CPP_INFO("[WebRtcSender] DEADLOCK_DEBUG: Constructor START for sink: %s", config_.sink_id.c_str());
     initialize_opus_encoder();
@@ -488,6 +504,12 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
     LOG_CPP_DEBUG("[WebRtcSender:%s] Encoding %zu bytes of PCM for listener", config_.sink_id.c_str(), payload_size);
     const int32_t* input = reinterpret_cast<const int32_t*>(payload_data);
     size_t num_samples_interleaved = payload_size / sizeof(int32_t);
+
+    if (num_samples_interleaved % static_cast<size_t>(opus_channels_) != 0) {
+        LOG_CPP_ERROR("[WebRtcSender:%s] Payload samples (%zu) not divisible by channel count %d",
+                      config_.sink_id.c_str(), num_samples_interleaved, opus_channels_);
+        return;
+    }
 
     std::vector<int16_t> pcm16_buffer(num_samples_interleaved);
     for (size_t i = 0; i < num_samples_interleaved; ++i) {
