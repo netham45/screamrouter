@@ -193,6 +193,13 @@ SinkAudioMixer::SinkAudioMixer(
 #elif defined(_WIN32)
         if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
             wasapi_sender->set_playback_rate_callback([this](double rate) { set_output_playback_rate(rate); });
+            wasapi_sender->set_format_change_callback(
+                [this](unsigned int device_rate, unsigned int device_channels, unsigned int device_bit_depth) {
+                    handle_system_audio_format_change(device_rate, device_channels, device_bit_depth);
+                });
+            wasapi_sender->update_source_format(static_cast<unsigned int>(std::max(playback_sample_rate_, 0)),
+                                                static_cast<unsigned int>(std::max(playback_channels_, 1)),
+                                                static_cast<unsigned int>(std::max(playback_bit_depth_, 8)));
             // TODO: Add buffer state callback to WASAPI sender when implemented
         }
 #endif
@@ -1837,6 +1844,27 @@ void SinkAudioMixer::update_playback_format_from_sender() {
         }
         return;
     }
+#elif defined(_WIN32)
+    if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+        unsigned int device_rate = wasapi_sender->get_effective_sample_rate();
+        unsigned int device_channels = wasapi_sender->get_effective_channels();
+        unsigned int device_bit_depth = wasapi_sender->get_effective_bit_depth();
+
+        int new_sample_rate = device_rate > 0 ? static_cast<int>(device_rate) : playback_sample_rate_;
+        int new_channels = device_channels > 0 ? static_cast<int>(device_channels) : playback_channels_;
+        int new_bit_depth = device_bit_depth > 0 ? static_cast<int>(device_bit_depth) : playback_bit_depth_;
+
+        bool format_changed = (new_sample_rate != playback_sample_rate_) ||
+                              (new_channels != playback_channels_) ||
+                              (new_bit_depth != playback_bit_depth_);
+
+        if (format_changed) {
+            set_playback_format(new_sample_rate, new_channels, new_bit_depth);
+            LOG_CPP_INFO("[SinkMixer:%s] Updated playback pacing to match WASAPI device (rate=%d Hz, channels=%d, bit_depth=%d).",
+                         config_.sink_id.c_str(), playback_sample_rate_, playback_channels_, playback_bit_depth_);
+        }
+        return;
+    }
 #endif
 }
 
@@ -1868,6 +1896,32 @@ void SinkAudioMixer::handle_system_audio_format_change(unsigned int device_rate,
         alsa_sender->update_source_format(static_cast<unsigned int>(std::max(playback_sample_rate_, 0)),
                                           static_cast<unsigned int>(std::max(playback_channels_, 1)),
                                           static_cast<unsigned int>(std::max(playback_bit_depth_, 8)));
+    }
+#elif defined(_WIN32)
+    const int new_sample_rate = device_rate > 0 ? static_cast<int>(device_rate) : playback_sample_rate_;
+    const int new_channels = device_channels > 0 ? static_cast<int>(device_channels) : playback_channels_;
+    const int new_bit_depth = device_bit_depth > 0 ? static_cast<int>(device_bit_depth) : playback_bit_depth_;
+    const bool changed = (new_sample_rate != playback_sample_rate_) ||
+                         (new_channels != playback_channels_) ||
+                         (new_bit_depth != playback_bit_depth_);
+    if (!changed) {
+        return;
+    }
+
+    LOG_CPP_WARNING("[SinkMixer:%s] WASAPI device forced format change -> rate=%d Hz channels=%d bit_depth=%d (was %d Hz/%d ch/%d-bit).",
+                    config_.sink_id.c_str(),
+                    new_sample_rate,
+                    new_channels,
+                    new_bit_depth,
+                    playback_sample_rate_,
+                    playback_channels_,
+                    playback_bit_depth_);
+
+    set_playback_format(new_sample_rate, new_channels, new_bit_depth);
+    if (auto wasapi_sender = dynamic_cast<screamrouter::audio::system_audio::WasapiPlaybackSender*>(network_sender_.get())) {
+        wasapi_sender->update_source_format(static_cast<unsigned int>(std::max(playback_sample_rate_, 0)),
+                                            static_cast<unsigned int>(std::max(playback_channels_, 1)),
+                                            static_cast<unsigned int>(std::max(playback_bit_depth_, 8)));
     }
 #else
     (void)device_rate;

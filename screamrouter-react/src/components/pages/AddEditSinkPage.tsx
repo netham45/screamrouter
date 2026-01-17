@@ -4,7 +4,7 @@
  * port, bit depth, sample rate, channels, channel layout, volume, delay, time sync settings, and more.
  * It allows the user to either add a new sink or update an existing one.
  */
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Flex,
@@ -74,6 +74,7 @@ const AddEditSinkPage: React.FC = () => {
     port: '4010',
     protocol: 'rtp',
   });
+  const previousPlaybackDeviceTag = useRef<string | null>(null);
   const [volumeNormalization, setVolumeNormalization] = useState(false);
   const [multiDeviceMode, setMultiDeviceMode] = useState(false);
   const [rtpReceiverMappings, setRtpReceiverMappings] = useState<RtpReceiverMapping[]>([]);
@@ -112,6 +113,39 @@ const AddEditSinkPage: React.FC = () => {
     unique.sort((a, b) => a - b);
     return unique;
   }, [outputMode, selectedPlaybackDevice]);
+
+  useEffect(() => {
+    if (outputMode !== 'system') {
+      previousPlaybackDeviceTag.current = null;
+      return;
+    }
+    if (!selectedPlaybackDevice) {
+      return;
+    }
+    const currentTag = selectedPlaybackDevice.tag || '';
+    if (previousPlaybackDeviceTag.current !== currentTag) {
+      previousPlaybackDeviceTag.current = currentTag;
+      if (availableBitDepths.length > 0) {
+        const preference = [32, 24, 16];
+        const preferred = preference.find(depth => availableBitDepths.includes(depth))
+          ?? availableBitDepths[availableBitDepths.length - 1];
+        if (preferred && preferred.toString() !== bitDepth) {
+          setBitDepth(preferred.toString());
+        }
+      }
+      return;
+    }
+    const currentDepth = Number.parseInt(bitDepth, 10);
+    if (!Number.isNaN(currentDepth) && availableBitDepths.includes(currentDepth)) {
+      return;
+    }
+    if (availableBitDepths.length > 0) {
+      const fallback = availableBitDepths[availableBitDepths.length - 1];
+      if (fallback && fallback.toString() !== bitDepth) {
+        setBitDepth(fallback.toString());
+      }
+    }
+  }, [availableBitDepths, bitDepth, outputMode, selectedPlaybackDevice]);
 
   const normalizePlaybackTag = (value?: string | null): string => {
     if (!value) {

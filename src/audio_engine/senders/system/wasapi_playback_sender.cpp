@@ -75,10 +75,34 @@ DWORD ChannelMaskFor(unsigned int channels) {
     }
 }
 
+WasapiPlaybackSender::SampleFormat SampleFormatForBits(unsigned int bits) {
+    switch (bits) {
+        case 16: return WasapiPlaybackSender::SampleFormat::Int16;
+        case 24: return WasapiPlaybackSender::SampleFormat::Int24;
+        case 32: return WasapiPlaybackSender::SampleFormat::Int32;
+        default: return WasapiPlaybackSender::SampleFormat::Unknown;
+    }
+}
+
 } // namespace
 
 WasapiPlaybackSender::WasapiPlaybackSender(const SinkMixerConfig& config)
-    : config_(config) {}
+    : config_(config) {
+    source_sample_rate_ = static_cast<unsigned int>(std::max(0, config_.output_samplerate));
+    source_channels_ = static_cast<unsigned int>(std::max(1, config_.output_channels));
+    unsigned int requested_bits = static_cast<unsigned int>(std::max(0, config_.output_bitdepth));
+    if (requested_bits < 8) {
+        requested_bits = 16;
+    }
+    if ((requested_bits % 8) != 0) {
+        requested_bits -= requested_bits % 8;
+    }
+    source_bits_per_sample_ = requested_bits;
+    source_bit_depth_ = requested_bits;
+    source_sample_format_ = SampleFormatForBits(source_bits_per_sample_);
+    source_bytes_per_frame_ = static_cast<size_t>(source_channels_) *
+                              static_cast<size_t>(std::max(1u, source_bits_per_sample_ / 8));
+}
 
 WasapiPlaybackSender::~WasapiPlaybackSender() {
     close();
@@ -150,9 +174,46 @@ void WasapiPlaybackSender::set_playback_rate_callback(std::function<void(double)
     playback_rate_callback_ = std::move(cb);
 }
 
+void WasapiPlaybackSender::set_format_change_callback(FormatChangeCallback cb) {
+    format_change_callback_ = std::move(cb);
+    if (format_notification_pending_ && format_change_callback_ && pending_format_notification_.valid) {
+        auto note = pending_format_notification_;
+        pending_format_notification_ = {};
+        format_notification_pending_ = false;
+        format_change_callback_(note.sample_rate, note.channels, note.bit_depth);
+    }
+}
+
 void WasapiPlaybackSender::update_pipeline_backlog(double upstream_frames, double upstream_target_frames) {
     upstream_buffer_frames_ = std::max(0.0, upstream_frames);
     upstream_target_frames_ = std::max(0.0, upstream_target_frames);
+}
+
+void WasapiPlaybackSender::update_source_format(unsigned int sample_rate,
+                                                unsigned int channels,
+                                                unsigned int bit_depth) {
+    if (sample_rate > 0) {
+        source_sample_rate_ = sample_rate;
+        config_.output_samplerate = static_cast<int>(sample_rate);
+    }
+    if (channels > 0) {
+        source_channels_ = channels;
+        config_.output_channels = static_cast<int>(channels);
+    }
+    unsigned int sanitized_bits = bit_depth >= 8 ? (bit_depth - (bit_depth % 8)) : source_bits_per_sample_;
+    if (sanitized_bits == 0) {
+        sanitized_bits = 16;
+    }
+    if (sanitized_bits != source_bits_per_sample_) {
+        config_.output_bitdepth = static_cast<int>(sanitized_bits);
+    }
+    source_bits_per_sample_ = sanitized_bits;
+    source_bit_depth_ = sanitized_bits;
+    source_sample_format_ = SampleFormatForBits(source_bits_per_sample_);
+    unsigned int bytes_per_sample = std::max(1u, source_bits_per_sample_ / 8);
+    source_bytes_per_frame_ = static_cast<size_t>(std::max(1u, source_channels_)) * bytes_per_sample;
+    evaluate_conversion_requirements();
+    update_conversion_state();
 }
 
 bool WasapiPlaybackSender::initialize_com() {
@@ -377,6 +438,7 @@ bool WasapiPlaybackSender::configure_audio_client() {
         return false;
     }
 
+    evaluate_conversion_requirements();
     update_conversion_state();
     reset_playback_counters();
 
@@ -413,15 +475,26 @@ void WasapiPlaybackSender::choose_device_format(WAVEFORMATEX* format, bool forma
     channels_ = device_format_->nChannels;
     sample_rate_ = device_format_->nSamplesPerSec;
     device_bytes_per_frame_ = device_format_->nBlockAlign;
+    evaluate_conversion_requirements();
 
-    source_bits_per_sample_ = static_cast<unsigned int>(config_.output_bitdepth);
-    source_bytes_per_frame_ = static_cast<size_t>(config_.output_bitdepth / 8) * static_cast<size_t>(config_.output_channels);
-
-    if (!format_supported) {
-        // We'll need conversion to device format.
-        requires_conversion_ = true;
-    } else {
-        requires_conversion_ = (device_bits_per_sample_ != source_bits_per_sample_) || (config_.output_channels != static_cast<int>(channels_));
+    const bool bit_depth_mismatch = source_bits_per_sample_ > 0 &&
+                                    device_bits_per_sample_ > 0 &&
+                                    device_bits_per_sample_ != source_bits_per_sample_;
+    const bool channel_mismatch = source_channels_ > 0 &&
+                                  channels_ > 0 &&
+                                  source_channels_ != channels_;
+    const bool rate_mismatch = source_sample_rate_ > 0 &&
+                               sample_rate_ > 0 &&
+                               source_sample_rate_ != sample_rate_;
+    if (bit_depth_mismatch) {
+        LOG_CPP_WARNING("[WasapiPlayback:%s] Requested %u-bit playback but WASAPI accepted %u-bit. Mixer will be notified.",
+                        config_.sink_id.c_str(), source_bits_per_sample_, device_bits_per_sample_);
+    } else if (channel_mismatch || rate_mismatch) {
+        LOG_CPP_WARNING("[WasapiPlayback:%s] WASAPI adjusted format to %u Hz / %u channels; notifying mixer.",
+                        config_.sink_id.c_str(), sample_rate_, channels_);
+    }
+    if (bit_depth_mismatch || channel_mismatch || rate_mismatch) {
+        queue_format_change_notification(sample_rate_, channels_, device_bits_per_sample_);
     }
 }
 
@@ -466,6 +539,27 @@ void WasapiPlaybackSender::convert_frames(const uint8_t* src, UINT32 frames, BYT
         int32_t* out = reinterpret_cast<int32_t*>(dst);
         for (size_t i = 0; i < samples; ++i) {
             out[i] = static_cast<int32_t>(in[i]) << 16;
+        }
+    } else if (device_sample_format_ == SampleFormat::Int24) {
+        uint8_t* out = dst;
+        if (source_bits_per_sample_ == 32) {
+            const int32_t* in = reinterpret_cast<const int32_t*>(src);
+            for (size_t i = 0; i < samples; ++i) {
+                int32_t value = in[i] >> 8;
+                out[i * 3] = static_cast<uint8_t>(value & 0xFF);
+                out[i * 3 + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+                out[i * 3 + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            }
+        } else if (source_bits_per_sample_ == 16) {
+            const int16_t* in = reinterpret_cast<const int16_t*>(src);
+            for (size_t i = 0; i < samples; ++i) {
+                int32_t value = static_cast<int32_t>(in[i]) << 8;
+                out[i * 3] = static_cast<uint8_t>(value & 0xFF);
+                out[i * 3 + 1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+                out[i * 3 + 2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+            }
+        } else {
+            std::memset(dst, 0, static_cast<size_t>(frames) * device_bytes_per_frame_);
         }
     } else {
         std::memset(dst, 0, static_cast<size_t>(frames) * device_bytes_per_frame_);
@@ -605,6 +699,31 @@ void WasapiPlaybackSender::maybe_update_playback_rate(UINT32 padding_frames) {
         last_playback_rate_command_ = desired_rate;
         playback_rate_callback_(desired_rate);
     }
+}
+
+void WasapiPlaybackSender::queue_format_change_notification(unsigned int rate,
+                                                            unsigned int channels,
+                                                            unsigned int bit_depth) {
+    pending_format_notification_.valid = true;
+    pending_format_notification_.sample_rate = rate;
+    pending_format_notification_.channels = channels;
+    pending_format_notification_.bit_depth = bit_depth;
+    format_notification_pending_ = true;
+    if (format_change_callback_) {
+        auto note = pending_format_notification_;
+        pending_format_notification_ = {};
+        format_notification_pending_ = false;
+        format_change_callback_(note.sample_rate, note.channels, note.bit_depth);
+    }
+}
+
+void WasapiPlaybackSender::evaluate_conversion_requirements() {
+    source_sample_format_ = SampleFormatForBits(source_bits_per_sample_);
+    const bool format_mismatch = device_sample_format_ != source_sample_format_;
+    const bool bit_depth_mismatch = device_bits_per_sample_ != source_bits_per_sample_;
+    const bool channel_mismatch = source_channels_ > 0 && channels_ > 0 &&
+                                  source_channels_ != channels_;
+    requires_conversion_ = format_mismatch || bit_depth_mismatch || channel_mismatch;
 }
 
 } // namespace system_audio

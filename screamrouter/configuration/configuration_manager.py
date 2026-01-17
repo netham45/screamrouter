@@ -3695,6 +3695,31 @@ class ConfigurationManager(threading.Thread):
 
             if 'properties' in service_info:
                 props = service_info['properties']
+                def _parse_first_int(value: object) -> Optional[int]:
+                    if value is None:
+                        return None
+                    try:
+                        return int(str(value).strip())
+                    except Exception:  # pylint: disable=broad-except
+                        return None
+
+                def _parse_int_list(raw_value: object) -> List[int]:
+                    if raw_value is None:
+                        return []
+                    if isinstance(raw_value, (list, tuple)):
+                        candidates = [str(item) for item in raw_value]
+                    else:
+                        candidates = str(raw_value).replace(';', ',').split(',')
+                    parsed: List[int] = []
+                    for candidate in candidates:
+                        try:
+                            number = int(candidate.strip())
+                        except Exception:  # pylint: disable=broad-except
+                            continue
+                        if number > 0:
+                            parsed.append(number)
+                    return parsed
+
                 # Extract config_id if present
                 config_id = props.get('id') or props.get('config_id')
 
@@ -3719,6 +3744,24 @@ class ConfigurationManager(threading.Thread):
                             sample_rate = int(samplerates[0])  # Use first available sample rate
                         except ValueError:
                             pass
+
+                bit_depth_candidates: List[int] = []
+                direct_bit_depth = None
+                for key in ('bit_depth', 'bitDepth', 'bitdepth'):
+                    direct_bit_depth = _parse_first_int(props.get(key))
+                    if direct_bit_depth:
+                        break
+                if not direct_bit_depth:
+                    for key in ('bit_depths', 'bitDepths', 'supported_bit_depths', 'supportedBitDepths'):
+                        bit_depth_candidates = _parse_int_list(props.get(key))
+                        if bit_depth_candidates:
+                            break
+                if direct_bit_depth:
+                    bit_depth = direct_bit_depth
+                elif bit_depth_candidates:
+                    preference = [32, 24, 16]
+                    preferred_depth = next((depth for depth in preference if depth in bit_depth_candidates), None)
+                    bit_depth = preferred_depth or bit_depth_candidates[-1]
 
                 _logger.info("[Configuration Manager] Using mDNS service info for sink %s: port=%s, channels=%s, samplerate=%s, config_id=%s",
                             ip, port, channels, sample_rate, config_id)

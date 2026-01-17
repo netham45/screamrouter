@@ -41,7 +41,15 @@ public:
     void close() override;
     void send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& csrcs) override;
     void set_playback_rate_callback(std::function<void(double)> cb);
+    using FormatChangeCallback = std::function<void(unsigned int device_rate,
+                                                    unsigned int device_channels,
+                                                    unsigned int device_bit_depth)>;
+    void set_format_change_callback(FormatChangeCallback cb);
+    void update_source_format(unsigned int sample_rate, unsigned int channels, unsigned int bit_depth);
     void update_pipeline_backlog(double upstream_frames, double upstream_target_frames);
+    unsigned int get_effective_bit_depth() const { return device_bits_per_sample_; }
+    unsigned int get_effective_sample_rate() const { return sample_rate_; }
+    unsigned int get_effective_channels() const { return channels_; }
 
 private:
 
@@ -56,6 +64,8 @@ private:
     void convert_frames(const uint8_t* src, UINT32 frames, BYTE* dst);
     void reset_playback_counters();
     void maybe_update_playback_rate(UINT32 padding_frames);
+    void queue_format_change_notification(unsigned int rate, unsigned int channels, unsigned int bit_depth);
+    void evaluate_conversion_requirements();
 
     SinkMixerConfig config_;
 
@@ -75,6 +85,9 @@ private:
     SampleFormat source_sample_format_ = SampleFormat::Unknown;
     unsigned int device_bits_per_sample_ = 0;
     unsigned int source_bits_per_sample_ = 0;
+    unsigned int source_sample_rate_ = 0;
+    unsigned int source_channels_ = 0;
+    unsigned int source_bit_depth_ = 0;
     unsigned int channels_ = 0;
     unsigned int sample_rate_ = 0;
     size_t source_bytes_per_frame_ = 0;
@@ -86,6 +99,15 @@ private:
 
     std::atomic<std::uint64_t> frames_written_{0};
     std::function<void(double)> playback_rate_callback_;
+    FormatChangeCallback format_change_callback_;
+    struct FormatNotification {
+        bool valid = false;
+        unsigned int sample_rate = 0;
+        unsigned int channels = 0;
+        unsigned int bit_depth = 0;
+    };
+    FormatNotification pending_format_notification_{};
+    bool format_notification_pending_ = false;
     double playback_rate_integral_ = 0.0;
     double target_delay_frames_ = 0.0;
     double upstream_buffer_frames_ = 0.0;
