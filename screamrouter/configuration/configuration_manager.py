@@ -5416,9 +5416,6 @@ class ConfigurationManager(threading.Thread):
             if normalized_session:
                 sap_tag = f"rtp:{normalized_session}#{stream_ip}.{port_int}"
         updated = False
-        if str(source_desc.ip) != stream_ip:
-            source_desc.ip = stream_ip
-            updated = True
         if sap_tag and source_desc.tag != sap_tag:
             source_desc.tag = sap_tag
             updated = True
