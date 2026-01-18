@@ -3492,9 +3492,13 @@ class ConfigurationManager(threading.Thread):
             f"dest_port={destination_port}",
         ]
         attribute_block = ";".join([part for part in attributes if part])
+        try:
+            origin_session_id = int(hashlib.sha1(request_guid.encode("utf-8")).hexdigest()[:8], 16) or 1
+        except Exception:
+            origin_session_id = 1
         lines = [
             "v=0",
-            f"o=screamrouter-request {request_guid} 1 IN IP4 {local_ip}",
+            f"o=screamrouter-request {origin_session_id} 1 IN IP4 {local_ip}",
             f"s={session_name}",
             f"c=IN IP4 {local_ip}",
             "t=0 0",
