@@ -130,7 +130,16 @@ void SapDirectory::upsert(uint32_t ssrc,
                           const std::string& stream_guid,
                           const std::string& target_sink,
                           const std::string& target_host,
-                          const std::string& session_name) {
+                          const std::string& session_name,
+                          bool is_request,
+                          const std::string& request_type,
+                          const std::string& request_route_id,
+                          const std::string& request_source_id,
+                          const std::string& request_source_name,
+                          const std::string& request_target_sink,
+                          const std::string& request_target_host,
+                          const std::string& request_destination_ip,
+                          int request_destination_port) {
     SapAnnouncement announcement;
     announcement.stream_ip = connection_ip.empty() ? announcer_ip : connection_ip;
     announcement.announcer_ip = announcer_ip;
@@ -140,6 +149,15 @@ void SapDirectory::upsert(uint32_t ssrc,
     announcement.target_sink = target_sink;
     announcement.target_host = target_host;
     announcement.session_name = session_name;
+    announcement.is_request = is_request;
+    announcement.request_type = request_type;
+    announcement.request_route_id = request_route_id;
+    announcement.request_source_id = request_source_id;
+    announcement.request_source_name = request_source_name;
+    announcement.request_target_sink = request_target_sink;
+    announcement.request_target_host = request_target_host;
+    announcement.request_destination_ip = request_destination_ip;
+    announcement.request_destination_port = request_destination_port;
 
     std::lock_guard<std::mutex> lock(mutex_);
 

@@ -47,7 +47,16 @@ public:
                 const std::string& stream_guid,
                 const std::string& target_sink,
                 const std::string& target_host,
-                const std::string& session_name);
+                const std::string& session_name,
+                bool is_request,
+                const std::string& request_type,
+                const std::string& request_route_id,
+                const std::string& request_source_id,
+                const std::string& request_source_name,
+                const std::string& request_target_sink,
+                const std::string& request_target_host,
+                const std::string& request_destination_ip,
+                int request_destination_port);
 
 private:
     static std::string make_ip_port_key(const std::string& ip, int port);

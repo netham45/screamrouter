@@ -44,6 +44,15 @@ struct SapAnnouncement {
     std::string target_sink;
     std::string target_host;
     std::string session_name;
+    bool is_request = false;
+    std::string request_type;
+    std::string request_route_id;
+    std::string request_source_id;
+    std::string request_source_name;
+    std::string request_target_sink;
+    std::string request_target_host;
+    std::string request_destination_ip;
+    int request_destination_port = 0;
 };
 
 } // namespace audio

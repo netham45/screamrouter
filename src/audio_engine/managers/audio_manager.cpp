@@ -622,6 +622,33 @@ pybind11::list AudioManager::get_rtp_sap_announcements() {
         if (!announcement.target_host.empty()) {
             entry["target_host"] = announcement.target_host;
         }
+        if (announcement.is_request) {
+            entry["is_request"] = true;
+            if (!announcement.request_type.empty()) {
+                entry["request_type"] = announcement.request_type;
+            }
+            if (!announcement.request_route_id.empty()) {
+                entry["request_route_id"] = announcement.request_route_id;
+            }
+            if (!announcement.request_source_id.empty()) {
+                entry["request_source_id"] = announcement.request_source_id;
+            }
+            if (!announcement.request_source_name.empty()) {
+                entry["request_source_name"] = announcement.request_source_name;
+            }
+            if (!announcement.request_target_sink.empty()) {
+                entry["request_target_sink"] = announcement.request_target_sink;
+            }
+            if (!announcement.request_target_host.empty()) {
+                entry["request_target_host"] = announcement.request_target_host;
+            }
+            if (!announcement.request_destination_ip.empty()) {
+                entry["request_destination_ip"] = announcement.request_destination_ip;
+            }
+            if (announcement.request_destination_port > 0) {
+                entry["request_destination_port"] = announcement.request_destination_port;
+            }
+        }
         if (!announcement.session_name.empty()) {
             entry["session_name"] = announcement.session_name;
         }
