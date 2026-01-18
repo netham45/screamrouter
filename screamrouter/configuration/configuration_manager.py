@@ -5282,9 +5282,7 @@ class ConfigurationManager(threading.Thread):
             requester_sink = str(announcement.get("request_target_sink") or "").strip()
             requester_host = str(announcement.get("request_target_host") or "").strip()
             sink_name = f"REMOTE_SOURCE_SINK_{request_route_id[:8]}"
-            sink_config_id = f"remotesrc:{request_route_id}"
             route_name = f"REMOTE_SOURCE_ROUTE_{request_route_id[:8]}"
-            route_config_id = f"remotesrc-route:{request_route_id}"
             existing_handle = self._remote_source_request_active.get(request_route_id)
             sink_obj: Optional[SinkDescription] = None
             if existing_handle:
@@ -5298,11 +5296,11 @@ class ConfigurationManager(threading.Thread):
                 if sink_obj.port != dest_port:
                     sink_obj.port = dest_port
                     updates_needed = True
-                if sink_obj.sap_target_sink != requester_sink:
-                    sink_obj.sap_target_sink = requester_sink
+                if sink_obj.sap_target_sink:
+                    sink_obj.sap_target_sink = None
                     updates_needed = True
-                if sink_obj.sap_target_host != requester_host:
-                    sink_obj.sap_target_host = requester_host
+                if sink_obj.sap_target_host:
+                    sink_obj.sap_target_host = None
                     updates_needed = True
                 if updates_needed:
                     changes_applied = True
@@ -5313,8 +5311,8 @@ class ConfigurationManager(threading.Thread):
                         ip=dest_ip,
                         port=dest_port,
                         protocol="rtp",
-                        sap_target_sink=requester_sink or None,
-                        sap_target_host=requester_host or None,
+                        sap_target_sink=None,
+                        sap_target_host=None,
                         enabled=True,
                         is_group=False,
                         group_members=[],
@@ -5323,7 +5321,6 @@ class ConfigurationManager(threading.Thread):
                         sample_rate=source_obj.sample_rate or 48000,
                         channels=source_obj.channels or 2,
                         channel_layout="stereo",
-                        config_id=sink_config_id,
                     )
                 except Exception as exc:  # pylint: disable=broad-except
                     _logger.warning("[Configuration Manager] Failed to build remote-source sink for request %s: %s",
@@ -5415,7 +5412,7 @@ class ConfigurationManager(threading.Thread):
         sap_session_name = str(announcement.get("session_name") or "").strip()
         sap_tag = None
         if sap_guid:
-            sap_tag = f"rtp:{sap_guid}#{stream_ip}.{port_int}"
+            sap_tag = f"rtp:{sap_guid}*"
         elif sap_session_name:
             normalized_session = self._sanitize_screamrouter_label(sap_session_name)
             if normalized_session:
