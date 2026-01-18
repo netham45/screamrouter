@@ -1147,7 +1147,7 @@ class ConfigurationManager(threading.Thread):
 
     def __get_source_by_config_id(self, config_id: str) -> SourceDescription:
         """Get the source description by config ID (including temporary/remote ones)."""
-        for source in self._get_all_known_sources():
+        for source in self._get_runtime_sources():
             if str(source.config_id) == config_id:
                 return source
         raise ValueError(f"No source found with ID {config_id}")
@@ -2733,7 +2733,7 @@ class ConfigurationManager(threading.Thread):
                      len(self.remote_route_sources),
                      len(self.active_temporary_routes),
                      len(self.active_temporary_sources))
-        combined_sources = self.source_descriptions + list(self.remote_route_sources.values()) + self.active_temporary_sources
+        combined_sources = self._get_runtime_sources()
         self.active_configuration = ConfigurationSolver(combined_sources,
                                                         combined_sinks,
                                                         combined_routes)
@@ -3126,8 +3126,12 @@ class ConfigurationManager(threading.Thread):
         return self.sink_descriptions + self.active_temporary_sinks + list(self.remote_route_sinks.values())
 
     def _get_all_known_sources(self) -> List[SourceDescription]:
-        """Return a combined list of permanent, temporary, and remote-route sources."""
-        return self.source_descriptions + list(self.remote_route_sources.values()) + self.active_temporary_sources
+        """Return a combined list of permanent and temporary sources."""
+        return self.source_descriptions + self.active_temporary_sources
+
+    def _get_runtime_sources(self) -> List[SourceDescription]:
+        """Return sources used for runtime solving (includes remote-route mirrors)."""
+        return self._get_all_known_sources() + list(self.remote_route_sources.values())
 
     def _coerce_remote_route_target(self, route: RouteDescription) -> Optional[RemoteRouteTarget]:
         """Ensure route.remote_target is a RemoteRouteTarget instance."""
