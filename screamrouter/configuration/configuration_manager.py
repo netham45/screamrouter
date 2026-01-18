@@ -3495,6 +3495,7 @@ class ConfigurationManager(threading.Thread):
             f"c=IN IP4 {local_ip}",
             "t=0 0",
             f"m=audio {destination_port} RTP/AVP 96",
+            "a=rtpmap:96 L16/48000/2",
             f"a=x-screamrouter-target:host={target_host}",
             f"a=x-screamrouter-request:{attribute_block}",
         ]
