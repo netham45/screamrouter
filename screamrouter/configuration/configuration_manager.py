@@ -308,7 +308,7 @@ class ConfigurationManager(threading.Thread):
     def _broadcast_full_configuration(self):
         """Return coroutine to broadcast current configuration and device metadata."""
         return self.websocket_config.broadcast_config_update(
-            self._get_all_known_sources(),
+            self.source_descriptions,
             self._get_all_known_sinks(),
             self.route_descriptions,
             self.system_capture_devices,
@@ -4993,13 +4993,20 @@ class ConfigurationManager(threading.Thread):
                 active_route_keys[key] = cid
 
         for announcement in sap_announcements:
+            sap_guid = str(announcement.get("stream_guid") or "").strip()
+            is_remote_source_stream = bool(sap_guid.startswith("remotesrc:"))
+            if self._handle_remote_source_stream_announcement(announcement):
+                continue
+            if is_remote_source_stream:
+                # Remote-source SAP streams should never spawn generic temporary routes,
+                # even if the handler skipped due to missing metadata.
+                continue
+
             target_sink = str(announcement.get("target_sink") or "").strip()
             if not target_sink:
                 continue
             target_host = str(announcement.get("target_host") or "").strip()
             if target_host and not self._sap_host_matches_local(target_host):
-                continue
-            if self._handle_remote_source_stream_announcement(announcement):
                 continue
 
             sink: Optional[SinkDescription] = None
@@ -5033,7 +5040,6 @@ class ConfigurationManager(threading.Thread):
             except Exception:  # pylint: disable=broad-except
                 ip_value = source_ip
 
-            sap_guid = str(announcement.get("stream_guid") or "").strip()
             sap_session_name = str(announcement.get("session_name") or "").strip()
             sap_tag = None
             if sap_guid:
