@@ -78,7 +78,7 @@ void initialize_rtc_logger_once() {
     static std::once_flag rtc_logger_once;
     std::call_once(rtc_logger_once, []() {
         // Initialize libdatachannel logger
-        rtc::InitLogger(rtc::LogLevel::Warning, [](rtc::LogLevel level, std::string message) {
+        rtc::InitLogger(rtc::LogLevel::Verbose, [](rtc::LogLevel level, std::string message) {
             auto mapped = map_rtc_log_level(level);
             screamrouter::audio::logging::log_message(
                 mapped,
@@ -87,7 +87,7 @@ void initialize_rtc_logger_once() {
                 "%s",
                 message.c_str());
         });
-        LOG_CPP_INFO("[libdatachannel] Logger initialized (level=Warning)");
+        LOG_CPP_INFO("[libdatachannel] Logger initialized (level=Verbose)");
         
         // Initialize libjuice logger (ICE/STUN layer)
         juice_set_log_level(JUICE_LOG_LEVEL_VERBOSE);
