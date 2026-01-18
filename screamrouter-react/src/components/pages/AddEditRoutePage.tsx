@@ -66,7 +66,7 @@ const AddEditRoutePage: React.FC = () => {
   const [volume, setVolume] = useState(1);
   const [delay, setDelay] = useState(0);
   const [timeshift, setTimeshift] = useState(0);
-  
+
   const [sources, setSources] = useState<Source[]>([]);
   const [sinks, setSinks] = useState<Sink[]>([]);
   const [remoteSinks, setRemoteSinks] = useState<Sink[]>([]);
@@ -396,7 +396,7 @@ const AddEditRoutePage: React.FC = () => {
 
   useEffect(() => {
     if (sourceMode === 'remote' && destinationMode === 'remote') {
-      setDestinationMode('local');
+      //setDestinationMode('local');
     }
   }, [sourceMode, destinationMode]);
 
@@ -592,14 +592,14 @@ const AddEditRoutePage: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-          const [sourcesResponse, sinksResponse] = await Promise.all([
-            ApiService.getSources(),
-            ApiService.getSinks()
-          ]);
-        
+        const [sourcesResponse, sinksResponse] = await Promise.all([
+          ApiService.getSources(),
+          ApiService.getSinks()
+        ]);
+
         setSources(Object.values(sourcesResponse.data));
-          setSinks(Object.values(sinksResponse.data));
-        
+        setSinks(Object.values(sinksResponse.data));
+
         // Set preselected source and sink if provided in URL
         if (preselectedSource && !isEdit) {
           const sourceExists = Object.values(sourcesResponse.data).some(
@@ -609,7 +609,7 @@ const AddEditRoutePage: React.FC = () => {
             setSource(preselectedSource);
           }
         }
-        
+
         if (preselectedSink && !isEdit) {
           const sinkExists = Object.values(sinksResponse.data).some(
             s => s.name === preselectedSink
@@ -675,7 +675,7 @@ const AddEditRoutePage: React.FC = () => {
 
     fetchRoute();
   }, [routeName]);
-  
+
   // Auto-fill name when source and sink are selected
   useEffect(() => {
     // Only auto-fill name if we're not in edit mode and the name hasn't been manually edited
@@ -801,21 +801,21 @@ const AddEditRoutePage: React.FC = () => {
         <Heading as="h1" size="lg" mb={6}>
           {isEdit ? 'Edit Route' : 'Add Route'}
         </Heading>
-        
+
         {error && (
           <Alert status="error" mb={4} borderRadius="md">
             <AlertIcon />
             {error}
           </Alert>
         )}
-        
+
         {success && (
           <Alert status="success" mb={4} borderRadius="md">
             <AlertIcon />
             {success}
           </Alert>
         )}
-        
+
         {(configId || routeTag) && (
           <Box
             mb={5}
@@ -1112,7 +1112,7 @@ const AddEditRoutePage: React.FC = () => {
             </NumberInput>
           </FormControl>
         </Stack>
-        
+
         <Flex mt={8} gap={3} justifyContent="flex-end">
           <Button
             colorScheme="blue"

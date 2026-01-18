@@ -194,6 +194,8 @@ class ConfigurationManager(threading.Thread):
         """Active remote-source request handlers (provider side) keyed by route id"""
         self._remote_source_request_last_seen: Dict[str, float] = {}
         """Last time we saw a request announcement for a given route id"""
+        self._remote_source_request_status: Dict[str, str] = {}
+        """Last-known logging status for each remote-source request route"""
         self._remote_source_request_thread: Optional[threading.Thread] = None
         """Background thread that emits SAP requests for remote sources"""
         self._remote_source_request_thread_stop: threading.Event = threading.Event()
@@ -3281,6 +3283,7 @@ class ConfigurationManager(threading.Thread):
         """Ensure the background SAP request announcer is running."""
         if self._remote_source_request_thread and self._remote_source_request_thread.is_alive():
             return
+        _logger.info("[Configuration Manager] Starting remote source request announcer thread")
         self._remote_source_request_thread_stop.clear()
         self._remote_source_request_thread = threading.Thread(
             target=self._remote_source_request_loop,
@@ -3304,24 +3307,65 @@ class ConfigurationManager(threading.Thread):
             if route.enabled and getattr(route, "remote_source_request", None)
         ]
         if not active_routes:
+            if self._remote_source_request_status:
+                self._remote_source_request_status.clear()
             return
+
+        active_keys = {
+            self._remote_source_request_key(route)
+            for route in active_routes
+        }
+        for route_key in list(self._remote_source_request_status.keys()):
+            if route_key not in active_keys:
+                self._remote_source_request_status.pop(route_key, None)
 
         for route in active_routes:
             request = self._coerce_remote_source_request(route)
             if not request:
+                self._update_remote_source_request_status(
+                    route,
+                    "invalid_request",
+                    f"[Configuration Manager] Remote source request for route '{route.name}' has invalid metadata; skipping SAP announcement.",
+                    warning=True,
+                )
                 continue
             try:
                 sink = self.get_sink_by_name(route.sink)
-            except Exception:  # pylint: disable=broad-except
+            except Exception as exc:  # pylint: disable=broad-except
+                self._update_remote_source_request_status(
+                    route,
+                    "sink_lookup_failed",
+                    f"[Configuration Manager] Remote source request for route '{route.name}' cannot resolve sink '{route.sink}': {exc}",
+                    warning=True,
+                )
                 continue
             if not sink:
+                self._update_remote_source_request_status(
+                    route,
+                    "sink_missing",
+                    f"[Configuration Manager] Remote source request for route '{route.name}' skipped because sink '{route.sink}' was not found.",
+                    warning=True,
+                )
                 continue
             contact_ip = self._determine_remote_request_contact(request)
             if not contact_ip:
+                target_hint = request.router_address or request.router_hostname or request.router_uuid or "<unknown>"
+                self._update_remote_source_request_status(
+                    route,
+                    "no_contact_ip",
+                    f"[Configuration Manager] Remote source request for route '{route.name}' could not determine a local interface for {target_hint}; will retry.",
+                    warning=True,
+                )
                 continue
             destination_port = constants.RTP_RECEIVER_PORT
             target_host = request.router_uuid or request.router_hostname or request.router_address
             if not target_host:
+                self._update_remote_source_request_status(
+                    route,
+                    "missing_target",
+                    f"[Configuration Manager] Remote source request for route '{route.name}' missing target host information; cannot emit SAP request.",
+                    warning=True,
+                )
                 continue
             sdp_payload = self._build_remote_source_request_sdp(
                 route,
@@ -3332,18 +3376,78 @@ class ConfigurationManager(threading.Thread):
                 target_host,
             )
             if not sdp_payload:
+                self._update_remote_source_request_status(
+                    route,
+                    "sdp_build_failed",
+                    f"[Configuration Manager] Remote source request for route '{route.name}' failed to build SDP payload; will retry.",
+                    warning=True,
+                )
                 continue
             packet = self._build_sap_request_packet(contact_ip, sdp_payload)
             if not packet:
+                self._update_remote_source_request_status(
+                    route,
+                    "sap_build_failed",
+                    f"[Configuration Manager] Remote source request for route '{route.name}' failed to build SAP packet; will retry.",
+                    warning=True,
+                )
                 continue
             self._broadcast_sap_request_packet(packet, contact_ip, request)
+            source_label = request.source_name or request.source_config_id or "remote source"
+            self._update_remote_source_request_status(
+                route,
+                "ok",
+                f"[Configuration Manager] Remote source request for route '{route.name}' announced for {source_label} targeting host {target_host} via {contact_ip}:{destination_port}.",
+                warning=False,
+            )
+
+    def _remote_source_request_key(self, route: RouteDescription) -> str:
+        """Generate a stable key for tracking remote-source request log state."""
+        route_id = getattr(route, "config_id", None)
+        if route_id:
+            return str(route_id)
+        name = getattr(route, "name", None)
+        return str(name or "<unnamed>")
+
+    def _update_remote_source_request_status(self,
+                                             route: RouteDescription,
+                                             status: str,
+                                             message: str,
+                                             warning: bool) -> None:
+        """Track and log changes to remote-source SAP announcement state."""
+        route_key = self._remote_source_request_key(route)
+        previous = self._remote_source_request_status.get(route_key)
+        should_log = True
+        if previous == status:
+            # Keep logging successful announcements so operators can see cadence,
+            # but suppress repeated warnings/errors until the status changes.
+            should_log = not warning and status == "ok"
+        if not should_log:
+            return
+        self._remote_source_request_status[route_key] = status
+        log_fn = _logger.warning if warning else _logger.info
+        log_fn(message)
 
     def _determine_remote_request_contact(self, request: RemoteSourceRequest) -> Optional[str]:
         """Determine the local IP address best suited for contacting the remote router."""
-        host = request.router_address or request.router_hostname
+        host = (request.router_address or request.router_hostname or "").strip()
+        port = request.router_port or (443 if request.router_scheme != "http" else 80)
+        if (not host or not port) and request.router_uuid:
+            service_info = self._lookup_router_service_by_uuid(request.router_uuid)
+            if service_info:
+                candidate_host = (service_info.get("addresses") or [None])[0]
+                if not candidate_host:
+                    candidate_host = (service_info.get("host") or "").strip()
+                if candidate_host:
+                    host = str(candidate_host).strip()
+                try:
+                    service_port = int(service_info.get("port") or 0)
+                    if service_port > 0:
+                        port = service_port
+                except (TypeError, ValueError):
+                    pass
         if not host:
             return None
-        port = request.router_port or (443 if request.router_scheme != "http" else 80)
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 sock.settimeout(0.5)
@@ -3434,10 +3538,12 @@ class ConfigurationManager(threading.Thread):
         direct_host = request.router_address or request.router_hostname
         if direct_host:
             destinations.append((direct_host, 9875))
+        ttl_value = 255
+        ttl_bytes = struct.pack('B', max(0, min(255, ttl_value)))
         for dest_ip, dest_port in destinations:
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, struct.pack('b', 255))
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl_bytes)
                 if interface_ip:
                     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface_ip))
                 sock.sendto(packet, (dest_ip, dest_port))
@@ -3703,10 +3809,6 @@ class ConfigurationManager(threading.Thread):
             if not target:
                 raw_type = type(raw_target).__name__ if raw_target is not None else "NoneType"
                 safe_repr = repr(raw_target)[:160] if raw_target is not None else "None"
-                _logger.debug("[Configuration Manager] Route '%s' marked remote but target could not be coerced (type=%s, value=%s)",
-                              getattr(route, "name", "<unnamed>"),
-                              raw_type,
-                              safe_repr)
                 continue
             if not (target.sink_config_id or target.sink_name):
                 missing_identity.append(getattr(route, "name", "<unnamed>"))
@@ -3727,8 +3829,6 @@ class ConfigurationManager(threading.Thread):
 
         now = time.monotonic()
         if not force and now < self._next_remote_route_poll:
-            _logger.debug("[Configuration Manager] Skipping remote route poll; next refresh in %.1fs",
-                          self._next_remote_route_poll - now)
             return
         self._next_remote_route_poll = now + self._remote_route_poll_interval
 
@@ -3823,8 +3923,6 @@ class ConfigurationManager(threading.Thread):
 
         now = time.monotonic()
         if not force and now < self._next_remote_source_poll:
-            _logger.debug("[Configuration Manager] Skipping remote source poll; next refresh in %.1fs",
-                          self._next_remote_source_poll - now)
             return
         self._next_remote_source_poll = now + self._remote_source_poll_interval
 
@@ -5049,8 +5147,6 @@ class ConfigurationManager(threading.Thread):
             # Changes occurred due to pruning; push updates to engine/clients
             self.__apply_temporary_configuration_sync()
             self.__reload_configuration()
-        else:
-            _logger.debug("[Configuration Manager] No SAP temp route changes detected; skipping reload")
 
     def _apply_remote_source_requests_from_announcements(self, sap_announcements: List[dict[str, Any]]) -> None:
         """Create or update provider-side temporary sinks/routes for remote source requests."""
