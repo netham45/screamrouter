@@ -70,12 +70,6 @@ class APINeighbors:
             methods=["POST"],
             tags=["Neighbors"],
         )
-        self._app.add_api_route(
-            "/neighbors/sources",
-            self.get_neighbor_sources,
-            methods=["POST"],
-            tags=["Neighbors"],
-        )
 
     async def get_neighbor_sinks(self, neighbor: NeighborInstance) -> Any:
         """Fetch /sinks from another ScreamRouter instance."""
@@ -106,41 +100,6 @@ class APINeighbors:
             payload = response.json()
         except json.JSONDecodeError as exc:
             logger.warning("Neighbor %s returned invalid JSON", sinks_url)
-            raise HTTPException(
-                status_code=502, detail="Neighbor response was not valid JSON"
-            ) from exc
-
-        return payload
-
-    async def get_neighbor_sources(self, neighbor: NeighborInstance) -> Any:
-        """Fetch /sources from another ScreamRouter instance."""
-        base_url = neighbor.build_base_url()
-        sources_url = f"{base_url}/sources"
-        logger.info("Fetching neighbor sources from %s", sources_url)
-        try:
-            async with httpx.AsyncClient(timeout=neighbor.timeout, verify=neighbor.verify_tls) as client:
-                response = await client.get(sources_url)
-                response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            logger.warning(
-                "Neighbor responded with HTTP %s for %s",
-                exc.response.status_code,
-                sources_url,
-            )
-            raise HTTPException(
-                status_code=502,
-                detail=f"Neighbor responded with HTTP {exc.response.status_code}",
-            ) from exc
-        except httpx.RequestError as exc:
-            logger.warning("Neighbor request to %s failed: %s", sources_url, exc)
-            raise HTTPException(
-                status_code=502, detail="Unable to reach neighbor sources endpoint"
-            ) from exc
-
-        try:
-            payload = response.json()
-        except json.JSONDecodeError as exc:
-            logger.warning("Neighbor %s returned invalid JSON", sources_url)
             raise HTTPException(
                 status_code=502, detail="Neighbor response was not valid JSON"
             ) from exc

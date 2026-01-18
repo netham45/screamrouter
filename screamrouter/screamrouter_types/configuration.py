@@ -529,41 +529,6 @@ class RemoteRouteTarget(BaseModel):
         return hash(values)
 
 
-class RemoteSourceRequest(BaseModel):
-    """Metadata describing a request for a remote router to stream a source here."""
-    model_config = ConfigDict(from_attributes=True,
-                              arbitrary_types_allowed=True,
-                              json_schema_serialization_defaults_required=True)
-
-    router_uuid: Optional[str] = None
-    """Remote router UUID advertised over mDNS."""
-    router_hostname: Optional[str] = None
-    """Human-friendly hostname for the remote router (mDNS hostname)."""
-    router_address: Optional[str] = None
-    """Direct IP address of the remote router."""
-    router_port: Optional[int] = Field(default=None, ge=1, le=65535)
-    """HTTPS port exposed by the remote router (defaults to 443 when omitted)."""
-    router_scheme: Literal["http", "https"] = "https"
-    """Scheme to use when contacting the remote router (default: https)."""
-    source_config_id: Optional[str] = None
-    """Remote source config_id."""
-    source_name: Optional[str] = None
-    """Remote source display name (fallback when config_id missing)."""
-
-    def __hash__(self):
-        """Allow RouteDescription hashing when remote_source_request is present."""
-        values = (
-            self.router_uuid,
-            self.router_hostname,
-            self.router_address,
-            self.router_port,
-            self.router_scheme,
-            self.source_config_id,
-            self.source_name,
-        )
-        return hash(values)
-
-
 class RouteDescription(BaseModel):
     """
     Holds a route mapping from source to sink
@@ -596,8 +561,6 @@ class RouteDescription(BaseModel):
     """Indicates if this route is temporary and should not be persisted"""
     remote_target: Optional["RemoteRouteTarget"] = None
     """Optional remote route metadata (router UUID + sink UUID)"""
-    remote_source_request: Optional["RemoteSourceRequest"] = None
-    """Optional request for a remote router to stream a source into this sink"""
 
     @model_validator(mode='after')
     def ensure_config_id(self):

@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import socket
-import struct
 import sys
 import threading
 import traceback
@@ -64,7 +63,6 @@ from screamrouter.screamrouter_types.annotations import (DelayType, IPAddressTyp
                                                 VolumeType)
 from screamrouter.screamrouter_types.configuration import (Equalizer, RouteDescription,
                                                   RemoteRouteTarget,
-                                                  RemoteSourceRequest,
                                                   SinkDescription,
                                                   SourceDescription,
                                                   SpeakerLayout,
@@ -180,27 +178,6 @@ class ConfigurationManager(threading.Thread):
         """Interval (seconds) between remote route refreshes"""
         self._next_remote_route_poll: float = 0.0
         """Timestamp for the next remote route refresh"""
-        self.remote_route_sources: Dict[str, SourceDescription] = {}
-        """Temporary source replicas for remote source requests, keyed by route config_id"""
-        self._remote_route_source_hashes: Dict[str, str] = {}
-        """Content hashes for remote source snapshots"""
-        self._remote_source_poll_interval: float = 60.0
-        """Interval (seconds) between remote source refreshes"""
-        self._next_remote_source_poll: float = 0.0
-        """Timestamp for the next remote source refresh"""
-        self._remote_source_stream_last_seen: Dict[str, float] = {}
-        """Timestamp of last SAP stream announcement per remote source route"""
-        self._remote_source_request_active: Dict[str, Dict[str, Any]] = {}
-        """Active remote-source request handlers (provider side) keyed by route id"""
-        self._remote_source_request_last_seen: Dict[str, float] = {}
-        """Last time we saw a request announcement for a given route id"""
-        self._remote_source_request_status: Dict[str, str] = {}
-        """Last-known logging status for each remote-source request route"""
-        self._remote_source_request_contacts: Dict[str, Tuple[str, int]] = {}
-        """Cached destination contact info (ip, port) per remote-source route"""
-        self._remote_source_request_thread: Optional[threading.Thread] = None
-        """Background thread that emits SAP requests for remote sources"""
-        self._remote_source_request_thread_stop: threading.Event = threading.Event()
         self._router_service_cache: List[Dict[str, Any]] = []
         """Cached mDNS router service entries"""
         self._router_service_cache_expiry: float = 0.0
@@ -286,7 +263,6 @@ class ConfigurationManager(threading.Thread):
         _logger.info("------------------------------------------------------------------------")
 
         self.start()
-        self._start_remote_source_request_announcer()
 
     def _safe_async_run(self, coro):
         """Safely run an async coroutine, handling both sync and async contexts.
@@ -433,7 +409,6 @@ class ConfigurationManager(threading.Thread):
     def get_sources(self, include_temporary: bool = False) -> List[SourceDescription]:
         """Get a list of sources, optionally including temporary ones."""
         source_pool: List[SourceDescription] = list(self.source_descriptions)
-        source_pool += list(self.remote_route_sources.values())
         if include_temporary:
             source_pool += self.active_temporary_sources
         sources: List[SourceDescription] = []
@@ -793,9 +768,6 @@ class ConfigurationManager(threading.Thread):
         if getattr(route, "remote_target", None):
             self._prime_remote_routes_for_reload()
             self._schedule_remote_route_refresh()
-        if getattr(route, "remote_source_request", None):
-            self._prime_remote_source_requests_for_reload()
-            self._schedule_remote_source_refresh()
         self.__reload_configuration()
         return True
 
@@ -804,7 +776,6 @@ class ConfigurationManager(threading.Thread):
            Undefined fields are ignored"""
         changed_route: RouteDescription = self.get_route_by_name(old_route_name)
         previous_remote_target = getattr(changed_route, "remote_target", None)
-        previous_remote_request = getattr(changed_route, "remote_source_request", None)
         notify_volume_eq: bool = False
         if new_route.name != old_route_name:
             for route in self.route_descriptions:
@@ -825,15 +796,6 @@ class ConfigurationManager(threading.Thread):
         if previous_remote_target is not None or updated_remote_target is not None:
             self._prime_remote_routes_for_reload()
             self._schedule_remote_route_refresh()
-        updated_remote_request = getattr(changed_route, "remote_source_request", None)
-        if previous_remote_request is not None or updated_remote_request is not None:
-            self._prime_remote_source_requests_for_reload()
-            self._schedule_remote_source_refresh()
-        previous_remote_request = getattr(previous_remote_target, "remote_source_request", None)
-        updated_remote_request = getattr(changed_route, "remote_source_request", None)
-        if previous_remote_request is not None or updated_remote_request is not None:
-            self._prime_remote_source_requests_for_reload()
-            self._schedule_remote_source_refresh()
         self.__reload_configuration()
         if notify_volume_eq:
             self.__notify_volume_eq_condition()
@@ -861,9 +823,6 @@ class ConfigurationManager(threading.Thread):
         if getattr(route, "remote_target", None):
             self._prime_remote_routes_for_reload()
             self._schedule_remote_route_refresh()
-        if getattr(route, "remote_source_request", None):
-            self._prime_remote_source_requests_for_reload()
-            self._schedule_remote_source_refresh()
         self.__reload_configuration()
         return True
 
@@ -874,9 +833,6 @@ class ConfigurationManager(threading.Thread):
         if getattr(route, "remote_target", None):
             self._prime_remote_routes_for_reload()
             self._schedule_remote_route_refresh()
-        if getattr(route, "remote_source_request", None):
-            self._prime_remote_source_requests_for_reload()
-            self._schedule_remote_source_refresh()
         self.__reload_configuration()
         return True
 
@@ -887,9 +843,6 @@ class ConfigurationManager(threading.Thread):
         if getattr(route, "remote_target", None):
             self._prime_remote_routes_for_reload()
             self._schedule_remote_route_refresh()
-        if getattr(route, "remote_source_request", None):
-            self._prime_remote_source_requests_for_reload()
-            self._schedule_remote_source_refresh()
         self.__reload_configuration()
         return True
     
@@ -1147,20 +1100,6 @@ class ConfigurationManager(threading.Thread):
                 return sink
         raise ValueError(f"No sink found with ID {config_id}")
 
-    def __get_source_by_config_id(self, config_id: str) -> SourceDescription:
-        """Get the source description by config ID (including temporary/remote ones)."""
-        for source in self._get_runtime_sources():
-            if str(source.config_id) == config_id:
-                return source
-        raise ValueError(f"No source found with ID {config_id}")
-
-    def __get_route_by_config_id(self, config_id: str) -> Optional[RouteDescription]:
-        """Return a route by config_id if it exists."""
-        for route in self.route_descriptions:
-            if getattr(route, "config_id", None) == config_id:
-                return route
-        return None
-
     def source_previous_track(self, source_name: SourceNameType) -> bool:
         """Send a Previous Track command to the source"""
         source: SourceDescription = self.get_source_by_name(source_name)
@@ -1399,8 +1338,7 @@ class ConfigurationManager(threading.Thread):
         """Verifies route sink and source exist, throws exception if not"""
         if not getattr(route, "remote_target", None):
             self.get_sink_by_name(route.sink)
-        if not getattr(route, "remote_source_request", None):
-            self.get_source_by_name(route.source)
+        self.get_source_by_name(route.source)
 
     def __remove_sink_from_groups(self, sink_name: SinkNameType) -> Dict[SinkNameType, List[SinkNameType]]:
         """Remove the sink from every group that references it."""
@@ -2706,10 +2644,6 @@ class ConfigurationManager(threading.Thread):
             self._service_remote_routes(force=True, apply_changes=False)
         except Exception as exc:  # pylint: disable=broad-except
             _logger.warning("[Configuration Manager] Remote route refresh during solve failed: %s", exc)
-        try:
-            self._service_remote_source_requests(force=True, apply_changes=False)
-        except Exception as exc:  # pylint: disable=broad-except
-            _logger.warning("[Configuration Manager] Remote source refresh during solve failed: %s", exc)
         
         # Merge temporary entities with regular ones for solving
         combined_sinks = self._get_all_known_sinks()
@@ -2729,13 +2663,12 @@ class ConfigurationManager(threading.Thread):
                     self.source_descriptions.append(plugin_source)
 
         # Get a new resolved configuration from the current state (including temporary entities)
-        _logger.debug("[Configuration Manager] Solving Configuration (including %d temporary sinks, %d remote sinks, %d remote sources, %d temporary routes, %d temporary sources)",
+        _logger.debug("[Configuration Manager] Solving Configuration (including %d temporary sinks, %d remote sinks, %d temporary routes, %d temporary sources)",
                      len(self.active_temporary_sinks),
                      len(self.remote_route_sinks),
-                     len(self.remote_route_sources),
                      len(self.active_temporary_routes),
                      len(self.active_temporary_sources))
-        combined_sources = self._get_runtime_sources()
+        combined_sources = self.source_descriptions + self.active_temporary_sources
         self.active_configuration = ConfigurationSolver(combined_sources,
                                                         combined_sinks,
                                                         combined_routes)
@@ -2867,20 +2800,17 @@ class ConfigurationManager(threading.Thread):
     def __reload_configuration_without_save(self) -> None:
         """Notifies the configuration manager to reload the configuration without saving to disk"""
         # Log temporary entities being processed
-        _logger.info("[Configuration Manager] Reloading configuration without save - Temporary sinks: %d, Remote sinks: %d, Remote sources: %d, Temporary routes: %d",
-                     len(self.active_temporary_sinks), len(self.remote_route_sinks), len(self.remote_route_sources), len(self.active_temporary_routes))
+        _logger.info("[Configuration Manager] Reloading configuration without save - Temporary sinks: %d, Remote sinks: %d, Temporary routes: %d",
+                     len(self.active_temporary_sinks), len(self.remote_route_sinks), len(self.active_temporary_routes))
         for sink in self.active_temporary_sinks:
             _logger.debug("[Configuration Manager] Temporary sink: name='%s', config_id='%s', protocol='%s', enabled=%s",
                          sink.name, sink.config_id, sink.protocol, sink.enabled)
         for sink in self.remote_route_sinks.values():
             _logger.debug("[Configuration Manager] Remote sink: name='%s', config_id='%s', protocol='%s', enabled=%s",
                           sink.name, sink.config_id, sink.protocol, sink.enabled)
-        for source in self.remote_route_sources.values():
-            _logger.debug("[Configuration Manager] Remote source: name='%s', config_id='%s', enabled=%s",
-                          source.name, source.config_id, source.enabled)
         
         self._safe_async_run(self.websocket_config.broadcast_config_update(
-            self._get_all_known_sources(),
+            self.source_descriptions,
             self._get_all_known_sinks(),
             self.route_descriptions + self.active_temporary_routes,
             self.system_capture_devices,
@@ -2943,7 +2873,7 @@ class ConfigurationManager(threading.Thread):
         
         # Update websocket clients
         self._safe_async_run(self.websocket_config.broadcast_config_update(
-            self._get_all_known_sources(),
+            self.source_descriptions,
             self._get_all_known_sinks(),
             self.route_descriptions,
             self.system_capture_devices,
@@ -3127,14 +3057,6 @@ class ConfigurationManager(threading.Thread):
         """Return a combined list of permanent, temporary, and remote-route sinks."""
         return self.sink_descriptions + self.active_temporary_sinks + list(self.remote_route_sinks.values())
 
-    def _get_all_known_sources(self) -> List[SourceDescription]:
-        """Return a combined list of permanent and temporary sources."""
-        return self.source_descriptions + self.active_temporary_sources
-
-    def _get_runtime_sources(self) -> List[SourceDescription]:
-        """Return sources used for runtime solving (includes remote-route mirrors)."""
-        return self._get_all_known_sources() + list(self.remote_route_sources.values())
-
     def _coerce_remote_route_target(self, route: RouteDescription) -> Optional[RemoteRouteTarget]:
         """Ensure route.remote_target is a RemoteRouteTarget instance."""
         target = getattr(route, "remote_target", None)
@@ -3207,411 +3129,14 @@ class ConfigurationManager(threading.Thread):
                         getattr(route, "name", "<unnamed>"), type(target).__name__)
         return None
 
-    def _coerce_remote_source_request(self, route: RouteDescription) -> Optional[RemoteSourceRequest]:
-        """Ensure route.remote_source_request is a RemoteSourceRequest instance."""
-        request = getattr(route, "remote_source_request", None)
-        if request is None:
-            return None
-        if isinstance(request, RemoteSourceRequest):
-            return request
-        if hasattr(request, "model_dump"):
-            try:
-                serialized = request.model_dump()
-                if isinstance(serialized, dict):
-                    coerced = RemoteSourceRequest(**serialized)
-                    return coerced
-            except Exception as exc:  # pylint: disable=broad-except
-                _logger.warning("[Configuration Manager] Route '%s' remote_source_request model_dump failed: %s",
-                                getattr(route, "name", "<unnamed>"), exc)
-        if hasattr(request, "__dict__") and not isinstance(request, dict):
-            try:
-                dict_view = dict(getattr(request, "__dict__", {}))
-                if dict_view:
-                    coerced = RemoteSourceRequest(**dict_view)
-                    return coerced
-            except Exception as exc:  # pylint: disable=broad-except
-                _logger.warning("[Configuration Manager] Route '%s' remote_source_request __dict__ coercion failed: %s",
-                                getattr(route, "name", "<unnamed>"), exc)
-        candidate: Dict[str, Any] = {}
-        for field_name in getattr(RemoteSourceRequest, "model_fields", {}):
-            if hasattr(request, field_name):
-                value = getattr(request, field_name)
-                if value is not None:
-                    candidate[field_name] = value
-        if candidate:
-            try:
-                coerced = RemoteSourceRequest(**candidate)
-                return coerced
-            except Exception as exc:  # pylint: disable=broad-except
-                _logger.warning("[Configuration Manager] Route '%s' remote_source_request attribute coercion failed: %s",
-                                getattr(route, "name", "<unnamed>"), exc)
-        if isinstance(request, str):
-            stripped = request.strip()
-            if not stripped or stripped.lower() in {"null", "none"}:
-                return None
-            try:
-                decoded = json.loads(stripped)
-                if isinstance(decoded, dict):
-                    coerced = RemoteSourceRequest(**decoded)
-                    try:
-                        route.remote_source_request = coerced
-                    except Exception:  # pylint: disable=broad-except
-                        pass
-                    return coerced
-            except json.JSONDecodeError:
-                _logger.warning("[Configuration Manager] Route '%s' remote_source_request string is not valid JSON",
-                                getattr(route, "name", "<unnamed>"))
-        if isinstance(request, dict):
-            try:
-                coerced = RemoteSourceRequest(**request)
-            except Exception as exc:  # pylint: disable=broad-except
-                _logger.warning("[Configuration Manager] Route '%s' has invalid remote_source_request payload: %s",
-                                getattr(route, "name", "<unnamed>"), exc)
-                return None
-            try:
-                route.remote_source_request = coerced
-            except Exception:  # pylint: disable=broad-except
-                pass
-            return coerced
-        _logger.warning("[Configuration Manager] Route '%s' has unsupported remote_source_request type %s",
-                        getattr(route, "name", "<unnamed>"), type(request).__name__)
-        return None
-
     def _schedule_remote_route_refresh(self) -> None:
         """Force the remote route poller to refresh on the next maintenance tick."""
         self._next_remote_route_poll = 0.0
-
-    def _schedule_remote_source_refresh(self) -> None:
-        """Force the remote source poller to refresh on the next maintenance tick."""
-        self._next_remote_source_poll = 0.0
-
-    def _start_remote_source_request_announcer(self) -> None:
-        """Ensure the background SAP request announcer is running."""
-        if self._remote_source_request_thread and self._remote_source_request_thread.is_alive():
-            return
-        _logger.info("[Configuration Manager] Starting remote source request announcer thread")
-        self._remote_source_request_thread_stop.clear()
-        self._remote_source_request_thread = threading.Thread(
-            target=self._remote_source_request_loop,
-            name="RemoteSourceRequestAnnouncer",
-            daemon=True,
-        )
-        self._remote_source_request_thread.start()
-
-    def _remote_source_request_loop(self) -> None:
-        """Background loop to emit SAP requests for remote sources."""
-        while not self._remote_source_request_thread_stop.wait(timeout=5.0):
-            try:
-                self._emit_remote_source_requests()
-            except Exception as exc:  # pylint: disable=broad-except
-                _logger.warning("[Configuration Manager] Remote source request announcer error: %s", exc)
-
-    def _emit_remote_source_requests(self) -> None:
-        """Broadcast SAP request packets for each enabled remote-source route."""
-        active_routes = [
-            route for route in self.route_descriptions
-            if route.enabled and getattr(route, "remote_source_request", None)
-        ]
-        if not active_routes:
-            mirrors_cleared = False
-            if self._remote_source_request_status:
-                self._remote_source_request_status.clear()
-            if self._remote_source_request_contacts:
-                self._remote_source_request_contacts.clear()
-                for route_id in list(self.remote_route_sources.keys()):
-                    mirrors_cleared |= self._apply_remote_source_tag_hint(route_id, None)
-            if mirrors_cleared:
-                self.__apply_temporary_configuration_sync()
-            return
-
-        active_keys = {
-            self._remote_source_request_key(route)
-            for route in active_routes
-        }
-        for route_key in list(self._remote_source_request_status.keys()):
-            if route_key not in active_keys:
-                self._remote_source_request_status.pop(route_key, None)
-
-        seen_route_ids: Set[str] = set()
-        mirrors_updated = False
-        for route in active_routes:
-            request = self._coerce_remote_source_request(route)
-            if not request:
-                self._update_remote_source_request_status(
-                    route,
-                    "invalid_request",
-                    f"[Configuration Manager] Remote source request for route '{route.name}' has invalid metadata; skipping SAP announcement.",
-                    warning=True,
-                )
-                route_id = getattr(route, "config_id", None)
-                if route_id:
-                    if self._remote_source_request_contacts.pop(route_id, None):
-                        mirrors_updated |= self._apply_remote_source_tag_hint(route_id, None)
-                continue
-            try:
-                sink = self.get_sink_by_name(route.sink)
-            except Exception as exc:  # pylint: disable=broad-except
-                self._update_remote_source_request_status(
-                    route,
-                    "sink_lookup_failed",
-                    f"[Configuration Manager] Remote source request for route '{route.name}' cannot resolve sink '{route.sink}': {exc}",
-                    warning=True,
-                )
-                continue
-            if not sink:
-                self._update_remote_source_request_status(
-                    route,
-                    "sink_missing",
-                    f"[Configuration Manager] Remote source request for route '{route.name}' skipped because sink '{route.sink}' was not found.",
-                    warning=True,
-                )
-                route_id = getattr(route, "config_id", None)
-                if route_id:
-                    if self._remote_source_request_contacts.pop(route_id, None):
-                        mirrors_updated |= self._apply_remote_source_tag_hint(route_id, None)
-                continue
-            route_id = getattr(route, "config_id", None)
-            if route_id:
-                seen_route_ids.add(route_id)
-            contact_ip = self._determine_remote_request_contact(request)
-            if not contact_ip:
-                target_hint = request.router_address or request.router_hostname or request.router_uuid or "<unknown>"
-                self._update_remote_source_request_status(
-                    route,
-                    "no_contact_ip",
-                    f"[Configuration Manager] Remote source request for route '{route.name}' could not determine a local interface for {target_hint}; will retry.",
-                    warning=True,
-                )
-                if route_id:
-                    if self._remote_source_request_contacts.pop(route_id, None):
-                        mirrors_updated |= self._apply_remote_source_tag_hint(route_id, None)
-                continue
-            destination_port = constants.RTP_RECEIVER_PORT
-            target_host = request.router_uuid or request.router_hostname or request.router_address
-            if not target_host:
-                self._update_remote_source_request_status(
-                    route,
-                    "missing_target",
-                    f"[Configuration Manager] Remote source request for route '{route.name}' missing target host information; cannot emit SAP request.",
-                    warning=True,
-                )
-                continue
-            sdp_payload = self._build_remote_source_request_sdp(
-                route,
-                request,
-                sink,
-                contact_ip,
-                destination_port,
-                target_host,
-            )
-            if not sdp_payload:
-                self._update_remote_source_request_status(
-                    route,
-                    "sdp_build_failed",
-                    f"[Configuration Manager] Remote source request for route '{route.name}' failed to build SDP payload; will retry.",
-                    warning=True,
-                )
-                continue
-            packet = self._build_sap_request_packet(contact_ip, sdp_payload)
-            if not packet:
-                self._update_remote_source_request_status(
-                    route,
-                    "sap_build_failed",
-                    f"[Configuration Manager] Remote source request for route '{route.name}' failed to build SAP packet; will retry.",
-                    warning=True,
-                )
-                continue
-            if route_id:
-                self._remote_source_request_contacts[route_id] = (contact_ip, destination_port)
-                mirrors_updated |= self._apply_remote_source_tag_hint(route_id, (contact_ip, destination_port))
-            self._broadcast_sap_request_packet(packet, contact_ip, request)
-            source_label = request.source_name or request.source_config_id or "remote source"
-            self._update_remote_source_request_status(
-                route,
-                "ok",
-                f"[Configuration Manager] Remote source request for route '{route.name}' announced for {source_label} targeting host {target_host} via {contact_ip}:{destination_port}.",
-                warning=False,
-            )
-        for route_id in list(self._remote_source_request_contacts.keys()):
-            if route_id not in seen_route_ids:
-                self._remote_source_request_contacts.pop(route_id, None)
-                mirrors_updated |= self._apply_remote_source_tag_hint(route_id, None)
-        if mirrors_updated:
-            self.__apply_temporary_configuration_sync()
-
-    def _remote_source_request_key(self, route: RouteDescription) -> str:
-        """Generate a stable key for tracking remote-source request log state."""
-        route_id = getattr(route, "config_id", None)
-        if route_id:
-            return str(route_id)
-        name = getattr(route, "name", None)
-        return str(name or "<unnamed>")
-
-    def _update_remote_source_request_status(self,
-                                             route: RouteDescription,
-                                             status: str,
-                                             message: str,
-                                             warning: bool) -> None:
-        """Track and log changes to remote-source SAP announcement state."""
-        route_key = self._remote_source_request_key(route)
-        previous = self._remote_source_request_status.get(route_key)
-        should_log = True
-        if previous == status:
-            # Keep logging successful announcements so operators can see cadence,
-            # but suppress repeated warnings/errors until the status changes.
-            should_log = not warning and status == "ok"
-        if not should_log:
-            return
-        self._remote_source_request_status[route_key] = status
-        log_fn = _logger.warning if warning else _logger.info
-        log_fn(message)
-
-    def _determine_remote_request_contact(self, request: RemoteSourceRequest) -> Optional[str]:
-        """Determine the local IP address best suited for contacting the remote router."""
-        host = (request.router_address or request.router_hostname or "").strip()
-        port = request.router_port or (443 if request.router_scheme != "http" else 80)
-        if (not host or not port) and request.router_uuid:
-            service_info = self._lookup_router_service_by_uuid(request.router_uuid)
-            if service_info:
-                candidate_host = (service_info.get("addresses") or [None])[0]
-                if not candidate_host:
-                    candidate_host = (service_info.get("host") or "").strip()
-                if candidate_host:
-                    host = str(candidate_host).strip()
-                try:
-                    service_port = int(service_info.get("port") or 0)
-                    if service_port > 0:
-                        port = service_port
-                except (TypeError, ValueError):
-                    pass
-        if not host:
-            return None
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                sock.settimeout(0.5)
-                sock.connect((host, port))
-                local_ip = sock.getsockname()[0]
-                return local_ip
-        except Exception:  # pylint: disable=broad-except
-            return None
-
-    def _remote_source_request_guid(self, route: RouteDescription) -> str:
-        """Deterministic GUID for a remote-source route."""
-        return route.config_id or uuid.uuid4().hex
-
-    def _build_remote_source_request_sdp(self,
-                                         route: RouteDescription,
-                                         request: RemoteSourceRequest,
-                                         sink: SinkDescription,
-                                         local_ip: str,
-                                         destination_port: int,
-                                         target_host: str) -> Optional[str]:
-        """Construct an SDP payload describing the remote-source request."""
-        if not local_ip:
-            return None
-        request_guid = self._remote_source_request_guid(route)
-        router_identity = self.router_uuid or socket.gethostname()
-        target_sink_identity = sink.config_id or sink.name
-        source_identity = request.source_config_id or ""
-        source_name = request.source_name or ""
-        session_name = f"Remote Source Request {route.name}"
-        attributes = [
-            f"type=remote_source",
-            f"route={route.config_id}",
-            f"source_id={source_identity}",
-            f"source_name={source_name}",
-            f"sink={target_sink_identity}",
-            f"host={router_identity}",
-            f"dest_ip={local_ip}",
-            f"dest_port={destination_port}",
-        ]
-        attribute_block = ";".join([part for part in attributes if part])
-        try:
-            origin_session_id = int(hashlib.sha1(request_guid.encode("utf-8")).hexdigest()[:8], 16) or 1
-        except Exception:
-            origin_session_id = 1
-        lines = [
-            "v=0",
-            f"o=screamrouter-request {origin_session_id} 1 IN IP4 {local_ip}",
-            f"s={session_name}",
-            f"c=IN IP4 {local_ip}",
-            "t=0 0",
-            f"m=audio {destination_port} RTP/AVP 96",
-            "a=rtpmap:96 L16/48000/2",
-            f"a=x-screamrouter-target:host={target_host}",
-            f"a=x-screamrouter-request:{attribute_block}",
-        ]
-        return "\n".join(lines) + "\n"
-
-    def _build_sap_request_packet(self, local_ip: str, sdp_payload: str) -> Optional[bytes]:
-        """Build a SAP packet from the provided SDP payload."""
-        if not local_ip or not sdp_payload:
-            return None
-        try:
-            ip_bytes = socket.inet_aton(local_ip)
-        except OSError:
-            return None
-        content_type = b"application/sdp"
-        sdp_bytes = sdp_payload.encode("utf-8")
-        sap_header_size = 8
-        packet = bytearray(sap_header_size + len(content_type) + 1 + len(sdp_bytes) + 1)
-        packet[0] = 0x20
-        packet[1] = 0x00
-        msg_hash = hashlib.sha1(sdp_bytes).digest()
-        struct.pack_into("!H", packet, 2, struct.unpack("!H", msg_hash[:2])[0])
-        packet[4:8] = ip_bytes
-        offset = sap_header_size
-        packet[offset:offset + len(content_type)] = content_type
-        offset += len(content_type)
-        packet[offset] = 0
-        offset += 1
-        packet[offset:offset + len(sdp_bytes)] = sdp_bytes
-        offset += len(sdp_bytes)
-        packet[offset] = 0
-        return bytes(packet)
-
-    def _broadcast_sap_request_packet(self,
-                                      packet: bytes,
-                                      interface_ip: Optional[str],
-                                      request: RemoteSourceRequest) -> None:
-        """Send the SAP packet to multicast destinations and optionally directly to the remote router."""
-        if not packet:
-            return
-        destinations = [("224.2.127.254", 9875), ("224.0.0.56", 9875)]
-        direct_host = request.router_address or request.router_hostname
-        if direct_host:
-            destinations.append((direct_host, 9875))
-        ttl_value = 255
-        ttl_bytes = struct.pack('B', max(0, min(255, ttl_value)))
-        for dest_ip, dest_port in destinations:
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl_bytes)
-                if interface_ip:
-                    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(interface_ip))
-                sock.sendto(packet, (dest_ip, dest_port))
-            except Exception as exc:  # pylint: disable=broad-except
-                _logger.debug("[Configuration Manager] Failed to send SAP request to %s:%d: %s",
-                              dest_ip, dest_port, exc)
-            finally:
-                try:
-                    sock.close()
-                except Exception:  # pylint: disable=broad-except
-                    pass
 
     def _hash_remote_sink_snapshot(self, route: RouteDescription, payload: Dict[str, Any]) -> str:
         """Generate a deterministic hash for a remote sink payload."""
         snapshot = {
             "route_sink": route.sink,
-            "payload": payload,
-        }
-        encoded = json.dumps(snapshot, sort_keys=True, default=str).encode("utf-8", "ignore")
-        return hashlib.sha256(encoded).hexdigest()
-
-    def _hash_remote_source_snapshot(self, route: RouteDescription, payload: Dict[str, Any]) -> str:
-        """Generate a deterministic hash for a remote source payload."""
-        snapshot = {
-            "route_source": route.source,
             "payload": payload,
         }
         encoded = json.dumps(snapshot, sort_keys=True, default=str).encode("utf-8", "ignore")
@@ -3715,51 +3240,6 @@ class ConfigurationManager(threading.Thread):
 
         return sink_payload
 
-    def _fetch_remote_source_payload(self, request: RemoteSourceRequest) -> Dict[str, Any]:
-        """Fetch the remote router source list and return the relevant source payload."""
-        base_url = self._build_remote_base_url(request)
-        if not base_url:
-            raise RuntimeError("Unable to resolve remote router host for remote source request")
-
-        sources_url = f"{base_url}/sources"
-        _logger.debug("[Configuration Manager] Fetching remote sources from %s", sources_url)
-        try:
-            response = httpx.get(sources_url, timeout=10.0, verify=False)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise RuntimeError(f"Remote router responded with HTTP {exc.response.status_code}") from exc
-        except httpx.RequestError as exc:
-            raise RuntimeError(f"Failed to reach remote router at {sources_url}: {exc}") from exc
-
-        try:
-            payload = response.json()
-        except json.JSONDecodeError as exc:
-            raise RuntimeError("Remote router returned invalid JSON for /sources") from exc
-
-        sources_list: List[Dict[str, Any]]
-        if isinstance(payload, list):
-            sources_list = payload
-        elif isinstance(payload, dict):
-            sources_list = list(payload.values())
-        else:
-            raise RuntimeError("Remote router returned unexpected payload for /sources")
-
-        source_payload: Optional[Dict[str, Any]] = None
-        if request.source_config_id:
-            for source_candidate in sources_list:
-                if source_candidate.get("config_id") == request.source_config_id:
-                    source_payload = source_candidate
-                    break
-        if source_payload is None and request.source_name:
-            for source_candidate in sources_list:
-                if source_candidate.get("name") == request.source_name:
-                    source_payload = source_candidate
-                    break
-        if source_payload is None:
-            raise RuntimeError("Remote source not found on remote router")
-
-        return source_payload
-
     def _allocate_remote_sink_port(self, route_identifier: str) -> int:
         """Deterministically choose a high UDP port for remote proxy sinks."""
         digest = hashlib.sha1(route_identifier.encode("utf-8", "ignore")).hexdigest()
@@ -3813,67 +3293,6 @@ class ConfigurationManager(threading.Thread):
         sink_desc.is_temporary = True
         return sink_desc
 
-    def _build_remote_source_tag(self, route_identifier: str, contact: Optional[Tuple[str, int]]) -> str:
-        """Construct the placeholder tag for a remote-source request mirror."""
-        remote_guid = f"remotesrc:{route_identifier}"
-        if contact:
-            contact_ip, contact_port = contact
-            if contact_ip and contact_port:
-                return f"rtp:{remote_guid}#{contact_ip}.{contact_port}"
-        return f"rtp:{remote_guid}*"
-
-    def _apply_remote_source_tag_hint(self, route_identifier: str, contact: Optional[Tuple[str, int]]) -> bool:
-        """Update the cached remote-source mirror tag if the contact info changed."""
-        source_desc = self.remote_route_sources.get(route_identifier)
-        if not source_desc:
-            return False
-        new_tag = self._build_remote_source_tag(route_identifier, contact)
-        if getattr(source_desc, "tag", None) == new_tag:
-            return False
-        source_desc.tag = new_tag
-        return True
-
-    def _generate_remote_source_description(self, route: RouteDescription, payload: Dict[str, Any], request: RemoteSourceRequest) -> SourceDescription:
-        """Convert a remote source payload into a temporary SourceDescription."""
-        route_identifier = route.config_id or uuid.uuid4().hex
-        source_name = route.source or payload.get("name") or f"RemoteSource-{route_identifier[:8]}"
-        source_config_id = f"remote-source-{route_identifier}"
-
-        existing_source = self.remote_route_sources.get(route_identifier)
-        source_payload = dict(payload)
-        source_payload["name"] = source_name
-        source_payload["config_id"] = source_config_id
-        source_payload["enabled"] = True
-        source_payload["is_group"] = False
-        source_payload["group_members"] = []
-        source_payload["is_process"] = False
-        # Remote routers report their own addressing metadata for the source.  Re-using that
-        # tag/ip locally breaks the remotesrc flow because our mirror suddenly looks like the
-        # remote host instead of a pending request.  Build a deterministic placeholder that
-        # points at the remotesrc sink GUID so downstream components can reason about it.
-        contact = self._remote_source_request_contacts.get(route_identifier)
-        source_payload.pop("tag", None)
-        preserved_tag = getattr(existing_source, "tag", None) if existing_source else None
-        if preserved_tag:
-            source_payload["tag"] = preserved_tag
-        else:
-            source_payload["tag"] = self._build_remote_source_tag(route_identifier, contact)
-        source_payload["ip"] = None
-        source_payload["vnc_ip"] = ""
-        source_payload["vnc_port"] = ""
-        if "volume" not in source_payload:
-            source_payload["volume"] = 1
-        if "delay" not in source_payload:
-            source_payload["delay"] = 0
-        if "timeshift" not in source_payload:
-            source_payload["timeshift"] = 0
-        if "equalizer" not in source_payload or not source_payload["equalizer"]:
-            source_payload["equalizer"] = Equalizer()
-
-        source_desc = SourceDescription(**source_payload)
-        source_desc.is_temporary = True
-        return source_desc
-
     def _service_remote_routes(self, force: bool = False, apply_changes: bool = True) -> None:
         """Ensure remote routes have up-to-date temporary sink representations."""
         remote_routes: List[RouteDescription] = []
@@ -3887,6 +3306,10 @@ class ConfigurationManager(threading.Thread):
             if not target:
                 raw_type = type(raw_target).__name__ if raw_target is not None else "NoneType"
                 safe_repr = repr(raw_target)[:160] if raw_target is not None else "None"
+                _logger.debug("[Configuration Manager] Route '%s' marked remote but target could not be coerced (type=%s, value=%s)",
+                              getattr(route, "name", "<unnamed>"),
+                              raw_type,
+                              safe_repr)
                 continue
             if not (target.sink_config_id or target.sink_name):
                 missing_identity.append(getattr(route, "name", "<unnamed>"))
@@ -3907,6 +3330,8 @@ class ConfigurationManager(threading.Thread):
 
         now = time.monotonic()
         if not force and now < self._next_remote_route_poll:
+            _logger.debug("[Configuration Manager] Skipping remote route poll; next refresh in %.1fs",
+                          self._next_remote_route_poll - now)
             return
         self._next_remote_route_poll = now + self._remote_route_poll_interval
 
@@ -3968,107 +3393,6 @@ class ConfigurationManager(threading.Thread):
             self._service_remote_routes(force=True, apply_changes=True)
         except Exception as exc:  # pylint: disable=broad-except
             _logger.warning("[Configuration Manager] Failed to prime remote routes: %s", exc)
-
-    def _service_remote_source_requests(self, force: bool = False, apply_changes: bool = True) -> None:
-        """Ensure remote source requests have up-to-date temporary source representations."""
-        remote_requests: List[RouteDescription] = []
-        declared_remote_requests = 0
-        missing_identity: List[str] = []
-        for route in self.route_descriptions:
-            raw_request = getattr(route, "remote_source_request", None)
-            if raw_request:
-                declared_remote_requests += 1
-            request = self._coerce_remote_source_request(route)
-            if not request:
-                continue
-            if not (request.source_config_id or request.source_name):
-                missing_identity.append(getattr(route, "name", "<unnamed>"))
-                continue
-            remote_requests.append(route)
-        if missing_identity:
-            _logger.warning("[Configuration Manager] Remote source routes missing source identity (source_config_id or source_name): %s",
-                            ", ".join(missing_identity))
-        if not remote_requests:
-            if declared_remote_requests:
-                _logger.info("[Configuration Manager] No serviceable remote source routes found (declared=%d).", declared_remote_requests)
-            if self.remote_route_sources:
-                self.remote_route_sources.clear()
-                self._remote_route_source_hashes.clear()
-                self._remote_source_stream_last_seen.clear()
-            if self._remote_source_request_contacts:
-                self._remote_source_request_contacts.clear()
-                _logger.info("[Configuration Manager] Cleared remote source mirrors (no remote source routes configured)")
-                self.__apply_temporary_configuration_sync()
-            return
-
-        now = time.monotonic()
-        if not force and now < self._next_remote_source_poll:
-            return
-        self._next_remote_source_poll = now + self._remote_source_poll_interval
-
-        changes_applied = False
-        active_route_ids: Set[str] = set()
-        _logger.info("[Configuration Manager] Refreshing %d remote source route(s)", len(remote_requests))
-        for route in remote_requests:
-            request = self._coerce_remote_source_request(route)
-            if not request or not route.enabled:
-                if route.enabled and not request:
-                    _logger.debug("[Configuration Manager] Remote source route '%s' missing request during refresh; skipping",
-                                  route.name)
-                if not route.enabled and route.config_id in self.remote_route_sources:
-                    self.remote_route_sources.pop(route.config_id, None)
-                    self._remote_route_source_hashes.pop(route.config_id, None)
-                    self._remote_source_request_contacts.pop(route.config_id, None)
-                    changes_applied = True
-                continue
-            route_label = getattr(route, "name", route.config_id or "<remote-source-route>")
-            source_label = request.source_config_id or request.source_name or "<unnamed>"
-            _logger.debug("[Configuration Manager] Remote source route '%s' -> requesting source '%s' from %s",
-                          route_label,
-                          source_label,
-                          request.router_address or request.router_hostname or request.router_uuid or "unknown host")
-            try:
-                payload = self._fetch_remote_source_payload(request)
-                _logger.debug("[Configuration Manager] Remote source route '%s' fetched source payload keys: %s",
-                              route_label, list(payload.keys()))
-                source_desc = self._generate_remote_source_description(route, payload, request)
-                snapshot_hash = self._hash_remote_source_snapshot(route, payload)
-                existing_hash = self._remote_route_source_hashes.get(route.config_id)
-                if existing_hash != snapshot_hash:
-                    self.remote_route_sources[route.config_id] = source_desc
-                    self._remote_route_source_hashes[route.config_id] = snapshot_hash
-                    _logger.info("[Configuration Manager] Updated remote source '%s' for route '%s'",
-                                 source_desc.name, route_label)
-                    changes_applied = True
-                else:
-                    _logger.debug("[Configuration Manager] Remote source '%s' for route '%s' unchanged (hash match)",
-                                  source_desc.name, route_label)
-                active_route_ids.add(route.config_id)
-            except Exception as exc:  # pylint: disable=broad-except
-                if route.config_id in self.remote_route_sources:
-                    self.remote_route_sources.pop(route.config_id, None)
-                    self._remote_route_source_hashes.pop(route.config_id, None)
-                    changes_applied = True
-                _logger.warning("[Configuration Manager] Remote source route '%s' refresh failed: %s", route_label, exc)
-
-        for route_id in list(self.remote_route_sources.keys()):
-            if route_id not in active_route_ids:
-                _logger.info("[Configuration Manager] Removing remote source for stale route id %s", route_id)
-                self.remote_route_sources.pop(route_id, None)
-                self._remote_route_source_hashes.pop(route_id, None)
-                self._remote_source_stream_last_seen.pop(route_id, None)
-                self._remote_source_request_contacts.pop(route_id, None)
-                changes_applied = True
-
-        if changes_applied and apply_changes:
-            self.__apply_temporary_configuration_sync()
-
-    def _prime_remote_source_requests_for_reload(self) -> None:
-        """Fetch remote source definitions so the next reload sees up-to-date mirrors."""
-        try:
-            self._service_remote_source_requests(force=True, apply_changes=True)
-        except Exception as exc:  # pylint: disable=broad-except
-            _logger.warning("[Configuration Manager] Failed to prime remote source routes: %s", exc)
 
     def auto_add_source(self, ip: IPAddressType, service_info: dict = None):
         """Checks if VNC is available and adds a source by IP with the correct options
@@ -4855,7 +4179,6 @@ class ConfigurationManager(threading.Thread):
             except Exception as e:
                 _logger.error("[Configuration Manager] Error processing SAP announcements from C++ RTP Receiver: %s", e)
             self._apply_sap_target_routes(sap_announcements)
-            self._apply_remote_source_requests_from_announcements(sap_announcements)
 
         # mDNS pinger for sources (senders)
         for ip in self.mdns_pinger.get_source_ips():
@@ -4992,10 +4315,6 @@ class ConfigurationManager(threading.Thread):
             self._service_remote_routes()
         except Exception as exc:  # pylint: disable=broad-except
             _logger.warning("[Configuration Manager] Remote route refresh failed: %s", exc)
-        try:
-            self._service_remote_source_requests()
-        except Exception as exc:  # pylint: disable=broad-except
-            _logger.warning("[Configuration Manager] Remote source route refresh failed: %s", exc)
         # --- End C++ Engine Based Auto Source Detection ---
 
     def _sap_host_matches_local(self, target_host: str) -> bool:
@@ -5074,15 +4393,6 @@ class ConfigurationManager(threading.Thread):
                 active_route_keys[key] = cid
 
         for announcement in sap_announcements:
-            sap_guid = str(announcement.get("stream_guid") or "").strip()
-            is_remote_source_stream = bool(sap_guid.startswith("remotesrc:"))
-            if self._handle_remote_source_stream_announcement(announcement):
-                continue
-            if is_remote_source_stream:
-                # Remote-source SAP streams should never spawn generic temporary routes,
-                # even if the handler skipped due to missing metadata.
-                continue
-
             target_sink = str(announcement.get("target_sink") or "").strip()
             if not target_sink:
                 continue
@@ -5121,6 +4431,7 @@ class ConfigurationManager(threading.Thread):
             except Exception:  # pylint: disable=broad-except
                 ip_value = source_ip
 
+            sap_guid = str(announcement.get("stream_guid") or "").strip()
             sap_session_name = str(announcement.get("session_name") or "").strip()
             sap_tag = None
             if sap_guid:
@@ -5221,8 +4532,6 @@ class ConfigurationManager(threading.Thread):
             new_routes.append(route_desc)
             self._sap_route_signature.add(deterministic_route_id)
             self._sap_route_last_seen[deterministic_route_id] = (now, deterministic_source_id)
-        self._prune_stale_remote_source_streams()
-
         if new_sources or new_routes:
             self.active_temporary_sources.extend(new_sources)
             self.active_temporary_routes.extend(new_routes)
@@ -5235,228 +4544,8 @@ class ConfigurationManager(threading.Thread):
             # Changes occurred due to pruning; push updates to engine/clients
             self.__apply_temporary_configuration_sync()
             self.__reload_configuration()
-
-    def _apply_remote_source_requests_from_announcements(self, sap_announcements: List[dict[str, Any]]) -> None:
-        """Create or update provider-side temporary sinks/routes for remote source requests."""
-        now = time.time()
-        changes_applied = False
-        for announcement in sap_announcements:
-            if not isinstance(announcement, dict):
-                continue
-            if not announcement.get("is_request"):
-                continue
-            request_route_id = str(announcement.get("request_route_id") or "").strip()
-            if not request_route_id:
-                continue
-            request_type = str(announcement.get("request_type") or "").strip()
-            if request_type and request_type != "remote_source":
-                continue
-            target_host = str(announcement.get("target_host") or announcement.get("request_target_host") or "").strip()
-            if target_host and not self._sap_host_matches_local(target_host):
-                continue
-            dest_ip = str(announcement.get("request_destination_ip") or "").strip()
-            if not dest_ip:
-                continue
-            port_value = announcement.get("request_destination_port")
-            try:
-                dest_port = int(port_value)
-            except (TypeError, ValueError):
-                dest_port = constants.RTP_RECEIVER_PORT
-            if dest_port <= 0:
-                dest_port = constants.RTP_RECEIVER_PORT
-            source_id = str(announcement.get("request_source_id") or "").strip()
-            source_name = str(announcement.get("request_source_name") or "").strip()
-            source_obj: Optional[SourceDescription] = None
-            if source_id:
-                try:
-                    source_obj = self.__get_source_by_config_id(source_id)
-                except Exception:  # pylint: disable=broad-except
-                    source_obj = None
-            if not source_obj and source_name:
-                try:
-                    source_obj = self.get_source_by_name(source_name)
-                except NameError:
-                    source_obj = None
-            if not source_obj:
-                continue
-            requester_sink = str(announcement.get("request_target_sink") or "").strip()
-            requester_host = str(announcement.get("request_target_host") or "").strip()
-            sink_name = f"REMOTE_SOURCE_SINK_{request_route_id[:8]}"
-            route_name = f"REMOTE_SOURCE_ROUTE_{request_route_id[:8]}"
-            existing_handle = self._remote_source_request_active.get(request_route_id)
-            sink_obj: Optional[SinkDescription] = None
-            if existing_handle:
-                sink_obj = next((sink for sink in self.active_temporary_sinks
-                                 if sink.name == existing_handle.get("sink_name")), None)
-            if sink_obj:
-                updates_needed = False
-                if str(sink_obj.ip) != dest_ip:
-                    sink_obj.ip = dest_ip
-                    updates_needed = True
-                if sink_obj.port != dest_port:
-                    sink_obj.port = dest_port
-                    updates_needed = True
-                if sink_obj.sap_target_sink:
-                    sink_obj.sap_target_sink = None
-                    updates_needed = True
-                if sink_obj.sap_target_host:
-                    sink_obj.sap_target_host = None
-                    updates_needed = True
-                if updates_needed:
-                    changes_applied = True
-            else:
-                try:
-                    new_sink = SinkDescription(
-                        name=sink_name,
-                        ip=dest_ip,
-                        port=dest_port,
-                        protocol="rtp",
-                        sap_target_sink=None,
-                        sap_target_host=None,
-                        enabled=True,
-                        is_group=False,
-                        group_members=[],
-                        volume=1,
-                        bit_depth=source_obj.bit_depth or 16,
-                        sample_rate=source_obj.sample_rate or 48000,
-                        channels=source_obj.channels or 2,
-                        channel_layout="stereo",
-                    )
-                except Exception as exc:  # pylint: disable=broad-except
-                    _logger.warning("[Configuration Manager] Failed to build remote-source sink for request %s: %s",
-                                    request_route_id, exc)
-                    continue
-                new_sink.is_temporary = True
-                try:
-                    self.add_temporary_sink(new_sink)
-                except Exception as exc:  # pylint: disable=broad-except
-                    _logger.warning("[Configuration Manager] Failed to register remote-source sink for request %s: %s",
-                                    request_route_id, exc)
-                    continue
-                temp_route = RouteDescription(
-                    name=route_name,
-                    source=source_obj.name,
-                    sink=new_sink.name,
-                    enabled=True,
-                    volume=1,
-                    delay=0,
-                    timeshift=0,
-                    equalizer=Equalizer(),
-                    is_temporary=True,
-                    config_id=route_config_id,
-                )
-                try:
-                    self.add_temporary_route(temp_route)
-                except Exception as exc:  # pylint: disable=broad-except
-                    _logger.warning("[Configuration Manager] Failed to register remote-source route for request %s: %s",
-                                    request_route_id, exc)
-                self._remote_source_request_active[request_route_id] = {
-                    "sink_name": new_sink.name,
-                    "route_name": temp_route.name,
-                }
-                _logger.info("[Configuration Manager] Serving remote source request %s via sink %s -> %s",
-                             request_route_id, source_obj.name, new_sink.name)
-                changes_applied = True
-            self._remote_source_request_last_seen[request_route_id] = now
-
-        stale_ids: List[str] = []
-        for route_id, last_seen in self._remote_source_request_last_seen.items():
-            if now - last_seen > 30.0:
-                stale_ids.append(route_id)
-        for route_id in stale_ids:
-            if self._teardown_remote_source_request(route_id):
-                changes_applied = True
-        if changes_applied:
-            self.__apply_temporary_configuration_sync()
-
-    def _teardown_remote_source_request(self, route_id: str) -> bool:
-        """Remove provider-side temporary resources for a remote source request."""
-        handle = self._remote_source_request_active.pop(route_id, None)
-        self._remote_source_request_last_seen.pop(route_id, None)
-        if not handle:
-            return False
-        sink_name = handle.get("sink_name")
-        if sink_name:
-            self.remove_temporary_sink(sink_name)
-        route_name = handle.get("route_name")
-        if route_name:
-            self.active_temporary_routes = [
-                route for route in self.active_temporary_routes
-                if route.name != route_name
-            ]
-        _logger.info("[Configuration Manager] Cleared remote source request %s", route_id)
-        return True
-
-    def _handle_remote_source_stream_announcement(self, announcement: dict[str, Any]) -> bool:
-        """Link an incoming SAP stream to a configured remote-source route."""
-        sap_guid = str(announcement.get("stream_guid") or "").strip()
-        if not sap_guid.startswith("remotesrc:"):
-            return False
-        route_id = sap_guid.split(":", 1)[1]
-        route = self.__get_route_by_config_id(route_id)
-        if not route:
-            return False
-        source_desc = self.remote_route_sources.get(route_id)
-        if not source_desc:
-            return False
-        stream_ip = str(announcement.get("stream_ip") or announcement.get("ip") or announcement.get("announcer_ip") or "").strip()
-        if not stream_ip:
-            return False
-        port_value = announcement.get("port")
-        try:
-            port_int = int(port_value)
-        except (TypeError, ValueError):
-            port_int = constants.RTP_RECEIVER_PORT
-        if port_int <= 0:
-            port_int = constants.RTP_RECEIVER_PORT
-        sap_session_name = str(announcement.get("session_name") or "").strip()
-        sap_tag = None
-        if sap_guid:
-            sap_tag = f"rtp:{sap_guid}*"
-        elif sap_session_name:
-            normalized_session = self._sanitize_screamrouter_label(sap_session_name)
-            if normalized_session:
-                sap_tag = f"rtp:{normalized_session}#{stream_ip}.{port_int}"
-        updated = False
-        if sap_tag and source_desc.tag != sap_tag:
-            source_desc.tag = sap_tag
-            updated = True
-        sample_rate = announcement.get("sample_rate")
-        if sample_rate and source_desc.sample_rate != sample_rate:
-            source_desc.sample_rate = sample_rate
-            updated = True
-        channels = announcement.get("channels")
-        if channels and source_desc.channels != channels:
-            source_desc.channels = channels
-            updated = True
-        bit_depth = announcement.get("bit_depth")
-        if bit_depth and source_desc.bit_depth != bit_depth:
-            source_desc.bit_depth = bit_depth
-            updated = True
-        if not source_desc.enabled:
-            source_desc.enabled = True
-            updated = True
-        self.remote_route_sources[route_id] = source_desc
-        self._remote_source_stream_last_seen[route_id] = time.time()
-        if updated:
-            _logger.info("[Configuration Manager] Linked remote source stream %s to route '%s'", sap_guid, route.name)
-            self.__apply_temporary_configuration_sync()
-        return True
-
-    def _prune_stale_remote_source_streams(self, max_age_seconds: float = 45.0) -> None:
-        """Disable remote source mirror entries that haven't reported recently."""
-        now = time.time()
-        changed = False
-        for route_id, last_seen in list(self._remote_source_stream_last_seen.items()):
-            if now - last_seen <= max_age_seconds:
-                continue
-            self._remote_source_stream_last_seen.pop(route_id, None)
-            source_desc = self.remote_route_sources.get(route_id)
-            if source_desc and source_desc.enabled:
-                source_desc.enabled = False
-                changed = True
-        if changed:
-            self.__apply_temporary_configuration_sync()
+        else:
+            _logger.debug("[Configuration Manager] No SAP temp route changes detected; skipping reload")
 
     def _dedupe_active_sap_temps(self) -> tuple[int, int]:
         """Remove duplicate SAP temp routes/sources by config_id (keep first)."""

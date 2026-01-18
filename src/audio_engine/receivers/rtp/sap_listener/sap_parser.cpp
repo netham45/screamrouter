@@ -79,48 +79,6 @@ struct SapTargetHints {
     }
 };
 
-struct SapRequestHints {
-    bool is_request = false;
-    std::string type;
-    std::string route_id;
-    std::string source_id;
-    std::string source_name;
-    std::string target_sink;
-    std::string target_host;
-    std::string destination_ip;
-    int destination_port = 0;
-
-    void merge_from(const SapRequestHints& other) {
-        if (other.is_request) {
-            is_request = true;
-        }
-        if (!other.type.empty()) {
-            type = other.type;
-        }
-        if (!other.route_id.empty()) {
-            route_id = other.route_id;
-        }
-        if (!other.source_id.empty()) {
-            source_id = other.source_id;
-        }
-        if (!other.source_name.empty()) {
-            source_name = other.source_name;
-        }
-        if (!other.target_sink.empty()) {
-            target_sink = other.target_sink;
-        }
-        if (!other.target_host.empty()) {
-            target_host = other.target_host;
-        }
-        if (!other.destination_ip.empty()) {
-            destination_ip = other.destination_ip;
-        }
-        if (other.destination_port > 0) {
-            destination_port = other.destination_port;
-        }
-    }
-};
-
 struct RtpmapEntry {
     std::string encoding;
     int sample_rate = 0;
@@ -142,7 +100,6 @@ struct SdpMetadata {
     std::string connection_ip;
     std::string stream_guid;
     SapTargetHints target_hints;
-    SapRequestHints request_hints;
     SdpAudioDescription audio;
 };
 
@@ -217,49 +174,6 @@ SapTargetHints parse_target_hint_block(const std::string& block) {
     if (hints.sink.empty()) {
         hints.sink = trim_copy(block);
     }
-    return hints;
-}
-
-SapRequestHints parse_request_hint_block(const std::string& block) {
-    SapRequestHints hints;
-    if (block.empty()) {
-        return hints;
-    }
-
-    std::stringstream ss(block);
-    std::string token;
-    while (std::getline(ss, token, ';')) {
-        const auto eq_pos = token.find('=');
-        std::string key = trim_copy(eq_pos == std::string::npos ? token : token.substr(0, eq_pos));
-        std::string value = eq_pos == std::string::npos ? "" : trim_copy(token.substr(eq_pos + 1));
-        lowercase_in_place(key);
-        if (key == "type") {
-            hints.is_request = true;
-            hints.type = value;
-        } else if (key == "route" || key == "route_id") {
-            hints.is_request = true;
-            hints.route_id = value;
-        } else if (key == "source" || key == "source_id") {
-            hints.is_request = true;
-            hints.source_id = value;
-        } else if (key == "source_name") {
-            hints.is_request = true;
-            hints.source_name = value;
-        } else if (key == "sink" || key == "target_sink") {
-            hints.is_request = true;
-            hints.target_sink = value;
-        } else if (key == "host" || key == "target_host") {
-            hints.is_request = true;
-            hints.target_host = value;
-        } else if (key == "dest" || key == "dest_ip" || key == "destination_ip") {
-            hints.is_request = true;
-            hints.destination_ip = value;
-        } else if (key == "port" || key == "dest_port" || key == "destination_port") {
-            hints.is_request = true;
-            hints.destination_port = safe_atoi(value, 0);
-        }
-    }
-
     return hints;
 }
 
@@ -356,10 +270,6 @@ void apply_target_overrides(SdpMetadata& metadata) {
         if (target_it != params.end()) {
             metadata.target_hints.merge_from(parse_target_hint_block(target_it->second));
         }
-        const auto request_it = params.find("x-screamrouter-request");
-        if (request_it != params.end()) {
-            metadata.request_hints.merge_from(parse_request_hint_block(request_it->second));
-        }
         const auto guid_it = params.find("x-screamrouter-guid");
         if (guid_it != params.end() && metadata.stream_guid.empty()) {
             metadata.stream_guid = trim_copy(guid_it->second);
@@ -400,8 +310,6 @@ bool parse_sdp_metadata(const std::vector<std::string>& lines, SdpMetadata& meta
             metadata.stream_guid = trim_copy(line.substr(std::strlen("a=x-screamrouter-guid:")));
         } else if (line.rfind("a=x-screamrouter-target:", 0) == 0) {
             metadata.target_hints.merge_from(parse_target_hint_block(trim_copy(line.substr(std::strlen("a=x-screamrouter-target:")))));
-        } else if (line.rfind("a=x-screamrouter-request:", 0) == 0) {
-            metadata.request_hints.merge_from(parse_request_hint_block(trim_copy(line.substr(std::strlen("a=x-screamrouter-request:")))));
         } else if (line.rfind("a=rtpmap:", 0) == 0) {
             parse_rtpmap_line(line, metadata.audio, logger_prefix);
         } else if (line.rfind("a=fmtp:", 0) == 0) {
@@ -696,15 +604,6 @@ bool parse_sap_packet(const char* buffer,
     out.stream_guid = metadata.stream_guid;
     out.target_sink = metadata.target_hints.sink;
     out.target_host = metadata.target_hints.host;
-    out.is_request = metadata.request_hints.is_request;
-    out.request_type = metadata.request_hints.type;
-    out.request_route_id = metadata.request_hints.route_id;
-    out.request_source_id = metadata.request_hints.source_id;
-    out.request_source_name = metadata.request_hints.source_name;
-    out.request_target_sink = metadata.request_hints.target_sink;
-    out.request_target_host = metadata.request_hints.target_host;
-    out.request_destination_ip = metadata.request_hints.destination_ip;
-    out.request_destination_port = metadata.request_hints.destination_port;
     out.properties = std::move(props);
     return true;
 }

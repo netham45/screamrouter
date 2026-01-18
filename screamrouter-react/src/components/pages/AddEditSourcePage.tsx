@@ -138,6 +138,22 @@ const AddEditSourcePage: React.FC = () => {
     return value;
   };
 
+  const normalizeSourceTag = (value?: string | null): string => {
+    const trimmed = (value ?? '').trim();
+    if (!trimmed) {
+      return '';
+    }
+    if (trimmed.startsWith('rtp:') && !trimmed.endsWith('*')) {
+      return `${trimmed}*`;
+    }
+    return trimmed;
+  };
+
+  const isRtpTag = (value?: string | null): boolean => {
+    const trimmed = (value ?? '').trim();
+    return trimmed.startsWith('rtp:');
+  };
+
   const captureChannelOptions = useMemo(() => {
     const maxSupported =
       selectedCaptureDevice?.channels_supported?.length
@@ -272,7 +288,8 @@ const AddEditSourcePage: React.FC = () => {
             setVncIp(sourceData.vnc_ip || '');
             setVncPort(sourceData.vnc_port?.toString() || '5900');
             setConfigId(sourceData.config_id || '');
-            setSourceTag(sourceData.tag || '');
+            const normalizedSourceTag = normalizeSourceTag(sourceData.tag);
+            setSourceTag(normalizedSourceTag);
 
             const networkIp = (typeof sourceData.ip === 'string' ? sourceData.ip : '') || '';
             const detectedCaptureTag = !sourceData.is_group && typeof sourceData.tag === 'string' && sourceData.tag.startsWith('ac:')
@@ -287,7 +304,7 @@ const AddEditSourcePage: React.FC = () => {
             } else {
               setInputMode('network');
               setSelectedCaptureTag('');
-              setIp(networkIp);
+              setIp(isRtpTag(normalizedSourceTag) ? '' : networkIp);
             }
           } else {
             setError(`Source "${sourceName}" not found.`);
@@ -313,9 +330,17 @@ const AddEditSourcePage: React.FC = () => {
       }
       const sapTag = deriveRtpSapTag(device);
       if (sapTag) {
-        setSourceTag(sapTag);
+        const normalized = normalizeSourceTag(sapTag);
+        setSourceTag(normalized);
+        if (isRtpTag(normalized)) {
+          setIp('');
+        }
       } else if (device.tag) {
-        setSourceTag(device.tag);
+        const normalized = normalizeSourceTag(device.tag);
+        setSourceTag(normalized);
+        if (isRtpTag(normalized)) {
+          setIp('');
+        }
       }
     });
 
@@ -386,8 +411,13 @@ const AddEditSourcePage: React.FC = () => {
         sourceData.ip = null; // clear existing network address if switching to system audio
       } else {
         const trimmedIp = ip.trim();
-        sourceData.ip = trimmedIp ? trimmedIp : null;
-        sourceData.tag = sourceTag.trim() || null;
+        const normalizedTag = normalizeSourceTag(sourceTag);
+        sourceData.tag = normalizedTag || null;
+        if (normalizedTag && isRtpTag(normalizedTag)) {
+          sourceData.ip = null;
+        } else {
+          sourceData.ip = trimmedIp ? trimmedIp : null;
+        }
         sourceData.channels = null;
         sourceData.sample_rate = null;
         sourceData.bit_depth = null;

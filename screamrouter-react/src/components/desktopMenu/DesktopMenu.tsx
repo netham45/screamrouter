@@ -36,24 +36,24 @@ const DesktopMenu: React.FC = () => {
     onVisualizeSink,
     onToggleActiveSource,
   } = useAppContext();
-
+  
   // State for menu navigation
   const [currentMenu, setCurrentMenu] = useState<MenuLevel>(() => {
     const savedMenu = localStorage.getItem('currentMenu');
     return savedMenu ? parseInt(savedMenu, 10) : MenuLevel.Main;
   });
-
+  
   // State for starred items
   const [starredSources, setStarredSources] = useState<string[]>([]);
   const [starredSinks, setStarredSinks] = useState<string[]>([]);
   const [starredRoutes, setStarredRoutes] = useState<string[]>([]);
-
+  
   // State for selected item
   const [selectedItem, setSelectedItem] = useState<string | null>(null);
-
+  
   // State for error messages
   const [error, setError] = useState<string | null>(null);
-
+  
   // State for delete confirmation dialog
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteItemType, setDeleteItemType] = useState<'sources' | 'sinks' | 'routes' | null>(null);
@@ -61,7 +61,7 @@ const DesktopMenu: React.FC = () => {
 
   // Reference to content area for scrolling
   const contentRef = React.useRef<HTMLDivElement>(null);
-
+  
   // Track color changes
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_, setColorUpdate] = useState(0);
@@ -70,7 +70,7 @@ const DesktopMenu: React.FC = () => {
       setColorUpdate(n => n + 1);
     });
   }, []);
-
+  
   // Get colors from the global singleton
   const bgColor = colorContextInstance.getDarkerColor(.9, .9);
   const borderColor = colorContextInstance.getDarkerColor(.88, .9); // Subtle border
@@ -80,7 +80,7 @@ const DesktopMenu: React.FC = () => {
   const buttonTextInactive = '#EEE'; // Gray text for inactive
   const buttonBorderDefault = 'rgba(255, 255, 255, 0.25)';
   const recentHeadingColor = '#F5F5F5'; // Always-light headings for Recently Used section
-
+  
   // Load starred items from localStorage - refresh when activeSource changes
   useEffect(() => {
     const starredSourcesData: string[] = JSON.parse(localStorage.getItem('starredSources') || '[]');
@@ -90,7 +90,7 @@ const DesktopMenu: React.FC = () => {
     setStarredSinks(starredSinksData);
     setStarredRoutes(starredRoutesData);
   }, [activeSource]); // Add activeSource as dependency so the component refreshes when it changes
-
+  
   // Listen for changes to localStorage to refresh when favorites change
   useEffect(() => {
     const handleStorageChange = (event: StorageEvent) => {
@@ -106,18 +106,18 @@ const DesktopMenu: React.FC = () => {
         }
       }
     };
-
+    
     window.addEventListener('storage', handleStorageChange);
     return () => {
       window.removeEventListener('storage', handleStorageChange);
     };
   }, []);
-
+  
   // Save current menu to localStorage
   useEffect(() => {
     localStorage.setItem('currentMenu', currentMenu.toString());
   }, [currentMenu]);
-
+  
   // Scroll to selected item when it changes
   useEffect(() => {
     if (selectedItem && contentRef.current) {
@@ -127,7 +127,7 @@ const DesktopMenu: React.FC = () => {
       }
     }
   }, [selectedItem, currentMenu]);
-
+  
   // This function is used by the createDesktopMenuActions utility
   // It's kept here for reference but the actual implementation is in utils.ts
   /*
@@ -137,11 +137,11 @@ const DesktopMenu: React.FC = () => {
     window.open(url, '_blank', `width=${width},height=${height},left=${left},top=${top}`);
   };
   */
-
+  
   // Function to navigate to a specific item
   const navigateToItem = (type: 'sources' | 'sinks' | 'routes', itemName: string) => {
     let menuLevel: MenuLevel;
-
+    
     switch (type) {
       case 'sources':
         menuLevel = MenuLevel.AllSources;
@@ -155,18 +155,18 @@ const DesktopMenu: React.FC = () => {
       default:
         menuLevel = MenuLevel.Main;
     }
-
+    
     setCurrentMenu(menuLevel);
     setSelectedItem(itemName);
   };
-
+  
   // Function to set starred items
   const setStarredItemsHandler = (type: 'sources' | 'sinks' | 'routes', setter: (prev: string[]) => string[]) => {
     if (type === 'sources') setStarredSources(setter);
     else if (type === 'sinks') setStarredSinks(setter);
     else if (type === 'routes') setStarredRoutes(setter);
   };
-
+  
   // Create actions for the DesktopMenu
   const actions: DesktopMenuActions = useMemo(() => createDesktopMenuActions(
     setStarredItemsHandler,
@@ -179,17 +179,19 @@ const DesktopMenu: React.FC = () => {
     navigateToItem
     // openDeleteDialog and showSpeakerLayoutPage will be assigned to actions object later
   ), [onToggleActiveSource, onTranscribeSink, onListenToSink, onVisualizeSink, sinks, navigateToItem]);
-
+  
   const showSpeakerLayoutPage = (type: 'sources' | 'sinks' | 'routes', item: Source | Sink | Route) => {
     try {
       const encodedName = encodeURIComponent(item.name);
       const url = `/site/speaker-layout-standalone?type=${type}&name=${encodedName}`;
-
+      
       const windowFeatures = 'width=650,height=750,menubar=no,toolbar=no,location=no,resizable=yes,scrollbars=yes,status=no';
       const newWindow = window.open(url, '_blank', windowFeatures);
 
       if (newWindow) {
         newWindow.focus();
+      } else {
+        setError('Failed to open new window. Please check your browser pop-up blocker settings.');
       }
     } catch (e) {
       console.error("Error opening speaker layout window:", e);
@@ -199,10 +201,10 @@ const DesktopMenu: React.FC = () => {
 
   // Add the actual showSpeakerLayoutPage to the actions object after its definition
   actions.showSpeakerLayoutPage = showSpeakerLayoutPage;
-
+  
   // Function to open the full interface
   const openFullInterface = () => {
-    window.open('/site/', 'FullView');
+     window.open('/site/', 'FullView');
   };
 
   // Function to open a URL in a new window (similar to the pattern used elsewhere)
@@ -214,6 +216,8 @@ const DesktopMenu: React.FC = () => {
 
     if (newWindow) {
       newWindow.focus();
+    } else {
+      setError('Failed to open new window. Please check your browser pop-up blocker settings.');
     }
   };
 
@@ -237,7 +241,7 @@ const DesktopMenu: React.FC = () => {
   const handleAddRoute = () => {
     openInNewWindow('/site/add-route');
   };
-
+  
   const getRecentRoutes = () => {
     const appContext = useAppContext();
     const recentNames = getRecents('routes');
@@ -259,7 +263,7 @@ const DesktopMenu: React.FC = () => {
   // Function to render content based on current menu
   const renderContent = () => {
     const primarySource = sources.find(source => source.name === activeSource);
-
+    
     switch (currentMenu) {
       case MenuLevel.Sources:
         return (
@@ -350,8 +354,8 @@ const DesktopMenu: React.FC = () => {
               actions={actions}
               selectedItem={selectedItem}
             />
-
-
+            
+            
             <Heading size="x-sm" mt={5} mb={3} color={recentHeadingColor}>Sinks</Heading>
             <SinkList
               routes={routes}
@@ -362,7 +366,7 @@ const DesktopMenu: React.FC = () => {
               actions={actions}
               selectedItem={selectedItem}
             />
-
+            
             <Heading size="x-sm" mt={5} mb={3} color={recentHeadingColor}>Routes</Heading>
             <RouteList
               routes={getRecentRoutes()}
@@ -370,7 +374,7 @@ const DesktopMenu: React.FC = () => {
               actions={actions}
               selectedItem={selectedItem}
             />
-            { }
+            {}
           </Box>
         );
       default: // MenuLevel.Main
@@ -386,11 +390,11 @@ const DesktopMenu: React.FC = () => {
         );
     }
   };
-
+  
   // Function to handle delete confirmation
   const handleConfirmDelete = async () => {
     if (!deleteItemType || !deleteItemName) return;
-
+    
     try {
       if (deleteItemType === 'sources') {
         await ApiService.deleteSource(deleteItemName);
@@ -399,7 +403,7 @@ const DesktopMenu: React.FC = () => {
       } else if (deleteItemType === 'routes') {
         await ApiService.deleteRoute(deleteItemName);
       }
-
+      
       // Remove from starred items if it was starred
       if (deleteItemType === 'sources' && starredSources.includes(deleteItemName)) {
         setStarredItemsHandler('sources', prev => prev.filter(item => item !== deleteItemName));
@@ -418,14 +422,14 @@ const DesktopMenu: React.FC = () => {
       setDeleteItemName(null);
     }
   };
-
+  
   // Function to open delete confirmation dialog
   const openDeleteDialog = (type: 'sources' | 'sinks' | 'routes', name: string) => {
     setDeleteItemType(type);
     setDeleteItemName(name);
     setDeleteDialogOpen(true);
   };
-
+  
   // Function to handle clicks on the desktop menu when alert is open
   const handleDesktopMenuClick = (e: React.MouseEvent) => {
     // Only close the dialog if the desktop menu is clicked (not the dialog itself)
@@ -439,11 +443,11 @@ const DesktopMenu: React.FC = () => {
       }
     }
   };
-
+  
   // Override the confirmDelete action with our local implementation
   actions.confirmDelete = openDeleteDialog;
   // The showSpeakerLayoutPage is now correctly part of actions object above
-
+  
   const buildTabStyle = (menu: MenuLevel) => ({
     backgroundColor: currentMenu === menu ? buttonBgActive : buttonBgInactive,
     borderWidth: currentMenu === menu ? '2px' : '1px',
@@ -497,9 +501,9 @@ const DesktopMenu: React.FC = () => {
             {error}
           </Alert>
         )}
-
-
-
+        
+        
+        
         <Box
           flex="1"
           overflow="auto"
@@ -609,7 +613,7 @@ const DesktopMenu: React.FC = () => {
               </Button>
             </ButtonGroup>
           </HStack>
-
+          
           {/* Second Row - All other buttons including Add */}
           <HStack width="100%" justify="center">
             <ButtonGroup variant="outline" isAttached spacing={0} size="sm">
@@ -637,7 +641,7 @@ const DesktopMenu: React.FC = () => {
               >
                 All Routes
               </Button>
-
+              
               {/* Add Menu Dropdown as part of the ButtonGroup */}
               <AddMenuDropdown
                 buttonBgInactive={buttonBgInactive}

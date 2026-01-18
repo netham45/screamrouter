@@ -98,7 +98,6 @@ export interface Route {
   favorite?: boolean;
   speaker_layouts?: { [key: number]: SpeakerLayout }; // New dictionary
   remote_target?: RemoteRouteTarget;
-  remote_source_request?: RemoteSourceRequest;
 }
 
 export interface RemoteRouteTarget {
@@ -109,16 +108,6 @@ export interface RemoteRouteTarget {
   router_scheme?: 'http' | 'https';
   sink_config_id?: string;
   sink_name?: string;
-}
-
-export interface RemoteSourceRequest {
-  router_uuid?: string;
-  router_hostname?: string;
-  router_address?: string;
-  router_port?: number;
-  router_scheme?: 'http' | 'https';
-  source_config_id?: string;
-  source_name?: string;
 }
 
 export interface SystemAudioDeviceInfo {
@@ -872,8 +861,6 @@ const ApiService = {
   }),
   getNeighborSinks: (payload: NeighborSinksRequest) =>
     axios.post<Record<string, Sink> | Sink[]>('/neighbors/sinks', payload),
-  getNeighborSources: (payload: NeighborSinksRequest) =>
-    axios.post<Record<string, Source> | Source[]>('/neighbors/sources', payload),
 
   // --- Speaker Layout Update Methods ---
   updateSourceSpeakerLayout: (name: string, inputChannelKey: number, layout: SpeakerLayout) => {

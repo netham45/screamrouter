@@ -330,16 +330,7 @@ void SapListener::process_sap_packet(const char* buffer, int size, const std::st
                            parsed.stream_guid,
                            parsed.target_sink,
                            parsed.target_host,
-                           parsed.session_name,
-                           parsed.is_request,
-                           parsed.request_type,
-                           parsed.request_route_id,
-                           parsed.request_source_id,
-                           parsed.request_source_name,
-                           parsed.request_target_sink,
-                           parsed.request_target_host,
-                           parsed.request_destination_ip,
-                           parsed.request_destination_port);
+                           parsed.session_name);
     }
 
     const char* codec_name = "unknown";

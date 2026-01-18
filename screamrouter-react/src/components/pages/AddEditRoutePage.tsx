@@ -43,7 +43,6 @@ const flatEqualizer: Equalizer = {
   normalization_enabled: false,
 };
 const REMOTE_UNAVAILABLE_MESSAGE = 'Remote server/sink unavailable (not found).';
-const REMOTE_SOURCE_UNAVAILABLE_MESSAGE = 'Remote server/source unavailable (not found).';
 
 const AddEditRoutePage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -66,23 +65,16 @@ const AddEditRoutePage: React.FC = () => {
   const [volume, setVolume] = useState(1);
   const [delay, setDelay] = useState(0);
   const [timeshift, setTimeshift] = useState(0);
-
+  
   const [sources, setSources] = useState<Source[]>([]);
   const [sinks, setSinks] = useState<Sink[]>([]);
   const [remoteSinks, setRemoteSinks] = useState<Sink[]>([]);
-  const [remoteSources, setRemoteSources] = useState<Source[]>([]);
-  const [sourceMode, setSourceMode] = useState<'local' | 'remote'>('local');
   const [destinationMode, setDestinationMode] = useState<'local' | 'remote'>('local');
   const [remoteInstanceId, setRemoteInstanceId] = useState('');
   const [remoteTarget, setRemoteTarget] = useState<Route['remote_target'] | null>(null);
   const [remoteSinkSelection, setRemoteSinkSelection] = useState('');
-  const [remoteSourceInstanceId, setRemoteSourceInstanceId] = useState('');
-  const [remoteSourceRequest, setRemoteSourceRequest] = useState<Route['remote_source_request'] | null>(null);
-  const [remoteSourceSelection, setRemoteSourceSelection] = useState('');
   const [remoteLoading, setRemoteLoading] = useState(false);
-  const [remoteSourceLoading, setRemoteSourceLoading] = useState(false);
   const [remoteError, setRemoteError] = useState<string | null>(null);
-  const [remoteSourceError, setRemoteSourceError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const { instances, loading: instancesLoading, error: instancesError, refresh: refreshInstances } = useRouterInstances();
@@ -90,12 +82,7 @@ const AddEditRoutePage: React.FC = () => {
     () => instances.find(instance => instance.id === remoteInstanceId) || null,
     [instances, remoteInstanceId]
   );
-  const selectedRemoteSourceInstance = useMemo<RouterInstance | null>(
-    () => instances.find(instance => instance.id === remoteSourceInstanceId) || null,
-    [instances, remoteSourceInstanceId]
-  );
   const remoteFetchKeyRef = useRef<string | null>(null);
-  const remoteSourceFetchKeyRef = useRef<string | null>(null);
 
   // Color values for light/dark mode
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -148,38 +135,19 @@ const AddEditRoutePage: React.FC = () => {
     }
   }, [buildNeighborPayload]);
 
-  const fetchRemoteSources = useCallback(async (instance: RouterInstance) => {
-    setRemoteSourceLoading(true);
-    setRemoteSourceError(null);
-    try {
-      const response = await ApiService.getNeighborSources(buildNeighborPayload(instance));
-      const payload = response.data;
-      const sourcesList = Array.isArray(payload) ? payload : Object.values(payload || {});
-      setRemoteSources(sourcesList);
-    } catch (err) {
-      console.error('Failed to fetch remote sources', err);
-      setRemoteSourceError(REMOTE_SOURCE_UNAVAILABLE_MESSAGE);
-      setRemoteSources([]);
-    } finally {
-      setRemoteSourceLoading(false);
-    }
-  }, [buildNeighborPayload]);
-
-  const buildPayloadFromEndpoint = useCallback((
-    endpoint: Route['remote_target'] | Route['remote_source_request'] | null
-  ): NeighborSinksRequest | null => {
-    if (!endpoint) {
+  const buildPayloadFromTarget = useCallback((target: Route['remote_target'] | null): NeighborSinksRequest | null => {
+    if (!target) {
       return null;
     }
-    const host = endpoint.router_hostname || endpoint.router_address;
+    const host = target.router_hostname || target.router_address;
     if (!host) {
       return null;
     }
-    const scheme = endpoint.router_scheme === 'http' ? 'http' : 'https';
-    const port = endpoint.router_port || (scheme === 'http' ? 80 : 443);
+    const scheme = target.router_scheme === 'http' ? 'http' : 'https';
+    const port = target.router_port || (scheme === 'http' ? 80 : 443);
     return {
       hostname: host,
-      address: endpoint.router_address || undefined,
+      address: target.router_address || undefined,
       port,
       scheme,
       api_path: '/',
@@ -188,7 +156,7 @@ const AddEditRoutePage: React.FC = () => {
   }, []);
 
   const fetchRemoteResourcesFromTarget = useCallback(async (target: Route['remote_target']) => {
-    const payload = buildPayloadFromEndpoint(target);
+    const payload = buildPayloadFromTarget(target);
     if (!payload) {
       setRemoteError(REMOTE_UNAVAILABLE_MESSAGE);
       setRemoteSinks([]);
@@ -208,34 +176,9 @@ const AddEditRoutePage: React.FC = () => {
     } finally {
       setRemoteLoading(false);
     }
-  }, [buildPayloadFromEndpoint]);
+  }, [buildPayloadFromTarget]);
 
-  const fetchRemoteSourcesFromRequest = useCallback(async (request: Route['remote_source_request']) => {
-    const payload = buildPayloadFromEndpoint(request);
-    if (!payload) {
-      setRemoteSourceError(REMOTE_SOURCE_UNAVAILABLE_MESSAGE);
-      setRemoteSources([]);
-      return;
-    }
-    setRemoteSourceLoading(true);
-    setRemoteSourceError(null);
-    try {
-      const response = await ApiService.getNeighborSources(payload);
-      const data = response.data;
-      const sourcesList = Array.isArray(data) ? data : Object.values(data || {});
-      setRemoteSources(sourcesList);
-    } catch (err) {
-      console.error('Failed to fetch remote sources', err);
-      setRemoteSourceError(REMOTE_SOURCE_UNAVAILABLE_MESSAGE);
-      setRemoteSources([]);
-    } finally {
-      setRemoteSourceLoading(false);
-    }
-  }, [buildPayloadFromEndpoint]);
-
-  const findInstanceForEndpoint = useCallback((
-    target: Route['remote_target'] | Route['remote_source_request'] | null
-  ): RouterInstance | null => {
+  const findInstanceForTarget = useCallback((target: Route['remote_target'] | null): RouterInstance | null => {
     if (!target) {
       return null;
     }
@@ -320,48 +263,6 @@ const AddEditRoutePage: React.FC = () => {
     setSuccess(`Route will target remote sink "${remoteSink.name}" on ${instance.label || instance.hostname}.`);
   }, [ensureUniqueName, remoteSinks, selectedRemoteInstance, sinks]);
 
-  const handleRemoteSourceInstanceChange = useCallback((value: string) => {
-    setRemoteSourceInstanceId(value);
-    setRemoteSourceSelection('');
-    setRemoteSourceRequest(null);
-    setRemoteSourceError(null);
-    setRemoteSources([]);
-    if (!value) {
-      return;
-    }
-    const instance = instances.find(inst => inst.id === value);
-    if (instance) {
-      void fetchRemoteSources(instance);
-    }
-  }, [fetchRemoteSources, instances]);
-
-  const handleRemoteSourceSelection = useCallback((value: string) => {
-    setRemoteSourceSelection(value);
-    if (!value) {
-      setRemoteSourceRequest(null);
-      return;
-    }
-    const instance = selectedRemoteSourceInstance;
-    const remoteSource = remoteSources.find(s => s.name === value);
-    if (!instance || !remoteSource) {
-      setError('Select a remote server and source first.');
-      return;
-    }
-    const baseName = `${remoteSource.name} @ ${instance.label || instance.hostname || instance.address || 'Remote'}`;
-    const sourceName = ensureUniqueName(baseName, sources.map(s => s.name));
-    setSource(sourceName);
-    setRemoteSourceRequest({
-      router_uuid: instance.uuid,
-      router_hostname: instance.hostname,
-      router_address: instance.address,
-      router_port: instance.port,
-      router_scheme: instance.scheme === 'http' ? 'http' : 'https',
-      source_config_id: remoteSource.config_id,
-      source_name: remoteSource.name,
-    });
-    setSuccess(`Route will request remote source "${remoteSource.name}" from ${instance.label || instance.hostname}.`);
-  }, [ensureUniqueName, remoteSources, selectedRemoteSourceInstance, sources]);
-
   useEffect(() => {
     if (!name.trim()) {
       return;
@@ -395,33 +296,10 @@ const AddEditRoutePage: React.FC = () => {
   }, [destinationMode]);
 
   useEffect(() => {
-    if (sourceMode === 'remote' && destinationMode === 'remote') {
-      //setDestinationMode('local');
-    }
-  }, [sourceMode, destinationMode]);
-
-  useEffect(() => {
-    if (sourceMode === 'local') {
-      setRemoteSourceInstanceId('');
-      setRemoteSourceRequest(null);
-      setRemoteSourceSelection('');
-      setRemoteSources([]);
-      setRemoteSourceError(null);
-      setRemoteSourceLoading(false);
-    }
-  }, [sourceMode]);
-
-  useEffect(() => {
     if (remoteTarget?.sink_name) {
       setRemoteSinkSelection(remoteTarget.sink_name);
     }
   }, [remoteTarget]);
-
-  useEffect(() => {
-    if (remoteSourceRequest?.source_name) {
-      setRemoteSourceSelection(remoteSourceRequest.source_name);
-    }
-  }, [remoteSourceRequest]);
 
   useEffect(() => {
     if (!remoteTarget) {
@@ -444,30 +322,10 @@ const AddEditRoutePage: React.FC = () => {
   }, [remoteTarget, remoteSinks, remoteLoading]);
 
   useEffect(() => {
-    if (!remoteSourceRequest) {
-      return;
-    }
-    if (!remoteSources.length) {
-      return;
-    }
-    const matchByConfig = remoteSourceRequest.source_config_id
-      ? remoteSources.find(s => s.config_id === remoteSourceRequest.source_config_id)
-      : undefined;
-    const matchByName = remoteSources.find(s => s.name === remoteSourceRequest.source_name);
-    const resolved = matchByConfig || matchByName;
-    if (resolved) {
-      setRemoteSourceSelection(resolved.name);
-      setRemoteSourceError(null);
-    } else if (!remoteSourceLoading) {
-      setRemoteSourceError(REMOTE_SOURCE_UNAVAILABLE_MESSAGE);
-    }
-  }, [remoteSourceRequest, remoteSources, remoteSourceLoading]);
-
-  useEffect(() => {
     if (!remoteTarget) {
       return;
     }
-    const matchingInstance = findInstanceForEndpoint(remoteTarget);
+    const matchingInstance = findInstanceForTarget(remoteTarget);
     if (matchingInstance) {
       if (matchingInstance.id !== remoteInstanceId) {
         setRemoteInstanceId(matchingInstance.id);
@@ -475,21 +333,7 @@ const AddEditRoutePage: React.FC = () => {
     } else if (remoteInstanceId) {
       setRemoteInstanceId('');
     }
-  }, [findInstanceForEndpoint, remoteInstanceId, remoteTarget]);
-
-  useEffect(() => {
-    if (!remoteSourceRequest) {
-      return;
-    }
-    const matchingInstance = findInstanceForEndpoint(remoteSourceRequest);
-    if (matchingInstance) {
-      if (matchingInstance.id !== remoteSourceInstanceId) {
-        setRemoteSourceInstanceId(matchingInstance.id);
-      }
-    } else if (remoteSourceInstanceId) {
-      setRemoteSourceInstanceId('');
-    }
-  }, [findInstanceForEndpoint, remoteSourceInstanceId, remoteSourceRequest]);
+  }, [findInstanceForTarget, remoteInstanceId, remoteTarget]);
 
   useEffect(() => {
     if (destinationMode !== 'remote') {
@@ -528,42 +372,6 @@ const AddEditRoutePage: React.FC = () => {
   ]);
 
   useEffect(() => {
-    if (sourceMode !== 'remote') {
-      remoteSourceFetchKeyRef.current = null;
-      return;
-    }
-    if (remoteSourceInstanceId) {
-      const instance = instances.find(inst => inst.id === remoteSourceInstanceId);
-      if (instance) {
-        const key = `source-instance:${remoteSourceInstanceId}`;
-        if (remoteSourceFetchKeyRef.current !== key) {
-          remoteSourceFetchKeyRef.current = key;
-          void fetchRemoteSources(instance);
-        }
-        return;
-      }
-    }
-    if (remoteSourceRequest) {
-      const hostKey = `${normalizeHostValue(remoteSourceRequest.router_hostname || remoteSourceRequest.router_address)}:${remoteSourceRequest.router_port || (remoteSourceRequest.router_scheme === 'http' ? 80 : 443)}`;
-      const key = `source-target:${hostKey}`;
-      if (remoteSourceFetchKeyRef.current !== key) {
-        remoteSourceFetchKeyRef.current = key;
-        void fetchRemoteSourcesFromRequest(remoteSourceRequest);
-      }
-      return;
-    }
-    remoteSourceFetchKeyRef.current = null;
-  }, [
-    sourceMode,
-    remoteSourceInstanceId,
-    remoteSourceRequest,
-    instances,
-    fetchRemoteSources,
-    fetchRemoteSourcesFromRequest,
-    normalizeHostValue,
-  ]);
-
-  useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
@@ -592,14 +400,14 @@ const AddEditRoutePage: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [sourcesResponse, sinksResponse] = await Promise.all([
-          ApiService.getSources(),
-          ApiService.getSinks()
-        ]);
-
+          const [sourcesResponse, sinksResponse] = await Promise.all([
+            ApiService.getSources(),
+            ApiService.getSinks()
+          ]);
+        
         setSources(Object.values(sourcesResponse.data));
-        setSinks(Object.values(sinksResponse.data));
-
+          setSinks(Object.values(sinksResponse.data));
+        
         // Set preselected source and sink if provided in URL
         if (preselectedSource && !isEdit) {
           const sourceExists = Object.values(sourcesResponse.data).some(
@@ -609,7 +417,7 @@ const AddEditRoutePage: React.FC = () => {
             setSource(preselectedSource);
           }
         }
-
+        
         if (preselectedSink && !isEdit) {
           const sinkExists = Object.values(sinksResponse.data).some(
             s => s.name === preselectedSink
@@ -645,15 +453,6 @@ const AddEditRoutePage: React.FC = () => {
             setTimeshift(routeData.timeshift || 0);
             setConfigId((routeData as any).config_id || '');
             setRouteTag((routeData as any).tag || '');
-            if ((routeData as Route).remote_source_request) {
-              setSourceMode('remote');
-              setRemoteSourceRequest(routeData.remote_source_request || null);
-              setRemoteSourceSelection(routeData.remote_source_request?.source_name || routeData.remote_source_request?.source_config_id || '');
-            } else {
-              setSourceMode('local');
-              setRemoteSourceRequest(null);
-              setRemoteSourceSelection('');
-            }
             if ((routeData as Route).remote_target) {
               setDestinationMode('remote');
               setRemoteTarget(routeData.remote_target || null);
@@ -675,7 +474,7 @@ const AddEditRoutePage: React.FC = () => {
 
     fetchRoute();
   }, [routeName]);
-
+  
   // Auto-fill name when source and sink are selected
   useEffect(() => {
     // Only auto-fill name if we're not in edit mode and the name hasn't been manually edited
@@ -691,11 +490,6 @@ const AddEditRoutePage: React.FC = () => {
   const handleSubmit = async () => {
     if (!source) {
       setError('Please select a source.');
-      return;
-    }
-
-    if (sourceMode === 'remote' && !remoteSourceRequest) {
-      setError('Please select a remote source.');
       return;
     }
 
@@ -718,7 +512,6 @@ const AddEditRoutePage: React.FC = () => {
       delay,
       timeshift,
       remote_target: destinationMode === 'remote' ? remoteTarget || undefined : undefined,
-      remote_source_request: sourceMode === 'remote' ? remoteSourceRequest || undefined : undefined,
     };
 
     try {
@@ -759,14 +552,10 @@ const AddEditRoutePage: React.FC = () => {
         setTimeshift(0);
         setConfigId('');
         setRouteTag('');
-        setSourceMode('local');
         setDestinationMode('local');
         setRemoteTarget(null);
         setRemoteInstanceId('');
         setRemoteSinkSelection('');
-        setRemoteSourceRequest(null);
-        setRemoteSourceInstanceId('');
-        setRemoteSourceSelection('');
       }
 
       if (window.opener) {
@@ -801,21 +590,21 @@ const AddEditRoutePage: React.FC = () => {
         <Heading as="h1" size="lg" mb={6}>
           {isEdit ? 'Edit Route' : 'Add Route'}
         </Heading>
-
+        
         {error && (
           <Alert status="error" mb={4} borderRadius="md">
             <AlertIcon />
             {error}
           </Alert>
         )}
-
+        
         {success && (
           <Alert status="success" mb={4} borderRadius="md">
             <AlertIcon />
             {success}
           </Alert>
         )}
-
+        
         {(configId || routeTag) && (
           <Box
             mb={5}
@@ -894,15 +683,20 @@ const AddEditRoutePage: React.FC = () => {
           </SimpleGrid>
 
           <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-            <FormControl>
-              <FormLabel>Source Type</FormLabel>
+            <FormControl isRequired>
+              <FormLabel>Source</FormLabel>
               <Select
-                value={sourceMode}
-                onChange={(e) => setSourceMode(e.target.value as 'local' | 'remote')}
+                data-tutorial-id="route-source-select"
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
                 bg={inputBg}
+                placeholder="Select a source"
               >
-                <option value="local">Local source</option>
-                <option value="remote">Remote router source</option>
+                {sources.map(src => (
+                  <option key={src.name} value={src.name}>
+                    {src.name}
+                  </option>
+                ))}
               </Select>
             </FormControl>
 
@@ -918,92 +712,6 @@ const AddEditRoutePage: React.FC = () => {
               </Select>
             </FormControl>
           </SimpleGrid>
-
-          {sourceMode === 'remote' && (
-            <FormControl>
-              <FormLabel>Remote Source Router</FormLabel>
-              <Stack direction={{ base: 'column', md: 'row' }} spacing={2}>
-                <Select
-                  value={remoteSourceInstanceId}
-                  onChange={(e) => handleRemoteSourceInstanceChange(e.target.value)}
-                  placeholder="Select a remote router"
-                  bg={inputBg}
-                  flex="1"
-                >
-                  {instances.filter(instance => !instance.isCurrent).map(instance => (
-                    <option key={instance.id} value={instance.id}>
-                      ScreamRouter - {instance.label}
-                    </option>
-                  ))}
-                </Select>
-                <Button
-                  size="sm"
-                  onClick={() => { remoteSourceFetchKeyRef.current = null; void refreshInstances(); }}
-                  isLoading={instancesLoading}
-                  variant="outline"
-                >
-                  Refresh
-                </Button>
-              </Stack>
-              {instancesError && (
-                <Text mt={1} fontSize="sm" color="red.400">
-                  {instancesError}
-                </Text>
-              )}
-              {remoteSourceRequest && !remoteSourceInstanceId && (
-                <Text mt={1} fontSize="sm" color="gray.400">
-                  Stored request: {remoteSourceRequest.source_name || remoteSourceRequest.source_config_id || 'remote source'} from {remoteSourceRequest.router_hostname || remoteSourceRequest.router_address || 'remote router'}
-                </Text>
-              )}
-            </FormControl>
-          )}
-
-          <FormControl isRequired>
-            <FormLabel>{sourceMode === 'remote' ? 'Remote Source' : 'Source'}</FormLabel>
-            {sourceMode === 'remote' ? (
-              <>
-                <Select
-                  value={remoteSourceSelection}
-                  onChange={(e) => handleRemoteSourceSelection(e.target.value)}
-                  bg={inputBg}
-                  placeholder={remoteSourceLoading ? 'Loading remote sources...' : 'Select a remote source'}
-                  isDisabled={!remoteSourceInstanceId || remoteSourceLoading || Boolean(remoteSourceError)}
-                >
-                  {remoteSources.map(s => (
-                    <option key={s.name} value={s.name}>
-                      {s.name}
-                    </option>
-                  ))}
-                </Select>
-                {remoteSourceError && (
-                  <Alert status="error" mt={2} borderRadius="md">
-                    <AlertIcon />
-                    {remoteSourceError}
-                  </Alert>
-                )}
-                {remoteSourceLoading && (
-                  <Flex align="center" gap={2} mt={2}>
-                    <Spinner size="sm" />
-                    <Text fontSize="sm">Loading remote sources...</Text>
-                  </Flex>
-                )}
-              </>
-            ) : (
-              <Select
-                data-tutorial-id="route-source-select"
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-                bg={inputBg}
-                placeholder="Select a source"
-              >
-                {sources.map(src => (
-                  <option key={src.name} value={src.name}>
-                    {src.name}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </FormControl>
 
           {destinationMode === 'remote' && (
             <FormControl>
@@ -1112,7 +820,7 @@ const AddEditRoutePage: React.FC = () => {
             </NumberInput>
           </FormControl>
         </Stack>
-
+        
         <Flex mt={8} gap={3} justifyContent="flex-end">
           <Button
             colorScheme="blue"
