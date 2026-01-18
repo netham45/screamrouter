@@ -3814,13 +3814,13 @@ class ConfigurationManager(threading.Thread):
         return sink_desc
 
     def _build_remote_source_tag(self, route_identifier: str, contact: Optional[Tuple[str, int]]) -> str:
-        """Construct a deterministic tag for a remote-source request mirror."""
-        remote_guid = f"remotesrc:{route_identifier}"
+        """Construct the placeholder tag for a remote-source request mirror."""
+        sink_stub = f"REMOTE_SOURCE_SINK_{route_identifier[:8]}"
         if contact:
             contact_ip, contact_port = contact
             if contact_ip and contact_port:
-                return f"rtp:{remote_guid}#{contact_ip}.{contact_port}"
-        return f"rtp:{remote_guid}*"
+                return f"rtp:{sink_stub}#{contact_ip}.{contact_port}"
+        return f"rtp:{sink_stub}*"
 
     def _apply_remote_source_tag_hint(self, route_identifier: str, contact: Optional[Tuple[str, int]]) -> bool:
         """Update the cached remote-source mirror tag if the contact info changed."""
