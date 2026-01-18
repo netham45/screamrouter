@@ -3839,6 +3839,7 @@ class ConfigurationManager(threading.Thread):
         source_name = route.source or payload.get("name") or f"RemoteSource-{route_identifier[:8]}"
         source_config_id = f"remote-source-{route_identifier}"
 
+        existing_source = self.remote_route_sources.get(route_identifier)
         source_payload = dict(payload)
         source_payload["name"] = source_name
         source_payload["config_id"] = source_config_id
@@ -3852,7 +3853,11 @@ class ConfigurationManager(threading.Thread):
         # points at the remotesrc sink GUID so downstream components can reason about it.
         contact = self._remote_source_request_contacts.get(route_identifier)
         source_payload.pop("tag", None)
-        source_payload["tag"] = self._build_remote_source_tag(route_identifier, contact)
+        preserved_tag = getattr(existing_source, "tag", None) if existing_source else None
+        if preserved_tag:
+            source_payload["tag"] = preserved_tag
+        else:
+            source_payload["tag"] = self._build_remote_source_tag(route_identifier, contact)
         source_payload["ip"] = None
         source_payload["vnc_ip"] = ""
         source_payload["vnc_port"] = ""
