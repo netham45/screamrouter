@@ -196,6 +196,8 @@ class ConfigurationManager(threading.Thread):
         """Last time we saw a request announcement for a given route id"""
         self._remote_source_request_status: Dict[str, str] = {}
         """Last-known logging status for each remote-source request route"""
+        self._remote_source_request_contacts: Dict[str, Tuple[str, int]] = {}
+        """Cached destination contact info (ip, port) per remote-source route"""
         self._remote_source_request_thread: Optional[threading.Thread] = None
         """Background thread that emits SAP requests for remote sources"""
         self._remote_source_request_thread_stop: threading.Event = threading.Event()
@@ -3311,8 +3313,15 @@ class ConfigurationManager(threading.Thread):
             if route.enabled and getattr(route, "remote_source_request", None)
         ]
         if not active_routes:
+            mirrors_cleared = False
             if self._remote_source_request_status:
                 self._remote_source_request_status.clear()
+            if self._remote_source_request_contacts:
+                self._remote_source_request_contacts.clear()
+                for route_id in list(self.remote_route_sources.keys()):
+                    mirrors_cleared |= self._apply_remote_source_tag_hint(route_id, None)
+            if mirrors_cleared:
+                self.__apply_temporary_configuration_sync()
             return
 
         active_keys = {
@@ -3323,6 +3332,8 @@ class ConfigurationManager(threading.Thread):
             if route_key not in active_keys:
                 self._remote_source_request_status.pop(route_key, None)
 
+        seen_route_ids: Set[str] = set()
+        mirrors_updated = False
         for route in active_routes:
             request = self._coerce_remote_source_request(route)
             if not request:
@@ -3332,6 +3343,10 @@ class ConfigurationManager(threading.Thread):
                     f"[Configuration Manager] Remote source request for route '{route.name}' has invalid metadata; skipping SAP announcement.",
                     warning=True,
                 )
+                route_id = getattr(route, "config_id", None)
+                if route_id:
+                    if self._remote_source_request_contacts.pop(route_id, None):
+                        mirrors_updated |= self._apply_remote_source_tag_hint(route_id, None)
                 continue
             try:
                 sink = self.get_sink_by_name(route.sink)
@@ -3350,7 +3365,14 @@ class ConfigurationManager(threading.Thread):
                     f"[Configuration Manager] Remote source request for route '{route.name}' skipped because sink '{route.sink}' was not found.",
                     warning=True,
                 )
+                route_id = getattr(route, "config_id", None)
+                if route_id:
+                    if self._remote_source_request_contacts.pop(route_id, None):
+                        mirrors_updated |= self._apply_remote_source_tag_hint(route_id, None)
                 continue
+            route_id = getattr(route, "config_id", None)
+            if route_id:
+                seen_route_ids.add(route_id)
             contact_ip = self._determine_remote_request_contact(request)
             if not contact_ip:
                 target_hint = request.router_address or request.router_hostname or request.router_uuid or "<unknown>"
@@ -3360,6 +3382,9 @@ class ConfigurationManager(threading.Thread):
                     f"[Configuration Manager] Remote source request for route '{route.name}' could not determine a local interface for {target_hint}; will retry.",
                     warning=True,
                 )
+                if route_id:
+                    if self._remote_source_request_contacts.pop(route_id, None):
+                        mirrors_updated |= self._apply_remote_source_tag_hint(route_id, None)
                 continue
             destination_port = constants.RTP_RECEIVER_PORT
             target_host = request.router_uuid or request.router_hostname or request.router_address
@@ -3396,6 +3421,9 @@ class ConfigurationManager(threading.Thread):
                     warning=True,
                 )
                 continue
+            if route_id:
+                self._remote_source_request_contacts[route_id] = (contact_ip, destination_port)
+                mirrors_updated |= self._apply_remote_source_tag_hint(route_id, (contact_ip, destination_port))
             self._broadcast_sap_request_packet(packet, contact_ip, request)
             source_label = request.source_name or request.source_config_id or "remote source"
             self._update_remote_source_request_status(
@@ -3404,6 +3432,12 @@ class ConfigurationManager(threading.Thread):
                 f"[Configuration Manager] Remote source request for route '{route.name}' announced for {source_label} targeting host {target_host} via {contact_ip}:{destination_port}.",
                 warning=False,
             )
+        for route_id in list(self._remote_source_request_contacts.keys()):
+            if route_id not in seen_route_ids:
+                self._remote_source_request_contacts.pop(route_id, None)
+                mirrors_updated |= self._apply_remote_source_tag_hint(route_id, None)
+        if mirrors_updated:
+            self.__apply_temporary_configuration_sync()
 
     def _remote_source_request_key(self, route: RouteDescription) -> str:
         """Generate a stable key for tracking remote-source request log state."""
@@ -3779,6 +3813,26 @@ class ConfigurationManager(threading.Thread):
         sink_desc.is_temporary = True
         return sink_desc
 
+    def _build_remote_source_tag(self, route_identifier: str, contact: Optional[Tuple[str, int]]) -> str:
+        """Construct a deterministic tag for a remote-source request mirror."""
+        remote_guid = f"remotesrc:{route_identifier}"
+        if contact:
+            contact_ip, contact_port = contact
+            if contact_ip and contact_port:
+                return f"rtp:{remote_guid}#{contact_ip}.{contact_port}"
+        return f"rtp:{remote_guid}*"
+
+    def _apply_remote_source_tag_hint(self, route_identifier: str, contact: Optional[Tuple[str, int]]) -> bool:
+        """Update the cached remote-source mirror tag if the contact info changed."""
+        source_desc = self.remote_route_sources.get(route_identifier)
+        if not source_desc:
+            return False
+        new_tag = self._build_remote_source_tag(route_identifier, contact)
+        if getattr(source_desc, "tag", None) == new_tag:
+            return False
+        source_desc.tag = new_tag
+        return True
+
     def _generate_remote_source_description(self, route: RouteDescription, payload: Dict[str, Any], request: RemoteSourceRequest) -> SourceDescription:
         """Convert a remote source payload into a temporary SourceDescription."""
         route_identifier = route.config_id or uuid.uuid4().hex
@@ -3792,6 +3846,16 @@ class ConfigurationManager(threading.Thread):
         source_payload["is_group"] = False
         source_payload["group_members"] = []
         source_payload["is_process"] = False
+        # Remote routers report their own addressing metadata for the source.  Re-using that
+        # tag/ip locally breaks the remotesrc flow because our mirror suddenly looks like the
+        # remote host instead of a pending request.  Build a deterministic placeholder that
+        # points at the remotesrc sink GUID so downstream components can reason about it.
+        contact = self._remote_source_request_contacts.get(route_identifier)
+        source_payload.pop("tag", None)
+        source_payload["tag"] = self._build_remote_source_tag(route_identifier, contact)
+        source_payload["ip"] = None
+        source_payload["vnc_ip"] = ""
+        source_payload["vnc_port"] = ""
         if "volume" not in source_payload:
             source_payload["volume"] = 1
         if "delay" not in source_payload:
@@ -3926,6 +3990,8 @@ class ConfigurationManager(threading.Thread):
                 self.remote_route_sources.clear()
                 self._remote_route_source_hashes.clear()
                 self._remote_source_stream_last_seen.clear()
+            if self._remote_source_request_contacts:
+                self._remote_source_request_contacts.clear()
                 _logger.info("[Configuration Manager] Cleared remote source mirrors (no remote source routes configured)")
                 self.__apply_temporary_configuration_sync()
             return
@@ -3947,6 +4013,7 @@ class ConfigurationManager(threading.Thread):
                 if not route.enabled and route.config_id in self.remote_route_sources:
                     self.remote_route_sources.pop(route.config_id, None)
                     self._remote_route_source_hashes.pop(route.config_id, None)
+                    self._remote_source_request_contacts.pop(route.config_id, None)
                     changes_applied = True
                 continue
             route_label = getattr(route, "name", route.config_id or "<remote-source-route>")
@@ -3985,6 +4052,7 @@ class ConfigurationManager(threading.Thread):
                 self.remote_route_sources.pop(route_id, None)
                 self._remote_route_source_hashes.pop(route_id, None)
                 self._remote_source_stream_last_seen.pop(route_id, None)
+                self._remote_source_request_contacts.pop(route_id, None)
                 changes_applied = True
 
         if changes_applied and apply_changes:
