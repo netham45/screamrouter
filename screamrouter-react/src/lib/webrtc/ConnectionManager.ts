@@ -42,17 +42,11 @@ export class ConnectionManager {
   private heartbeatManager: HeartbeatManager;
   private connections: Map<string, ActiveConnection> = new Map();
   private callbacks: ConnectionCallbacks;
-  
+
   // Configuration
   private readonly config: Required<ConnectionConfig> = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      {
-        urls: 'turn:192.168.3.201',
-        username: 'screamrouter',
-        credential: 'screamrouter',
-      },
-    ],
+    // No ICE servers - use host-only candidates for LAN connections
+    iceServers: [],
     enableAutoReconnect: true,
     reconnectDelay: 3000,
     maxReconnectAttempts: 5,
@@ -70,7 +64,7 @@ export class ConnectionManager {
     this.candidateManager = candidateManager;
     this.heartbeatManager = heartbeatManager;
     this.callbacks = callbacks || {};
-    
+
     if (config) {
       this.config = { ...this.config, ...config };
     }
@@ -81,13 +75,13 @@ export class ConnectionManager {
    */
   async connect(sinkId: string): Promise<MediaStream> {
     console.log(`[ConnectionManager] Connecting to sink ${sinkId}`);
-    
+
     // Disconnect existing connection if any
     if (this.connections.has(sinkId)) {
       console.log(`[ConnectionManager] Disconnecting existing connection to ${sinkId}`);
       await this.disconnect(sinkId);
     }
-    
+
     const connection: ActiveConnection = {
       sinkId,
       pc: new RTCPeerConnection({ iceServers: this.config.iceServers }),
@@ -96,45 +90,45 @@ export class ConnectionManager {
       stream: null,
       reconnectAttempts: 0,
     };
-    
+
     this.connections.set(sinkId, connection);
     this.updateConnectionState(sinkId, 'connecting');
-    
+
     try {
       // Set up peer connection handlers
       this.setupPeerConnectionHandlers(connection);
-      
+
       // Create offer
       connection.pc.addTransceiver('audio', { direction: 'recvonly' });
       const offer = await connection.pc.createOffer();
-      
+
       // Enhance offer for stereo audio
       if (offer.sdp) {
         offer.sdp = offer.sdp.replace("useinbandfec=1", "useinbandfec=1;stereo=1;sprop-stereo=1");
         offer.sdp = offer.sdp.replace("useinbandfec=0", "useinbandfec=0;stereo=1;sprop-stereo=1");
       }
-      
+
       await connection.pc.setLocalDescription(offer);
-      
+
       // Create WHEP session
       const { session, answerSdp } = await this.whepClient.createSession(sinkId, offer.sdp!);
       connection.session = session;
-      
+
       // Process queued candidates
       await this.candidateManager.processQueuedCandidates(session);
-      
+
       // Set remote description
       await connection.pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }));
-      
+
       // Start ICE candidate polling
       this.candidateManager.startPolling(session, connection.pc);
-      
+
       // Start heartbeat
       this.heartbeatManager.startHeartbeat(session);
-      
+
       // Set connection timeout
       this.setConnectionTimeout(connection);
-      
+
       // Wait for stream
       return new Promise((resolve, reject) => {
         const checkInterval = setInterval(() => {
@@ -150,7 +144,7 @@ export class ConnectionManager {
             reject(new Error('Connection failed'));
           }
         }, 100);
-        
+
         // Timeout after 30 seconds
         setTimeout(() => {
           clearInterval(checkInterval);
@@ -169,13 +163,13 @@ export class ConnectionManager {
    */
   async disconnect(sinkId: string): Promise<void> {
     console.log(`[ConnectionManager] Disconnecting from sink ${sinkId}`);
-    
+
     const connection = this.connections.get(sinkId);
     if (!connection) {
       console.log(`[ConnectionManager] No connection found for ${sinkId}`);
       return;
     }
-    
+
     // Clear timeouts
     if (connection.reconnectTimeout) {
       clearTimeout(connection.reconnectTimeout);
@@ -183,28 +177,28 @@ export class ConnectionManager {
     if (connection.connectionTimeout) {
       clearTimeout(connection.connectionTimeout);
     }
-    
+
     // Stop heartbeat
     if (connection.session) {
       this.heartbeatManager.stopHeartbeat(connection.session);
     }
-    
+
     // Stop ICE candidate polling
     this.candidateManager.stopPolling();
-    
+
     // Close peer connection
     if (connection.pc) {
       connection.pc.close();
     }
-    
+
     // Delete WHEP session
     if (connection.session) {
       await this.whepClient.deleteSession(connection.session);
     }
-    
+
     // Remove from connections map
     this.connections.delete(sinkId);
-    
+
     // Notify callbacks
     this.updateConnectionState(sinkId, 'disconnected');
     if (this.callbacks.onStream) {
@@ -217,13 +211,13 @@ export class ConnectionManager {
    */
   async disconnectAll(): Promise<void> {
     console.log(`[ConnectionManager] Disconnecting all connections (${this.connections.size} active)`);
-    
-    const disconnectPromises = Array.from(this.connections.keys()).map(sinkId => 
-      this.disconnect(sinkId).catch(error => 
+
+    const disconnectPromises = Array.from(this.connections.keys()).map(sinkId =>
+      this.disconnect(sinkId).catch(error =>
         console.error(`[ConnectionManager] Error disconnecting ${sinkId}:`, error)
       )
     );
-    
+
     await Promise.all(disconnectPromises);
   }
 
@@ -259,7 +253,7 @@ export class ConnectionManager {
     if (!connection || !connection.pc) {
       return null;
     }
-    
+
     try {
       const stats = await connection.pc.getStats();
       if (this.callbacks.onStats) {
@@ -278,7 +272,7 @@ export class ConnectionManager {
   private setupPeerConnectionHandlers(connection: ActiveConnection): void {
     const pc = connection.pc;
     const sinkId = connection.sinkId;
-    
+
     // Handle ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate && connection.session) {
@@ -287,7 +281,7 @@ export class ConnectionManager {
         );
       }
     };
-    
+
     // Handle tracks
     pc.ontrack = (event) => {
       console.log(`[ConnectionManager] Received track for ${sinkId}`);
@@ -296,11 +290,11 @@ export class ConnectionManager {
         this.callbacks.onStream(sinkId, event.streams[0]);
       }
     };
-    
+
     // Handle ICE connection state changes
     pc.oniceconnectionstatechange = () => {
       console.log(`[ConnectionManager] ICE state changed to ${pc.iceConnectionState} for ${sinkId}`);
-      
+
       switch (pc.iceConnectionState) {
         case 'connected':
         case 'completed':
@@ -312,11 +306,11 @@ export class ConnectionManager {
           break;
       }
     };
-    
+
     // Handle connection state changes
     pc.onconnectionstatechange = () => {
       console.log(`[ConnectionManager] Connection state changed to ${pc.connectionState} for ${sinkId}`);
-      
+
       if (pc.connectionState === 'failed') {
         this.handleConnectionFailure(connection, new Error('Peer connection failed'));
       }
@@ -328,16 +322,16 @@ export class ConnectionManager {
    */
   private handleConnectionSuccess(connection: ActiveConnection): void {
     console.log(`[ConnectionManager] Connection successful for ${connection.sinkId}`);
-    
+
     // Clear connection timeout
     if (connection.connectionTimeout) {
       clearTimeout(connection.connectionTimeout);
       connection.connectionTimeout = undefined;
     }
-    
+
     // Reset reconnect attempts
     connection.reconnectAttempts = 0;
-    
+
     // Update state
     this.updateConnectionState(connection.sinkId, 'connected');
   }
@@ -347,21 +341,21 @@ export class ConnectionManager {
    */
   private async handleConnectionFailure(connection: ActiveConnection, error: Error): Promise<void> {
     console.error(`[ConnectionManager] Connection failed for ${connection.sinkId}:`, error);
-    
+
     // Clear connection timeout
     if (connection.connectionTimeout) {
       clearTimeout(connection.connectionTimeout);
       connection.connectionTimeout = undefined;
     }
-    
+
     // Notify error callback
     if (this.callbacks.onError) {
       this.callbacks.onError(connection.sinkId, error);
     }
-    
+
     // Check if we should reconnect
-    if (this.config.enableAutoReconnect && 
-        connection.reconnectAttempts < this.config.maxReconnectAttempts) {
+    if (this.config.enableAutoReconnect &&
+      connection.reconnectAttempts < this.config.maxReconnectAttempts) {
       await this.scheduleReconnect(connection);
     } else {
       this.updateConnectionState(connection.sinkId, 'failed');
@@ -375,11 +369,11 @@ export class ConnectionManager {
   private async scheduleReconnect(connection: ActiveConnection): Promise<void> {
     connection.reconnectAttempts++;
     const delay = this.config.reconnectDelay * Math.pow(2, connection.reconnectAttempts - 1); // Exponential backoff
-    
+
     console.log(`[ConnectionManager] Scheduling reconnect for ${connection.sinkId} in ${delay}ms (attempt ${connection.reconnectAttempts}/${this.config.maxReconnectAttempts})`);
-    
+
     this.updateConnectionState(connection.sinkId, 'reconnecting');
-    
+
     connection.reconnectTimeout = setTimeout(async () => {
       try {
         await this.connect(connection.sinkId);
@@ -409,7 +403,7 @@ export class ConnectionManager {
     if (connection) {
       connection.state = state;
     }
-    
+
     if (this.callbacks.onStateChange) {
       this.callbacks.onStateChange(sinkId, state);
     }

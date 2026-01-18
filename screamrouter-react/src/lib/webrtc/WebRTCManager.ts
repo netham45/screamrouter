@@ -14,7 +14,7 @@ export class WebRTCManager {
   private activeSinkId: string | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private iceCandidateQueue: RTCIceCandidate[] = [];
-  
+
   // Server ICE candidate polling
   private candidatePollingInterval: NodeJS.Timeout | null = null;
   private candidatePollingStartTime: number = 0;
@@ -62,12 +62,7 @@ export class WebRTCManager {
 
     this.pc = new RTCPeerConnection({
       iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        {
-          urls: 'turn:192.168.3.201',
-          username: 'screamrouter',
-          credential: 'screamrouter',
-        },
+        { urls: 'stun:stun.l.google.com:19302' }
       ],
     });
 
@@ -250,22 +245,22 @@ export class WebRTCManager {
 
     const sinkId = this.activeSinkId;
     const listenerId = this.listenerId;
-    
+
     console.log(`[WebRTC:${sinkId}] Starting server ICE candidate polling for listener ${listenerId}`);
-    
+
     // Record when we started polling
     this.candidatePollingStartTime = Date.now();
-    
+
     // Clear any existing polling interval
     if (this.candidatePollingInterval) {
       clearInterval(this.candidatePollingInterval);
     }
-    
+
     // Start polling interval
     this.candidatePollingInterval = setInterval(async () => {
       // Check if we should stop polling (timeout or connection established)
       const elapsedTime = Date.now() - this.candidatePollingStartTime;
-      
+
       if (elapsedTime > this.CANDIDATE_POLLING_MAX_DURATION_MS) {
         console.log(`[WebRTC:${sinkId}] Stopping candidate polling after ${this.CANDIDATE_POLLING_MAX_DURATION_MS}ms timeout`);
         if (this.candidatePollingInterval) {
@@ -274,7 +269,7 @@ export class WebRTCManager {
         }
         return;
       }
-      
+
       // Check if connection is already established
       if (this.pc?.iceConnectionState === 'connected' || this.pc?.iceConnectionState === 'completed') {
         console.log(`[WebRTC:${sinkId}] ICE connection established, stopping candidate polling`);
@@ -284,20 +279,20 @@ export class WebRTCManager {
         }
         return;
       }
-      
+
       // Poll for server candidates
       try {
         const response = await fetch(`/api/whep/${sinkId}/${listenerId}/candidates`, {
           method: 'GET',
           headers: { 'Accept': 'application/json' }
         });
-        
+
         if (response.status === 200) {
           const candidates = await response.json();
-          
+
           if (Array.isArray(candidates) && candidates.length > 0) {
             console.log(`[WebRTC:${sinkId}] Received ${candidates.length} server ICE candidates`);
-            
+
             for (const candidateData of candidates) {
               if (candidateData.candidate && candidateData.sdpMid !== undefined) {
                 try {
@@ -306,7 +301,7 @@ export class WebRTCManager {
                     sdpMLineIndex: 0, // Audio is typically on line 0
                     sdpMid: candidateData.sdpMid
                   });
-                  
+
                   if (this.pc) {
                     await this.pc.addIceCandidate(iceCandidate);
                     console.log(`[WebRTC:${sinkId}] Added server ICE candidate: ${candidateData.candidate}`);

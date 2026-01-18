@@ -4574,7 +4574,7 @@ class ConfigurationManager(threading.Thread):
         now = time.time()
         for route in self.active_temporary_routes:
             cid = getattr(route, "config_id", None)
-            if cid:
+            if cid and cid.startswith("saproute:"):
                 self._sap_route_last_seen.setdefault(cid, (now, None))
                 self._sap_route_signature.add(cid)
         return removed_routes, removed_sources
@@ -4606,6 +4606,8 @@ class ConfigurationManager(threading.Thread):
         now = time.time()
         stale: list[tuple[str, str]] = []
         for route_id, (seen, source_id) in list(self._sap_route_last_seen.items()):
+            if not route_id.startswith("saproute:"):
+                continue
             if now - seen > max_age_seconds:
                 stale.append((route_id, source_id))
         if not stale:

@@ -156,6 +156,46 @@ INetworkSender* SinkManager::get_listener_from_sink(const std::string& sink_id, 
     return nullptr;
 }
 
+std::map<std::string, std::unique_ptr<INetworkSender>> 
+SinkManager::extract_listeners_from_sink(const std::string& sink_id) {
+    std::scoped_lock lock(m_manager_mutex);
+    auto sink_it = m_sinks.find(sink_id);
+    if (sink_it != m_sinks.end() && sink_it->second) {
+        auto extracted = sink_it->second->extract_all_listeners();
+        if (!extracted.empty()) {
+            LOG_CPP_INFO("[SinkManager] Extracted %zu listeners from sink '%s' for preservation",
+                         extracted.size(), sink_id.c_str());
+        }
+        return extracted;
+    }
+    return {};
+}
+
+void SinkManager::reattach_listeners_to_sink(
+    const std::string& sink_id, 
+    std::map<std::string, std::unique_ptr<INetworkSender>>& listeners) {
+    if (listeners.empty()) {
+        return;
+    }
+    
+    std::scoped_lock lock(m_manager_mutex);
+    auto sink_it = m_sinks.find(sink_id);
+    if (sink_it != m_sinks.end() && sink_it->second) {
+        LOG_CPP_INFO("[SinkManager] Reattaching %zu listeners to sink '%s'",
+                     listeners.size(), sink_id.c_str());
+        for (auto& [listener_id, sender] : listeners) {
+            if (sender) {
+                sink_it->second->add_listener(listener_id, std::move(sender));
+                LOG_CPP_INFO("[SinkManager] Reattached listener '%s' to sink '%s'",
+                             listener_id.c_str(), sink_id.c_str());
+            }
+        }
+        listeners.clear();
+    } else {
+        LOG_CPP_WARNING("[SinkManager] Cannot reattach listeners - sink '%s' not found", sink_id.c_str());
+    }
+}
+
 std::map<std::string, SinkConfig>& SinkManager::get_sink_configs() {
     return m_sink_configs;
 }

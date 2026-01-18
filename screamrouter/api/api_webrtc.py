@@ -1,15 +1,188 @@
 import asyncio
+import atexit
 import json
 import logging
+import socket
+import threading
 import time
 import uuid
+from typing import Dict, Optional, Tuple
 
 from fastapi import APIRouter, Request, Response
 from screamrouter_audio_engine import AudioManager
 from screamrouter.configuration.configuration_manager import ConfigurationManager
 from screamrouter.screamrouter_types.configuration import SinkDescription, RouteDescription, SourceDescription
+from zeroconf import DNSOutgoing, DNSQuestion, RecordUpdateListener, Zeroconf
 
 logger = logging.getLogger(__name__)
+
+DNS_TYPE_A = 1
+DNS_FLAGS_QR_QUERY = 0x0000
+MDNS_CACHE_TTL_SECONDS = 300
+
+_mdns_cache: Dict[str, Tuple[str, float]] = {}
+_mdns_lock = threading.Lock()
+_mdns_zeroconf: Optional[Zeroconf] = None
+
+
+def _close_mdns_client() -> None:
+    global _mdns_zeroconf
+    with _mdns_lock:
+        if _mdns_zeroconf:
+            try:
+                _mdns_zeroconf.close()
+            except Exception:
+                logger.debug("Failed to close Zeroconf instance during shutdown", exc_info=True)
+            _mdns_zeroconf = None
+
+
+atexit.register(_close_mdns_client)
+
+
+class _MdnsQueryListener(RecordUpdateListener):
+    def __init__(self, target_name: str):
+        self._target = target_name.rstrip(".").lower()
+        self._event = threading.Event()
+        self.result: Optional[str] = None
+
+    def update_record(self, _zc: Zeroconf, _now: float, record) -> None:  # type: ignore[override]
+        try:
+            record_name = getattr(record, "name", "")
+        except Exception:
+            return
+
+        if not isinstance(record_name, str):
+            return
+
+        normalized = record_name.rstrip(".").lower()
+        if normalized != self._target:
+            return
+
+        if getattr(record, "type", None) != DNS_TYPE_A:
+            return
+
+        address = getattr(record, "address", None)
+        if not address:
+            return
+
+        if isinstance(address, bytes):
+            ip = ".".join(str(b) for b in address)
+        else:
+            ip = str(address)
+
+        self.result = ip
+        self._event.set()
+
+    def wait(self, timeout: float) -> Optional[str]:
+        finished = self._event.wait(timeout)
+        return self.result if finished else None
+
+
+def _get_mdns_client() -> Optional[Zeroconf]:
+    global _mdns_zeroconf
+    with _mdns_lock:
+        if _mdns_zeroconf is None:
+            try:
+                _mdns_zeroconf = Zeroconf()
+            except Exception as exc:
+                logger.warning(f"Failed to initialize Zeroconf for mDNS ICE resolution: {exc}")
+                _mdns_zeroconf = None
+        return _mdns_zeroconf
+
+
+def _resolve_via_socket(hostname: str) -> Optional[str]:
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET)
+    except socket.gaierror:
+        return None
+
+    for family, _, _, _, sockaddr in infos:
+        if family == socket.AF_INET and sockaddr:
+            return sockaddr[0]
+    return None
+
+
+def _resolve_via_mdns_query(hostname: str, timeout: float = 1.0) -> Optional[str]:
+    zc = _get_mdns_client()
+    if not zc:
+        return None
+
+    listener = _MdnsQueryListener(hostname)
+    try:
+        zc.add_listener(listener, None)
+    except Exception:
+        logger.debug("Failed to register Zeroconf listener for mDNS candidate resolution", exc_info=True)
+        return None
+
+    try:
+        outgoing = DNSOutgoing(DNS_FLAGS_QR_QUERY)
+        query_name = hostname if hostname.endswith(".") else f"{hostname}."
+        outgoing.add_question(DNSQuestion(query_name, DNS_TYPE_A, 1))
+        zc.send(outgoing)
+        return listener.wait(timeout)
+    finally:
+        try:
+            zc.remove_listener(listener)
+        except Exception:
+            logger.debug("Failed to remove Zeroconf listener after mDNS lookup", exc_info=True)
+
+
+def _resolve_mdns_hostname(hostname: str) -> Optional[str]:
+    normalized = hostname.rstrip(".")
+    if not normalized.lower().endswith(".local"):
+        return None
+
+    now = time.time()
+    with _mdns_lock:
+        cached = _mdns_cache.get(normalized)
+        if cached and now - cached[1] < MDNS_CACHE_TTL_SECONDS:
+            return cached[0]
+
+    resolved = _resolve_via_socket(normalized)
+    if not resolved:
+        resolved = _resolve_via_mdns_query(normalized)
+
+    if resolved:
+        with _mdns_lock:
+            _mdns_cache[normalized] = (resolved, now)
+    return resolved
+
+
+def _maybe_rewrite_candidate(candidate: str) -> str:
+    if ".local" not in candidate:
+        return candidate
+
+    parts = candidate.split()
+    if len(parts) < 5:
+        return candidate
+
+    host = parts[4]
+    if ".local" not in host.lower():
+        return candidate
+
+    resolved = _resolve_mdns_hostname(host)
+    if resolved:
+        if resolved != host:
+            logger.info(f"Resolved mDNS ICE host '{host}' -> '{resolved}'")
+        parts[4] = resolved
+        return " ".join(parts)
+
+    logger.warning(f"Failed to resolve mDNS ICE candidate hostname '{host}'")
+    return candidate
+
+
+def _rewrite_sdp_candidates(sdp: str) -> Tuple[str, int]:
+    lines = sdp.splitlines()
+    replacements = 0
+    for idx, line in enumerate(lines):
+        if line.startswith("a=candidate:"):
+            original = line[2:]  # strip leading "a="
+            rewritten = _maybe_rewrite_candidate(original)
+            if rewritten != original:
+                replacements += 1
+            lines[idx] = "a=" + rewritten
+    return "\r\n".join(lines), replacements
+
 
 class APIWebRTC:
     def __init__(self, app: APIRouter, audio_manager: AudioManager, configuration_manager: ConfigurationManager = None):
@@ -162,6 +335,9 @@ class APIWebRTC:
         try:
             offer_sdp_bytes = await request.body()
             offer_sdp = offer_sdp_bytes.decode("utf-8")
+            offer_sdp, rewrites = _rewrite_sdp_candidates(offer_sdp)
+            if rewrites:
+                logger.info(f"[whep:{sink_id}] Rewrote {rewrites} mDNS ICE candidates inside SDP offer.")
         except Exception as e:
             logger.error(f"Could not read SDP offer from request body: {e}")
             return Response(status_code=400, content="Bad Request: Could not read SDP offer.")
@@ -287,6 +463,8 @@ class APIWebRTC:
             if not candidate or not sdp_mid:
                 return Response(status_code=400, content="Bad Request: 'candidate' and 'sdpMid' fields are required.")
             
+            candidate = _maybe_rewrite_candidate(candidate)
+
             # Get the actual sink_id from listener info
             actual_sink_id = sink_id
             async with self.listeners_lock:
@@ -350,7 +528,7 @@ class APIWebRTC:
             # Get all pending candidates and clear the list
             candidates = self.pending_server_candidates[listener_id]
             self.pending_server_candidates[listener_id] = []
-            
+
             logger.debug(f"[whep:{listener_id}] Returning {len(candidates)} server ICE candidates to client")
             return Response(content=json.dumps(candidates), status_code=200, headers={"Content-Type": "application/json"})
         except Exception as e:

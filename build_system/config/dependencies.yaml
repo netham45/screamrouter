@@ -81,6 +81,7 @@ dependencies:
           - "-DOPUS_INSTALL_PKG_CONFIG_MODULE=OFF"
           - "-DCMAKE_INSTALL_PREFIX={install_dir}"
           - "-DCMAKE_INSTALL_LIBDIR=lib"
+          - "-DLIBJUICE_ENABLE_DEBUG_LOGS=ON"
         generator: "Visual Studio 17 2022"
         
     outputs:
@@ -174,6 +175,7 @@ dependencies:
           - "-DNO_EXAMPLES=ON"
           - "-DNO_TESTS=ON"
           - "-DCMAKE_INSTALL_LIBDIR=lib"
+          - "-DLIBJUICE_ENABLE_DEBUG_LOGS=ON"
       
       windows:
         build_system: "cmake"
@@ -191,6 +193,8 @@ dependencies:
           - "-DNO_EXAMPLES=ON"
           - "-DNO_TESTS=ON"
           - "-DCMAKE_INSTALL_LIBDIR=lib"
+          - "-DLIBJUICE_ENABLE_DEBUG_LOGS=ON"
+          - "-DDISABLE_CONSENT_FRESHNESS=ON"
         
     outputs:
       libraries:

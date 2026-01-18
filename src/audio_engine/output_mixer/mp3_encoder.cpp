@@ -98,15 +98,52 @@ void Mp3Encoder::start() {
 }
 
 void Mp3Encoder::stop() {
-    stop_flag_.store(true, std::memory_order_release);
+    LOG_CPP_INFO("[Mp3Encoder:%s] Stopping...", sink_id_.c_str());
+    
+    // Signal stop flag and notify with mutex held to ensure thread sees it
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stop_flag_.store(true, std::memory_order_release);
+    }
     cv_.notify_all();
     
     if (worker_thread_.joinable()) {
-        try {
-            worker_thread_.join();
-            LOG_CPP_INFO("[Mp3Encoder:%s] Worker thread stopped.", sink_id_.c_str());
-        } catch (const std::system_error& e) {
-            LOG_CPP_ERROR("[Mp3Encoder:%s] Error joining thread: %s", sink_id_.c_str(), e.what());
+        // Use a timed wait loop to ensure we don't deadlock
+        // Keep notifying in case the thread is in between wait cycles
+        auto start = std::chrono::steady_clock::now();
+        constexpr auto max_wait = std::chrono::seconds(5);
+        
+        while (true) {
+            // Notify repeatedly to ensure thread wakes up
+            cv_.notify_all();
+            
+            // Use native_handle for timed join since C++ doesn't have it
+            // For now, detach if taking too long to avoid permanent deadlock
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed > max_wait) {
+                LOG_CPP_WARNING("[Mp3Encoder:%s] Thread stop timed out after 5s, detaching to avoid deadlock.",
+                               sink_id_.c_str());
+                worker_thread_.detach();
+                break;
+            }
+            
+            // Check if thread finished (via thread_running_ flag set by thread on exit)
+            // Short sleep to avoid busy spinning
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            
+            // Try to check if thread is still running
+            if (!thread_running_.load(std::memory_order_acquire)) {
+                // Thread signaled it's done, safe to join
+                try {
+                    worker_thread_.join();
+                    LOG_CPP_INFO("[Mp3Encoder:%s] Worker thread stopped.", sink_id_.c_str());
+                } catch (const std::system_error& e) {
+                    // Already joined or detached
+                    LOG_CPP_DEBUG("[Mp3Encoder:%s] Join after thread stopped: %s", 
+                                  sink_id_.c_str(), e.what());
+                }
+                break;
+            }
         }
     }
     thread_running_.store(false, std::memory_order_release);
@@ -173,6 +210,8 @@ void Mp3Encoder::reset_profiling_counters() {
 
 void Mp3Encoder::thread_loop() {
     PROFILE_FUNCTION();
+    LOG_CPP_DEBUG("[Mp3Encoder:%s] Thread loop started.", sink_id_.c_str());
+    
     while (true) {
         std::vector<int32_t> work;
         {
@@ -182,6 +221,8 @@ void Mp3Encoder::thread_loop() {
             });
             
             if (stop_flag_.load(std::memory_order_acquire) && pcm_queue_.empty()) {
+                LOG_CPP_DEBUG("[Mp3Encoder:%s] Stop flag set and queue empty, exiting thread loop.",
+                             sink_id_.c_str());
                 break;
             }
             
@@ -195,6 +236,10 @@ void Mp3Encoder::thread_loop() {
             encode_and_push(work.data(), work.size());
         }
     }
+    
+    // Signal that we're done before exiting - this allows stop() to detect completion
+    thread_running_.store(false, std::memory_order_release);
+    LOG_CPP_DEBUG("[Mp3Encoder:%s] Thread loop exited.", sink_id_.c_str());
 }
 
 void Mp3Encoder::encode_and_push(const int32_t* samples, size_t sample_count) {

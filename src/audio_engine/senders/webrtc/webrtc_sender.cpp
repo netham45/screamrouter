@@ -210,7 +210,6 @@ void WebRtcSender::setup_peer_connection() {
     LOG_CPP_INFO("[WebRtcSender:%s] DEADLOCK_DEBUG: setup_peer_connection() START", config_.sink_id.c_str());
     rtc::Configuration rtc_config;
     rtc_config.iceServers.emplace_back("stun:stun.l.google.com:19302");
-    rtc_config.iceServers.emplace_back("turn:screamrouter:screamrouter@192.168.3.201:3478");
     rtc_config.disableAutoNegotiation = true;
 
     LOG_CPP_INFO("[WebRtcSender:%s] DEADLOCK_DEBUG: Creating PeerConnection", config_.sink_id.c_str());
@@ -227,10 +226,13 @@ void WebRtcSender::setup_peer_connection() {
             case rtc::PeerConnection::State::Connected:
                 state_str = "Connected";
                 has_been_connected_.store(true);
+                disconnect_time_ = std::chrono::steady_clock::time_point{};
                 break;
             case rtc::PeerConnection::State::Disconnected:
                 state_str = "Disconnected";
-                should_close = true;
+                if (disconnect_time_ == std::chrono::steady_clock::time_point{}) {
+                    disconnect_time_ = std::chrono::steady_clock::now();
+                }
                 break;
             case rtc::PeerConnection::State::Failed:
                 state_str = "Failed";
@@ -243,9 +245,15 @@ void WebRtcSender::setup_peer_connection() {
             default: state_str = "Unknown"; break;
         }
         LOG_CPP_INFO("[WebRtcSender:%s] PeerConnection state changed to: %s", config_.sink_id.c_str(), state_str.c_str());
+        if (state == rtc::PeerConnection::State::Disconnected) {
+            LOG_CPP_INFO("[WebRtcSender:%s] PeerConnection disconnected; staying alive unless explicitly closed",
+                        config_.sink_id.c_str());
+        }
         if (should_close) {
             LOG_CPP_INFO("[WebRtcSender:%s] Connection state is now terminal. Triggering cleanup.", config_.sink_id.c_str());
-            disconnect_time_ = std::chrono::steady_clock::now();
+            if (disconnect_time_ == std::chrono::steady_clock::time_point{}) {
+                disconnect_time_ = std::chrono::steady_clock::now();
+            }
             trigger_cleanup_if_needed();
         }
     });
@@ -260,11 +268,13 @@ void WebRtcSender::setup_peer_connection() {
                 ice_state_str = "Connected";
                 state_ = rtc::PeerConnection::State::Connected;
                 has_been_connected_.store(true);
+                disconnect_time_ = std::chrono::steady_clock::time_point{};
                 break;
             case rtc::PeerConnection::IceState::Completed:
                 ice_state_str = "Completed";
                 state_ = rtc::PeerConnection::State::Connected;
                 has_been_connected_.store(true);
+                disconnect_time_ = std::chrono::steady_clock::time_point{};
                 break;
             case rtc::PeerConnection::IceState::Failed:
                 ice_state_str = "Failed";
@@ -272,7 +282,10 @@ void WebRtcSender::setup_peer_connection() {
                 break;
             case rtc::PeerConnection::IceState::Disconnected:
                 ice_state_str = "Disconnected";
-                should_close = true;
+                state_ = rtc::PeerConnection::State::Disconnected;
+                if (disconnect_time_ == std::chrono::steady_clock::time_point{}) {
+                    disconnect_time_ = std::chrono::steady_clock::now();
+                }
                 break;
             case rtc::PeerConnection::IceState::Closed:
                 ice_state_str = "Closed";
@@ -282,6 +295,17 @@ void WebRtcSender::setup_peer_connection() {
         }
         LOG_CPP_INFO("[WebRtcSender:%s] ICE state changed to: %s", config_.sink_id.c_str(), ice_state_str.c_str());
         
+        if (ice_state == rtc::PeerConnection::IceState::Disconnected) {
+            LOG_CPP_INFO("[WebRtcSender:%s] ICE disconnected; keeping sender alive for potential recovery",
+                         config_.sink_id.c_str());
+            log_selected_candidate_pair("ICE disconnected");
+        } else if (ice_state == rtc::PeerConnection::IceState::Connected ||
+                   ice_state == rtc::PeerConnection::IceState::Completed) {
+            log_selected_candidate_pair("ICE connected/completed");
+        } else if (ice_state == rtc::PeerConnection::IceState::Failed) {
+            log_selected_candidate_pair("ICE failed");
+        }
+
         if (should_close) {
             LOG_CPP_INFO("[WebRtcSender:%s] ICE state is now terminal. Triggering cleanup.", config_.sink_id.c_str());
             if (disconnect_time_ == std::chrono::steady_clock::time_point{}) {
@@ -371,7 +395,20 @@ void WebRtcSender::setup_peer_connection() {
         });
         
         audio_track_->onClosed([this]() {
-            LOG_CPP_INFO("[WebRtcSender:%s] Audio track closed", config_.sink_id.c_str());
+            std::string state_str;
+            switch (state_.load()) {
+                case rtc::PeerConnection::State::New: state_str = "New"; break;
+                case rtc::PeerConnection::State::Connecting: state_str = "Connecting"; break;
+                case rtc::PeerConnection::State::Connected: state_str = "Connected"; break;
+                case rtc::PeerConnection::State::Disconnected: state_str = "Disconnected"; break;
+                case rtc::PeerConnection::State::Failed: state_str = "Failed"; break;
+                case rtc::PeerConnection::State::Closed: state_str = "Closed"; break;
+                default: state_str = "Unknown"; break;
+            }
+            LOG_CPP_WARNING("[WebRtcSender:%s] Audio track closed! packets_sent=%llu state=%s",
+                         config_.sink_id.c_str(),
+                         static_cast<unsigned long long>(m_total_packets_sent.load()),
+                         state_str.c_str());
         });
         
         // Extract negotiated values from the audio description instead of using hardcoded values
@@ -459,17 +496,15 @@ void WebRtcSender::close() {
 }
 
 void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size, const std::vector<uint32_t>& /*csrcs*/) {
-    //LOG_CPP_INFO("[WebRtcSender:%s] send_payload called with %zu bytes", config_.sink_id.c_str(), payload_size);
-    
-    // Early return if this sender is closed or marked for cleanup
-    if (is_closed()) {
-        LOG_CPP_DEBUG("[WebRtcSender:%s] Dropping payload because sender is closed (size=%zu)", config_.sink_id.c_str(), payload_size);
-        return;
-    }
-    
-    if (state_ != rtc::PeerConnection::State::Connected) {
+    // Time-based heartbeat logging: log every 5 seconds to track audio flow
+    static thread_local std::chrono::steady_clock::time_point last_heartbeat = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    auto since_last = std::chrono::duration_cast<std::chrono::seconds>(now - last_heartbeat).count();
+    if (since_last >= 5) {
+        last_heartbeat = now;
+        auto elapsed = time_since_disconnect();
         std::string state_str;
-        switch (state_) {
+        switch (state_.load()) {
             case rtc::PeerConnection::State::New: state_str = "New"; break;
             case rtc::PeerConnection::State::Connecting: state_str = "Connecting"; break;
             case rtc::PeerConnection::State::Connected: state_str = "Connected"; break;
@@ -478,9 +513,21 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
             case rtc::PeerConnection::State::Closed: state_str = "Closed"; break;
             default: state_str = "Unknown"; break;
         }
-        LOG_CPP_DEBUG("[WebRtcSender:%s] Not connected, state: %s", config_.sink_id.c_str(), state_str.c_str());
+        LOG_CPP_INFO("[WebRtcSender:%s] HEARTBEAT: packets_sent=%llu state=%s track_open=%s cleanup_req=%s elapsed_since_disconnect=%lldms",
+                     config_.sink_id.c_str(),
+                     static_cast<unsigned long long>(m_total_packets_sent.load()),
+                     state_str.c_str(),
+                     (audio_track_ && audio_track_->isOpen()) ? "true" : "false",
+                     cleanup_requested_.load() ? "true" : "false",
+                     static_cast<long long>(elapsed.count()));
+    }
+    
+    // Early return if this sender is closed or marked for cleanup
+    if (is_closed()) {
+        LOG_CPP_DEBUG("[WebRtcSender:%s] Dropping payload because sender is closed (size=%zu)", config_.sink_id.c_str(), payload_size);
         return;
     }
+    
     if (!audio_track_) {
         LOG_CPP_ERROR("[WebRtcSender:%s] Audio track is null", config_.sink_id.c_str());
         return;
@@ -501,7 +548,7 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
         }
     }
 
-    LOG_CPP_DEBUG("[WebRtcSender:%s] Encoding %zu bytes of PCM for listener", config_.sink_id.c_str(), payload_size);
+    //LOG_CPP_DEBUG("[WebRtcSender:%s] Encoding %zu bytes of PCM for listener", config_.sink_id.c_str(), payload_size);
     const int32_t* input = reinterpret_cast<const int32_t*>(payload_data);
     size_t num_samples_interleaved = payload_size / sizeof(int32_t);
 
@@ -550,9 +597,9 @@ void WebRtcSender::send_payload(const uint8_t* payload_data, size_t payload_size
             const auto* opus_data_byte_ptr = reinterpret_cast<const std::byte*>(opus_buffer_.data());
             audio_track_->sendFrame(rtc::binary(opus_data_byte_ptr, opus_data_byte_ptr + encoded_bytes), frame_info);
             m_total_packets_sent++;
-            LOG_CPP_DEBUG("[WebRtcSender:%s] Sent Opus frame (encoded_bytes=%d timestamp=%u total_packets=%llu)",
-                          config_.sink_id.c_str(), encoded_bytes, current_timestamp_,
-                          static_cast<unsigned long long>(m_total_packets_sent.load()));
+            //LOG_CPP_DEBUG("[WebRtcSender:%s] Sent Opus frame (encoded_bytes=%d timestamp=%u total_packets=%llu)",
+              //            config_.sink_id.c_str(), encoded_bytes, current_timestamp_,
+                //          static_cast<unsigned long long>(m_total_packets_sent.load()));
             current_timestamp_ += static_cast<uint32_t>(frame_samples_per_channel);
         }
 
@@ -586,8 +633,7 @@ bool WebRtcSender::is_closed() const {
     rtc::PeerConnection::State current_state = state_.load();
     
     // Only consider truly terminal states as closed
-    bool peer_connection_closed = current_state == rtc::PeerConnection::State::Disconnected ||
-                                 current_state == rtc::PeerConnection::State::Failed ||
+    bool peer_connection_closed = current_state == rtc::PeerConnection::State::Failed ||
                                  current_state == rtc::PeerConnection::State::Closed;
     
     // Don't check audio track state - it can cause false positives
@@ -597,10 +643,7 @@ bool WebRtcSender::is_closed() const {
 }
 
 bool WebRtcSender::should_cleanup_due_to_timeout() const {
-    if (is_closed() && disconnect_time_ != std::chrono::steady_clock::time_point{}) {
-        auto elapsed = std::chrono::steady_clock::now() - disconnect_time_;
-        return elapsed > CLEANUP_TIMEOUT;
-    }
+    // Disconnected is treated as a recoverable state; rely on explicit closures instead.
     return false;
 }
 
@@ -683,6 +726,47 @@ void WebRtcSender::trigger_cleanup_if_needed() {
     }
 }
 
+void WebRtcSender::log_selected_candidate_pair(const char* reason) {
+    if (!peer_connection_) {
+        LOG_CPP_WARNING("[WebRtcSender:%s] Unable to log candidate pair (%s): peer connection missing",
+                        config_.sink_id.c_str(),
+                        reason ? reason : "unknown");
+        return;
+    }
+
+    rtc::Candidate local_candidate;
+    rtc::Candidate remote_candidate;
+    if (!peer_connection_->getSelectedCandidatePair(&local_candidate, &remote_candidate)) {
+        LOG_CPP_INFO("[WebRtcSender:%s] No selected candidate pair yet (%s)",
+                     config_.sink_id.c_str(),
+                     reason ? reason : "unknown");
+        return;
+    }
+
+    auto describe_candidate = [](const rtc::Candidate& candidate) {
+        std::ostringstream oss;
+        const auto addr = candidate.address();
+        const auto port = candidate.port();
+        oss << (addr ? *addr : "unresolved");
+        oss << ":";
+        if (port) {
+            oss << *port;
+        } else {
+            oss << "?";
+        }
+        oss << " type=" << candidate.type();
+        oss << " transport=" << candidate.transportType();
+        return oss.str();
+    };
+
+    const std::string reason_str = reason ? reason : "selected-candidate";
+    LOG_CPP_INFO("[WebRtcSender:%s] SRTP path (%s): local=%s remote=%s",
+                 config_.sink_id.c_str(),
+                 reason_str.c_str(),
+                 describe_candidate(local_candidate).c_str(),
+                 describe_candidate(remote_candidate).c_str());
+}
+
 WebRtcSenderStats WebRtcSender::get_stats() {
     WebRtcSenderStats stats;
     stats.total_packets_sent = m_total_packets_sent.load();
@@ -701,6 +785,14 @@ WebRtcSenderStats WebRtcSender::get_stats() {
     stats.connection_state = state_str;
 
     return stats;
+}
+
+std::chrono::milliseconds WebRtcSender::time_since_disconnect() const {
+    if (disconnect_time_ == std::chrono::steady_clock::time_point{}) {
+        return std::chrono::milliseconds(-1);
+    }
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - disconnect_time_);
 }
 
 } // namespace audio

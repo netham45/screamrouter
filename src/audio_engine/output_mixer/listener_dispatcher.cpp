@@ -7,6 +7,7 @@
 #include "../utils/profiler.h"
 #include "../senders/webrtc/webrtc_sender.h"
 #include <chrono>
+#include <map>
 
 namespace screamrouter {
 namespace audio {
@@ -100,6 +101,17 @@ void ListenerDispatcher::dispatch_to_listeners(const ListenerAudioBuffer& stereo
     PROFILE_FUNCTION();
     auto t0 = std::chrono::steady_clock::now();
     
+    // Per-sink heartbeat logging every 5 seconds
+    static thread_local std::map<std::string, std::chrono::steady_clock::time_point> last_heartbeat_map;
+    auto& last_heartbeat = last_heartbeat_map[sink_id_];
+    auto since_last = std::chrono::duration_cast<std::chrono::seconds>(t0 - last_heartbeat).count();
+    if (since_last >= 5) {
+        last_heartbeat = t0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        LOG_CPP_INFO("[ListenerDispatcher:%s] HEARTBEAT: listener_count=%zu dispatch_calls=%llu",
+                     sink_id_.c_str(), listeners_.size(), static_cast<unsigned long long>(dispatch_calls_));
+    }
+    
     std::vector<std::string> closed_listeners;
     
     {
@@ -191,10 +203,20 @@ void ListenerDispatcher::cleanup_closed_listeners() {
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& [id, sender] : listeners_) {
             if (WebRtcSender* webrtc_sender = dynamic_cast<WebRtcSender*>(sender.get())) {
-                if (webrtc_sender->is_closed() || webrtc_sender->should_cleanup_due_to_timeout()) {
+                const bool peer_closed = webrtc_sender->is_closed();
+                const bool timeout_elapsed = !peer_closed && webrtc_sender->should_cleanup_due_to_timeout();
+                if (peer_closed || timeout_elapsed) {
+                    const auto stats = webrtc_sender->get_stats();
+                    const auto disconnect_ms = webrtc_sender->time_since_disconnect().count();
+                    LOG_CPP_WARNING(
+                        "[ListenerDispatcher:%s] Scheduling cleanup for listener %s (reason=%s, state=%s, disconnect_ms=%lld, packets_sent=%llu)",
+                        sink_id_.c_str(),
+                        id.c_str(),
+                        peer_closed ? "peer-closed" : "disconnect-timeout",
+                        stats.connection_state.c_str(),
+                        static_cast<long long>(disconnect_ms),
+                        static_cast<unsigned long long>(stats.total_packets_sent));
                     to_remove.push_back(id);
-                    LOG_CPP_INFO("[ListenerDispatcher:%s] Found listener to cleanup: %s",
-                                 sink_id_.c_str(), id.c_str());
                 }
             }
         }
@@ -224,6 +246,24 @@ void ListenerDispatcher::close_all() {
     }
     listeners_.clear();
     LOG_CPP_INFO("[ListenerDispatcher:%s] All listeners closed.", sink_id_.c_str());
+}
+
+std::map<std::string, std::unique_ptr<INetworkSender>> ListenerDispatcher::extract_all() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::map<std::string, std::unique_ptr<INetworkSender>> extracted;
+    
+    for (auto& [id, sender] : listeners_) {
+        if (sender) {
+            LOG_CPP_INFO("[ListenerDispatcher:%s] Extracting listener for preservation: %s",
+                         sink_id_.c_str(), id.c_str());
+            extracted[id] = std::move(sender);
+        }
+    }
+    
+    listeners_.clear();
+    LOG_CPP_INFO("[ListenerDispatcher:%s] Extracted %zu listeners for preservation.",
+                 sink_id_.c_str(), extracted.size());
+    return extracted;
 }
 
 std::vector<std::string> ListenerDispatcher::get_listener_ids() const {

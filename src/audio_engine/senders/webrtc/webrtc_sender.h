@@ -109,9 +109,11 @@ public:
     WebRtcSenderStats get_stats();
     bool wants_multichannel_audio() const;
     int channel_count() const;
+    std::chrono::milliseconds time_since_disconnect() const;
 
 private:
     void trigger_cleanup_if_needed();
+    void log_selected_candidate_pair(const char* reason = nullptr);
     const std::string DEFAULT_OPUS_AUDIO_PROFILE = "minptime=10;maxaveragebitrate=512000;stereo=1;sprop-stereo=1;useinbandfec=0";
     void setup_peer_connection();
     void initialize_opus_encoder();

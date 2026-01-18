@@ -411,6 +411,13 @@ INetworkSender* SinkAudioMixer::get_listener(const std::string& listener_id) {
     return listener_dispatcher_ ? listener_dispatcher_->get_listener(listener_id) : nullptr;
 }
 
+std::map<std::string, std::unique_ptr<INetworkSender>> SinkAudioMixer::extract_all_listeners() {
+    if (listener_dispatcher_) {
+        return listener_dispatcher_->extract_all();
+    }
+    return {};
+}
+
 SinkAudioMixerStats SinkAudioMixer::get_stats() {
     SinkAudioMixerStats stats;
     stats.total_chunks_mixed = m_total_chunks_mixed.load();

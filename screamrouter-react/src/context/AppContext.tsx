@@ -230,6 +230,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [listeningStatus, setListeningStatus] = useState<Map<string, boolean>>(new Map());
   const webrtcListenersRef = useRef<Map<string, { pc: RTCPeerConnection, listenerId: string, sinkId: string }>>(new Map());
   const heartbeatIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const disconnectTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const ICE_DISCONNECT_TIMEOUT_MS = 5000;
   const [audioStreams, setAudioStreams] = useState<Map<string, MediaStream>>(new Map());
   const silenceSessionAudioRef = useRef<HTMLAudioElement>(null);
   // Removed audioContext and audioSourceNode - not needed for Chrome audio playback
@@ -343,104 +345,104 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Handle WebSocket updates
   const handleWebSocketUpdate = (update: WebSocketUpdate) => {
     console.log("Processing WebSocket update:", update);
-    
+
     // If this is the initial data load from api.ts setupWebSocket function, 
     // and we've already loaded data directly, skip this update to prevent duplicates
     if (!initialDataLoaded &&
-        update.sources && Object.keys(update.sources).length > 0 &&
-        update.sinks && Object.keys(update.sinks).length > 0 &&
-        update.routes && Object.keys(update.routes).length > 0) {
+      update.sources && Object.keys(update.sources).length > 0 &&
+      update.sinks && Object.keys(update.sinks).length > 0 &&
+      update.routes && Object.keys(update.routes).length > 0) {
       console.log("Initial data from WebSocket - using direct API data instead");
       setInitialDataLoaded(true);
       return;
     }
-    
+
     // If we have an update from WebSocket before our direct API call completes,
     // mark initialDataLoaded to prevent the direct API call from overwriting WebSocket data
-    if (!initialDataLoaded && 
-        (update.sources || update.sinks || update.routes)) {
+    if (!initialDataLoaded &&
+      (update.sources || update.sinks || update.routes)) {
       setInitialDataLoaded(true);
     }
-    
+
     // Handle source updates - fixed to properly merge by name
     if (update.sources && Object.keys(update.sources).length > 0) {
       setSources(prevSources => {
         // Create a map of all existing sources keyed by name
         const nameToSourceMap = new Map<string, Source>();
-        
+
         // Add all existing sources to the map
         prevSources.forEach(source => {
           nameToSourceMap.set(source.name, source);
         });
-        
+
         // Update/add sources from the update
         Object.entries(update.sources!).forEach(([name, source]) => {
           const isNew = !nameToSourceMap.has(name);
           nameToSourceMap.set(name, source);
-          
+
           if (isNew) {
             console.log(`Added new source: ${name}`);
           } else {
             console.log(`Updated existing source: ${name}`);
           }
         });
-        
+
         // Convert the map back to an array
         return Array.from(nameToSourceMap.values());
       });
     }
-    
+
     // Handle sink updates - fixed to properly merge by name
     if (update.sinks && Object.keys(update.sinks).length > 0) {
       setSinks(prevSinks => {
         // Create a map of all existing sinks keyed by name
         const nameToSinkMap = new Map<string, Sink>();
-        
+
         // Add all existing sinks to the map
         prevSinks.forEach(sink => {
           nameToSinkMap.set(sink.name, sink);
         });
-        
+
         // Update/add sinks from the update
         Object.entries(update.sinks!).forEach(([name, sink]) => {
           const isNew = !nameToSinkMap.has(name);
           nameToSinkMap.set(name, sink);
-          
+
           if (isNew) {
             console.log(`Added new sink: ${name}`);
           } else {
             console.log(`Updated existing sink: ${name}`);
           }
         });
-        
+
         // Convert the map back to an array
         return Array.from(nameToSinkMap.values());
       });
     }
-    
+
     // Handle route updates - fixed to properly merge by name
     if (update.routes && Object.keys(update.routes).length > 0) {
       setRoutes(prevRoutes => {
         // Create a map of all existing routes keyed by name
         const nameToRouteMap = new Map<string, Route>();
-        
+
         // Add all existing routes to the map
         prevRoutes.forEach(route => {
           nameToRouteMap.set(route.name, route);
         });
-        
+
         // Update/add routes from the update
         Object.entries(update.routes!).forEach(([name, route]) => {
           const isNew = !nameToRouteMap.has(name);
           nameToRouteMap.set(name, route);
-          
+
           if (isNew) {
             console.log(`Added new route: ${name}`);
           } else {
             console.log(`Updated existing route: ${name}`);
           }
         });
-        
+
         // Convert the map back to an array
         return Array.from(nameToRouteMap.values());
       });
@@ -456,13 +458,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (update.system_playback_devices || (playbackDeviceRemovals && playbackDeviceRemovals.length > 0)) {
       setSystemPlaybackDevices(prev => mergeSystemDeviceUpdate(prev, update.system_playback_devices, playbackDeviceRemovals));
     }
-    
+
     // Handle removals if present in the update
     if (update.removals) {
       // Handle source removals
       if (update.removals.sources && update.removals.sources.length > 0) {
         setSources(prevSources => {
-          const updatedSources = prevSources.filter(source => 
+          const updatedSources = prevSources.filter(source =>
             !update.removals!.sources!.includes(source.name)
           );
           update.removals!.sources!.forEach((name: string) => {
@@ -471,11 +473,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return updatedSources;
         });
       }
-      
+
       // Handle sink removals
       if (update.removals.sinks && update.removals.sinks.length > 0) {
         setSinks(prevSinks => {
-          const updatedSinks = prevSinks.filter(sink => 
+          const updatedSinks = prevSinks.filter(sink =>
             !update.removals!.sinks!.includes(sink.name)
           );
           update.removals!.sinks!.forEach((name: string) => {
@@ -484,11 +486,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return updatedSinks;
         });
       }
-      
+
       // Handle route removals
       if (update.removals.routes && update.removals.routes.length > 0) {
         setRoutes(prevRoutes => {
-          const updatedRoutes = prevRoutes.filter(route => 
+          const updatedRoutes = prevRoutes.filter(route =>
             !update.removals!.routes!.includes(route.name)
           );
           update.removals!.routes!.forEach((name: string) => {
@@ -660,58 +662,94 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
    */
   // Store temporary sink IDs for cleanup
   const temporarySinkIdsRef = useRef<Map<string, string>>(new Map());
+  const cleanupInProgressRef = useRef<Set<string>>(new Set());
+
+  const clearDisconnectTimeout = (entityId: string) => {
+    const timeoutId = disconnectTimeoutsRef.current.get(entityId);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      disconnectTimeoutsRef.current.delete(entityId);
+      console.log(`[WebRTC:${entityId}] Cleared disconnect timeout.`);
+    }
+  };
 
   // --- Centralized Cleanup Function ---
   const cleanupConnection = async (entityId: string, entityType: 'sink' | 'source' | 'route', reason: string) => {
     console.log(`[WebRTC:${entityType}:${entityId}] Cleaning up connection. Reason: ${reason}`);
-    const listener = webrtcListenersRef.current.get(entityId);
-
-    // Stop heartbeat
-    if (heartbeatIntervalsRef.current.has(entityId)) {
-      clearInterval(heartbeatIntervalsRef.current.get(entityId)!);
-      heartbeatIntervalsRef.current.delete(entityId);
-      console.log(`[WebRTC:${entityType}:${entityId}] Stopped heartbeat.`);
+    if (cleanupInProgressRef.current.has(entityId)) {
+      console.log(`[WebRTC:${entityType}:${entityId}] Cleanup already in progress, skipping duplicate invocation.`);
+      return;
     }
+    cleanupInProgressRef.current.add(entityId);
+    try {
+      const listener = webrtcListenersRef.current.get(entityId);
 
-    if (listener) {
-      listener.pc.close();
-      // Send DELETE request to WHEP endpoint using the persisted sink ID
-      try {
-        const endpoint = `/api/whep/${listener.sinkId}/${listener.listenerId}`;
-        await fetch(endpoint, {
-          method: 'DELETE',
-        });
-        console.log(`[WebRTC:${entityType}:${entityId}] Sent DELETE request to WHEP endpoint.`);
-      } catch (error) {
-        console.error(`[WebRTC:${entityType}:${entityId}] Error sending DELETE request:`, error);
-      }
-    }
-
-    // Clean up temporary entities for sources and routes
-    if (entityType === 'source' || entityType === 'route') {
-      const temporarySinkId = temporarySinkIdsRef.current.get(entityId);
-      if (temporarySinkId) {
+      if (listener) {
         try {
-          console.log(`[WebRTC:${entityType}:${entityId}] Cleaning up temporary sink: ${temporarySinkId}`);
-          await fetch(`/api/listen/temporary/${temporarySinkId}`, {
-            method: 'DELETE',
+          const stats = await listener.pc.getStats();
+          console.log(`[WebRTC:${entityType}:${entityId}] Snapshot before cleanup`, {
+            listenerId: listener.listenerId,
+            sinkId: listener.sinkId,
+            iceConnectionState: listener.pc.iceConnectionState,
+            connectionState: listener.pc.connectionState,
+            iceGatheringState: listener.pc.iceGatheringState,
+            statsCount: stats.size,
           });
-          console.log(`[WebRTC:${entityType}:${entityId}] Temporary sink cleaned up successfully.`);
-          temporarySinkIdsRef.current.delete(entityId);
-        } catch (error) {
-          console.error(`[WebRTC:${entityType}:${entityId}] Error cleaning up temporary sink:`, error);
+        } catch (err) {
+          console.warn(`[WebRTC:${entityType}:${entityId}] Failed to retrieve stats prior to cleanup`, err);
         }
       }
-    }
 
-    webrtcListenersRef.current.delete(entityId);
-    setAudioStreams(prev => {
-      const newMap = new Map(prev);
-      newMap.delete(entityId);
-      return newMap;
-    });
-    setListeningStatus(prev => new Map(prev).set(entityId, false));
-    console.log(`[WebRTC:${entityType}:${entityId}] Connection cleanup complete.`);
+      // Stop heartbeat
+      if (heartbeatIntervalsRef.current.has(entityId)) {
+        clearInterval(heartbeatIntervalsRef.current.get(entityId)!);
+        heartbeatIntervalsRef.current.delete(entityId);
+        console.log(`[WebRTC:${entityType}:${entityId}] Stopped heartbeat.`);
+      }
+      clearDisconnectTimeout(entityId);
+
+      if (listener) {
+        listener.pc.close();
+        // Send DELETE request to WHEP endpoint using the persisted sink ID
+        try {
+          const endpoint = `/api/whep/${listener.sinkId}/${listener.listenerId}`;
+          await fetch(endpoint, {
+            method: 'DELETE',
+          });
+          console.log(`[WebRTC:${entityType}:${entityId}] Sent DELETE request to WHEP endpoint.`);
+        } catch (error) {
+          console.error(`[WebRTC:${entityType}:${entityId}] Error sending DELETE request:`, error);
+        }
+      }
+
+      // Clean up temporary entities for sources and routes
+      if (entityType === 'source' || entityType === 'route') {
+        const temporarySinkId = temporarySinkIdsRef.current.get(entityId);
+        if (temporarySinkId) {
+          try {
+            console.log(`[WebRTC:${entityType}:${entityId}] Cleaning up temporary sink: ${temporarySinkId}`);
+            await fetch(`/api/listen/temporary/${temporarySinkId}`, {
+              method: 'DELETE',
+            });
+            console.log(`[WebRTC:${entityType}:${entityId}] Temporary sink cleaned up successfully.`);
+            temporarySinkIdsRef.current.delete(entityId);
+          } catch (error) {
+            console.error(`[WebRTC:${entityType}:${entityId}] Error cleaning up temporary sink:`, error);
+          }
+        }
+      }
+
+      webrtcListenersRef.current.delete(entityId);
+      setAudioStreams(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(entityId);
+        return newMap;
+      });
+      setListeningStatus(prev => new Map(prev).set(entityId, false));
+      console.log(`[WebRTC:${entityType}:${entityId}] Connection cleanup complete.`);
+    } finally {
+      cleanupInProgressRef.current.delete(entityId);
+    }
   };
 
   // New unified function to listen to any entity type
@@ -755,31 +793,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 2. For sources and routes, first setup temporary entities
     let webrtcSinkId = entityId;
-    
+
     if (entityType === 'source' || entityType === 'route') {
       try {
         console.log(`[WebRTC:${entityType}:${entityId}] Setting up temporary entities...`);
-        
+
         const setupEndpoint = entityType === 'source'
           ? `/api/listen/source/${entityId}/setup`
           : `/api/listen/route/${entityId}/setup`;
-        
+
         const setupResponse = await fetch(setupEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
-        
+
         if (!setupResponse.ok) {
           const errorText = await setupResponse.text();
           throw new Error(`Failed to setup ${entityType} listener: ${setupResponse.status} - ${errorText}`);
         }
-        
+
         const setupData = await setupResponse.json();
         webrtcSinkId = setupData.sink_id;
-        
+
         // Store the temporary sink ID for cleanup
         temporarySinkIdsRef.current.set(entityId, webrtcSinkId);
-        
+
         console.log(`[WebRTC:${entityType}:${entityId}] Temporary sink created with ID: ${webrtcSinkId}`);
       } catch (error) {
         console.error(`[WebRTC:${entityType}:${entityId}] Failed to setup temporary entities:`, error);
@@ -796,17 +834,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     console.log(`[WebRTC:${entityType}:${entityId}] Proceeding to establish WHEP connection with sink_id: ${webrtcSinkId}`);
     const pc = new RTCPeerConnection({
       iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        {
-          urls: 'turn:192.168.3.201',
-          username: 'screamrouter',
-          credential: 'screamrouter',
-        },
       ],
     });
 
     const iceCandidateQueue: RTCIceCandidate[] = [];
     let listenerId: string | null = null;
+
+    const dumpPeerConnectionStats = async (phase: string) => {
+      try {
+        const stats = await pc.getStats();
+        let selectedPairId: string | undefined;
+        let candidatePairReport: RTCStats | undefined;
+        let localCandidateReport: RTCStats | undefined;
+        let remoteCandidateReport: RTCStats | undefined;
+
+        stats.forEach(report => {
+          if (!selectedPairId && report.type === 'transport') {
+            const selectedId = (report as any).selectedCandidatePairId as string | undefined;
+            if (selectedId) {
+              selectedPairId = selectedId;
+            }
+          }
+          if (!selectedPairId && report.type === 'candidate-pair') {
+            const nominated = (report as any).nominated;
+            const state = (report as any).state;
+            if (nominated || state === 'succeeded') {
+              selectedPairId = report.id;
+            }
+          }
+        });
+
+        if (selectedPairId) {
+          candidatePairReport = stats.get(selectedPairId);
+          if (candidatePairReport) {
+            const localId = (candidatePairReport as any).localCandidateId as string | undefined;
+            const remoteId = (candidatePairReport as any).remoteCandidateId as string | undefined;
+            if (localId) {
+              localCandidateReport = stats.get(localId);
+            }
+            if (remoteId) {
+              remoteCandidateReport = stats.get(remoteId);
+            }
+          }
+        }
+
+        console.log(`[WebRTC:${entityType}:${entityId}] [${phase}] Stats snapshot`, {
+          selectedPairId,
+          candidatePairReport,
+          localCandidateReport,
+          remoteCandidateReport,
+        });
+      } catch (err) {
+        console.warn(`[WebRTC:${entityType}:${entityId}] Failed to dump stats during ${phase}`, err);
+      }
+    };
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -815,19 +896,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           candidate: candidateJson.candidate,
           sdpMid: candidateJson.sdpMid
         };
+        console.log(`[WebRTC:${entityType}:${entityId}] Generated local ICE candidate`, candidateJson);
+        if (!candidateJson.candidate) {
+          console.log(`[WebRTC:${entityType}:${entityId}] Reached ICE gathering completion (empty candidate).`);
+          return;
+        }
         if (listenerId) {
           // Use the webrtcSinkId which is either the sink's config_id or the temporary sink_id
           const endpoint = `/api/whep/${webrtcSinkId}/${listenerId}`;
-          
+
           fetch(endpoint, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
+          }).then(async response => {
+            if (!response.ok) {
+              const text = await response.text();
+              console.error(`[WebRTC:${entityType}:${entityId}] Failed to send ICE candidate (status ${response.status}): ${text}`);
+            }
           }).catch(e => console.error(`[WebRTC:${entityType}:${entityId}] Error sending ICE candidate:`, e));
         } else {
           iceCandidateQueue.push(event.candidate);
         }
       }
+    };
+
+    pc.onicecandidateerror = (event) => {
+      console.error(`[WebRTC:${entityType}:${entityId}] ICE candidate error`, {
+        errorCode: event.errorCode,
+        errorText: event.errorText,
+        hostCandidate: event.hostCandidate,
+        url: event.url,
+      });
     };
 
     pc.ontrack = (event) => {
@@ -836,9 +936,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setAudioStreams(prev => new Map(prev).set(entityId, event.streams[0]));
     };
 
+    pc.onconnectionstatechange = () => {
+      console.log(`[WebRTC:${entityType}:${entityId}] Peer connection state changed to: ${pc.connectionState}`);
+      dumpPeerConnectionStats(`connection-${pc.connectionState}`);
+      if (pc.connectionState === 'failed') {
+        cleanupConnection(entityId, entityType, 'Peer connection failed').catch(err => {
+          console.error(`[WebRTC:${entityType}:${entityId}] Error during connection-failed cleanup:`, err);
+        });
+      }
+    };
+
     pc.oniceconnectionstatechange = async () => {
-      console.log(`[WebRTC:${entityType}:${entityId}] ICE connection state changed to: ${pc.iceConnectionState}`);
-      if (pc.iceConnectionState === 'connected') {
+      console.log(`[WebRTC:${entityType}:${entityId}] ICE connection state changed to: ${pc.iceConnectionState} (connection=${pc.connectionState}, gathering=${pc.iceGatheringState})`);
+      dumpPeerConnectionStats(`ice-${pc.iceConnectionState}`);
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        clearDisconnectTimeout(entityId);
         setListeningStatus(prev => new Map(prev).set(entityId, true));
         const intervalId = setInterval(async () => {
           const listener = webrtcListenersRef.current.get(entityId);
@@ -846,7 +958,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             try {
               // Use the persisted sink ID for heartbeat to avoid identifier mismatches
               const endpoint = `/api/whep/${listener.sinkId}/${listener.listenerId}`;
-              
+
               const response = await fetch(endpoint, { method: 'POST' });
               if (response.status === 404) {
                 console.error(`[WebRTC:${entityType}:${entityId}] Heartbeat failed: session not found. Cleaning up.`);
@@ -858,7 +970,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }, 5000);
         heartbeatIntervalsRef.current.set(entityId, intervalId);
-      } else if (['failed', 'disconnected', 'closed'].includes(pc.iceConnectionState)) {
+      } else if (pc.iceConnectionState === 'disconnected') {
+        if (!disconnectTimeoutsRef.current.has(entityId)) {
+          console.warn(`[WebRTC:${entityType}:${entityId}] ICE disconnected. Waiting up to ${ICE_DISCONNECT_TIMEOUT_MS}ms before cleanup.`);
+          const timeoutId = window.setTimeout(() => {
+            disconnectTimeoutsRef.current.delete(entityId);
+            console.error(`[WebRTC:${entityType}:${entityId}] ICE stayed disconnected past timeout. Cleaning up listener.`);
+            cleanupConnection(entityId, entityType, "ICE disconnected timeout").catch(err => {
+              console.error(`[WebRTC:${entityType}:${entityId}] Error during disconnect-timeout cleanup:`, err);
+            });
+          }, ICE_DISCONNECT_TIMEOUT_MS);
+          disconnectTimeoutsRef.current.set(entityId, timeoutId);
+        }
+      } else if (['failed', 'closed'].includes(pc.iceConnectionState)) {
+        clearDisconnectTimeout(entityId);
+        await dumpPeerConnectionStats(`terminal-${pc.iceConnectionState}`);
         await cleanupConnection(entityId, entityType, `ICE state changed to ${pc.iceConnectionState}`);
       }
     };
@@ -872,7 +998,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // Use the webrtcSinkId for the WHEP endpoint
       const endpoint = `/api/whep/${webrtcSinkId}`;
-      
+
       console.log(`[WebRTC:${entityType}:${entityId}] Using WebRTC sink ID: ${webrtcSinkId}`);
 
       const response = await fetch(endpoint, {
@@ -899,23 +1025,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const candidate = iceCandidateQueue.shift();
         if (candidate) {
           const candidateJson = candidate.toJSON();
+          if (!candidateJson.candidate) {
+            console.log(`[WebRTC:${entityType}:${entityId}] Skipping queued end-of-candidates notification.`);
+            continue;
+          }
           const payload = {
             candidate: candidateJson.candidate,
             sdpMid: candidateJson.sdpMid
           };
           // Use the webrtcSinkId for the PATCH endpoint
           const patchEndpoint = `/api/whep/${webrtcSinkId}/${listenerId}`;
-          
+
           fetch(patchEndpoint, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
+          }).then(async response => {
+            if (!response.ok) {
+              const text = await response.text();
+              console.error(`[WebRTC:${entityType}:${entityId}] Failed to send queued ICE candidate (status ${response.status}): ${text}`);
+            }
           }).catch(e => console.error(`[WebRTC:${entityType}:${entityId}] Error sending queued ICE candidate:`, e));
         }
       }
 
       const answer = new RTCSessionDescription({ type: 'answer', sdp: answerSdp });
       await pc.setRemoteDescription(answer);
+      console.log(`[WebRTC:${entityType}:${entityId}] Remote description applied. Awaiting ICE completion.`);
 
       webrtcListenersRef.current.set(entityId, { pc, listenerId: listenerId!, sinkId: webrtcSinkId });
       console.log(`[WebRTC:${entityType}:${entityId}] Started listening via WHEP`);
@@ -1025,7 +1161,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!audioEl) {
       return;
     }
-  
+
     const handlePause = () => {
       console.log("Silence audio paused, stopping all WebRTC sessions.");
       setIsSilenceAudioPlaying(false);
@@ -1043,7 +1179,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return newMap;
       });
     };
-  
+
     const handlePlay = () => {
       console.log("Silence audio playing, restarting paused WebRTC sessions.");
       setIsSilenceAudioPlaying(true);
@@ -1057,10 +1193,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       setManuallyPausedSinks(new Set());
     };
-  
+
     audioEl.addEventListener('pause', handlePause);
     audioEl.addEventListener('play', handlePlay);
-  
+
     return () => {
       audioEl.removeEventListener('pause', handlePause);
       audioEl.removeEventListener('play', handlePlay);
@@ -1208,7 +1344,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setStartedListeningSinks,
     }}>
       {children}
-      <audio id={"silencesAudio"} ref={silenceSessionAudioRef} src={silenceMP3} style={{"display":"none"}} controls autoPlay loop />
+      <audio id={"silencesAudio"} ref={silenceSessionAudioRef} src={silenceMP3} style={{ "display": "none" }} controls autoPlay loop />
     </AppContext.Provider>
   );
 };

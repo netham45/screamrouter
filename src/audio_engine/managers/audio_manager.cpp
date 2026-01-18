@@ -971,6 +971,22 @@ void AudioManager::add_webrtc_remote_ice_candidate(const std::string& sink_id, c
     }
 }
 
+std::map<std::string, std::unique_ptr<INetworkSender>> 
+AudioManager::extract_listeners_from_sink(const std::string& sink_id) {
+    if (m_sink_manager) {
+        return m_sink_manager->extract_listeners_from_sink(sink_id);
+    }
+    return {};
+}
+
+void AudioManager::reattach_listeners_to_sink(
+    const std::string& sink_id, 
+    std::map<std::string, std::unique_ptr<INetworkSender>>& listeners) {
+    if (m_sink_manager && !listeners.empty()) {
+        m_sink_manager->reattach_listeners_to_sink(sink_id, listeners);
+    }
+}
+
 AudioEngineStats AudioManager::get_audio_engine_stats() {
     if (m_stats_manager) {
         return m_stats_manager->get_current_stats();

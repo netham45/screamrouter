@@ -155,6 +155,13 @@ public:
      * @return A pointer to the `INetworkSender`, or `nullptr` if not found.
      */
     INetworkSender* get_listener(const std::string& listener_id);
+    
+    /**
+     * @brief Extracts all listeners from this sink, transferring ownership to caller.
+     * @details Used to preserve WebRTC sessions during sink config updates.
+     * @return Map of listener IDs to their senders (ownership transferred).
+     */
+    std::map<std::string, std::unique_ptr<INetworkSender>> extract_all_listeners();
 
     /**
      * @brief Retrieves the current statistics from the mixer.

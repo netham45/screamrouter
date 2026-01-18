@@ -93,6 +93,22 @@ public:
      * @return A pointer to the network sender, or nullptr if not found.
      */
     INetworkSender* get_listener_from_sink(const std::string& sink_id, const std::string& listener_id);
+    
+    /**
+     * @brief Extracts all listeners from a sink, transferring ownership to caller.
+     * @details Used to preserve WebRTC sessions during sink config updates.
+     * @param sink_id The ID of the sink.
+     * @return Map of listener IDs to their senders (ownership transferred).
+     */
+    std::map<std::string, std::unique_ptr<INetworkSender>> extract_listeners_from_sink(const std::string& sink_id);
+    
+    /**
+     * @brief Reattaches previously extracted listeners to a sink.
+     * @param sink_id The ID of the sink.
+     * @param listeners Map of listeners to reattach (ownership transferred to sink).
+     */
+    void reattach_listeners_to_sink(const std::string& sink_id, 
+                                    std::map<std::string, std::unique_ptr<INetworkSender>>& listeners);
 
     /** @brief Gets a reference to the map of sink configurations. */
     std::map<std::string, SinkConfig>& get_sink_configs();

@@ -289,6 +289,21 @@ public:
      * @param sdpMid The SDP media line index.
      */
     void add_webrtc_remote_ice_candidate(const std::string& sink_id, const std::string& listener_id, const std::string& candidate, const std::string& sdpMid);
+    
+    /**
+     * @brief Extracts all WebRTC listeners from a sink, for preservation during sink updates.
+     * @param sink_id The ID of the sink.
+     * @return Map of listener IDs to their senders (ownership transferred to caller).
+     */
+    std::map<std::string, std::unique_ptr<INetworkSender>> extract_listeners_from_sink(const std::string& sink_id);
+    
+    /**
+     * @brief Reattaches previously extracted listeners to a sink.
+     * @param sink_id The ID of the sink.
+     * @param listeners Map of listeners to reattach (ownership transferred to sink).
+     */
+    void reattach_listeners_to_sink(const std::string& sink_id, 
+                                    std::map<std::string, std::unique_ptr<INetworkSender>>& listeners);
 
     /**
      * @brief Retrieves a snapshot of all current audio engine statistics.

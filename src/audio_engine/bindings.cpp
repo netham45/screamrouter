@@ -27,11 +27,84 @@
 struct DesktopOverlayStub {};
 #endif
 #include <cstdlib>
+#include <mutex>
 
 // Note: audio_types.h and audio_engine_config_types.h are included by the headers above.
 
+#include <rtc/global.hpp>
+#include "deps/libdatachannel/deps/libjuice/include/juice/juice.h"
+
 namespace py = pybind11;
 using namespace screamrouter;
+
+namespace {
+
+audio::logging::LogLevel map_rtc_log_level(rtc::LogLevel level) {
+    using RTCLevel = rtc::LogLevel;
+    switch (level) {
+        case RTCLevel::Fatal:
+        case RTCLevel::Error:
+            return audio::logging::LogLevel::ERR;
+        case RTCLevel::Warning:
+            return audio::logging::LogLevel::WARNING;
+        case RTCLevel::Info:
+            return audio::logging::LogLevel::INFO;
+        case RTCLevel::Debug:
+        case RTCLevel::Verbose:
+        case RTCLevel::None:
+        default:
+            return audio::logging::LogLevel::DEBUG;
+    }
+}
+
+audio::logging::LogLevel map_juice_log_level(juice_log_level_t level) {
+    switch (level) {
+        case JUICE_LOG_LEVEL_FATAL:
+        case JUICE_LOG_LEVEL_ERROR:
+            return audio::logging::LogLevel::ERR;
+        case JUICE_LOG_LEVEL_WARN:
+            return audio::logging::LogLevel::WARNING;
+        case JUICE_LOG_LEVEL_INFO:
+            return audio::logging::LogLevel::INFO;
+        case JUICE_LOG_LEVEL_DEBUG:
+        case JUICE_LOG_LEVEL_VERBOSE:
+        case JUICE_LOG_LEVEL_NONE:
+        default:
+            return audio::logging::LogLevel::DEBUG;
+    }
+}
+
+void initialize_rtc_logger_once() {
+    static std::once_flag rtc_logger_once;
+    std::call_once(rtc_logger_once, []() {
+        // Initialize libdatachannel logger
+        rtc::InitLogger(rtc::LogLevel::Verbose, [](rtc::LogLevel level, std::string message) {
+            auto mapped = map_rtc_log_level(level);
+            screamrouter::audio::logging::log_message(
+                mapped,
+                "libdatachannel",
+                0,
+                "%s",
+                message.c_str());
+        });
+        LOG_CPP_INFO("[libdatachannel] Logger initialized (level=Verbose)");
+        
+        // Initialize libjuice logger (ICE/STUN layer)
+        juice_set_log_level(JUICE_LOG_LEVEL_VERBOSE);
+        juice_set_log_handler([](juice_log_level_t level, const char* message) {
+            auto mapped = map_juice_log_level(level);
+            screamrouter::audio::logging::log_message(
+                mapped,
+                "libjuice",
+                0,
+                "%s",
+                message);
+        });
+        LOG_CPP_INFO("[libjuice] Logger initialized (level=VERBOSE)");
+    });
+}
+
+} // namespace
 
 /**
  * @brief The main entry point for the pybind11 module definition.
@@ -62,6 +135,7 @@ PYBIND11_MODULE(screamrouter_audio_engine, m) {
 
     // 1. Logger has no dependencies on other bound types
     audio::logging::bind_logger(m);
+    initialize_rtc_logger_once();
 
     // 2. Audio types are fundamental and used by other bindings
     audio::bind_audio_types(m);

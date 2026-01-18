@@ -551,6 +551,14 @@ void AudioEngineConfigApplier::process_sink_updates(const std::vector<AppliedSin
 
         if (config_changed) {
             LOG_CPP_DEBUG("[ConfigApplier]     Core sink parameters changed for %s. Re-adding sink.", sink_id.c_str());
+            
+            // PRESERVE WEBRTC LISTENERS: Extract before removal to reattach after recreation
+            auto preserved_listeners = audio_manager_.extract_listeners_from_sink(sink_id);
+            if (!preserved_listeners.empty()) {
+                LOG_CPP_INFO("[ConfigApplier]     Preserved %zu listeners from sink %s for reattachment",
+                             preserved_listeners.size(), sink_id.c_str());
+            }
+            
             // Remove the old sink from AudioManager.
             const auto t_rm0 = std::chrono::steady_clock::now();
             if (!audio_manager_.remove_sink(sink_id)) {
@@ -570,6 +578,13 @@ void AudioEngineConfigApplier::process_sink_updates(const std::vector<AppliedSin
             const auto t_add1 = std::chrono::steady_clock::now();
             LOG_CPP_INFO("[ConfigApplier]     Sink %s re-added with new config in %lld ms", sink_id.c_str(),
                          (long long)std::chrono::duration_cast<std::chrono::milliseconds>(t_add1 - t_add0).count());
+            
+            // REATTACH PRESERVED LISTENERS to the recreated sink
+            if (!preserved_listeners.empty()) {
+                audio_manager_.reattach_listeners_to_sink(sink_id, preserved_listeners);
+                LOG_CPP_INFO("[ConfigApplier]     Reattached preserved listeners to sink %s", sink_id.c_str());
+            }
+            
             // Update internal config state.
             current_internal_state.params.sink_engine_config = desired_sink_param.sink_engine_config;
             // Clear internal connection state as they will be re-established.

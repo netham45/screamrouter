@@ -84,6 +84,13 @@ public:
     void close_all();
     
     /**
+     * @brief Extracts all listeners, transferring ownership to caller.
+     * @details Used to preserve WebRTC sessions during sink config updates.
+     * @return Map of listener IDs to their senders (ownership transferred).
+     */
+    std::map<std::string, std::unique_ptr<INetworkSender>> extract_all();
+    
+    /**
      * @brief Gets list of current listener IDs.
      * @return Vector of listener ID strings.
      */
